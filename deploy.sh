@@ -1,132 +1,165 @@
 #!/bin/bash
 # MMCD Shiny Applications Deployment Script
+# Updated for the complete MMCD analytics platform
 
-echo "🚀 Starting MMCD Shiny Applications Deployment..."
+set -e  # Exit on any error
+
+echo "Starting MMCD Shiny Applications Deployment..."
+
+# Check if running as root
+if [[ $EUID -eq 0 ]]; then
+   echo "ERROR: This script should not be run as root for security reasons"
+   echo "   Run as a regular user with sudo privileges"
+   exit 1
+fi
+
+# Set workspace path - user should modify this
+MMCD_WORKSPACE="${MMCD_WORKSPACE:-$(pwd)}"
+echo "Using workspace: $MMCD_WORKSPACE"
+
+# Validate workspace
+if [[ ! -d "$MMCD_WORKSPACE/apps" ]]; then
+    echo "ERROR: apps directory not found in $MMCD_WORKSPACE"
+    echo "   Please set MMCD_WORKSPACE environment variable or run from the project root"
+    exit 1
+fi
 
 # Update system packages
-echo "📦 Updating system packages..."
+echo "Updating system packages..."
 sudo apt update
 
 # Install R and required system dependencies
-echo "📊 Installing R and system dependencies..."
-sudo apt install -y r-base r-base-dev libcurl4-openssl-dev libssl-dev libxml2-dev \
-    libpq-dev libgdal-dev libudunits2-dev libproj-dev gdebi-core nginx
+echo "Installing R and comprehensive system dependencies..."
+sudo apt install -y \
+    r-base r-base-dev gdebi-core \
+    libcurl4-openssl-dev libssl-dev libxml2-dev libpq-dev \
+    libgdal-dev libudunits2-dev libproj-dev \
+    libfontconfig1-dev libfreetype-dev libpng-dev \
+    libharfbuzz-dev libfribidi-dev \
+    gfortran cmake libabsl-dev
 
 # Install Shiny Server
-echo "🌐 Installing Shiny Server..."
+echo "Installing Shiny Server..."
 if ! command -v shiny-server &> /dev/null; then
-    wget https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-1.5.22.1017-amd64.deb
+    echo "   Downloading Shiny Server..."
+    wget -q https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-1.5.22.1017-amd64.deb
+    echo "   Installing Shiny Server..."
     sudo gdebi -n shiny-server-1.5.22.1017-amd64.deb
     rm shiny-server-1.5.22.1017-amd64.deb
+else
+    echo "   Shiny Server already installed"
 fi
 
-# Install required R packages
-echo "📚 Installing R packages..."
-sudo R -e "
-packages <- c('shiny', 'DBI', 'RPostgres', 'dplyr', 'ggplot2', 'lubridate', 
-              'scales', 'leaflet', 'sf', 'stringr', 'DT', 'vroom', 'tidyverse',
-              'shinydashboard', 'shinyWidgets', 'plotrix')
+# Install required R packages (both user and system-wide)
+echo "Installing R packages..."
+echo "   Installing packages for current user..."
+R -e "
+packages <- c('shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 
+              'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', 
+              'plotrix', 'dtplyr', 'vroom', 'tidyverse', 'classInt', 's2', 
+              'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster')
 install.packages(packages, repos='https://cran.rstudio.com/')
 "
 
+echo "   Installing packages system-wide for Shiny Server..."
+sudo R -e "
+packages <- c('shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 
+              'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', 
+              'plotrix', 'dtplyr', 'vroom', 'tidyverse', 'classInt', 's2', 
+              'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster')
+install.packages(packages, lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')
+"
+
 # Create necessary directories
-echo "📁 Creating directories..."
+echo "Creating directories..."
 sudo mkdir -p /var/log/shiny-server
 sudo mkdir -p /srv/shiny-server
 sudo mkdir -p /etc/shiny-server
 
 # Copy applications to Shiny Server directory
-echo "📋 Copying applications..."
-sudo cp -r /home/alexpdyak32/Documents/mmcd/apps/* /srv/shiny-server/
+echo "Copying applications..."
+sudo cp -r "$MMCD_WORKSPACE/apps"/* /srv/shiny-server/
 sudo chown -R shiny:shiny /srv/shiny-server
 
-# Copy configuration
-echo "⚙️ Setting up configuration..."
-sudo cp /home/alexpdyak32/Documents/mmcd/shiny-server.conf /etc/shiny-server/shiny-server.conf
+# Create default Shiny Server configuration
+echo "Setting up Shiny Server configuration..."
+sudo tee /etc/shiny-server/shiny-server.conf > /dev/null <<EOF
+# Define the user to run applications as
+run_as shiny;
 
-# Configure Nginx reverse proxy
-echo "🔄 Configuring Nginx..."
-sudo tee /etc/nginx/sites-available/mmcd-apps > /dev/null <<EOF
+# Define a server that listens on port 3838
 server {
-    listen 80;
-    server_name your-domain.com;  # Replace with your domain
-    
-    # Main landing page
-    location / {
-        root /srv/shiny-server;
-        index index.html;
-        try_files \$uri \$uri/ =404;
-    }
-    
-    # Shiny applications
-    location /mosquito-monitoring/ {
-        proxy_pass http://127.0.0.1:3838/mosquito-monitoring/;
-        proxy_redirect http://127.0.0.1:3838/ \$scheme://\$host/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
-        proxy_read_timeout 20d;
-        proxy_buffering off;
-    }
-    
-    location /suco-analysis/ {
-        proxy_pass http://127.0.0.1:3838/suco-analysis/;
-        proxy_redirect http://127.0.0.1:3838/ \$scheme://\$host/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
-        proxy_read_timeout 20d;
-        proxy_buffering off;
-    }
-    
-    location /treatment-analysis/ {
-        proxy_pass http://127.0.0.1:3838/treatment-analysis/;
-        proxy_redirect http://127.0.0.1:3838/ \$scheme://\$host/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
-        proxy_read_timeout 20d;
-        proxy_buffering off;
-    }
-}
+  listen 3838;
 
-map \$http_upgrade \$connection_upgrade {
-    default upgrade;
-    ''      close;
+  # Define a location at the base URL
+  location / {
+
+    # Host the directory of Shiny Apps stored in this directory
+    site_dir /srv/shiny-server;
+
+    # Log all Shiny output to files in this directory
+    log_dir /var/log/shiny-server;
+
+    # When a user visits the base URL rather than a particular application,
+    # an index of the applications available in this directory will be shown.
+    directory_index on;
+  }
 }
 EOF
 
-# Enable the site
-sudo ln -sf /etc/nginx/sites-available/mmcd-apps /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-
-# Test Nginx configuration
-sudo nginx -t
-
-# Start and enable services
-echo "🔧 Starting services..."
+# Start and enable Shiny Server
+echo "Starting Shiny Server..."
 sudo systemctl restart shiny-server
 sudo systemctl enable shiny-server
-sudo systemctl restart nginx
-sudo systemctl enable nginx
 
-# Configure firewall
-echo "🔥 Configuring firewall..."
-sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw allow 3838/tcp
-sudo ufw --force enable
+# Check if Shiny Server is running
+if sudo systemctl is-active --quiet shiny-server; then
+    echo "SUCCESS: Shiny Server is running"
+else
+    echo "ERROR: Shiny Server failed to start"
+    echo "   Check logs: sudo journalctl -u shiny-server -f"
+    exit 1
+fi
 
-echo "✅ Deployment complete!"
+# Test applications
+echo "Testing deployment..."
+sleep 5  # Give Shiny Server time to start
+
+# Test main dashboard
+if curl -s -f http://127.0.0.1:3838/ > /dev/null; then
+    echo "SUCCESS: Main dashboard is accessible"
+else
+    echo "WARNING: Main dashboard test failed"
+fi
+
+# Test the test application
+if curl -s -f http://127.0.0.1:3838/test-app/ > /dev/null; then
+    echo "SUCCESS: Test application is accessible"
+else
+    echo "WARNING: Test application not accessible (may need database connectivity)"
+fi
+
 echo ""
-echo "🌐 Your applications are now available at:"
-echo "   Main Dashboard: http://your-server-ip/"
-echo "   Mosquito Monitoring: http://your-server-ip/mosquito-monitoring/"
-echo "   SUCO Analysis: http://your-server-ip/suco-analysis/"
-echo "   Treatment Analysis: http://your-server-ip/treatment-analysis/"
+echo "DEPLOYMENT COMPLETE!"
 echo ""
-echo "📋 Next steps:"
-echo "   1. Replace 'your-domain.com' in /etc/nginx/sites-available/mmcd-apps with your actual domain"
-echo "   2. Configure SSL certificates (recommended)"
-echo "   3. Set up monitoring and backups"
+echo "Your applications are now available at:"
+echo "   Main Dashboard: http://$(hostname -I | awk '{print $1}'):3838/"
+echo "   Test Application: http://$(hostname -I | awk '{print $1}'):3838/test-app/"
+echo "   Mosquito Monitoring: http://$(hostname -I | awk '{print $1}'):3838/mosquito-monitoring/"
+echo "   SUCO History: http://$(hostname -I | awk '{print $1}'):3838/suco_history/"
+echo "   Drone Treatment Progress: http://$(hostname -I | awk '{print $1}'):3838/drone_trt_progress/"
+echo "   Structural Treatment Progress: http://$(hostname -I | awk '{print $1}'):3838/struct_trt_progress/"
+echo "   Cattail Planned Treatments: http://$(hostname -I | awk '{print $1}'):3838/cattail_planned_trt/"
+echo "   Drone Treatment History: http://$(hostname -I | awk '{print $1}'):3838/drone_trt_history/"
+echo ""
+echo "Next steps:"
+echo "   1. Test all applications in your browser"
+echo "   2. Check Shiny Server logs if any applications fail: sudo tail -f /var/log/shiny-server.log"
+echo "   3. For production, consider setting up Nginx reverse proxy and SSL"
+echo "   4. Ensure database connectivity for the MMCD applications"
+echo ""
+echo "Troubleshooting:"
+echo "   - If buttons don't work: Check browser console (F12)"
+echo "   - If apps timeout: Check database connectivity to data.mmcd.org"
+echo "   - View logs: sudo journalctl -u shiny-server -f"
+echo "   - Restart: sudo systemctl restart shiny-server"

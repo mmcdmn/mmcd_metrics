@@ -67,7 +67,7 @@ sudo apt install -y r-base r-base-dev libcurl4-openssl-dev libssl-dev \
 ### Quick Deployment
 ```bash
 # Clone the repository
-git clone https://gitlab.com/ablepacifist/mmcd_metrics_1.git
+git clone https://github.com/ablepacifist/mmcd_metrics_1.git
 cd mmcd_metrics_1
 
 # Run automated deployment
@@ -328,7 +328,7 @@ R -e "library(shiny); library(DBI); library(RPostgres)"
 3. Follow the application structure guidelines
 4. Test thoroughly
 5. Update documentation
-6. Submit a merge request
+6. Submit a pull request
 
 ## License
 

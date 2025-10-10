@@ -6,7 +6,7 @@
 
 A comprehensive analytics platform for the Metropolitan Mosquito Control District, providing interactive dashboards for mosquito surveillance, treatment analysis, and operational metrics.
 
-## 🏗️ Architecture
+## Architecture
 
 This platform hosts multiple R Shiny applications in an organized, scalable structure:
 
@@ -21,9 +21,9 @@ apps/
     └── app.R
 ```
 
-## 🚀 Applications
+## Applications
 
-### 🦟 Mosquito Monitoring
+### Mosquito Monitoring
 - **Path**: `/mosquito-monitoring/`
 - **Purpose**: CO2 trap mosquito surveillance analysis
 - **Features**: 
@@ -33,7 +33,7 @@ apps/
   - Standard error visualization
   - Logarithmic scale options
 
-### 🎯 SUCO Analysis  
+### SUCO Analysis  
 - **Path**: `/suco-analysis/`
 - **Purpose**: Surveillance Count (SUCO) analysis dashboard
 - **Features**:
@@ -43,7 +43,7 @@ apps/
   - Top locations identification
   - Spatial data visualization
 
-### 💊 Treatment Analysis
+### Treatment Analysis
 - **Path**: `/treatment-analysis/`
 - **Purpose**: Active treatment proportion tracking
 - **Features**:
@@ -53,7 +53,7 @@ apps/
   - Comprehensive data tables
   - Real-time calculations
 
-## 📦 Installation & Deployment
+## Installation & Deployment
 
 ### Prerequisites
 ```bash
@@ -91,7 +91,7 @@ sudo cp -r apps/* /srv/shiny-server/
 sudo chown -R shiny:shiny /srv/shiny-server
 ```
 
-## 🔧 Adding New Applications
+## Adding New Applications
 
 ### Step 1: Create Application Directory
 ```bash
@@ -189,7 +189,7 @@ Add your new application to `apps/index.html`:
 
 ```html
 <div class="app-card">
-    <h3>📊 Your New App</h3>
+    <h3>Your New App</h3>
     <p>Description of what your new application does.</p>
     <a href="/your-new-app/" class="app-link">Open Application</a>
 </div>
@@ -216,7 +216,7 @@ sudo systemctl restart shiny-server
 sudo systemctl restart nginx
 ```
 
-## 📊 Database Schema
+## Database Schema
 
 ### Available Tables
 - `dbadult_insp_current` - Current adult inspection data
@@ -245,7 +245,7 @@ SELECT * FROM dbadult_insp_current
 WHERE survtype = '7'
 ```
 
-## 🔍 Common R Patterns
+## Common R Patterns
 
 ### Database Connection
 ```r
@@ -282,13 +282,13 @@ output$plot <- renderPlot({
 })
 ```
 
-## 🌐 URLs After Deployment
+## URLs After Deployment
 
 - **Main Dashboard**: `http://your-server/`
 - **Applications**: `http://your-server/app-name/`
 - **Direct Shiny Access**: `http://your-server:3838/app-name/`
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Check Shiny Server Status
 ```bash
@@ -312,7 +312,7 @@ sudo systemctl restart nginx
 R -e "library(shiny); library(DBI); library(RPostgres)"
 ```
 
-## 📝 Development Workflow
+## Development Workflow
 
 1. **Create new app locally**
 2. **Test with**: `R -e "shiny::runApp('apps/your-app')"`
@@ -321,7 +321,7 @@ R -e "library(shiny); library(DBI); library(RPostgres)"
 5. **Commit to Git**
 6. **Deploy to server**
 
-## 🤝 Contributing
+## Contributing
 
 1. Clone the repository
 2. Create a new branch for your application
@@ -330,11 +330,11 @@ R -e "library(shiny); library(DBI); library(RPostgres)"
 5. Update documentation
 6. Submit a merge request
 
-## 📄 License
+## License
 
 This project is maintained by the Metropolitan Mosquito Control District.
 
-## 📞 Support
+## Support
 
 For technical support or questions about adding new applications, contact the MMCD IT team.
 

@@ -1,0 +1,58 @@
+# R and RStudio files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj
+
+# Shiny token (do not upload to public repositories)
+rsconnect/
+
+# R packages
+*.tar.gz
+
+# Log files
+*.log
+
+# Temporary files
+*~
+.DS_Store
+.Rproj.user
+
+# System files
+Thumbs.db
+ehthumbs.db
+
+# Node modules (if using any JavaScript dependencies)
+node_modules/
+
+# Environment variables
+.env
+.env.local
+
+# Database credentials (if stored in files)
+config/database.yml
+config/secrets.yml
+
+# Local development files
+local/
+temp/
+tmp/
+
+# IDE files
+.vscode/
+.idea/
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+
+# Backup files
+*.bak
+*.backup
+
+# Compiled files
+*.so
+*.o
+*.dll

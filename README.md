@@ -55,7 +55,19 @@ apps/
 
 ## Installation & Deployment
 
-### Prerequisites
+### AWS EC2 Deployment (Recommended)
+For production deployment following the same approach as the original MMCD mosquito monitoring application, see the comprehensive **[AWS Deployment Guide](AWS_DEPLOYMENT_GUIDE.md)** which includes:
+
+- Complete AWS EC2 setup instructions
+- Ubuntu/Linux deployment steps  
+- Windows deployment workflow
+- SSL certificate configuration
+- Application management procedures
+- Troubleshooting guide
+
+### Local Development Setup
+
+#### Prerequisites
 ```bash
 # System dependencies
 sudo apt update

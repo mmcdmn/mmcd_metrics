@@ -69,6 +69,15 @@
             margin-bottom: 20px;
             font-size: 18px;
         }
+        .category {
+            color: #2c5aa0;
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #2c5aa0;
+        }
     </style>
 </head>
 <body>
@@ -76,6 +85,7 @@
         <h1>MMCD Analytics Dashboard</h1>
         <p class="description">Metropolitan Mosquito Control District - Data Analysis Applications</p>
         
+        <h2 class="category">Surveillance Applications</h2>
         <div class="apps-grid">
             <div class="app-card">
                 <h3>🦟 Mosquito Monitoring</h3>
@@ -84,15 +94,39 @@
             </div>
             
             <div class="app-card">
-                <h3>🎯 SUCO Analysis</h3>
-                <p>Surveillance Count (SUCO) analysis dashboard with interactive maps, location filtering, and temporal trend analysis. Includes facility and foreman-based grouping.</p>
-                <a href="/suco-analysis/" class="app-link">Open Application</a>
+                <h3>🎯 SUCO History</h3>
+                <p>Surveillance Count (SUCO) historical analysis dashboard with interactive maps, location filtering, and temporal trend analysis. Includes facility and foreman-based grouping.</p>
+                <a href="/suco_history/" class="app-link">Open Application</a>
+            </div>
+        </div>
+
+        <h2 class="category">Treatment Progress</h2>
+        <div class="apps-grid">
+            <div class="app-card">
+                <h3>🚁 Drone Treatment Progress</h3>
+                <p>Real-time tracking of drone-based treatment operations showing active treatment areas, progress metrics, and coverage analysis for aerial mosquito control operations.</p>
+                <a href="/drone_trt_progress/" class="app-link">Open Application</a>
             </div>
             
             <div class="app-card">
-                <h3>💊 Treatment Analysis</h3>
-                <p>Active treatment tracking showing proportion of structures under treatment over time. Customizable treatment duration and comprehensive trend visualization.</p>
-                <a href="/treatment-analysis/" class="app-link">Open Application</a>
+                <h3>🏗️ Structural Treatment Progress</h3>
+                <p>Monitor structural treatment activities tracking proportion of structures under treatment over time. Customizable treatment duration and comprehensive trend visualization.</p>
+                <a href="/struct_trt_progress/" class="app-link">Open Application</a>
+            </div>
+            
+            <div class="app-card">
+                <h3>🌾 Cattail Planned Treatments</h3>
+                <p>Planning and tracking dashboard for cattail marsh treatments. View planned treatment areas, schedules, and resource allocation for targeted cattail habitat management.</p>
+                <a href="/cattail_planned_trt/" class="app-link">Open Application</a>
+            </div>
+        </div>
+
+        <h2 class="category">Historical Analysis</h2>
+        <div class="apps-grid">
+            <div class="app-card">
+                <h3>📊 Drone Treatment History</h3>
+                <p>Historical analysis of drone treatment operations with trend visualization, effectiveness metrics, and comprehensive records of past aerial treatment campaigns.</p>
+                <a href="/drone_trt_history/" class="app-link">Open Application</a>
             </div>
         </div>
         

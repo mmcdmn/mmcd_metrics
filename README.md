@@ -102,7 +102,7 @@ apps/
 - **Purpose**: Historical analysis of drone treatment operations
 - **Features**:
   - Trend visualization and effectiveness metrics
-  - Comprehensive records of past aerial campaigns
+  - Comprehensive records of past treatments
   - Historical treatment pattern analysis
 
 ## Installation & Deployment
@@ -498,12 +498,6 @@ sudo ufw status
 7. **Commit changes**: `git add . && git commit -m "Add new application"`
 8. **Deploy to server**: Copy to `/srv/shiny-server/` and restart Shiny Server
 
-### Best Practices
-- Follow the existing application structure and naming conventions
-- Test all applications thoroughly before deployment
-- Use consistent database connection patterns
-- Include proper error handling in applications
-- Document new features and applications in this README
 
 ## Contributing
 
@@ -520,7 +514,7 @@ This project is maintained by the Metropolitan Mosquito Control District.
 
 ## Support
 
-For technical support or questions about adding new applications, contact the MMCD IT team.
+For technical support or questions about adding new applications, contact the MMCD IT team or Alex directly.
 
 ---
 *Last updated: October 2025*

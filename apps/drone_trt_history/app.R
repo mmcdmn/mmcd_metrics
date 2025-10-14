@@ -41,13 +41,16 @@ ui <- fluidPage(
                    choices = c("Average" = "avg", "Smallest" = "min", "Largest" = "max"),
                    selected = "avg"),
       
-      helpText("This graph shows drone treatments by facility over time.",
-               tags$br(),
-               "Data sources:",
-               tags$ul(
-                 tags$li("Archive data: treatments with action = 'D'"),
-                 tags$li("Current data: treatments with airgrnd_plan = 'D' or action = 'D'")
-               ))
+      helpText(
+        "This graph shows drone treatments by facility over time.",
+        tags$br(),
+        "Note: If a site was partially treated, this program counts the full acres for that site.",
+        tags$br(),
+        "Data sources:",
+        tags$ul(
+          tags$li("Archive data: treatments with action = 'D'"),
+          tags$li("Current data: treatments with airgrnd_plan = 'D' or action = 'D'")
+        ))
     ),
     
     # Main panel for displaying the graph

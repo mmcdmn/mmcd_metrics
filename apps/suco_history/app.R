@@ -376,7 +376,7 @@ AND inspdate BETWEEN '%s' AND '%s'
         ) %>%
         # Add points with larger size and black border
         addCircleMarkers(
-          radius = ~pmin(15, (sqrt(fieldcount + 5) * size_multiplier)),
+          radius = ~pmin(15, (3 * size_multiplier)),
           color = "black", # Black border
           weight = 1.5, # Border thickness
           fillColor = ~pal(facility),
@@ -413,7 +413,7 @@ AND inspdate BETWEEN '%s' AND '%s'
         ) %>%
         # Add points with larger size and black border
         addCircleMarkers(
-          radius = ~pmin(15, (sqrt(fieldcount + 5) * size_multiplier)),
+          radius = ~pmin(15, (3 * size_multiplier)),
           color = "black", # Black border
           weight = 1.5, # Border thickness
           fillColor = ~pal(foreman),

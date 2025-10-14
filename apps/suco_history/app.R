@@ -29,7 +29,8 @@ ui <- fluidPage(
       # Group by selection
       radioButtons("group_by", "Group By:",
                    choices = c("Facility" = "facility",
-                               "Foreman" = "foreman"),
+                               "Foreman" = "foreman",
+                               "MMCD (All)" = "mmcd_all"),
                    selected = "facility"),
       
       # Date range selection - default to current year
@@ -245,15 +246,29 @@ AND inspdate BETWEEN '%s' AND '%s'
     # Define the grouping column
     group_col <- input$group_by
     
-    # Group and summarize data
-    result <- data %>%
-      group_by(time_group, !!sym(group_col)) %>%
-      summarize(
-        count = n(),
-        total_fieldcount = sum(fieldcount, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      arrange(time_group)
+    if (group_col == "mmcd_all") {
+      # Aggregate for the whole MMCD (no grouping by facility or foreman)
+      result <- data %>%
+        group_by(time_group) %>%
+        summarize(
+          count = n(),
+          total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(time_group)
+      # Add a dummy column for plotting
+      result$mmcd_all <- "MMCD (All)"
+    } else {
+      # Group and summarize data
+      result <- data %>%
+        group_by(time_group, !!sym(group_col)) %>%
+        summarize(
+          count = n(),
+          total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(time_group)
+    }
     
     return(result)
   })
@@ -284,6 +299,11 @@ AND inspdate BETWEEN '%s' AND '%s'
     # Determine group column for coloring
     group_col <- input$group_by
     
+    # For MMCD (All), use a constant group
+    if (group_col == "mmcd_all") {
+      group_col <- "mmcd_all"
+    }
+    
     # Create title based on selections
     title_interval <- ifelse(input$time_interval == "week", "Weekly", "Monthly")
     title_group <- ifelse(input$group_by == "facility", "Facility", "Foreman")
@@ -294,11 +314,11 @@ AND inspdate BETWEEN '%s' AND '%s'
     p <- ggplot(data, aes(x = time_group, y = count, fill = !!sym(group_col))) +
       geom_bar(stat = "identity", position = "dodge") +
       labs(
-        title = paste(title_interval, "SUCO Counts by", title_group),
+        title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
         subtitle = paste(facility_text, "-", foreman_text),
         x = ifelse(input$time_interval == "week", "Week Starting", "Month"),
         y = "Number of SUCOs",
-        fill = title_group
+        fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
       ) +
       theme_minimal() +
       theme(
@@ -435,12 +455,75 @@ AND inspdate BETWEEN '%s' AND '%s'
     }
   })
   
+  # Generate summary table
+  output$summary_table <- renderDataTable({
+    data <- filtered_data()
+    group_col <- input$group_by
+    
+    if (group_col == "mmcd_all") {
+      # Summarize for the whole MMCD (no grouping)
+      summary_data <- data %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Avg_Field_Count = round(mean(fieldcount, na.rm = TRUE), 1),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        )
+      # Set row name for clarity
+      rownames(summary_data) <- "MMCD (All)"
+    } else {
+      # Group by selected factor and calculate summary stats
+      summary_data <- data %>%
+        group_by(across(all_of(group_col))) %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Avg_Field_Count = round(mean(fieldcount, na.rm = TRUE), 1),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        ) %>%
+        arrange(desc(Total_SUCOs))
+      # Rename column for display
+      if (group_col == "facility") {
+        colnames(summary_data)[1] <- "Facility"
+      } else {
+        colnames(summary_data)[1] <- "Foreman"
+      }
+    }
+    return(summary_data)
+  }, options = list(pageLength = 15, searching = TRUE))
+  
   # Generate location plot (top locations with most SUCOs)
   output$location_plot <- renderPlot({
     data <- filtered_data()
+    group_col <- input$group_by
+    
+    # For MMCD (All), just show top locations overall
+    if (group_col == "mmcd_all") {
+      top_locations <- data %>%
+        group_by(location) %>%
+        summarize(
+          count = n(),
+          avg_fieldcount = mean(fieldcount, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(desc(count)) %>%
+        head(15)
+    } else {
+      top_locations <- data %>%
+        group_by(location, across(all_of(group_col))) %>%
+        summarize(
+          count = n(),
+          avg_fieldcount = mean(fieldcount, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(desc(count)) %>%
+        head(15)
+    }
     
     # Handle case when no data is available
-    if (nrow(data) == 0) {
+    if (nrow(top_locations) == 0) {
       return(
         ggplot() +
           annotate("text", x = 0.5, y = 0.5,
@@ -449,29 +532,13 @@ AND inspdate BETWEEN '%s' AND '%s'
       )
     }
     
-    # Identify top locations
-    top_locations <- data %>%
-      group_by(location) %>%
-      summarize(
-        count = n(),
-        avg_fieldcount = mean(fieldcount, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      arrange(desc(count)) %>%
-      head(15) # Top 15 locations
-    
-    # Create title based on selections
-    facility_text <- ifelse(input$facility_filter == "All", "All Facilities", paste("Facility:", input$facility_filter))
-    foreman_text <- ifelse(input$foreman_filter == "All", "All Foremen", paste("Foreman:", input$foreman_filter))
-    
     # Create plot
     ggplot(top_locations, aes(x = reorder(location, count), y = count)) +
       geom_bar(stat = "identity", fill = "steelblue") +
       geom_text(aes(label = count), hjust = -0.2) +
-      coord_flip() + # Horizontal bars for better label readability
+      coord_flip() +
       labs(
         title = "Top SUCO Locations",
-        subtitle = paste(facility_text, "-", foreman_text),
         x = "Location",
         y = "Number of SUCOs"
       ) +
@@ -481,35 +548,6 @@ AND inspdate BETWEEN '%s' AND '%s'
         axis.title = element_text(face = "bold")
       )
   })
-  
-  # Generate summary table
-  output$summary_table <- renderDataTable({
-    # Get filtered data
-    data <- filtered_data()
-    
-    # Group by selected factor and calculate summary stats
-    group_col <- input$group_by
-    
-    summary_data <- data %>%
-      group_by(across(all_of(group_col))) %>%
-      summarize(
-        Total_SUCOs = n(),
-        Total_Locations = n_distinct(sitecode),
-        Avg_Field_Count = round(mean(fieldcount, na.rm = TRUE), 1),
-        First_SUCO = min(inspdate),
-        Last_SUCO = max(inspdate)
-      ) %>%
-      arrange(desc(Total_SUCOs))
-    
-    # Rename column for display
-    if (group_col == "facility") {
-      colnames(summary_data)[1] <- "Facility"
-    } else {
-      colnames(summary_data)[1] <- "Foreman"
-    }
-    
-    return(summary_data)
-  }, options = list(pageLength = 15, searching = TRUE))
 }
 
 # Run the application

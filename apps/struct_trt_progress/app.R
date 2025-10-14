@@ -134,14 +134,17 @@ AND enddate IS NULL
     dbDisconnect(con)
     
     # Combine and process data
-    bind_rows(archive_data, current_data) %>%
+    combined_data <- bind_rows(archive_data, current_data) %>%
       mutate(inspdate = as.Date(inspdate),
              enddate = inspdate + effect_days)
+    list(data = combined_data, total_structures = total_structures)
   })
   
   # Generate the plot
   output$treatment_plot <- renderPlot({
-    data <- treatment_data()
+    td <- treatment_data()
+    data <- td$data
+    total_structures <- td$total_structures
     
     # Handle cases where no data is available
     if (nrow(data) == 0) {
@@ -152,6 +155,21 @@ AND enddate IS NULL
             x = 0.5,
             y = 0.5,
             label = "No data available for the selected range.",
+            size = 6
+          ) +
+          theme_void()
+      )
+    }
+    
+    # Handle cases where total_structures is missing or zero
+    if (is.null(total_structures) || is.na(total_structures) || total_structures == 0) {
+      return(
+        ggplot() +
+          annotate(
+            "text",
+            x = 0.5,
+            y = 0.5,
+            label = "No structure data available or total structures is zero.",
             size = 6
           ) +
           theme_void()

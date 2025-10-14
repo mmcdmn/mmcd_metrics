@@ -15,8 +15,8 @@ suppressPackageStartupMessages({
 # Define UI for the application
 ui <- fluidPage(
   # Application title
-  titlePanel("SUCO (Surveillance Count) Analysis Dashboard"),
-  
+  titlePanel("SUCO Analysis Dashboard"),
+
   # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
@@ -48,6 +48,9 @@ ui <- fluidPage(
       selectInput("foreman_filter", "Filter by Foreman:",
                   choices = c("All"),
                   selected = "All"),
+      
+      # Add species filter to sidebarPanel
+      selectInput("species_filter", "Filter by Species:", choices = c("All"), selected = "All"),
       
       # Map Controls
       conditionalPanel(
@@ -111,7 +114,27 @@ server <- function(input, output, session) {
     })
   }
   
-  # Fetch SUCO data from both current and archive tables
+  # Add a mapping from spp code to readable species name
+  species_code_map <- c(
+    '26' = 'Cx. tarsalis',
+    '32' = 'Cx. erraticus',
+    '33' = 'Cx. pipiens',
+    '34' = 'Cx. restuans',
+    '35' = 'Cx. salinarius',
+    '36' = 'Cx. tarsalis',
+    '37' = 'Cx. territans',
+    '43' = 'Or. signifera',
+    '44' = 'Ps. ciliata',
+    '45' = 'Ps. columbiae',
+    '46' = 'Ps. ferox',
+    '47' = 'Ps. horrida',
+    '48' = 'Ur. sapphirina',
+    '49' = 'sp49_smith',
+    '50' = 'sp50_hende'
+    # ...add more as needed...
+  )
+  
+  # Fetch and join SUCO and species data
   suco_data <- reactive({
     con <- dbConnect(
       RPostgres::Postgres(),
@@ -152,10 +175,24 @@ AND inspdate BETWEEN '%s' AND '%s'
     current_data <- dbGetQuery(con, current_query)
     archive_data <- dbGetQuery(con, archive_query)
     
+    # Query species tables (current and archive)
+    species_current_query <- sprintf("
+SELECT ainspecnum, spp, cnt
+FROM public.dbadult_species_current
+WHERE ainspecnum IS NOT NULL
+")
+    species_archive_query <- sprintf("
+SELECT ainspecnum, spp, cnt
+FROM public.dbadult_species_archive
+WHERE ainspecnum IS NOT NULL
+")
+    species_current <- dbGetQuery(con, species_current_query)
+    species_archive <- dbGetQuery(con, species_archive_query)
+    
     # Close connection
     dbDisconnect(con)
     
-    # Combine data and process dates
+    # Combine current and archive data
     all_data <- bind_rows(
       mutate(current_data, source = "Current"),
       mutate(archive_data, source = "Archive")
@@ -164,13 +201,74 @@ AND inspdate BETWEEN '%s' AND '%s'
         inspdate = as.Date(inspdate),
         year = year(inspdate),
         month = month(inspdate),
-        week_start = floor_date(inspdate, "week", week_start = 1), # Week starting on Monday
+        week_start = floor_date(inspdate, "week", week_start = 1),
         month_label = format(inspdate, "%b %Y"),
         location = ifelse(!is.na(park_name) & park_name != "", park_name,
                           ifelse(!is.na(address1) & address1 != "", address1, sitecode))
       )
     
-    return(all_data)
+    # Combine species data
+    all_species <- bind_rows(species_current, species_archive)
+    
+    # Join SUCO data with species data
+    joined_data <- all_data %>%
+      left_join(all_species, by = "ainspecnum") %>%
+      mutate(
+        species_name = ifelse(!is.na(spp) & spp %in% names(species_code_map), species_code_map[as.character(spp)], as.character(spp))
+      )
+    
+    return(joined_data)
+  })
+  
+  # Update species filter choices based on available data (use species_name)
+  observe({
+    data <- suco_data()
+    
+    # Get unique species
+    spp_choices <- sort(unique(na.omit(data$species_name)))
+    spp_choices <- c("All", spp_choices)
+    
+    # Update select input
+    updateSelectInput(session, "species_filter", choices = spp_choices)
+  })
+  
+  # Update foreman filter choices based on available data
+  observe({
+    data <- suco_data()
+    
+    # Filter by facility if selected
+    if (input$facility_filter != "All") {
+      data <- data %>% filter(facility == input$facility_filter)
+    }
+    
+    # Get unique foremen
+    foremen <- sort(unique(data$foreman))
+    foremen_choices <- c("All", foremen)
+    
+    # Update select input
+    updateSelectInput(session, "foreman_filter", choices = foremen_choices)
+  })
+  
+  # Filter data based on user selections, now including species
+  filtered_data <- reactive({
+    data <- suco_data()
+    
+    # Filter by facility if selected
+    if (input$facility_filter != "All") {
+      data <- data %>% filter(facility == input$facility_filter)
+    }
+    
+    # Filter by foreman if selected
+    if (input$foreman_filter != "All") {
+      data <- data %>% filter(foreman == input$foreman_filter)
+    }
+    
+    # Filter by species if selected
+    if (input$species_filter != "All") {
+      data <- data %>% filter(species_name == input$species_filter)
+    }
+    
+    return(data)
   })
   
   # Process spatial data for mapping
@@ -192,40 +290,6 @@ AND inspdate BETWEEN '%s' AND '%s'
       st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
     
     return(sf_data)
-  })
-  
-  # Update foreman filter choices based on available data
-  observe({
-    data <- suco_data()
-    
-    # Filter by facility if selected
-    if (input$facility_filter != "All") {
-      data <- data %>% filter(facility == input$facility_filter)
-    }
-    
-    # Get unique foremen
-    foremen <- sort(unique(data$foreman))
-    foremen_choices <- c("All", foremen)
-    
-    # Update select input
-    updateSelectInput(session, "foreman_filter", choices = foremen_choices)
-  })
-  
-  # Filter data based on user selections
-  filtered_data <- reactive({
-    data <- suco_data()
-    
-    # Filter by facility if selected
-    if (input$facility_filter != "All") {
-      data <- data %>% filter(facility == input$facility_filter)
-    }
-    
-    # Filter by foreman if selected
-    if (input$foreman_filter != "All") {
-      data <- data %>% filter(foreman == input$foreman_filter)
-    }
-    
-    return(data)
   })
   
   # Aggregate data by selected time interval and grouping
@@ -459,18 +523,17 @@ AND inspdate BETWEEN '%s' AND '%s'
   output$summary_table <- renderDataTable({
     data <- filtered_data()
     group_col <- input$group_by
-    
+
     if (group_col == "mmcd_all") {
       # Summarize for the whole MMCD (no grouping)
       summary_data <- data %>%
         summarize(
           Total_SUCOs = n(),
           Total_Locations = n_distinct(sitecode),
-          Avg_Field_Count = round(mean(fieldcount, na.rm = TRUE), 1),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
           First_SUCO = min(inspdate),
           Last_SUCO = max(inspdate)
         )
-      # Set row name for clarity
       rownames(summary_data) <- "MMCD (All)"
     } else {
       # Group by selected factor and calculate summary stats
@@ -479,12 +542,11 @@ AND inspdate BETWEEN '%s' AND '%s'
         summarize(
           Total_SUCOs = n(),
           Total_Locations = n_distinct(sitecode),
-          Avg_Field_Count = round(mean(fieldcount, na.rm = TRUE), 1),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
           First_SUCO = min(inspdate),
           Last_SUCO = max(inspdate)
         ) %>%
         arrange(desc(Total_SUCOs))
-      # Rename column for display
       if (group_col == "facility") {
         colnames(summary_data)[1] <- "Facility"
       } else {
@@ -498,30 +560,30 @@ AND inspdate BETWEEN '%s' AND '%s'
   output$location_plot <- renderPlot({
     data <- filtered_data()
     group_col <- input$group_by
-    
+
     # For MMCD (All), just show top locations overall
     if (group_col == "mmcd_all") {
       top_locations <- data %>%
         group_by(location) %>%
         summarize(
           count = n(),
-          avg_fieldcount = mean(fieldcount, na.rm = TRUE),
+          total_species_count = sum(cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
-        arrange(desc(count)) %>%
+        arrange(desc(total_species_count)) %>%
         head(15)
     } else {
       top_locations <- data %>%
         group_by(location, across(all_of(group_col))) %>%
         summarize(
           count = n(),
-          avg_fieldcount = mean(fieldcount, na.rm = TRUE),
+          total_species_count = sum(cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
-        arrange(desc(count)) %>%
+        arrange(desc(total_species_count)) %>%
         head(15)
     }
-    
+
     # Handle case when no data is available
     if (nrow(top_locations) == 0) {
       return(
@@ -531,16 +593,16 @@ AND inspdate BETWEEN '%s' AND '%s'
           theme_void()
       )
     }
-    
+
     # Create plot
-    ggplot(top_locations, aes(x = reorder(location, count), y = count)) +
+    ggplot(top_locations, aes(x = reorder(location, total_species_count), y = total_species_count)) +
       geom_bar(stat = "identity", fill = "steelblue") +
-      geom_text(aes(label = count), hjust = -0.2) +
+      geom_text(aes(label = total_species_count), hjust = -0.2) +
       coord_flip() +
       labs(
         title = "Top SUCO Locations",
         x = "Location",
-        y = "Number of SUCOs"
+        y = "Number of Individuals (cnt)"
       ) +
       theme_minimal() +
       theme(

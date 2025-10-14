@@ -59,14 +59,10 @@ server <- function(input, output) {
     actuals <- bind_rows(archive, current) %>%
       group_by(facility) %>%
       summarize(inspections = sum(inspections, na.rm = TRUE), .groups = "drop")
-    # Get goals (assume goals table has one row per facility per year, or filter if needed)
-    goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount, year FROM public.cattail_pctcomplete_base")
+    # Get goals (no year column)
+    goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base")
     dbDisconnect(con)
-    # Filter goals to selected year if year column exists
-    if ("year" %in% names(goals)) {
-      goals <- goals %>% filter(year == as.numeric(input$goal_year))
-    }
-    # Merge actuals and goals yay!
+    # Merge actuals and goals
     merged <- goals %>%
       left_join(actuals, by = "facility") %>%
       mutate(inspections = ifelse(is.na(inspections), 0, inspections))

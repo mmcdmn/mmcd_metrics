@@ -40,19 +40,22 @@ ui <- fluidPage(
                      end = Sys.Date(),
                      format = "yyyy-mm-dd"),
       
-      # Filter by facility
-      selectInput("facility_filter", "Filter by Facility:",
+      # Filter by facility (multi-select)
+      selectizeInput("facility_filter", "Filter by Facility:",
                   choices = c("All", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
-                  selected = "All"),
+                  selected = "All", multiple = TRUE),
       
-      # Filter by foreman (populated dynamically)
-      selectInput("foreman_filter", "Filter by Foreman:",
+      # Filter by foreman (multi-select, populated dynamically)
+      selectizeInput("foreman_filter", "Filter by Foreman:",
                   choices = c("All"),
-                  selected = "All"),
+                  selected = "All", multiple = TRUE),
       
       # Add species filter to sidebarPanel
       selectInput("species_filter", "Filter by Species:", choices = c("All"), selected = "All"),
-      
+      # Graph type selector
+      selectInput("graph_type", "Graph Type:",
+                  choices = c("Bar" = "bar", "Line" = "line", "Point" = "point", "Area" = "area"),
+                  selected = "bar"),
       # Map Controls
       conditionalPanel(
         condition = "input.tabset == 'Map'",
@@ -240,43 +243,33 @@ WHERE ainspecnum IS NOT NULL
     updateSelectInput(session, "species_filter", choices = spp_choices)
   })
   
-  # Update foreman filter choices based on available data
+  # Update foreman filter choices based on available data (multi-select aware)
   observe({
     data <- suco_data()
-    
-    # Filter by facility if selected
-    if (input$facility_filter != "All") {
-      data <- data %>% filter(facility == input$facility_filter)
+    # Filter by facility if not 'All' and not empty
+    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
+      data <- data %>% filter(facility %in% input$facility_filter)
     }
-    
-    # Get unique foremen
     foremen <- sort(unique(data$foreman))
     foremen_choices <- c("All", foremen)
-    
-    # Update select input
     updateSelectInput(session, "foreman_filter", choices = foremen_choices)
   })
-  
-  # Filter data based on user selections, now including species
+
+  # Filter data based on user selections, now including multi-select for facility/foreman
   filtered_data <- reactive({
     data <- suco_data()
-    
-    # Filter by facility if selected
-    if (input$facility_filter != "All") {
-      data <- data %>% filter(facility == input$facility_filter)
+    # Filter by facility if not 'All' and not empty
+    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
+      data <- data %>% filter(facility %in% input$facility_filter)
     }
-    
-    # Filter by foreman if selected
-    if (input$foreman_filter != "All") {
-      data <- data %>% filter(foreman == input$foreman_filter)
+    # Filter by foreman if not 'All' and not empty
+    if (!is.null(input$foreman_filter) && !("All" %in% input$foreman_filter)) {
+      data <- data %>% filter(foreman %in% input$foreman_filter)
     }
-    
     # Filter by species if selected
     if (input$species_filter != "All") {
-      data <- data %>%
-        filter(species_name == input$species_filter)
+      data <- data %>% filter(species_name == input$species_filter)
     }
-    
     return(data)
   })
   
@@ -349,8 +342,6 @@ WHERE ainspecnum IS NOT NULL
   # Generate trend plot
   output$trend_plot <- renderPlot({
     data <- aggregated_data()
-    
-    # Handle case when no data is available
     if (nrow(data) == 0) {
       return(
         ggplot() +
@@ -359,40 +350,37 @@ WHERE ainspecnum IS NOT NULL
           theme_void()
       )
     }
-    
-    # Format time_group based on selected interval
     if (input$time_interval == "week") {
-      # Format as MM/DD for weekly
       data$time_label <- format(data$time_group, "%m/%d")
     } else {
-      # Format as Month Year for monthly
       data$time_label <- format(data$time_group, "%b %Y")
     }
-    
-    # Determine group column for coloring
     group_col <- input$group_by
-    
-    # For MMCD (All), use a constant group
     if (group_col == "mmcd_all") {
       group_col <- "mmcd_all"
     }
-    
-    # Create title based on selections
     title_interval <- ifelse(input$time_interval == "week", "Weekly", "Monthly")
     title_group <- ifelse(input$group_by == "facility", "Facility", "Foreman")
     facility_text <- ifelse(input$facility_filter == "All", "All Facilities", paste("Facility:", input$facility_filter))
     foreman_text <- ifelse(input$foreman_filter == "All", "All Foremen", paste("Foreman:", input$foreman_filter))
-    
-    # Create plot
-    p <- ggplot(data, aes(x = time_group, y = count, fill = !!sym(group_col))) +
-      geom_bar(stat = "identity", position = "dodge") +
-      labs(
-        title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
-        subtitle = paste(facility_text, "-", foreman_text),
-        x = ifelse(input$time_interval == "week", "Week Starting", "Month"),
-        y = "Number of SUCOs",
-        fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
-      ) +
+    p <- ggplot(data, aes(x = time_group, y = count, color = !!sym(group_col), fill = !!sym(group_col), group = !!sym(group_col)))
+    if (input$graph_type == "bar") {
+      p <- p + geom_bar(stat = "identity", position = "dodge")
+    } else if (input$graph_type == "line") {
+      p <- p + geom_line(size = 1.2)
+    } else if (input$graph_type == "point") {
+      p <- p + geom_point(size = 3)
+    } else if (input$graph_type == "area") {
+      p <- p + geom_area(position = "stack", alpha = 0.6)
+    }
+    p <- p + labs(
+      title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
+      subtitle = paste(facility_text, "-", foreman_text),
+      x = ifelse(input$time_interval == "week", "Week Starting", "Month"),
+      y = "Number of SUCOs",
+      fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group),
+      color = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
+    ) +
       theme_minimal() +
       theme(
         plot.title = element_text(face = "bold", size = 16),
@@ -401,24 +389,19 @@ WHERE ainspecnum IS NOT NULL
         legend.position = "bottom",
         legend.title = element_text(face = "bold")
       )
-    
-    # Set x-axis date format based on time interval
     if (input$time_interval == "week") {
-      # For weekly data, format as MM/DD
       p <- p + scale_x_date(
         date_breaks = "2 weeks",
         date_labels = "%m/%d",
         limits = c(min(data$time_group), max(data$time_group))
       )
     } else {
-      # For monthly data, format as Mon YYYY
       p <- p + scale_x_date(
         date_breaks = "1 month",
         date_labels = "%b %Y",
         limits = c(min(data$time_group), max(data$time_group))
       )
     }
-    
     return(p)
   })
   

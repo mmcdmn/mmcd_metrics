@@ -383,6 +383,12 @@ sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 sudo systemctl restart shiny-server
 ```
 
+```bash
+#if docker is in place
+docker build -t mmcd-dashboard .
+docker run -p 3838:3838 mmcd-dashboard
+```
+
 ### **CRITICAL DEPLOYMENT NOTE**
 **Always copy `index.html` to Shiny Server after making changes!**
 

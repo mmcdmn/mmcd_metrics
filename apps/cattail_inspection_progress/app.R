@@ -131,7 +131,7 @@ server <- function(input, output) {
       labs(
         title = "Cattail Inspections vs. Goal by Facility",
         x = "Facility",
-        y = "Count",
+        y = "Number of Sites",
         fill = "Legend"
       ) +
       theme_minimal() +

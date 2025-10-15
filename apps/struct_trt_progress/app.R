@@ -6,7 +6,7 @@ library(ggplot2)
 
 # Define UI for the app
 ui <- fluidPage(
-  titlePanel("Proportion of Structures with Active Treatment"),
+  titlePanel("Proportion of Structures with Active Treatment current and historical"),
   
   # Sidebar layout for user inputs
   sidebarLayout(

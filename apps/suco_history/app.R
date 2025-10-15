@@ -132,7 +132,6 @@ server <- function(input, output, session) {
     '48' = 'Ur. sapphirina',
     '49' = 'sp49_smith',
     '50' = 'sp50_hende'
-    # ...add more as needed...
   )
   
   # Fetch and join SUCO and species data

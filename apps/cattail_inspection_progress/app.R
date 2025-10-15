@@ -108,6 +108,7 @@ server <- function(input, output) {
       }),
       type = "Actual Inspections"
     )
+    print("ACTUALS_LONG:"); print(actuals_long); print(str(actuals_long))
     goals_long <- tibble::tibble(
       facility = all_facilities,
       count = purrr::map_dbl(all_facilities, function(f) {
@@ -116,7 +117,9 @@ server <- function(input, output) {
       }),
       type = "Goal"
     )
+    print("GOALS_LONG:"); print(goals_long); print(str(goals_long))
     plot_data <- dplyr::bind_rows(actuals_long, goals_long)
+    print("PLOT DATA (tibble, purrr):"); print(plot_data)
     return(plot_data)
   })
 

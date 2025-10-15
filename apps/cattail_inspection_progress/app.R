@@ -25,6 +25,12 @@ ui <- fluidPage(
           "Secondary Goal (p2_totsitecount)" = "p2_totsitecount"
         ),
         selected = "p1_totsitecount"
+      ),
+      dateInput(
+        "custom_today",
+        "Pretend Today is:",
+        value = Sys.Date(),
+        format = "yyyy-mm-dd"
       )
     ),
     mainPanel(
@@ -43,16 +49,18 @@ server <- function(input, output) {
       user = "mmcd_read",
       password = "mmcd2012"
     )
-    # Get actual inspections from archive (filter by year)
+    # Get actual inspections from archive (filter by year, date, and reinspect)
     query_archive <- sprintf(
-      "SELECT facility, COUNT(*) AS inspections FROM public.dblarv_insptrt_archive WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = %d GROUP BY facility",
-      as.numeric(input$goal_year)
+      "SELECT facility, COUNT(*) AS inspections FROM public.dblarv_insptrt_archive WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = %d AND inspdate <= '%s' AND (reinspect IS NULL OR reinspect = 'f') GROUP BY facility",
+      as.numeric(input$goal_year),
+      as.character(input$custom_today)
     )
     archive <- dbGetQuery(con, query_archive)
-    # Get actual inspections from current (filter by year)
+    # Get actual inspections from current (filter by year, date, and reinspect)
     query_current <- sprintf(
-      "SELECT facility, COUNT(*) AS inspections FROM public.dblarv_insptrt_current WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = %d GROUP BY facility",
-      as.numeric(input$goal_year)
+      "SELECT facility, COUNT(*) AS inspections FROM public.dblarv_insptrt_current WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = %d AND inspdate <= '%s' AND (reinspect IS NULL OR reinspect = 'f') GROUP BY facility",
+      as.numeric(input$goal_year),
+      as.character(input$custom_today)
     )
     current <- dbGetQuery(con, query_current)
     # Combine actuals
@@ -60,6 +68,7 @@ server <- function(input, output) {
       mutate(facility = toupper(trimws(facility))) %>%
       group_by(facility) %>%
       summarize(inspections = sum(inspections, na.rm = TRUE), .groups = "drop")
+    actuals$inspections <- as.numeric(actuals$inspections)
     # Get goals
     goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
       mutate(facility = toupper(trimws(facility)))
@@ -94,7 +103,7 @@ server <- function(input, output) {
   output$progressPlot <- renderPlot({
     plot_data <- inspection_data()
     ggplot(plot_data, aes(x = facility, y = count, fill = type)) +
-      geom_bar(stat = "identity", position = "dodge") +
+      geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.7) +
       scale_fill_manual(values = c("Actual Inspections" = "#2c5aa0", "Goal" = "#e67e22")) +
       labs(
         title = "Cattail Inspections vs. Goal by Facility",

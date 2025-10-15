@@ -67,31 +67,27 @@ server <- function(input, output) {
     # Build a complete facility list
     all_facilities <- union(actuals$facility, goals$facility)
     # Build actuals and goals for all facilities
-    actuals_long <- data.frame(
+    # Use tibble and purrr for robust construction
+    actuals_long <- tibble::tibble(
       facility = all_facilities,
-      count = sapply(all_facilities, function(f) {
+      count = purrr::map_dbl(all_facilities, function(f) {
         val <- actuals$inspections[actuals$facility == f]
         if (length(val) == 0) 0 else val
       }),
-      type = "Actual Inspections",
-      stringsAsFactors = FALSE
+      type = "Actual Inspections"
     )
-    goals_long <- data.frame(
+    print("ACTUALS_LONG:"); print(actuals_long); print(str(actuals_long))
+    goals_long <- tibble::tibble(
       facility = all_facilities,
-      count = sapply(all_facilities, function(f) {
+      count = purrr::map_dbl(all_facilities, function(f) {
         val <- goals[[input$goal_column]][goals$facility == f]
         if (length(val) == 0) 0 else val
       }),
-      type = "Goal",
-      stringsAsFactors = FALSE
+      type = "Goal"
     )
-    plot_data <- bind_rows(actuals_long, goals_long)
-    print("ALL FACILITIES:"); print(all_facilities); print(length(all_facilities))
-    print("ACTUALS facilities:"); print(actuals$facility); print(length(actuals$facility))
-    print("GOALS facilities:"); print(goals$facility); print(length(goals$facility))
-    print("ACTUALS DF:"); print(actuals)
-    print("GOALS DF:"); print(goals)
-    print("PLOT DATA (stacked, no merge):"); print(plot_data)
+    print("GOALS_LONG:"); print(goals_long); print(str(goals_long))
+    plot_data <- dplyr::bind_rows(actuals_long, goals_long)
+    print("PLOT DATA (tibble, purrr):"); print(plot_data)
     return(plot_data)
   })
 

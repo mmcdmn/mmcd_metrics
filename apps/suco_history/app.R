@@ -10,6 +10,7 @@ suppressPackageStartupMessages({
   library(leaflet) # For interactive maps
   library(sf) # For handling spatial data
   library(stringr) # For string manipulation
+  library(plotly)
 })
 
 # Define UI for the application
@@ -78,7 +79,7 @@ ui <- fluidPage(
                   tabPanel("Graph", value = "Graph", plotOutput("trend_plot", height = "500px")),
                   tabPanel("Map", value = "Map", leafletOutput("map", height = "600px")),
                   tabPanel("Summary Table", value = "Table", dataTableOutput("summary_table")),
-                  tabPanel("Top Locations", value = "TopLoc", plotOutput("location_plot", height = "500px"))
+                  tabPanel("Top Locations", value = "TopLoc", plotlyOutput("location_plotly", height = "500px"))
       )
     )
   )
@@ -188,10 +189,13 @@ WHERE ainspecnum IS NOT NULL
 ")
     species_current <- dbGetQuery(con, species_current_query)
     species_archive <- dbGetQuery(con, species_archive_query)
-    
+
+    # Query species lookup table
+    species_lookup <- dbGetQuery(con, "SELECT sppcode, genus, species FROM public.lookup_specieslist")
+
     # Close connection
     dbDisconnect(con)
-    
+
     # Combine current and archive data
     all_data <- bind_rows(
       mutate(current_data, source = "Current"),
@@ -206,17 +210,22 @@ WHERE ainspecnum IS NOT NULL
         location = ifelse(!is.na(park_name) & park_name != "", park_name,
                           ifelse(!is.na(address1) & address1 != "", address1, sitecode))
       )
-    
+
     # Combine species data
     all_species <- bind_rows(species_current, species_archive)
-    
-    # Join SUCO data with species data
+
+    # Join SUCO data with species data and lookup for names
     joined_data <- all_data %>%
       left_join(all_species, by = "ainspecnum") %>%
+      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
       mutate(
-        species_name = ifelse(!is.na(spp) & spp %in% names(species_code_map), species_code_map[as.character(spp)], as.character(spp))
+        species_name = dplyr::case_when(
+          !is.na(genus) & !is.na(species) ~ paste(genus, species),
+          !is.na(spp) ~ as.character(spp),
+          TRUE ~ NA_character_
+        )
       )
-    
+
     return(joined_data)
   })
   
@@ -265,7 +274,8 @@ WHERE ainspecnum IS NOT NULL
     
     # Filter by species if selected
     if (input$species_filter != "All") {
-      data <- data %>% filter(species_name == input$species_filter)
+      data <- data %>%
+        filter(species_name == input$species_filter)
     }
     
     return(data)
@@ -557,58 +567,56 @@ WHERE ainspecnum IS NOT NULL
   }, options = list(pageLength = 15, searching = TRUE))
   
   # Generate location plot (top locations with most SUCOs)
-  output$location_plot <- renderPlot({
+  output$location_plotly <- plotly::renderPlotly({
     data <- filtered_data()
     group_col <- input$group_by
-
-    # For MMCD (All), just show top locations overall
     if (group_col == "mmcd_all") {
       top_locations <- data %>%
         group_by(location) %>%
-        summarize(
-          count = n(),
-          total_species_count = sum(cnt, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        arrange(desc(total_species_count)) %>%
+        summarize(visits = n(), .groups = "drop") %>%
+        arrange(desc(visits)) %>%
         head(15)
     } else {
       top_locations <- data %>%
         group_by(location, across(all_of(group_col))) %>%
-        summarize(
-          count = n(),
-          total_species_count = sum(cnt, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        arrange(desc(total_species_count)) %>%
+        summarize(visits = n(), .groups = "drop") %>%
+        arrange(desc(visits)) %>%
         head(15)
     }
-
-    # Handle case when no data is available
     if (nrow(top_locations) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5,
-                   label = "No SUCO data available with the selected filters", size = 6) +
-          theme_void()
-      )
+      return(plotly::ggplotly(ggplot() + annotate("text", x = 0.5, y = 0.5, label = "No SUCO data available with the selected filters", size = 6) + theme_void()))
     }
-
-    # Create plot
-    ggplot(top_locations, aes(x = reorder(location, total_species_count), y = total_species_count)) +
+    p <- ggplot(top_locations, aes(x = reorder(location, visits), y = visits, text = location)) +
       geom_bar(stat = "identity", fill = "steelblue") +
-      geom_text(aes(label = total_species_count), hjust = -0.2) +
+      geom_text(aes(label = visits), hjust = -0.2) +
       coord_flip() +
-      labs(
-        title = "Top SUCO Locations",
-        x = "Location",
-        y = "Number of Individuals (cnt)"
-      ) +
+      labs(title = "Top SUCO Locations", x = "Location", y = "Number of Visits") +
       theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.title = element_text(face = "bold")
-      )
+      theme(plot.title = element_text(face = "bold", size = 16), axis.title = element_text(face = "bold"))
+    plotly::ggplotly(p, tooltip = c("x", "y", "text"))
+  })
+  
+  # React to plotly click and update map
+  observe({
+    click <- plotly::event_data("plotly_click", source = "location_plotly")
+    if (!is.null(click)) {
+      loc <- click$x
+      # Find coordinates for this location
+      data <- filtered_data()
+      loc_data <- data %>% filter(location == loc)
+      if (nrow(loc_data) > 0) {
+        lng <- as.numeric(loc_data$x[1])
+        lat <- as.numeric(loc_data$y[1])
+        if (!is.na(lng) && !is.na(lat)) {
+          leafletProxy("map") %>%
+            setView(lng = lng, lat = lat, zoom = 15) %>%
+            addCircleMarkers(lng = lng, lat = lat, radius = 15, color = "red", fill = TRUE, fillOpacity = 0.7, layerId = "highlighted_location")
+        }
+      }
+    } else {
+      # Remove highlight if nothing is clicked
+      leafletProxy("map") %>% clearGroup("highlighted_location")
+    }
   })
 }
 

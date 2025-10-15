@@ -16,7 +16,8 @@ RUN R -e "install.packages(c( \
   'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
   'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
   'classInt', 's2', \
-  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster' \
+  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
+  'plotly' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
 # Copy app files and config

@@ -63,7 +63,8 @@ server <- function(input, output) {
     print("ACTUALS:"); print(actuals)
     # Get goals (no year column)
     goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
-      mutate(facility = toupper(trimws(facility)))
+      mutate(facility = toupper(trimws(facility))) %>%
+      select(-any_of("inspections"))
     print("GOALS:"); print(goals)
     dbDisconnect(con)
     # Merge actuals and goals
@@ -76,6 +77,7 @@ server <- function(input, output) {
 
   output$progressPlot <- renderPlot({
     data <- inspection_data()
+    print("DATA FOR PLOTTING:"); print(data)
     goal_col <- input$goal_column
     # Prepare data for plotting
     plot_data <- data %>%
@@ -86,6 +88,7 @@ server <- function(input, output) {
         values_to = "count"
       ) %>%
       mutate(type = recode(type, inspections = "Actual Inspections", goal = "Goal"))
+    print("PLOT DATA:"); print(plot_data)
     # Plot
     ggplot(plot_data, aes(x = facility, y = count, fill = type)) +
       geom_bar(stat = "identity", position = "dodge") +

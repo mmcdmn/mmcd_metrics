@@ -53,15 +53,13 @@ server <- function(input, output) {
     )
     # Get actual inspections from archive (filter by year, date, reinspect, and join for zone)
     query_archive <- sprintf(
-      
-      
-      "SELECT a.facility, g.zone, COUNT(*) AS inspections\n"
-      "FROM public.dblarv_insptrt_archive a\n"
-      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)\n"
-      "WHERE a.action = '9'\n"
-      "  AND EXTRACT(YEAR FROM a.inspdate) = %d\n"
-      "  AND a.inspdate <= '%s'\n"
-      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')\n"
+      "SELECT a.facility, g.zone, COUNT(*) AS inspections\n" 
+      "FROM public.dblarv_insptrt_archive a\n" 
+      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)\n" 
+      "WHERE a.action = '9'\n" 
+      "  AND EXTRACT(YEAR FROM a.inspdate) = %d\n" 
+      "  AND a.inspdate <= '%s'\n" 
+      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')\n" 
       "GROUP BY a.facility, g.zone",
       as.numeric(input$goal_year),
       as.character(input$custom_today)
@@ -69,14 +67,13 @@ server <- function(input, output) {
     archive <- dbGetQuery(con, query_archive)
     # Get actual inspections from current (filter by year, date, reinspect, and join for zone)
     query_current <- sprintf(
-      
-      "SELECT a.facility, g.zone, COUNT(*) AS inspections\n"
-      "FROM public.dblarv_insptrt_current a\n"
-      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)\n"
-      "WHERE a.action = '9'\n"
-      "  AND EXTRACT(YEAR FROM a.inspdate) = %d\n"
-      "  AND a.inspdate <= '%s'\n"
-      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')\n"
+      "SELECT a.facility, g.zone, COUNT(*) AS inspections\n" 
+      "FROM public.dblarv_insptrt_current a\n" 
+      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)\n" 
+      "WHERE a.action = '9'\n" 
+      "  AND EXTRACT(YEAR FROM a.inspdate) = %d\n" 
+      "  AND a.inspdate <= '%s'\n" 
+      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')\n" 
       "GROUP BY a.facility, g.zone",
       as.numeric(input$goal_year),
       as.character(input$custom_today)

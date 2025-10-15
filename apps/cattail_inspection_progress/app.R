@@ -53,28 +53,34 @@ server <- function(input, output) {
     )
     # Get actual inspections from archive (filter by year, date, reinspect, and join for zone)
     query_archive <- sprintf(
-      "SELECT a.facility, g.zone, COUNT(*) AS inspections\n" 
-      "FROM public.dblarv_insptrt_archive a\n" 
-      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)\n" 
-      "WHERE a.action = '9'\n" 
-      "  AND EXTRACT(YEAR FROM a.inspdate) = %d\n" 
-      "  AND a.inspdate <= '%s'\n" 
-      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')\n" 
-      "GROUP BY a.facility, g.zone",
+      paste(
+        "SELECT a.facility, g.zone, COUNT(*) AS inspections",
+        "FROM public.dblarv_insptrt_archive a",
+        "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)",
+        "WHERE a.action = '9'",
+        "  AND EXTRACT(YEAR FROM a.inspdate) = %d",
+        "  AND a.inspdate <= '%s'",
+        "  AND (a.reinspect IS NULL OR a.reinspect = 'f')",
+        "GROUP BY a.facility, g.zone",
+        sep = "\n"
+      ),
       as.numeric(input$goal_year),
       as.character(input$custom_today)
     )
     archive <- dbGetQuery(con, query_archive)
     # Get actual inspections from current (filter by year, date, reinspect, and join for zone)
     query_current <- sprintf(
-      "SELECT a.facility, g.zone, COUNT(*) AS inspections\n" 
-      "FROM public.dblarv_insptrt_current a\n" 
-      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)\n" 
-      "WHERE a.action = '9'\n" 
-      "  AND EXTRACT(YEAR FROM a.inspdate) = %d\n" 
-      "  AND a.inspdate <= '%s'\n" 
-      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')\n" 
-      "GROUP BY a.facility, g.zone",
+      paste(
+        "SELECT a.facility, g.zone, COUNT(*) AS inspections",
+        "FROM public.dblarv_insptrt_current a",
+        "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)",
+        "WHERE a.action = '9'",
+        "  AND EXTRACT(YEAR FROM a.inspdate) = %d",
+        "  AND a.inspdate <= '%s'",
+        "  AND (a.reinspect IS NULL OR a.reinspect = 'f')",
+        "GROUP BY a.facility, g.zone",
+        sep = "\n"
+      ),
       as.numeric(input$goal_year),
       as.character(input$custom_today)
     )
@@ -105,7 +111,6 @@ server <- function(input, output) {
       }),
       type = "Actual Inspections"
     )
-    print("ACTUALS_LONG:"); print(actuals_long); print(str(actuals_long))
     goals_long <- tibble::tibble(
       facility = all_facilities,
       count = purrr::map_dbl(all_facilities, function(f) {
@@ -114,9 +119,7 @@ server <- function(input, output) {
       }),
       type = "Goal"
     )
-    print("GOALS_LONG:"); print(goals_long); print(str(goals_long))
     plot_data <- dplyr::bind_rows(actuals_long, goals_long)
-    print("PLOT DATA (tibble, purrr):"); print(plot_data)
     return(plot_data)
   })
 

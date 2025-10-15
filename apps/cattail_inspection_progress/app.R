@@ -69,7 +69,9 @@ server <- function(input, output) {
     print("GOALS: "); print(goals)
     print("GOALS facility unique:"); print(unique(goals$facility)); print(str(goals$facility))
     dbDisconnect(con)
-    # Merge actuals and goals
+    # Merge actuals and goals (debug with full join)
+    debug_full <- full_join(goals, actuals, by = "facility")
+    print("FULL JOIN DEBUG:"); print(debug_full)
     merged <- goals %>%
       left_join(actuals, by = "facility") %>%
       mutate(inspections = as.integer(ifelse(is.na(inspections), 0, inspections)))

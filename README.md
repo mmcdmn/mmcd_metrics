@@ -400,7 +400,7 @@ sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 - After modifying button links or layout
 
 **Why this is necessary:**
-- Your development files are in `$MMCD_WORKSPACE/apps/`
+- The development files are in `$MMCD_WORKSPACE/apps/`
 - Shiny Server serves files from `/srv/shiny-server/`
 - These are separate directories - changes in one don't automatically appear in the other
 

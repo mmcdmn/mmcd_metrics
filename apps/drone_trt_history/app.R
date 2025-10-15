@@ -36,19 +36,30 @@ ui <- fluidPage(
       sliderInput("year_range", "Select Year Range:",
                   min = 2018, max = 2025, value = c(2018, 2025), step = 1),
       
-      helpText("This graph shows drone treatments by facility over time.",
-               tags$br(),
-               "Data sources:",
-               tags$ul(
-                 tags$li("Archive data: treatments with action = 'D'"),
-                 tags$li("Current data: treatments with airgrnd_plan = 'D' or action = 'D'")
-               ))
+      # Add radio button for site size metric
+      radioButtons("site_size_metric", "Site Size Metric:",
+                   choices = c("Average" = "avg", "Smallest" = "min", "Largest" = "max"),
+                   selected = "avg"),
+      
+      helpText(
+        "This graph shows drone treatments by facility over time.",
+        tags$br(),
+        "Note: If a site was partially treated, this program counts the full acres for that site.",
+        tags$br(),
+        "Data sources:",
+        tags$ul(
+          tags$li("Archive data: treatments with action = 'D'"),
+          tags$li("Current data: treatments with airgrnd_plan = 'D' or action = 'D'")
+        ))
     ),
     
     # Main panel for displaying the graph
     mainPanel(
       plotOutput("droneGraph", height = "600px"),
-      dataTableOutput("summaryTable")
+      plotOutput("siteAvgSizeGraph", height = "400px"),
+      dataTableOutput("summaryTable"),
+      h4("5 Smallest and 5 Largest Drone Sites per Year"),
+      dataTableOutput("siteExtremesTable")
     )
   )
 )
@@ -66,8 +77,7 @@ server <- function(input, output) {
       user = "mmcd_read",
       password = "mmcd2012"
     )
-    
-    # Get archive data with complete record details
+    # Get archive data
     archive_query <- sprintf("
 SELECT
 facility,
@@ -78,10 +88,8 @@ FROM public.dblarv_insptrt_archive
 WHERE action = 'D'
 AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
 ", input$year_range[1], input$year_range[2])
-    
     archive_data <- dbGetQuery(con, archive_query)
-    
-    # Get current data with complete record details
+    # Get current data
     current_query <- sprintf("
 SELECT
 facility,
@@ -93,15 +101,22 @@ FROM public.dblarv_insptrt_current
 WHERE (airgrnd_plan = 'D' OR action = 'D')
 AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
 ", input$year_range[1], input$year_range[2])
-    
     current_data <- dbGetQuery(con, current_query)
-    
+    # Get site size info from loc_breeding_sites
+    sitecodes <- unique(c(archive_data$sitecode, current_data$sitecode))
+    if (length(sitecodes) > 0) {
+      sitecodes_str <- paste(sprintf("'%s'", sitecodes), collapse = ",")
+      lbs_query <- sprintf("
+SELECT sitecode, acres, facility FROM public.loc_breeding_sites WHERE sitecode IN (%s)", sitecodes_str)
+      lbs_data <- dbGetQuery(con, lbs_query)
+    } else {
+      lbs_data <- data.frame(sitecode=character(), acres=numeric(), facility=character())
+    }
     dbDisconnect(con)
-    
-    # Combine the datasets
     list(
       archive = archive_data,
-      current = current_data
+      current = current_data,
+      lbs = lbs_data
     )
   })
   
@@ -233,29 +248,118 @@ AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
     return(p)
   })
   
-  # Generate the summary table
-  output$summaryTable <- renderDataTable({
-    # Get the filtered data
-    data <- processed_data()
-    
-    # Create a summary table
-    summary_table <- data %>%
-      group_by(facility) %>%
-      summarize(
-        Total_Count = sum(count),
-        Years_with_Data = sum(count > 0)
-      ) %>%
-      arrange(desc(Total_Count))
-    
-    # Set column names based on count type
-    if (input$count_type == "treatments") {
-      colnames(summary_table) <- c("Facility", "Total Treatments", "Years with Data")
-    } else {
-      colnames(summary_table) <- c("Facility", "Total Unique Sites", "Years with Data")
+  # Generate the site size graph (avg, smallest, largest)
+  output$siteAvgSizeGraph <- renderPlot({
+    data_list <- raw_data()
+    archive_data <- data_list$archive
+    current_data <- data_list$current
+    lbs_data <- data_list$lbs
+    archive_data <- left_join(archive_data, lbs_data, by = c("sitecode", "facility"))
+    current_data <- left_join(current_data, lbs_data, by = c("sitecode", "facility"))
+    all_data <- bind_rows(archive_data, current_data)
+    if (input$facility_filter != "All") {
+      all_data <- all_data %>% filter(facility == input$facility_filter)
     }
-    
-    return(summary_table)
-  }, options = list(pageLength = 10, searching = FALSE, dom = 't'))
+    all_data <- all_data %>% filter(!is.na(acres) & acres > 0)
+    all_data <- all_data %>% mutate(year = year(inspdate))
+    metric <- input$site_size_metric
+    if (input$facility_filter == "All") {
+      summary <- all_data %>% group_by(year, facility)
+      if (metric == "avg") {
+        summary <- summary %>% summarize(val = mean(acres, na.rm = TRUE), .groups = "drop")
+        ylab <- "Average Site Acres"
+        title <- "Average Drone Site Size (Acres) by Year and Facility"
+      } else if (metric == "min") {
+        summary <- summary %>% summarize(val = min(acres, na.rm = TRUE), .groups = "drop")
+        ylab <- "Smallest Site Acres"
+        title <- "Smallest Drone Site (Acres) by Year and Facility"
+      } else {
+        summary <- summary %>% summarize(val = max(acres, na.rm = TRUE), .groups = "drop")
+        ylab <- "Largest Site Acres"
+        title <- "Largest Drone Site (Acres) by Year and Facility"
+      }
+      p <- ggplot(summary, aes(x = year, y = val, color = facility)) +
+        geom_line(linewidth = 1.5) +
+        geom_point(size = 3) +
+        geom_text(aes(label = round(val, 2)), vjust = -1) +
+        labs(
+          title = title,
+          x = "Year",
+          y = ylab,
+          color = "Facility"
+        ) +
+        scale_x_continuous(breaks = seq(input$year_range[1], input$year_range[2], 1)) +
+        theme_minimal()
+    } else {
+      summary <- all_data %>% group_by(year)
+      if (metric == "avg") {
+        summary <- summary %>% summarize(val = mean(acres, na.rm = TRUE), .groups = "drop")
+        ylab <- "Average Site Acres"
+        title <- paste("Average Drone Site Size (Acres) by Year -", input$facility_filter, "Facility")
+      } else if (metric == "min") {
+        summary <- summary %>% summarize(val = min(acres, na.rm = TRUE), .groups = "drop")
+        ylab <- "Smallest Site Acres"
+        title <- paste("Smallest Drone Site (Acres) by Year -", input$facility_filter, "Facility")
+      } else {
+        summary <- summary %>% summarize(val = max(acres, na.rm = TRUE), .groups = "drop")
+        ylab <- "Largest Site Acres"
+        title <- paste("Largest Drone Site (Acres) by Year -", input$facility_filter, "Facility")
+      }
+      p <- ggplot(summary, aes(x = year, y = val)) +
+        geom_line(linewidth = 1.5, color = "darkgreen") +
+        geom_point(size = 3, color = "darkgreen") +
+        geom_text(aes(label = round(val, 2)), vjust = -1) +
+        labs(
+          title = title,
+          x = "Year",
+          y = ylab
+        ) +
+        scale_x_continuous(breaks = seq(input$year_range[1], input$year_range[2], 1)) +
+        theme_minimal()
+    }
+    return(p)
+  })
+
+  # Redesigned extremes table: split by facility, 5 smallest and 5 largest columns
+  output$siteExtremesTable <- renderDataTable({
+    data_list <- raw_data()
+    archive_data <- data_list$archive
+    current_data <- data_list$current
+    lbs_data <- data_list$lbs
+    archive_data <- left_join(archive_data, lbs_data, by = c("sitecode", "facility"))
+    current_data <- left_join(current_data, lbs_data, by = c("sitecode", "facility"))
+    all_data <- bind_rows(archive_data, current_data)
+    if (input$facility_filter != "All") {
+      all_data <- all_data %>% filter(facility == input$facility_filter)
+    }
+    all_data <- all_data %>% filter(!is.na(acres) & acres > 0)
+    all_data <- all_data %>% mutate(year = year(inspdate))
+    # For each year/facility, get 5 smallest and 5 largest
+    extremes <- all_data %>%
+      group_by(year, facility) %>%
+      arrange(acres) %>%
+      mutate(rank = row_number(), n = n()) %>%
+      filter(rank <= 5 | rank > n - 5) %>%
+      ungroup()
+    # Split into smallest and largest
+    smallest <- extremes %>% group_by(year, facility) %>% top_n(-5, acres) %>% arrange(year, facility, acres)
+    largest  <- extremes %>% group_by(year, facility) %>% top_n(5, acres) %>% arrange(year, facility, desc(acres))
+    # Combine into wide format
+    make_col <- function(df, label) {
+      df %>% group_by(year, facility) %>%
+        summarize(
+          !!paste0(label, "_sitecodes") := paste(sitecode, collapse=", "),
+          !!paste0(label, "_acres") := paste(round(acres,2), collapse=", "),
+          .groups = "drop"
+        )
+    }
+    smallest_wide <- make_col(smallest, "Smallest")
+    largest_wide  <- make_col(largest, "Largest")
+    extremes_wide <- full_join(smallest_wide, largest_wide, by = c("year", "facility"))
+    extremes_wide <- extremes_wide %>% arrange(year, facility)
+    colnames(extremes_wide) <- c("Year", "Facility", "5 Smallest Sitecodes", "5 Smallest Acres", "5 Largest Sitecodes", "5 Largest Acres")
+    return(extremes_wide)
+  }, options = list(pageLength = 20, searching = TRUE))
 }
 
 # Run the application

@@ -10,13 +10,14 @@ suppressPackageStartupMessages({
   library(leaflet) # For interactive maps
   library(sf) # For handling spatial data
   library(stringr) # For string manipulation
+  library(plotly)
 })
 
 # Define UI for the application
 ui <- fluidPage(
   # Application title
-  titlePanel("SUCO (Surveillance Count) Analysis Dashboard"),
-  
+  titlePanel("SUCO Analysis Dashboard"),
+
   # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
@@ -29,7 +30,8 @@ ui <- fluidPage(
       # Group by selection
       radioButtons("group_by", "Group By:",
                    choices = c("Facility" = "facility",
-                               "Foreman" = "foreman"),
+                               "Foreman" = "foreman",
+                               "MMCD (All)" = "mmcd_all"),
                    selected = "facility"),
       
       # Date range selection - default to current year
@@ -47,6 +49,9 @@ ui <- fluidPage(
       selectInput("foreman_filter", "Filter by Foreman:",
                   choices = c("All"),
                   selected = "All"),
+      
+      # Add species filter to sidebarPanel
+      selectInput("species_filter", "Filter by Species:", choices = c("All"), selected = "All"),
       
       # Map Controls
       conditionalPanel(
@@ -74,7 +79,7 @@ ui <- fluidPage(
                   tabPanel("Graph", value = "Graph", plotOutput("trend_plot", height = "500px")),
                   tabPanel("Map", value = "Map", leafletOutput("map", height = "600px")),
                   tabPanel("Summary Table", value = "Table", dataTableOutput("summary_table")),
-                  tabPanel("Top Locations", value = "TopLoc", plotOutput("location_plot", height = "500px"))
+                  tabPanel("Top Locations", value = "TopLoc", plotlyOutput("location_plotly", height = "500px"))
       )
     )
   )
@@ -110,7 +115,26 @@ server <- function(input, output, session) {
     })
   }
   
-  # Fetch SUCO data from both current and archive tables
+  # Add a mapping from spp code to readable species name
+  species_code_map <- c(
+    '26' = 'Cx. tarsalis',
+    '32' = 'Cx. erraticus',
+    '33' = 'Cx. pipiens',
+    '34' = 'Cx. restuans',
+    '35' = 'Cx. salinarius',
+    '36' = 'Cx. tarsalis',
+    '37' = 'Cx. territans',
+    '43' = 'Or. signifera',
+    '44' = 'Ps. ciliata',
+    '45' = 'Ps. columbiae',
+    '46' = 'Ps. ferox',
+    '47' = 'Ps. horrida',
+    '48' = 'Ur. sapphirina',
+    '49' = 'sp49_smith',
+    '50' = 'sp50_hende'
+  )
+  
+  # Fetch and join SUCO and species data
   suco_data <- reactive({
     con <- dbConnect(
       RPostgres::Postgres(),
@@ -151,10 +175,27 @@ AND inspdate BETWEEN '%s' AND '%s'
     current_data <- dbGetQuery(con, current_query)
     archive_data <- dbGetQuery(con, archive_query)
     
+    # Query species tables (current and archive)
+    species_current_query <- sprintf("
+SELECT ainspecnum, spp, cnt
+FROM public.dbadult_species_current
+WHERE ainspecnum IS NOT NULL
+")
+    species_archive_query <- sprintf("
+SELECT ainspecnum, spp, cnt
+FROM public.dbadult_species_archive
+WHERE ainspecnum IS NOT NULL
+")
+    species_current <- dbGetQuery(con, species_current_query)
+    species_archive <- dbGetQuery(con, species_archive_query)
+
+    # Query species lookup table
+    species_lookup <- dbGetQuery(con, "SELECT sppcode, genus, species FROM public.lookup_specieslist")
+
     # Close connection
     dbDisconnect(con)
-    
-    # Combine data and process dates
+
+    # Combine current and archive data
     all_data <- bind_rows(
       mutate(current_data, source = "Current"),
       mutate(archive_data, source = "Archive")
@@ -163,13 +204,80 @@ AND inspdate BETWEEN '%s' AND '%s'
         inspdate = as.Date(inspdate),
         year = year(inspdate),
         month = month(inspdate),
-        week_start = floor_date(inspdate, "week", week_start = 1), # Week starting on Monday
+        week_start = floor_date(inspdate, "week", week_start = 1),
         month_label = format(inspdate, "%b %Y"),
         location = ifelse(!is.na(park_name) & park_name != "", park_name,
                           ifelse(!is.na(address1) & address1 != "", address1, sitecode))
       )
+
+    # Combine species data
+    all_species <- bind_rows(species_current, species_archive)
+
+    # Join SUCO data with species data and lookup for names
+    joined_data <- all_data %>%
+      left_join(all_species, by = "ainspecnum") %>%
+      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
+      mutate(
+        species_name = dplyr::case_when(
+          !is.na(genus) & !is.na(species) ~ paste(genus, species),
+          !is.na(spp) ~ as.character(spp),
+          TRUE ~ NA_character_
+        )
+      )
+
+    return(joined_data)
+  })
+  
+  # Update species filter choices based on available data (use species_name)
+  observe({
+    data <- suco_data()
     
-    return(all_data)
+    # Get unique species
+    spp_choices <- sort(unique(na.omit(data$species_name)))
+    spp_choices <- c("All", spp_choices)
+    
+    # Update select input
+    updateSelectInput(session, "species_filter", choices = spp_choices)
+  })
+  
+  # Update foreman filter choices based on available data
+  observe({
+    data <- suco_data()
+    
+    # Filter by facility if selected
+    if (input$facility_filter != "All") {
+      data <- data %>% filter(facility == input$facility_filter)
+    }
+    
+    # Get unique foremen
+    foremen <- sort(unique(data$foreman))
+    foremen_choices <- c("All", foremen)
+    
+    # Update select input
+    updateSelectInput(session, "foreman_filter", choices = foremen_choices)
+  })
+  
+  # Filter data based on user selections, now including species
+  filtered_data <- reactive({
+    data <- suco_data()
+    
+    # Filter by facility if selected
+    if (input$facility_filter != "All") {
+      data <- data %>% filter(facility == input$facility_filter)
+    }
+    
+    # Filter by foreman if selected
+    if (input$foreman_filter != "All") {
+      data <- data %>% filter(foreman == input$foreman_filter)
+    }
+    
+    # Filter by species if selected
+    if (input$species_filter != "All") {
+      data <- data %>%
+        filter(species_name == input$species_filter)
+    }
+    
+    return(data)
   })
   
   # Process spatial data for mapping
@@ -193,40 +301,6 @@ AND inspdate BETWEEN '%s' AND '%s'
     return(sf_data)
   })
   
-  # Update foreman filter choices based on available data
-  observe({
-    data <- suco_data()
-    
-    # Filter by facility if selected
-    if (input$facility_filter != "All") {
-      data <- data %>% filter(facility == input$facility_filter)
-    }
-    
-    # Get unique foremen
-    foremen <- sort(unique(data$foreman))
-    foremen_choices <- c("All", foremen)
-    
-    # Update select input
-    updateSelectInput(session, "foreman_filter", choices = foremen_choices)
-  })
-  
-  # Filter data based on user selections
-  filtered_data <- reactive({
-    data <- suco_data()
-    
-    # Filter by facility if selected
-    if (input$facility_filter != "All") {
-      data <- data %>% filter(facility == input$facility_filter)
-    }
-    
-    # Filter by foreman if selected
-    if (input$foreman_filter != "All") {
-      data <- data %>% filter(foreman == input$foreman_filter)
-    }
-    
-    return(data)
-  })
-  
   # Aggregate data by selected time interval and grouping
   aggregated_data <- reactive({
     data <- filtered_data()
@@ -245,15 +319,29 @@ AND inspdate BETWEEN '%s' AND '%s'
     # Define the grouping column
     group_col <- input$group_by
     
-    # Group and summarize data
-    result <- data %>%
-      group_by(time_group, !!sym(group_col)) %>%
-      summarize(
-        count = n(),
-        total_fieldcount = sum(fieldcount, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      arrange(time_group)
+    if (group_col == "mmcd_all") {
+      # Aggregate for the whole MMCD (no grouping by facility or foreman)
+      result <- data %>%
+        group_by(time_group) %>%
+        summarize(
+          count = n(),
+          total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(time_group)
+      # Add a dummy column for plotting
+      result$mmcd_all <- "MMCD (All)"
+    } else {
+      # Group and summarize data
+      result <- data %>%
+        group_by(time_group, !!sym(group_col)) %>%
+        summarize(
+          count = n(),
+          total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(time_group)
+    }
     
     return(result)
   })
@@ -284,6 +372,11 @@ AND inspdate BETWEEN '%s' AND '%s'
     # Determine group column for coloring
     group_col <- input$group_by
     
+    # For MMCD (All), use a constant group
+    if (group_col == "mmcd_all") {
+      group_col <- "mmcd_all"
+    }
+    
     # Create title based on selections
     title_interval <- ifelse(input$time_interval == "week", "Weekly", "Monthly")
     title_group <- ifelse(input$group_by == "facility", "Facility", "Foreman")
@@ -294,11 +387,11 @@ AND inspdate BETWEEN '%s' AND '%s'
     p <- ggplot(data, aes(x = time_group, y = count, fill = !!sym(group_col))) +
       geom_bar(stat = "identity", position = "dodge") +
       labs(
-        title = paste(title_interval, "SUCO Counts by", title_group),
+        title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
         subtitle = paste(facility_text, "-", foreman_text),
         x = ifelse(input$time_interval == "week", "Week Starting", "Month"),
         y = "Number of SUCOs",
-        fill = title_group
+        fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
       ) +
       theme_minimal() +
       theme(
@@ -435,81 +528,98 @@ AND inspdate BETWEEN '%s' AND '%s'
     }
   })
   
-  # Generate location plot (top locations with most SUCOs)
-  output$location_plot <- renderPlot({
-    data <- filtered_data()
-    
-    # Handle case when no data is available
-    if (nrow(data) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5,
-                   label = "No SUCO data available with the selected filters", size = 6) +
-          theme_void()
-      )
-    }
-    
-    # Identify top locations
-    top_locations <- data %>%
-      group_by(location) %>%
-      summarize(
-        count = n(),
-        avg_fieldcount = mean(fieldcount, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      arrange(desc(count)) %>%
-      head(15) # Top 15 locations
-    
-    # Create title based on selections
-    facility_text <- ifelse(input$facility_filter == "All", "All Facilities", paste("Facility:", input$facility_filter))
-    foreman_text <- ifelse(input$foreman_filter == "All", "All Foremen", paste("Foreman:", input$foreman_filter))
-    
-    # Create plot
-    ggplot(top_locations, aes(x = reorder(location, count), y = count)) +
-      geom_bar(stat = "identity", fill = "steelblue") +
-      geom_text(aes(label = count), hjust = -0.2) +
-      coord_flip() + # Horizontal bars for better label readability
-      labs(
-        title = "Top SUCO Locations",
-        subtitle = paste(facility_text, "-", foreman_text),
-        x = "Location",
-        y = "Number of SUCOs"
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.title = element_text(face = "bold")
-      )
-  })
-  
   # Generate summary table
   output$summary_table <- renderDataTable({
-    # Get filtered data
     data <- filtered_data()
-    
-    # Group by selected factor and calculate summary stats
     group_col <- input$group_by
-    
-    summary_data <- data %>%
-      group_by(across(all_of(group_col))) %>%
-      summarize(
-        Total_SUCOs = n(),
-        Total_Locations = n_distinct(sitecode),
-        Avg_Field_Count = round(mean(fieldcount, na.rm = TRUE), 1),
-        First_SUCO = min(inspdate),
-        Last_SUCO = max(inspdate)
-      ) %>%
-      arrange(desc(Total_SUCOs))
-    
-    # Rename column for display
-    if (group_col == "facility") {
-      colnames(summary_data)[1] <- "Facility"
+
+    if (group_col == "mmcd_all") {
+      # Summarize for the whole MMCD (no grouping)
+      summary_data <- data %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        )
+      rownames(summary_data) <- "MMCD (All)"
     } else {
-      colnames(summary_data)[1] <- "Foreman"
+      # Group by selected factor and calculate summary stats
+      summary_data <- data %>%
+        group_by(across(all_of(group_col))) %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        ) %>%
+        arrange(desc(Total_SUCOs))
+      if (group_col == "facility") {
+        colnames(summary_data)[1] <- "Facility"
+      } else {
+        colnames(summary_data)[1] <- "Foreman"
+      }
     }
-    
     return(summary_data)
   }, options = list(pageLength = 15, searching = TRUE))
+  
+  # Generate location plot (top locations with most SUCOs)
+  output$location_plotly <- plotly::renderPlotly({
+    data <- filtered_data()
+    # Always group by location for top locations
+    top_locations <- data %>%
+      group_by(location) %>%
+      summarize(visits = n(), .groups = "drop") %>%
+      arrange(desc(visits)) %>%
+      head(15)
+    if (nrow(top_locations) == 0) {
+      return(plotly::ggplotly(ggplot() + annotate("text", x = 0.5, y = 0.5, label = "No SUCO data available with the selected filters", size = 6) + theme_void()))
+    }
+    p <- ggplot(top_locations, aes(x = reorder(location, visits), y = visits, text = location)) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      geom_text(aes(label = visits), hjust = 1.3, color = "black") +  # Move number further right
+      coord_flip() +
+      labs(title = "Top SUCO Locations", x = "Location", y = "Number of Visits") +
+      theme_minimal() +
+      theme(plot.title = element_text(face = "bold", size = 16), axis.title = element_text(face = "bold"))
+    plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = "location_plotly")
+  })
+  
+  # React to plotly click and update map and tab
+  observe({
+    click <- plotly::event_data("plotly_click", source = "location_plotly")
+    if (!is.null(click)) {
+      idx <- click$pointNumber + 1  # R is 1-based
+      data <- filtered_data()
+      top_locations <- data %>%
+        group_by(location) %>%
+        summarize(visits = n(), .groups = "drop") %>%
+        arrange(desc(visits)) %>%
+        head(15)
+      if (idx > 0 && idx <= nrow(top_locations)) {
+        loc <- top_locations$location[idx]
+        # Use spatial_data() for accurate coordinates (same as map)
+        spatial <- spatial_data()
+        # Find the first point in spatial_data with this location
+        if (nrow(spatial) > 0 && loc %in% spatial$location) {
+          point <- spatial[spatial$location == loc, ][1, ]
+          coords <- sf::st_coordinates(point)
+          lng <- coords[1]
+          lat <- coords[2]
+          if (!is.na(lng) && !is.na(lat)) {
+            updateTabsetPanel(session, "tabset", selected = "Map")
+            leafletProxy("map") %>%
+              setView(lng = lng, lat = lat, zoom = 15) %>%
+              addCircleMarkers(lng = lng, lat = lat, radius = 15, color = "red", fill = TRUE, fillOpacity = 0.7, layerId = "highlighted_location")
+          }
+        }
+      }
+    } else {
+      leafletProxy("map") %>% clearGroup("highlighted_location")
+    }
+  })
 }
 
 # Run the application

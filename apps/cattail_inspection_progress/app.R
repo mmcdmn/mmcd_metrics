@@ -57,15 +57,20 @@ server <- function(input, output) {
     current <- dbGetQuery(con, query_current)
     # Combine actuals
     actuals <- bind_rows(archive, current) %>%
+      mutate(facility = toupper(trimws(facility))) %>%
       group_by(facility) %>%
       summarize(inspections = sum(inspections, na.rm = TRUE), .groups = "drop")
+    print("ACTUALS:"); print(actuals)
     # Get goals (no year column)
-    goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base")
+    goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
+      mutate(facility = toupper(trimws(facility)))
+    print("GOALS:"); print(goals)
     dbDisconnect(con)
     # Merge actuals and goals
     merged <- goals %>%
       left_join(actuals, by = "facility") %>%
       mutate(inspections = ifelse(is.na(inspections), 0, inspections))
+    print("MERGED:"); print(merged)
     return(merged)
   })
 
@@ -79,12 +84,13 @@ server <- function(input, output) {
         cols = c("inspections", "goal"),
         names_to = "type",
         values_to = "count"
-      )
+      ) %>%
+      mutate(type = recode(type, inspections = "Actual Inspections", goal = "Goal"))
     # Plot
     ggplot(plot_data, aes(x = facility, y = count, fill = type)) +
       geom_bar(stat = "identity", position = "dodge") +
       scale_fill_manual(
-        values = c("inspections" = "#2c5aa0", "goal" = "#e67e22"),
+        values = c("Actual Inspections" = "#2c5aa0", "Goal" = "#e67e22"),
         labels = c("Actual Inspections", "Goal")
       ) +
       labs(

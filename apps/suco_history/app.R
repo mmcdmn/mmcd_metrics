@@ -569,52 +569,55 @@ WHERE ainspecnum IS NOT NULL
   # Generate location plot (top locations with most SUCOs)
   output$location_plotly <- plotly::renderPlotly({
     data <- filtered_data()
-    group_col <- input$group_by
-    if (group_col == "mmcd_all") {
-      top_locations <- data %>%
-        group_by(location) %>%
-        summarize(visits = n(), .groups = "drop") %>%
-        arrange(desc(visits)) %>%
-        head(15)
-    } else {
-      top_locations <- data %>%
-        group_by(location, across(all_of(group_col))) %>%
-        summarize(visits = n(), .groups = "drop") %>%
-        arrange(desc(visits)) %>%
-        head(15)
-    }
+    # Always group by location for top locations
+    top_locations <- data %>%
+      group_by(location) %>%
+      summarize(visits = n(), .groups = "drop") %>%
+      arrange(desc(visits)) %>%
+      head(15)
     if (nrow(top_locations) == 0) {
       return(plotly::ggplotly(ggplot() + annotate("text", x = 0.5, y = 0.5, label = "No SUCO data available with the selected filters", size = 6) + theme_void()))
     }
     p <- ggplot(top_locations, aes(x = reorder(location, visits), y = visits, text = location)) +
       geom_bar(stat = "identity", fill = "steelblue") +
-      geom_text(aes(label = visits), hjust = -0.2) +
+      geom_text(aes(label = visits), hjust = 1.3, color = "black") +  # Move number further right
       coord_flip() +
       labs(title = "Top SUCO Locations", x = "Location", y = "Number of Visits") +
       theme_minimal() +
       theme(plot.title = element_text(face = "bold", size = 16), axis.title = element_text(face = "bold"))
-    plotly::ggplotly(p, tooltip = c("x", "y", "text"))
+    plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = "location_plotly")
   })
   
-  # React to plotly click and update map
+  # React to plotly click and update map and tab
   observe({
     click <- plotly::event_data("plotly_click", source = "location_plotly")
     if (!is.null(click)) {
-      loc <- click$x
-      # Find coordinates for this location
+      idx <- click$pointNumber + 1  # R is 1-based
       data <- filtered_data()
-      loc_data <- data %>% filter(location == loc)
-      if (nrow(loc_data) > 0) {
-        lng <- as.numeric(loc_data$x[1])
-        lat <- as.numeric(loc_data$y[1])
-        if (!is.na(lng) && !is.na(lat)) {
-          leafletProxy("map") %>%
-            setView(lng = lng, lat = lat, zoom = 15) %>%
-            addCircleMarkers(lng = lng, lat = lat, radius = 15, color = "red", fill = TRUE, fillOpacity = 0.7, layerId = "highlighted_location")
+      top_locations <- data %>%
+        group_by(location) %>%
+        summarize(visits = n(), .groups = "drop") %>%
+        arrange(desc(visits)) %>%
+        head(15)
+      if (idx > 0 && idx <= nrow(top_locations)) {
+        loc <- top_locations$location[idx]
+        # Use spatial_data() for accurate coordinates (same as map)
+        spatial <- spatial_data()
+        # Find the first point in spatial_data with this location
+        if (nrow(spatial) > 0 && loc %in% spatial$location) {
+          point <- spatial[spatial$location == loc, ][1, ]
+          coords <- sf::st_coordinates(point)
+          lng <- coords[1]
+          lat <- coords[2]
+          if (!is.na(lng) && !is.na(lat)) {
+            updateTabsetPanel(session, "tabset", selected = "Map")
+            leafletProxy("map") %>%
+              setView(lng = lng, lat = lat, zoom = 15) %>%
+              addCircleMarkers(lng = lng, lat = lat, radius = 15, color = "red", fill = TRUE, fillOpacity = 0.7, layerId = "highlighted_location")
+          }
         }
       }
     } else {
-      # Remove highlight if nothing is clicked
       leafletProxy("map") %>% clearGroup("highlighted_location")
     }
   })

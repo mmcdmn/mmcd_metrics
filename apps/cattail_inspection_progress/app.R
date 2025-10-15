@@ -61,16 +61,18 @@ server <- function(input, output) {
       group_by(facility) %>%
       summarize(inspections = sum(inspections, na.rm = TRUE), .groups = "drop")
     print("ACTUALS:"); print(actuals)
+    print("ACTUALS facility unique:"); print(unique(actuals$facility)); print(str(actuals$facility))
     # Get goals (no year column)
     goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
       mutate(facility = toupper(trimws(facility))) %>%
       select(-any_of("inspections"))
-    print("GOALS:"); print(goals)
+    print("GOALS: "); print(goals)
+    print("GOALS facility unique:"); print(unique(goals$facility)); print(str(goals$facility))
     dbDisconnect(con)
     # Merge actuals and goals
     merged <- goals %>%
       left_join(actuals, by = "facility") %>%
-      mutate(inspections = ifelse(is.na(inspections), 0, inspections))
+      mutate(inspections = as.integer(ifelse(is.na(inspections), 0, inspections)))
     print("MERGED:"); print(merged)
     return(merged)
   })

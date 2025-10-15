@@ -10,14 +10,14 @@ RUN apt-get update && apt-get install -y \
     libtiff-dev libjpeg-dev libgeos-dev libgmp-dev libgsl-dev \
     libv8-dev libpoppler-cpp-dev libmagick++-dev
 
-# Install required R packages system-wide
+# Install required R packages
 RUN R -e "install.packages(c( \
   'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
   'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
   'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
   'classInt', 's2', \
   'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
-  'plotly' \
+  'plotly', 'purrr', 'tibble' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
 # Copy app files and config

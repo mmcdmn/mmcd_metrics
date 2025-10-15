@@ -60,44 +60,54 @@ server <- function(input, output) {
       mutate(facility = toupper(trimws(facility))) %>%
       group_by(facility) %>%
       summarize(inspections = sum(inspections, na.rm = TRUE), .groups = "drop")
-    print("ACTUALS:"); print(actuals)
-    print("ACTUALS facility unique:"); print(unique(actuals$facility)); print(str(actuals$facility))
-    # Get goals (no year column)
+    # Get goals
     goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
-      mutate(facility = toupper(trimws(facility))) %>%
-      select(-any_of("inspections"))
-    print("GOALS: "); print(goals)
-    print("GOALS facility unique:"); print(unique(goals$facility)); print(str(goals$facility))
+      mutate(facility = toupper(trimws(facility)))
     dbDisconnect(con)
-    # Create a complete facility list
+    # Build a complete facility list
     all_facilities <- union(actuals$facility, goals$facility)
-    print("ALL FACILITIES:"); print(all_facilities)
     # Build actuals and goals for all facilities
     actuals_long <- data.frame(
       facility = all_facilities,
-      goal = sapply(all_facilities, function(f) {
+      count = sapply(all_facilities, function(f) {
         val <- actuals$inspections[actuals$facility == f]
         if (length(val) == 0) 0 else val
       }),
-      source = "Actual Inspections"
+      type = "Actual Inspections",
+      stringsAsFactors = FALSE
     )
     goals_long <- data.frame(
       facility = all_facilities,
-      goal = sapply(all_facilities, function(f) {
+      count = sapply(all_facilities, function(f) {
         val <- goals[[input$goal_column]][goals$facility == f]
         if (length(val) == 0) 0 else val
       }),
-      source = "Goal"
+      type = "Goal",
+      stringsAsFactors = FALSE
     )
     plot_data <- bind_rows(actuals_long, goals_long)
-    print("PLOT DATA (complete):"); print(plot_data)
+    print("ALL FACILITIES:"); print(all_facilities); print(length(all_facilities))
+    print("ACTUALS facilities:"); print(actuals$facility); print(length(actuals$facility))
+    print("GOALS facilities:"); print(goals$facility); print(length(goals$facility))
+    print("ACTUALS DF:"); print(actuals)
+    print("GOALS DF:"); print(goals)
+    print("PLOT DATA (stacked, no merge):"); print(plot_data)
     return(plot_data)
   })
 
   output$progressPlot <- renderPlot({
     plot_data <- inspection_data()
-    ggplot(plot_data, aes(x = facility, y = goal, fill = source)) +
-      geom_bar(stat = "identity", position = "dodge")
+    ggplot(plot_data, aes(x = facility, y = count, fill = type)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      scale_fill_manual(values = c("Actual Inspections" = "#2c5aa0", "Goal" = "#e67e22")) +
+      labs(
+        title = "Cattail Inspections vs. Goal by Facility",
+        x = "Facility",
+        y = "Count",
+        fill = "Legend"
+      ) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
 }
 

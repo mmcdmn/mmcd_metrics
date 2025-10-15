@@ -69,45 +69,35 @@ server <- function(input, output) {
     print("GOALS: "); print(goals)
     print("GOALS facility unique:"); print(unique(goals$facility)); print(str(goals$facility))
     dbDisconnect(con)
-    # Merge actuals and goals (debug with full join)
-    debug_full <- full_join(goals, actuals, by = "facility")
-    print("FULL JOIN DEBUG:"); print(debug_full)
-    merged <- goals %>%
-      left_join(actuals, by = "facility") %>%
-      mutate(inspections = as.integer(ifelse(is.na(inspections), 0, inspections)))
-    print("MERGED:"); print(merged)
-    return(merged)
+    # Create a complete facility list
+    all_facilities <- union(actuals$facility, goals$facility)
+    print("ALL FACILITIES:"); print(all_facilities)
+    # Build actuals and goals for all facilities
+    actuals_long <- data.frame(
+      facility = all_facilities,
+      goal = sapply(all_facilities, function(f) {
+        val <- actuals$inspections[actuals$facility == f]
+        if (length(val) == 0) 0 else val
+      }),
+      source = "Actual Inspections"
+    )
+    goals_long <- data.frame(
+      facility = all_facilities,
+      goal = sapply(all_facilities, function(f) {
+        val <- goals[[input$goal_column]][goals$facility == f]
+        if (length(val) == 0) 0 else val
+      }),
+      source = "Goal"
+    )
+    plot_data <- bind_rows(actuals_long, goals_long)
+    print("PLOT DATA (complete):"); print(plot_data)
+    return(plot_data)
   })
 
   output$progressPlot <- renderPlot({
-    data <- inspection_data()
-    print("DATA FOR PLOTTING:"); print(data)
-    goal_col <- input$goal_column
-    # Prepare data for plotting
-    plot_data <- data %>%
-      select(facility, inspections, goal = all_of(goal_col)) %>%
-      tidyr::pivot_longer(
-        cols = c("inspections", "goal"),
-        names_to = "type",
-        values_to = "count"
-      ) %>%
-      mutate(type = recode(type, inspections = "Actual Inspections", goal = "Goal"))
-    print("PLOT DATA:"); print(plot_data)
-    # Plot
-    ggplot(plot_data, aes(x = facility, y = count, fill = type)) +
-      geom_bar(stat = "identity", position = "dodge") +
-      scale_fill_manual(
-        values = c("Actual Inspections" = "#2c5aa0", "Goal" = "#e67e22"),
-        labels = c("Actual Inspections", "Goal")
-      ) +
-      labs(
-        title = "Cattail Inspections vs. Goal by Facility",
-        x = "Facility",
-        y = "Count",
-        fill = "Legend"
-      ) +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    plot_data <- inspection_data()
+    ggplot(plot_data, aes(x = facility, y = goal, fill = source)) +
+      geom_bar(stat = "identity", position = "dodge")
   })
 }
 

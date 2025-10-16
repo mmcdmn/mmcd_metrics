@@ -42,10 +42,17 @@ RUN R -e "install.packages(c( \
   'plotly', 'purrr', 'tibble' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
-# Remove existing shiny-server content
-RUN rm -rf /srv/shiny-server/*
+# Ensure shiny user exists and has proper setup
+RUN id shiny || (groupadd -r shiny && useradd -r -g shiny shiny) && \
+    mkdir -p /var/log/shiny-server && \
+    chown shiny:shiny /var/log/shiny-server && \
+    chmod 755 /var/log/shiny-server
 
-# Copy shiny-server configuration
+# Remove existing shiny-server content and set up directories
+RUN rm -rf /srv/shiny-server/* && \
+    mkdir -p /srv/shiny-server/apps
+
+# Copy shiny-server configuration first
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
 # Copy index.html to root
@@ -54,9 +61,13 @@ COPY index.html /srv/shiny-server/index.html
 # Copy apps directory
 COPY apps/ /srv/shiny-server/apps/
 
-# Set ownership and permissions
+# Set ownership and permissions for all shiny-server content
 RUN chown -R shiny:shiny /srv/shiny-server && \
-    chmod -R 755 /srv/shiny-server
+    chmod -R 755 /srv/shiny-server && \
+    chown -R shiny:shiny /var/log/shiny-server
+
+# Switch to shiny user for running the server
+USER shiny
 
 EXPOSE 3838
 CMD ["/usr/bin/shiny-server"]
@@ -104,11 +115,7 @@ EOF
 cat > $DEPLOY_DIR/Dockerfile-nonroot << 'EOF'
 FROM rocker/shiny:latest
 
-# Create a non-root user
-RUN groupadd -g 1000 shiny && \
-    useradd -u 1000 -g shiny -s /bin/bash -m shiny
-
-# Install system dependencies
+# Install system dependencies first (as root)
 RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev libssl-dev libxml2-dev libpq-dev \
     libgdal-dev libudunits2-dev libproj-dev \
@@ -119,7 +126,7 @@ RUN apt-get update && apt-get install -y \
     libv8-dev libpoppler-cpp-dev libmagick++-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install R packages as root, then switch to non-root
+# Install R packages system-wide (as root)
 RUN R -e "install.packages(c( \
   'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
   'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
@@ -129,20 +136,23 @@ RUN R -e "install.packages(c( \
   'plotly', 'purrr', 'tibble' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
-# Create app directory and set permissions
-RUN mkdir -p /home/shiny/app /home/shiny/logs && \
-    chown -R shiny:shiny /home/shiny
+# Ensure shiny user exists with proper setup
+RUN id shiny || (groupadd -r shiny && useradd -r -g shiny -d /home/shiny -m shiny) && \
+    mkdir -p /home/shiny/app /home/shiny/logs /var/log/shiny-server && \
+    chown -R shiny:shiny /home/shiny /var/log/shiny-server && \
+    chmod -R 755 /home/shiny /var/log/shiny-server
 
-# Copy shiny-server config
-COPY --chown=shiny:shiny shiny-server-nonroot.conf /home/shiny/shiny-server.conf
+# Copy shiny-server config (as root, then chown)
+COPY shiny-server-nonroot.conf /home/shiny/shiny-server.conf
+RUN chown shiny:shiny /home/shiny/shiny-server.conf
 
-# Copy index.html
-COPY --chown=shiny:shiny index.html /home/shiny/app/index.html
+# Copy index.html and apps (as root, then chown)
+COPY index.html /home/shiny/app/index.html
+COPY apps/ /home/shiny/app/apps/
+RUN chown -R shiny:shiny /home/shiny/app && \
+    chmod -R 755 /home/shiny/app
 
-# Copy apps directory
-COPY --chown=shiny:shiny apps/ /home/shiny/app/apps/
-
-# Switch to non-root user
+# Switch to shiny user
 USER shiny
 WORKDIR /home/shiny/app
 

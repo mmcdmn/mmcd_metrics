@@ -19,6 +19,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+        with:
+          daemon-config: |
+            {
+              "debug": true,
+              "features": {
+                "containerd-snapshotter": true
+              }
+            }
+            
       - name: Configure AWS credentials
         id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -41,7 +52,8 @@ jobs:
         run: |
           export IMAGE_TAG=${REF_NAME}-${COMMIT_SHA:0:7}
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-             --cache-from type=registry,ref=$ECR_REGISTRY/$ECR_REPOSITORY \
+             --cache-from type=registry,ref=$ECR_REGISTRY/$ECR_REPOSITORY:cache \
+             --cache-to type=registry,ref=$ECR_REGISTRY/$ECR_REPOSITORY:cache \
              .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT

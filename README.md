@@ -45,6 +45,8 @@ apps/
 │   └── app.R
 ├── struct_trt_progress/          # Structural treatment progress
 │   └── app.R
+├── struct_trt_history/           # Structural treatment history (historical analysis)
+│   └── app.R
 └── cattail_planned_trt/          # Cattail treatment planning
     └── app.R
 ```
@@ -80,14 +82,23 @@ apps/
   - Aerial mosquito control operations tracking
   - Interactive date range selection
 
+
 ### Structural Treatment Progress
 - **Path**: `/struct_trt_progress/`
-- **Purpose**: Monitor structural treatment activities
+- **Purpose**: Monitor current structural treatment activities
 - **Features**:
-  - Proportion of structures under treatment tracking
+  - Proportion of structures under treatment tracking (current only)
   - Customizable treatment duration settings
-  - Comprehensive trend visualization
   - Real-time calculations
+  - Date simulation ("pretend today is")
+
+### Structural Treatment History
+- **Path**: `/struct_trt_history/`
+- **Purpose**: Historical analysis of structure treatment activities
+- **Features**:
+  - Historical time series and breakdowns by facility, type, and priority
+  - Formerly the main "Progress" app
+  - Snapshot and priority breakdowns
 
 ### Cattail Planned Treatments
 - **Path**: `/cattail_planned_trt/`

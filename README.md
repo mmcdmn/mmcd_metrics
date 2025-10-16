@@ -323,11 +323,11 @@ server <- function(input, output, session) {
     
     con <- dbConnect(
       RPostgres::Postgres(),
-      dbname = "mmcd_data",
-      host = "rds-readonly.mmcd.org",
-      port = 5432,
-      user = "mmcd_read",
-      password = "mmcd2012"
+      dbname = Sys.getenv("DB_NAME", "your_database"),
+      host = Sys.getenv("DB_HOST", "your-database-host.com"),
+      port = as.numeric(Sys.getenv("DB_PORT", "5432")),
+      user = Sys.getenv("DB_USER", "your_user"),
+      password = Sys.getenv("DB_PASSWORD", "your_password")
     )
     
     # Your SQL query here
@@ -440,11 +440,19 @@ sudo apt install -y libfontconfig1-dev libfreetype-dev
 
 #### Database Connection Issues
 ```bash
-# Test database connectivity
-R -e "library(DBI); library(RPostgreSQL); con <- dbConnect(PostgreSQL(), host='data.mmcd.org', dbname='mmcd_data', user='mmcd_read', password='mmcd2012'); dbListTables(con); dbDisconnect(con)"
+# Test database connectivity (using environment variables)
+R -e "
+if (file.exists('.env')) readRenviron('.env');
+library(DBI); library(RPostgreSQL);
+con <- dbConnect(PostgreSQL(), 
+  host=Sys.getenv('DB_HOST'), 
+  dbname=Sys.getenv('DB_NAME'), 
+  user=Sys.getenv('DB_USER'), 
+  password=Sys.getenv('DB_PASSWORD')); 
+dbListTables(con); dbDisconnect(con)"
 
 # If database connection fails, check network connectivity
-ping data.mmcd.org
+ping your-database-host.com
 
 # For development/testing without database access, you can modify app.R files to use sample data
 # instead of live database connections
@@ -479,12 +487,12 @@ If application buttons on the main dashboard don't respond when clicked:
 7. **Test with the Test Application**: The test app should always work since it doesn't require database connectivity
 
 #### Network Connectivity for Database Access
-The MMCD applications require access to `data.mmcd.org` on port 5432. If you're experiencing connection timeouts:
+The MMCD applications require access to your database server on port 5432. If you're experiencing connection timeouts:
 
 ```bash
-# Test if the database server is reachable
-ping data.mmcd.org
-telnet data.mmcd.org 5432
+# Test if the database server is reachable (replace with your actual host)
+ping your-database-host.com
+telnet your-database-host.com 5432
 
 # Check firewall rules
 sudo ufw status

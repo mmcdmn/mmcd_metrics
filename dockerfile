@@ -20,8 +20,11 @@ RUN R -e "install.packages(c( \
   'plotly', 'purrr', 'tibble' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
-# Copy app files and config
-COPY . /srv/shiny-server
+# Copy app files and config to correct locations
+COPY apps /srv/shiny-server/apps
+COPY index.html /srv/shiny-server/
+COPY .env /srv/shiny-server/
+COPY .env.example /srv/shiny-server/
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 
 # Set ownership

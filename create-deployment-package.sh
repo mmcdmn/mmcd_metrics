@@ -402,14 +402,18 @@ sudo ufw allow 8080/tcp  # or your chosen port
 
 ## Database Configuration
 
-The applications connect to:
-- **Host**: rds-readonly.mmcd.org
-- **Database**: mmcd_data
-- **User**: mmcd_read
-- **Password**: mmcd2012
-- **Port**: 5432
+The applications connect to your database using environment variables.
+Configure database connection in `.env` file:
 
-**Network Requirements**: The host system must be able to reach `rds-readonly.mmcd.org:5432`
+\`\`\`
+DB_HOST=your-database-host.com
+DB_NAME=your_database_name
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
+DB_PORT=5432
+\`\`\`
+
+**Network Requirements**: The host system must be able to reach your database server on port 5432
 
 ## Troubleshooting
 

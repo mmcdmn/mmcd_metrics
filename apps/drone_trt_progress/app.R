@@ -8,6 +8,15 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
+# Load environment variables from .env file if it exists
+if (file.exists("../../.env")) {
+  readRenviron("../../.env")
+} else if (file.exists("../.env")) {
+  readRenviron("../.env")
+} else if (file.exists(".env")) {
+  readRenviron(".env")
+}
+
 # Define UI for the application
 ui <- fluidPage(
   # Application title
@@ -68,14 +77,14 @@ server <- function(input, output) {
   current_date <- Sys.Date() 
   
   # Fetch data from database
-  drone_treatment_data <- reactive({
+  raw_data <- reactive({
     con <- dbConnect(
       RPostgres::Postgres(),
-      dbname = "mmcd_data",
-      host = "rds-readonly.mmcd.org",
-      port = 5432,
-      user = "mmcd_read",
-      password = "mmcd2012"
+      dbname = Sys.getenv("DB_NAME", "mmcd_data"),
+      host = Sys.getenv("DB_HOST", "rds-readonly.mmcd.org"),
+      port = as.numeric(Sys.getenv("DB_PORT", "5432")),
+      user = Sys.getenv("DB_USER", "mmcd_read"),
+      password = Sys.getenv("DB_PASSWORD", "mmcd2012")
     )
     
     # Build the drone designation filter based on user selection
@@ -128,7 +137,7 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
   # Process data based on user inputs
   processed_data <- reactive({
     # Get raw data
-    data <- drone_treatment_data()
+    data <- raw_data()
     drone_sites <- data$drone_sites
     drone_treatments <- data$drone_treatments
     

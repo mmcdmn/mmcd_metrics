@@ -41,8 +41,7 @@ jobs:
         run: |
           export IMAGE_TAG=${REF_NAME}-${COMMIT_SHA:0:7}
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-             --cache-from type=registry,ref=$ECR_REGISTRY/$ECR_REPOSITORY:cache \
-             --cache-to type=registry,ref=$ECR_REGISTRY/$ECR_REPOSITORY:cache,mode=max \
+             --cache-from type=registry,ref=$ECR_REGISTRY/$ECR_REPOSITORY \
              .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT

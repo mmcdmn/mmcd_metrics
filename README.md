@@ -273,91 +273,9 @@ Replace `your-server.com` with your actual server address:
 mkdir -p $MMCD_WORKSPACE/apps/your-new-app
 ```
 
+
 ### Step 2: Create app.R File
-Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` with this template:
-
-```r
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  # Add other libraries as needed
-})
-
-# Define UI
-ui <- fluidPage(
-  titlePanel("Your Application Title"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      # Add your input controls here
-      dateRangeInput("date_range", "Select Date Range:",
-                     start = Sys.Date() - 365,
-                     end = Sys.Date()),
-      
-      selectInput("facility", "Select Facility:",
-                  choices = c("All", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
-                  selected = "All"),
-      
-      actionButton("refresh", "Refresh Data", class = "btn-primary")
-    ),
-    
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Plot", plotOutput("main_plot")),
-        tabPanel("Data", dataTableOutput("data_table"))
-      )
-    )
-  )
-)
-
-# Define server logic
-server <- function(input, output, session) {
-  
-  # Database connection function
-  get_data <- reactive({
-    input$refresh  # Dependency on refresh button
-    
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = Sys.getenv("DB_NAME", "your_database"),
-      host = Sys.getenv("DB_HOST", "your-database-host.com"),
-      port = as.numeric(Sys.getenv("DB_PORT", "5432")),
-      user = Sys.getenv("DB_USER", "your_user"),
-      password = Sys.getenv("DB_PASSWORD", "your_password")
-    )
-    
-    # Your SQL query here
-    query <- "SELECT * FROM your_table WHERE date_column BETWEEN ? AND ?"
-    data <- dbGetQuery(con, query)
-    
-    dbDisconnect(con)
-    return(data)
-  })
-  
-  # Generate plots
-  output$main_plot <- renderPlot({
-    data <- get_data()
-    
-    # Your ggplot code here
-    ggplot(data, aes(x = date, y = value)) +
-      geom_line() +
-      theme_minimal() +
-      labs(title = "Your Chart Title")
-  })
-  
-  # Generate data table
-  output$data_table <- renderDataTable({
-    get_data()
-  }, options = list(pageLength = 15))
-}
-
-# Run the application
-shinyApp(ui = ui, server = server)
-```
+Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` (see other apps for examples).
 
 ### Step 3: Update Landing Page
 Add your new application to `$MMCD_WORKSPACE/apps/index.html`:
@@ -383,8 +301,11 @@ sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 sudo systemctl restart shiny-server
 ```
 
+docker build -t mmcd-dashboard .
+docker run -p 3838:3838 mmcd-dashboard
+
+To build and run the dashboard using Docker:
 ```bash
-#if docker is in place
 docker build -t mmcd-dashboard .
 docker run -p 3838:3838 mmcd-dashboard
 ```

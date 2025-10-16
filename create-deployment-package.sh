@@ -17,6 +17,51 @@ cp index.html $DEPLOY_DIR/
 cp dockerfile $DEPLOY_DIR/Dockerfile 
 cp shiny-server.conf $DEPLOY_DIR/
 
+# Create an improved Dockerfile that works better cross-platform
+cat > $DEPLOY_DIR/Dockerfile << 'EOF'
+FROM rocker/shiny:latest
+
+# Install system dependencies for geospatial and database packages
+RUN apt-get update && apt-get install -y \
+    libcurl4-openssl-dev libssl-dev libxml2-dev libpq-dev \
+    libgdal-dev libudunits2-dev libproj-dev \
+    libfontconfig1-dev libfreetype-dev libpng-dev \
+    libharfbuzz-dev libfribidi-dev gfortran cmake gdebi-core \
+    libgl1-mesa-dev libglu1-mesa libx11-dev libxt-dev libxft-dev \
+    libtiff-dev libjpeg-dev libgeos-dev libgmp-dev libgsl-dev \
+    libv8-dev libpoppler-cpp-dev libmagick++-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install required R packages
+RUN R -e "install.packages(c( \
+  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
+  'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
+  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
+  'classInt', 's2', \
+  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
+  'plotly', 'purrr', 'tibble' \
+), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
+# Remove existing shiny-server content
+RUN rm -rf /srv/shiny-server/*
+
+# Copy shiny-server configuration
+COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+
+# Copy index.html to root
+COPY index.html /srv/shiny-server/index.html
+
+# Copy apps directory
+COPY apps/ /srv/shiny-server/apps/
+
+# Set ownership and permissions
+RUN chown -R shiny:shiny /srv/shiny-server && \
+    chmod -R 755 /srv/shiny-server
+
+EXPOSE 3838
+CMD ["/usr/bin/shiny-server"]
+EOF
+
 # Create flexible docker-compose configurations
 echo "Creating docker-compose configurations..."
 
@@ -88,9 +133,14 @@ RUN R -e "install.packages(c( \
 RUN mkdir -p /home/shiny/app /home/shiny/logs && \
     chown -R shiny:shiny /home/shiny
 
-# Copy app files
-COPY --chown=shiny:shiny . /home/shiny/app/
+# Copy shiny-server config
 COPY --chown=shiny:shiny shiny-server-nonroot.conf /home/shiny/shiny-server.conf
+
+# Copy index.html
+COPY --chown=shiny:shiny index.html /home/shiny/app/index.html
+
+# Copy apps directory
+COPY --chown=shiny:shiny apps/ /home/shiny/app/apps/
 
 # Switch to non-root user
 USER shiny

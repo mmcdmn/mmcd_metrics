@@ -24,18 +24,10 @@ RUN R -e "install.packages(c( \
 COPY apps /srv/shiny-server/apps
 COPY index.html /srv/shiny-server/
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+COPY startup.sh /startup.sh
 
-# Create .env file from environment variables at runtime
-# This allows secure deployment without committing secrets to git
-RUN echo "# Environment variables for MMCD Dashboard" > /srv/shiny-server/.env \
-    && echo "# Set these via Docker environment variables or AWS secrets" >> /srv/shiny-server/.env \
-    && echo "DB_HOST=${DB_HOST:-localhost}" >> /srv/shiny-server/.env \
-    && echo "DB_NAME=${DB_NAME:-mmcd}" >> /srv/shiny-server/.env \
-    && echo "DB_USER=${DB_USER:-shiny}" >> /srv/shiny-server/.env \
-    && echo "DB_PASSWORD=${DB_PASSWORD:-}" >> /srv/shiny-server/.env
-
-# Set ownership
-RUN chown -R shiny:shiny /srv/shiny-server
+# Make startup script executable and set ownership
+RUN chmod +x /startup.sh && chown -R shiny:shiny /srv/shiny-server
 
 EXPOSE 3838
-CMD ["/usr/bin/shiny-server"]
+CMD ["/startup.sh"]

@@ -15,6 +15,7 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
   - [Drone Treatment Progress](#drone-treatment-progress)
   - [Structural Treatment Progress](#structural-treatment-progress)
   - [Cattail Planned Treatments](#cattail-planned-treatments)
+  - [Control Efficacy](#control-efficacy)
   - [Drone Treatment History](#drone-treatment-history)
 - [Installation & Deployment](#installation--deployment)
   - [Prerequisites - System Dependencies](#prerequisites---system-dependencies)
@@ -47,7 +48,9 @@ apps/
 │   └── app.R
 ├── struct_trt_history/           # Structural treatment history 
 │   └── app.R
-└── cattail_planned_trt/          # Cattail treatment planning
+├── cattail_planned_trt/          # Cattail treatment planning
+│   └── app.R
+└── control_efficacy/             # Air treatment checkback efficacy
     └── app.R
 ```
 
@@ -107,6 +110,18 @@ apps/
   - Planned treatment area visualization
   - Schedule and resource allocation tracking
   - Targeted cattail habitat management
+
+### Control Efficacy
+- **Path**: `/control_efficacy/`
+- **Purpose**: Air treatment checkback analysis and efficacy monitoring
+- **Features**:
+  - Air treatment campaign identification (multi-day treatments grouped)
+  - Configurable checkback requirements (percentage or fixed number)
+  - Checkback completion rate tracking by facility
+  - Treatment-to-checkback timing analysis
+  - Dip count change visualization (pre vs post treatment)
+  - Site-level treatment and checkback details
+  - Multi-day treatment campaign support
 
 ### Drone Treatment History
 - **Path**: `/drone_trt_history/`

@@ -15,11 +15,8 @@ suppressPackageStartupMessages({
 
 # Load environment variables from .env file if it exists
 if (file.exists("../../.env")) {
-  readRenviron("../../.env")
 } else if (file.exists("../.env")) {
-  readRenviron("../.env")
 } else if (file.exists(".env")) {
-  readRenviron(".env")
 }
 
 # Define UI for the application
@@ -80,11 +77,11 @@ server <- function(input, output) {
   raw_data <- reactive({
     con <- dbConnect(
       RPostgres::Postgres(),
-      dbname = Sys.getenv("DB_NAME", "mmcd_data"),
-      host = Sys.getenv("DB_HOST", "rds-readonly.mmcd.org"),
-      port = as.numeric(Sys.getenv("DB_PORT", "5432")),
-      user = Sys.getenv("DB_USER", "mmcd_read"),
-      password = Sys.getenv("DB_PASSWORD", "mmcd2012")
+      dbname = "mmcd_data",
+      host = "rds-readonly.mmcd.org",
+      port = 5432,
+      user = "mmcd_read",
+      password = "mmcd2012"
     )
     # Get archive data
     archive_query <- sprintf("

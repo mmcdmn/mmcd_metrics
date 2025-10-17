@@ -10,21 +10,12 @@ library(plotrix)
 library(DBI)
 library(RPostgreSQL)
 
-# Load environment variables from .env file if it exists
-if (file.exists("../../.env")) {
-  readRenviron("../../.env")
-} else if (file.exists("../.env")) {
-  readRenviron("../.env")
-} else if (file.exists(".env")) {
-  readRenviron(".env")
-}
-
-# Get database configuration from environment variables
-host_db <- Sys.getenv("DB_HOST_ALT", "data.mmcd.org")
-db_port <- Sys.getenv("DB_PORT", "5432")
-db_user <- Sys.getenv("DB_USER", "mmcd_read")
-db_password <- Sys.getenv("DB_PASSWORD", "mmcd2012")
-db_name <- Sys.getenv("DB_NAME", "mmcd_data")
+# Database configuration (HARDCODED TEMPORARILY)
+host_db <- "data.mmcd.org"
+db_port <- "5432"
+db_user <- "mmcd_read"
+db_password <- "mmcd2012"
+db_name <- "mmcd_data"
 drv <- dbDriver("PostgreSQL")
 
 con <- dbConnect(drv, dbname = db_name, host=host_db, port=db_port, user=db_user, password=db_password )

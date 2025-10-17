@@ -45,7 +45,7 @@ apps/
 │   └── app.R
 ├── struct_trt_progress/          # Structural treatment progress
 │   └── app.R
-├── struct_trt_history/           # Structural treatment history (historical analysis)
+├── struct_trt_history/           # Structural treatment history 
 │   └── app.R
 └── cattail_planned_trt/          # Cattail treatment planning
     └── app.R
@@ -312,13 +312,84 @@ sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 sudo systemctl restart shiny-server
 ```
 
-docker build -t mmcd-dashboard .
-docker run -p 3838:3838 mmcd-dashboard
+### Docker Deployment
 
 To build and run the dashboard using Docker:
+
 ```bash
+# Build the Docker image
 docker build -t mmcd-dashboard .
-docker run -p 3838:3838 mmcd-dashboard
+
+# Run the container with database environment variables
+docker run -p 3838:3838 \
+  -e DB_HOST=your-db-host \
+  -e DB_NAME=your-db-name \
+  -e DB_USER=your-db-user \
+  -e DB_PASSWORD=your-db-password \
+  mmcd-dashboard
+
+# For local development (if you have .env file locally)
+docker run -p 3838:3838 --env-file .env mmcd-dashboard
+```
+
+Access the dashboard at: `http://localhost:3838`
+
+#### Docker Troubleshooting
+
+If you encounter "port already in use" errors:
+
+1. **Check what's using the port**:
+   ```bash
+   sudo lsof -i :3838
+   ```
+
+2. **Kill processes using the port**:
+   ```bash
+   sudo kill -9 <PID>
+   ```
+
+3. **Use a different port**:
+   ```bash
+   docker run -p 4000:3838 mmcd-dashboard
+   ```
+
+4. **Clean up Docker resources**:
+   ```bash
+   docker system prune
+   ```
+
+#### AWS Deployment with Secure Environment Variables
+
+For AWS deployment, **DO NOT** copy .env files to the container. Instead, use AWS Secrets Manager or environment variables:
+
+**Option 1: AWS Secrets Manager (Recommended)**
+```bash
+# Store secrets in AWS Secrets Manager
+aws secretsmanager create-secret \
+  --name "mmcd-dashboard-db" \
+  --description "Database credentials for MMCD Dashboard" \
+  --secret-string '{"DB_HOST":"your-host","DB_NAME":"your-db","DB_USER":"your-user","DB_PASSWORD":"your-password"}'
+
+# Use in ECS task definition or EC2 user data
+```
+
+**Option 2: Environment Variables in Docker**
+```bash
+# Run with environment variables (for AWS ECS/EC2)
+docker run -p 3838:3838 \
+  -e DB_HOST=$DB_HOST \
+  -e DB_NAME=$DB_NAME \
+  -e DB_USER=$DB_USER \
+  -e DB_PASSWORD=$DB_PASSWORD \
+  mmcd-dashboard
+```
+
+**Option 3: Local Development Only**
+```bash
+# Only for local development - create .env file manually
+cp .env.example .env
+# Edit .env with your local database credentials
+docker run -p 3838:3838 --env-file .env mmcd-dashboard
 ```
 
 ### **CRITICAL DEPLOYMENT NOTE**

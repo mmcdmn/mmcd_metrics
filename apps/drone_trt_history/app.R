@@ -362,15 +362,41 @@ SELECT sitecode, acres, facility FROM public.loc_breeding_sites WHERE sitecode I
     all_data <- all_data %>% filter(!is.na(acres) & acres > 0)
     all_data <- all_data %>% mutate(year = year(inspdate))
     # For each year/facility, get 5 smallest and 5 largest
-    extremes <- all_data %>%
+    # For each year/facility, get min/max acres per sitecode, then top 5 distinct sites
+    site_extremes <- all_data %>%
+      group_by(year, facility, sitecode) %>%
+      summarize(
+        min_acres = min(acres, na.rm = TRUE),
+        max_acres = max(acres, na.rm = TRUE),
+        .groups = "drop"
+      )
+    # 5 smallest distinct sites per year/facility
+    smallest <- site_extremes %>%
       group_by(year, facility) %>%
-      arrange(acres) %>%
-      mutate(rank = row_number(), n = n()) %>%
-      filter(rank <= 5 | rank > n - 5) %>%
+      arrange(min_acres) %>%
+      slice_head(n = 5) %>%
       ungroup()
-    # Split into smallest and largest
-    smallest <- extremes %>% group_by(year, facility) %>% top_n(-5, acres) %>% arrange(year, facility, acres)
-    largest  <- extremes %>% group_by(year, facility) %>% top_n(5, acres) %>% arrange(year, facility, desc(acres))
+    # 5 largest distinct sites per year/facility
+    largest <- site_extremes %>%
+      group_by(year, facility) %>%
+      arrange(desc(max_acres)) %>%
+      slice_head(n = 5) %>%
+      ungroup()
+    # Combine into wide format
+    make_col <- function(df, label, acres_col) {
+      df %>% group_by(year, facility) %>%
+        summarize(
+          !!paste0(label, "_sitecodes") := paste(sitecode, collapse=", "),
+          !!paste0(label, "_acres") := paste(round(.data[[acres_col]],2), collapse=", "),
+          .groups = "drop"
+        )
+    }
+    smallest_wide <- make_col(smallest, "Smallest", "min_acres")
+    largest_wide  <- make_col(largest, "Largest", "max_acres")
+    extremes_wide <- full_join(smallest_wide, largest_wide, by = c("year", "facility"))
+    extremes_wide <- extremes_wide %>% arrange(year, facility)
+    colnames(extremes_wide) <- c("Year", "Facility", "5 Smallest Sitecodes", "5 Smallest Acres", "5 Largest Sitecodes", "5 Largest Acres")
+    return(extremes_wide)
     # Combine into wide format
     make_col <- function(df, label) {
       df %>% group_by(year, facility) %>%

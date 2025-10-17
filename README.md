@@ -45,6 +45,8 @@ apps/
 │   └── app.R
 ├── struct_trt_progress/          # Structural treatment progress
 │   └── app.R
+├── struct_trt_history/           # Structural treatment history (historical analysis)
+│   └── app.R
 └── cattail_planned_trt/          # Cattail treatment planning
     └── app.R
 ```
@@ -80,14 +82,23 @@ apps/
   - Aerial mosquito control operations tracking
   - Interactive date range selection
 
+
 ### Structural Treatment Progress
 - **Path**: `/struct_trt_progress/`
-- **Purpose**: Monitor structural treatment activities
+- **Purpose**: Monitor current structural treatment activities
 - **Features**:
-  - Proportion of structures under treatment tracking
+  - Proportion of structures under treatment tracking (current only)
   - Customizable treatment duration settings
-  - Comprehensive trend visualization
   - Real-time calculations
+  - Date simulation ("pretend today is")
+
+### Structural Treatment History
+- **Path**: `/struct_trt_history/`
+- **Purpose**: Historical analysis of structure treatment activities
+- **Features**:
+  - Historical time series and breakdowns by facility, type, and priority
+  - Formerly the main "Progress" app
+  - Snapshot and priority breakdowns
 
 ### Cattail Planned Treatments
 - **Path**: `/cattail_planned_trt/`
@@ -273,91 +284,9 @@ Replace `your-server.com` with your actual server address:
 mkdir -p $MMCD_WORKSPACE/apps/your-new-app
 ```
 
+
 ### Step 2: Create app.R File
-Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` with this template:
-
-```r
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  # Add other libraries as needed
-})
-
-# Define UI
-ui <- fluidPage(
-  titlePanel("Your Application Title"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      # Add your input controls here
-      dateRangeInput("date_range", "Select Date Range:",
-                     start = Sys.Date() - 365,
-                     end = Sys.Date()),
-      
-      selectInput("facility", "Select Facility:",
-                  choices = c("All", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
-                  selected = "All"),
-      
-      actionButton("refresh", "Refresh Data", class = "btn-primary")
-    ),
-    
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Plot", plotOutput("main_plot")),
-        tabPanel("Data", dataTableOutput("data_table"))
-      )
-    )
-  )
-)
-
-# Define server logic
-server <- function(input, output, session) {
-  
-  # Database connection function
-  get_data <- reactive({
-    input$refresh  # Dependency on refresh button
-    
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = "mmcd_data",
-      host = "rds-readonly.mmcd.org",
-      port = 5432,
-      user = "mmcd_read",
-      password = "mmcd2012"
-    )
-    
-    # Your SQL query here
-    query <- "SELECT * FROM your_table WHERE date_column BETWEEN ? AND ?"
-    data <- dbGetQuery(con, query)
-    
-    dbDisconnect(con)
-    return(data)
-  })
-  
-  # Generate plots
-  output$main_plot <- renderPlot({
-    data <- get_data()
-    
-    # Your ggplot code here
-    ggplot(data, aes(x = date, y = value)) +
-      geom_line() +
-      theme_minimal() +
-      labs(title = "Your Chart Title")
-  })
-  
-  # Generate data table
-  output$data_table <- renderDataTable({
-    get_data()
-  }, options = list(pageLength = 15))
-}
-
-# Run the application
-shinyApp(ui = ui, server = server)
-```
+Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` (see other apps for examples).
 
 ### Step 3: Update Landing Page
 Add your new application to `$MMCD_WORKSPACE/apps/index.html`:
@@ -381,6 +310,15 @@ sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 
 # Restart Shiny Server
 sudo systemctl restart shiny-server
+```
+
+docker build -t mmcd-dashboard .
+docker run -p 3838:3838 mmcd-dashboard
+
+To build and run the dashboard using Docker:
+```bash
+docker build -t mmcd-dashboard .
+docker run -p 3838:3838 mmcd-dashboard
 ```
 
 ### **CRITICAL DEPLOYMENT NOTE**
@@ -434,11 +372,19 @@ sudo apt install -y libfontconfig1-dev libfreetype-dev
 
 #### Database Connection Issues
 ```bash
-# Test database connectivity
-R -e "library(DBI); library(RPostgreSQL); con <- dbConnect(PostgreSQL(), host='data.mmcd.org', dbname='mmcd_data', user='mmcd_read', password='mmcd2012'); dbListTables(con); dbDisconnect(con)"
+# Test database connectivity (using environment variables)
+R -e "
+if (file.exists('.env')) readRenviron('.env');
+library(DBI); library(RPostgreSQL);
+con <- dbConnect(PostgreSQL(), 
+  host=Sys.getenv('DB_HOST'), 
+  dbname=Sys.getenv('DB_NAME'), 
+  user=Sys.getenv('DB_USER'), 
+  password=Sys.getenv('DB_PASSWORD')); 
+dbListTables(con); dbDisconnect(con)"
 
 # If database connection fails, check network connectivity
-ping data.mmcd.org
+ping your-database-host.com
 
 # For development/testing without database access, you can modify app.R files to use sample data
 # instead of live database connections
@@ -473,12 +419,12 @@ If application buttons on the main dashboard don't respond when clicked:
 7. **Test with the Test Application**: The test app should always work since it doesn't require database connectivity
 
 #### Network Connectivity for Database Access
-The MMCD applications require access to `data.mmcd.org` on port 5432. If you're experiencing connection timeouts:
+The MMCD applications require access to your database server on port 5432. If you're experiencing connection timeouts:
 
 ```bash
-# Test if the database server is reachable
-ping data.mmcd.org
-telnet data.mmcd.org 5432
+# Test if the database server is reachable (replace with your actual host)
+ping your-database-host.com
+telnet your-database-host.com 5432
 
 # Check firewall rules
 sudo ufw status

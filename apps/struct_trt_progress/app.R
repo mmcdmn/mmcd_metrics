@@ -1,224 +1,304 @@
-library(shiny)
-library(DBI)
-library(RPostgres)
-library(dplyr)
-library(ggplot2)
+# Load required libraries
+suppressPackageStartupMessages({
+  library(shiny)
+  library(DBI)
+  library(RPostgres)
+  library(dplyr)
+  library(ggplot2)
+  library(lubridate)
+})
 
-# Define UI for the app
+# Load environment variables from .env file if it exists
+if (file.exists("../../.env")) {
+  readRenviron("../../.env")
+} else if (file.exists("../.env")) {
+  readRenviron("../.env")
+} else if (file.exists(".env")) {
+  readRenviron(".env")
+}
+
+# Define UI for the application
 ui <- fluidPage(
-  titlePanel("Proportion of Structures with Active Treatment current and historical"),
+  # Application title
+  titlePanel("Structures with Active and Expiring Treatments"),
   
-  # Sidebar layout for user inputs
+  # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
-      # Dropdown for start year
-      selectInput(
-        "start_year",
-        "Start Year:",
-        choices = seq(2010, 2025),
-        selected = 2018
-      ),
+      # Slider to control the expiration window
+      sliderInput("expiring_days", "Days Until Expiration:",
+                  min = 1, max = 30, value = 7, step = 1),
       
-      # Dropdown for end year
-      selectInput(
-        "end_year",
-        "End Year:",
-        choices = seq(2010, 2025),
-        selected = 2025
-      ),
+      # Date input to simulate "today"
+      dateInput("custom_today", "Pretend Today is:",
+                value = Sys.Date(), 
+                format = "yyyy-mm-dd"),
+      
+      # Toggle for structure status types
+      checkboxGroupInput("status_types", "Include Structure Status:",
+                         choices = c("Dry (D)" = "D",
+                                     "Wet (W)" = "W", 
+                                     "Unknown (U)" = "U"),
+                         selected = c("D", "W", "U")),
       
       # Dropdown for facility filter
-      selectInput(
-        "facility_filter",
-        "Facility:",
-        choices = c("all", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
-        selected = "all"
-      )
+      selectInput("facility_filter", "Facility:",
+                  choices = c("All" = "all", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
+                  selected = "all"),
+      
+      # Dropdown for structure type filter  
+      selectInput("structure_type_filter", "Structure Type:",
+                  choices = c("All" = "all", "AP", "CB", "CG", "cv", "CV", "CV/PR", "CV/RR", "DR", "PC", "Pool", "PR", "RG", "RR", "SP", "SS", "US", "W", "wo", "WO", "XX"),
+                  selected = "all"),
+      
+      # Dropdown for priority filter
+      selectInput("priority_filter", "Priority:",
+                  choices = c("All" = "all", "BLUE", "GREEN", "RED", "YELLOW"),
+                  selected = "all"),
+      
+      helpText("This visualization shows structures by facility with three categories:",
+               tags$br(),
+               tags$ul(
+                 tags$li(tags$span(style = "color:gray", "Gray: Total structures")),
+                 tags$li(tags$span(style = "color:steelblue", "Blue: Structures with active treatments")),
+                 tags$li(tags$span(style = "color:orange", "Orange: Structures with treatments expiring within the selected days"))
+               )),
+      
+      helpText(tags$b("Date Simulation:"),
+               tags$br(),
+               "Use 'Pretend Today is' to see what treatments would be active/expiring on any specific date. Only treatments that would still be active on that date are considered."),
+      
+      helpText(tags$b("Structure Status:"),
+               tags$br(),
+               tags$ul(
+                 tags$li(tags$b("D:"), "Dry - Structure is dry"),
+                 tags$li(tags$b("W:"), "Wet - Structure has water"),
+                 tags$li(tags$b("U:"), "Unknown - Status not determined")
+               ))
     ),
     
+    # Main panel for displaying the graph
     mainPanel(
-      # Output plot
-      plotOutput("treatment_plot")
+      plotOutput("structureGraph", height = "600px")
     )
   )
 )
 
 # Define server logic
 server <- function(input, output) {
-  # Function to construct the facility filter condition for SQL
-  get_facility_condition <- function(facility) {
-    if (facility == "all") {
-      return("") # No filtering
-    } else {
-      return(sprintf("AND trt.facility = '%s'", facility)) # Filter by the specified facility
-    }
-  }
   
-  ##!!!!!!!!!!!!-----------
-  # NOTE: this may only get us the total structure count no matter what was put
-  ##-----------------------
-  get_facility_condition_total <- function(facility) {
-    if (facility == "all") {
-      return("") # No filtering
-    } else {
-      return(sprintf("AND facility = '%s'", facility)) # Reference the correct column directly
-    }
-  }
-  
-  # Reactive function to fetch and process data
-  treatment_data <- reactive({
+  # Fetch data from database
+  raw_data <- reactive({
     con <- dbConnect(
       RPostgres::Postgres(),
-      dbname = "mmcd_data",
-      host = "rds-readonly.mmcd.org",
-      port = 5432,
-      user = "mmcd_read",
-      password = "mmcd2012"
+      dbname = Sys.getenv("DB_NAME", "mmcd_data"),
+      host = Sys.getenv("DB_HOST", "rds-readonly.mmcd.org"),
+      port = as.numeric(Sys.getenv("DB_PORT", "5432")),
+      user = Sys.getenv("DB_USER", "mmcd_read"),
+      password = Sys.getenv("DB_PASSWORD", "mmcd2012")
     )
     
-    # Fetch archive data
-    query_archive <- sprintf(
-      "
-SELECT
-trt.sitecode,
-trt.inspdate,
-COALESCE(mat.effect_days, 0) AS effect_days
-FROM public.dblarv_insptrt_archive trt
-LEFT JOIN public.mattype_list_targetdose mat
-ON trt.matcode = mat.matcode
-WHERE trt.inspdate >= date '%d-01-01'
-AND trt.inspdate < date '%d-01-01'
-AND trt.list_type = 'STR'
+    # Build the status filter based on user selection
+    status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")
+    
+    # Build facility filter condition
+    facility_condition <- if (input$facility_filter == "all") "" else sprintf("AND facility = '%s'", input$facility_filter)
+    
+    # Build structure type filter condition  
+    struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s_type = '%s'", input$structure_type_filter)
+    
+    # Build priority filter condition
+    priority_condition <- if (input$priority_filter == "all") "" else sprintf("AND priority = '%s'", input$priority_filter)
+    
+    # Query to get structures from loc_cxstruct
+    structures_query <- sprintf("
+SELECT sitecode, facility, status_udw, s_type, priority
+FROM public.loc_cxstruct
+WHERE (status_udw IN (%s) OR status_udw IS NULL)
+AND (enddate IS NULL OR enddate > CURRENT_DATE)
 %s
-",
-      as.numeric(input$start_year),
-      as.numeric(input$end_year) + 1,
-      get_facility_condition(input$facility_filter)
-    )
-    archive_data <- dbGetQuery(con, query_archive)
-    
-    # Fetch current data
-    query_current <- sprintf(
-      "
-SELECT
-trt.sitecode,
-trt.inspdate,
-COALESCE(mat.effect_days, 0) AS effect_days
-FROM public.dblarv_insptrt_current trt
-LEFT JOIN public.mattype_list_targetdose mat
-ON trt.matcode = mat.matcode
-WHERE trt.inspdate >= date '%d-01-01'
-AND trt.inspdate < date '%d-01-01'
-AND trt.list_type = 'STR'
 %s
-",
-      as.numeric(input$start_year),
-      as.numeric(input$end_year) + 1,
-      get_facility_condition(input$facility_filter)
-    )
-    current_data <- dbGetQuery(con, query_current)
-    
-    #Fetch Total Structures
-    query_total_structures <- sprintf(
-      "
-SELECT COUNT(DISTINCT sitecode) AS total_structures
-FROM loc_cxstruct
-WHERE 1=1
-AND enddate IS NULL
 %s
-",
-      get_facility_condition_total(input$facility_filter)
-    )
+", status_types, facility_condition, struct_type_condition, priority_condition)
     
-    total_structures <- dbGetQuery(con, query_total_structures)$total_structures
+    structures <- dbGetQuery(con, structures_query)
+    
+    # Query to get treatment information from current treatments
+    treatments_query <- "
+SELECT t.sitecode, t.facility, t.inspdate, t.matcode, m.effect_days
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE t.list_type = 'STR'
+"
+    treatments <- dbGetQuery(con, treatments_query)
+    
     dbDisconnect(con)
     
-    # Combine and process data
-    combined_data <- bind_rows(archive_data, current_data) %>%
-      mutate(inspdate = as.Date(inspdate),
-             enddate = inspdate + effect_days)
-    list(data = combined_data, total_structures = total_structures)
+    # Process the data
+    # Identify structures with treatments
+    structure_treatments <- treatments %>%
+      inner_join(structures, by = c("sitecode", "facility"))
+    
+    # Calculate treatment status (active) - will be recalculated in processed_data with custom date
+    structure_treatments <- structure_treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        effect_days = ifelse(is.na(effect_days), 0, effect_days),
+        treatment_end_date = inspdate + effect_days
+      )
+    
+    # Return all the data needed for filtering later
+    list(
+      structures = structures,
+      structure_treatments = structure_treatments
+    )
+  })
+  
+  # Process data based on user inputs
+  processed_data <- reactive({
+    # Get raw data
+    data <- raw_data()
+    structures <- data$structures
+    structure_treatments <- data$structure_treatments
+    
+    # Use custom date from input
+    current_date <- as.Date(input$custom_today)
+    
+    # Calculate expiring window
+    expiring_start_date <- current_date
+    expiring_end_date <- current_date + input$expiring_days
+    
+    # Update treatment status based on custom date
+    structure_treatments <- structure_treatments %>%
+      mutate(
+        is_active = treatment_end_date >= current_date,
+        is_expiring = treatment_end_date >= expiring_start_date &
+          treatment_end_date <= expiring_end_date &
+          treatment_end_date >= current_date
+      )
+    
+    # Count total structures by facility
+    total_structures <- structures %>%
+      group_by(facility) %>%
+      summarize(
+        total_structures = n()
+      )
+    
+    # Count active structures by facility
+    # Need to handle overlapping treatments by taking distinct sitecodes only
+    active_structures <- structure_treatments %>%
+      filter(is_active == TRUE) %>%
+      distinct(sitecode, facility) %>%
+      group_by(facility) %>%
+      summarize(
+        active_structures = n()
+      )
+    
+    # Count expiring structures by facility
+    expiring_structures <- structure_treatments %>%
+      filter(is_expiring == TRUE) %>%
+      distinct(sitecode, facility) %>%
+      group_by(facility) %>%
+      summarize(
+        expiring_structures = n()
+      )
+    
+    # Combine all the counts
+    result <- total_structures %>%
+      left_join(active_structures, by = "facility") %>%
+      left_join(expiring_structures, by = "facility") %>%
+      mutate(
+        active_structures = ifelse(is.na(active_structures), 0, active_structures),
+        expiring_structures = ifelse(is.na(expiring_structures), 0, expiring_structures)
+      )
+    
+    return(result)
   })
   
   # Generate the plot
-  output$treatment_plot <- renderPlot({
-    td <- treatment_data()
-    data <- td$data
-    total_structures <- td$total_structures
+  output$structureGraph <- renderPlot({
+    # Get the processed data
+    data <- processed_data()
     
-    # Handle cases where no data is available
+    # Handle case when no data is available (e.g., no structures with selected filters)
     if (nrow(data) == 0) {
       return(
         ggplot() +
-          annotate(
-            "text",
-            x = 0.5,
-            y = 0.5,
-            label = "No data available for the selected range.",
-            size = 6
-          ) +
+          annotate("text", x = 0.5, y = 0.5,
+                   label = "No data available with the selected filters", size = 6) +
           theme_void()
       )
     }
     
-    # Handle cases where total_structures is missing or zero
-    if (is.null(total_structures) || is.na(total_structures) || total_structures == 0) {
-      return(
-        ggplot() +
-          annotate(
-            "text",
-            x = 0.5,
-            y = 0.5,
-            label = "No structure data available or total structures is zero.",
-            size = 6
-          ) +
-          theme_void()
-      )
-    }
+    # Set display values (only structures, no acres)
+    data$y_total <- data$total_structures
+    data$y_active <- data$active_structures
+    data$y_expiring <- data$expiring_structures
+    y_label <- "Number of Structures"
+    title_metric <- "Number of Structures"
     
-    # Generate the full date range
-    start_date <- as.Date(sprintf("%d-03-01", as.numeric(input$start_year)))
-    end_date <- as.Date(sprintf("%d-12-31", as.numeric(input$end_year)))
-    date_range <- seq.Date(start_date, end_date, by = "day")
+    # Create a new column to determine which labels to show (avoiding overplot)
+    data$show_active_label <- data$y_active != data$y_expiring
     
-    # Create a dataframe of daily changes
-    daily_changes <- data.frame(
-      date = c(data$inspdate, data$enddate),
-      change = c(rep(1, nrow(data)), rep(-1, nrow(data))) # +1 for start, -1 for end
-    ) %>%
-      group_by(date) %>%
-      summarize(change = sum(change)) %>%
-      arrange(date)
+    # Calculate y-axis maximum for proper positioning
+    y_max <- max(data$y_total) * 1.1
     
-    # Calculate cumulative active treatments
-    all_dates <- data.frame(date = date_range)
-    treatment_trends <- all_dates %>%
-      left_join(daily_changes, by = "date") %>%
-      mutate(change = ifelse(is.na(change), 0, change)) %>%
-      arrange(date) %>%
-      mutate(active_treatments = cumsum(change))
+    # Set up the title with appropriate filters
+    status_types_text <- paste(input$status_types, collapse = ", ")
+    facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
     
-    # Normalize to proportion of total structures
-    treatment_trends <- treatment_trends %>%
-      mutate(proportion_active_treatment = active_treatments / total_structures)
-    
-    # Plot the data
-    ggplot(treatment_trends,
-           aes(x = date, y = proportion_active_treatment)) +
-      geom_line(color = "blue") +
+    # Create the plot
+    p <- ggplot(data, aes(x = facility)) +
+      # First draw total bars
+      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
+      # Then overlay active bars
+      geom_bar(aes(y = y_active), stat = "identity", fill = "steelblue") +
+      # Finally overlay expiring bars
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = "orange") +
+      
+      # Add labels on top of each bar
+      geom_text(aes(y = y_total, label = y_total), vjust = -0.5, color = "black") +
+      # Add expiring labels
+      geom_text(aes(y = y_expiring, label = y_expiring), vjust = 1.5, color = "black", fontface = "bold") +
+      
+      # Add labels and title
       labs(
-        title = sprintf(
-          "Proportion of Structures with Active Treatment (%d to %d)",
-          as.numeric(input$start_year),
-          as.numeric(input$end_year)
-        ),
-        x = "Date",
-        y = "Proportion of Active Treatment"
+        title = paste("Structures by Facility -", title_metric),
+        subtitle = paste("Status types:", status_types_text, "-", facility_text,
+                         "- Expiring within", input$expiring_days, "days"),
+        x = "Facility",
+        y = y_label
       ) +
-      scale_y_continuous(labels = scales::percent_format()) +
-      theme_minimal()
+      # Customize appearance
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 16),
+        axis.title = element_text(face = "bold"),
+        legend.position = "none"
+      )
+    
+    # Add active labels only where they differ from expiring (safer approach)
+    if (any(data$show_active_label)) {
+      p <- p + geom_text(data = data[data$show_active_label,],
+                         aes(y = y_active, label = y_active),
+                         vjust = -0.5, color = "steelblue", fontface = "bold")
+    }
+    
+    # Add legend manually
+    p + annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.9, ymax = y_max * 0.95,
+                 fill = "gray80", alpha = 0.7) +
+      annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.8, ymax = y_max * 0.85,
+               fill = "steelblue") +
+      annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.7, ymax = y_max * 0.75,
+               fill = "orange") +
+      annotate("text", x = 0.1, y = y_max * 0.925,
+               label = "Total", hjust = 0) +
+      annotate("text", x = 0.1, y = y_max * 0.825,
+               label = "Active", hjust = 0) +
+      annotate("text", x = 0.1, y = y_max * 0.725,
+               label = "Expiring", hjust = 0)
   })
 }
 
-# Run the app
+# Run the application
 shinyApp(ui = ui, server = server)

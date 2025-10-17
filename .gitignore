@@ -9,7 +9,7 @@
 rsconnect/
 
 # R packages
-*.tar.gz
+#*.tar.gz
 
 # Log files
 *.log

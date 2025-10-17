@@ -9,15 +9,25 @@ library(shinyWidgets)
 library(plotrix)
 library(DBI)
 library(RPostgreSQL)
-#Current To DO
-#DONE
-host_db <- 'data.mmcd.org'
-db_port <- '5432'
-db_user <- 'mmcd_read'
-db_password <- 'mmcd2012'
+
+# Load environment variables from .env file if it exists
+if (file.exists("../../.env")) {
+  readRenviron("../../.env")
+} else if (file.exists("../.env")) {
+  readRenviron("../.env")
+} else if (file.exists(".env")) {
+  readRenviron(".env")
+}
+
+# Get database configuration from environment variables
+host_db <- Sys.getenv("DB_HOST_ALT", "data.mmcd.org")
+db_port <- Sys.getenv("DB_PORT", "5432")
+db_user <- Sys.getenv("DB_USER", "mmcd_read")
+db_password <- Sys.getenv("DB_PASSWORD", "mmcd2012")
+db_name <- Sys.getenv("DB_NAME", "mmcd_data")
 drv <- dbDriver("PostgreSQL")
 
-con <- dbConnect(drv, dbname = "mmcd_data", host=host_db, port=db_port, user=db_user, password=db_password )
+con <- dbConnect(drv, dbname = db_name, host=host_db, port=db_port, user=db_user, password=db_password )
 
 mosquito0NAS <- dbReadTable(con, "dbadult_mon_nt_co2_tall2_forr")
 

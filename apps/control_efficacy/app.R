@@ -40,7 +40,8 @@ ui <- dashboardPage(
     sidebarMenu(
       menuItem("Treatment Analysis", tabName = "analysis", icon = icon("chart-line")),
       menuItem("Checkback Status", tabName = "status", icon = icon("tasks")),
-      menuItem("Site Details", tabName = "details", icon = icon("map-marker"))
+      menuItem("Site Details", tabName = "details", icon = icon("map-marker")),
+      menuItem("Multiple Checkbacks", tabName = "multiple", icon = icon("search-plus"))
     )
   ),
   
@@ -101,7 +102,7 @@ ui <- dashboardPage(
                 conditionalPanel(
                   condition = "input.checkback_type == 'percent'",
                   numericInput("checkback_percent", "Required Checkback %:",
-                    value = 20,
+                    value = 10,
                     min = 0,
                     max = 100,
                     step = 5
@@ -152,8 +153,8 @@ ui <- dashboardPage(
       # Status Tab
       tabItem(tabName = "status",
         fluidRow(
-          box(title = "Treatment Campaign Details", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("treatment_campaigns")
+          box(title = "Air Treatment Round Details", status = "primary", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("treatment_rounds")
           )
         ),
         
@@ -175,6 +176,25 @@ ui <- dashboardPage(
         fluidRow(
           box(title = "Efficacy Analysis", status = "success", solidHeader = TRUE, width = 12,
             plotOutput("efficacy_plot", height = "400px")
+          )
+        )
+      ),
+      
+      # Multiple Checkbacks Tab
+      tabItem(tabName = "multiple",
+        fluidRow(
+          box(title = "Sites with Multiple Checkbacks", status = "primary", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("multiple_checkbacks_table")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 8,
+            DT::dataTableOutput("all_checkbacks_table")
+          ),
+          
+          box(title = "Dip Count Changes", status = "warning", solidHeader = TRUE, width = 4,
+            plotOutput("dip_changes_plot", height = "400px")
           )
         )
       )
@@ -250,7 +270,6 @@ server <- function(input, output, session) {
           acres,
           matcode,
           pkey_pg,
-          createdate,
           insptime
         FROM dblarv_insptrt_current 
         WHERE action = 'A' 
@@ -305,13 +324,13 @@ server <- function(input, output, session) {
     if (is.null(con)) return(NULL)
     
     tryCatch({
-      # Get checkback inspections for treated sites (posttrt_p = 'P')
+      # Get checkback inspections for treated sites
       treated_sites <- unique(treatments$sitecode)
       
       if (length(treated_sites) == 0) return(NULL)
       
-      # Create placeholder string for SQL IN clause
-      placeholders <- paste(rep("?", length(treated_sites)), collapse = ",")
+      # Create placeholder string for SQL IN clause - use $3, $4, etc. for consistency
+      site_placeholders <- paste0("$", 3:(2 + length(treated_sites)), collapse = ",")
       
       query <- paste("
         SELECT 
@@ -323,15 +342,14 @@ server <- function(input, output, session) {
           numdip,
           diphabitat,
           pkey_pg,
-          createdate,
           insptime,
           posttrt_p
         FROM dblarv_insptrt_current 
-        WHERE sitecode IN (", placeholders, ")
+        WHERE sitecode IN (", site_placeholders, ")
           AND inspdate >= $1 
           AND inspdate <= $2
           AND action = '4'
-          AND posttrt_p = 'P'
+          AND posttrt_p IS NOT NULL
         ORDER BY inspdate, sitecode
       ")
       
@@ -360,8 +378,8 @@ server <- function(input, output, session) {
     })
   })
   
-  # Calculate treatment campaigns (multi-day treatments grouped)
-  treatment_campaigns <- reactive({
+  # Calculate treatment rounds (multi-day treatments grouped)
+  treatment_rounds <- reactive({
     req(treatment_data())
     
     treatments <- treatment_data()
@@ -370,15 +388,15 @@ server <- function(input, output, session) {
     }
     
     # Group consecutive treatment days by facility
-    campaigns <- treatments %>%
+    rounds <- treatments %>%
       arrange(facility, inspdate) %>%
       group_by(facility) %>%
       mutate(
         date_diff = as.numeric(inspdate - lag(inspdate, default = inspdate[1] - 2)),
-        campaign_start = ifelse(date_diff > 1, TRUE, FALSE),
-        campaign_id = cumsum(campaign_start)
+        round_start = ifelse(date_diff > 1, TRUE, FALSE),
+        round_id = cumsum(round_start)
       ) %>%
-      group_by(facility, campaign_id) %>%
+      group_by(facility, round_id) %>%
       summarise(
         start_date = min(inspdate),
         end_date = max(inspdate),
@@ -389,70 +407,102 @@ server <- function(input, output, session) {
         .groups = "drop"
       ) %>%
       mutate(
-        campaign_name = paste(facility, format(start_date, "%m/%d"), sep = "-"),
+        round_name = paste(facility, format(start_date, "%m/%d"), sep = "-"),
         checkbacks_needed = case_when(
           input$checkback_type == "percent" ~ ceiling(sites_treated * input$checkback_percent / 100),
           TRUE ~ pmin(input$checkback_number, sites_treated)
         )
       )
     
-    return(campaigns)
+    return(rounds)
   })
   
   # Calculate checkback status
   checkback_status <- reactive({
-    req(treatment_campaigns(), checkback_data())
+    req(treatment_rounds())
     
-    campaigns <- treatment_campaigns()
+    rounds <- treatment_rounds()
     checkbacks <- checkback_data()
     treatments <- treatment_data()
     
-    # Validate all required data exists
-    if (is.null(campaigns) || nrow(campaigns) == 0 || 
-        is.null(checkbacks) || nrow(checkbacks) == 0 || 
-        is.null(treatments) || nrow(treatments) == 0) {
+    # Validate required data exists
+    if (is.null(rounds) || nrow(rounds) == 0 || is.null(treatments) || nrow(treatments) == 0) {
       return(NULL)
     }
     
-    # For each campaign, find checkbacks within reasonable timeframe (e.g., 30 days)
+    # Allow function to work even if no checkbacks exist yet
+    if (is.null(checkbacks)) {
+      checkbacks <- data.frame()
+    }
+    
+    # For each round, find checkbacks within reasonable timeframe
     results <- list()
     
-  for (i in seq_len(nrow(campaigns))) {
-      campaign <- campaigns[i, ]
+    for (i in seq_len(nrow(rounds))) {
+      round <- rounds[i, ]
       
-      # Get sites treated in this campaign
-      campaign_treatments <- treatments %>%
+      # Get sites treated in this round
+      round_treatments <- treatments %>%
         filter(
-          facility == campaign$facility,
-          inspdate >= campaign$start_date,
-          inspdate <= campaign$end_date
+          facility == round$facility,
+          inspdate >= round$start_date,
+          inspdate <= round$end_date
         )
       
-        # Get checkbacks for these sites after treatment
-        campaign_checkbacks <- checkbacks %>%
-          filter(
-            facility == campaign$facility,
-            sitecode %in% campaign_treatments$sitecode,
-            inspdate > campaign$end_date
-          ) %>%
-          group_by(sitecode) %>%
-          arrange(inspdate) %>%
-          slice(1) %>%  # First checkback only
-          ungroup() %>%
-          mutate(
-            days_to_checkback = as.numeric(inspdate - campaign$end_date)
-          )
-        results[[i]] <- data.frame(
-        facility = campaign$facility,
-        campaign_name = campaign$campaign_name,
-        start_date = campaign$start_date,
-        end_date = campaign$end_date,
-        sites_treated = campaign$sites_treated,
-        checkbacks_needed = campaign$checkbacks_needed,
-        checkbacks_completed = nrow(campaign_checkbacks),
-        completion_rate = round(nrow(campaign_checkbacks) / campaign$checkbacks_needed * 100, 1),
-        avg_days_to_checkback = ifelse(nrow(campaign_checkbacks) > 0, 
-                                     round(mean(campaign_checkbacks$days_to_checkback, na.rm = TRUE), 1), 
+      # For each site in this round, only count checkbacks that haven't been invalidated by newer treatments
+      valid_checkbacks <- data.frame()
+      
+      if (nrow(checkbacks) > 0) {
+        for (site in unique(round_treatments$sitecode)) {
+          # Get the last treatment date for this site in this round
+          last_treatment_date <- max(round_treatments$inspdate[round_treatments$sitecode == site])
+          
+          # Get all future treatments for this site (to invalidate checkbacks)
+          future_treatments <- treatments %>%
+            filter(sitecode == site, inspdate > last_treatment_date)
+          
+          # Get checkbacks for this site after the round
+          site_checkbacks <- checkbacks %>%
+            filter(
+              sitecode == site,
+              inspdate > last_treatment_date
+            )
+          
+          if (nrow(site_checkbacks) > 0) {
+            # If there are future treatments, only count checkbacks before the next treatment
+            if (nrow(future_treatments) > 0) {
+              next_treatment_date <- min(future_treatments$inspdate)
+              site_checkbacks <- site_checkbacks %>%
+                filter(inspdate < next_treatment_date)
+            }
+            
+            # Take only the first valid checkback
+            if (nrow(site_checkbacks) > 0) {
+              first_checkback <- site_checkbacks %>%
+                arrange(inspdate) %>%
+                slice(1) %>%
+                mutate(
+                  days_to_checkback = as.numeric(inspdate - last_treatment_date),
+                  round_end = round$end_date
+                )
+              
+              valid_checkbacks <- rbind(valid_checkbacks, first_checkback)
+            }
+          }
+        }
+      }
+      
+      results[[i]] <- data.frame(
+        facility = round$facility,
+        round_name = round$round_name,
+        start_date = round$start_date,
+        end_date = round$end_date,
+        sites_treated = round$sites_treated,
+        checkbacks_needed = round$checkbacks_needed,
+        checkbacks_completed = nrow(valid_checkbacks),
+        completion_rate = round(nrow(valid_checkbacks) / round$checkbacks_needed * 100, 1),
+        avg_days_to_checkback = ifelse(nrow(valid_checkbacks) > 0, 
+                                     round(mean(valid_checkbacks$days_to_checkback, na.rm = TRUE), 1), 
                                      NA)
       )
     }
@@ -464,21 +514,149 @@ server <- function(input, output, session) {
     }
   })
   
+  # Multiple checkbacks analysis
+  multiple_checkbacks_data <- reactive({
+    checkbacks <- checkback_data()
+    treatments <- treatment_data()
+    
+    if (is.null(checkbacks) || nrow(checkbacks) == 0 || 
+        is.null(treatments) || nrow(treatments) == 0) {
+      return(NULL)
+    }
+    
+    # Find sites with multiple checkbacks
+    sites_with_multiple <- checkbacks %>%
+      group_by(sitecode) %>%
+      summarise(checkback_count = n(), .groups = "drop") %>%
+      filter(checkback_count > 1) %>%
+      pull(sitecode)
+    
+    if (length(sites_with_multiple) == 0) {
+      return(NULL)
+    }
+    
+    # Get detailed checkback sequence for sites with multiple checkbacks
+    multiple_details <- list()
+    
+    for (site in sites_with_multiple) {
+      site_treatments <- treatments %>%
+        filter(sitecode == site) %>%
+        arrange(inspdate)
+      
+      site_checkbacks <- checkbacks %>%
+        filter(sitecode == site) %>%
+        arrange(inspdate)
+      
+      # Create sequence showing treatment -> checkback patterns
+      for (i in seq_len(nrow(site_checkbacks))) {
+        checkback <- site_checkbacks[i, ]
+        
+        # Find the most recent treatment before this checkback
+        recent_treatment <- site_treatments %>%
+          filter(inspdate <= checkback$inspdate) %>%
+          arrange(desc(inspdate)) %>%
+          slice(1)
+        
+        if (nrow(recent_treatment) > 0) {
+          # Calculate change from previous checkback
+          prev_dip <- if (i > 1) site_checkbacks$numdip[i-1] else recent_treatment$numdip
+          dip_change <- checkback$numdip - prev_dip
+          
+          multiple_details[[length(multiple_details) + 1]] <- data.frame(
+            sitecode = site,
+            facility = checkback$facility,
+            treatment_date = recent_treatment$inspdate,
+            checkback_date = checkback$inspdate,
+            checkback_sequence = i,
+            days_since_treatment = as.numeric(checkback$inspdate - recent_treatment$inspdate),
+            treatment_dip = recent_treatment$numdip,
+            checkback_dip = checkback$numdip,
+            previous_dip = prev_dip,
+            dip_change_from_previous = dip_change,
+            total_change_from_treatment = checkback$numdip - recent_treatment$numdip
+          )
+        }
+      }
+    }
+    
+    if (length(multiple_details) > 0) {
+      return(do.call(rbind, multiple_details))
+    } else {
+      return(NULL)
+    }
+  })
+  
+  # All checkbacks summary
+  all_checkbacks_summary <- reactive({
+    checkbacks <- checkback_data()
+    treatments <- treatment_data()
+    
+    if (is.null(checkbacks) || nrow(checkbacks) == 0 || 
+        is.null(treatments) || nrow(treatments) == 0) {
+      return(NULL)
+    }
+    
+    # Get all sites with at least one checkback
+    checkback_summary <- list()
+    
+    for (site in unique(checkbacks$sitecode)) {
+      site_treatments <- treatments %>%
+        filter(sitecode == site) %>%
+        arrange(inspdate)
+      
+      site_checkbacks <- checkbacks %>%
+        filter(sitecode == site) %>%
+        arrange(inspdate)
+      
+      # Get the most recent treatment and first checkback after it
+      last_treatment <- site_treatments %>%
+        slice(nrow(site_treatments))
+      
+      first_checkback <- site_checkbacks %>%
+        filter(inspdate > last_treatment$inspdate) %>%
+        arrange(inspdate) %>%
+        slice(1)
+      
+      if (nrow(first_checkback) > 0) {
+        checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
+          sitecode = site,
+          facility = first_checkback$facility,
+          last_treatment_date = last_treatment$inspdate,
+          first_checkback_date = first_checkback$inspdate,
+          total_checkbacks = nrow(site_checkbacks),
+          days_to_first_checkback = as.numeric(first_checkback$inspdate - last_treatment$inspdate),
+          treatment_dip = last_treatment$numdip,
+          first_checkback_dip = first_checkback$numdip,
+          initial_reduction = last_treatment$numdip - first_checkback$numdip,
+          percent_reduction = ifelse(last_treatment$numdip > 0, 
+                                   round((last_treatment$numdip - first_checkback$numdip) / last_treatment$numdip * 100, 1), 
+                                   0)
+        )
+      }
+    }
+    
+    if (length(checkback_summary) > 0) {
+      return(do.call(rbind, checkback_summary))
+    } else {
+      return(NULL)
+    }
+  })
+  
   # Value boxes
   output$total_treatments <- renderValueBox({
-    treatments <- treatment_campaigns()
+    treatments <- treatment_rounds()
     value <- ifelse(is.null(treatments), 0, nrow(treatments))
     
     valueBox(
       value = value,
-      subtitle = "Treatment Campaigns",
+      subtitle = "Treatment Rounds",
       icon = icon("plane"),
       color = "blue"
     )
   })
   
   output$sites_treated <- renderValueBox({
-    treatments <- treatment_campaigns()
+    treatments <- treatment_rounds()
     value <- ifelse(is.null(treatments), 0, sum(treatments$sites_treated, na.rm = TRUE))
     
     valueBox(
@@ -490,7 +668,7 @@ server <- function(input, output, session) {
   })
   
   output$checkbacks_needed <- renderValueBox({
-    treatments <- treatment_campaigns()
+    treatments <- treatment_rounds()
     value <- ifelse(is.null(treatments), 0, sum(treatments$checkbacks_needed, na.rm = TRUE))
     
     valueBox(
@@ -636,17 +814,17 @@ server <- function(input, output, session) {
     }
   })
   
-  # Treatment campaigns table
-  output$treatment_campaigns <- DT::renderDataTable({
-    campaigns <- treatment_campaigns()
+  # Treatment rounds table
+  output$treatment_rounds <- DT::renderDataTable({
+    rounds <- treatment_rounds()
     
-    if (is.null(campaigns)) {
-      return(data.frame(Message = "No treatment campaigns found"))
+    if (is.null(rounds)) {
+      return(data.frame(Message = "No treatment rounds found"))
     }
     
-    display_data <- campaigns %>%
+    display_data <- rounds %>%
       select(
-        Campaign = campaign_name,
+        Round = round_name,
         Facility = facility,
         `Start Date` = start_date,
         `End Date` = end_date,
@@ -679,7 +857,7 @@ server <- function(input, output, session) {
     
     display_data <- status %>%
       select(
-        Campaign = campaign_name,
+        Round = round_name,
         Facility = facility,
         `Treatment Period` = paste(start_date, "to", end_date),
         `Sites Treated` = sites_treated,
@@ -868,6 +1046,114 @@ server <- function(input, output, session) {
         theme_void()
       return(p)
     }
+  })
+  
+  # Multiple checkbacks table
+  output$multiple_checkbacks_table <- DT::renderDataTable({
+    multiple_data <- multiple_checkbacks_data()
+    
+    if (is.null(multiple_data)) {
+      return(data.frame(Message = "No sites with multiple checkbacks found"))
+    }
+    
+    display_data <- multiple_data %>%
+      arrange(sitecode, checkback_sequence) %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        `Treatment Date` = treatment_date,
+        `Checkback Date` = checkback_date,
+        `Checkback #` = checkback_sequence,
+        `Days Since Treatment` = days_since_treatment,
+        `Treatment Dip` = treatment_dip,
+        `Checkback Dip` = checkback_dip,
+        `Previous Dip` = previous_dip,
+        `Change from Previous` = dip_change_from_previous,
+        `Total Change` = total_change_from_treatment
+      )
+    
+    datatable(display_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle("Change from Previous",
+        backgroundColor = styleInterval(c(-0.1, 0.1), c("#ffcdd2", "#fff9c4", "#c8e6c9")),
+        fontWeight = "bold"
+      ) %>%
+      formatStyle("Total Change",
+        backgroundColor = styleInterval(c(-0.1, 0.1), c("#ffcdd2", "#fff9c4", "#c8e6c9")),
+        fontWeight = "bold"
+      )
+  })
+  
+  # All checkbacks table
+  output$all_checkbacks_table <- DT::renderDataTable({
+    all_data <- all_checkbacks_summary()
+    
+    if (is.null(all_data)) {
+      return(data.frame(Message = "No sites with checkbacks found"))
+    }
+    
+    display_data <- all_data %>%
+      arrange(facility, sitecode) %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        `Last Treatment` = last_treatment_date,
+        `First Checkback` = first_checkback_date,
+        `Total Checkbacks` = total_checkbacks,
+        `Days to Checkback` = days_to_first_checkback,
+        `Treatment Dip` = treatment_dip,
+        `First Checkback Dip` = first_checkback_dip,
+        `Initial Reduction` = initial_reduction,
+        `% Reduction` = percent_reduction
+      )
+    
+    datatable(display_data,
+      options = list(
+        pageLength = 20,
+        scrollX = TRUE
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle("% Reduction",
+        backgroundColor = styleInterval(c(0, 50, 80), c("#ffcdd2", "#fff9c4", "#c8e6c9", "#a5d6a7")),
+        fontWeight = "bold"
+      )
+  })
+  
+  # Dip changes plot
+  output$dip_changes_plot <- renderPlot({
+    multiple_data <- multiple_checkbacks_data()
+    
+    if (is.null(multiple_data)) {
+      p <- ggplot() + 
+        geom_text(aes(x = 0, y = 0, label = "No multiple\ncheckbacks"), size = 4) +
+        theme_void()
+      return(p)
+    }
+    
+    # Plot dip count changes over checkback sequence
+    p <- ggplot(multiple_data, aes(x = checkback_sequence, y = checkback_dip, color = sitecode)) +
+      geom_line(aes(group = sitecode), alpha = 0.7) +
+      geom_point(size = 2) +
+      labs(
+        title = "Dip Count Changes\nAcross Multiple Checkbacks",
+        x = "Checkback Sequence",
+        y = "Dip Count",
+        color = "Site Code"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 12),
+        legend.position = "none"  # Too many sites for useful legend
+      ) +
+      scale_x_continuous(breaks = function(x) seq(min(x), max(x), by = 1))
+    
+    return(p)
   })
 }
 

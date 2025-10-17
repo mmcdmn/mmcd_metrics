@@ -312,6 +312,32 @@ sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 sudo systemctl restart shiny-server
 ```
 
+### Environment Variables Setup
+
+#### Local Development
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+2. Edit `.env` with your actual database credentials:
+   ```bash
+   DB_HOST=your-database-host
+   DB_PORT=5432
+   DB_USER=your-username
+   DB_PASSWORD=your-password
+   DB_NAME=your-database-name
+   ```
+
+#### Production Deployment
+In production (AWS App Runner, Docker, etc.), set these environment variables:
+- `DB_HOST`
+- `DB_PORT` 
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+
+The application will automatically use environment variables if no .env file is found.
+
 ### Docker Deployment
 
 To build and run the dashboard using Docker:
@@ -320,16 +346,16 @@ To build and run the dashboard using Docker:
 # Build the Docker image
 docker build -t mmcd-dashboard .
 
-# Run the container with database environment variables
+# For local development (with .env file)
+docker run -p 3838:3838 --env-file .env mmcd-dashboard
+
+# For production (with environment variables)
 docker run -p 3838:3838 \
   -e DB_HOST=your-db-host \
   -e DB_NAME=your-db-name \
   -e DB_USER=your-db-user \
   -e DB_PASSWORD=your-db-password \
   mmcd-dashboard
-
-# For local development (if you have .env file locally)
-docker run -p 3838:3838 --env-file .env mmcd-dashboard
 ```
 
 Access the dashboard at: `http://localhost:3838`

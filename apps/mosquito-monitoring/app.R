@@ -10,12 +10,32 @@ library(plotrix)
 library(DBI)
 library(RPostgreSQL)
 
-# Database configuration (HARDCODED TEMPORARILY)
-host_db <- "data.mmcd.org"
-db_port <- "5432"
-db_user <- "mmcd_read"
-db_password <- "mmcd2012"
-db_name <- "mmcd_data"
+# Load environment variables from .env file (for local development)
+# or from Docker environment variables (for production)
+env_paths <- c(
+  "../../.env",           # For local development
+  "../../../.env",        # Alternative local path
+  "/srv/shiny-server/.env" # Docker path
+)
+
+# Try to load from .env file first
+env_loaded <- FALSE
+for (path in env_paths) {
+  if (file.exists(path)) {
+    readRenviron(path)
+    env_loaded <- TRUE
+    break
+  }
+}
+
+# If no .env file found, environment variables should already be set by Docker
+
+# Database configuration using environment variables
+host_db <- Sys.getenv("DB_HOST")
+db_port <- Sys.getenv("DB_PORT")
+db_user <- Sys.getenv("DB_USER")
+db_password <- Sys.getenv("DB_PASSWORD")
+db_name <- Sys.getenv("DB_NAME")
 drv <- dbDriver("PostgreSQL")
 
 con <- dbConnect(drv, dbname = db_name, host=host_db, port=db_port, user=db_user, password=db_password )

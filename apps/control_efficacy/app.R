@@ -49,7 +49,7 @@ ui <- dashboardPage(
       menuItem("Treatment Analysis", tabName = "analysis", icon = icon("chart-line")),
       menuItem("Control Efficacy", tabName = "status", icon = icon("tasks")),
       menuItem("Site Details", tabName = "details", icon = icon("map-marker")),
-      menuItem("Multiple Checkbacks", tabName = "multiple", icon = icon("search-plus"))
+    menuItem("Checkback Status", tabName = "checkback_status", icon = icon("search-plus"))
     )
   ),
   
@@ -85,7 +85,7 @@ ui <- dashboardPage(
             fluidRow(
               column(3,
                 dateRangeInput("date_range", "Select Date Range:",
-                  start = Sys.Date() - 90,
+                  start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
                   end = Sys.Date(),
                   max = Sys.Date()
                 )
@@ -149,26 +149,15 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          # Checkback Status by Facility
-          box(title = "Checkback Status by Facility", status = "success", solidHeader = TRUE, width = 8,
-            DT::dataTableOutput("facility_status")
-          ),
-          
-          # Days to Checkback Distribution  
-          box(title = "Time to Checkback", status = "warning", solidHeader = TRUE, width = 4,
-            plotOutput("checkback_timing", height = "300px")
+          # Air Treatment Details
+          box(title = "Air Treatment Details", status = "primary", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("treatment_rounds")
           )
         )
       ),
       
       # Status Tab
       tabItem(tabName = "status",
-        fluidRow(
-          box(class = "hidden-box", title = "Air Treatment Round Details", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("treatment_rounds")
-          )
-        ),
-        
         fluidRow(
             box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 12,
                 DT::dataTableOutput("all_checkbacks_table")
@@ -185,12 +174,6 @@ ui <- dashboardPage(
       # Details Tab  
       tabItem(tabName = "details",
         fluidRow(
-          box(title = "Site-Level Treatment and Checkback Details", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("site_details")
-          )
-        ),
-        
-        fluidRow(
           box(title = "Efficacy Analysis", status = "success", solidHeader = TRUE, width = 12,
             plotOutput("efficacy_plot", height = "400px")
           )
@@ -198,10 +181,23 @@ ui <- dashboardPage(
       ),
       
       # Multiple Checkbacks Tab
-      tabItem(tabName = "multiple",
+      tabItem(tabName = "checkback_status",
         fluidRow(
           box(title = "Sites with Multiple Checkbacks", status = "primary", solidHeader = TRUE, width = 12,
             DT::dataTableOutput("multiple_checkbacks_table")
+          )
+        ),
+        fluidRow(
+          box(title = "Site-Level Treatment and Checkback Details", status = "primary", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("site_details")
+          )
+        ),
+        fluidRow(
+          box(title = "Checkback Status by Facility", status = "success", solidHeader = TRUE, width = 8,
+            DT::dataTableOutput("facility_status")
+          ),
+          box(title = "Time to Checkback", status = "warning", solidHeader = TRUE, width = 4,
+            plotOutput("checkback_timing", height = "300px")
           )
         )
       )
@@ -230,13 +226,32 @@ server <- function(input, output, session) {
         fac_choices <- setNames(facilities$facility, facilities$facility)
         fac_choices <- c("All Facilities" = "all", fac_choices)
         
-        # Get material codes for filter (from air treatments only)
-        matcodes <- dbGetQuery(con, "SELECT DISTINCT matcode FROM dblarv_insptrt_current WHERE action = 'A' AND matcode IS NOT NULL AND matcode != '' ORDER BY matcode")
+        # Get material codes for filter with display names from lookup table
+        matcodes_query <- "
+          SELECT DISTINCT 
+            t.matcode,
+            COALESCE(l.display_text, t.matcode) as display_text,
+            l.tdosedisplay
+          FROM dblarv_insptrt_current t
+          LEFT JOIN lookup_matcode_entrylist l ON t.matcode = l.matcode
+          WHERE t.action = 'A' 
+            AND t.matcode IS NOT NULL 
+            AND t.matcode != '' 
+          ORDER BY COALESCE(l.display_text, t.matcode)
+        "
+        matcodes <- dbGetQuery(con, matcodes_query)
+        
         if (nrow(matcodes) == 0) {
           # Ensure dropdown always has at least the All option
           mat_choices <- c("All Materials" = "all")
         } else {
-          mat_choices <- setNames(matcodes$matcode, matcodes$matcode)
+          # Create display names: use display_text + tdosedisplay if available
+          display_names <- ifelse(
+            !is.na(matcodes$tdosedisplay) & matcodes$tdosedisplay != "",
+            paste0(matcodes$display_text, " (", matcodes$tdosedisplay, ")"),
+            matcodes$display_text
+          )
+          mat_choices <- setNames(matcodes$matcode, display_names)
           mat_choices <- c("All Materials" = "all", mat_choices)
         }
         
@@ -386,7 +401,7 @@ server <- function(input, output, session) {
     })
   })
   
-  # Calculate treatment rounds (multi-day treatments grouped)
+  # Calculate broods (multi-day treatments grouped)
   treatment_rounds <- reactive({
     req(treatment_data())
     
@@ -678,8 +693,8 @@ server <- function(input, output, session) {
     
     valueBox(
       value = value,
-      subtitle = "Treatment Rounds",
-      icon = icon("plane"),
+  subtitle = "Broods",
+  icon = icon("helicopter"),
       color = "blue"
     )
   })
@@ -843,17 +858,17 @@ server <- function(input, output, session) {
     }
   })
   
-  # Treatment rounds table
+  # Broods table
   output$treatment_rounds <- DT::renderDataTable({
     rounds <- treatment_rounds()
     
     if (is.null(rounds)) {
-      return(data.frame(Message = "No treatment rounds found"))
+  return(data.frame(Message = "No broods found"))
     }
     
     display_data <- rounds %>%
       select(
-        Round = round_name,
+        Brood = round_name,
         Facility = facility,
         `Start Date` = start_date,
         `End Date` = end_date,

@@ -331,7 +331,7 @@ server <- function(input, output, session) {
          <strong>Acres:</strong> %.2f<br/>
          <strong>Total Rainfall:</strong> %.2f inches<br/>
          <strong>Avg Rainfall:</strong> %.3f inches<br/>
-         <strong>Rain Days:</strong> %d",
+         <strong>Rain Days:</strong> %.0f",
         data$sitecode, data$type, data$priority, data$facility,
         data$acres, data$total_rainfall, data$avg_rainfall, data$rain_days
       )

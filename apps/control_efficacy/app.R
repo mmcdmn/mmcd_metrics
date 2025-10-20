@@ -1105,20 +1105,26 @@ server <- function(input, output, session) {
       return(data.frame(Message = "No sites with checkbacks found"))
     }
     
-    display_data <- all_data %>%
-      arrange(facility, sitecode) %>%
-      select(
-        `Site Code` = sitecode,
-        Facility = facility,
-        `Last Treatment` = last_treatment_date,
-        `First Checkback` = first_checkback_date,
-        `Total Checkbacks` = total_checkbacks,
-        `Days to Checkback` = days_to_first_checkback,
-        `Treatment Dip` = treatment_dip,
-        `First Checkback Dip` = first_checkback_dip,
-        `Initial Reduction` = initial_reduction,
-        `% Reduction` = percent_reduction
-      )
+    tryCatch({
+      display_data <- all_data %>%
+        as.data.frame() %>%
+        arrange(facility, sitecode) %>%
+        select(
+          `Site Code` = sitecode,
+          Facility = facility,
+          `Last Treatment` = last_treatment_date,
+          `First Checkback` = first_checkback_date,
+          `Total Checkbacks` = total_checkbacks,
+          `Days to Checkback` = days_to_first_checkback,
+          `Treatment Dip` = treatment_dip,
+          `First Checkback Dip` = first_checkback_dip,
+          `Initial Reduction` = initial_reduction,
+          `% Reduction` = percent_reduction
+        )
+    }, error = function(e) {
+      showNotification(paste("Error preparing table data:", e$message), type = "error")
+      return(data.frame(Message = "Error loading data"))
+    })
     
     dt <- datatable(display_data,
       options = list(

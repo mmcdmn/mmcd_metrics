@@ -177,7 +177,7 @@ ui <- dashboardPage(
         
         fluidRow(
             box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 12,
-                plotly::plotlyOutput("dip_changes_plot", height = "600px", click = "dip_plot_click")
+                plotly::plotlyOutput("dip_changes_plot", height = "600px")
             )
         )
       ),
@@ -1189,19 +1189,15 @@ server <- function(input, output, session) {
         axis.text.x = element_text(size = 12),
         legend.position = "right"
       )
-    ggplotly(p, tooltip = "text") %>%
+    ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
       layout(clickmode = "event+select")
   })
   
-  # Handle plot clicks to select sitecode
-  observeEvent(input$dip_plot_click, {
-    d <- input$dip_plot_click
-    if (!is.null(d)) {
-      # The text field contains the sitecode
-      sitecode_clicked <- d$text
-      if (!is.null(sitecode_clicked)) {
-        values$selected_sitecode <- sitecode_clicked
-      }
+  # Handle plot clicks to select sitecode using plotly event
+  observeEvent(event_data("plotly_click", source = "dip_changes_plot"), {
+    d <- event_data("plotly_click", source = "dip_changes_plot")
+    if (!is.null(d) && !is.null(d$text)) {
+      values$selected_sitecode <- d$text
     }
   })
   

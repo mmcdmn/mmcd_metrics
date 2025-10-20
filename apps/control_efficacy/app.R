@@ -604,6 +604,36 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
+    # First pass: calculate mean days to first checkback (excluding extreme outliers)
+    all_days <- numeric()
+    
+    for (site in unique(checkbacks$sitecode)) {
+      site_treatments <- treatments %>%
+        filter(sitecode == site) %>%
+        arrange(inspdate)
+      
+      site_checkbacks <- checkbacks %>%
+        filter(sitecode == site) %>%
+        arrange(inspdate)
+      
+      last_treatment <- site_treatments %>%
+        slice(nrow(site_treatments))
+      
+      first_checkback <- site_checkbacks %>%
+        filter(inspdate > last_treatment$inspdate) %>%
+        arrange(inspdate) %>%
+        slice(1)
+      
+      if (nrow(first_checkback) > 0) {
+        days_val <- as.numeric(first_checkback$inspdate - last_treatment$inspdate)
+        all_days <- c(all_days, days_val)
+      }
+    }
+    
+    # Calculate mean and identify outliers
+    mean_days <- mean(all_days, na.rm = TRUE)
+    outlier_threshold <- mean_days + 12  # More than 12 days after mean
+    
     # Get all sites with at least one checkback
     checkback_summary <- list()
     
@@ -626,19 +656,23 @@ server <- function(input, output, session) {
         slice(1)
       
       if (nrow(first_checkback) > 0) {
+        days_val <- as.numeric(first_checkback$inspdate - last_treatment$inspdate)
+        is_outlier <- days_val > outlier_threshold
+        
         checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
           sitecode = site,
           facility = first_checkback$facility,
           last_treatment_date = last_treatment$inspdate,
           first_checkback_date = first_checkback$inspdate,
           total_checkbacks = nrow(site_checkbacks),
-          days_to_first_checkback = as.numeric(first_checkback$inspdate - last_treatment$inspdate),
+          days_to_first_checkback = if_else(is_outlier, mean_days, days_val),  # Use mean if outlier
           treatment_dip = last_treatment$numdip,
           first_checkback_dip = first_checkback$numdip,
           initial_reduction = last_treatment$numdip - first_checkback$numdip,
           percent_reduction = ifelse(last_treatment$numdip > 0, 
                                    round((last_treatment$numdip - first_checkback$numdip) / last_treatment$numdip * 100, 1), 
-                                   0)
+                                   0),
+          is_outlier_days = is_outlier
         )
       }
     }
@@ -1100,6 +1134,8 @@ server <- function(input, output, session) {
   # All checkbacks table
   output$all_checkbacks_table <- DT::renderDataTable({
     all_data <- all_checkbacks_summary()
+    # Trigger reactive dependency on selected_sitecode so table updates when selection changes
+    selected <- values$selected_sitecode
     
     if (is.null(all_data)) {
       return(data.frame(Message = "No sites with checkbacks found"))
@@ -1140,15 +1176,16 @@ server <- function(input, output, session) {
       )
     
     # Highlight selected row based on selected_sitecode
-    if (!is.null(values$selected_sitecode)) {
+    if (!is.null(selected) && selected != "") {
       # Find which row has the selected sitecode
-      selected_row <- which(display_data$`Site Code` == values$selected_sitecode)
-      if (length(selected_row) > 0) {
+      selected_rows <- which(display_data$`Site Code` == selected)
+      if (length(selected_rows) > 0) {
+        selected_row_idx <- selected_rows[1] - 1  # Convert to 0-based index
         dt <- dt %>%
           formatStyle(
             columns = 0:ncol(display_data),
             target = "row",
-            backgroundColor = styleEqual(selected_row - 1, "lightyellow")
+            backgroundColor = styleEqual(selected_row_idx, "lightyellow")
           )
       }
     }
@@ -1159,6 +1196,9 @@ server <- function(input, output, session) {
   # Dip changes plot (pre-treatment vs first checkback for all sites)
   output$dip_changes_plot <- renderPlotly({
     all_data <- all_checkbacks_summary()
+    # Trigger reactive dependency on selected_sitecode so plot updates when selection changes
+    selected <- values$selected_sitecode
+    
     if (is.null(all_data) || nrow(all_data) == 0) {
       p <- ggplot() + 
         geom_text(aes(x = 0, y = 0, label = "No checkback data"), size = 5) +
@@ -1176,23 +1216,34 @@ server <- function(input, output, session) {
                              labels = c("Pre-Treatment", "First Checkback"))
       
       # Add highlight indicator for selected sitecode
-      plot_df$is_selected <- ifelse(is.null(values$selected_sitecode), FALSE, plot_df$sitecode == values$selected_sitecode)
+      plot_df$is_selected <- ifelse(is.null(selected) || selected == "", FALSE, plot_df$sitecode == selected)
+      
+      # Separate in-range and out-of-range data
+      plot_df_inrange <- plot_df %>% filter(dip >= -2 & dip <= 25)
+      plot_df_outrange <- plot_df %>% filter(dip > 25) %>% mutate(dip_display = 25)  # Display at edge
       
       # Dumbbell plot: paired points with lines, plus boxplot overlay
+      # The boxplot is calculated on the FULL plot_df (all data)
       dodge_amt <- 1
-      p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback, text = paste("Site:", sitecode))) +
-        geom_boxplot(aes(group = type, text = NA), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = -0.30), outlier.shape = NA) +
-        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
-        geom_point(aes(size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
+      p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode)) +
+        # Boxplot calculated on ALL data
+        geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, 
+                     position = position_nudge(x = -0.30), outlier.shape = NA, coef = Inf) +
+        # Lines and points for in-range data
+        geom_line(data = plot_df_inrange, aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
+        geom_point(data = plot_df_inrange, aes(text = sitecode, size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
+        # Lines and points for out-of-range data (shown at edge)
+        geom_line(data = plot_df_outrange, aes(y = dip_display, size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
+        geom_point(data = plot_df_outrange, aes(y = dip_display, text = sitecode, size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
         labs(
           title = "Dip Count Change: Pre-Treatment vs First Checkback",
           x = "",
           y = "Dip Count",
           color = "Days Between"
         ) +
-        scale_color_gradientn(colors = c("red", "orange", "green", "blue", "purple")) +
+        scale_color_gradientn(colors = c("red", "orange", "green", "blue", "purple"), na.value = "gold") +
         scale_size_identity() +
-        coord_cartesian(ylim = c(-2, 25), expand = FALSE) +
+        scale_y_continuous(limits = c(-2, 25)) +
         theme_minimal() +
         theme(
           plot.title = element_text(hjust = 0.5, size = 14),
@@ -1203,7 +1254,6 @@ server <- function(input, output, session) {
       p_plotly <- ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
         layout(clickmode = "event+select")
       
-      # Explicitly register the click event
       p_plotly <- event_register(p_plotly, "plotly_click")
       p_plotly
     }, error = function(e) {
@@ -1220,33 +1270,46 @@ server <- function(input, output, session) {
   # Handle plot clicks to select sitecode using plotly event
   observeEvent(event_data("plotly_click", source = "dip_changes_plot"), {
     d <- event_data("plotly_click", source = "dip_changes_plot")
-    cat("Plot clicked! Text data:", d$text, "\n")
-    if (!is.null(d) && !is.null(d$text)) {
-      # Extract sitecode from "Site: XXXX-XXX" format
-      text_parts <- strsplit(d$text, "Site: ")[[1]]
-      if (length(text_parts) > 1) {
-        sitecode <- text_parts[2]
-        cat("Extracted sitecode from plot click:", sitecode, "\n")
-        values$selected_sitecode <- sitecode
-      }
+    cat("Plot clicked! Full event:\n")
+    cat("d structure:", str(d), "\n")
+    cat("d$text:", ifelse(is.null(d$text), "NULL", d$text), "\n")
+    
+    if (!is.null(d) && nrow(d) > 0 && !is.null(d$text) && d$text != "") {
+      sitecode <- as.character(d$text)
+      cat("✓ Successfully extracted sitecode from plot:", sitecode, "\n")
+      values$selected_sitecode <- sitecode
+      cat("✓ Set values$selected_sitecode to:", values$selected_sitecode, "\n")
+    } else {
+      cat("✗ Failed: d is null, empty, or text is null/empty\n")
     }
   })
   
   # Handle table row selection
   observeEvent(input$all_checkbacks_table_rows_selected, {
     all_data <- all_checkbacks_summary()
-    cat("Table row selected:", input$all_checkbacks_table_rows_selected, "\n")
+    cat("\n>>> TABLE ROW SELECTED <<<\n")
+    cat("Row index:", input$all_checkbacks_table_rows_selected, "\n")
+    
     if (!is.null(all_data) && is.data.frame(all_data) && length(input$all_checkbacks_table_rows_selected) > 0) {
       # Get the selected row index
       selected_row <- input$all_checkbacks_table_rows_selected[1]
+      cat("Selected row number:", selected_row, "\n")
+      
       # Sort the data the same way the table does
       sorted_data <- all_data[order(all_data$facility, all_data$sitecode), ]
+      cat("Total rows in sorted_data:", nrow(sorted_data), "\n")
+      
       # Get the sitecode from the selected row
       if (selected_row <= nrow(sorted_data)) {
         selected_sitecode <- sorted_data$sitecode[selected_row]
-        cat("Selected sitecode from table:", selected_sitecode, "\n")
+        cat("✓ Selected sitecode:", selected_sitecode, "\n")
         values$selected_sitecode <- selected_sitecode
+        cat("✓ Set values$selected_sitecode to:", values$selected_sitecode, "\n")
+      } else {
+        cat("✗ Selected row exceeds data rows\n")
       }
+    } else {
+      cat("✗ Conditions not met: all_data=", !is.null(all_data), " is.df=", is.data.frame(all_data), " has selection=", length(input$all_checkbacks_table_rows_selected) > 0, "\n")
     }
   })
 }

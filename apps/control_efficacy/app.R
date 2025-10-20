@@ -151,12 +151,12 @@ ui <- dashboardPage(
         
         
         fluidRow(
-          box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 8,
-              DT::dataTableOutput("all_checkbacks_table")
-          ),
-          box(title = "Dip Count Changes", status = "warning", solidHeader = TRUE, width = 4,
-              plotOutput("dip_changes_plot", height = "400px")
-          )
+            box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 8,
+                DT::dataTableOutput("all_checkbacks_table")
+            ),
+            box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 4,
+                plotOutput("dip_changes_plot", height = "400px")
+            )
         )
       ),
       
@@ -1110,34 +1110,39 @@ server <- function(input, output, session) {
       )
   })
   
-  # Dip changes plot
+  # Dip changes plot (pre-treatment vs first checkback for all sites)
   output$dip_changes_plot <- renderPlot({
-    multiple_data <- multiple_checkbacks_data()
-    
-    if (is.null(multiple_data)) {
+    all_data <- all_checkbacks_summary()
+    if (is.null(all_data) || nrow(all_data) == 0) {
       p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No multiple\ncheckbacks"), size = 4) +
+        geom_text(aes(x = 0, y = 0, label = "No checkback data"), size = 5) +
         theme_void()
       return(p)
     }
-    
-    # Plot dip count changes over checkback sequence
-    p <- ggplot(multiple_data, aes(x = checkback_sequence, y = checkback_dip, color = sitecode)) +
-      geom_line(aes(group = sitecode), alpha = 0.7) +
-      geom_point(size = 2) +
+    # Prepare paired data: one row per site, pre-treatment and first checkback
+    plot_df <- all_data %>%
+      select(sitecode, facility, treatment_dip, first_checkback_dip) %>%
+      tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
+                         names_to = "type", values_to = "dip")
+    plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
+                          labels = c("Pre-Treatment", "First Checkback"))
+    # Dumbbell plot: paired points with lines, plus boxplot overlay
+    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = facility)) +
+      geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
+      geom_line(aes(group = sitecode), color = "gray70", alpha = 0.5, size = 1) +
+      geom_point(size = 3, alpha = 0.8) +
       labs(
-        title = "Dip Count Changes\nAcross Multiple Checkbacks",
-        x = "Checkback Sequence",
+        title = "Dip Count Change: Pre-Treatment vs First Checkback",
+        x = "",
         y = "Dip Count",
-        color = "Site Code"
+        color = "Facility"
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(hjust = 0.5, size = 12),
-        legend.position = "none"  # Too many sites for useful legend
-      ) +
-      scale_x_continuous(breaks = function(x) seq(min(x), max(x), by = 1))
-    
+        plot.title = element_text(hjust = 0.5, size = 14),
+        axis.text.x = element_text(size = 12),
+        legend.position = "right"
+      )
     return(p)
   })
 }

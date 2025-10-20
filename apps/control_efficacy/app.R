@@ -226,32 +226,13 @@ server <- function(input, output, session) {
         fac_choices <- setNames(facilities$facility, facilities$facility)
         fac_choices <- c("All Facilities" = "all", fac_choices)
         
-        # Get material codes for filter with display names from lookup table
-        matcodes_query <- "
-          SELECT DISTINCT 
-            t.matcode,
-            COALESCE(l.display_text, t.matcode) as display_text,
-            l.tdosedisplay
-          FROM dblarv_insptrt_current t
-          LEFT JOIN lookup_matcode_entrylist l ON t.matcode = l.matcode
-          WHERE t.action = 'A' 
-            AND t.matcode IS NOT NULL 
-            AND t.matcode != '' 
-          ORDER BY COALESCE(l.display_text, t.matcode)
-        "
-        matcodes <- dbGetQuery(con, matcodes_query)
-        
+        # Get material codes for filter (from air treatments only) - simplified without lookup for now
+        matcodes <- dbGetQuery(con, "SELECT DISTINCT matcode FROM dblarv_insptrt_current WHERE action = 'A' AND matcode IS NOT NULL AND matcode != '' ORDER BY matcode")
         if (nrow(matcodes) == 0) {
           # Ensure dropdown always has at least the All option
           mat_choices <- c("All Materials" = "all")
         } else {
-          # Create display names: use display_text + tdosedisplay if available
-          display_names <- ifelse(
-            !is.na(matcodes$tdosedisplay) & matcodes$tdosedisplay != "",
-            paste0(matcodes$display_text, " (", matcodes$tdosedisplay, ")"),
-            matcodes$display_text
-          )
-          mat_choices <- setNames(matcodes$matcode, display_names)
+          mat_choices <- setNames(matcodes$matcode, matcodes$matcode)
           mat_choices <- c("All Materials" = "all", mat_choices)
         }
         
@@ -618,6 +599,24 @@ server <- function(input, output, session) {
         is.null(treatments) || nrow(treatments) == 0) {
       return(NULL)
     }
+
+    # Get material lookup data for display names
+    con <- get_db_connection()
+    material_lookup <- data.frame()
+    if (!is.null(con)) {
+      tryCatch({
+        material_lookup <- dbGetQuery(con, "
+          SELECT 
+            matcode,
+            display_text,
+            tdosedisplay
+          FROM public.lookup_matcode_entrylist
+        ")
+        dbDisconnect(con)
+      }, error = function(e) {
+        if (!is.null(con)) dbDisconnect(con)
+      })
+    }
     
     # Get all sites with at least one checkback
     checkback_summary <- list()
@@ -642,9 +641,23 @@ server <- function(input, output, session) {
           slice(1)
         
         if (nrow(treatment_before) > 0) {
+          # Get material display name
+          material_display <- treatment_before$matcode
+          if (nrow(material_lookup) > 0) {
+            lookup_row <- material_lookup[material_lookup$matcode == treatment_before$matcode, ]
+            if (nrow(lookup_row) > 0) {
+              if (!is.na(lookup_row$tdosedisplay) && lookup_row$tdosedisplay != "") {
+                material_display <- paste0(lookup_row$display_text, " (", lookup_row$tdosedisplay, ")")
+              } else {
+                material_display <- lookup_row$display_text
+              }
+            }
+          }
+          
           checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
             sitecode = site,
             facility = checkback$facility,
+            material = material_display,
             last_treatment_date = treatment_before$inspdate,
             first_checkback_date = checkback$inspdate,
             total_checkbacks = nrow(site_checkbacks),
@@ -1146,10 +1159,10 @@ server <- function(input, output, session) {
     tryCatch({
       display_data <- all_data %>%
         as.data.frame() %>%
-        arrange(facility, sitecode) %>%
+        arrange(material, sitecode) %>%
         select(
           `Site Code` = sitecode,
-          Facility = facility,
+          Material = material,
           `Last Treatment` = last_treatment_date,
           `First Checkback` = first_checkback_date,
           `Total Checkbacks` = total_checkbacks,

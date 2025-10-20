@@ -616,48 +616,54 @@ server <- function(input, output, session) {
         filter(sitecode == site) %>%
         arrange(inspdate)
       
-      cat("Site:", site, "- Treatments:", nrow(site_treatments), "Checkbacks:", nrow(site_checkbacks), "\n")
-      cat("  Checkback dips:", paste(site_checkbacks$numdip, collapse = ", "), "\n")
-      
-      # Get the most recent treatment and first checkback after it
-      last_treatment <- site_treatments %>%
-        slice(nrow(site_treatments))
-      
-      first_checkback <- site_checkbacks %>%
-        filter(inspdate > last_treatment$inspdate) %>%
-        arrange(inspdate) %>%
-        slice(1)
-      
-      cat("  Last treatment dip:", last_treatment$numdip, "date:", last_treatment$inspdate, "\n")
-      if (nrow(first_checkback) > 0) {
-        cat("  First checkback after treatment dip:", first_checkback$numdip, "date:", first_checkback$inspdate, "\n")
-      } else {
-        cat("  No checkback after last treatment\n")
-      }
-      
-      if (nrow(first_checkback) > 0) {
-        checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
-          sitecode = site,
-          facility = first_checkback$facility,
-          last_treatment_date = last_treatment$inspdate,
-          first_checkback_date = first_checkback$inspdate,
-          total_checkbacks = nrow(site_checkbacks),
-          days_to_first_checkback = as.numeric(first_checkback$inspdate - last_treatment$inspdate),
-          treatment_dip = last_treatment$numdip,
-          first_checkback_dip = first_checkback$numdip,
-          initial_reduction = last_treatment$numdip - first_checkback$numdip,
-          percent_reduction = ifelse(last_treatment$numdip > 0, 
-                                   round((last_treatment$numdip - first_checkback$numdip) / last_treatment$numdip * 100, 1), 
-                                   0)
-        )
+      # For each checkback, find the most recent treatment BEFORE it
+      for (i in 1:nrow(site_checkbacks)) {
+        checkback <- site_checkbacks[i, ]
+        
+        # Get most recent treatment before this checkback
+        treatment_before <- site_treatments %>%
+          filter(inspdate <= checkback$inspdate) %>%
+          arrange(desc(inspdate)) %>%
+          slice(1)
+        
+        if (nrow(treatment_before) > 0) {
+          checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
+            sitecode = site,
+            facility = checkback$facility,
+            last_treatment_date = treatment_before$inspdate,
+            first_checkback_date = checkback$inspdate,
+            total_checkbacks = nrow(site_checkbacks),
+            days_to_first_checkback = as.numeric(checkback$inspdate - treatment_before$inspdate),
+            treatment_dip = treatment_before$numdip,
+            first_checkback_dip = checkback$numdip,
+            initial_reduction = treatment_before$numdip - checkback$numdip,
+            percent_reduction = ifelse(treatment_before$numdip > 0, 
+                                     round((treatment_before$numdip - checkback$numdip) / treatment_before$numdip * 100, 1), 
+                                     0)
+          )
+        }
       }
     }
     
     if (length(checkback_summary) > 0) {
       result <- do.call(rbind, checkback_summary)
+      
+      # Calculate mean days and identify outliers
+      mean_days <- mean(result$days_to_first_checkback, na.rm = TRUE)
+      outlier_threshold <- mean_days + 12
+      
+      # Replace outlier days with mean for coloring purposes
+      result$days_to_first_checkback_display <- ifelse(
+        result$days_to_first_checkback > outlier_threshold,
+        mean_days,
+        result$days_to_first_checkback
+      )
+      
       cat("\n=== FINAL SUMMARY ===\n")
       cat("Max first_checkback_dip:", max(result$first_checkback_dip, na.rm = TRUE), "\n")
-      cat("Sites included:", nrow(result), "\n")
+      cat("Sites/Checkbacks included:", nrow(result), "\n")
+      cat("Mean days to checkback:", round(mean_days, 1), "\n")
+      cat("Outlier threshold (mean + 12):", round(outlier_threshold, 1), "\n")
       cat("====================\n\n")
       return(result)
     } else {
@@ -1190,27 +1196,38 @@ server <- function(input, output, session) {
     tryCatch({
       # Prepare paired data: one row per site, pre-treatment and first checkback
       plot_df <- all_data %>%
-        select(sitecode, treatment_dip, first_checkback_dip, days_to_first_checkback) %>%
+        select(sitecode, treatment_dip, first_checkback_dip, days_to_first_checkback_display) %>%
         tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
                              names_to = "type", values_to = "dip")
       plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
                              labels = c("Pre-Treatment", "First Checkback"))
-      
-      cat("DEBUG: Max dip in plot_df before filtering:", max(plot_df$dip, na.rm = TRUE), "\n")
-      cat("DEBUG: Min dip in plot_df before filtering:", min(plot_df$dip, na.rm = TRUE), "\n")
-      cat("DEBUG: Number of rows:", nrow(plot_df), "\n")
-      
+
+  # Calculate Q1, Q3, and IQR for each type
+  q1_treatment <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.25, na.rm = TRUE)
+  q3_treatment <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.75, na.rm = TRUE)
+  iqr_treatment <- q3_treatment - q1_treatment
+  q1_checkback <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.25, na.rm = TRUE)
+  q3_checkback <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.75, na.rm = TRUE)
+  iqr_checkback <- q3_checkback - q1_checkback
+  # Use the higher Q3 and IQR
+  y_top <- max(q3_treatment, q3_checkback)
+  iqr_top <- max(iqr_treatment, iqr_checkback)
+  # Set y-axis upper limit to Q3 + max(25% of IQR, 2), rounded up
+  y_lim_top <- ceiling(y_top + max(0.25 * iqr_top, 2))
+
       # Add highlight indicator for selected sitecode
       plot_df$is_selected <- ifelse(is.null(selected) || selected == "", FALSE, plot_df$sitecode == selected)
       # Store the color value: gold if selected, otherwise use days value
-      plot_df$point_color <- ifelse(plot_df$is_selected, "gold", as.numeric(plot_df$days_to_first_checkback))
-      
+      plot_df$point_color <- ifelse(plot_df$is_selected, "gold", as.numeric(plot_df$days_to_first_checkback_display))
+      # Create a group ID that will be used for highlighting entire dumbbells
+      plot_df$dumbbell_group <- plot_df$sitecode
+
       # Dumbbell plot: paired points with lines, plus boxplot overlay
-      dodge_amt <- 1
+      dodge_amt <- 0.5
       p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode)) +
         geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = -0.30), outlier.shape = NA, coef = Inf) +
-        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
-        geom_point(aes(text = sitecode, size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
+        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback_display), customdata = dumbbell_group), position = position_dodge(width = dodge_amt)) +
+        geom_point(aes(text = sitecode, size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback_display)), position = position_dodge(width = dodge_amt)) +
         labs(
           title = "Dip Count Change: Pre-Treatment vs First Checkback",
           x = "",
@@ -1219,17 +1236,17 @@ server <- function(input, output, session) {
         ) +
         scale_color_gradientn(colors = c("red", "orange", "green", "blue", "purple"), na.value = "gold") +
         scale_size_identity() +
-        scale_y_continuous(limits = c(-2, 25), oob = scales::oob_keep) +
+        scale_y_continuous(limits = c(-2, y_lim_top), oob = scales::oob_keep) +
         theme_minimal() +
         theme(
           plot.title = element_text(hjust = 0.5, size = 14),
           axis.text.x = element_text(size = 12),
           legend.position = "right"
         )
-      
+
       p_plotly <- ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
-        layout(clickmode = "event+select")
-      
+        layout(clickmode = "event")
+
       p_plotly <- event_register(p_plotly, "plotly_click")
       p_plotly
     }, error = function(e) {
@@ -1245,14 +1262,21 @@ server <- function(input, output, session) {
   
   # Handle plot clicks to select sitecode using plotly event
   observeEvent(event_data("plotly_click", source = "dip_changes_plot"), {
+    cat(">>> observeEvent triggered for plotly_click\n")
     d <- event_data("plotly_click", source = "dip_changes_plot")
-    cat("Plot clicked! text:", d$text, "\n")
+    cat(">>> event_data returned:", class(d), "\n")
+    if (!is.null(d)) {
+      cat(">>> d structure:", paste(names(d), collapse = ", "), "\n")
+      cat(">>> d$text:", d$text, "\n")
+    }
     if (!is.null(d) && !is.null(d$text)) {
       sitecode <- d$text
-      cat("Extracted sitecode from plot click:", sitecode, "\n")
+      cat(">>> Extracted sitecode from plot click:", sitecode, "\n")
       values$selected_sitecode <- sitecode
+    } else {
+      cat(">>> No text found in event_data\n")
     }
-  })
+  }, ignoreInit = TRUE)
   
   # Handle table row selection
   observeEvent(input$all_checkbacks_table_rows_selected, {

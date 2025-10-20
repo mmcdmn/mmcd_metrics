@@ -1139,17 +1139,6 @@ server <- function(input, output, session) {
         fontWeight = "bold"
       )
     
-    # Highlight selected row if a sitecode is selected from the plot
-    if (!is.null(values$selected_sitecode)) {
-      selected_row <- which(display_data$`Site Code` == values$selected_sitecode)
-      if (length(selected_row) > 0) {
-        dt <- dt %>%
-          formatStyle(columns = 0:ncol(display_data), 
-                     target = "row",
-                     backgroundColor = styleEqual(selected_row, "lightblue"))
-      }
-    }
-    
     dt
   })
   
@@ -1162,59 +1151,71 @@ server <- function(input, output, session) {
         theme_void()
       return(ggplotly(p))
     }
-    # Prepare paired data: one row per site, pre-treatment and first checkback
-    plot_df <- all_data %>%
-      select(sitecode, treatment_dip, first_checkback_dip, days_to_first_checkback) %>%
-      tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
-                           names_to = "type", values_to = "dip")
-    plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
-                           labels = c("Pre-Treatment", "First Checkback"))
     
-    # Add highlight indicator for selected sitecode
-    plot_df$is_selected <- ifelse(is.null(values$selected_sitecode), FALSE, plot_df$sitecode == values$selected_sitecode)
-    
-    # Dumbbell plot: paired points with lines, plus boxplot overlay
-    dodge_amt <- 0.2
-    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback, text = sitecode)) +
-      geom_boxplot(aes(group = type, text = NA), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
-      geom_line(data = plot_df[!plot_df$is_selected, ], aes(group = sitecode, text = NA), color = "gray70", alpha = 0.5, size = 1, position = position_dodge(width = dodge_amt)) +
-      geom_line(data = plot_df[plot_df$is_selected, ], aes(group = sitecode, text = NA), color = "black", alpha = 0.9, size = 2, position = position_dodge(width = dodge_amt)) +
-      geom_point(data = plot_df[!plot_df$is_selected, ], aes(text = sitecode), size = 3, alpha = 0.8, position = position_dodge(width = dodge_amt)) +
-      geom_point(data = plot_df[plot_df$is_selected, ], aes(text = sitecode), size = 5, alpha = 1, color = "darkred", position = position_dodge(width = dodge_amt)) +
-      labs(
-        title = "Dip Count Change: Pre-Treatment vs First Checkback",
-        x = "",
-        y = "Dip Count",
-        color = "Days Between"
-      ) +
-      scale_color_gradientn(colors = c("red", "orange", "green", "blue", "purple")) +
-      coord_cartesian(ylim = c(-2, 25), expand = FALSE) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(hjust = 0.5, size = 14),
-        axis.text.x = element_text(size = 12),
-        legend.position = "right"
-      )
-    
-    p_plotly <- ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
-      layout(clickmode = "event+select")
-    
-    # Register the click event
-    event_register(p_plotly, "plotly_click")
-    p_plotly
+    tryCatch({
+      # Prepare paired data: one row per site, pre-treatment and first checkback
+      plot_df <- all_data %>%
+        select(sitecode, treatment_dip, first_checkback_dip, days_to_first_checkback) %>%
+        tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
+                             names_to = "type", values_to = "dip")
+      plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
+                             labels = c("Pre-Treatment", "First Checkback"))
+      
+      # Add highlight indicator for selected sitecode
+      plot_df$is_selected <- ifelse(is.null(values$selected_sitecode), FALSE, plot_df$sitecode == values$selected_sitecode)
+      
+      # Dumbbell plot: paired points with lines, plus boxplot overlay
+      dodge_amt <- 1
+      p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback, label = sitecode)) +
+        geom_boxplot(aes(group = type, label = NA), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = -0.30), outlier.shape = NA) +
+        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5)), position = position_dodge(width = dodge_amt)) +
+        geom_point(aes(size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
+        labs(
+          title = "Dip Count Change: Pre-Treatment vs First Checkback",
+          x = "",
+          y = "Dip Count",
+          color = "Days Between"
+        ) +
+        scale_color_gradientn(colors = c("red", "orange", "green", "blue", "purple")) +
+        scale_size_identity() +
+        coord_cartesian(ylim = c(-2, 25), expand = FALSE) +
+        theme_minimal() +
+        theme(
+          plot.title = element_text(hjust = 0.5, size = 14),
+          axis.text.x = element_text(size = 12),
+          legend.position = "right"
+        )
+      
+      p_plotly <- ggplotly(p, tooltip = "label", source = "dip_changes_plot") %>%
+        layout(clickmode = "event+select")
+      
+      # Explicitly register the click event
+      p_plotly <- event_register(p_plotly, "plotly_click")
+      p_plotly
+    }, error = function(e) {
+      showNotification(paste("Plot error:", e$message), type = "error")
+      ggplotly(ggplot() + geom_text(aes(x = 0, y = 0, label = "Error rendering plot")))
+    })
   })
   
   # Handle plot clicks to select sitecode using plotly event
   observeEvent(event_data("plotly_click", source = "dip_changes_plot"), {
     d <- event_data("plotly_click", source = "dip_changes_plot")
-    if (!is.null(d) && !is.null(d$text)) {
-      values$selected_sitecode <- d$text
+    cat("Plot clicked! Data:", d$text, "\n")
+    if (!is.null(d)) {
+      # Try to get text from different fields
+      sitecode <- d$text %||% d$customdata %||% d$label
+      cat("Extracted sitecode:", sitecode, "\n")
+      if (!is.null(sitecode)) {
+        values$selected_sitecode <- sitecode
+      }
     }
   })
   
   # Handle table row selection
   observeEvent(input$all_checkbacks_table_rows_selected, {
     all_data <- all_checkbacks_summary()
+    cat("Table row selected:", input$all_checkbacks_table_rows_selected, "\n")
     if (!is.null(all_data) && is.data.frame(all_data) && length(input$all_checkbacks_table_rows_selected) > 0) {
       # Get the selected row index
       selected_row <- input$all_checkbacks_table_rows_selected[1]
@@ -1223,6 +1224,7 @@ server <- function(input, output, session) {
       # Get the sitecode from the selected row
       if (selected_row <= nrow(sorted_data)) {
         selected_sitecode <- sorted_data$sitecode[selected_row]
+        cat("Selected sitecode from table:", selected_sitecode, "\n")
         values$selected_sitecode <- selected_sitecode
       }
     }

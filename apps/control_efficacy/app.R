@@ -8,24 +8,15 @@ library(ggplot2)
 library(lubridate)
 library(DT)
 
-# Load environment variables
-if (file.exists(".env")) {
-  readRenviron(".env")
-} else if (file.exists("../../.env")) {
-  readRenviron("../../.env")
-} else if (file.exists("/home/alexpdyak32/Documents/mmcd/mmcd_metrics/.env")) {
-  readRenviron("/home/alexpdyak32/Documents/mmcd/mmcd_metrics/.env")
-}
-
 # Database connection function
 get_db_connection <- function() {
   tryCatch({
     dbConnect(PostgreSQL(),
-              host = Sys.getenv("DB_HOST"),
-              port = as.integer(Sys.getenv("DB_PORT", "5432")),
-              dbname = Sys.getenv("DB_NAME"),
-              user = Sys.getenv("DB_USER"),
-              password = Sys.getenv("DB_PASSWORD"))
+              host = "rds-readonly.mmcd.org",
+              port = 5432,
+              dbname = "mmcd_data",
+              user = "mmcd_read",
+              password = "mmcd2012")
   }, error = function(e) {
     showNotification(paste("Database connection failed:", e$message), type = "error", duration = 10)
     NULL
@@ -158,9 +149,13 @@ ui <- dashboardPage(
           )
         ),
         
+        
         fluidRow(
-          box(title = "Checkback Progress Tracking", status = "info", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("checkback_progress")
+          box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 8,
+              DT::dataTableOutput("all_checkbacks_table")
+          ),
+          box(title = "Dip Count Changes", status = "warning", solidHeader = TRUE, width = 4,
+              plotOutput("dip_changes_plot", height = "400px")
           )
         )
       ),
@@ -185,16 +180,6 @@ ui <- dashboardPage(
         fluidRow(
           box(title = "Sites with Multiple Checkbacks", status = "primary", solidHeader = TRUE, width = 12,
             DT::dataTableOutput("multiple_checkbacks_table")
-          )
-        ),
-        
-        fluidRow(
-          box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 8,
-            DT::dataTableOutput("all_checkbacks_table")
-          ),
-          
-          box(title = "Dip Count Changes", status = "warning", solidHeader = TRUE, width = 4,
-            plotOutput("dip_changes_plot", height = "400px")
           )
         )
       )

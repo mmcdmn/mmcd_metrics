@@ -1165,7 +1165,7 @@ server <- function(input, output, session) {
                            labels = c("Pre-Treatment", "First Checkback"))
     
     # Add highlight indicator for selected sitecode
-    plot_df$is_selected <- plot_df$sitecode == values$selected_sitecode
+    plot_df$is_selected <- ifelse(is.null(values$selected_sitecode), FALSE, plot_df$sitecode == values$selected_sitecode)
     
     # Dumbbell plot: paired points with lines, plus boxplot overlay
     dodge_amt <- 0.2
@@ -1189,8 +1189,13 @@ server <- function(input, output, session) {
         axis.text.x = element_text(size = 12),
         legend.position = "right"
       )
-    ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
+    
+    p_plotly <- ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
       layout(clickmode = "event+select")
+    
+    # Register the click event
+    event_register(p_plotly, "plotly_click")
+    p_plotly
   })
   
   # Handle plot clicks to select sitecode using plotly event

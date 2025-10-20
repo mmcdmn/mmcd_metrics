@@ -1209,14 +1209,16 @@ server <- function(input, output, session) {
   # Handle table row selection
   observeEvent(input$all_checkbacks_table_rows_selected, {
     all_data <- all_checkbacks_summary()
-    if (!is.null(all_data) && length(input$all_checkbacks_table_rows_selected) > 0) {
+    if (!is.null(all_data) && is.data.frame(all_data) && length(input$all_checkbacks_table_rows_selected) > 0) {
       # Get the selected row index
       selected_row <- input$all_checkbacks_table_rows_selected[1]
       # Sort the data the same way the table does
-      sorted_data <- all_data %>% arrange(facility, sitecode)
+      sorted_data <- all_data[order(all_data$facility, all_data$sitecode), ]
       # Get the sitecode from the selected row
-      selected_sitecode <- sorted_data$sitecode[selected_row]
-      values$selected_sitecode <- selected_sitecode
+      if (selected_row <= nrow(sorted_data)) {
+        selected_sitecode <- sorted_data$sitecode[selected_row]
+        values$selected_sitecode <- selected_sitecode
+      }
     }
   })
 }

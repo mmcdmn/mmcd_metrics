@@ -1137,15 +1137,14 @@ server <- function(input, output, session) {
     }
     # Prepare paired data: one row per site, pre-treatment and first checkback
     plot_df <- all_data %>%
-      select(sitecode, treatment_dip, first_checkback_dip) %>%
-      mutate(days_between = days_to_first_checkback) %>%
+      select(sitecode, treatment_dip, first_checkback_dip, days_to_first_checkback) %>%
       tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
                            names_to = "type", values_to = "dip")
     plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
                            labels = c("Pre-Treatment", "First Checkback"))
     # Dumbbell plot: paired points with lines, plus boxplot overlay
     dodge_amt <- 0.2
-    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_between)) +
+    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback)) +
       geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
       geom_line(aes(group = sitecode), color = "gray70", alpha = 0.5, size = 1, position = position_dodge(width = dodge_amt)) +
       geom_point(size = 3, alpha = 0.8, position = position_dodge(width = dodge_amt)) +

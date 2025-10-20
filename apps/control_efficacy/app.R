@@ -1139,6 +1139,20 @@ server <- function(input, output, session) {
         fontWeight = "bold"
       )
     
+    # Highlight selected row based on selected_sitecode
+    if (!is.null(values$selected_sitecode)) {
+      # Find which row has the selected sitecode
+      selected_row <- which(display_data$`Site Code` == values$selected_sitecode)
+      if (length(selected_row) > 0) {
+        dt <- dt %>%
+          formatStyle(
+            columns = 0:ncol(display_data),
+            target = "row",
+            backgroundColor = styleEqual(selected_row - 1, "lightyellow")
+          )
+      }
+    }
+    
     dt
   })
   
@@ -1166,9 +1180,9 @@ server <- function(input, output, session) {
       
       # Dumbbell plot: paired points with lines, plus boxplot overlay
       dodge_amt <- 1
-      p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback, label = sitecode)) +
-        geom_boxplot(aes(group = type, label = NA), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = -0.30), outlier.shape = NA) +
-        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5)), position = position_dodge(width = dodge_amt)) +
+      p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback, text = paste("Site:", sitecode))) +
+        geom_boxplot(aes(group = type, text = NA), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = -0.30), outlier.shape = NA) +
+        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
         geom_point(aes(size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback)), position = position_dodge(width = dodge_amt)) +
         labs(
           title = "Dip Count Change: Pre-Treatment vs First Checkback",
@@ -1186,7 +1200,7 @@ server <- function(input, output, session) {
           legend.position = "right"
         )
       
-      p_plotly <- ggplotly(p, tooltip = "label", source = "dip_changes_plot") %>%
+      p_plotly <- ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
         layout(clickmode = "event+select")
       
       # Explicitly register the click event
@@ -1198,15 +1212,21 @@ server <- function(input, output, session) {
     })
   })
   
+  # Debug observer - print selected sitecode whenever it changes
+  observe({
+    cat(">>> values$selected_sitecode changed to:", values$selected_sitecode, "\n")
+  })
+  
   # Handle plot clicks to select sitecode using plotly event
   observeEvent(event_data("plotly_click", source = "dip_changes_plot"), {
     d <- event_data("plotly_click", source = "dip_changes_plot")
-    cat("Plot clicked! Data:", d$text, "\n")
-    if (!is.null(d)) {
-      # Try to get text from different fields
-      sitecode <- d$text %||% d$customdata %||% d$label
-      cat("Extracted sitecode:", sitecode, "\n")
-      if (!is.null(sitecode)) {
+    cat("Plot clicked! Text data:", d$text, "\n")
+    if (!is.null(d) && !is.null(d$text)) {
+      # Extract sitecode from "Site: XXXX-XXX" format
+      text_parts <- strsplit(d$text, "Site: ")[[1]]
+      if (length(text_parts) > 1) {
+        sitecode <- text_parts[2]
+        cat("Extracted sitecode from plot click:", sitecode, "\n")
         values$selected_sitecode <- sitecode
       }
     }

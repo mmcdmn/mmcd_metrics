@@ -66,7 +66,7 @@ ui <- fluidPage(
       selectInput(
         "structure_type_filter",
         "Structure Type:",
-        choices = c("all", "AP", "CB", "CG", "cv", "CV", "CV/PR", "CV/RR", "DR", "PC", "Pool", "PR", "RG", "RR", "SP", "SS", "US", "W", "wo", "WO", "XX"),
+        choices = c("all", "AP", "CG", "CV", "PC", "PR", "RG", "RR", "SP", "SS", "US", "WO", "XX"),
         selected = "all"
       ),
       
@@ -128,7 +128,10 @@ server <- function(input, output) {
     if (structure_type == "all") {
       return("")
     } else {
-      return(sprintf("AND loc.s_type = '%s'", structure_type))
+      # Handle compound types (e.g., CV/PR matches both CV and PR)
+      # Use case-insensitive matching with UPPER()
+      return(sprintf("AND (UPPER(loc.s_type) = '%s' OR UPPER(loc.s_type) LIKE '%%/%s' OR UPPER(loc.s_type) LIKE '%s/%%' OR UPPER(loc.s_type) LIKE '%%/%s/%%')", 
+                     toupper(structure_type), toupper(structure_type), toupper(structure_type), toupper(structure_type)))
     }
   }
   
@@ -156,16 +159,15 @@ server <- function(input, output) {
     }
   }
   
-    ##!!!!!!!!!!!!-----------
-  # NOTE: this may only get us the total structure count no matter what was put
-  ##-----------------------
   get_facility_condition_total <- function(facility, structure_type, priority, include_status_values) {
     conditions <- c()
     if (facility != "all") {
       conditions <- c(conditions, sprintf("facility = '%s'", facility))
     }
     if (structure_type != "all") {
-      conditions <- c(conditions, sprintf("s_type = '%s'", structure_type))
+      # Handle compound types and case-insensitivity for total structure count
+      conditions <- c(conditions, sprintf("(UPPER(s_type) = '%s' OR UPPER(s_type) LIKE '%%/%s' OR UPPER(s_type) LIKE '%s/%%' OR UPPER(s_type) LIKE '%%/%s/%%')", 
+                                        toupper(structure_type), toupper(structure_type), toupper(structure_type), toupper(structure_type)))
     }
     if (priority != "all") {
       conditions <- c(conditions, sprintf("priority = '%s'", priority))

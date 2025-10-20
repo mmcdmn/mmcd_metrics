@@ -14,6 +14,7 @@ library(dplyr)
 library(ggplot2)
 library(lubridate)
 library(DT)
+library(plotly)
 library(shiny)
 library(shinydashboard)
 library(shinyWidgets)
@@ -46,7 +47,7 @@ ui <- dashboardPage(
   dashboardSidebar(
     sidebarMenu(
       menuItem("Treatment Analysis", tabName = "analysis", icon = icon("chart-line")),
-      menuItem("Checkback Status", tabName = "status", icon = icon("tasks")),
+      menuItem("Control Efficacy", tabName = "status", icon = icon("tasks")),
       menuItem("Site Details", tabName = "details", icon = icon("map-marker")),
       menuItem("Multiple Checkbacks", tabName = "multiple", icon = icon("search-plus"))
     )
@@ -68,6 +69,9 @@ ui <- dashboardPage(
         }
         .nav-tabs-custom > .nav-tabs > li.active {
           border-top-color: #3c8dbc;
+        }
+        .hidden-box {
+          display: none !important;
         }
       "))
     ),
@@ -160,18 +164,20 @@ ui <- dashboardPage(
       # Status Tab
       tabItem(tabName = "status",
         fluidRow(
-          box(title = "Air Treatment Round Details", status = "primary", solidHeader = TRUE, width = 12,
+          box(class = "hidden-box", title = "Air Treatment Round Details", status = "primary", solidHeader = TRUE, width = 12,
             DT::dataTableOutput("treatment_rounds")
           )
         ),
         
+        fluidRow(
+            box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 12,
+                DT::dataTableOutput("all_checkbacks_table")
+            )
+        ),
         
         fluidRow(
-            box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 8,
-                DT::dataTableOutput("all_checkbacks_table")
-            ),
-            box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 4,
-                plotOutput("dip_changes_plot", height = "400px")
+            box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 12,
+                plotly::plotlyOutput("dip_changes_plot", height = "600px", click = "dip_plot_click")
             )
         )
       ),
@@ -210,7 +216,8 @@ server <- function(input, output, session) {
   values <- reactiveValues(
     treatments = NULL,
     checkbacks = NULL,
-    facilities = NULL
+    facilities = NULL,
+    selected_sitecode = NULL
   )
   
   # Load data
@@ -1113,27 +1120,41 @@ server <- function(input, output, session) {
         `% Reduction` = percent_reduction
       )
     
-    datatable(display_data,
+    dt <- datatable(display_data,
       options = list(
         pageLength = 20,
         scrollX = TRUE
       ),
-      rownames = FALSE
+      rownames = FALSE,
+      selection = "single"
     ) %>%
       formatStyle("% Reduction",
         backgroundColor = styleInterval(c(0, 50, 80), c("#ffcdd2", "#fff9c4", "#c8e6c9", "#a5d6a7")),
         fontWeight = "bold"
       )
+    
+    # Highlight selected row if a sitecode is selected from the plot
+    if (!is.null(values$selected_sitecode)) {
+      selected_row <- which(display_data$`Site Code` == values$selected_sitecode)
+      if (length(selected_row) > 0) {
+        dt <- dt %>%
+          formatStyle(columns = 0:ncol(display_data), 
+                     target = "row",
+                     backgroundColor = styleEqual(selected_row, "lightblue"))
+      }
+    }
+    
+    dt
   })
   
   # Dip changes plot (pre-treatment vs first checkback for all sites)
-  output$dip_changes_plot <- renderPlot({
+  output$dip_changes_plot <- renderPlotly({
     all_data <- all_checkbacks_summary()
     if (is.null(all_data) || nrow(all_data) == 0) {
       p <- ggplot() + 
         geom_text(aes(x = 0, y = 0, label = "No checkback data"), size = 5) +
         theme_void()
-      return(p)
+      return(ggplotly(p))
     }
     # Prepare paired data: one row per site, pre-treatment and first checkback
     plot_df <- all_data %>%
@@ -1142,12 +1163,18 @@ server <- function(input, output, session) {
                            names_to = "type", values_to = "dip")
     plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
                            labels = c("Pre-Treatment", "First Checkback"))
+    
+    # Add highlight indicator for selected sitecode
+    plot_df$is_selected <- plot_df$sitecode == values$selected_sitecode
+    
     # Dumbbell plot: paired points with lines, plus boxplot overlay
     dodge_amt <- 0.2
-    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback)) +
-      geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
-      geom_line(aes(group = sitecode), color = "gray70", alpha = 0.5, size = 1, position = position_dodge(width = dodge_amt)) +
-      geom_point(size = 3, alpha = 0.8, position = position_dodge(width = dodge_amt)) +
+    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = days_to_first_checkback, text = sitecode)) +
+      geom_boxplot(aes(group = type, text = NA), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
+      geom_line(data = plot_df[!plot_df$is_selected, ], aes(group = sitecode, text = NA), color = "gray70", alpha = 0.5, size = 1, position = position_dodge(width = dodge_amt)) +
+      geom_line(data = plot_df[plot_df$is_selected, ], aes(group = sitecode, text = NA), color = "black", alpha = 0.9, size = 2, position = position_dodge(width = dodge_amt)) +
+      geom_point(data = plot_df[!plot_df$is_selected, ], aes(text = sitecode), size = 3, alpha = 0.8, position = position_dodge(width = dodge_amt)) +
+      geom_point(data = plot_df[plot_df$is_selected, ], aes(text = sitecode), size = 5, alpha = 1, color = "darkred", position = position_dodge(width = dodge_amt)) +
       labs(
         title = "Dip Count Change: Pre-Treatment vs First Checkback",
         x = "",
@@ -1162,7 +1189,34 @@ server <- function(input, output, session) {
         axis.text.x = element_text(size = 12),
         legend.position = "right"
       )
-    return(p)
+    ggplotly(p, tooltip = "text") %>%
+      layout(clickmode = "event+select")
+  })
+  
+  # Handle plot clicks to select sitecode
+  observeEvent(input$dip_plot_click, {
+    d <- input$dip_plot_click
+    if (!is.null(d)) {
+      # The text field contains the sitecode
+      sitecode_clicked <- d$text
+      if (!is.null(sitecode_clicked)) {
+        values$selected_sitecode <- sitecode_clicked
+      }
+    }
+  })
+  
+  # Handle table row selection
+  observeEvent(input$all_checkbacks_table_rows_selected, {
+    all_data <- all_checkbacks_summary()
+    if (!is.null(all_data) && length(input$all_checkbacks_table_rows_selected) > 0) {
+      # Get the selected row index
+      selected_row <- input$all_checkbacks_table_rows_selected[1]
+      # Sort the data the same way the table does
+      sorted_data <- all_data %>% arrange(facility, sitecode)
+      # Get the sitecode from the selected row
+      selected_sitecode <- sorted_data$sitecode[selected_row]
+      values$selected_sitecode <- selected_sitecode
+    }
   })
 }
 

@@ -616,6 +616,9 @@ server <- function(input, output, session) {
         filter(sitecode == site) %>%
         arrange(inspdate)
       
+      cat("Site:", site, "- Treatments:", nrow(site_treatments), "Checkbacks:", nrow(site_checkbacks), "\n")
+      cat("  Checkback dips:", paste(site_checkbacks$numdip, collapse = ", "), "\n")
+      
       # Get the most recent treatment and first checkback after it
       last_treatment <- site_treatments %>%
         slice(nrow(site_treatments))
@@ -624,6 +627,13 @@ server <- function(input, output, session) {
         filter(inspdate > last_treatment$inspdate) %>%
         arrange(inspdate) %>%
         slice(1)
+      
+      cat("  Last treatment dip:", last_treatment$numdip, "date:", last_treatment$inspdate, "\n")
+      if (nrow(first_checkback) > 0) {
+        cat("  First checkback after treatment dip:", first_checkback$numdip, "date:", first_checkback$inspdate, "\n")
+      } else {
+        cat("  No checkback after last treatment\n")
+      }
       
       if (nrow(first_checkback) > 0) {
         checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
@@ -644,7 +654,12 @@ server <- function(input, output, session) {
     }
     
     if (length(checkback_summary) > 0) {
-      return(do.call(rbind, checkback_summary))
+      result <- do.call(rbind, checkback_summary)
+      cat("\n=== FINAL SUMMARY ===\n")
+      cat("Max first_checkback_dip:", max(result$first_checkback_dip, na.rm = TRUE), "\n")
+      cat("Sites included:", nrow(result), "\n")
+      cat("====================\n\n")
+      return(result)
     } else {
       return(NULL)
     }

@@ -1120,30 +1120,33 @@ server <- function(input, output, session) {
       return(p)
     }
     # Prepare paired data: one row per site, pre-treatment and first checkback
-    plot_df <- all_data %>%
-      select(sitecode, facility, treatment_dip, first_checkback_dip) %>%
-      tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
-                         names_to = "type", values_to = "dip")
-    plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
-                          labels = c("Pre-Treatment", "First Checkback"))
-    # Dumbbell plot: paired points with lines, plus boxplot overlay
-    p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = facility)) +
-      geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
-      geom_line(aes(group = sitecode), color = "gray70", alpha = 0.5, size = 1) +
-      geom_point(size = 3, alpha = 0.8) +
-      labs(
-        title = "Dip Count Change: Pre-Treatment vs First Checkback",
-        x = "",
-        y = "Dip Count",
-        color = "Facility"
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(hjust = 0.5, size = 14),
-        axis.text.x = element_text(size = 12),
-        legend.position = "right"
-      )
-    return(p)
+        plot_df <- all_data %>%
+          select(sitecode, facility, treatment_dip, first_checkback_dip) %>%
+          tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
+                           names_to = "type", values_to = "dip")
+        plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
+                              labels = c("Pre-Treatment", "First Checkback"))
+        # No clipping of dip counts, use original values
+        # Dumbbell plot: paired points with lines, plus boxplot overlay
+        dodge_amt <- 0.2
+        p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode, color = facility)) +
+          geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = 0.15), outlier.shape = NA) +
+          geom_line(aes(group = sitecode), color = "gray70", alpha = 0.5, size = 1, position = position_dodge(width = dodge_amt)) +
+          geom_point(size = 3, alpha = 0.8, position = position_dodge(width = dodge_amt)) +
+          labs(
+            title = "Dip Count Change: Pre-Treatment vs First Checkback",
+            x = "",
+            y = "Dip Count",
+            color = "Facility"
+          ) +
+          coord_cartesian(ylim = c(-2, 25), expand = FALSE) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(hjust = 0.5, size = 14),
+            axis.text.x = element_text(size = 12),
+            legend.position = "right"
+          )
+        return(p)
   })
 }
 

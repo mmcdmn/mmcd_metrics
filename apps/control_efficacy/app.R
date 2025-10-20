@@ -226,13 +226,32 @@ server <- function(input, output, session) {
         fac_choices <- setNames(facilities$facility, facilities$facility)
         fac_choices <- c("All Facilities" = "all", fac_choices)
         
-        # Get material codes for filter (from air treatments only) - simplified without lookup for now
-        matcodes <- dbGetQuery(con, "SELECT DISTINCT matcode FROM dblarv_insptrt_current WHERE action = 'A' AND matcode IS NOT NULL AND matcode != '' ORDER BY matcode")
+        # Get material codes for filter with display names from lookup table
+        matcodes_query <- "
+          SELECT DISTINCT 
+            t.matcode,
+            COALESCE(l.display_text, t.matcode) as display_text,
+            l.tdosedisplay
+          FROM dblarv_insptrt_current t
+          LEFT JOIN public.lookup_matcode_entrylist l ON t.matcode = l.matcode
+          WHERE t.action = 'A' 
+            AND t.matcode IS NOT NULL 
+            AND t.matcode != '' 
+          ORDER BY COALESCE(l.display_text, t.matcode)
+        "
+        matcodes <- dbGetQuery(con, matcodes_query)
+        
         if (nrow(matcodes) == 0) {
           # Ensure dropdown always has at least the All option
           mat_choices <- c("All Materials" = "all")
         } else {
-          mat_choices <- setNames(matcodes$matcode, matcodes$matcode)
+          # Create display names: use display_text + tdosedisplay if available
+          display_names <- ifelse(
+            !is.na(matcodes$tdosedisplay) & matcodes$tdosedisplay != "",
+            paste0(matcodes$display_text, " (", matcodes$tdosedisplay, ")"),
+            matcodes$display_text
+          )
+          mat_choices <- setNames(matcodes$matcode, display_names)
           mat_choices <- c("All Materials" = "all", mat_choices)
         }
         
@@ -646,10 +665,12 @@ server <- function(input, output, session) {
           if (nrow(material_lookup) > 0) {
             lookup_row <- material_lookup[material_lookup$matcode == treatment_before$matcode, ]
             if (nrow(lookup_row) > 0) {
-              if (!is.na(lookup_row$tdosedisplay) && lookup_row$tdosedisplay != "") {
-                material_display <- paste0(lookup_row$display_text, " (", lookup_row$tdosedisplay, ")")
+              # Take the first row if multiple matches and ensure single values
+              lookup_row <- lookup_row[1, ]
+              if (!is.na(lookup_row$tdosedisplay[1]) && lookup_row$tdosedisplay[1] != "") {
+                material_display <- paste0(lookup_row$display_text[1], " (", lookup_row$tdosedisplay[1], ")")
               } else {
-                material_display <- lookup_row$display_text
+                material_display <- lookup_row$display_text[1]
               }
             }
           }

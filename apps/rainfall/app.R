@@ -87,21 +87,23 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
-                selectInput("facility_filter", "Facility:",
-                  choices = c("All Facilities" = "all"),
-                  selected = "all"
-                )
+                  selectInput("facility_filter", "Facility:",
+                    choices = c("Select Facility" = "none"),
+                    selected = "none"
+                  )
               ),
               column(3,
                 selectInput("wetland_type_filter", "Wetland Type:",
                   choices = c("All Types" = "all"),
-                  selected = "all"
+                  selected = "all",
+                  multiple = TRUE
                 )
               ),
               column(3,
                 selectInput("priority_filter", "Priority:",
                   choices = c("All Priorities" = "all"),
-                  selected = "all"
+                  selected = "all",
+                  multiple = TRUE
                 )
               )
             ),
@@ -151,8 +153,40 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          box(title = "Rainfall by Wetland Type", status = "info", solidHeader = TRUE, width = 6,
-            plotOutput("rainfall_by_type", height = "350px")
+          box(title = "Rainfall by Location", status = "info", solidHeader = TRUE, width = 6,
+            fluidRow(
+              column(6,
+                selectInput("location_level", "Location Level:",
+                  choices = list(
+                    "County" = "county",
+                    "City" = "city",
+                    "Section" = "section"
+                  ),
+                  selected = "city"
+                )
+              ),
+              column(6,
+                conditionalPanel(
+                  condition = "input.location_level == 'city' || input.location_level == 'section'",
+                  selectInput("county_filter", "Filter by County:",
+                    choices = c("All Counties" = "all"),
+                    selected = "all"
+                  )
+                )
+              )
+            ),
+            fluidRow(
+              column(12,
+                conditionalPanel(
+                  condition = "input.location_level == 'section'",
+                  selectInput("city_filter", "Filter by City:",
+                    choices = c("All Cities" = "all"),
+                    selected = "all"
+                  )
+                )
+              )
+            ),
+            plotOutput("rainfall_by_location", height = "300px")
           ),
           box(title = "Rainfall by Priority", status = "warning", solidHeader = TRUE, width = 6,
             plotOutput("rainfall_by_priority", height = "350px")
@@ -183,7 +217,7 @@ server <- function(input, output, session) {
         # Get facilities
         facilities <- dbGetQuery(con, "SELECT DISTINCT facility FROM loc_breeding_sites WHERE facility IS NOT NULL ORDER BY facility")
         fac_choices <- setNames(facilities$facility, facilities$facility)
-        fac_choices <- c("All Facilities" = "all", fac_choices)
+        fac_choices <- c("Select Facility" = "none", fac_choices)
         
         # Get wetland types
         types <- dbGetQuery(con, "SELECT DISTINCT type FROM loc_breeding_sites WHERE type IS NOT NULL ORDER BY type")
@@ -194,6 +228,29 @@ server <- function(input, output, session) {
         priorities <- dbGetQuery(con, "SELECT DISTINCT priority FROM loc_breeding_sites WHERE priority IS NOT NULL ORDER BY priority")
         priority_choices <- setNames(priorities$priority, priorities$priority)
         priority_choices <- c("All Priorities" = "all", priority_choices)
+        
+        # Get location filters (counties and cities from sitecodes with lookup names)
+        sitecodes <- dbGetQuery(con, "SELECT DISTINCT sitecode FROM loc_breeding_sites WHERE sitecode IS NOT NULL")
+        if (nrow(sitecodes) > 0) {
+          counties <- unique(substr(sitecodes$sitecode, 1, 2))
+          counties <- counties[!is.na(counties) & nchar(counties) == 2]
+          
+          # Get county names from lookup table
+          county_lookup <- dbGetQuery(con, "SELECT id, name FROM public.lookup_county ORDER BY id")
+          county_names <- setNames(county_lookup$name, sprintf("%02d", county_lookup$id))
+          
+          # Create choices with names but values as codes
+          county_choices <- c("All Counties" = "all")
+          for (code in counties) {
+            name <- county_names[code]
+            if (!is.na(name)) {
+              county_choices[paste0(name, " (", code, ")")] <- code
+            } else {
+              county_choices[code] <- code
+            }
+          }
+          updateSelectInput(session, "county_filter", choices = county_choices)
+        }
         
         updateSelectInput(session, "facility_filter", choices = fac_choices)
         updateSelectInput(session, "wetland_type_filter", choices = type_choices)
@@ -207,14 +264,60 @@ server <- function(input, output, session) {
     }
   })
   
+  # Update city filter based on county selection
+  observe({
+    req(input$county_filter)
+    if (input$county_filter != "all") {
+      con <- get_db_connection()
+      if (!is.null(con)) {
+        tryCatch({
+          # Get cities for selected county
+          sitecodes <- dbGetQuery(con, sprintf("
+            SELECT DISTINCT sitecode 
+            FROM loc_breeding_sites 
+            WHERE sitecode LIKE '%s%%'
+          ", input$county_filter))
+          
+          if (nrow(sitecodes) > 0) {
+            cities <- unique(substr(sitecodes$sitecode, 3, 4))
+            cities <- cities[!is.na(cities) & nchar(cities) == 2]
+            
+            # Get city names from lookup table
+            city_lookup <- dbGetQuery(con, "SELECT towncode, city FROM public.lookup_towncode_name")
+            city_names <- setNames(city_lookup$city, city_lookup$towncode)
+            
+            # Create choices with names but values as codes
+            city_choices <- c("All Cities" = "all")
+            for (code in cities) {
+              towncode <- paste0(input$county_filter, code)
+              name <- city_names[towncode]
+              if (!is.na(name)) {
+                city_choices[paste0(name, " (", code, ")")] <- code
+              } else {
+                city_choices[code] <- code
+              }
+            }
+            updateSelectInput(session, "city_filter", choices = city_choices)
+          }
+          
+          dbDisconnect(con)
+        }, error = function(e) {
+          if (!is.null(con)) dbDisconnect(con)
+        })
+      }
+    }
+  })
+  
   # Reactive data loading
   site_rainfall_data <- reactive({
     req(input$date_range)
-    
+    if (is.null(input$facility_filter) || input$facility_filter == "none") {
+      return(data.frame())
+    }
     con <- get_db_connection()
     if (is.null(con)) return(NULL)
-    
     tryCatch({
+      # ...existing code...
       # Determine date range based on selection
       if (input$rainfall_period == "week") {
         start_date <- Sys.Date() - 7
@@ -226,28 +329,29 @@ server <- function(input, output, session) {
         start_date <- input$date_range[1]
         end_date <- input$date_range[2]
       }
-      
       # Build WHERE conditions
       where_conditions <- c()
-      
-      if (input$facility_filter != "all") {
+      if (input$facility_filter != "none") {
         where_conditions <- c(where_conditions, sprintf("s.facility = '%s'", input$facility_filter))
       }
-      
-      if (input$wetland_type_filter != "all") {
-        where_conditions <- c(where_conditions, sprintf("s.type = %s", input$wetland_type_filter))
+      # Wetland type multi-select
+      wet_types <- input$wetland_type_filter
+      if (!is.null(wet_types) && !("all" %in% wet_types)) {
+        wet_types_sql <- paste(sprintf("'%s'", wet_types), collapse = ",")
+        where_conditions <- c(where_conditions, sprintf("s.type IN (%s)", wet_types_sql))
       }
-      
-      if (input$priority_filter != "all") {
-        where_conditions <- c(where_conditions, sprintf("s.priority = '%s'", input$priority_filter))
+      # Priority multi-select
+      priorities <- input$priority_filter
+      if (!is.null(priorities) && !("all" %in% priorities)) {
+        priorities_sql <- paste(sprintf("'%s'", priorities), collapse = ",")
+        where_conditions <- c(where_conditions, sprintf("s.priority IN (%s)", priorities_sql))
       }
-      
       where_clause <- if (length(where_conditions) > 0) {
         paste("AND", paste(where_conditions, collapse = " AND "))
       } else {
         ""
       }
-      
+      # ...existing code...
       # Query to get site data with rainfall
       query <- sprintf("
         SELECT 
@@ -278,32 +382,31 @@ server <- function(input, output, session) {
         HAVING COALESCE(SUM(r.rain_inches), 0) >= %f
         ORDER BY total_rainfall DESC
       ", start_date, end_date, where_clause, input$min_rainfall)
-      
       result <- dbGetQuery(con, query)
       dbDisconnect(con)
-      
       if (nrow(result) > 0) {
+        # ...existing code...
         # Add color coding based on rainfall
         result$color <- cut(result$total_rainfall,
-          breaks = c(0, 0.5, 1.0, 2.0, 5.0, Inf),
-          labels = c("Very Low", "Low", "Moderate", "High", "Very High"),
+          breaks = c(0, 0.25, 0.5, 1.0, 2.0, 3.5, 5.0, 7.0, Inf),
+          labels = c("Very Low", "Low", "Moderate-Low", "Moderate", "Moderate-High", "High", "Very High", "Extreme"),
           include.lowest = TRUE
         )
-        
         result$color_hex <- case_when(
-          result$color == "Very Low" ~ "#fee5d9",
-          result$color == "Low" ~ "#fcae91", 
-          result$color == "Moderate" ~ "#fb6a4a",
-          result$color == "High" ~ "#de2d26",
-          result$color == "Very High" ~ "#a50f15",
-          TRUE ~ "#gray"
+          result$color == "Very Low" ~ "#006837",         # dark green
+          result$color == "Low" ~ "#2ecc40",              # green
+          result$color == "Moderate-Low" ~ "#b2df8a",     # yellow-green
+          result$color == "Moderate" ~ "#ffff99",         # yellow
+          result$color == "Moderate-High" ~ "#ffd700",    # gold
+          result$color == "High" ~ "#ff9800",             # orange
+          result$color == "Very High" ~ "#e41a1c",        # red
+          result$color == "Extreme" ~ "#800026",          # dark red
+          TRUE ~ "#cccccc"
         )
-        
         return(result)
       } else {
         return(data.frame())
       }
-      
     }, error = function(e) {
       showNotification(paste("Error loading data:", e$message), type = "error")
       if (!is.null(con)) dbDisconnect(con)
@@ -341,7 +444,7 @@ server <- function(input, output, session) {
         addCircleMarkers(
           lng = ~longitude,
           lat = ~latitude,
-          radius = ~sqrt(acres) * 3 + 3,  # Size based on acres
+          radius = ~total_rainfall * 2 + 4, 
           color = "white",
           fillColor = ~color_hex,
           fillOpacity = 0.8,
@@ -350,8 +453,17 @@ server <- function(input, output, session) {
         ) %>%
         addLegend(
           position = "bottomright",
-          colors = c("#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"),
-          labels = c("Very Low (0-0.5\")", "Low (0.5-1\")", "Moderate (1-2\")", "High (2-5\")", "Very High (5\"+)"),
+          colors = c("#006837", "#2ecc40", "#b2df8a", "#ffff99", "#ffd700", "#ff9800", "#e41a1c", "#800026"),
+          labels = c(
+            "Very Low (0-0.25\")",
+            "Low (0.25-0.5\")",
+            "Moderate-Low (0.5-1\")",
+            "Moderate (1-2\")",
+            "Moderate-High (2-3.5\")",
+            "High (3.5-5\")",
+            "Very High (5-7\")",
+            "Extreme (7\"+)"
+          ),
           title = "Total Rainfall",
           opacity = 0.8
         )
@@ -453,8 +565,8 @@ server <- function(input, output, session) {
     }
   })
   
-  # Rainfall by wetland type
-  output$rainfall_by_type <- renderPlot({
+  # Rainfall by location
+  output$rainfall_by_location <- renderPlot({
     data <- site_rainfall_data()
     
     if (is.null(data) || nrow(data) == 0) {
@@ -462,24 +574,88 @@ server <- function(input, output, session) {
         geom_text(aes(x = 0, y = 0, label = "No data available"), size = 5) +
         theme_void()
     } else {
-      type_summary <- data %>%
-        group_by(type) %>%
-        summarise(
-          avg_rainfall = mean(total_rainfall, na.rm = TRUE),
-          site_count = n(),
-          .groups = "drop"
-        ) %>%
-        arrange(desc(avg_rainfall))
+      # Extract location components from sitecode
+      data$county <- substr(data$sitecode, 1, 2)
+      data$city <- substr(data$sitecode, 3, 4)
+      data$section <- substr(data$sitecode, 5, 6)
       
-      ggplot(type_summary, aes(x = reorder(type, avg_rainfall), y = avg_rainfall)) +
-        geom_col(fill = "lightblue", color = "steelblue") +
-        coord_flip() +
-        labs(
-          title = "Average Rainfall by Wetland Type",
-          x = "Wetland Type",
-          y = "Average Rainfall (inches)"
-        ) +
-        theme_minimal()
+      # Filter and group based on selection
+      if (input$location_level == "county") {
+        location_data <- data %>%
+          group_by(county) %>%
+          summarise(
+            avg_rainfall = mean(total_rainfall, na.rm = TRUE),
+            site_count = n(),
+            .groups = "drop"
+          ) %>%
+          arrange(desc(avg_rainfall)) %>%
+          head(15)  # Limit to top 15 for readability
+        
+        plot_title <- "Average Rainfall by County"
+        x_label <- "County"
+        
+      } else if (input$location_level == "city") {
+        filtered_data <- data
+        if (input$county_filter != "all") {
+          filtered_data <- data %>% filter(county == input$county_filter)
+        }
+        
+        location_data <- filtered_data %>%
+          mutate(city_label = paste0(county, city)) %>%
+          group_by(city_label) %>%
+          summarise(
+            avg_rainfall = mean(total_rainfall, na.rm = TRUE),
+            site_count = n(),
+            .groups = "drop"
+          ) %>%
+          arrange(desc(avg_rainfall)) %>%
+          head(15)
+        
+        plot_title <- "Average Rainfall by City"
+        x_label <- "City Code"
+        
+      } else {  # section level
+        filtered_data <- data
+        if (input$county_filter != "all") {
+          filtered_data <- data %>% filter(county == input$county_filter)
+        }
+        if (input$city_filter != "all") {
+          filtered_data <- filtered_data %>% filter(city == input$city_filter)
+        }
+        
+        location_data <- filtered_data %>%
+          mutate(section_label = paste0(county, city, section)) %>%
+          group_by(section_label) %>%
+          summarise(
+            avg_rainfall = mean(total_rainfall, na.rm = TRUE),
+            site_count = n(),
+            .groups = "drop"
+          ) %>%
+          arrange(desc(avg_rainfall)) %>%
+          head(15)
+        
+        plot_title <- "Average Rainfall by Section"
+        x_label <- "Section Code"
+      }
+      
+      if (nrow(location_data) > 0) {
+        x_var <- names(location_data)[1]  # First column (county, city_label, or section_label)
+        
+        ggplot(location_data, aes_string(x = paste0("reorder(", x_var, ", avg_rainfall)"), y = "avg_rainfall")) +
+          geom_col(fill = "lightblue", color = "steelblue") +
+          coord_flip() +
+          labs(
+            title = plot_title,
+            x = x_label,
+            y = "Average Rainfall (inches)"
+          ) +
+          theme_minimal() +
+          theme(axis.text.y = element_text(size = 8))
+      } else {
+        ggplot() + 
+          geom_text(aes(x = 0, y = 0, label = "No data for selected filters"), size = 5) +
+          theme_void()
+      }
     }
   })
   

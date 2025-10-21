@@ -54,14 +54,14 @@ get_db_connection <- function() {
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Rainfall Metrics & Treatment Response Analysis"),
+  dashboardHeader(title = "Air Site Treatment Pipeline Analysis"),
   
   dashboardSidebar(
     sidebarMenu(
-      menuItem("High Priority Wetlands", tabName = "priority", icon = icon("exclamation-triangle")),
-      menuItem("Rainfall Map", tabName = "map", icon = icon("map")),
-      menuItem("Treatment Analysis", tabName = "treatment", icon = icon("syringe")),
-      menuItem("Wetland Metrics", tabName = "metrics", icon = icon("chart-bar")),
+      menuItem("Air Site Pipeline", tabName = "pipeline", icon = icon("plane")),
+      menuItem("Inspection Status", tabName = "inspection", icon = icon("search")),
+      menuItem("Treatment Queue", tabName = "treatment_queue", icon = icon("list-alt")),
+      menuItem("Performance Metrics", tabName = "metrics", icon = icon("chart-bar")),
       menuItem("Site Details", tabName = "details", icon = icon("table"))
     )
   ),
@@ -79,10 +79,10 @@ ui <- dashboardPage(
     ),
     
     tabItems(
-      # High Priority Wetlands Tab
-      tabItem(tabName = "priority",
+      # Air Site Pipeline Tab
+      tabItem(tabName = "pipeline",
         fluidRow(
-          box(title = "High Priority Wetland Controls", status = "danger", solidHeader = TRUE, width = 12,
+          box(title = "Air Site Pipeline Controls", status = "primary", solidHeader = TRUE, width = 12,
             fluidRow(
               column(3,
                 dateInput("pretend_today", "Pretend Today Is:",
@@ -108,7 +108,7 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
-                selectInput("priority_focus", "Priority Focus:",
+                selectInput("priority_focus", "Priority Level:",
                   choices = list(
                     "Red Only" = "RED",
                     "Red + Yellow" = "RED,YELLOW",
@@ -119,7 +119,7 @@ ui <- dashboardPage(
               )
             ),
             fluidRow(
-              column(4,
+              column(3,
                 radioButtons("lookback_period", "Rainfall Lookback Period:",
                   choices = list(
                     "Last 7 days" = 7,
@@ -130,47 +130,161 @@ ui <- dashboardPage(
                   inline = TRUE
                 )
               ),
-              column(4,
-                selectInput("facility_priority", "Facility:",
+              column(3,
+                selectInput("facility_filter", "Facility:",
                   choices = c("All Facilities" = "all"),
                   selected = "all"
                 )
               ),
-              column(4,
-                checkboxInput("show_untreated_only", "Show Only Untreated Sites", value = TRUE)
+              column(3,
+                radioButtons("prehatch_filter", "Prehatch Sites:",
+                  choices = list(
+                    "Include All" = "include",
+                    "Exclude Prehatch" = "exclude", 
+                    "Prehatch Only" = "only"
+                  ),
+                  selected = "include",
+                  inline = TRUE
+                )
+              ),
+              column(3,
+                numericInput("dip_threshold", "Treatment Threshold (dip count):",
+                  value = 2.0,
+                  min = 0.1,
+                  max = 50,
+                  step = 0.1
+                )
               )
             )
           )
         ),
         
         fluidRow(
-          valueBoxOutput("high_priority_sites", width = 3),
-          valueBoxOutput("sites_needing_treatment", width = 3),
-          valueBoxOutput("sites_treated_timely", width = 3),
-          valueBoxOutput("avg_response_time", width = 3)
+          valueBoxOutput("air_sites_with_rain", width = 3),
+          valueBoxOutput("sites_needing_inspection", width = 3),
+          valueBoxOutput("sites_inspected", width = 3),
+          valueBoxOutput("sites_needing_treatment", width = 3)
         ),
         
         fluidRow(
-          box(title = "High Priority Sites Map", status = "danger", solidHeader = TRUE, width = 8,
-            leafletOutput("priority_map", height = "500px")
+          box(title = "Air Sites Pipeline Map", status = "primary", solidHeader = TRUE, width = 8,
+            leafletOutput("pipeline_map", height = "500px")
           ),
-          box(title = "Quick Stats", status = "info", solidHeader = TRUE, width = 4,
+          box(title = "Pipeline Summary", status = "info", solidHeader = TRUE, width = 4,
             div(style = "height: 500px; overflow-y: auto;",
-              h4("Rainfall & Treatment Summary"),
-              DT::dataTableOutput("priority_summary_table")
+              h4("Step 1: Rainfall → Air Sites"),
+              DT::dataTableOutput("rainfall_summary_table"),
+              h4("Step 2: Inspections Needed"),
+              DT::dataTableOutput("inspection_summary_table"),
+              h4("Step 3: Treatment Queue"),
+              DT::dataTableOutput("treatment_queue_summary")
             )
           )
         ),
         
         fluidRow(
-          box(title = "High Priority Wetlands Table", status = "warning", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("priority_table")
+          box(title = "Air Sites Needing Attention", status = "warning", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("pipeline_table")
           )
         )
       ),
       
-      # Map Tab
-      tabItem(tabName = "map",
+      # Inspection Status Tab
+      tabItem(tabName = "inspection",
+        fluidRow(
+          box(title = "Inspection Status Controls", status = "success", solidHeader = TRUE, width = 12,
+            fluidRow(
+              column(4,
+                h4("Sites requiring inspection after rainfall events")
+              ),
+              column(4,
+                checkboxInput("show_overdue_only", "Show Overdue Inspections Only", value = FALSE)
+              ),
+              column(4,
+                numericInput("inspection_days_threshold", "Days Since Rainfall (Overdue):",
+                  value = 3,
+                  min = 1,
+                  max = 14,
+                  step = 1
+                )
+              )
+            )
+          )
+        ),
+        
+        fluidRow(
+          valueBoxOutput("total_inspections_needed", width = 3),
+          valueBoxOutput("inspections_completed", width = 3),
+          valueBoxOutput("inspections_overdue", width = 3),
+          valueBoxOutput("inspection_completion_rate", width = 3)
+        ),
+        
+        fluidRow(
+          box(title = "Inspection Status by Facility", status = "success", solidHeader = TRUE, width = 8,
+            plotlyOutput("inspection_status_plot", height = "400px")
+          ),
+          box(title = "Inspection Timeline", status = "info", solidHeader = TRUE, width = 4,
+            plotOutput("inspection_timeline", height = "400px")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Sites Needing Inspection", status = "warning", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("inspection_status_table")
+          )
+        )
+      ),
+      
+      # Treatment Queue Tab  
+      tabItem(tabName = "treatment_queue",
+        fluidRow(
+          box(title = "Treatment Queue Controls", status = "danger", solidHeader = TRUE, width = 12,
+            fluidRow(
+              column(4,
+                h4("Sites requiring treatment based on inspection results")
+              ),
+              column(4,
+                checkboxInput("show_untreated_only", "Show Untreated Sites Only", value = TRUE)
+              ),
+              column(4,
+                selectInput("treatment_type_filter", "Treatment Type:",
+                  choices = list(
+                    "All Treatments" = "all",
+                    "Air Treatment (A)" = "A",
+                    "Ground Treatments (1,3,D)" = "ground"
+                  ),
+                  selected = "all"
+                )
+              )
+            )
+          )
+        ),
+        
+        fluidRow(
+          valueBoxOutput("sites_requiring_treatment", width = 3),
+          valueBoxOutput("air_treatments_completed", width = 3),
+          valueBoxOutput("ground_treatments_completed", width = 3),
+          valueBoxOutput("treatment_backlog", width = 3)
+        ),
+        
+        fluidRow(
+          box(title = "Treatment Queue Map", status = "danger", solidHeader = TRUE, width = 8,
+            leafletOutput("treatment_queue_map", height = "500px")
+          ),
+          box(title = "Treatment Priority", status = "warning", solidHeader = TRUE, width = 4,
+            plotOutput("treatment_priority_plot", height = "500px")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Sites in Treatment Queue", status = "primary", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("treatment_queue_table")
+          )
+        )
+      ),
+
+      # Performance Metrics Tab (renamed from map)
+      tabItem(tabName = "metrics",
         fluidRow(
           box(title = "Controls", status = "primary", solidHeader = TRUE, width = 12,
             fluidRow(
@@ -406,10 +520,7 @@ server <- function(input, output, session) {
         }
         
         # Update all facility dropdowns
-        updateSelectInput(session, "facility_filter", choices = fac_choices_select)
-        updateSelectInput(session, "facility_priority", choices = fac_choices_all)
-        updateSelectInput(session, "treatment_facility", choices = fac_choices_all)
-        updateSelectInput(session, "metrics_facility", choices = fac_choices_all)
+        updateSelectInput(session, "facility_filter", choices = fac_choices_all)
         
         updateSelectInput(session, "wetland_type_filter", choices = type_choices)
         updateSelectInput(session, "priority_filter", choices = priority_choices)
@@ -467,8 +578,8 @@ server <- function(input, output, session) {
     })
   }
   
-  # Priority wetlands data
-  priority_data <- reactive({
+  # Air site pipeline data - Step 1: Air sites with qualifying rainfall
+  air_sites_with_rain <- reactive({
     req(input$pretend_today, input$rainfall_threshold, input$lookback_period)
     
     # Calculate lookback period
@@ -478,24 +589,30 @@ server <- function(input, output, session) {
     con <- get_db_connection()
     if (is.null(con)) return(NULL)
     
-    tryCatch({
-      # Build priority filter
-      priority_condition <- if (input$priority_focus == "all") {
+      tryCatch({
+        # Build priority filter
+        priority_condition <- if (input$priority_focus == "all") {
+          ""
+        } else {
+          priorities <- unlist(strsplit(input$priority_focus, ","))
+          priority_list <- paste(sprintf("'%s'", priorities), collapse = ",")
+          sprintf("AND s.priority IN (%s)", priority_list)
+        }      # Build facility filter
+      facility_condition <- if (input$facility_filter == "all") {
         ""
       } else {
-        priorities <- unlist(strsplit(input$priority_focus, ","))
-        priority_list <- paste(sprintf("'%s'", priorities), collapse = ",")
-        sprintf("AND s.priority IN (%s)", priority_list)
+        sprintf("AND s.facility = '%s'", input$facility_filter)
       }
       
-      # Build facility filter
-      facility_condition <- if (input$facility_priority == "all") {
-        ""
-      } else {
-        sprintf("AND s.facility = '%s'", input$facility_priority)
+      # Build prehatch filter - TODO: Find correct column name for prehatch entities
+      prehatch_condition <- ""
+      if (input$prehatch_filter == "exclude") {
+        prehatch_condition <- "AND s.prehatch NOT IN ('BRIQUETS', 'BTI', 'PELLET', 'REHATCH')"
+      } else if (input$prehatch_filter == "only") {
+        prehatch_condition <- "AND s.prehatch IN ('BRIQUETS', 'BTI', 'PELLET', 'REHATCH')"
       }
       
-      # Get sites with rainfall above threshold
+      # Get AIR sites with rainfall above threshold
       query <- sprintf("
         SELECT 
           s.sitecode,
@@ -503,6 +620,8 @@ server <- function(input, output, session) {
           s.type,
           s.priority,
           s.facility,
+          s.air_gnd,
+          s.prehatch,
           ST_X(ST_Centroid(ST_Transform(s.geom, 4326))) as longitude,
           ST_Y(ST_Centroid(ST_Transform(s.geom, 4326))) as latitude,
           COALESCE(SUM(r.rain_inches), 0) as total_rainfall,
@@ -516,58 +635,196 @@ server <- function(input, output, session) {
         WHERE s.geom IS NOT NULL
           AND s.startdate IS NOT NULL
           AND (s.enddate IS NULL OR s.enddate > '%s')
+          AND s.air_gnd = 'A'
           %s
           %s
-        GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, 
+          %s
+        GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, s.air_gnd, s.prehatch,
                  ST_X(ST_Centroid(ST_Transform(s.geom, 4326))), ST_Y(ST_Centroid(ST_Transform(s.geom, 4326)))
         HAVING COALESCE(SUM(r.rain_inches), 0) >= %f
         ORDER BY s.priority, total_rainfall DESC
-      ", start_date, end_date, end_date, priority_condition, facility_condition, input$rainfall_threshold)
+      ", start_date, end_date, end_date, priority_condition, facility_condition, prehatch_condition, input$rainfall_threshold)
       
-      sites <- dbGetQuery(con, query)
-      
-      # Get treatment data for these sites
-      if (nrow(sites) > 0) {
-        treatments <- get_treatment_data(start_date, end_date, input$data_source)
-        
-        # For each site, find if it was treated after rainfall
-        sites$treated <- FALSE
-        sites$treatment_date <- as.Date(NA)
-        sites$days_to_treatment <- NA
-        sites$treatment_response <- "Not Treated"
-        
-        if (nrow(treatments) > 0) {
-          for (i in 1:nrow(sites)) {
-            site_treatments <- treatments[treatments$sitecode == sites$sitecode[i] & 
-                                        treatments$inspdate > sites$last_rain_date[i], ]
-            if (nrow(site_treatments) > 0) {
-              earliest_treatment <- site_treatments[which.min(site_treatments$inspdate), ]
-              sites$treated[i] <- TRUE
-              sites$treatment_date[i] <- earliest_treatment$inspdate
-              sites$days_to_treatment[i] <- as.numeric(earliest_treatment$inspdate - sites$last_rain_date[i])
-              
-              if (sites$days_to_treatment[i] <= 7) {
-                sites$treatment_response[i] <- "Timely"
-              } else {
-                sites$treatment_response[i] <- "Delayed"
-              }
-            }
-          }
-        }
-        
-        # Filter to untreated only if requested
-        if (input$show_untreated_only) {
-          sites <- sites[!sites$treated, ]
-        }
-      }
-      
+      result <- dbGetQuery(con, query)
       dbDisconnect(con)
-      return(sites)
+      return(result)
       
     }, error = function(e) {
-      showNotification(paste("Error loading priority data:", e$message), type = "error")
+      showNotification(paste("Error loading air sites with rain:", e$message), type = "error")
       if (!is.null(con)) dbDisconnect(con)
       return(data.frame())
+    })
+  })
+  
+  # Step 2: Get inspection data for air sites
+  inspection_data <- reactive({
+    air_sites <- air_sites_with_rain()
+    if (is.null(air_sites) || nrow(air_sites) == 0) return(data.frame())
+    
+    req(input$pretend_today)
+    end_date <- input$pretend_today
+    start_date <- end_date - as.numeric(input$lookback_period)
+    
+    con <- get_db_connection()
+    if (is.null(con)) return(data.frame())
+    
+    tryCatch({
+      # Choose table based on data source
+      table_name <- if (input$data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
+      
+      # Get sites that need inspection (from air sites with rain)
+      site_list <- paste(sprintf("'%s'", air_sites$sitecode), collapse = ",")
+      
+      # Get inspections (actions 1, 4, 3) after rainfall events
+      query <- sprintf("
+        SELECT 
+          t.sitecode,
+          t.inspdate,
+          t.facility,
+          t.action,
+          t.numdip,
+          t.wet
+        FROM %s t
+        WHERE t.sitecode IN (%s)
+          AND t.inspdate >= '%s' 
+          AND t.inspdate <= '%s'
+          AND t.action IN ('1', '4', '3')
+        ORDER BY t.sitecode, t.inspdate DESC
+      ", table_name, site_list, start_date, end_date)
+      
+      inspections <- dbGetQuery(con, query)
+      dbDisconnect(con)
+      
+      if (nrow(inspections) > 0) {
+        inspections$inspdate <- as.Date(inspections$inspdate)
+        
+        # For each air site, determine inspection status
+        for (i in 1:nrow(air_sites)) {
+          site_inspections <- inspections[inspections$sitecode == air_sites$sitecode[i] & 
+                                        inspections$inspdate >= air_sites$last_rain_date[i], ]
+          
+          if (nrow(site_inspections) > 0) {
+            # Get most recent inspection after rainfall
+            latest_inspection <- site_inspections[which.max(site_inspections$inspdate), ]
+            air_sites$inspected[i] <- TRUE
+            air_sites$inspection_date[i] <- latest_inspection$inspdate
+            air_sites$days_to_inspection[i] <- as.numeric(latest_inspection$inspdate - air_sites$last_rain_date[i])
+            air_sites$numdip[i] <- latest_inspection$numdip
+            air_sites$wet_status[i] <- latest_inspection$wet
+            air_sites$needs_treatment[i] <- !is.na(latest_inspection$numdip) && latest_inspection$numdip >= input$dip_threshold
+          } else {
+            air_sites$inspected[i] <- FALSE
+            air_sites$inspection_date[i] <- as.Date(NA)
+            air_sites$days_to_inspection[i] <- NA
+            air_sites$numdip[i] <- NA
+            air_sites$wet_status[i] <- NA
+            air_sites$needs_treatment[i] <- FALSE
+          }
+        }
+      } else {
+        # No inspections found
+        air_sites$inspected <- FALSE
+        air_sites$inspection_date <- as.Date(NA)
+        air_sites$days_to_inspection <- NA
+        air_sites$numdip <- NA
+        air_sites$wet_status <- NA
+        air_sites$needs_treatment <- FALSE
+      }
+      
+      return(air_sites)
+      
+    }, error = function(e) {
+      if (!is.null(con)) dbDisconnect(con)
+      showNotification(paste("Error loading inspection data:", e$message), type = "error")
+      return(air_sites)
+    })
+  })
+  
+  # Step 3: Get treatment data for sites needing treatment
+  treatment_queue_data <- reactive({
+    inspection_data <- inspection_data()
+    if (is.null(inspection_data) || nrow(inspection_data) == 0) return(data.frame())
+    
+    # Filter to sites that need treatment
+    sites_needing_treatment <- inspection_data[inspection_data$needs_treatment & !is.na(inspection_data$needs_treatment), ]
+    if (nrow(sites_needing_treatment) == 0) return(data.frame())
+    
+    req(input$pretend_today)
+    end_date <- input$pretend_today
+    start_date <- end_date - as.numeric(input$lookback_period)
+    
+    con <- get_db_connection()
+    if (is.null(con)) return(sites_needing_treatment)
+    
+    tryCatch({
+      # Choose table based on data source
+      table_name <- if (input$data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
+      
+      site_list <- paste(sprintf("'%s'", sites_needing_treatment$sitecode), collapse = ",")
+      
+      # Get treatments (actions A, 1, 3, D) after inspection
+      query <- sprintf("
+        SELECT 
+          t.sitecode,
+          t.inspdate as treatment_date,
+          t.facility,
+          t.action as treatment_action,
+          t.matcode,
+          t.acres as treated_acres
+        FROM %s t
+        WHERE t.sitecode IN (%s)
+          AND t.inspdate >= '%s' 
+          AND t.inspdate <= '%s'
+          AND t.action IN ('A', '1', '3', 'D')
+        ORDER BY t.sitecode, t.inspdate DESC
+      ", table_name, site_list, start_date, end_date)
+      
+      treatments <- dbGetQuery(con, query)
+      dbDisconnect(con)
+      
+      if (nrow(treatments) > 0) {
+        treatments$treatment_date <- as.Date(treatments$treatment_date)
+        
+        # For each site needing treatment, check if it was treated after inspection
+        for (i in 1:nrow(sites_needing_treatment)) {
+          if (!is.na(sites_needing_treatment$inspection_date[i])) {
+            site_treatments <- treatments[treatments$sitecode == sites_needing_treatment$sitecode[i] & 
+                                        treatments$treatment_date >= sites_needing_treatment$inspection_date[i], ]
+            
+            if (nrow(site_treatments) > 0) {
+              # Get most recent treatment after inspection
+              latest_treatment <- site_treatments[which.max(site_treatments$treatment_date), ]
+              sites_needing_treatment$treated[i] <- TRUE
+              sites_needing_treatment$treatment_date[i] <- latest_treatment$treatment_date
+              sites_needing_treatment$treatment_action[i] <- latest_treatment$treatment_action
+              sites_needing_treatment$days_to_treatment[i] <- as.numeric(latest_treatment$treatment_date - sites_needing_treatment$inspection_date[i])
+            } else {
+              sites_needing_treatment$treated[i] <- FALSE
+              sites_needing_treatment$treatment_date[i] <- as.Date(NA)
+              sites_needing_treatment$treatment_action[i] <- NA
+              sites_needing_treatment$days_to_treatment[i] <- NA
+            }
+          } else {
+            sites_needing_treatment$treated[i] <- FALSE
+            sites_needing_treatment$treatment_date[i] <- as.Date(NA)
+            sites_needing_treatment$treatment_action[i] <- NA
+            sites_needing_treatment$days_to_treatment[i] <- NA
+          }
+        }
+      } else {
+        # No treatments found
+        sites_needing_treatment$treated <- FALSE
+        sites_needing_treatment$treatment_date <- as.Date(NA)
+        sites_needing_treatment$treatment_action <- NA
+        sites_needing_treatment$days_to_treatment <- NA
+      }
+      
+      return(sites_needing_treatment)
+      
+    }, error = function(e) {
+      if (!is.null(con)) dbDisconnect(con)
+      showNotification(paste("Error loading treatment queue data:", e$message), type = "error")
+      return(sites_needing_treatment)
     })
   })
   
@@ -777,54 +1034,57 @@ server <- function(input, output, session) {
     }
   })
   
-  # Priority tab value boxes
-  output$high_priority_sites <- renderValueBox({
-    data <- priority_data()
+  # Pipeline tab value boxes
+  output$air_sites_with_rain <- renderValueBox({
+    data <- air_sites_with_rain()
     value <- ifelse(is.null(data), 0, nrow(data))
     
     valueBox(
       value = value,
-      subtitle = "High Priority Sites",
-      icon = icon("exclamation-triangle"),
-      color = "red"
+      subtitle = "Air Sites with Rain",
+      icon = icon("plane"),
+      color = "blue"
     )
   })
   
-  output$sites_needing_treatment <- renderValueBox({
-    data <- priority_data()
-    value <- ifelse(is.null(data), 0, sum(!data$treated, na.rm = TRUE))
+  output$sites_needing_inspection <- renderValueBox({
+    air_data <- air_sites_with_rain()
+    inspection_data <- inspection_data()
+    if (is.null(inspection_data)) {
+      value <- ifelse(is.null(air_data), 0, nrow(air_data))
+    } else {
+      value <- sum(!inspection_data$inspected, na.rm = TRUE)
+    }
     
     valueBox(
       value = value,
-      subtitle = "Needing Treatment",
-      icon = icon("syringe"),
-      color = "yellow"
+      subtitle = "Need Inspection",
+      icon = icon("search"),
+      color = "orange"
     )
   })
   
-  output$sites_treated_timely <- renderValueBox({
-    data <- priority_data()
-    value <- ifelse(is.null(data), 0, sum(data$treatment_response == "Timely", na.rm = TRUE))
+  output$sites_inspected <- renderValueBox({
+    data <- inspection_data()
+    value <- ifelse(is.null(data), 0, sum(data$inspected, na.rm = TRUE))
     
     valueBox(
       value = value,
-      subtitle = "Treated Timely",
-      icon = icon("check"),
+      subtitle = "Inspected",
+      icon = icon("check-circle"),
       color = "green"
     )
   })
   
-  output$avg_response_time <- renderValueBox({
-    data <- priority_data()
-    treated_data <- data[data$treated & !is.na(data$days_to_treatment), ]
-    value <- ifelse(nrow(treated_data) == 0, "N/A", 
-                   paste(round(mean(treated_data$days_to_treatment), 1), "days"))
+  output$sites_needing_treatment <- renderValueBox({
+    data <- inspection_data()
+    value <- ifelse(is.null(data), 0, sum(data$needs_treatment, na.rm = TRUE))
     
     valueBox(
       value = value,
-      subtitle = "Avg Response Time",
-      icon = icon("clock"),
-      color = "purple"
+      subtitle = "Need Treatment",
+      icon = icon("syringe"),
+      color = "red"
     )
   })
   

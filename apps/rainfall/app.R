@@ -1050,10 +1050,15 @@ server <- function(input, output, session) {
   output$sites_needing_inspection <- renderValueBox({
     air_data <- air_sites_with_rain()
     inspection_data <- inspection_data()
-    if (is.null(inspection_data)) {
+    
+    if (is.null(inspection_data) || nrow(inspection_data) == 0) {
       value <- ifelse(is.null(air_data), 0, nrow(air_data))
-    } else {
+    } else if ("inspected" %in% names(inspection_data)) {
+      # Count sites that haven't been inspected
       value <- sum(!inspection_data$inspected, na.rm = TRUE)
+    } else {
+      # If inspected column doesn't exist, assume all need inspection
+      value <- nrow(inspection_data)
     }
     
     valueBox(

@@ -122,11 +122,14 @@ ui <- dashboardPage(
               column(3,
                 radioButtons("lookback_period", "Rainfall Lookback Period:",
                   choices = list(
-                    "Last 7 days" = 7,
-                    "Last 14 days" = 14,
-                    "Last 30 days" = 30
+                    "Last 24 hours" = 1,
+                    "Last 48 hours" = 2,
+                    "Last 72 hours" = 3,
+                    "Last 4 days" = 4,
+                    "Last 5 days" = 5,
+                    "Last 7 days" = 7
                   ),
-                  selected = 7,
+                  selected = 3,
                   inline = TRUE
                 )
               ),
@@ -666,12 +669,85 @@ server <- function(input, output, session) {
   # Step 2: Get inspection data for air sites
   inspection_data <- reactive({
     air_sites <- air_sites_with_rain()
-    if (is.null(air_sites) || nrow(air_sites) == 0) return(data.frame())
     
     req(input$pretend_today)
     end_date <- input$pretend_today
-    start_date <- end_date - as.numeric(input$lookback_period)
     
+    # Also get sites that were previously inspected and found above threshold but not treated
+    con <- get_db_connection()
+    if (is.null(con)) {
+      if (is.null(air_sites) || nrow(air_sites) == 0) return(data.frame())
+    } else {
+      # Get sites that were inspected in last 30 days and found above threshold
+      tryCatch({
+        table_name <- if (input$data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
+        inspection_start_date <- end_date - 30
+        
+        # Find sites with recent inspections above threshold
+        above_threshold_query <- sprintf("
+          SELECT DISTINCT
+            s.sitecode,
+            s.acres,
+            s.type,
+            s.priority,
+            s.facility,
+            s.air_gnd,
+            s.prehatch,
+            ST_X(ST_Centroid(ST_Transform(s.geom, 4326))) as longitude,
+            ST_Y(ST_Centroid(ST_Transform(s.geom, 4326))) as latitude,
+            0 as total_rainfall,
+            0 as rain_days,
+            MAX(t.inspdate) as last_rain_date
+          FROM public.loc_breeding_sites s
+          INNER JOIN %s t ON s.sitecode = t.sitecode
+          WHERE s.air_gnd = 'A'
+            AND t.inspdate >= '%s' 
+            AND t.inspdate <= '%s'
+            AND t.action IN ('1', '2', '4')
+            AND (t.matcode IS NULL OR t.matcode = '')
+            AND t.numdip >= %s
+          GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, s.air_gnd, s.prehatch, s.geom
+          HAVING s.sitecode NOT IN (
+              SELECT DISTINCT t2.sitecode 
+              FROM %s t2 
+              WHERE t2.inspdate > MAX(t.inspdate)
+                AND t2.sitecode = s.sitecode
+                AND t2.action IN ('A', '3', '1')
+                AND t2.matcode IS NOT NULL 
+                AND t2.matcode != ''
+            )
+        ", table_name, inspection_start_date, end_date, input$dip_threshold, table_name)
+        
+        above_threshold_sites <- dbGetQuery(con, above_threshold_query)
+        dbDisconnect(con)
+        
+        # Add days since rain calculation for above_threshold_sites
+        if (nrow(above_threshold_sites) > 0) {
+          above_threshold_sites$last_rain_date <- as.Date(above_threshold_sites$last_rain_date)
+          above_threshold_sites$days_since_rain <- as.numeric(input$pretend_today - above_threshold_sites$last_rain_date)
+        }
+        
+        # Combine with rain-triggered sites
+        if (nrow(above_threshold_sites) > 0) {
+          if (is.null(air_sites) || nrow(air_sites) == 0) {
+            air_sites <- above_threshold_sites
+          } else {
+            # Remove duplicates and combine
+            air_sites <- rbind(
+              air_sites,
+              above_threshold_sites[!above_threshold_sites$sitecode %in% air_sites$sitecode, ]
+            )
+          }
+        }
+      }, error = function(e) {
+        showNotification(paste("Error getting above-threshold sites:", e$message), type = "warning")
+        dbDisconnect(con)
+      })
+    }
+    
+    if (is.null(air_sites) || nrow(air_sites) == 0) return(data.frame())
+    
+    # Continue with inspection analysis
     con <- get_db_connection()
     if (is.null(con)) return(data.frame())
     
@@ -682,7 +758,8 @@ server <- function(input, output, session) {
       # Get sites that need inspection (from air sites with rain)
       site_list <- paste(sprintf("'%s'", air_sites$sitecode), collapse = ",")
       
-      # Get inspections (actions 1, 4, 3) after rainfall events
+      # Get both inspections and treatments from last 30 days
+      activity_start_date <- end_date - 30  # Look back 30 days for all activities
       query <- sprintf("
         SELECT 
           t.sitecode,
@@ -690,36 +767,105 @@ server <- function(input, output, session) {
           t.facility,
           t.action,
           t.numdip,
-          t.wet
+          t.wet,
+          t.matcode,
+          CASE 
+            WHEN t.action IN ('2', '4') THEN 'inspection'
+            WHEN t.action = '1' AND (t.matcode IS NULL OR t.matcode = '') THEN 'inspection'
+            WHEN t.action IN ('A', '3') THEN 'treatment'
+            WHEN t.action = '1' AND t.matcode IS NOT NULL AND t.matcode != '' THEN 'treatment'
+            ELSE 'other'
+          END as activity_type
         FROM %s t
         WHERE t.sitecode IN (%s)
           AND t.inspdate >= '%s' 
           AND t.inspdate <= '%s'
-          AND t.action IN ('1', '4', '3')
+          AND t.action IN ('1', '2', '4', 'A', '3')
         ORDER BY t.sitecode, t.inspdate DESC
-      ", table_name, site_list, start_date, end_date)
+      ", table_name, site_list, activity_start_date, end_date)
       
-      inspections <- dbGetQuery(con, query)
+      activities <- dbGetQuery(con, query)
       dbDisconnect(con)
       
-      if (nrow(inspections) > 0) {
-        inspections$inspdate <- as.Date(inspections$inspdate)
+      if (nrow(activities) > 0) {
+        activities$inspdate <- as.Date(activities$inspdate)
         
-        # For each air site, determine inspection status
+        # For each air site, determine inspection/treatment status
         for (i in 1:nrow(air_sites)) {
-          site_inspections <- inspections[inspections$sitecode == air_sites$sitecode[i] & 
-                                        inspections$inspdate >= air_sites$last_rain_date[i], ]
+          site_activities <- activities[activities$sitecode == air_sites$sitecode[i], ]
           
-          if (nrow(site_inspections) > 0) {
-            # Get most recent inspection after rainfall
-            latest_inspection <- site_inspections[which.max(site_inspections$inspdate), ]
-            air_sites$inspected[i] <- TRUE
-            air_sites$inspection_date[i] <- latest_inspection$inspdate
-            air_sites$days_to_inspection[i] <- as.numeric(latest_inspection$inspdate - air_sites$last_rain_date[i])
-            air_sites$numdip[i] <- latest_inspection$numdip
-            air_sites$wet_status[i] <- latest_inspection$wet
-            air_sites$needs_treatment[i] <- !is.na(latest_inspection$numdip) && latest_inspection$numdip >= input$dip_threshold
+          if (nrow(site_activities) > 0) {
+            # Get most recent inspection and treatment separately
+            inspections <- site_activities[site_activities$activity_type == 'inspection', ]
+            treatments <- site_activities[site_activities$activity_type == 'treatment', ]
+            
+            latest_inspection <- NULL
+            latest_treatment <- NULL
+            
+            if (nrow(inspections) > 0) {
+              latest_inspection <- inspections[which.max(inspections$inspdate), ]
+            }
+            if (nrow(treatments) > 0) {
+              latest_treatment <- treatments[which.max(treatments$inspdate), ]
+            }
+            
+            # Determine site status based on timeline: rainfall → inspection → treatment
+            rain_date <- air_sites$last_rain_date[i]
+            
+            if (!is.null(latest_inspection)) {
+              inspection_date <- latest_inspection$inspdate
+              
+              # Check if inspection is after rainfall (handle NA values)
+              if (!is.na(inspection_date) && !is.na(rain_date) && inspection_date >= rain_date) {
+                air_sites$inspected[i] <- TRUE
+                air_sites$inspection_date[i] <- inspection_date
+                air_sites$days_to_inspection[i] <- as.numeric(inspection_date - rain_date)
+                air_sites$numdip[i] <- latest_inspection$numdip
+                air_sites$wet_status[i] <- latest_inspection$wet
+                
+                # Check if site needs treatment (above threshold)
+                above_threshold <- !is.na(latest_inspection$numdip) && latest_inspection$numdip >= input$dip_threshold
+                
+                if (above_threshold) {
+                  # Check if treated after inspection but before new rain
+                  if (!is.null(latest_treatment) && !is.na(latest_treatment$inspdate) && !is.na(inspection_date) && latest_treatment$inspdate > inspection_date) {
+                    # Site was treated after inspection - check if rain came after treatment
+                    if (!is.na(rain_date) && !is.na(latest_treatment$inspdate) && rain_date > latest_treatment$inspdate) {
+                      # Rain after treatment - needs new inspection
+                      air_sites$inspected[i] <- FALSE
+                      air_sites$needs_treatment[i] <- FALSE
+                    } else {
+                      # No rain after treatment - site is treated
+                      air_sites$needs_treatment[i] <- FALSE
+                    }
+                  } else {
+                    # No treatment after inspection - still needs treatment
+                    air_sites$needs_treatment[i] <- TRUE
+                  }
+                } else {
+                  # Below threshold - no treatment needed
+                  air_sites$needs_treatment[i] <- FALSE
+                }
+              } else {
+                # Inspection before rainfall - needs new inspection
+                air_sites$inspected[i] <- FALSE
+                air_sites$inspection_date[i] <- as.Date(NA)
+                air_sites$days_to_inspection[i] <- NA
+                air_sites$numdip[i] <- NA
+                air_sites$wet_status[i] <- NA
+                air_sites$needs_treatment[i] <- FALSE
+              }
+            } else {
+              # No inspection found - needs inspection
+              air_sites$inspected[i] <- FALSE
+              air_sites$inspection_date[i] <- as.Date(NA)
+              air_sites$days_to_inspection[i] <- NA
+              air_sites$numdip[i] <- NA
+              air_sites$wet_status[i] <- NA
+              air_sites$needs_treatment[i] <- FALSE
+            }
           } else {
+            # No activities found - needs inspection
             air_sites$inspected[i] <- FALSE
             air_sites$inspection_date[i] <- as.Date(NA)
             air_sites$days_to_inspection[i] <- NA
@@ -782,7 +928,9 @@ server <- function(input, output, session) {
         WHERE t.sitecode IN (%s)
           AND t.inspdate >= '%s' 
           AND t.inspdate <= '%s'
-          AND t.action IN ('A', '1', '3', 'D')
+          AND t.action IN ('A', '3', '1')
+          AND t.matcode IS NOT NULL 
+          AND t.matcode != ''
         ORDER BY t.sitecode, t.inspdate DESC
       ", table_name, site_list, start_date, end_date)
       
@@ -1082,7 +1230,7 @@ server <- function(input, output, session) {
     
     valueBox(
       value = value,
-      subtitle = "Inspected",
+      subtitle = "Isp (under threshold)",
       icon = icon("check-circle"),
       color = "green"
     )
@@ -1955,7 +2103,7 @@ server <- function(input, output, session) {
     data$status <- "Not Inspected"  # Default value
     if ("inspected" %in% names(data)) {
       inspected_status <- !is.na(data$inspected) & data$inspected
-      data$status[inspected_status] <- "Inspected"
+      data$status[inspected_status] <- "Isp (under threshold)"
       
       if ("needs_treatment" %in% names(data)) {
         treatment_needed <- !is.na(data$needs_treatment) & data$needs_treatment
@@ -1966,7 +2114,7 @@ server <- function(input, output, session) {
     # Create color palette based on inspection status
     pal <- colorFactor(
       palette = c("red", "green", "orange"),
-      domain = c("Not Inspected", "Inspected", "Needs Treatment")
+      domain = c("Not Inspected", "Isp (under threshold)", "Needs Treatment")
     )
     
     # Create popup text safely
@@ -1974,6 +2122,8 @@ server <- function(input, output, session) {
       "Site:", data$sitecode, "<br>",
       "Status:", data$status, "<br>",
       "Last Rain:", ifelse(!is.na(data$last_rain_date), as.character(data$last_rain_date), "Unknown"), "<br>",
+      "Rainfall Amount:", ifelse("total_rainfall" %in% names(data) & !is.na(data$total_rainfall), 
+                                paste(data$total_rainfall, "inches"), "Unknown"), "<br>",
       ifelse("inspection_date" %in% names(data) & !is.na(data$inspection_date), 
              paste("Inspected:", as.character(data$inspection_date)), 
              "Not Inspected")
@@ -2049,7 +2199,7 @@ server <- function(input, output, session) {
         Status = case_when(
           is.na(inspected) | !inspected ~ "Needs Inspection",
           needs_treatment ~ "Needs Treatment", 
-          TRUE ~ "Inspected"
+          TRUE ~ "Isp (under threshold)"
         ),
         `Days Since Rain` = days_since_rain,
         `Inspection Date` = as.character(inspection_date),
@@ -2071,7 +2221,7 @@ server <- function(input, output, session) {
               caption = "All Air Sites Pipeline Status") %>%
       formatStyle("Status",
                   backgroundColor = styleEqual(
-                    c("Needs Inspection", "Needs Treatment", "Inspected"),
+                    c("Needs Inspection", "Needs Treatment", "Isp (under threshold)"),
                     c("#ffcccc", "#fff2cc", "#ccffcc")
                   ))
   }, server = FALSE)

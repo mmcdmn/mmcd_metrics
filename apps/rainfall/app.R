@@ -8,6 +8,9 @@ library(ggplot2)
 library(lubridate)
 library(DT)
 library(sf)
+library(plotly)
+library(shinyWidgets)
+library(tidyr)
 
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
@@ -51,12 +54,14 @@ get_db_connection <- function() {
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Rainfall and Breeding Sites Analysis"),
+  dashboardHeader(title = "Rainfall Metrics & Treatment Response Analysis"),
   
   dashboardSidebar(
     sidebarMenu(
+      menuItem("High Priority Wetlands", tabName = "priority", icon = icon("exclamation-triangle")),
       menuItem("Rainfall Map", tabName = "map", icon = icon("map")),
-      menuItem("Rainfall Trends", tabName = "trends", icon = icon("chart-line")),
+      menuItem("Treatment Analysis", tabName = "treatment", icon = icon("syringe")),
+      menuItem("Wetland Metrics", tabName = "metrics", icon = icon("chart-bar")),
       menuItem("Site Details", tabName = "details", icon = icon("table"))
     )
   ),
@@ -74,6 +79,96 @@ ui <- dashboardPage(
     ),
     
     tabItems(
+      # High Priority Wetlands Tab
+      tabItem(tabName = "priority",
+        fluidRow(
+          box(title = "High Priority Wetland Controls", status = "danger", solidHeader = TRUE, width = 12,
+            fluidRow(
+              column(3,
+                dateInput("pretend_today", "Pretend Today Is:",
+                  value = Sys.Date(),
+                  max = Sys.Date()
+                )
+              ),
+              column(3,
+                selectInput("data_source", "Data Source:",
+                  choices = list(
+                    "Current Year" = "current",
+                    "Archive" = "archive"
+                  ),
+                  selected = "current"
+                )
+              ),
+              column(3,
+                numericInput("rainfall_threshold", "Rainfall Threshold (inches):",
+                  value = 1.0,
+                  min = 0.1,
+                  max = 10,
+                  step = 0.1
+                )
+              ),
+              column(3,
+                selectInput("priority_focus", "Priority Focus:",
+                  choices = list(
+                    "Red Only" = "RED",
+                    "Red + Yellow" = "RED,YELLOW",
+                    "All Priorities" = "all"
+                  ),
+                  selected = "RED"
+                )
+              )
+            ),
+            fluidRow(
+              column(4,
+                radioButtons("lookback_period", "Rainfall Lookback Period:",
+                  choices = list(
+                    "Last 7 days" = 7,
+                    "Last 14 days" = 14,
+                    "Last 30 days" = 30
+                  ),
+                  selected = 7,
+                  inline = TRUE
+                )
+              ),
+              column(4,
+                selectInput("facility_priority", "Facility:",
+                  choices = c("All Facilities" = "all"),
+                  selected = "all"
+                )
+              ),
+              column(4,
+                checkboxInput("show_untreated_only", "Show Only Untreated Sites", value = TRUE)
+              )
+            )
+          )
+        ),
+        
+        fluidRow(
+          valueBoxOutput("high_priority_sites", width = 3),
+          valueBoxOutput("sites_needing_treatment", width = 3),
+          valueBoxOutput("sites_treated_timely", width = 3),
+          valueBoxOutput("avg_response_time", width = 3)
+        ),
+        
+        fluidRow(
+          box(title = "High Priority Sites Map", status = "danger", solidHeader = TRUE, width = 8,
+            leafletOutput("priority_map", height = "500px")
+          ),
+          box(title = "Quick Stats", status = "info", solidHeader = TRUE, width = 4,
+            div(style = "height: 500px; overflow-y: auto;",
+              h4("Rainfall & Treatment Summary"),
+              DT::dataTableOutput("priority_summary_table")
+            )
+          )
+        ),
+        
+        fluidRow(
+          box(title = "High Priority Wetlands Table", status = "warning", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("priority_table")
+          )
+        )
+      ),
+      
       # Map Tab
       tabItem(tabName = "map",
         fluidRow(
@@ -87,10 +182,10 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
-                  selectInput("facility_filter", "Facility:",
-                    choices = c("Select Facility" = "none"),
-                    selected = "none"
-                  )
+                selectInput("facility_filter", "Facility:",
+                  choices = c("Select Facility" = "none"),
+                  selected = "none"
+                )
               ),
               column(3,
                 selectInput("wetland_type_filter", "Wetland Type:",
@@ -144,52 +239,109 @@ ui <- dashboardPage(
         )
       ),
       
-      # Trends Tab
-      tabItem(tabName = "trends",
+      # Treatment Analysis Tab
+      tabItem(tabName = "treatment",
         fluidRow(
-          box(title = "Rainfall Trends Over Time", status = "primary", solidHeader = TRUE, width = 12,
-            plotOutput("rainfall_trend_plot", height = "400px")
+          box(title = "Treatment Response Analysis", status = "success", solidHeader = TRUE, width = 12,
+            fluidRow(
+              column(4,
+                numericInput("treatment_threshold", "Min Rainfall for Treatment (inches):",
+                  value = 1.0,
+                  min = 0.1,
+                  max = 10,
+                  step = 0.1
+                )
+              ),
+              column(4,
+                numericInput("max_response_days", "Max Response Days:",
+                  value = 7,
+                  min = 1,
+                  max = 30,
+                  step = 1
+                )
+              ),
+              column(4,
+                selectInput("treatment_facility", "Facility:",
+                  choices = c("All Facilities" = "all"),
+                  selected = "all"
+                )
+              )
+            )
           )
         ),
         
         fluidRow(
-          box(title = "Rainfall by Location", status = "info", solidHeader = TRUE, width = 6,
+          valueBoxOutput("total_rainfall_events", width = 3),
+          valueBoxOutput("sites_treated_after_rain", width = 3),
+          valueBoxOutput("avg_treatment_response", width = 3),
+          valueBoxOutput("treatment_success_rate", width = 3)
+        ),
+        
+        fluidRow(
+          box(title = "Rainfall to Treatment Timeline", status = "info", solidHeader = TRUE, width = 8,
+            plotlyOutput("treatment_timeline_plot", height = "400px")
+          ),
+          box(title = "Response Time Distribution", status = "warning", solidHeader = TRUE, width = 4,
+            plotOutput("response_time_dist", height = "400px")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Treatment Response Details", status = "primary", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("treatment_response_table")
+          )
+        )
+      ),
+      
+      # Wetland Metrics Tab
+      tabItem(tabName = "metrics",
+        fluidRow(
+          box(title = "Wetland Metrics Controls", status = "info", solidHeader = TRUE, width = 12,
             fluidRow(
-              column(6,
-                selectInput("location_level", "Location Level:",
-                  choices = list(
-                    "County" = "county",
-                    "City" = "city",
-                    "Section" = "section"
-                  ),
-                  selected = "city"
+              column(4,
+                numericInput("metrics_rainfall_threshold", "Rainfall Threshold (inches):",
+                  value = 1.0,
+                  min = 0.1,
+                  max = 10,
+                  step = 0.1
                 )
               ),
-              column(6,
-                conditionalPanel(
-                  condition = "input.location_level == 'city' || input.location_level == 'section'",
-                  selectInput("county_filter", "Filter by County:",
-                    choices = c("All Counties" = "all"),
-                    selected = "all"
-                  )
+              column(4,
+                selectInput("metrics_facility", "Facility:",
+                  choices = c("All Facilities" = "all"),
+                  selected = "all"
+                )
+              ),
+              column(4,
+                radioButtons("metrics_period", "Analysis Period:",
+                  choices = list(
+                    "Last 30 days" = 30,
+                    "Last 60 days" = 60,
+                    "Last 90 days" = 90
+                  ),
+                  selected = 30,
+                  inline = TRUE
                 )
               )
-            ),
-            fluidRow(
-              column(12,
-                conditionalPanel(
-                  condition = "input.location_level == 'section'",
-                  selectInput("city_filter", "Filter by City:",
-                    choices = c("All Cities" = "all"),
-                    selected = "all"
-                  )
-                )
-              )
-            ),
-            plotOutput("rainfall_by_location", height = "300px")
+            )
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Precipitation Threshold Analysis", status = "primary", solidHeader = TRUE, width = 6,
+            DT::dataTableOutput("threshold_analysis_table")
           ),
-          box(title = "Rainfall by Priority", status = "warning", solidHeader = TRUE, width = 6,
-            plotOutput("rainfall_by_priority", height = "350px")
+          box(title = "Wetland Status by Acreage", status = "info", solidHeader = TRUE, width = 6,
+            plotOutput("acreage_status_plot", height = "300px")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Risk Designation Matrix", status = "warning", solidHeader = TRUE, width = 8,
+            DT::dataTableOutput("risk_matrix_table")
+          ),
+          box(title = "Risk Distribution", status = "success", solidHeader = TRUE, width = 4,
+            plotOutput("risk_distribution_plot", height = "300px")
           )
         )
       ),
@@ -217,7 +369,8 @@ server <- function(input, output, session) {
         # Get facilities
         facilities <- dbGetQuery(con, "SELECT DISTINCT facility FROM loc_breeding_sites WHERE facility IS NOT NULL ORDER BY facility")
         fac_choices <- setNames(facilities$facility, facilities$facility)
-        fac_choices <- c("Select Facility" = "none", fac_choices)
+        fac_choices_all <- c("All Facilities" = "all", fac_choices)
+        fac_choices_select <- c("Select Facility" = "none", fac_choices)
         
         # Get wetland types
         types <- dbGetQuery(con, "SELECT DISTINCT type FROM loc_breeding_sites WHERE type IS NOT NULL ORDER BY type")
@@ -252,7 +405,12 @@ server <- function(input, output, session) {
           updateSelectInput(session, "county_filter", choices = county_choices)
         }
         
-        updateSelectInput(session, "facility_filter", choices = fac_choices)
+        # Update all facility dropdowns
+        updateSelectInput(session, "facility_filter", choices = fac_choices_select)
+        updateSelectInput(session, "facility_priority", choices = fac_choices_all)
+        updateSelectInput(session, "treatment_facility", choices = fac_choices_all)
+        updateSelectInput(session, "metrics_facility", choices = fac_choices_all)
+        
         updateSelectInput(session, "wetland_type_filter", choices = type_choices)
         updateSelectInput(session, "priority_filter", choices = priority_choices)
         
@@ -262,6 +420,155 @@ server <- function(input, output, session) {
         if (!is.null(con)) dbDisconnect(con)
       })
     }
+  })
+  
+  # Helper function to get treatment data
+  get_treatment_data <- function(start_date, end_date, data_source = "current") {
+    con <- get_db_connection()
+    if (is.null(con)) return(NULL)
+    
+    tryCatch({
+      # Choose table based on data source
+      table_name <- if (data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
+      
+      query <- sprintf("
+        SELECT 
+          t.inspdate,
+          t.facility,
+          t.sitecode,
+          t.action,
+          t.acres,
+          t.matcode,
+          ST_X(ST_Centroid(ST_Transform(s.geom, 4326))) as longitude,
+          ST_Y(ST_Centroid(ST_Transform(s.geom, 4326))) as latitude
+        FROM %s t
+        LEFT JOIN loc_breeding_sites s ON t.sitecode = s.sitecode
+        WHERE t.inspdate >= '%s' 
+          AND t.inspdate <= '%s'
+          AND t.action IN ('4', '2', '1')
+          AND s.geom IS NOT NULL
+        ORDER BY t.inspdate, t.sitecode
+      ", table_name, start_date, end_date)
+      
+      result <- dbGetQuery(con, query)
+      dbDisconnect(con)
+      
+      if (nrow(result) > 0) {
+        result$inspdate <- as.Date(result$inspdate)
+        return(result)
+      } else {
+        return(data.frame())
+      }
+      
+    }, error = function(e) {
+      showNotification(paste("Error loading treatment data:", e$message), type = "error")
+      if (!is.null(con)) dbDisconnect(con)
+      return(data.frame())
+    })
+  }
+  
+  # Priority wetlands data
+  priority_data <- reactive({
+    req(input$pretend_today, input$rainfall_threshold, input$lookback_period)
+    
+    # Calculate lookback period
+    end_date <- input$pretend_today
+    start_date <- end_date - as.numeric(input$lookback_period)
+    
+    con <- get_db_connection()
+    if (is.null(con)) return(NULL)
+    
+    tryCatch({
+      # Build priority filter
+      priority_condition <- if (input$priority_focus == "all") {
+        ""
+      } else {
+        priorities <- unlist(strsplit(input$priority_focus, ","))
+        priority_list <- paste(sprintf("'%s'", priorities), collapse = ",")
+        sprintf("AND s.priority IN (%s)", priority_list)
+      }
+      
+      # Build facility filter
+      facility_condition <- if (input$facility_priority == "all") {
+        ""
+      } else {
+        sprintf("AND s.facility = '%s'", input$facility_priority)
+      }
+      
+      # Get sites with rainfall above threshold
+      query <- sprintf("
+        SELECT 
+          s.sitecode,
+          s.acres,
+          s.type,
+          s.priority,
+          s.facility,
+          ST_X(ST_Centroid(ST_Transform(s.geom, 4326))) as longitude,
+          ST_Y(ST_Centroid(ST_Transform(s.geom, 4326))) as latitude,
+          COALESCE(SUM(r.rain_inches), 0) as total_rainfall,
+          COUNT(r.date) as rain_days,
+          MAX(r.date) as last_rain_date
+        FROM loc_breeding_sites s
+        LEFT JOIN breeding_site_hrap h ON s.sitecode = h.sitecode
+        LEFT JOIN nws_precip_site_history r ON h.sitecode = r.sitecode 
+          AND r.date >= '%s' 
+          AND r.date <= '%s'
+        WHERE s.geom IS NOT NULL
+          AND s.startdate IS NOT NULL
+          AND (s.enddate IS NULL OR s.enddate > '%s')
+          %s
+          %s
+        GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, 
+                 ST_X(ST_Centroid(ST_Transform(s.geom, 4326))), ST_Y(ST_Centroid(ST_Transform(s.geom, 4326)))
+        HAVING COALESCE(SUM(r.rain_inches), 0) >= %f
+        ORDER BY s.priority, total_rainfall DESC
+      ", start_date, end_date, end_date, priority_condition, facility_condition, input$rainfall_threshold)
+      
+      sites <- dbGetQuery(con, query)
+      
+      # Get treatment data for these sites
+      if (nrow(sites) > 0) {
+        treatments <- get_treatment_data(start_date, end_date, input$data_source)
+        
+        # For each site, find if it was treated after rainfall
+        sites$treated <- FALSE
+        sites$treatment_date <- as.Date(NA)
+        sites$days_to_treatment <- NA
+        sites$treatment_response <- "Not Treated"
+        
+        if (nrow(treatments) > 0) {
+          for (i in 1:nrow(sites)) {
+            site_treatments <- treatments[treatments$sitecode == sites$sitecode[i] & 
+                                        treatments$inspdate > sites$last_rain_date[i], ]
+            if (nrow(site_treatments) > 0) {
+              earliest_treatment <- site_treatments[which.min(site_treatments$inspdate), ]
+              sites$treated[i] <- TRUE
+              sites$treatment_date[i] <- earliest_treatment$inspdate
+              sites$days_to_treatment[i] <- as.numeric(earliest_treatment$inspdate - sites$last_rain_date[i])
+              
+              if (sites$days_to_treatment[i] <= 7) {
+                sites$treatment_response[i] <- "Timely"
+              } else {
+                sites$treatment_response[i] <- "Delayed"
+              }
+            }
+          }
+        }
+        
+        # Filter to untreated only if requested
+        if (input$show_untreated_only) {
+          sites <- sites[!sites$treated, ]
+        }
+      }
+      
+      dbDisconnect(con)
+      return(sites)
+      
+    }, error = function(e) {
+      showNotification(paste("Error loading priority data:", e$message), type = "error")
+      if (!is.null(con)) dbDisconnect(con)
+      return(data.frame())
+    })
   })
   
   # Update city filter based on county selection
@@ -470,7 +777,192 @@ server <- function(input, output, session) {
     }
   })
   
-  # Value boxes
+  # Priority tab value boxes
+  output$high_priority_sites <- renderValueBox({
+    data <- priority_data()
+    value <- ifelse(is.null(data), 0, nrow(data))
+    
+    valueBox(
+      value = value,
+      subtitle = "High Priority Sites",
+      icon = icon("exclamation-triangle"),
+      color = "red"
+    )
+  })
+  
+  output$sites_needing_treatment <- renderValueBox({
+    data <- priority_data()
+    value <- ifelse(is.null(data), 0, sum(!data$treated, na.rm = TRUE))
+    
+    valueBox(
+      value = value,
+      subtitle = "Needing Treatment",
+      icon = icon("syringe"),
+      color = "yellow"
+    )
+  })
+  
+  output$sites_treated_timely <- renderValueBox({
+    data <- priority_data()
+    value <- ifelse(is.null(data), 0, sum(data$treatment_response == "Timely", na.rm = TRUE))
+    
+    valueBox(
+      value = value,
+      subtitle = "Treated Timely",
+      icon = icon("check"),
+      color = "green"
+    )
+  })
+  
+  output$avg_response_time <- renderValueBox({
+    data <- priority_data()
+    treated_data <- data[data$treated & !is.na(data$days_to_treatment), ]
+    value <- ifelse(nrow(treated_data) == 0, "N/A", 
+                   paste(round(mean(treated_data$days_to_treatment), 1), "days"))
+    
+    valueBox(
+      value = value,
+      subtitle = "Avg Response Time",
+      icon = icon("clock"),
+      color = "purple"
+    )
+  })
+  
+  # Priority map
+  output$priority_map <- renderLeaflet({
+    data <- priority_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      leaflet() %>%
+        addTiles() %>%
+        setView(lng = -93.2, lat = 44.9, zoom = 10) %>%
+        addPopups(lng = -93.2, lat = 44.9, popup = "No high priority sites found")
+    } else {
+      # Color by treatment status
+      data$color <- case_when(
+        !data$treated ~ "#e74c3c",  # Red for untreated
+        data$treatment_response == "Timely" ~ "#27ae60",  # Green for timely
+        data$treatment_response == "Delayed" ~ "#f39c12",  # Orange for delayed
+        TRUE ~ "#95a5a6"  # Gray for other
+      )
+      
+      popup_content <- sprintf(
+        "<strong>Site:</strong> %s<br/>
+         <strong>Priority:</strong> %s<br/>
+         <strong>Facility:</strong> %s<br/>
+         <strong>Acres:</strong> %.2f<br/>
+         <strong>Total Rainfall:</strong> %.2f inches<br/>
+         <strong>Treatment Status:</strong> %s<br/>
+         %s",
+        data$sitecode, data$priority, data$facility, data$acres, 
+        data$total_rainfall, data$treatment_response,
+        ifelse(data$treated, 
+               sprintf("<strong>Days to Treatment:</strong> %d", data$days_to_treatment),
+               "<strong>Action Required</strong>")
+      )
+      
+      leaflet(data) %>%
+        addTiles() %>%
+        addCircleMarkers(
+          lng = ~longitude,
+          lat = ~latitude,
+          radius = ~pmax(5, total_rainfall * 2),
+          color = "white",
+          fillColor = ~color,
+          fillOpacity = 0.8,
+          weight = 2,
+          popup = popup_content
+        ) %>%
+        addLegend(
+          position = "bottomright",
+          colors = c("#e74c3c", "#f39c12", "#27ae60"),
+          labels = c("Untreated", "Delayed Treatment", "Timely Treatment"),
+          title = "Treatment Status",
+          opacity = 0.8
+        )
+    }
+  })
+  
+  # Priority summary table
+  output$priority_summary_table <- DT::renderDataTable({
+    data <- priority_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No data available"))
+    }
+    
+    summary_stats <- data.frame(
+      Metric = c("Total Sites", "Untreated", "Treated Timely", "Treated Late", "Avg Response (days)"),
+      Value = c(
+        nrow(data),
+        sum(!data$treated),
+        sum(data$treatment_response == "Timely", na.rm = TRUE),
+        sum(data$treatment_response == "Delayed", na.rm = TRUE),
+        round(mean(data$days_to_treatment, na.rm = TRUE), 1)
+      )
+    )
+    
+    datatable(summary_stats,
+      options = list(
+        pageLength = 5,
+        dom = 't',
+        ordering = FALSE
+      ),
+      rownames = FALSE
+    )
+  })
+  
+  # Priority table
+  output$priority_table <- DT::renderDataTable({
+    data <- priority_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No high priority sites found"))
+    }
+    
+    display_data <- data %>%
+      select(
+        `Site Code` = sitecode,
+        Priority = priority,
+        Facility = facility,
+        `Type` = type,
+        `Acres` = acres,
+        `Rainfall (inches)` = total_rainfall,
+        `Rain Days` = rain_days,
+        `Last Rain` = last_rain_date,
+        `Treated` = treated,
+        `Treatment Date` = treatment_date,
+        `Days to Treatment` = days_to_treatment,
+        `Response` = treatment_response
+      ) %>%
+      mutate(
+        Acres = round(Acres, 2),
+        `Rainfall (inches)` = round(`Rainfall (inches)`, 2)
+      )
+    
+    datatable(display_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        order = list(list(5, 'desc'))
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle("Priority",
+        backgroundColor = styleEqual(
+          c("RED", "YELLOW", "BLUE", "GREEN"),
+          c("#ffebee", "#fff8e1", "#e3f2fd", "#e8f5e8")
+        )
+      ) %>%
+      formatStyle("Response",
+        backgroundColor = styleEqual(
+          c("Not Treated", "Delayed", "Timely"),
+          c("#ffcdd2", "#ffecb3", "#c8e6c9")
+        )
+      )
+  })
+
+  # Value boxes for original tabs
   output$total_sites <- renderValueBox({
     data <- site_rainfall_data()
     value <- ifelse(is.null(data), 0, nrow(data))
@@ -691,6 +1183,434 @@ server <- function(input, output, session) {
     }
   })
   
+  # Treatment Analysis Tab Outputs
+  # Treatment analysis data
+  treatment_analysis_data <- reactive({
+    req(input$pretend_today, input$treatment_threshold, input$max_response_days)
+    
+    end_date <- input$pretend_today
+    start_date <- end_date - 90  # Look back 90 days for comprehensive analysis
+    
+    con <- get_db_connection()
+    if (is.null(con)) return(NULL)
+    
+    tryCatch({
+      # Get rainfall events above threshold
+      rainfall_events <- dbGetQuery(con, sprintf("
+        SELECT 
+          r.sitecode,
+          r.date as rain_date,
+          r.rain_inches,
+          s.facility,
+          s.priority,
+          s.acres
+        FROM nws_precip_site_history r
+        JOIN breeding_site_hrap h ON r.sitecode = h.sitecode
+        JOIN loc_breeding_sites s ON h.sitecode = s.sitecode
+        WHERE r.date >= '%s' 
+          AND r.date <= '%s'
+          AND r.rain_inches >= %f
+          AND s.startdate IS NOT NULL
+          AND (s.enddate IS NULL OR s.enddate > '%s')
+        ORDER BY r.date, r.sitecode
+      ", start_date, end_date, input$treatment_threshold, end_date))
+      
+      if (nrow(rainfall_events) == 0) {
+        dbDisconnect(con)
+        return(data.frame())
+      }
+      
+      rainfall_events$rain_date <- as.Date(rainfall_events$rain_date)
+      
+      # Get treatments for analysis
+      treatments <- get_treatment_data(start_date, end_date + 30, input$data_source)  # Extended range for treatments
+      
+      if (nrow(treatments) == 0) {
+        rainfall_events$treated <- FALSE
+        rainfall_events$treatment_date <- as.Date(NA)
+        rainfall_events$response_days <- NA
+        dbDisconnect(con)
+        return(rainfall_events)
+      }
+      
+      # Match treatments to rainfall events
+      for (i in 1:nrow(rainfall_events)) {
+        site_treatments <- treatments[
+          treatments$sitecode == rainfall_events$sitecode[i] &
+          treatments$inspdate > rainfall_events$rain_date[i] &
+          treatments$inspdate <= (rainfall_events$rain_date[i] + input$max_response_days), 
+        ]
+        
+        if (nrow(site_treatments) > 0) {
+          earliest_treatment <- site_treatments[which.min(site_treatments$inspdate), ]
+          rainfall_events$treated[i] <- TRUE
+          rainfall_events$treatment_date[i] <- earliest_treatment$inspdate
+          rainfall_events$response_days[i] <- as.numeric(earliest_treatment$inspdate - rainfall_events$rain_date[i])
+        } else {
+          rainfall_events$treated[i] <- FALSE
+          rainfall_events$treatment_date[i] <- as.Date(NA)
+          rainfall_events$response_days[i] <- NA
+        }
+      }
+      
+      # Filter by facility if specified
+      if (input$treatment_facility != "all") {
+        rainfall_events <- rainfall_events[rainfall_events$facility == input$treatment_facility, ]
+      }
+      
+      dbDisconnect(con)
+      return(rainfall_events)
+      
+    }, error = function(e) {
+      if (!is.null(con)) dbDisconnect(con)
+      showNotification(paste("Error in treatment analysis:", e$message), type = "error")
+      return(data.frame())
+    })
+  })
+  
+  # Treatment value boxes
+  output$total_rainfall_events <- renderValueBox({
+    data <- treatment_analysis_data()
+    value <- ifelse(is.null(data), 0, nrow(data))
+    
+    valueBox(
+      value = value,
+      subtitle = "Rainfall Events",
+      icon = icon("cloud-rain"),
+      color = "blue"
+    )
+  })
+  
+  output$sites_treated_after_rain <- renderValueBox({
+    data <- treatment_analysis_data()
+    value <- ifelse(is.null(data), 0, sum(data$treated, na.rm = TRUE))
+    
+    valueBox(
+      value = value,
+      subtitle = "Sites Treated",
+      icon = icon("syringe"),
+      color = "green"
+    )
+  })
+  
+  output$avg_treatment_response <- renderValueBox({
+    data <- treatment_analysis_data()
+    treated_data <- data[data$treated & !is.na(data$response_days), ]
+    value <- ifelse(nrow(treated_data) == 0, "N/A",
+                   paste(round(mean(treated_data$response_days), 1), "days"))
+    
+    valueBox(
+      value = value,
+      subtitle = "Avg Response Time",
+      icon = icon("clock"),
+      color = "orange"
+    )
+  })
+  
+  output$treatment_success_rate <- renderValueBox({
+    data <- treatment_analysis_data()
+    rate <- ifelse(nrow(data) == 0, 0, round(sum(data$treated, na.rm = TRUE) / nrow(data) * 100, 1))
+    
+    valueBox(
+      value = paste0(rate, "%"),
+      subtitle = "Treatment Rate",
+      icon = icon("percentage"),
+      color = "purple"
+    )
+  })
+  
+  # Treatment timeline plot
+  output$treatment_timeline_plot <- renderPlotly({
+    data <- treatment_analysis_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      p <- ggplot() + 
+        geom_text(aes(x = 0, y = 0, label = "No data available"), size = 6) +
+        theme_void()
+      return(ggplotly(p))
+    }
+    
+    # Create timeline data
+    timeline_data <- data %>%
+      filter(treated) %>%
+      select(sitecode, rain_date, treatment_date, response_days, facility, rain_inches) %>%
+      pivot_longer(cols = c(rain_date, treatment_date), names_to = "event_type", values_to = "date") %>%
+      mutate(
+        event_type = case_when(
+          event_type == "rain_date" ~ "Rainfall",
+          event_type == "treatment_date" ~ "Treatment"
+        ),
+        event_color = case_when(
+          event_type == "Rainfall" ~ "blue",
+          event_type == "Treatment" ~ "red"
+        )
+      )
+    
+    p <- ggplot(timeline_data, aes(x = date, y = sitecode)) +
+      geom_line(aes(group = sitecode), color = "gray", alpha = 0.5) +
+      geom_point(aes(color = event_type, size = rain_inches), alpha = 0.7) +
+      scale_color_manual(values = c("Rainfall" = "blue", "Treatment" = "red")) +
+      labs(
+        title = "Rainfall to Treatment Timeline",
+        x = "Date",
+        y = "Site Code",
+        color = "Event Type",
+        size = "Rainfall (inches)"
+      ) +
+      theme_minimal() +
+      theme(axis.text.y = element_text(size = 6))
+    
+    ggplotly(p, tooltip = c("x", "y", "colour", "size"))
+  })
+  
+  # Response time distribution
+  output$response_time_dist <- renderPlot({
+    data <- treatment_analysis_data()
+    treated_data <- data[data$treated & !is.na(data$response_days), ]
+    
+    if (nrow(treated_data) == 0) {
+      ggplot() + 
+        geom_text(aes(x = 0, y = 0, label = "No treatment data"), size = 5) +
+        theme_void()
+    } else {
+      ggplot(treated_data, aes(x = response_days)) +
+        geom_histogram(binwidth = 1, fill = "steelblue", alpha = 0.7) +
+        geom_vline(xintercept = 7, color = "red", linetype = "dashed", size = 1) +
+        labs(
+          title = "Response Time Distribution",
+          x = "Days to Treatment",
+          y = "Count"
+        ) +
+        theme_minimal() +
+        annotate("text", x = 7.5, y = Inf, label = "7-day target", 
+                color = "red", vjust = 2, hjust = 0)
+    }
+  })
+  
+  # Treatment response table
+  output$treatment_response_table <- DT::renderDataTable({
+    data <- treatment_analysis_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No rainfall events found"))
+    }
+    
+    display_data <- data %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        Priority = priority,
+        `Rain Date` = rain_date,
+        `Rainfall (inches)` = rain_inches,
+        `Treated` = treated,
+        `Treatment Date` = treatment_date,
+        `Response Days` = response_days
+      ) %>%
+      mutate(
+        `Rainfall (inches)` = round(`Rainfall (inches)`, 2)
+      )
+    
+    datatable(display_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        order = list(list(3, 'desc'))
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle("Treated",
+        backgroundColor = styleEqual(c(TRUE, FALSE), c("#c8e6c9", "#ffcdd2"))
+      ) %>%
+      formatStyle("Response Days",
+        backgroundColor = styleInterval(c(3, 7), c("#c8e6c9", "#fff3e0", "#ffcdd2"))
+      )
+  })
+  
+  # Wetland Metrics Tab Outputs
+  wetland_metrics_data <- reactive({
+    req(input$metrics_rainfall_threshold, input$metrics_period)
+    
+    end_date <- input$pretend_today
+    start_date <- end_date - as.numeric(input$metrics_period)
+    
+    con <- get_db_connection()
+    if (is.null(con)) return(NULL)
+    
+    tryCatch({
+      facility_condition <- if (input$metrics_facility == "all") {
+        ""
+      } else {
+        sprintf("AND s.facility = '%s'", input$metrics_facility)
+      }
+      
+      query <- sprintf("
+        SELECT 
+          s.sitecode,
+          s.acres,
+          s.type,
+          s.priority,
+          s.facility,
+          COALESCE(SUM(r.rain_inches), 0) as total_rainfall,
+          COUNT(CASE WHEN r.rain_inches > 0 THEN 1 END) as rain_days,
+          CASE 
+            WHEN COALESCE(SUM(r.rain_inches), 0) = 0 THEN 'Dry'
+            WHEN COALESCE(SUM(r.rain_inches), 0) < %f THEN 'Under Threshold'
+            ELSE 'Over Threshold'
+          END as rainfall_status,
+          CASE 
+            WHEN COALESCE(SUM(r.rain_inches), 0) >= 3.0 THEN 'High Risk'
+            WHEN COALESCE(SUM(r.rain_inches), 0) >= %f THEN 'Medium Risk'
+            WHEN COALESCE(SUM(r.rain_inches), 0) > 0 THEN 'Low Risk'
+            ELSE 'No Risk'
+          END as risk_designation
+        FROM loc_breeding_sites s
+        LEFT JOIN breeding_site_hrap h ON s.sitecode = h.sitecode
+        LEFT JOIN nws_precip_site_history r ON h.sitecode = r.sitecode 
+          AND r.date >= '%s' 
+          AND r.date <= '%s'
+        WHERE s.geom IS NOT NULL
+          AND s.startdate IS NOT NULL
+          AND (s.enddate IS NULL OR s.enddate > '%s')
+          %s
+        GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility
+        ORDER BY s.facility, s.priority, total_rainfall DESC
+      ", input$metrics_rainfall_threshold, input$metrics_rainfall_threshold, 
+         start_date, end_date, end_date, facility_condition)
+      
+      result <- dbGetQuery(con, query)
+      dbDisconnect(con)
+      return(result)
+      
+    }, error = function(e) {
+      if (!is.null(con)) dbDisconnect(con)
+      showNotification(paste("Error in metrics analysis:", e$message), type = "error")
+      return(data.frame())
+    })
+  })
+  
+  # Threshold analysis table
+  output$threshold_analysis_table <- DT::renderDataTable({
+    data <- wetland_metrics_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No data available"))
+    }
+    
+    summary_data <- data %>%
+      group_by(rainfall_status) %>%
+      summarise(
+        Count = n(),
+        `Total Acres` = round(sum(acres, na.rm = TRUE), 1),
+        `Avg Acres` = round(mean(acres, na.rm = TRUE), 2),
+        `Avg Rainfall` = round(mean(total_rainfall, na.rm = TRUE), 2),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(Count))
+    
+    datatable(summary_data,
+      options = list(
+        pageLength = 10,
+        dom = 't',
+        ordering = FALSE
+      ),
+      rownames = FALSE
+    ) %>%
+      formatStyle("rainfall_status",
+        backgroundColor = styleEqual(
+          c("Dry", "Under Threshold", "Over Threshold"),
+          c("#f8f9fa", "#fff3cd", "#d1ecf1")
+        )
+      )
+  })
+  
+  # Acreage status plot
+  output$acreage_status_plot <- renderPlot({
+    data <- wetland_metrics_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      ggplot() + 
+        geom_text(aes(x = 0, y = 0, label = "No data available"), size = 5) +
+        theme_void()
+    } else {
+      acreage_summary <- data %>%
+        group_by(rainfall_status) %>%
+        summarise(total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+      
+      ggplot(acreage_summary, aes(x = rainfall_status, y = total_acres, fill = rainfall_status)) +
+        geom_col() +
+        scale_fill_manual(
+          values = c("Dry" = "#6c757d", "Under Threshold" = "#ffc107", "Over Threshold" = "#17a2b8")
+        ) +
+        labs(
+          title = "Total Acreage by Rainfall Status",
+          x = "Rainfall Status",
+          y = "Total Acres"
+        ) +
+        theme_minimal() +
+        theme(legend.position = "none")
+    }
+  })
+  
+  # Risk matrix table
+  output$risk_matrix_table <- DT::renderDataTable({
+    data <- wetland_metrics_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No data available"))
+    }
+    
+    risk_summary <- data %>%
+      group_by(priority, risk_designation) %>%
+      summarise(
+        Count = n(),
+        `Total Acres` = round(sum(acres, na.rm = TRUE), 1),
+        `Avg Rainfall` = round(mean(total_rainfall, na.rm = TRUE), 2),
+        .groups = "drop"
+      ) %>%
+      pivot_wider(
+        names_from = risk_designation,
+        values_from = c(Count, `Total Acres`, `Avg Rainfall`),
+        values_fill = 0
+      )
+    
+    datatable(risk_summary,
+      options = list(
+        pageLength = 10,
+        scrollX = TRUE
+      ),
+      rownames = FALSE
+    )
+  })
+  
+  # Risk distribution plot
+  output$risk_distribution_plot <- renderPlot({
+    data <- wetland_metrics_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      ggplot() + 
+        geom_text(aes(x = 0, y = 0, label = "No data available"), size = 5) +
+        theme_void()
+    } else {
+      risk_counts <- data %>%
+        count(risk_designation) %>%
+        mutate(percentage = n / sum(n) * 100)
+      
+      ggplot(risk_counts, aes(x = "", y = percentage, fill = risk_designation)) +
+        geom_bar(stat = "identity", width = 1) +
+        coord_polar(theta = "y") +
+        scale_fill_manual(
+          values = c("No Risk" = "#28a745", "Low Risk" = "#ffc107", 
+                    "Medium Risk" = "#fd7e14", "High Risk" = "#dc3545")
+        ) +
+        labs(
+          title = "Risk Distribution",
+          fill = "Risk Level"
+        ) +
+        theme_void() +
+        theme(legend.position = "bottom")
+    }
+  })
+
   # Site details table
   output$site_rainfall_table <- DT::renderDataTable({
     data <- site_rainfall_data()

@@ -1938,25 +1938,53 @@ server <- function(input, output, session) {
       return(leaflet() %>% addTiles())
     }
     
+    # Check if required columns exist
+    required_cols <- c("longitude", "latitude", "sitecode")
+    if (!all(required_cols %in% names(data))) {
+      showNotification("Map data missing required coordinates", type = "warning")
+      return(leaflet() %>% addTiles())
+    }
+    
+    # Filter out rows with missing coordinates
+    data <- data[!is.na(data$longitude) & !is.na(data$latitude), ]
+    if (nrow(data) == 0) {
+      return(leaflet() %>% addTiles())
+    }
+    
+    # Create status column safely
+    data$status <- "Not Inspected"  # Default value
+    if ("inspected" %in% names(data)) {
+      inspected_status <- !is.na(data$inspected) & data$inspected
+      data$status[inspected_status] <- "Inspected"
+      
+      if ("needs_treatment" %in% names(data)) {
+        treatment_needed <- !is.na(data$needs_treatment) & data$needs_treatment
+        data$status[inspected_status & treatment_needed] <- "Needs Treatment"
+      }
+    }
+    
     # Create color palette based on inspection status
     pal <- colorFactor(
       palette = c("red", "green", "orange"),
       domain = c("Not Inspected", "Inspected", "Needs Treatment")
     )
     
-    # Determine status for each site
-    data$status <- ifelse(is.na(data$inspected) | !data$inspected, "Not Inspected",
-                         ifelse(data$needs_treatment, "Needs Treatment", "Inspected"))
+    # Create popup text safely
+    popup_text <- paste(
+      "Site:", data$sitecode, "<br>",
+      "Status:", data$status, "<br>",
+      "Last Rain:", ifelse(!is.na(data$last_rain_date), as.character(data$last_rain_date), "Unknown"), "<br>",
+      ifelse("inspection_date" %in% names(data) & !is.na(data$inspection_date), 
+             paste("Inspected:", as.character(data$inspection_date)), 
+             "Not Inspected")
+    )
     
     leaflet(data) %>%
       addTiles() %>%
       addCircleMarkers(
         lng = ~longitude, lat = ~latitude,
         color = ~pal(status),
-        popup = ~paste("Site:", sitecode, "<br>",
-                      "Status:", status, "<br>",
-                      "Last Rain:", last_rain_date, "<br>",
-                      if (!is.na(inspection_date)) paste("Inspected:", inspection_date) else "Not Inspected"),
+        popup = popup_text,
         radius = 8,
         fillOpacity = 0.8
       ) %>%

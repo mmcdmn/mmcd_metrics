@@ -647,6 +647,13 @@ server <- function(input, output, session) {
       
       result <- dbGetQuery(con, query)
       dbDisconnect(con)
+      
+      # Add days since rain calculation
+      if (nrow(result) > 0) {
+        result$last_rain_date <- as.Date(result$last_rain_date)
+        result$days_since_rain <- as.numeric(input$pretend_today - result$last_rain_date)
+      }
+      
       return(result)
       
     }, error = function(e) {
@@ -1923,6 +1930,123 @@ server <- function(input, output, session) {
         color = styleInterval(c(2.0), c("black", "white"))
       )
   })
+  
+  # Air Site Pipeline Tab Outputs
+  output$pipeline_map <- renderLeaflet({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(leaflet() %>% addTiles())
+    }
+    
+    # Create color palette based on inspection status
+    pal <- colorFactor(
+      palette = c("red", "green", "orange"),
+      domain = c("Not Inspected", "Inspected", "Needs Treatment")
+    )
+    
+    # Determine status for each site
+    data$status <- ifelse(is.na(data$inspected) | !data$inspected, "Not Inspected",
+                         ifelse(data$needs_treatment, "Needs Treatment", "Inspected"))
+    
+    leaflet(data) %>%
+      addTiles() %>%
+      addCircleMarkers(
+        lng = ~longitude, lat = ~latitude,
+        color = ~pal(status),
+        popup = ~paste("Site:", sitecode, "<br>",
+                      "Status:", status, "<br>",
+                      "Last Rain:", last_rain_date, "<br>",
+                      if (!is.na(inspection_date)) paste("Inspected:", inspection_date) else "Not Inspected"),
+        radius = 8,
+        fillOpacity = 0.8
+      ) %>%
+      addLegend("bottomright", pal = pal, values = ~status, title = "Site Status")
+  })
+  
+  output$rainfall_summary_table <- DT::renderDataTable({
+    data <- air_sites_with_rain()
+    if (is.null(data) || nrow(data) == 0) {
+      return(datatable(data.frame(Message = "No air sites with recent rainfall")))
+    }
+    
+    summary_data <- data %>%
+      select(sitecode, facility, last_rain_date, total_rainfall) %>%
+      arrange(desc(last_rain_date))
+    
+    datatable(summary_data, 
+              options = list(pageLength = 5, scrollX = TRUE),
+              caption = "Air Sites with Recent Rainfall")
+  }, server = FALSE)
+  
+  output$inspection_summary_table <- DT::renderDataTable({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0 || !"inspected" %in% names(data)) {
+      return(datatable(data.frame(Message = "No inspection data available")))
+    }
+    
+    summary_data <- data %>%
+      filter(!inspected) %>%
+      select(sitecode, facility, last_rain_date, days_since_rain = days_since_rain) %>%
+      arrange(desc(days_since_rain))
+    
+    datatable(summary_data,
+              options = list(pageLength = 5, scrollX = TRUE),
+              caption = "Sites Needing Inspection")
+  }, server = FALSE)
+  
+  output$treatment_queue_summary <- DT::renderDataTable({
+    data <- treatment_queue_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(datatable(data.frame(Message = "No sites need treatment")))
+    }
+    
+    summary_data <- data %>%
+      select(sitecode, facility, inspection_date, numdip) %>%
+      arrange(desc(numdip))
+    
+    datatable(summary_data,
+              options = list(pageLength = 5, scrollX = TRUE),
+              caption = "Sites Needing Treatment")
+  }, server = FALSE)
+  
+  output$pipeline_table <- DT::renderDataTable({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(datatable(data.frame(Message = "No data available")))
+    }
+    
+    # Show all sites with their status
+    display_data <- data %>%
+      mutate(
+        Status = case_when(
+          is.na(inspected) | !inspected ~ "Needs Inspection",
+          needs_treatment ~ "Needs Treatment", 
+          TRUE ~ "Inspected"
+        ),
+        `Days Since Rain` = days_since_rain,
+        `Inspection Date` = as.character(inspection_date),
+        `Dip Count` = numdip
+      ) %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        Status,
+        `Last Rain` = last_rain_date,
+        `Days Since Rain`,
+        `Inspection Date`,
+        `Dip Count`
+      ) %>%
+      arrange(desc(`Days Since Rain`))
+    
+    datatable(display_data,
+              options = list(pageLength = 10, scrollX = TRUE),
+              caption = "All Air Sites Pipeline Status") %>%
+      formatStyle("Status",
+                  backgroundColor = styleEqual(
+                    c("Needs Inspection", "Needs Treatment", "Inspected"),
+                    c("#ffcccc", "#fff2cc", "#ccffcc")
+                  ))
+  }, server = FALSE)
 }
 
 # Run the application

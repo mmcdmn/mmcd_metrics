@@ -1,4 +1,4 @@
-# Air Site Status Tracking Application
+# Air Work Pipeline Application
 # Based on requirements: Track all air sites with proper status lifecycle
 
 # Load required libraries
@@ -54,7 +54,7 @@ get_db_connection <- function() {
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Air Site Status Tracking"),
+  dashboardHeader(title = "Air Work Pipeline"),
   
   dashboardSidebar(
     sidebarMenu(

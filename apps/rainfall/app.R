@@ -60,9 +60,7 @@ ui <- dashboardPage(
     sidebarMenu(
       menuItem("Air Site Pipeline", tabName = "pipeline", icon = icon("plane")),
       menuItem("Inspection Status", tabName = "inspection", icon = icon("search")),
-      menuItem("Treatment Queue", tabName = "treatment_queue", icon = icon("list-alt")),
-      menuItem("Performance Metrics", tabName = "metrics", icon = icon("chart-bar")),
-      menuItem("Site Details", tabName = "details", icon = icon("table"))
+      menuItem("Treatment Queue", tabName = "treatment_queue", icon = icon("list-alt"))
     )
   ),
   
@@ -300,192 +298,6 @@ ui <- dashboardPage(
         fluidRow(
           box(title = "Sites in Treatment Queue", status = "primary", solidHeader = TRUE, width = 12,
             DT::dataTableOutput("treatment_queue_table")
-          )
-        )
-      ),
-
-      # Performance Metrics Tab (renamed from map)
-      tabItem(tabName = "metrics",
-        fluidRow(
-          box(title = "Controls", status = "primary", solidHeader = TRUE, width = 12,
-            fluidRow(
-              column(3,
-                dateRangeInput("date_range", "Date Range:",
-                  start = Sys.Date() - 365,
-                  end = Sys.Date(),
-                  max = Sys.Date()
-                )
-              ),
-              column(3,
-                selectInput("facility_filter", "Facility:",
-                  choices = c("Select Facility" = "none"),
-                  selected = "none"
-                )
-              ),
-              column(3,
-                selectInput("wetland_type_filter", "Wetland Type:",
-                  choices = c("All Types" = "all"),
-                  selected = "all",
-                  multiple = TRUE
-                )
-              ),
-              column(3,
-                selectInput("priority_filter", "Priority:",
-                  choices = c("All Priorities" = "all"),
-                  selected = "all",
-                  multiple = TRUE
-                )
-              )
-            ),
-            fluidRow(
-              column(6,
-                sliderInput("min_rainfall", "Minimum Rainfall (inches):",
-                  min = 0, max = 5, value = 0, step = 0.1
-                )
-              ),
-              column(6,
-                radioButtons("rainfall_period", "Rainfall Period:",
-                  choices = list(
-                    "Last 7 days" = "week",
-                    "Last 30 days" = "month", 
-                    "Selected date range" = "custom"
-                  ),
-                  selected = "month",
-                  inline = TRUE
-                )
-              )
-            )
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Breeding Sites and Rainfall", status = "info", solidHeader = TRUE, width = 12, height = "600px",
-            leafletOutput("rainfall_map", height = "550px")
-          )
-        ),
-        
-        fluidRow(
-          column(6,
-            valueBoxOutput("total_sites", width = 12)
-          ),
-          column(6,
-            valueBoxOutput("avg_rainfall", width = 12)
-          )
-        )
-      ),
-      
-      # Treatment Analysis Tab
-      tabItem(tabName = "treatment",
-        fluidRow(
-          box(title = "Treatment Response Analysis", status = "success", solidHeader = TRUE, width = 12,
-            fluidRow(
-              column(4,
-                numericInput("treatment_threshold", "Min Rainfall for Treatment (inches):",
-                  value = 1.0,
-                  min = 0.1,
-                  max = 10,
-                  step = 0.1
-                )
-              ),
-              column(4,
-                numericInput("max_response_days", "Max Response Days:",
-                  value = 7,
-                  min = 1,
-                  max = 30,
-                  step = 1
-                )
-              ),
-              column(4,
-                selectInput("treatment_facility", "Facility:",
-                  choices = c("All Facilities" = "all"),
-                  selected = "all"
-                )
-              )
-            )
-          )
-        ),
-        
-        fluidRow(
-          valueBoxOutput("total_rainfall_events", width = 3),
-          valueBoxOutput("sites_treated_after_rain", width = 3),
-          valueBoxOutput("avg_treatment_response", width = 3),
-          valueBoxOutput("treatment_success_rate", width = 3)
-        ),
-        
-        fluidRow(
-          box(title = "Rainfall to Treatment Timeline", status = "info", solidHeader = TRUE, width = 8,
-            plotlyOutput("treatment_timeline_plot", height = "400px")
-          ),
-          box(title = "Response Time Distribution", status = "warning", solidHeader = TRUE, width = 4,
-            plotOutput("response_time_dist", height = "400px")
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Treatment Response Details", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("treatment_response_table")
-          )
-        )
-      ),
-      
-      # Wetland Metrics Tab
-      tabItem(tabName = "metrics",
-        fluidRow(
-          box(title = "Wetland Metrics Controls", status = "info", solidHeader = TRUE, width = 12,
-            fluidRow(
-              column(4,
-                numericInput("metrics_rainfall_threshold", "Rainfall Threshold (inches):",
-                  value = 1.0,
-                  min = 0.1,
-                  max = 10,
-                  step = 0.1
-                )
-              ),
-              column(4,
-                selectInput("metrics_facility", "Facility:",
-                  choices = c("All Facilities" = "all"),
-                  selected = "all"
-                )
-              ),
-              column(4,
-                radioButtons("metrics_period", "Analysis Period:",
-                  choices = list(
-                    "Last 30 days" = 30,
-                    "Last 60 days" = 60,
-                    "Last 90 days" = 90
-                  ),
-                  selected = 30,
-                  inline = TRUE
-                )
-              )
-            )
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Precipitation Threshold Analysis", status = "primary", solidHeader = TRUE, width = 6,
-            DT::dataTableOutput("threshold_analysis_table")
-          ),
-          box(title = "Wetland Status by Acreage", status = "info", solidHeader = TRUE, width = 6,
-            plotOutput("acreage_status_plot", height = "300px")
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Risk Designation Matrix", status = "warning", solidHeader = TRUE, width = 8,
-            DT::dataTableOutput("risk_matrix_table")
-          ),
-          box(title = "Risk Distribution", status = "success", solidHeader = TRUE, width = 4,
-            plotOutput("risk_distribution_plot", height = "300px")
-          )
-        )
-      ),
-      
-      # Details Tab
-      tabItem(tabName = "details",
-        fluidRow(
-          box(title = "Site Rainfall Details", status = "success", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("site_rainfall_table")
           )
         )
       )
@@ -1257,7 +1069,7 @@ server <- function(input, output, session) {
   
   # Pipeline tab value boxes
   output$air_sites_with_rain <- renderValueBox({
-    data <- air_sites_with_rain()
+    data <- all_air_sites()
     value <- ifelse(is.null(data), 0, nrow(data))
     
     valueBox(
@@ -2325,7 +2137,7 @@ server <- function(input, output, session) {
   })
   
   output$rainfall_summary_table <- DT::renderDataTable({
-    data <- air_sites_with_rain()
+    data <- all_air_sites()
     if (is.null(data) || nrow(data) == 0) {
       return(datatable(data.frame(Message = "No air sites with recent rainfall")))
     }

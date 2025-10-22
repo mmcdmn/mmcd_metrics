@@ -255,11 +255,7 @@ server <- function(input, output, session) {
             FROM dblarv_insptrt_current
             WHERE action IN ('1', '2', '4')
               AND inspdate >= '%s'::date - INTERVAL '90 days'
-            UNION ALL
-            SELECT sitecode, inspdate, numdip, action  
-            FROM dblarv_insptrt_archive
-            WHERE action IN ('1', '2', '4')
-              AND inspdate >= '%s'::date - INTERVAL '90 days'
+              AND inspdate <= '%s'::date
           ) combined_inspections
           ORDER BY sitecode, inspdate DESC
         ),
@@ -276,11 +272,7 @@ server <- function(input, output, session) {
             FROM dblarv_insptrt_current
             WHERE action = 'A'
               AND inspdate >= '%s'::date - INTERVAL '90 days'
-            UNION ALL
-            SELECT sitecode, inspdate, mattype, action
-            FROM dblarv_insptrt_archive  
-            WHERE action = 'A'
-              AND inspdate >= '%s'::date - INTERVAL '90 days'
+              AND inspdate <= '%s'::date
           ) t
           LEFT JOIN mattype_list m ON t.mattype = m.mattype
           ORDER BY t.sitecode, t.inspdate DESC
@@ -291,10 +283,11 @@ server <- function(input, output, session) {
           r.total_rainfall,
           r.last_rain_date,
           ('%s' - r.last_rain_date) as days_since_rain,
-          i.last_inspection_date,
+          TO_CHAR(i.last_inspection_date, 'YYYY-MM-DD') as last_inspection_date,
           i.numdip,
+          i.source_table,
           ('%s' - i.last_inspection_date) as days_since_inspection,
-          t.last_treatment_date,
+          TO_CHAR(t.last_treatment_date, 'YYYY-MM-DD') as last_treatment_date,
           t.days_since_treatment,
           t.effect_days,
           
@@ -337,15 +330,15 @@ server <- function(input, output, session) {
         # Parameters for query
         analysis_date,     # Active sites filter
         facility_condition,
-        priority_condition,# Priority filter
+        priority_condition, # Priority filter
         analysis_date,     # Rainfall start date
         lookback_days,     # Rainfall lookback period
         analysis_date,     # Rainfall end date
         analysis_date,     # Recent inspections start
-        analysis_date,     # Recent inspections start (archive)
+        analysis_date,     # Recent inspections end (no future dates)
         analysis_date,     # Days since treatment calculation
         analysis_date,     # Recent treatments start
-        analysis_date,     # Recent treatments start (archive)
+        analysis_date,     # Recent treatments end (no future dates)
         analysis_date,     # Days since rain calculation  
         analysis_date,     # Days since inspection calculation
         treatment_threshold, # Treatment threshold for needs treatment
@@ -462,7 +455,9 @@ server <- function(input, output, session) {
           "Days Since Rain: ", days_since_rain,
           ifelse(site_status %in% c("Under Threshold", "Needs Treatment"),
                  paste0("<br/>Last Inspection: ", 
-                       ifelse(is.na(last_inspection_date), "None", last_inspection_date),
+                       ifelse(is.na(last_inspection_date) | last_inspection_date == "", "None", 
+                              tryCatch(format(as.Date(last_inspection_date), "%m/%d/%y"), 
+                                     error = function(e) last_inspection_date)),
                        "<br/>Larvae Count: ", 
                        ifelse(is.na(numdip), "N/A", numdip)), 
                  "")
@@ -519,6 +514,16 @@ server <- function(input, output, session) {
     
     # Select and rename columns for display
     display_data <- data %>%
+      mutate(
+        formatted_inspection_date = ifelse(is.na(last_inspection_date) | last_inspection_date == "", 
+                                         "None", 
+                                         tryCatch(format(as.Date(last_inspection_date), "%m/%d/%y"), 
+                                                error = function(e) last_inspection_date)),
+        formatted_treatment_date = ifelse(is.na(last_treatment_date) | last_treatment_date == "", 
+                                        "None", 
+                                        tryCatch(format(as.Date(last_treatment_date), "%m/%d/%y"), 
+                                               error = function(e) last_treatment_date))
+      ) %>%
       select(
         `Site Code` = sitecode,
         Facility = facility,
@@ -526,10 +531,10 @@ server <- function(input, output, session) {
         Priority = priority,
         `Total Rainfall` = total_rainfall,
         `Days Since Rain` = days_since_rain,
-        `Last Inspection` = last_inspection_date,
+        `Last Inspection` = formatted_inspection_date,
         `Days Since Inspection` = days_since_inspection,
         `Larvae Count` = numdip,
-        `Last Treatment` = last_treatment_date,
+        `Last Treatment` = formatted_treatment_date,
         `Days Since Treatment` = days_since_treatment
       )
     

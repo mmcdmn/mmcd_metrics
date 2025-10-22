@@ -233,7 +233,7 @@ server <- function(input, output, session) {
             COALESCE(l.display_text, t.matcode) as display_text,
             l.tdosedisplay
           FROM dblarv_insptrt_current t
-          LEFT JOIN lookup_matcode_entrylist l ON t.matcode = l.matcode
+          LEFT JOIN public.lookup_matcode_entrylist l ON t.matcode = l.matcode
           WHERE t.action = 'A' 
             AND t.matcode IS NOT NULL 
             AND t.matcode != '' 
@@ -618,6 +618,24 @@ server <- function(input, output, session) {
         is.null(treatments) || nrow(treatments) == 0) {
       return(NULL)
     }
+
+    # Get material lookup data for display names
+    con <- get_db_connection()
+    material_lookup <- data.frame()
+    if (!is.null(con)) {
+      tryCatch({
+        material_lookup <- dbGetQuery(con, "
+          SELECT 
+            matcode,
+            display_text,
+            tdosedisplay
+          FROM public.lookup_matcode_entrylist
+        ")
+        dbDisconnect(con)
+      }, error = function(e) {
+        if (!is.null(con)) dbDisconnect(con)
+      })
+    }
     
     # Get all sites with at least one checkback
     checkback_summary <- list()
@@ -642,9 +660,25 @@ server <- function(input, output, session) {
           slice(1)
         
         if (nrow(treatment_before) > 0) {
+          # Get material display name
+          material_display <- treatment_before$matcode
+          if (nrow(material_lookup) > 0) {
+            lookup_row <- material_lookup[material_lookup$matcode == treatment_before$matcode, ]
+            if (nrow(lookup_row) > 0) {
+              # Take the first row if multiple matches and ensure single values
+              lookup_row <- lookup_row[1, ]
+              if (!is.na(lookup_row$tdosedisplay[1]) && lookup_row$tdosedisplay[1] != "") {
+                material_display <- paste0(lookup_row$display_text[1], " (", lookup_row$tdosedisplay[1], ")")
+              } else {
+                material_display <- lookup_row$display_text[1]
+              }
+            }
+          }
+          
           checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
             sitecode = site,
             facility = checkback$facility,
+            material = material_display,
             last_treatment_date = treatment_before$inspdate,
             first_checkback_date = checkback$inspdate,
             total_checkbacks = nrow(site_checkbacks),
@@ -1146,10 +1180,10 @@ server <- function(input, output, session) {
     tryCatch({
       display_data <- all_data %>%
         as.data.frame() %>%
-        arrange(facility, sitecode) %>%
+        arrange(material, sitecode) %>%
         select(
           `Site Code` = sitecode,
-          Facility = facility,
+          Material = material,
           `Last Treatment` = last_treatment_date,
           `First Checkback` = first_checkback_date,
           `Total Checkbacks` = total_checkbacks,

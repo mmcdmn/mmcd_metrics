@@ -170,6 +170,13 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
+          valueBoxOutput("sites_active_treatment", width = 3),
+          valueBoxOutput("sites_unknown_status", width = 3),
+          valueBoxOutput("treatment_effectiveness", width = 3),
+          valueBoxOutput("pipeline_completion", width = 3)
+        ),
+        
+        fluidRow(
           box(title = "Air Sites Pipeline Map", status = "primary", solidHeader = TRUE, width = 8,
             leafletOutput("pipeline_map", height = "500px")
           ),
@@ -798,45 +805,156 @@ server <- function(input, output, session) {
       if (nrow(activities) > 0) {
         activities$inspdate <- as.Date(activities$inspdate)
         
-        # Simplified logic based on reference code pattern
-        # For each air site, find most recent inspection and treatment
+        # Proper status lifecycle management
+        # Status flow: U -> Needs Inspection -> Isp(under)/Needs Treatment -> Active Treatment -> U(expired)
+        
+        # Get material effectiveness data for treatment duration
+        mat_query <- "SELECT matcode, mattype, effect_days FROM public.mattype_list WHERE effect_days IS NOT NULL"
+        mat_data <- tryCatch({
+          con_mat <- get_db_connection()
+          if (!is.null(con_mat)) {
+            result <- dbGetQuery(con_mat, mat_query)
+            dbDisconnect(con_mat)
+            result
+          } else {
+            data.frame(matcode = character(0), mattype = character(0), effect_days = numeric(0))
+          }
+        }, error = function(e) {
+          data.frame(matcode = character(0), mattype = character(0), effect_days = numeric(0))
+        })
+        
         for (i in 1:nrow(air_sites)) {
           site_activities <- activities[activities$sitecode == air_sites$sitecode[i], ]
+          current_date <- input$pretend_today
+          rain_date <- air_sites$last_rain_date[i]
           
-          # Initialize with defaults
+          # Initialize site data
           air_sites$inspected[i] <- FALSE
           air_sites$inspection_date[i] <- as.Date(NA)
           air_sites$days_to_inspection[i] <- NA
           air_sites$numdip[i] <- NA
           air_sites$wet_status[i] <- NA
           air_sites$needs_treatment[i] <- FALSE
+          air_sites$site_status[i] <- "U" # Default to Unknown
+          air_sites$treatment_status[i] <- "None"
+          air_sites$days_since_treatment[i] <- NA
           
           if (nrow(site_activities) > 0) {
-            # Get most recent inspection
+            # Get most recent inspection and treatment
             inspections <- site_activities[site_activities$activity_type == 'inspection', ]
+            treatments <- site_activities[site_activities$activity_type == 'treatment', ]
+            
+            latest_inspection <- NULL
+            latest_treatment <- NULL
+            
             if (nrow(inspections) > 0) {
               latest_inspection <- inspections[which.max(inspections$inspdate), ]
+            }
+            if (nrow(treatments) > 0) {
+              latest_treatment <- treatments[which.max(treatments$inspdate), ]
+            }
+            
+            # Determine site status based on timeline and activities
+            
+            # Step 1: Check if site has active treatment (within effectiveness period)
+            if (!is.null(latest_treatment)) {
+              treatment_date <- latest_treatment$inspdate
+              matcode <- latest_treatment$matcode
               
-              # Site has been inspected
-              air_sites$inspected[i] <- TRUE
-              air_sites$inspection_date[i] <- latest_inspection$inspdate
-              air_sites$numdip[i] <- latest_inspection$numdip
-              air_sites$wet_status[i] <- latest_inspection$wet
+              # Get effectiveness period for this material
+              effect_days <- 30 # Default
+              if (nrow(mat_data) > 0 && matcode %in% mat_data$matcode) {
+                effect_days <- mat_data$effect_days[mat_data$matcode == matcode][1]
+                if (is.na(effect_days)) effect_days <- 30
+              }
               
-              # Check if above threshold
-              if (!is.na(latest_inspection$numdip) && latest_inspection$numdip >= input$dip_threshold) {
-                # Check if treated since inspection
-                treatments <- site_activities[site_activities$activity_type == 'treatment', ]
-                treated_since_inspection <- FALSE
+              days_since_treatment <- as.numeric(current_date - treatment_date)
+              air_sites$days_since_treatment[i] <- days_since_treatment
+              
+              # Check if treatment is still active
+              if (days_since_treatment <= effect_days) {
+                # Check if there's been significant rainfall since treatment
+                if (!is.na(rain_date) && rain_date > treatment_date) {
+                  # Rain after treatment - reset to needs inspection
+                  air_sites$site_status[i] <- "Needs Inspection"
+                  air_sites$treatment_status[i] <- "Expired (rainfall)"
+                } else {
+                  # Treatment still active
+                  air_sites$site_status[i] <- "Active Treatment"
+                  air_sites$treatment_status[i] <- paste("Active", effect_days - days_since_treatment, "days left")
+                }
+              } else {
+                # Treatment expired
+                if (!is.na(rain_date) && rain_date > treatment_date) {
+                  # Rain after expired treatment
+                  air_sites$site_status[i] <- "Needs Inspection"
+                  air_sites$treatment_status[i] <- "Expired"
+                } else {
+                  # No rain after expired treatment
+                  air_sites$site_status[i] <- "U"
+                  air_sites$treatment_status[i] <- "Expired"
+                }
+              }
+            }
+            
+            # Step 2: If not in active treatment, check inspection status
+            if (air_sites$site_status[i] %in% c("U", "Needs Inspection", "Isp (under threshold)")) {
+              if (!is.null(latest_inspection)) {
+                inspection_date <- latest_inspection$inspdate
+                air_sites$inspection_date[i] <- inspection_date
+                air_sites$numdip[i] <- latest_inspection$numdip
+                air_sites$wet_status[i] <- latest_inspection$wet
                 
-                if (nrow(treatments) > 0) {
-                  treatments_after_inspection <- treatments[treatments$inspdate > latest_inspection$inspdate, ]
-                  treated_since_inspection <- nrow(treatments_after_inspection) > 0
+                # Special case: If site was "Isp (under threshold)" but there's new qualifying rainfall after the last inspection, 
+                # it should change to "Needs Inspection"
+                if (air_sites$site_status[i] == "Isp (under threshold)" && 
+                    !is.na(rain_date) && inspection_date < rain_date) {
+                  air_sites$site_status[i] <- "Needs Inspection"
                 }
                 
-                # If not treated since inspection, still needs treatment
-                air_sites$needs_treatment[i] <- !treated_since_inspection
+                # Check if inspection is after most recent qualifying rainfall
+                if (!is.na(rain_date) && inspection_date >= rain_date) {
+                  # Site was inspected after rainfall
+                  air_sites$inspected[i] <- TRUE
+                  air_sites$days_to_inspection[i] <- as.numeric(inspection_date - rain_date)
+                  
+                  # Determine status based on dip count
+                  if (!is.na(latest_inspection$numdip)) {
+                    if (latest_inspection$numdip >= input$dip_threshold) {
+                      # Above threshold - check if treated since inspection
+                      treated_since_inspection <- FALSE
+                      if (!is.null(latest_treatment) && latest_treatment$inspdate > inspection_date) {
+                        treated_since_inspection <- TRUE
+                      }
+                      
+                      if (!treated_since_inspection) {
+                        air_sites$site_status[i] <- "Needs Treatment"
+                        air_sites$needs_treatment[i] <- TRUE
+                      }
+                    } else {
+                      # Below threshold
+                      air_sites$site_status[i] <- "Isp (under threshold)"
+                    }
+                  }
+                } else {
+                  # Inspection before rainfall - needs new inspection
+                  air_sites$site_status[i] <- "Needs Inspection"
+                }
+              } else {
+                # No inspection found
+                if (!is.na(rain_date)) {
+                  air_sites$site_status[i] <- "Needs Inspection"
+                } else {
+                  air_sites$site_status[i] <- "U"
+                }
               }
+            }
+          } else {
+            # No activities found
+            if (!is.na(rain_date)) {
+              air_sites$site_status[i] <- "Needs Inspection"
+            } else {
+              air_sites$site_status[i] <- "U"
             }
           }
         }
@@ -1169,16 +1287,17 @@ server <- function(input, output, session) {
   })
   
   output$sites_needing_inspection <- renderValueBox({
-    air_data <- air_sites_with_rain()
     inspection_data <- inspection_data()
     
     if (is.null(inspection_data) || nrow(inspection_data) == 0) {
-      value <- ifelse(is.null(air_data), 0, nrow(air_data))
+      value <- 0
+    } else if ("site_status" %in% names(inspection_data)) {
+      # Count sites with "Needs Inspection" status
+      value <- sum(inspection_data$site_status == "Needs Inspection", na.rm = TRUE)
     } else if ("inspected" %in% names(inspection_data)) {
-      # Count sites that haven't been inspected
+      # Fallback to old logic
       value <- sum(!inspection_data$inspected, na.rm = TRUE)
     } else {
-      # If inspected column doesn't exist, assume all need inspection
       value <- nrow(inspection_data)
     }
     
@@ -1192,7 +1311,15 @@ server <- function(input, output, session) {
   
   output$sites_inspected <- renderValueBox({
     data <- inspection_data()
-    value <- ifelse(is.null(data), 0, sum(data$inspected, na.rm = TRUE))
+    if (is.null(data) || nrow(data) == 0) {
+      value <- 0
+    } else if ("site_status" %in% names(data)) {
+      # Count sites with "Isp (under threshold)" status
+      value <- sum(data$site_status == "Isp (under threshold)", na.rm = TRUE)
+    } else {
+      # Fallback to old logic
+      value <- sum(data$inspected, na.rm = TRUE)
+    }
     
     valueBox(
       value = value,
@@ -1204,13 +1331,108 @@ server <- function(input, output, session) {
   
   output$sites_needing_treatment <- renderValueBox({
     data <- inspection_data()
-    value <- ifelse(is.null(data), 0, sum(data$needs_treatment, na.rm = TRUE))
+    if (is.null(data) || nrow(data) == 0) {
+      value <- 0
+    } else if ("site_status" %in% names(data)) {
+      # Count sites with "Needs Treatment" status
+      value <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
+    } else {
+      # Fallback to old logic
+      value <- sum(data$needs_treatment, na.rm = TRUE)
+    }
     
     valueBox(
       value = value,
       subtitle = "Need Treatment",
       icon = icon("syringe"),
       color = "green"
+    )
+  })
+  
+  output$sites_active_treatment <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      value <- 0
+    } else if ("site_status" %in% names(data)) {
+      value <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
+    } else {
+      value <- 0
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Active Treatment",
+      icon = icon("shield-alt"),
+      color = "green"
+    )
+  })
+  
+  output$sites_unknown_status <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      value <- 0
+    } else if ("site_status" %in% names(data)) {
+      value <- sum(data$site_status == "U", na.rm = TRUE)
+    } else {
+      value <- 0
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Unknown Status",
+      icon = icon("question"),
+      color = "gray"
+    )
+  })
+  
+  output$treatment_effectiveness <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      value <- "N/A"
+    } else if ("site_status" %in% names(data)) {
+      treated <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
+      needed <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
+      total_needing_treatment <- treated + needed
+      if (total_needing_treatment > 0) {
+        rate <- round(treated / total_needing_treatment * 100, 1)
+        value <- paste0(rate, "%")
+      } else {
+        value <- "100%"
+      }
+    } else {
+      value <- "N/A"
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Treatment Rate",
+      icon = icon("chart-line"),
+      color = "purple"
+    )
+  })
+  
+  output$pipeline_completion <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      value <- "N/A"
+    } else if ("site_status" %in% names(data)) {
+      completed <- sum(data$site_status %in% c("Isp (under threshold)", "Active Treatment"), na.rm = TRUE)
+      total <- nrow(data)
+      if (total > 0) {
+        rate <- round(completed / total * 100, 1)
+        value <- paste0(rate, "%")
+      } else {
+        value <- "0%"
+      }
+    } else {
+      value <- "N/A"
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Pipeline Complete",
+      icon = icon("check-double"),
+      color = "blue"
     )
   })
   
@@ -2065,22 +2287,28 @@ server <- function(input, output, session) {
       return(leaflet() %>% addTiles())
     }
     
-    # Create status column safely
-    data$status <- "Not Inspected"  # Default value
-    if ("inspected" %in% names(data)) {
-      inspected_status <- !is.na(data$inspected) & data$inspected
-      data$status[inspected_status] <- "Isp (under threshold)"
-      
-      if ("needs_treatment" %in% names(data)) {
-        treatment_needed <- !is.na(data$needs_treatment) & data$needs_treatment
-        data$status[inspected_status & treatment_needed] <- "Needs Treatment"
+    # Use the new site_status column or fall back to old logic
+    if ("site_status" %in% names(data)) {
+      data$status <- data$site_status
+    } else {
+      # Fallback to old logic if site_status not available
+      data$status <- "Not Inspected"
+      if ("inspected" %in% names(data)) {
+        inspected_status <- !is.na(data$inspected) & data$inspected
+        data$status[inspected_status] <- "Isp (under threshold)"
+        
+        if ("needs_treatment" %in% names(data)) {
+          treatment_needed <- !is.na(data$needs_treatment) & data$needs_treatment
+          data$status[inspected_status & treatment_needed] <- "Needs Treatment"
+        }
       }
     }
     
-    # Create color palette based on inspection status
+    # Create color palette for all possible statuses
+    all_statuses <- c("U", "Needs Inspection", "Isp (under threshold)", "Needs Treatment", "Active Treatment")
     pal <- colorFactor(
-      palette = c("red", "green", "orange"),
-      domain = c("Not Inspected", "Isp (under threshold)", "Needs Treatment")
+      palette = c("gray", "red", "yellow", "orange", "green"),
+      domain = all_statuses
     )
     
     # Create popup text safely
@@ -2162,11 +2390,7 @@ server <- function(input, output, session) {
     # Show all sites with their status
     display_data <- data %>%
       mutate(
-        Status = case_when(
-          is.na(inspected) | !inspected ~ "Needs Inspection",
-          needs_treatment ~ "Needs Treatment", 
-          TRUE ~ "Isp (under threshold)"
-        ),
+        Status = site_status,
         `Days Since Rain` = days_since_rain,
         `Inspection Date` = as.character(inspection_date),
         `Dip Count` = numdip
@@ -2187,8 +2411,8 @@ server <- function(input, output, session) {
               caption = "All Air Sites Pipeline Status") %>%
       formatStyle("Status",
                   backgroundColor = styleEqual(
-                    c("Needs Inspection", "Needs Treatment", "Isp (under threshold)"),
-                    c("#ffcccc", "#fff2cc", "#ccffcc")
+                    c("Needs Inspection", "Needs Treatment", "Isp (under threshold)", "Active Treatment", "U"),
+                    c("#ffcccc", "#ccffcc", "#ccffcc", "#ccffcc", "#f0f0f0")
                   ))
   }, server = FALSE)
   

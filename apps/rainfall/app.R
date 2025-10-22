@@ -58,7 +58,7 @@ ui <- dashboardPage(
   
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Air Site Status", tabName = "status", icon = icon("plane")),
+      menuItem("Air Site Status", tabName = "status", icon = icon("helicopter")),
       menuItem("Flow Testing", tabName = "testing", icon = icon("flask"))
     )
   ),
@@ -371,6 +371,7 @@ server <- function(input, output, session) {
           TO_CHAR(t.last_treatment_date, 'YYYY-MM-DD') as last_treatment_date,
           t.days_since_treatment,
           t.effect_days,
+          t.mattype,
           
           -- Status calculation logic
           CASE
@@ -453,7 +454,7 @@ server <- function(input, output, session) {
     valueBox(
       value = value,
       subtitle = "Total Air Sites",
-      icon = icon("plane"),
+      icon = icon("helicopter"),
       color = "blue"
     )
   })
@@ -603,7 +604,10 @@ server <- function(input, output, session) {
         formatted_treatment_date = ifelse(is.na(last_treatment_date) | last_treatment_date == "", 
                                         "None", 
                                         tryCatch(format(as.Date(last_treatment_date), "%m/%d/%y"), 
-                                               error = function(e) last_treatment_date))
+                                               error = function(e) last_treatment_date)),
+        material_used = ifelse(site_status == "Active Treatment" & !is.na(mattype) & mattype != "", 
+                              mattype, 
+                              "N/A")
       ) %>%
       select(
         `Site Code` = sitecode,
@@ -616,7 +620,8 @@ server <- function(input, output, session) {
         `Days Since Inspection` = days_since_inspection,
         `Larvae Count` = numdip,
         `Last Treatment` = formatted_treatment_date,
-        `Days Since Treatment` = days_since_treatment
+        `Days Since Treatment` = days_since_treatment,
+        `Material Used` = material_used
       )
     
     datatable(display_data,
@@ -668,7 +673,8 @@ server <- function(input, output, session) {
           RainfallData AS (
             SELECT 
               a.sitecode,
-              COALESCE(SUM(r.rain_inches), 0) as total_rainfall
+              COALESCE(SUM(r.rain_inches), 0) as total_rainfall,
+              MAX(r.date) as last_rain_date
             FROM ActiveAirSites a
             LEFT JOIN nws_precip_site_history r ON a.sitecode = r.sitecode
               AND r.date >= '%s'::date - INTERVAL '3 days'
@@ -705,7 +711,9 @@ server <- function(input, output, session) {
           SELECT 
             COUNT(*) as total_sites,
             SUM(CASE WHEN r.total_rainfall >= 1.0 THEN 1 ELSE 0 END) as sites_with_rain,
+            -- Count sites that have been inspected (have inspection records)
             SUM(CASE WHEN i.sitecode IS NOT NULL THEN 1 ELSE 0 END) as sites_inspected,
+            -- Status-based counts that match main query logic
             SUM(CASE WHEN i.numdip IS NOT NULL AND i.numdip < 1 THEN 1 ELSE 0 END) as under_threshold,
             SUM(CASE WHEN i.numdip >= 1 
                       AND (t.days_since_treatment IS NULL 
@@ -715,9 +723,15 @@ server <- function(input, output, session) {
             SUM(CASE WHEN t.days_since_treatment IS NOT NULL 
                       AND t.effect_days IS NOT NULL 
                       AND t.days_since_treatment <= t.effect_days THEN 1 ELSE 0 END) as active_treatment,
+            -- Sites needing inspection: have qualifying rain but no recent inspection or inspection is older than rain
             SUM(CASE WHEN r.total_rainfall >= 1.0 
                       AND (i.last_inspection_date IS NULL 
-                           OR r.total_rainfall >= 1.0) THEN 1 ELSE 0 END) as needs_inspection
+                           OR r.last_rain_date > i.last_inspection_date) THEN 1 ELSE 0 END) as needs_inspection,
+            -- Add unknown status count for better validation
+            SUM(CASE WHEN (t.days_since_treatment IS NOT NULL 
+                           AND t.days_since_treatment > COALESCE(t.effect_days, 30) + 3)
+                      OR (r.total_rainfall < 1.0 AND i.sitecode IS NULL)
+                      OR (i.sitecode IS NULL AND r.total_rainfall < 1.0) THEN 1 ELSE 0 END) as unknown_status
           FROM ActiveAirSites a
           LEFT JOIN RainfallData r ON a.sitecode = r.sitecode  
           LEFT JOIN RecentInspections i ON a.sitecode = i.sitecode
@@ -883,21 +897,36 @@ server <- function(input, output, session) {
     inspected_accounted <- latest$under_threshold + latest$needs_treatment + latest$active_treatment
     inspected_missing <- latest$sites_inspected - inspected_accounted
     
+    # Total accounted sites (including unknown)
+    total_accounted <- latest$under_threshold + latest$needs_treatment + latest$active_treatment + 
+                      latest$needs_inspection + ifelse("unknown_status" %in% names(latest), latest$unknown_status, 0)
+    total_missing <- latest$total_sites - total_accounted
+    
     validation_issues <- c()
+    
+    # Check data types and values
+    if (any(sapply(latest, function(x) !is.numeric(x) && !is.integer(x)))) {
+      non_numeric <- names(latest)[!sapply(latest, function(x) is.numeric(x) || is.integer(x))]
+      validation_issues <- c(validation_issues, 
+        sprintf("⚠️  DATA TYPE ISSUE: Non-numeric columns: %s", paste(non_numeric, collapse = ", ")))
+    }
     
     if (inspected_missing > 0) {
       validation_issues <- c(validation_issues, 
         sprintf("❌ MISSING: %d inspected sites are unaccounted for in status categories", inspected_missing))
     }
     
-    if (latest$sites_with_rain > latest$sites_inspected + latest$needs_inspection) {
+    if (total_missing > 0) {
       validation_issues <- c(validation_issues,
-        "❌ LOGIC ERROR: Sites with rain should equal inspected + needs inspection")
+        sprintf("❌ TOTAL MISSING: %d sites unaccounted for across all categories", total_missing))
     }
     
-    if (latest$needs_treatment == 0 && latest$sites_inspected > latest$under_threshold + latest$active_treatment) {
+    # More flexible rain logic check
+    rain_logic_diff <- latest$sites_with_rain - (latest$sites_inspected + latest$needs_inspection)
+    if (abs(rain_logic_diff) > 0) {
       validation_issues <- c(validation_issues,
-        "❌ SUSPICIOUS: No sites need treatment but some inspected sites are unaccounted for")
+        sprintf("⚠️  RAIN LOGIC: Sites with rain (%d) vs Inspected + Needs Inspection (%d). Diff: %d", 
+                latest$sites_with_rain, latest$sites_inspected + latest$needs_inspection, rain_logic_diff))
     }
     
     if (length(validation_issues) == 0) {
@@ -907,16 +936,30 @@ server <- function(input, output, session) {
     paste(
       "DATA VALIDATION REPORT",
       "======================",
+      sprintf("Total Sites: %d", latest$total_sites),
+      sprintf("Sites with Rain: %d", latest$sites_with_rain),
       sprintf("Sites Inspected: %d", latest$sites_inspected),
-      sprintf("Status Breakdown: Under Threshold (%d) + Needs Treatment (%d) + Active Treatment (%d) = %d", 
-              latest$under_threshold, latest$needs_treatment, latest$active_treatment, inspected_accounted),
-      sprintf("Missing from Status Categories: %d", inspected_missing),
+      sprintf("Needs Inspection: %d", latest$needs_inspection),
       "",
+      "STATUS BREAKDOWN:",
+      sprintf("  Under Threshold: %d", latest$under_threshold),
+      sprintf("  Needs Treatment: %d", latest$needs_treatment), 
+      sprintf("  Active Treatment: %d", latest$active_treatment),
+      if("unknown_status" %in% names(latest)) sprintf("  Unknown Status: %d", latest$unknown_status) else "  Unknown Status: Not calculated",
+      "",
+      sprintf("Inspected Accounted For: %d/%d (%.1f%%)", 
+              inspected_accounted, latest$sites_inspected, 
+              ifelse(latest$sites_inspected > 0, (inspected_accounted/latest$sites_inspected)*100, 0)),
+      sprintf("Total Accounted For: %d/%d (%.1f%%)", 
+              total_accounted, latest$total_sites,
+              ifelse(latest$total_sites > 0, (total_accounted/latest$total_sites)*100, 0)),
+      "",
+      "VALIDATION RESULTS:",
       paste(validation_issues, collapse = "\n"),
+      if(length(validation_issues) == 0) "✅ All basic validation checks passed!" else "",
       "",
-      "EXPECTED FLOW VALIDATION:",
-      "Rain Sites = Inspected + Needs Inspection",
-      "Inspected Sites = Under Threshold + Needs Treatment + Active Treatment",
+      "DATA TYPES:",
+      paste(sprintf("  %s: %s", names(latest), sapply(latest, class)), collapse = "\n"),
       sep = "\n"
     )
   })

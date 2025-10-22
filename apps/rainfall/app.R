@@ -337,7 +337,7 @@ server <- function(input, output, session) {
         # Parameters for query
         analysis_date,     # Active sites filter
         facility_condition,
-        priority_condition, 
+        priority_condition,# Priority filter
         analysis_date,     # Rainfall start date
         lookback_days,     # Rainfall lookback period
         analysis_date,     # Rainfall end date

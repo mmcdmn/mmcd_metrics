@@ -11,6 +11,7 @@ suppressPackageStartupMessages({
   library(leaflet)
   library(DT)
   library(plotly)
+  library(tidyr)
 })
 
 # Load environment variables
@@ -57,7 +58,8 @@ ui <- dashboardPage(
   
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Air Site Status", tabName = "status", icon = icon("plane"))
+      menuItem("Air Site Status", tabName = "status", icon = icon("plane")),
+      menuItem("Flow Testing", tabName = "testing", icon = icon("flask"))
     )
   ),
   
@@ -153,6 +155,86 @@ ui <- dashboardPage(
         fluidRow(
           box(title = "Site Details", status = "success", solidHeader = TRUE, width = 12,
             DT::dataTableOutput("site_details_table")
+          )
+        )
+      ),
+      
+      tabItem(tabName = "testing",
+        fluidRow(
+          box(title = "Pipeline Flow Testing", status = "primary", solidHeader = TRUE, width = 12,
+            h4("Test the Rainfall → Inspection → Treatment Pipeline"),
+            p("This tool helps verify the flow logic by showing status transitions over time."),
+            
+            fluidRow(
+              column(3,
+                dateInput("test_start_date", "Test Start Date:",
+                  value = Sys.Date() - 7,
+                  max = Sys.Date()
+                )
+              ),
+              column(3,
+                dateInput("test_end_date", "Test End Date:",
+                  value = Sys.Date(),
+                  max = Sys.Date()
+                )
+              ),
+              column(3,
+                selectInput("test_data_type", "Data Type:",
+                  choices = list(
+                    "Real Database Data" = "real",
+                    "Synthetic Test Data" = "synthetic"
+                  ),
+                  selected = "real"
+                )
+              ),
+              column(3,
+                actionButton("run_flow_test", "Run Flow Test", class = "btn-success")
+              )
+            ),
+            
+            conditionalPanel(
+              condition = "input.test_data_type == 'synthetic'",
+              fluidRow(
+                column(12,
+                  h5("Synthetic Data Parameters:"),
+                  fluidRow(
+                    column(3,
+                      numericInput("synth_total_sites", "Total Sites:", value = 100, min = 10, max = 1000)
+                    ),
+                    column(3,
+                      numericInput("synth_rain_pct", "% Sites with Rain:", value = 60, min = 0, max = 100)
+                    ),
+                    column(3,
+                      numericInput("synth_inspect_pct", "% Rain Sites Inspected:", value = 80, min = 0, max = 100)
+                    ),
+                    column(3,
+                      numericInput("synth_above_thresh_pct", "% Above Threshold:", value = 30, min = 0, max = 100)
+                    )
+                  )
+                )
+              )
+            )
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Flow Test Results", status = "info", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("flow_test_results")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Daily Status Counts", status = "success", solidHeader = TRUE, width = 6,
+            plotlyOutput("daily_counts_chart")
+          ),
+          box(title = "Status Summary", status = "warning", solidHeader = TRUE, width = 6,
+            verbatimTextOutput("flow_summary")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Data Validation", status = "danger", solidHeader = TRUE, width = 12,
+            verbatimTextOutput("validation_summary")
           )
         )
       )
@@ -270,7 +352,7 @@ server <- function(input, output, session) {
           FROM (
             SELECT sitecode, inspdate, mattype, action
             FROM dblarv_insptrt_current
-            WHERE action = 'A'
+            WHERE action IN ('A', '3', 'D')
               AND inspdate >= '%s'::date - INTERVAL '90 days'
               AND inspdate <= '%s'::date
           ) t
@@ -544,6 +626,299 @@ server <- function(input, output, session) {
                     c("U", "Needs Inspection", "Under Threshold", "Needs Treatment", "Active Treatment"),
                     c("#f0f0f0", "#ffff99", "#cce7ff", "#f8d7da", "#d4edda")
                   ))
+  })
+  
+  # Flow Testing Logic
+  flow_test_data <- eventReactive(input$run_flow_test, {
+    req(input$test_start_date, input$test_end_date, input$test_data_type)
+    
+    if (input$test_data_type == "synthetic") {
+      return(generate_synthetic_test_data())
+    }
+    
+    con <- get_db_connection()
+    if (is.null(con)) return(data.frame())
+    
+    tryCatch({
+      start_date <- input$test_start_date
+      end_date <- input$test_end_date
+      
+      # Create a sequence of dates to test
+      date_sequence <- seq(from = start_date, to = end_date, by = "day")
+      
+      results <- data.frame()
+      
+      for (test_date in date_sequence) {
+        current_date <- as.Date(test_date, origin = "1970-01-01")
+        
+        # Get status counts for this specific date
+        query <- sprintf("
+          WITH ActiveAirSites AS (
+            SELECT 
+              b.sitecode,
+              b.facility,
+              b.priority
+            FROM loc_breeding_sites b
+            WHERE (b.enddate IS NULL OR b.enddate > '%s')
+              AND b.air_gnd = 'A'
+              AND b.geom IS NOT NULL
+              AND b.priority = 'RED'
+          ),
+          
+          RainfallData AS (
+            SELECT 
+              a.sitecode,
+              COALESCE(SUM(r.rain_inches), 0) as total_rainfall
+            FROM ActiveAirSites a
+            LEFT JOIN nws_precip_site_history r ON a.sitecode = r.sitecode
+              AND r.date >= '%s'::date - INTERVAL '3 days'
+              AND r.date <= '%s'::date
+            GROUP BY a.sitecode
+          ),
+          
+          RecentInspections AS (
+            SELECT DISTINCT ON (sitecode)
+              sitecode,
+              inspdate as last_inspection_date,
+              numdip
+            FROM dblarv_insptrt_current
+            WHERE action IN ('1', '2', '4')
+              AND inspdate >= '%s'::date - INTERVAL '90 days'
+              AND inspdate <= '%s'::date
+            ORDER BY sitecode, inspdate DESC
+          ),
+          
+          RecentTreatments AS (
+            SELECT DISTINCT ON (t.sitecode)
+              t.sitecode,
+              t.inspdate as last_treatment_date,
+              m.effect_days,
+              ('%s'::date - t.inspdate::date) as days_since_treatment
+            FROM dblarv_insptrt_current t
+            LEFT JOIN mattype_list m ON t.mattype = m.mattype
+            WHERE t.action IN ('A', '3', 'D')
+              AND t.inspdate >= '%s'::date - INTERVAL '90 days'
+              AND t.inspdate <= '%s'::date
+            ORDER BY t.sitecode, t.inspdate DESC
+          )
+          
+          SELECT 
+            COUNT(*) as total_sites,
+            SUM(CASE WHEN r.total_rainfall >= 1.0 THEN 1 ELSE 0 END) as sites_with_rain,
+            SUM(CASE WHEN i.sitecode IS NOT NULL THEN 1 ELSE 0 END) as sites_inspected,
+            SUM(CASE WHEN i.numdip IS NOT NULL AND i.numdip < 1 THEN 1 ELSE 0 END) as under_threshold,
+            SUM(CASE WHEN i.numdip >= 1 
+                      AND (t.days_since_treatment IS NULL 
+                           OR t.effect_days IS NULL 
+                           OR t.days_since_treatment > t.effect_days)
+                      AND ('%s' - i.last_inspection_date) <= 3 THEN 1 ELSE 0 END) as needs_treatment,
+            SUM(CASE WHEN t.days_since_treatment IS NOT NULL 
+                      AND t.effect_days IS NOT NULL 
+                      AND t.days_since_treatment <= t.effect_days THEN 1 ELSE 0 END) as active_treatment,
+            SUM(CASE WHEN r.total_rainfall >= 1.0 
+                      AND (i.last_inspection_date IS NULL 
+                           OR r.total_rainfall >= 1.0) THEN 1 ELSE 0 END) as needs_inspection
+          FROM ActiveAirSites a
+          LEFT JOIN RainfallData r ON a.sitecode = r.sitecode  
+          LEFT JOIN RecentInspections i ON a.sitecode = i.sitecode
+          LEFT JOIN RecentTreatments t ON a.sitecode = t.sitecode",
+          
+          current_date,  # Active sites
+          current_date,  # Rainfall start
+          current_date,  # Rainfall end
+          current_date,  # Inspections start
+          current_date,  # Inspections end
+          current_date,  # Treatment calculation
+          current_date,  # Treatments start
+          current_date,  # Treatments end
+          current_date   # Status calculation
+        )
+        
+        day_result <- dbGetQuery(con, query)
+        day_result$test_date <- current_date
+        results <- rbind(results, day_result)
+      }
+      
+      dbDisconnect(con)
+      return(results)
+      
+    }, error = function(e) {
+      showNotification(paste("Error running flow test:", e$message), type = "error")
+      if (!is.null(con)) dbDisconnect(con)
+      return(data.frame())
+    })
+  })
+  
+  # Synthetic Test Data Generation
+  generate_synthetic_test_data <- reactive({
+    req(input$synth_total_sites, input$synth_rain_pct, input$synth_inspect_pct, input$synth_above_thresh_pct)
+    
+    start_date <- input$test_start_date
+    end_date <- input$test_end_date
+    date_sequence <- seq(from = start_date, to = end_date, by = "day")
+    
+    results <- data.frame()
+    
+    # Simulate the flow over time
+    total_sites <- input$synth_total_sites
+    sites_with_rain <- round(total_sites * input$synth_rain_pct / 100)
+    sites_inspected <- round(sites_with_rain * input$synth_inspect_pct / 100)
+    sites_above_thresh <- round(sites_inspected * input$synth_above_thresh_pct / 100)
+    
+    # Initialize state variables
+    active_treatment <- 0
+    needs_treatment <- 0
+    under_threshold <- 0
+    
+    for (i in 1:length(date_sequence)) {
+      current_date <- date_sequence[i]
+      
+      # Day 1: Sites get rain and are inspected
+      if (i == 1) {
+        needs_treatment <- sites_above_thresh
+        under_threshold <- sites_inspected - sites_above_thresh  # This should equal sites_under_thresh
+        active_treatment <- 0
+      }
+      # Day 2-3: Some sites get treated (simulate 50% treatment rate per day)
+      else if (i <= 3 && needs_treatment > 0) {
+        new_treatments <- round(needs_treatment * 0.5)
+        active_treatment <- active_treatment + new_treatments
+        needs_treatment <- needs_treatment - new_treatments
+      }
+      # After day 5: Treatments start expiring (assuming 3-day treatment effect)
+      else if (i > 5) {
+        # Some active treatments expire and go to Unknown (not counted in inspected categories)
+        expiring <- round(active_treatment * 0.3)
+        active_treatment <- active_treatment - expiring
+        # Note: Expired treatments don't go back to under_threshold - they become Unknown status
+        # and are no longer counted as "inspected sites"
+        sites_inspected <- sites_inspected - expiring
+      }
+      
+      day_result <- data.frame(
+        test_date = current_date,
+        total_sites = total_sites,
+        sites_with_rain = ifelse(i == 1, sites_with_rain, round(sites_with_rain * 0.1)), # Less rain after day 1
+        sites_inspected = sites_inspected,
+        under_threshold = under_threshold,
+        needs_treatment = needs_treatment,
+        active_treatment = active_treatment,
+        needs_inspection = total_sites - sites_inspected
+      )
+      
+      results <- rbind(results, day_result)
+    }
+    
+    return(results)
+  })
+  
+  output$flow_test_results <- DT::renderDataTable({
+    data <- flow_test_data()
+    
+    if (nrow(data) == 0) {
+      return(datatable(data.frame(Message = "No test data available")))
+    }
+    
+    datatable(data, options = list(pageLength = 15, scrollX = TRUE)) %>%
+      formatStyle(c("needs_treatment", "active_treatment"), 
+                  backgroundColor = "lightyellow")
+  })
+  
+  output$daily_counts_chart <- renderPlotly({
+    data <- flow_test_data()
+    
+    if (nrow(data) == 0) {
+      return(plot_ly() %>% add_text(text = "No data available", x = 0.5, y = 0.5))
+    }
+    
+    # Reshape data for plotting
+    plot_data <- data %>%
+      select(test_date, needs_inspection, under_threshold, needs_treatment, active_treatment) %>%
+      tidyr::gather(key = "status", value = "count", -test_date)
+    
+    plot_ly(plot_data, x = ~test_date, y = ~count, color = ~status, type = "scatter", mode = "lines+markers") %>%
+      layout(
+        title = "Status Counts Over Time",
+        xaxis = list(title = "Date"),
+        yaxis = list(title = "Count")
+      )
+  })
+  
+  output$flow_summary <- renderText({
+    data <- flow_test_data()
+    
+    if (nrow(data) == 0) {
+      return("No test data available")
+    }
+    
+    latest <- data[nrow(data), ]
+    
+    paste(
+      "FLOW TEST SUMMARY",
+      "=================",
+      paste("Total Air Sites:", latest$total_sites),
+      paste("Sites with Qualifying Rain:", latest$sites_with_rain),
+      paste("Sites Inspected:", latest$sites_inspected),
+      paste("Under Threshold:", latest$under_threshold),
+      paste("Needs Treatment:", latest$needs_treatment), 
+      paste("Active Treatment:", latest$active_treatment),
+      paste("Needs Inspection:", latest$needs_inspection),
+      "",
+      "EXPECTED FLOW:",
+      "Rain → Inspection → (Under Threshold OR Needs Treatment) → Active Treatment → Unknown",
+      sep = "\n"
+    )
+  })
+  
+  output$validation_summary <- renderText({
+    data <- flow_test_data()
+    
+    if (nrow(data) == 0) {
+      return("No data to validate")
+    }
+    
+    latest <- data[nrow(data), ]
+    
+    # Validation checks
+    inspected_accounted <- latest$under_threshold + latest$needs_treatment + latest$active_treatment
+    inspected_missing <- latest$sites_inspected - inspected_accounted
+    
+    validation_issues <- c()
+    
+    if (inspected_missing > 0) {
+      validation_issues <- c(validation_issues, 
+        sprintf("❌ MISSING: %d inspected sites are unaccounted for in status categories", inspected_missing))
+    }
+    
+    if (latest$sites_with_rain > latest$sites_inspected + latest$needs_inspection) {
+      validation_issues <- c(validation_issues,
+        "❌ LOGIC ERROR: Sites with rain should equal inspected + needs inspection")
+    }
+    
+    if (latest$needs_treatment == 0 && latest$sites_inspected > latest$under_threshold + latest$active_treatment) {
+      validation_issues <- c(validation_issues,
+        "❌ SUSPICIOUS: No sites need treatment but some inspected sites are unaccounted for")
+    }
+    
+    if (length(validation_issues) == 0) {
+      validation_issues <- c("✅ All data validation checks passed!")
+    }
+    
+    paste(
+      "DATA VALIDATION REPORT",
+      "======================",
+      sprintf("Sites Inspected: %d", latest$sites_inspected),
+      sprintf("Status Breakdown: Under Threshold (%d) + Needs Treatment (%d) + Active Treatment (%d) = %d", 
+              latest$under_threshold, latest$needs_treatment, latest$active_treatment, inspected_accounted),
+      sprintf("Missing from Status Categories: %d", inspected_missing),
+      "",
+      paste(validation_issues, collapse = "\n"),
+      "",
+      "EXPECTED FLOW VALIDATION:",
+      "Rain Sites = Inspected + Needs Inspection",
+      "Inspected Sites = Under Threshold + Needs Treatment + Active Treatment",
+      sep = "\n"
+    )
   })
 }
 

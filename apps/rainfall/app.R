@@ -351,7 +351,6 @@ server <- function(input, output, session) {
         treatment_threshold, # Treatment threshold for needs treatment
         analysis_date,     # Status calculation reference date
         treatment_threshold, # Treatment threshold for under threshold
-        analysis_date,     # Status calculation reference date
         rain_threshold     # Rain threshold for needs inspection
       )
       

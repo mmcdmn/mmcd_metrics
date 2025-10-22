@@ -285,7 +285,6 @@ server <- function(input, output, session) {
           ('%s' - r.last_rain_date) as days_since_rain,
           TO_CHAR(i.last_inspection_date, 'YYYY-MM-DD') as last_inspection_date,
           i.numdip,
-          i.source_table,
           ('%s' - i.last_inspection_date) as days_since_inspection,
           TO_CHAR(t.last_treatment_date, 'YYYY-MM-DD') as last_treatment_date,
           t.days_since_treatment,

@@ -140,6 +140,17 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
+                selectInput("status_filter", "Site Status:",
+                  choices = c("All Statuses" = "all",
+                             "Unknown" = "U",
+                             "Needs Inspection" = "Needs Inspection",
+                             "Isp (under threshold)" = "Isp (under threshold)",
+                             "Needs Treatment" = "Needs Treatment",
+                             "Active Treatment" = "Active Treatment"),
+                  selected = "all"
+                )
+              ),
+              column(2,
                 radioButtons("prehatch_filter", "Prehatch Sites:",
                   choices = list(
                     "Include All" = "include",
@@ -588,9 +599,9 @@ server <- function(input, output, session) {
     })
   }
   
-  # Air site pipeline data - Step 1: Air sites with qualifying rainfall
-  air_sites_with_rain <- reactive({
-    req(input$pretend_today, input$rainfall_threshold, input$lookback_period)
+  # Air site pipeline data - Step 1: ALL air sites with rainfall data
+  all_air_sites <- reactive({
+    req(input$pretend_today, input$rain_threshold, input$lookback_period)
     
     # Calculate lookback period
     end_date <- input$pretend_today
@@ -622,7 +633,7 @@ server <- function(input, output, session) {
         prehatch_condition <- "AND s.prehatch IN ('BRIQUETS', 'BTI', 'PELLET', 'REHATCH')"
       }
       
-      # Get AIR sites with rainfall above threshold
+      # Get ALL AIR sites with their rainfall data (not filtered by threshold)
       query <- sprintf("
         SELECT 
           s.sitecode,
@@ -651,9 +662,8 @@ server <- function(input, output, session) {
           %s
         GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, s.air_gnd, s.prehatch,
                  ST_X(ST_Centroid(ST_Transform(s.geom, 4326))), ST_Y(ST_Centroid(ST_Transform(s.geom, 4326)))
-        HAVING COALESCE(SUM(r.rain_inches), 0) >= %f
         ORDER BY s.priority, total_rainfall DESC
-      ", start_date, end_date, end_date, priority_condition, facility_condition, prehatch_condition, input$rainfall_threshold)
+      ", start_date, end_date, end_date, priority_condition, facility_condition, prehatch_condition)
       
       result <- dbGetQuery(con, query)
       dbDisconnect(con)
@@ -673,100 +683,72 @@ server <- function(input, output, session) {
     })
   })
   
-  # Step 2: Get inspection data for air sites
+  # Step 2: Get ALL air sites and calculate their status
   inspection_data <- reactive({
-    air_sites <- air_sites_with_rain()
+    # Get ALL air sites (not just those with rain)
+    air_sites <- all_air_sites()
     
     req(input$pretend_today)
     end_date <- input$pretend_today
     
-    # Also get sites that were previously inspected and found above threshold but not treated
-    con <- get_db_connection()
-    if (is.null(con)) {
-      if (is.null(air_sites) || nrow(air_sites) == 0) return(data.frame())
-    } else {
-      # Get sites that were inspected in last 30 days and found above threshold
-      tryCatch({
-        table_name <- if (input$data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
-        inspection_start_date <- end_date - 30
-        
-        # Build facility filter for above-threshold sites
-        facility_condition <- if (input$facility_filter == "all") {
-          ""
-        } else {
-          sprintf("AND s.facility = '%s'", input$facility_filter)
-        }
-        
-        # Find sites with recent inspections above threshold
-        above_threshold_query <- sprintf("
-          SELECT DISTINCT
-            s.sitecode,
-            s.acres,
-            s.type,
-            s.priority,
-            s.facility,
-            s.air_gnd,
-            s.prehatch,
-            ST_X(ST_Centroid(ST_Transform(s.geom, 4326))) as longitude,
-            ST_Y(ST_Centroid(ST_Transform(s.geom, 4326))) as latitude,
-            0 as total_rainfall,
-            0 as rain_days,
-            MAX(t.inspdate) as last_rain_date
-          FROM public.loc_breeding_sites s
-          INNER JOIN %s t ON s.sitecode = t.sitecode
-          WHERE s.air_gnd = 'A'
-            AND t.inspdate >= '%s' 
-            AND t.inspdate <= '%s'
-            AND t.action IN ('1', '2', '4')
-            AND (t.matcode IS NULL OR t.matcode = '')
-            AND t.numdip >= %s
-            %s
-          GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, s.air_gnd, s.prehatch, s.geom
-          HAVING s.sitecode NOT IN (
-              SELECT DISTINCT t2.sitecode 
-              FROM %s t2 
-              WHERE t2.inspdate > MAX(t.inspdate)
-                AND t2.sitecode = s.sitecode
-                AND t2.action IN ('A', '3', '1')
-                AND t2.matcode IS NOT NULL 
-                AND t2.matcode != ''
-            )
-        ", table_name, inspection_start_date, end_date, input$dip_threshold, facility_condition, table_name)
-        
-        above_threshold_sites <- dbGetQuery(con, above_threshold_query)
-        dbDisconnect(con)
-        
-        # Add days since rain calculation for above_threshold_sites
-        if (nrow(above_threshold_sites) > 0) {
-          above_threshold_sites$last_rain_date <- as.Date(above_threshold_sites$last_rain_date)
-          above_threshold_sites$days_since_rain <- as.numeric(input$pretend_today - above_threshold_sites$last_rain_date)
-        }
-        
-        # Combine with rain-triggered sites
-        if (nrow(above_threshold_sites) > 0) {
-          if (is.null(air_sites) || nrow(air_sites) == 0) {
-            air_sites <- above_threshold_sites
-          } else {
-            # Remove duplicates and combine
-            air_sites <- rbind(
-              air_sites,
-              above_threshold_sites[!above_threshold_sites$sitecode %in% air_sites$sitecode, ]
-            )
-          }
-        }
-      }, error = function(e) {
-        showNotification(paste("Error getting above-threshold sites:", e$message), type = "warning")
-        dbDisconnect(con)
-      })
-    }
-    
     if (is.null(air_sites) || nrow(air_sites) == 0) return(data.frame())
     
-    # Continue with inspection analysis
     con <- get_db_connection()
     if (is.null(con)) return(data.frame())
     
     tryCatch({
+      # Get ALL air sites first (not just those with rain)
+      facility_condition <- if (input$facility_filter == "all") {
+        ""
+      } else {
+        sprintf("AND s.facility = '%s'", input$facility_filter)
+      }
+      
+      # Query to get all air sites with their basic info and rainfall data
+      all_air_sites_query <- sprintf("
+        WITH rain_data AS (
+          SELECT 
+            s.sitecode,
+            s.facility,
+            s.acres,
+            s.type,
+            s.priority,
+            s.air_gnd,
+            s.prehatch,
+            ST_X(ST_Centroid(ST_Transform(s.geom, 4326))) as longitude,
+            ST_Y(ST_Centroid(ST_Transform(s.geom, 4326))) as latitude,
+            COALESCE(SUM(r.rain_inches), 0) as total_rainfall,
+            COUNT(CASE WHEN r.rain_inches >= %f THEN 1 END) as rain_days,
+            MAX(r.date) as last_rain_date,
+            (%s - MAX(r.date)) as days_since_rain
+          FROM loc_breeding_sites s
+          LEFT JOIN nws_precip_site_history r ON s.rain_site = r.station
+            AND r.date >= '%s' - INTERVAL '%d days'
+            AND r.date <= '%s'
+          WHERE s.air_gnd = 'A'
+            %s
+          GROUP BY s.sitecode, s.facility, s.acres, s.type, s.priority, s.air_gnd, s.prehatch, s.geom
+        )
+        SELECT * FROM rain_data
+        ORDER BY facility, sitecode",
+        input$rain_threshold,
+        end_date,
+        end_date,
+        as.numeric(input$lookback_period),
+        end_date,
+        facility_condition
+      )
+      
+      air_sites <- dbGetQuery(con, all_air_sites_query)
+    
+      if (nrow(air_sites) == 0) {
+        dbDisconnect(con)
+        return(data.frame())
+      }
+      
+      # Get material effectiveness data  
+      mattype_query <- "SELECT mattype, effect_days FROM mattype_list WHERE effect_days IS NOT NULL"
+      mattype_data <- dbGetQuery(con, mattype_query)
       # Choose table based on data source
       table_name <- if (input$data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
       
@@ -1381,7 +1363,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Unknown Status",
       icon = icon("question"),
-      color = "gray"
+      color = "black"
     )
   })
   
@@ -2272,6 +2254,13 @@ server <- function(input, output, session) {
     data <- inspection_data()
     if (is.null(data) || nrow(data) == 0) {
       return(leaflet() %>% addTiles())
+    }
+    
+    # Apply status filter
+    if (!is.null(input$status_filter) && input$status_filter != "all") {
+      if ("site_status" %in% names(data)) {
+        data <- data[data$site_status == input$status_filter, ]
+      }
     }
     
     # Check if required columns exist

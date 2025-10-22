@@ -109,7 +109,6 @@ ui <- dashboardPage(
                 )
               ),
               column(9, "")
-            )
             ),
             fluidRow(
               column(4,
@@ -159,7 +158,7 @@ ui <- dashboardPage(
       )
     )
   )
-
+)
 
 # Define Server
 server <- function(input, output, session) {

@@ -683,6 +683,13 @@ server <- function(input, output, session) {
         table_name <- if (input$data_source == "archive") "public.dblarv_insptrt_archive" else "public.dblarv_insptrt_current"
         inspection_start_date <- end_date - 30
         
+        # Build facility filter for above-threshold sites
+        facility_condition <- if (input$facility_filter == "all") {
+          ""
+        } else {
+          sprintf("AND s.facility = '%s'", input$facility_filter)
+        }
+        
         # Find sites with recent inspections above threshold
         above_threshold_query <- sprintf("
           SELECT DISTINCT
@@ -706,6 +713,7 @@ server <- function(input, output, session) {
             AND t.action IN ('1', '2', '4')
             AND (t.matcode IS NULL OR t.matcode = '')
             AND t.numdip >= %s
+            %s
           GROUP BY s.sitecode, s.acres, s.type, s.priority, s.facility, s.air_gnd, s.prehatch, s.geom
           HAVING s.sitecode NOT IN (
               SELECT DISTINCT t2.sitecode 
@@ -716,7 +724,7 @@ server <- function(input, output, session) {
                 AND t2.matcode IS NOT NULL 
                 AND t2.matcode != ''
             )
-        ", table_name, inspection_start_date, end_date, input$dip_threshold, table_name)
+        ", table_name, inspection_start_date, end_date, input$dip_threshold, facility_condition, table_name)
         
         above_threshold_sites <- dbGetQuery(con, above_threshold_query)
         dbDisconnect(con)
@@ -772,8 +780,8 @@ server <- function(input, output, session) {
           CASE 
             WHEN t.action IN ('2', '4') THEN 'inspection'
             WHEN t.action = '1' AND (t.matcode IS NULL OR t.matcode = '') THEN 'inspection'
-            WHEN t.action IN ('A', '3') THEN 'treatment'
-            WHEN t.action = '1' AND t.matcode IS NOT NULL AND t.matcode != '' THEN 'treatment'
+            WHEN t.action = 'A' THEN 'treatment'
+            WHEN t.action IN ('3', '1') AND t.matcode IS NOT NULL AND t.matcode != '' THEN 'treatment'
             ELSE 'other'
           END as activity_type
         FROM %s t
@@ -790,88 +798,46 @@ server <- function(input, output, session) {
       if (nrow(activities) > 0) {
         activities$inspdate <- as.Date(activities$inspdate)
         
-        # For each air site, determine inspection/treatment status
+        # Simplified logic based on reference code pattern
+        # For each air site, find most recent inspection and treatment
         for (i in 1:nrow(air_sites)) {
           site_activities <- activities[activities$sitecode == air_sites$sitecode[i], ]
           
+          # Initialize with defaults
+          air_sites$inspected[i] <- FALSE
+          air_sites$inspection_date[i] <- as.Date(NA)
+          air_sites$days_to_inspection[i] <- NA
+          air_sites$numdip[i] <- NA
+          air_sites$wet_status[i] <- NA
+          air_sites$needs_treatment[i] <- FALSE
+          
           if (nrow(site_activities) > 0) {
-            # Get most recent inspection and treatment separately
+            # Get most recent inspection
             inspections <- site_activities[site_activities$activity_type == 'inspection', ]
-            treatments <- site_activities[site_activities$activity_type == 'treatment', ]
-            
-            latest_inspection <- NULL
-            latest_treatment <- NULL
-            
             if (nrow(inspections) > 0) {
               latest_inspection <- inspections[which.max(inspections$inspdate), ]
-            }
-            if (nrow(treatments) > 0) {
-              latest_treatment <- treatments[which.max(treatments$inspdate), ]
-            }
-            
-            # Determine site status based on timeline: rainfall → inspection → treatment
-            rain_date <- air_sites$last_rain_date[i]
-            
-            if (!is.null(latest_inspection)) {
-              inspection_date <- latest_inspection$inspdate
               
-              # Check if inspection is after rainfall (handle NA values)
-              if (!is.na(inspection_date) && !is.na(rain_date) && inspection_date >= rain_date) {
-                air_sites$inspected[i] <- TRUE
-                air_sites$inspection_date[i] <- inspection_date
-                air_sites$days_to_inspection[i] <- as.numeric(inspection_date - rain_date)
-                air_sites$numdip[i] <- latest_inspection$numdip
-                air_sites$wet_status[i] <- latest_inspection$wet
+              # Site has been inspected
+              air_sites$inspected[i] <- TRUE
+              air_sites$inspection_date[i] <- latest_inspection$inspdate
+              air_sites$numdip[i] <- latest_inspection$numdip
+              air_sites$wet_status[i] <- latest_inspection$wet
+              
+              # Check if above threshold
+              if (!is.na(latest_inspection$numdip) && latest_inspection$numdip >= input$dip_threshold) {
+                # Check if treated since inspection
+                treatments <- site_activities[site_activities$activity_type == 'treatment', ]
+                treated_since_inspection <- FALSE
                 
-                # Check if site needs treatment (above threshold)
-                above_threshold <- !is.na(latest_inspection$numdip) && latest_inspection$numdip >= input$dip_threshold
-                
-                if (above_threshold) {
-                  # Check if treated after inspection but before new rain
-                  if (!is.null(latest_treatment) && !is.na(latest_treatment$inspdate) && !is.na(inspection_date) && latest_treatment$inspdate > inspection_date) {
-                    # Site was treated after inspection - check if rain came after treatment
-                    if (!is.na(rain_date) && !is.na(latest_treatment$inspdate) && rain_date > latest_treatment$inspdate) {
-                      # Rain after treatment - needs new inspection
-                      air_sites$inspected[i] <- FALSE
-                      air_sites$needs_treatment[i] <- FALSE
-                    } else {
-                      # No rain after treatment - site is treated
-                      air_sites$needs_treatment[i] <- FALSE
-                    }
-                  } else {
-                    # No treatment after inspection - still needs treatment
-                    air_sites$needs_treatment[i] <- TRUE
-                  }
-                } else {
-                  # Below threshold - no treatment needed
-                  air_sites$needs_treatment[i] <- FALSE
+                if (nrow(treatments) > 0) {
+                  treatments_after_inspection <- treatments[treatments$inspdate > latest_inspection$inspdate, ]
+                  treated_since_inspection <- nrow(treatments_after_inspection) > 0
                 }
-              } else {
-                # Inspection before rainfall - needs new inspection
-                air_sites$inspected[i] <- FALSE
-                air_sites$inspection_date[i] <- as.Date(NA)
-                air_sites$days_to_inspection[i] <- NA
-                air_sites$numdip[i] <- NA
-                air_sites$wet_status[i] <- NA
-                air_sites$needs_treatment[i] <- FALSE
+                
+                # If not treated since inspection, still needs treatment
+                air_sites$needs_treatment[i] <- !treated_since_inspection
               }
-            } else {
-              # No inspection found - needs inspection
-              air_sites$inspected[i] <- FALSE
-              air_sites$inspection_date[i] <- as.Date(NA)
-              air_sites$days_to_inspection[i] <- NA
-              air_sites$numdip[i] <- NA
-              air_sites$wet_status[i] <- NA
-              air_sites$needs_treatment[i] <- FALSE
             }
-          } else {
-            # No activities found - needs inspection
-            air_sites$inspected[i] <- FALSE
-            air_sites$inspection_date[i] <- as.Date(NA)
-            air_sites$days_to_inspection[i] <- NA
-            air_sites$numdip[i] <- NA
-            air_sites$wet_status[i] <- NA
-            air_sites$needs_treatment[i] <- FALSE
           }
         }
       } else {
@@ -1232,7 +1198,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Isp (under threshold)",
       icon = icon("check-circle"),
-      color = "green"
+      color = "red"
     )
   })
   
@@ -1244,7 +1210,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Need Treatment",
       icon = icon("syringe"),
-      color = "red"
+      color = "green"
     )
   })
   
@@ -2224,6 +2190,198 @@ server <- function(input, output, session) {
                     c("Needs Inspection", "Needs Treatment", "Isp (under threshold)"),
                     c("#ffcccc", "#fff2cc", "#ccffcc")
                   ))
+  }, server = FALSE)
+  
+  # Inspection Status Tab Outputs
+  output$total_inspections_needed <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data)) {
+      value <- 0
+    } else {
+      # Count sites that need inspection (not yet inspected or need re-inspection)
+      value <- sum(!data$inspected, na.rm = TRUE)
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Total Inspections Needed",
+      icon = icon("list-check"),
+      color = "blue"
+    )
+  })
+  
+  output$inspections_completed <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data)) {
+      value <- 0
+    } else {
+      value <- sum(data$inspected, na.rm = TRUE)
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Inspections Completed",
+      icon = icon("check"),
+      color = "green"
+    )
+  })
+  
+  output$inspections_overdue <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data) || !"days_since_rain" %in% names(data)) {
+      value <- 0
+    } else {
+      overdue_threshold <- input$inspection_days_threshold
+      value <- sum(!data$inspected & data$days_since_rain > overdue_threshold, na.rm = TRUE)
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Overdue Inspections",
+      icon = icon("exclamation-triangle"),
+      color = "red"
+    )
+  })
+  
+  output$inspection_completion_rate <- renderValueBox({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      value <- "0%"
+    } else {
+      completed <- sum(data$inspected, na.rm = TRUE)
+      total <- nrow(data)
+      rate <- ifelse(total > 0, round(completed / total * 100, 1), 0)
+      value <- paste0(rate, "%")
+    }
+    
+    valueBox(
+      value = value,
+      subtitle = "Completion Rate",
+      icon = icon("percent"),
+      color = "purple"
+    )
+  })
+  
+  output$inspection_status_plot <- renderPlotly({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      p <- ggplot() + 
+        geom_text(aes(x = 1, y = 1, label = "No data available"), size = 5) +
+        theme_void()
+      return(ggplotly(p))
+    }
+    
+    # Summarize by facility
+    summary_data <- data %>%
+      group_by(facility) %>%
+      summarise(
+        total_sites = n(),
+        inspected = sum(inspected, na.rm = TRUE),
+        needs_inspection = sum(!inspected, na.rm = TRUE),
+        .groups = 'drop'
+      ) %>%
+      pivot_longer(cols = c(inspected, needs_inspection),
+                  names_to = "status",
+                  values_to = "count") %>%
+      mutate(status = case_when(
+        status == "inspected" ~ "Inspected",
+        status == "needs_inspection" ~ "Needs Inspection"
+      ))
+    
+    p <- ggplot(summary_data, aes(x = facility, y = count, fill = status)) +
+      geom_bar(stat = "identity", position = "stack") +
+      scale_fill_manual(values = c("Inspected" = "#28a745", "Needs Inspection" = "#dc3545")) +
+      labs(title = "Inspection Status by Facility",
+           x = "Facility",
+           y = "Number of Sites",
+           fill = "Status") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    ggplotly(p)
+  })
+  
+  output$inspection_timeline <- renderPlot({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No data available", cex = 1.5)
+      return()
+    }
+    
+    # Create timeline data
+    if ("days_since_rain" %in% names(data)) {
+      timeline_data <- data %>%
+        filter(!is.na(days_since_rain)) %>%
+        mutate(
+          days_category = case_when(
+            days_since_rain <= 1 ~ "0-1 days",
+            days_since_rain <= 3 ~ "2-3 days", 
+            days_since_rain <= 7 ~ "4-7 days",
+            TRUE ~ ">7 days"
+          )
+        ) %>%
+        count(days_category, inspected) %>%
+        mutate(status = ifelse(inspected, "Inspected", "Not Inspected"))
+      
+      ggplot(timeline_data, aes(x = days_category, y = n, fill = status)) +
+        geom_bar(stat = "identity", position = "stack") +
+        scale_fill_manual(values = c("Inspected" = "#28a745", "Not Inspected" = "#dc3545")) +
+        labs(title = "Days Since Rainfall",
+             x = "Days Since Rain",
+             y = "Number of Sites",
+             fill = "Status") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    }
+  })
+  
+  output$inspection_status_table <- DT::renderDataTable({
+    data <- inspection_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(datatable(data.frame(Message = "No inspection data available")))
+    }
+    
+    # Filter based on checkbox
+    display_data <- data
+    if (input$show_overdue_only && "days_since_rain" %in% names(data)) {
+      overdue_threshold <- input$inspection_days_threshold
+      display_data <- data[!data$inspected & data$days_since_rain > overdue_threshold, ]
+    }
+    
+    # Format for display
+    if (nrow(display_data) > 0) {
+      display_data <- display_data %>%
+        mutate(
+          Status = ifelse(inspected, "Inspected", "Needs Inspection"),
+          `Days Since Rain` = ifelse(is.na(days_since_rain), "", as.character(days_since_rain)),
+          `Inspection Date` = ifelse(is.na(inspection_date), "", as.character(inspection_date)),
+          `Dip Count` = ifelse(is.na(numdip), "", as.character(numdip))
+        ) %>%
+        select(
+          `Site Code` = sitecode,
+          Facility = facility,
+          Status,
+          `Days Since Rain`,
+          `Inspection Date`,
+          `Dip Count`,
+          Priority = priority
+        ) %>%
+        arrange(desc(`Days Since Rain`))
+      
+      datatable(display_data,
+                options = list(pageLength = 15, scrollX = TRUE),
+                caption = ifelse(input$show_overdue_only, 
+                                "Overdue Inspections", 
+                                "All Sites Needing Inspection")) %>%
+        formatStyle("Status",
+                    backgroundColor = styleEqual(
+                      c("Needs Inspection", "Inspected"),
+                      c("#ffcccc", "#ccffcc")
+                    ))
+    } else {
+      datatable(data.frame(Message = "No sites match the current filters"))
+    }
   }, server = FALSE)
 }
 

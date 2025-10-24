@@ -62,9 +62,9 @@ ui <- fluidPage(
                                      "Unknown (U)" = "U"),
                          selected = c("D", "W", "U")),
       
-      # Dropdown for facility filter
+      # Dropdown for facility filter - using db_helpers to get full names
       selectInput("facility_filter", "Facility:",
-                  choices = c("All" = "all", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
+                  choices = get_facility_choices(),
                   selected = "all"),
       
       # Dropdown for structure type filter  
@@ -258,6 +258,11 @@ WHERE t.list_type = 'STR'
     y_label <- "Number of Structures"
     title_metric <- "Number of Structures"
     
+    # Map facility codes to full names for display
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$full_name, facilities$short_name)
+    data$facility_name <- facility_map[data$facility]
+    
     # Create a new column to determine which labels to show (avoiding overplot)
     data$show_active_label <- data$y_active != data$y_expiring
     
@@ -268,11 +273,11 @@ WHERE t.list_type = 'STR'
     status_types_text <- paste(input$status_types, collapse = ", ")
     facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
     
+    # Get status colors from db_helpers before creating the plot
+    status_colors <- get_status_colors()
+    
     # Create the plot
-    p <- ggplot(data, aes(x = facility)) +
-      # Get status colors from db_helpers
-      status_colors <- get_status_colors()
-      
+    p <- ggplot(data, aes(x = facility_name)) +
       # First draw total bars
       geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
       # Then overlay active bars
@@ -298,6 +303,7 @@ WHERE t.list_type = 'STR'
       theme(
         plot.title = element_text(face = "bold", size = 16),
         axis.title = element_text(face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1),
         legend.position = "none"
       )
     

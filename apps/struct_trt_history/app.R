@@ -5,6 +5,9 @@ library(dplyr)
 library(ggplot2)
 library(lubridate)
 
+# Source the shared database helper functions
+source("../../shared/db_helpers.R")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -55,11 +58,11 @@ ui <- fluidPage(
         selected = 2025
       ),
       
-      # Dropdown for facility filter
+      # Dropdown for facility filter - using db_helpers
       selectInput(
         "facility_filter",
         "Facility:",
-        choices = c("all", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
+        choices = get_facility_choices(),
         selected = "all"
       ),
       
@@ -79,30 +82,12 @@ ui <- fluidPage(
         selected = "all"
       ),
       
-      # Checkbox for priority breakdown view
-      checkboxInput(
-        "show_priority_breakdown",
-        "Show Priority Breakdown",
-        value = FALSE
-      ),
-      
       # Multi-select for status_udw values to include
       checkboxGroupInput(
         "include_status_values",
         "Include Status Values:",
         choices = c("D (Dry)" = "D", "W (Wet)" = "W", "U (Unknown)" = "U"),
         selected = c("D", "W", "U")
-      ),
-      
-      # Date input for priority breakdown (conditional)
-      conditionalPanel(
-        condition = "input.show_priority_breakdown == true",
-        dateInput(
-          "snapshot_date",
-          "Snapshot Date:",
-          value = Sys.Date(),
-          format = "yyyy-mm-dd"
-        )
       )
     ),
     
@@ -321,79 +306,6 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
       )
     }
     
-    # Generate priority breakdown plot if selected
-    if (input$show_priority_breakdown) {
-      # Calculate active treatments by priority for the snapshot date
-      snapshot_date <- as.Date(input$snapshot_date)
-      if (is.null(snapshot_date)) {
-        snapshot_date <- Sys.Date()
-      }
-      
-      # Get priority totals for active structures on snapshot date
-      con <- dbConnect(
-        RPostgres::Postgres(),
-        dbname = db_name,
-        host = db_host,
-        port = as.numeric(db_port),
-        user = db_user,
-        password = db_password
-      )
-      
-      query_priority_totals <- sprintf(
-        "
-SELECT priority, COUNT(DISTINCT sitecode) AS total_structures
-FROM loc_cxstruct
-WHERE 1=1
-AND (enddate IS NULL OR enddate > '%s')
-%s
-GROUP BY priority
-",
-        as.character(snapshot_date),
-        get_facility_condition_total(input$facility_filter, input$structure_type_filter, "all", input$include_status_values)
-      )
-      priority_totals <- dbGetQuery(con, query_priority_totals)
-      dbDisconnect(con)
-      
-      # Filter data for treatments active on snapshot date (count distinct sites only)
-      active_treatments_by_priority <- data %>%
-        filter(inspdate <= snapshot_date & (inspdate + effect_days) >= snapshot_date) %>%
-        # Count distinct sitecodes only, regardless of overlapping treatments
-        distinct(sitecode, priority) %>%
-        group_by(priority) %>%
-        summarize(active_count = n(), .groups = "drop")
-      
-      # Merge with totals
-      priority_summary <- priority_totals %>%
-        left_join(active_treatments_by_priority, by = "priority") %>%
-        mutate(
-          active_count = ifelse(is.na(active_count), 0, active_count),
-          proportion = active_count / total_structures,
-          priority = ifelse(is.na(priority), "Unknown", priority)
-        )
-      
-      # Create bar chart
-      return(
-        ggplot(priority_summary, aes(x = priority, y = proportion, fill = priority)) +
-          geom_bar(stat = "identity") +
-          scale_fill_manual(values = c(
-            "BLUE" = "#2E86C1", 
-            "GREEN" = "#27AE60", 
-            "RED" = "#E74C3C", 
-            "YELLOW" = "#F39C12",
-            "Unknown" = "#7F8C8D"
-          )) +
-          labs(
-            title = sprintf("Active Treatment Proportion by Priority (%s)", format(snapshot_date, "%Y-%m-%d")),
-            x = "Priority Level",
-            y = "Proportion with Active Treatment",
-            fill = "Priority"
-          ) +
-          scale_y_continuous(labels = scales::percent_format()) +
-          theme_minimal() +
-          theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      )
-    }
-    
     # Generate the full date range for time series
     start_date <- as.Date(sprintf("%d-03-01", as.numeric(input$start_year)))
     end_date <- as.Date(sprintf("%d-12-31", as.numeric(input$end_year)))
@@ -501,6 +413,15 @@ WHERE 1=1
     if (input$structure_type_filter != "all") filters <- c(filters, paste("Type:", input$structure_type_filter))
     if (input$priority_filter != "all") filters <- c(filters, paste("Priority:", input$priority_filter))
     
+    # Map facility code to full name if a specific facility is selected
+    if (input$facility_filter != "all") {
+      facilities <- get_facility_lookup()
+      facility_full_name <- facilities$full_name[facilities$short_name == input$facility_filter]
+      if (length(facility_full_name) > 0) {
+        filters <- c(filters[-1], paste("Facility:", facility_full_name))  # Replace facility filter with full name
+      }
+    }
+    
     filter_text <- if (length(filters) > 0) paste(" -", paste(filters, collapse = ", ")) else ""
     
     # Plot the data
@@ -526,8 +447,8 @@ WHERE 1=1
     
     # Plot the data with 10-year average line
     ggplot(treatment_trends, aes(x = date)) +
-      geom_line(aes(y = proportion_active_treatment), color = "blue") +
-      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1) +
+      geom_line(aes(y = proportion_active_treatment), color = "blue", size = 1) +
+      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1.2) +
       labs(
         title = sprintf(
           "Proportion of Structures with Active Treatment (%d to %d)%s",
@@ -539,8 +460,24 @@ WHERE 1=1
         x = "Date",
         y = "Proportion of Active Treatment"
       ) +
-      scale_y_continuous(labels = scales::percent_format()) +
-      theme_minimal()
+      scale_y_continuous(
+        labels = scales::percent_format(),
+        breaks = seq(0, 1, by = 0.1)  # Show every 10%
+      ) +
+      scale_x_date(
+        date_breaks = "6 months",
+        date_labels = "%b %Y",
+        expand = expansion(mult = c(0.02, 0.02))
+      ) +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 12, face = "bold"),
+        axis.text.y = element_text(size = 12, face = "bold"),
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold"),
+        plot.subtitle = element_text(size = 12),
+        panel.grid.minor = element_blank()  # Remove minor grid lines for cleaner look
+      )
     
     
   })

@@ -3,6 +3,7 @@ library(DBI)
 library(RPostgres)
 library(dplyr)
 library(ggplot2)
+library(lubridate)
 
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
@@ -503,9 +504,30 @@ WHERE 1=1
     filter_text <- if (length(filters) > 0) paste(" -", paste(filters, collapse = ", ")) else ""
     
     # Plot the data
-    ggplot(treatment_trends,
-           aes(x = date, y = proportion_active_treatment)) +
-      geom_line(color = "blue") +
+    # Compute seasonal average curve (average proportion for each calendar day across all years)
+    seasonal_curve <- treatment_trends %>%
+      mutate(day_of_year = format(date, "%m-%d")) %>%
+      group_by(day_of_year) %>%
+      summarize(
+        seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # Join seasonal average back to full date range
+    treatment_trends <- treatment_trends %>%
+      mutate(day_of_year = format(date, "%m-%d")) %>%
+      left_join(seasonal_curve, by = "day_of_year")
+    
+    avg_window_start <- end_date - years(10)
+    avg_value <- treatment_trends %>%
+      filter(date >= avg_window_start & date <= end_date) %>%
+      summarize(mean_prop = mean(proportion_active_treatment, na.rm = TRUE)) %>%
+      pull(mean_prop)
+    
+    # Plot the data with 10-year average line
+    ggplot(treatment_trends, aes(x = date)) +
+      geom_line(aes(y = proportion_active_treatment), color = "blue") +
+      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1) +
       labs(
         title = sprintf(
           "Proportion of Structures with Active Treatment (%d to %d)%s",
@@ -513,11 +535,14 @@ WHERE 1=1
           as.numeric(input$end_year),
           filter_text
         ),
+        subtitle = "Blue: actual | Red dashed: seasonal average",
         x = "Date",
         y = "Proportion of Active Treatment"
       ) +
       scale_y_continuous(labels = scales::percent_format()) +
       theme_minimal()
+    
+    
   })
 }
 

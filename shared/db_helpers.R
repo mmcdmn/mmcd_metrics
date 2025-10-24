@@ -102,16 +102,17 @@ get_facility_lookup <- function() {
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get facility lookup from gis_facility table
+    # Get facility lookup with abbreviation and city name
     facilities <- dbGetQuery(con, "
       SELECT DISTINCT 
-        abbrv as short_name,
+        facility as short_name,
         city as full_name
-      FROM gis_facility 
-      WHERE abbrv IS NOT NULL 
-        AND city IS NOT NULL
-        AND abbrv NOT IN ('AW', 'MF', 'OT', 'OW', 'RW')
-      ORDER BY abbrv
+      FROM employee_list 
+      WHERE emp_type = 'FieldSuper'
+        AND active = true 
+        AND facility IS NOT NULL
+      GROUP BY facility, city
+      ORDER BY facility
     ")
     
     dbDisconnect(con)
@@ -119,6 +120,35 @@ get_facility_lookup <- function() {
     
   }, error = function(e) {
     warning(paste("Error loading facility lookup:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
+}
+
+# Get complete facility information
+get_facility_info <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    facilities <- dbGetQuery(con, "
+      SELECT DISTINCT 
+        facility as abbrv,
+        shortname,
+        COUNT(DISTINCT shortname) as num_foremen
+      FROM employee_list 
+      WHERE emp_type = 'FieldSuper'
+        AND active = true 
+        AND facility IS NOT NULL
+      GROUP BY facility, shortname
+      ORDER BY facility
+    ")
+    
+    dbDisconnect(con)
+    return(facilities)
+    
+  }, error = function(e) {
+    warning(paste("Error loading facility info:", e$message))
     if (!is.null(con)) dbDisconnect(con)
     return(data.frame())
   })
@@ -164,7 +194,7 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "GREEN")
+  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)
@@ -194,8 +224,7 @@ get_material_types <- function() {
         tdosedisplay,
         mattype
       FROM lookup_matcode_entrylist 
-      WHERE matcode IS NOT NULL 
-      ORDER BY order_num, matcode
+      ORDER BY matcode
     ")
     
     dbDisconnect(con)
@@ -236,18 +265,16 @@ get_foremen_lookup <- function() {
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get active field supervisors from employee_list
+        # Get active field supervisors basic info
     foremen <- dbGetQuery(con, "
       SELECT 
         emp_num,
-        lastname,
-        firstname,
         shortname,
         facility
       FROM employee_list 
-      WHERE emp_type = 'FieldSuper' 
-      AND date_end IS NULL 
-      AND active = TRUE
+      WHERE emp_type = 'FieldSuper'
+        AND active = true 
+        AND facility IS NOT NULL
       ORDER BY facility, shortname
     ")
     
@@ -263,131 +290,77 @@ get_foremen_lookup <- function() {
 
 
 
-# Get facility base colors - each facility gets a unique, maximally distinct color
-get_facility_base_colors <- function() {
-  con <- get_db_connection()
-  if (is.null(con)) return(c())
+# Generate colors dynamically based on index
+generate_distinct_colors <- function(n) {
+  if (n <= 0) return(character(0))
   
-  tryCatch({
-    facilities <- dbGetQuery(con, "
-      SELECT DISTINCT 
-        abbrv,
-        city
-      FROM gis_facility 
-      WHERE abbrv IS NOT NULL 
-        AND abbrv NOT IN ('AW', 'MF', 'OT', 'OW', 'RW')
-      ORDER BY abbrv
-    ")
-    
-    dbDisconnect(con)
-    
-    if (nrow(facilities) == 0) return(c())
-    
-    # Maximally distinct colors - completely unique for each facility
-    # These colors have been chosen to be as distinct as possible 
-    # while maintaining good visibility
-    base_colors <- c(
-      "#FF0000",  # Pure Red
-      "#0000FF",  # Pure Blue
-      "#00CC00",  # Bright Green
-      "#FF6600",  # Orange
-      "#9933CC",  # Purple
-      "#FF3399",  # Pink
-      "#00CCFF",  # Sky Blue
-      "#FFCC00",  # Gold
-      "#33CC33",  # Lime Green
-      "#FF99CC",  # Light Pink
-      "#6666FF",  # Cornflower Blue
-      "#FF9900"   # Dark Orange
-    )
-    
-    n_facilities <- nrow(facilities)
-    if (n_facilities > length(base_colors)) {
-      warning("More facilities than predefined colors - generating additional colors")
-      # Generate additional maximally distinct colors
-      h_values <- seq(0, 0.9, length.out = n_facilities)  # Spread hues evenly
-      s_values <- rep(0.8, n_facilities)  # Keep saturation constant
-      v_values <- rep(0.9, n_facilities)  # Keep value constant
-      
-      base_colors <- sapply(h_values, function(h) {
-        hsv(h = h, s = 0.8, v = 0.9)
-      })
-    }
-    
-    # Create named vector mapping facility abbreviations to colors
-    result <- setNames(base_colors[1:n_facilities], facilities$abbrv)
-    return(result)
-  }, error = function(e) {
-    warning(paste("Error loading facility colors:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
-    return(c())
+  # Use HSV color space for even distribution
+  hues <- seq(0, 1, length.out = n + 1)[1:n]  # Spread hues evenly
+  
+  # Create colors with constant saturation and value for consistency
+  colors <- sapply(hues, function(h) {
+    hsv(h = h, s = 0.8, v = 0.9)
   })
-}# Generate foreman colors dynamically based on facility colors
-get_foreman_colors <- function() {
-  # Get current facilities and their colors
-  facility_colors <- get_facility_base_colors()
   
-  # Get current active foremen
+  return(colors)
+}
+
+# Get facility colors by mapping them to the distinct color set
+get_facility_base_colors <- function() {
+  facilities <- get_facility_lookup()
+  if (nrow(facilities) == 0) return(c())
+  
+  # Generate one color per facility
+  colors <- generate_distinct_colors(nrow(facilities))
+  
+  # Map colors to facility short names
+  result <- setNames(colors, facilities$short_name)
+  return(result)
+}
+
+# Generate foreman colors based on their facility's base color
+get_foreman_colors <- function() {
   foremen <- get_foremen_lookup()
   if (nrow(foremen) == 0) return(c())
   
-  foreman_colors <- c()
+  facility_colors <- get_facility_base_colors()
+  foreman_colors <- character(nrow(foremen))
   
-  # Process each facility's foremen
+  # For each facility
   for (facility in unique(foremen$facility)) {
     # Get foremen for this facility
     facility_foremen <- foremen[foremen$facility == facility, ]
+    n_foremen <- nrow(facility_foremen)
+    
+    # Get base color for facility
     base_color <- facility_colors[facility]
+    if (is.na(base_color)) next
     
-    if (is.na(base_color)) {
-      warning(paste("No base color found for facility:", facility))
-      next
-    }
-    
-    # Convert base color to HSV for better shade generation
+    # Convert base color to HSV
     rgb_base <- col2rgb(base_color) / 255
     hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
     
-    n_foremen <- nrow(facility_foremen)
-    
+    # Generate variations of the base color
     if (n_foremen == 1) {
       # Single foreman gets the facility base color
-      foreman_colors[as.character(facility_foremen$foreman)] <- base_color
+      foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
     } else {
-      # For multiple foremen, generate distinct shades
-      # Use golden ratio to spread colors evenly
-      golden_ratio <- 0.618033988749895
+      # For multiple foremen, vary the saturation and value
+      saturations <- seq(0.6, 0.9, length.out = n_foremen)
+      values <- seq(0.7, 0.9, length.out = n_foremen)
       
-      # Generate shades for each foreman
-      shades <- character(n_foremen)
-      for (i in 1:n_foremen) {
-        # Use golden ratio to generate well-distributed values
-        sat_position <- (i * golden_ratio) %% 1
-        val_position <- ((i * golden_ratio * golden_ratio) %% 1)
-        
-        # Calculate new saturation and value
-        # Keep saturation between 0.5 and 1.0 for visibility
-        new_sat <- 0.5 + (sat_position * 0.5)
-        # Keep value between 0.4 and 0.9 for visibility
-        new_val <- 0.4 + (val_position * 0.5)
-        
-        # Create color
-        shades[i] <- hsv(h = hsv_base[1],     # Keep facility hue
-                        s = new_sat, 
-                        v = new_val)
-      }
+      shades <- sapply(1:n_foremen, function(i) {
+        hsv(h = hsv_base[1], s = saturations[i], v = values[i])
+      })
       
-      # Assign the base facility color to the middle foreman
-      mid_point <- ceiling(n_foremen/2)
-      shades[mid_point] <- base_color
-      
-      # Map colors to foremen
-      foreman_colors <- c(foreman_colors,
-                         setNames(shades,
-                                as.character(facility_foremen$foreman)))
+      # Assign colors to foremen
+      foreman_idx <- which(foremen$shortname %in% facility_foremen$shortname)
+      foreman_colors[foreman_idx] <- shades
     }
   }
   
+  # Create named vector
+  names(foreman_colors) <- foremen$shortname
   return(foreman_colors)
 }
 

@@ -559,17 +559,17 @@ server <- function(input, output, session) {
       count(site_status) %>%
       arrange(desc(n))
     
-    # Consistent color mapping
-    status_colors <- c(
-      "Unknown" = "gray",
-      "Needs Inspection" = "yellow", 
-      "Under Threshold" = "blue",
-      "Needs Treatment" = "red",
-      "Active Treatment" = "green"
-    )
-    
-    # Map colors to the actual statuses in the data
-    colors_for_chart <- status_colors[status_counts$site_status]
+    # Map statuses to Shiny named colors using sapply
+    colors_for_chart <- sapply(status_counts$site_status, function(status) {
+      switch(status,
+        "Unknown" = shiny_colors[["unknown"]],
+        "Needs Inspection" = shiny_colors[["needs_action"]],
+        "Under Threshold" = shiny_colors[["completed"]],
+        "Needs Treatment" = shiny_colors[["needs_treatment"]],
+        "Active Treatment" = shiny_colors[["active"]],
+        "gray"  # default
+      )
+    })
     
     plot_ly(status_counts, x = ~reorder(site_status, -n), y = ~n, type = "bar",
             marker = list(color = colors_for_chart)) %>%

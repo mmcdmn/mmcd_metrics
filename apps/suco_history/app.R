@@ -402,13 +402,27 @@ WHERE ainspecnum IS NOT NULL
     custom_colors <- if(group_col == "facility") {
       get_facility_base_colors()
     } else if(group_col == "foreman") {
-      # Get foreman colors and print debug info
+      # Get foreman colors and lookup data
       foreman_colors <- get_foreman_colors()
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Create mapping from emp_num to colors using the lookup table
+      emp_colors <- character(0)
+      if(nrow(foremen_lookup) > 0) {
+        # Match shortname to color first
+        matched_colors <- foreman_colors[foremen_lookup$shortname]
+        # Then create mapping from emp_num to those colors
+        emp_colors <- setNames(matched_colors, foremen_lookup$emp_num)
+        # Remove any NA values
+        emp_colors <- emp_colors[!is.na(emp_colors)]
+      }
+      
       # Print debug info
       cat("Trend plot - Available foremen in data:", paste(unique(data[[group_col]]), collapse=", "), "\n")
-      cat("Trend plot - Foreman colors from helper:", paste(names(foreman_colors), collapse=", "), "\n")
-      # Return the colors
-      foreman_colors
+      cat("Trend plot - Employee numbers mapped:", paste(names(emp_colors), collapse=", "), "\n")
+      
+      # Return the employee number based colors
+      emp_colors
     } else {
       NULL
     }
@@ -534,16 +548,29 @@ WHERE ainspecnum IS NOT NULL
           opacity = 0.8
         )
     } else if (input$group_by == "foreman") {
-      # Get foreman colors and print debug info
+      # Get foreman colors and lookup data
       foreman_colors <- get_foreman_colors()
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Create mapping from emp_num to colors using the lookup table
+      emp_colors <- character(0)
+      if(nrow(foremen_lookup) > 0) {
+        # Match shortname to color first
+        matched_colors <- foreman_colors[foremen_lookup$shortname]
+        # Then create mapping from emp_num to those colors
+        emp_colors <- setNames(matched_colors, foremen_lookup$emp_num)
+        # Remove any NA values
+        emp_colors <- emp_colors[!is.na(emp_colors)]
+      }
+      
       # Print debug info
       cat("Map - Available foremen in data:", paste(unique(data$foreman), collapse=", "), "\n")
-      cat("Map - Foreman colors from helper:", paste(names(foreman_colors), collapse=", "), "\n")
+      cat("Map - Employee numbers mapped:", paste(names(emp_colors), collapse=", "), "\n")
       
-      # Create color palette function using the predefined foreman colors
+      # Create color palette function using the mapped colors
       pal <- colorFactor(
-        palette = unname(foreman_colors),  # Remove names from the palette
-        domain = unique(data$foreman))     # Use actual foremen from data
+        palette = emp_colors,
+        domain = names(emp_colors))
       
       # Create map with foreman coloring
       leaflet(data) %>%

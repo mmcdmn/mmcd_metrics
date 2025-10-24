@@ -258,7 +258,11 @@ get_foremen_lookup <- function() {
 
 
 
-# Generate colors dynamically based on index
+# Internal helper function to generate visually distinct colors
+# This function creates a set of unique colors that are visually distinct from each other
+# Parameters:
+#   n: Number of colors to generate
+# Returns: Vector of hex color codes
 generate_distinct_colors <- function(n) {
   if (n <= 0) return(character(0))
   
@@ -273,7 +277,29 @@ generate_distinct_colors <- function(n) {
   return(colors)
 }
 
-# Get facility colors by mapping them to the distinct color set
+#' Get Consistent Facility Colors
+#' 
+#' This function generates and returns a consistent color mapping for facilities.
+#' Each facility gets assigned a unique color that remains consistent across all visualizations.
+#' 
+#' Usage:
+#' ```r
+#' # In ggplot2:
+#' facility_colors <- get_facility_base_colors()
+#' ggplot(data, aes(x = x, y = y, color = facility)) +
+#'   scale_color_manual(values = facility_colors)
+#'
+#' # In leaflet:
+#' pal <- colorFactor(
+#'   palette = facility_colors,
+#'   domain = names(facility_colors)
+#' )
+#' ```
+#' 
+#' Returns:
+#'   Named vector where names are facility short names (e.g., "AP", "NM") and 
+#'   values are hex color codes. Can be used directly in scale_color_manual() 
+#'   or similar functions.
 get_facility_base_colors <- function() {
   facilities <- get_facility_lookup()
   if (nrow(facilities) == 0) return(c())
@@ -286,7 +312,42 @@ get_facility_base_colors <- function() {
   return(result)
 }
 
-# Generate foreman colors based on their facility's base color
+#' Get Consistent Foreman Colors Based on Facility
+#' 
+#' This function generates and returns a color mapping for foremen where each foreman's
+#' color is a variation of their facility's base color. This ensures that foremen from
+#' the same facility have similar but distinguishable colors.
+#' 
+#' Important Notes:
+#' 1. The foreman colors are based on employee numbers (e.g., "7002", "8203")
+#' 2. You must use get_foremen_lookup() to map between employee numbers and names
+#' 
+#' Usage:
+#' ```r
+#' # Get both colors and lookup
+#' foreman_colors <- get_foreman_colors()
+#' foremen_lookup <- get_foremen_lookup()
+#' 
+#' # Create mapping from emp_num to colors
+#' emp_colors <- setNames(
+#'   foreman_colors[foremen_lookup$shortname],
+#'   foremen_lookup$emp_num
+#' )
+#' 
+#' # In ggplot2:
+#' ggplot(data, aes(x = x, y = y, color = foreman)) +
+#'   scale_color_manual(values = emp_colors)
+#' 
+#' # In leaflet:
+#' pal <- colorFactor(
+#'   palette = emp_colors,
+#'   domain = names(emp_colors)
+#' )
+#' ```
+#' 
+#' Returns:
+#'   Named vector where names are foreman shortnames and values are hex color codes.
+#'   Must be mapped to employee numbers using get_foremen_lookup() for use with data.
 get_foreman_colors <- function() {
   foremen <- get_foremen_lookup()
   if (nrow(foremen) == 0) return(c())

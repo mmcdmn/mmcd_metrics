@@ -530,11 +530,21 @@ WHERE ainspecnum IS NOT NULL
       # Get foreman colors from db_helpers - these are already mapped to foreman names
       foreman_colors <- get_foreman_colors()
       
+      # First ensure we only use foremen that exist in our data
+      data_foremen <- unique(na.omit(data$foreman))
+      # Filter the colors to only include foremen in our data
+      available_colors <- foreman_colors[intersect(names(foreman_colors), data_foremen)]
+      
+      # Add a gray color for any missing foremen
+      if (length(available_colors) < length(data_foremen)) {
+        missing_foremen <- setdiff(data_foremen, names(available_colors))
+        available_colors[missing_foremen] <- "#808080"
+      }
+      
       # Create color palette function that uses exact foreman colors
       pal <- colorFactor(
-        palette = foreman_colors,
-        domain = names(foreman_colors),
-        na.value = "#808080")
+        palette = available_colors,
+        domain = data_foremen)
       
       # Create map with foreman coloring
       leaflet(data) %>%
@@ -644,6 +654,7 @@ WHERE ainspecnum IS NOT NULL
     top_locations <- data %>%
       group_by(location) %>%
       summarize(visits = n(), .groups = "drop") %>%
+      filter(!is.na(location)) %>%  # Remove NA locations
       arrange(desc(visits)) %>%
       head(15)
     if (nrow(top_locations) == 0) {
@@ -656,7 +667,10 @@ WHERE ainspecnum IS NOT NULL
       labs(title = "Top SUCO Locations", x = "Location", y = "Number of Visits") +
       theme_minimal() +
       theme(plot.title = element_text(face = "bold", size = 16), axis.title = element_text(face = "bold"))
-    plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = "location_plotly")
+    p <- plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = "location_plotly")
+    # Register the click event
+    plotly::event_register(p, 'plotly_click')
+    p
   })
   
   # React to plotly click and update map and tab

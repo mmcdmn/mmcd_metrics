@@ -445,7 +445,7 @@ get_status_descriptions <- function() {
     # Priority descriptions
     "RED" = "High priority",
     "YELLOW" = "Medium priority", 
-    "GREEN" = "Low priority",
+    "GREEN" = "PREHATCH",
     "HIGH" = "High priority",
     "MEDIUM" = "Medium priority",
     "LOW" = "Low priority",

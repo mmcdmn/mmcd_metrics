@@ -8,6 +8,9 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
+# Source the shared database helper functions
+source("../../shared/db_helpers.R")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -78,8 +81,8 @@ ui <- fluidPage(
                tags$br(),
                tags$ul(
                  tags$li(tags$span(style = "color:gray", "Gray: Total structures")),
-                 tags$li(tags$span(style = "color:steelblue", "Blue: Structures with active treatments")),
-                 tags$li(tags$span(style = "color:orange", "Orange: Structures with treatments expiring within the selected days"))
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Structures with active treatments")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Structures with treatments expiring within the selected days"))
                )),
       
       helpText(tags$b("Date Simulation:"),
@@ -267,12 +270,15 @@ WHERE t.list_type = 'STR'
     
     # Create the plot
     p <- ggplot(data, aes(x = facility)) +
+      # Get status colors from db_helpers
+      status_colors <- get_status_colors()
+      
       # First draw total bars
       geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
       # Then overlay active bars
-      geom_bar(aes(y = y_active), stat = "identity", fill = "steelblue") +
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
       # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = "orange") +
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
       
       # Add labels on top of each bar
       geom_text(aes(y = y_total, label = y_total), vjust = -0.5, color = "black") +
@@ -299,16 +305,16 @@ WHERE t.list_type = 'STR'
     if (any(data$show_active_label)) {
       p <- p + geom_text(data = data[data$show_active_label,],
                          aes(y = y_active, label = y_active),
-                         vjust = -0.5, color = "steelblue", fontface = "bold")
+                         vjust = -0.5, color = status_colors["active"], fontface = "bold")
     }
     
     # Add legend manually
     p + annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.9, ymax = y_max * 0.95,
                  fill = "gray80", alpha = 0.7) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.8, ymax = y_max * 0.85,
-               fill = "steelblue") +
+               fill = status_colors["active"]) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.7, ymax = y_max * 0.75,
-               fill = "orange") +
+               fill = status_colors["planned"]) +
       annotate("text", x = 0.1, y = y_max * 0.925,
                label = "Total", hjust = 0) +
       annotate("text", x = 0.1, y = y_max * 0.825,

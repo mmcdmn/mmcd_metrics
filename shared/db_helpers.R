@@ -425,6 +425,23 @@ get_status_colors <- function() {
   ))
 }
 
+# Map status types to semantic Shiny colors for valueBox
+get_status_semantic_color <- function(status_type) {
+  # Map status types to semantic color names that Shiny valueBox understands
+  color_map <- c(
+    "active" = "success",          # Green
+    "completed" = "info",          # Blue
+    "planned" = "warning",         # Orange
+    "needs_action" = "danger",     # Red
+    "unknown" = "default"          # Gray
+  )
+  
+  if (status_type %in% names(color_map)) {
+    return(color_map[status_type])
+  }
+  return("default")
+}
+
 # Get color descriptions for different status types
 get_status_descriptions <- function() {
   return(c(

@@ -55,10 +55,9 @@ server <- function(input, output) {
     colors <- get_facility_base_colors()
     
     df <- data.frame(
-      Abbreviation = facilities$short_name,
-      "Long Name" = facilities$full_name,
-      Color = unname(colors[facilities$short_name]),
-      Preview = sprintf(
+      Facility = facilities$short_name,
+      City = facilities$full_name,
+      Color = sprintf(
         '<div style="background-color: %s; width: 100px; height: 20px; border: 1px solid #ddd;"></div>',
         colors[facilities$short_name]
       ),

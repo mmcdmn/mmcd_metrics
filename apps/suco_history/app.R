@@ -13,6 +13,9 @@ suppressPackageStartupMessages({
   library(plotly)
 })
 
+# Source the shared database helper functions
+source("../../shared/db_helpers.R")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -69,7 +72,7 @@ ui <- fluidPage(
       
       # Filter by facility (multi-select)
       selectizeInput("facility_filter", "Filter by Facility:",
-                  choices = c("All", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
+                  choices = c("All"),  # Will be populated from get_facility_lookup()
                   selected = "All", multiple = TRUE),
       
       # Filter by foreman (multi-select, populated dynamically)
@@ -93,7 +96,6 @@ ui <- fluidPage(
         selectInput("basemap", "Base Map:",
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
-                                "Stamen Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
                     selected = "carto"),
         
@@ -117,6 +119,12 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
+  # Initialize facility choices from db_helpers
+  observe({
+    facilities <- get_facility_lookup()
+    facility_choices <- c("All", sort(unique(facilities$short_name)))
+    updateSelectizeInput(session, "facility_filter", choices = facility_choices)
+  })
   
   # Function to convert well-known binary (WKB) to sf object
   wkb_to_sf <- function(wkb) {
@@ -390,7 +398,23 @@ WHERE ainspecnum IS NOT NULL
     title_group <- ifelse(input$group_by == "facility", "Facility", "Foreman")
     facility_text <- ifelse(input$facility_filter == "All", "All Facilities", paste("Facility:", input$facility_filter))
     foreman_text <- ifelse(input$foreman_filter == "All", "All Foremen", paste("Foreman:", input$foreman_filter))
+    # Get color scales from db_helpers based on grouping
+    custom_colors <- if(group_col == "facility") {
+      get_facility_base_colors()
+    } else if(group_col == "foreman") {
+      get_foreman_colors()
+    } else {
+      NULL
+    }
+    
     p <- ggplot(data, aes(x = time_group, y = count, color = !!sym(group_col), fill = !!sym(group_col), group = !!sym(group_col)))
+    
+    # Add color scales based on grouping
+    if(!is.null(custom_colors)) {
+      p <- p + scale_color_manual(values = custom_colors) + scale_fill_manual(values = custom_colors)
+    } else {
+      p <- p + scale_color_discrete() + scale_fill_discrete()
+    }
     if (input$graph_type == "bar") {
       p <- p + geom_bar(stat = "identity", position = "dodge")
     } else if (input$graph_type == "line") {
@@ -462,10 +486,14 @@ WHERE ainspecnum IS NOT NULL
     
     # Create color palette based on field count or facility
     if (input$group_by == "facility") {
-      # Create a color palette for facilities
-      facilities <- unique(data$facility)
-      pal <- colorFactor(palette = "Set1", domain = facilities)
+      # Get facility colors from db_helpers
+      facility_colors <- get_facility_base_colors()
+      # Convert facility_colors to a function that returns colors
+      pal <- colorFactor(
+        palette = facility_colors,
+        domain = names(facility_colors))
       
+
       # Create map with facility coloring
       leaflet(data) %>%
         # Add base map
@@ -498,10 +526,15 @@ WHERE ainspecnum IS NOT NULL
           values = ~facility,
           opacity = 0.8
         )
-    } else {
-      # Create a color palette for foremen
-      foremen <- unique(data$foreman)
-      pal <- colorFactor(palette = "Set1", domain = foremen)
+    } else if (input$group_by == "foreman") {
+      # Get foreman colors from db_helpers - these are already mapped to foreman names
+      foreman_colors <- get_foreman_colors()
+      
+      # Create color palette function that uses exact foreman colors
+      pal <- colorFactor(
+        palette = foreman_colors,
+        domain = names(foreman_colors),
+        na.value = "#808080")
       
       # Create map with foreman coloring
       leaflet(data) %>%
@@ -533,6 +566,35 @@ WHERE ainspecnum IS NOT NULL
           title = "Foreman",
           pal = pal,
           values = ~foreman,
+          opacity = 0.8
+        )
+    } else {
+      # For MMCD (All) case, use a single color
+      leaflet(data) %>%
+        addProviderTiles(basemap) %>%
+        fitBounds(
+          lng1 = min(st_coordinates(data)[,1]),
+          lat1 = min(st_coordinates(data)[,2]),
+          lng2 = max(st_coordinates(data)[,1]),
+          lat2 = max(st_coordinates(data)[,2])
+        ) %>%
+        addCircleMarkers(
+          radius = ~pmin(15, (3 * size_multiplier)),
+          color = "black",
+          weight = 1.5,
+          fillColor = "#1f77b4", # Standard blue color
+          fillOpacity = 0.8,
+          popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
+                          "<b>Facility:</b> ", facility, "<br>",
+                          "<b>Foreman:</b> ", foreman, "<br>",
+                          "<b>Location:</b> ", location, "<br>",
+                          "<b>Field Count:</b> ", fieldcount)
+        ) %>%
+        addLegend(
+          position = "bottomright",
+          title = "MMCD",
+          colors = "#1f77b4",
+          labels = "All",
           opacity = 0.8
         )
     }

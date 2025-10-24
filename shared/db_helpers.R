@@ -102,17 +102,14 @@ get_facility_lookup <- function() {
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get facility lookup with abbreviation and city name
+    # Get facility lookup from gis_facility table, excluding special facilities
     facilities <- dbGetQuery(con, "
       SELECT DISTINCT 
-        facility as short_name,
+        abbrv as short_name,
         city as full_name
-      FROM employee_list 
-      WHERE emp_type = 'FieldSuper'
-        AND active = true 
-        AND facility IS NOT NULL
-      GROUP BY facility, city
-      ORDER BY facility
+      FROM public.gis_facility
+      WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
+      ORDER BY abbrv
     ")
     
     dbDisconnect(con)
@@ -120,35 +117,6 @@ get_facility_lookup <- function() {
     
   }, error = function(e) {
     warning(paste("Error loading facility lookup:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
-    return(data.frame())
-  })
-}
-
-# Get complete facility information
-get_facility_info <- function() {
-  con <- get_db_connection()
-  if (is.null(con)) return(data.frame())
-  
-  tryCatch({
-    facilities <- dbGetQuery(con, "
-      SELECT DISTINCT 
-        facility as abbrv,
-        shortname,
-        COUNT(DISTINCT shortname) as num_foremen
-      FROM employee_list 
-      WHERE emp_type = 'FieldSuper'
-        AND active = true 
-        AND facility IS NOT NULL
-      GROUP BY facility, shortname
-      ORDER BY facility
-    ")
-    
-    dbDisconnect(con)
-    return(facilities)
-    
-  }, error = function(e) {
-    warning(paste("Error loading facility info:", e$message))
     if (!is.null(con)) dbDisconnect(con)
     return(data.frame())
   })

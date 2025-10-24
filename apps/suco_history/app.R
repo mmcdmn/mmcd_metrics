@@ -632,25 +632,28 @@ WHERE ainspecnum IS NOT NULL
       foreman_colors <- get_foreman_colors()
       foremen_lookup <- get_foremen_lookup()
       
-      # First, ensure we have all foremen from the data in our lookup
-      data_foremen <- unique(as.character(data$foreman))
+      # Make sure employee numbers in lookup match data format
+      # Convert employee numbers to 4-digit format with leading zeros
+      foremen_lookup$emp_num <- sprintf("%04d", as.numeric(foremen_lookup$emp_num))
       
-      # Filter lookup to only include foremen in our data
-      relevant_lookup <- foremen_lookup[foremen_lookup$emp_num %in% data_foremen,]
+      # First, ensure we have all foremen from the data in our lookup
+      data_foremen <- sprintf("%04d", as.numeric(data$foreman))
+      
+      # Debug info for data format
+      cat("Map - Raw foremen from data:", paste(unique(data$foreman), collapse=", "), "\n")
+      cat("Map - Formatted foremen:", paste(unique(data_foremen), collapse=", "), "\n")
+      cat("Map - Lookup emp_nums:", paste(foremen_lookup$emp_num, collapse=", "), "\n")
       
       # Create mapping from emp_num to colors exactly as shown in documentation
       emp_colors <- setNames(
-        foreman_colors[relevant_lookup$shortname],
-        relevant_lookup$emp_num
+        foreman_colors[foremen_lookup$shortname],
+        foremen_lookup$emp_num
       )
       
-      # Debug info
-      cat("Map - Available foremen in data:", paste(data_foremen, collapse=", "), "\n")
-      cat("Map - Lookup shortnames:", paste(relevant_lookup$shortname, collapse=", "), "\n")
-      cat("Map - Colors available:", paste(names(foreman_colors), collapse=", "), "\n")
-      cat("Map - Final color mapping:", paste(names(emp_colors), "->", emp_colors, collapse="; "), "\n")
+      # Debug info for color mapping
+      cat("Map - Color mapping:", paste(names(emp_colors), "->", emp_colors, collapse="; "), "\n")
       
-      # Create color palette function exactly as documented
+      # Create color palette function for leaflet
       pal <- colorFactor(
         palette = emp_colors,
         domain = names(emp_colors)
@@ -669,14 +672,12 @@ WHERE ainspecnum IS NOT NULL
           radius = ~pmin(15, (3 * size_multiplier)),
           color = "black",
           weight = 1.5,
-          fillColor = ~{
-            emp_num <- as.character(foreman)
-            if (emp_num %in% names(emp_colors)) emp_colors[emp_num] else "#808080"
-          },
+          fillColor = ~pal(sprintf("%04d", as.numeric(foreman))),
           fillOpacity = 0.8,
           popup = ~{
-            foreman_name <- foremen_lookup$shortname[foremen_lookup$emp_num == foreman]
-            foreman_name <- if(length(foreman_name) > 0) foreman_name[1] else foreman
+            emp_num_formatted <- sprintf("%04d", as.numeric(foreman))
+            foreman_name <- foremen_lookup$shortname[foremen_lookup$emp_num == emp_num_formatted]
+            foreman_name <- if(length(foreman_name) > 0) foreman_name[1] else emp_num_formatted
             facility_name <- facilities$full_name[facilities$short_name == facility]
             facility_name <- if(length(facility_name) > 0) facility_name[1] else facility
             
@@ -733,6 +734,11 @@ WHERE ainspecnum IS NOT NULL
   output$summary_table <- renderDataTable({
     data <- filtered_data()
     group_col <- input$group_by
+    
+    # Debug info
+    cat("Summary Table - Starting summary generation\n")
+    cat("Summary Table - Group by:", group_col, "\n")
+    cat("Summary Table - Data rows:", nrow(data), "\n")
 
     if (group_col == "mmcd_all") {
       # Summarize for the whole MMCD (no grouping)
@@ -745,26 +751,92 @@ WHERE ainspecnum IS NOT NULL
           Last_SUCO = max(inspdate)
         )
       rownames(summary_data) <- "MMCD (All)"
-    } else {
-      # Group by selected factor and calculate summary stats
-      summary_data <- data %>%
-        group_by(across(all_of(group_col))) %>%
+    } else if (group_col == "facility") {
+      # Get all facilities from lookup
+      facilities <- get_facility_lookup()
+      
+      # Create base data frame with all facilities
+      all_facilities <- data.frame(
+        facility = facilities$short_name,
+        full_name = facilities$full_name
+      )
+      
+      # Summarize actual data
+      summary_stats <- data %>%
+        group_by(facility) %>%
         summarize(
           Total_SUCOs = n(),
           Total_Locations = n_distinct(sitecode),
           Total_Species_Count = sum(cnt, na.rm = TRUE),
           First_SUCO = min(inspdate),
           Last_SUCO = max(inspdate)
+        )
+      
+      # Join with all facilities to include zeros
+      summary_data <- all_facilities %>%
+        left_join(summary_stats, by = "facility") %>%
+        mutate(
+          Total_SUCOs = replace_na(Total_SUCOs, 0),
+          Total_Locations = replace_na(Total_Locations, 0),
+          Total_Species_Count = replace_na(Total_Species_Count, 0),
+          First_SUCO = as.Date(First_SUCO),
+          Last_SUCO = as.Date(Last_SUCO)
         ) %>%
-        arrange(desc(Total_SUCOs))
-      if (group_col == "facility") {
-        colnames(summary_data)[1] <- "Facility"
-      } else {
-        colnames(summary_data)[1] <- "Foreman"
-      }
+        arrange(desc(Total_SUCOs), facility)
+      
+      # Rename columns
+      colnames(summary_data)[1:2] <- c("Facility", "Facility_Name")
+      
+    } else {  # foreman grouping
+      # Get foreman lookup
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Ensure consistent employee number format
+      foremen_lookup$emp_num <- sprintf("%04d", as.numeric(foremen_lookup$emp_num))
+      data$foreman <- sprintf("%04d", as.numeric(data$foreman))
+      
+      # Create base data frame with all foremen
+      all_foremen <- data.frame(
+        foreman = foremen_lookup$emp_num,
+        shortname = foremen_lookup$shortname,
+        facility = foremen_lookup$facility
+      )
+      
+      # Summarize actual data
+      summary_stats <- data %>%
+        group_by(foreman) %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        )
+      
+      # Join with all foremen to include zeros
+      summary_data <- all_foremen %>%
+        left_join(summary_stats, by = c("foreman")) %>%
+        mutate(
+          Total_SUCOs = replace_na(Total_SUCOs, 0),
+          Total_Locations = replace_na(Total_Locations, 0),
+          Total_Species_Count = replace_na(Total_Species_Count, 0),
+          First_SUCO = as.Date(First_SUCO),
+          Last_SUCO = as.Date(Last_SUCO)
+        ) %>%
+        arrange(desc(Total_SUCOs), facility, shortname)
+      
+      # Rename columns
+      colnames(summary_data)[1:3] <- c("Foreman", "Name", "Facility")
     }
     return(summary_data)
-  }, options = list(pageLength = 15, searching = TRUE))
+  }, options = list(pageLength = 15, 
+                   searching = TRUE,
+                   columnDefs = list(list(
+                     targets = c("First_SUCO", "Last_SUCO"),
+                     render = JS("function(data, type, row) {
+                       return data ? data : 'N/A';
+                     }")
+                   ))))
   
   # Generate location plot (top locations with most SUCOs)
   output$location_plotly <- plotly::renderPlotly({

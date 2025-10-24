@@ -561,6 +561,9 @@ WHERE ainspecnum IS NOT NULL
     # Get marker size multiplier
     size_multiplier <- input$marker_size
     
+    # Get facility and foremen lookups for display names
+    facilities <- get_facility_lookup()
+    
     # Set up basemap provider
     basemap <- switch(input$basemap,
                       "osm" = providers$OpenStreetMap,
@@ -629,16 +632,23 @@ WHERE ainspecnum IS NOT NULL
       foreman_colors <- get_foreman_colors()
       foremen_lookup <- get_foremen_lookup()
       
+      # First, ensure we have all foremen from the data in our lookup
+      data_foremen <- unique(as.character(data$foreman))
+      
+      # Filter lookup to only include foremen in our data
+      relevant_lookup <- foremen_lookup[foremen_lookup$emp_num %in% data_foremen,]
+      
       # Create mapping from emp_num to colors exactly as shown in documentation
       emp_colors <- setNames(
-        foreman_colors[foremen_lookup$shortname],
-        foremen_lookup$emp_num
+        foreman_colors[relevant_lookup$shortname],
+        relevant_lookup$emp_num
       )
       
       # Debug info
-      cat("Map - Available foremen in data:", paste(unique(data$foreman), collapse=", "), "\n")
-      cat("Map - Employee numbers mapped:", paste(names(emp_colors), collapse=", "), "\n")
-      cat("Map - Colors assigned:", paste(emp_colors, collapse=", "), "\n")
+      cat("Map - Available foremen in data:", paste(data_foremen, collapse=", "), "\n")
+      cat("Map - Lookup shortnames:", paste(relevant_lookup$shortname, collapse=", "), "\n")
+      cat("Map - Colors available:", paste(names(foreman_colors), collapse=", "), "\n")
+      cat("Map - Final color mapping:", paste(names(emp_colors), "->", emp_colors, collapse="; "), "\n")
       
       # Create color palette function exactly as documented
       pal <- colorFactor(
@@ -659,20 +669,31 @@ WHERE ainspecnum IS NOT NULL
           radius = ~pmin(15, (3 * size_multiplier)),
           color = "black",
           weight = 1.5,
-          fillColor = ~emp_colors[as.character(foreman)],
+          fillColor = ~{
+            emp_num <- as.character(foreman)
+            if (emp_num %in% names(emp_colors)) emp_colors[emp_num] else "#808080"
+          },
           fillOpacity = 0.8,
-          popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
-                         "<b>Facility:</b> ", facilities$full_name[facilities$short_name == facility], "<br>",
-                         "<b>Foreman:</b> ", foremen_lookup$shortname[foremen_lookup$emp_num == foreman], "<br>",
-                         "<b>Location:</b> ", location, "<br>",
-                         "<b>Field Count:</b> ", fieldcount)
+          popup = ~{
+            foreman_name <- foremen_lookup$shortname[foremen_lookup$emp_num == foreman]
+            foreman_name <- if(length(foreman_name) > 0) foreman_name[1] else foreman
+            facility_name <- facilities$full_name[facilities$short_name == facility]
+            facility_name <- if(length(facility_name) > 0) facility_name[1] else facility
+            
+            paste0("<b>Date:</b> ", inspdate, "<br>",
+                   "<b>Facility:</b> ", facility_name, "<br>",
+                   "<b>Foreman:</b> ", foreman_name, "<br>",
+                   "<b>Location:</b> ", location, "<br>",
+                   "<b>Field Count:</b> ", fieldcount)
+          }
         ) %>%
         addLegend(
           position = "bottomright",
           title = "Foreman",
           colors = unname(emp_colors),
           labels = sapply(names(emp_colors), function(emp_num) {
-            foremen_lookup$shortname[foremen_lookup$emp_num == emp_num]
+            shortname <- foremen_lookup$shortname[foremen_lookup$emp_num == emp_num]
+            if(length(shortname) > 0) shortname[1] else emp_num
           }),
           opacity = 0.8
         )

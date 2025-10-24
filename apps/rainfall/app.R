@@ -14,6 +14,11 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
+# Source the shared database helper functions
+suppressWarnings({
+  source("../../shared/db_helpers.R")
+})
+
 # Load environment variables
 env_paths <- c(
   "../../.env",
@@ -116,7 +121,7 @@ ui <- dashboardPage(
               column(4,
                 selectInput("status_filter", "Status Filter:",
                   choices = c("All Statuses" = "all",
-                             "Unknown" = "U",
+                             "Unknown" = "Unknown",
                              "Needs Inspection" = "Needs Inspection", 
                              "Under Threshold" = "Under Threshold",
                              "Needs Treatment" = "Needs Treatment"),
@@ -244,26 +249,18 @@ ui <- dashboardPage(
 
 # Define Server
 server <- function(input, output, session) {
+   source_colors <- get_status_colors()
+  shiny_colors <- get_shiny_colors()
   
   # Load facility choices
   observe({
-    con <- get_db_connection()
-    if (!is.null(con)) {
-      tryCatch({
-        facilities <- dbGetQuery(con, 
-          "SELECT DISTINCT facility FROM loc_breeding_sites 
-           WHERE air_gnd = 'A' AND facility IS NOT NULL 
-           ORDER BY facility")
-        
-        fac_choices <- c("All Facilities" = "all", setNames(facilities$facility, facilities$facility))
-        updateSelectInput(session, "facility_filter", choices = fac_choices)
-        
-        dbDisconnect(con)
-      }, error = function(e) {
-        showNotification(paste("Error loading facilities:", e$message), type = "error")
-        if (!is.null(con)) dbDisconnect(con)
-      })
-    }
+    tryCatch({
+      # Use the shared function to get facility choices
+      fac_choices <- get_facility_choices(include_all = TRUE)
+      updateSelectInput(session, "facility_filter", choices = fac_choices)
+    }, error = function(e) {
+      showNotification(paste("Error loading facilities:", e$message), type = "error")
+    })
   })
   
   # Main data reactive - gets all air sites with calculated status
@@ -397,10 +394,10 @@ server <- function(input, output, session) {
             
             -- Sites that were treated but treatment expired > 3 days ago, reset to Unknown
             WHEN t.days_since_treatment IS NOT NULL 
-                 AND t.days_since_treatment > COALESCE(t.effect_days, 30) + 3 THEN 'U'
+                 AND t.days_since_treatment > COALESCE(t.effect_days, 30) + 3 THEN 'Unknown'
             
             -- Default to Unknown
-            ELSE 'U'
+            ELSE 'Unknown'
           END as site_status
           
         FROM ActiveAirSites a
@@ -445,7 +442,6 @@ server <- function(input, output, session) {
       return(data.frame())
     })
   })
-  
   # Value boxes
   output$total_air_sites <- renderValueBox({
     data <- air_sites_data()
@@ -455,7 +451,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Total Air Sites",
       icon = icon("helicopter"),
-      color = "blue"
+      color = shiny_colors["completed"]
     )
   })
   
@@ -467,7 +463,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Needs Inspection", 
       icon = icon("search"),
-      color = "yellow"
+      color = shiny_colors["needs_action"]
     )
   })
   
@@ -479,7 +475,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Under Treatment Threshold",
       icon = icon("check-circle"),
-      color = "blue"
+      color = shiny_colors["completed"]
     )
   })
   
@@ -491,7 +487,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Needs Treatment",
       icon = icon("syringe"), 
-      color = "red"
+      color = shiny_colors["needs_treatment"]
     )
   })
   
@@ -512,7 +508,7 @@ server <- function(input, output, session) {
     
     # Color mapping for status
     colors <- c(
-      "U" = "gray",
+      "Unknown" = "gray",
       "Needs Inspection" = "yellow", 
       "Under Threshold" = "blue",
       "Needs Treatment" = "red",
@@ -567,7 +563,7 @@ server <- function(input, output, session) {
     
     # Consistent color mapping
     status_colors <- c(
-      "U" = "gray",
+      "Unknown" = "gray",
       "Needs Inspection" = "yellow", 
       "Under Threshold" = "blue",
       "Needs Treatment" = "red",
@@ -628,7 +624,7 @@ server <- function(input, output, session) {
               options = list(pageLength = 15, scrollX = TRUE)) %>%
       formatStyle("Status",
                   backgroundColor = styleEqual(
-                    c("U", "Needs Inspection", "Under Threshold", "Needs Treatment", "Active Treatment"),
+                    c("Unknown", "Needs Inspection", "Under Threshold", "Needs Treatment", "Active Treatment"),
                     c("#f0f0f0", "#ffff99", "#cce7ff", "#f8d7da", "#d4edda")
                   ))
   })

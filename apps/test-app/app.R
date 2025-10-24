@@ -1,80 +1,97 @@
 library(shiny)
-library(ggplot2)
+library(shinydashboard)
 library(dplyr)
+library(DT)
 
-# Simple test application without database dependency
-ui <- fluidPage(
-  titlePanel("MMCD Test Application"),
+source("../../shared/db_helpers.R")
+
+ui <- dashboardPage(
+  dashboardHeader(title = "DB Helpers Info"),
   
-  sidebarLayout(
-    sidebarPanel(
-      h3("Test Application"),
-      p("This is a simple test application to verify that Shiny Server is working properly."),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Facilities", tabName = "facilities", icon = icon("building")),
+      menuItem("Foremen", tabName = "foremen", icon = icon("users"))
+    )
+  ),
+  
+  dashboardBody(
+    tabItems(
+      # Facilities tab
+      tabItem(tabName = "facilities",
+        fluidRow(
+          box(
+            title = "Facility Information",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("facilityInfo")
+          )
+        )
+      ),
       
-      selectInput("dataset", "Choose a dataset:",
-                  choices = c("mtcars", "iris", "faithful")),
-      
-      numericInput("obs", "Number of observations:", 
-                   value = 10, min = 1, max = 100),
-      
-      actionButton("refresh", "Refresh", class = "btn-primary")
-    ),
-    
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Plot", 
-                 plotOutput("plot")),
-        tabPanel("Summary",
-                 verbatimTextOutput("summary")),
-        tabPanel("Data", 
-                 tableOutput("table"))
+      # Foremen tab
+      tabItem(tabName = "foremen",
+        fluidRow(
+          box(
+            title = "Foreman Information",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("foremanInfo")
+          )
+        )
       )
     )
   )
 )
 
 server <- function(input, output) {
-  
-  # Get selected dataset
-  datasetInput <- reactive({
-    switch(input$dataset,
-           "mtcars" = mtcars,
-           "iris" = iris,
-           "faithful" = faithful)
-  })
-  
-  # Create plot
-  output$plot <- renderPlot({
-    dataset <- datasetInput()
+  # Facility Information (with colors)
+  output$facilityInfo <- renderDT({
+    facilities <- get_facility_lookup()
+    if (nrow(facilities) == 0) return(NULL)
     
-    if (input$dataset == "mtcars") {
-      ggplot(dataset, aes(x = wt, y = mpg)) +
-        geom_point() +
-        geom_smooth(method = "lm") +
-        theme_minimal() +
-        labs(title = "Car Weight vs MPG", x = "Weight", y = "Miles per Gallon")
-    } else if (input$dataset == "iris") {
-      ggplot(dataset, aes(x = Sepal.Length, y = Sepal.Width, color = Species)) +
-        geom_point() +
-        theme_minimal() +
-        labs(title = "Iris Sepal Dimensions", x = "Sepal Length", y = "Sepal Width")
-    } else {
-      ggplot(dataset, aes(x = waiting, y = eruptions)) +
-        geom_point() +
-        theme_minimal() +
-        labs(title = "Old Faithful Geyser", x = "Waiting Time", y = "Eruption Duration")
-    }
-  })
+    colors <- get_facility_base_colors()
+    
+    df <- data.frame(
+      Facility = facilities$short_name,
+      City = facilities$full_name,
+      Color = sprintf(
+        '<div style="background-color: %s; width: 100px; height: 20px; border: 1px solid #ddd;"></div>',
+        colors[facilities$short_name]
+      ),
+      stringsAsFactors = FALSE,
+      row.names = NULL
+    )
+    df
+  }, escape = FALSE, options = list(pageLength = 10))
   
-  # Show summary
-  output$summary <- renderPrint({
-    summary(datasetInput())
-  })
+  # Foreman Information (with colors)
+  output$foremanInfo <- renderDT({
+    foremen <- get_foremen_lookup()
+    if (nrow(foremen) == 0) return(NULL)
+    
+    colors <- get_foreman_colors()
+    
+    df <- data.frame(
+      "Emp Num" = foremen$emp_num,
+      "Shortname" = foremen$shortname,
+      Facility = foremen$facility,
+      Color = unname(colors[foremen$shortname]),
+      Preview = sprintf(
+        '<div style="background-color: %s; width: 100px; height: 20px; border: 1px solid #ddd;"></div>',
+        colors[foremen$shortname]
+      ),
+      stringsAsFactors = FALSE,
+      row.names = NULL
+    )
+    df
+  }, escape = FALSE, options = list(pageLength = 10))
   
-  # Show data table
-  output$table <- renderTable({
-    head(datasetInput(), input$obs)
-  })
+  
+  
+
 }
 
 shinyApp(ui = ui, server = server)

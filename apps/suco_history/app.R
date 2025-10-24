@@ -76,7 +76,7 @@ ui <- fluidPage(
                   selected = "All", multiple = TRUE),
       
       # Filter by foreman (multi-select, populated dynamically)
-      selectizeInput("foreman_filter", "Filter by Foreman:",
+      selectizeInput("foreman_filter", "Filter by FOS:",
                   choices = c("All"),
                   selected = "All", multiple = TRUE),
       
@@ -122,7 +122,12 @@ server <- function(input, output, session) {
   # Initialize facility choices from db_helpers
   observe({
     facilities <- get_facility_lookup()
-    facility_choices <- c("All", sort(unique(facilities$short_name)))
+    # Create named vector with full names as labels and short names as values
+    facility_choices <- c("All" = "All")
+    facility_choices <- c(
+      facility_choices,
+      setNames(facilities$short_name, facilities$full_name)
+    )
     updateSelectizeInput(session, "facility_filter", choices = facility_choices)
   })
   
@@ -281,12 +286,28 @@ WHERE ainspecnum IS NOT NULL
   # Update foreman filter choices based on available data (multi-select aware)
   observe({
     data <- suco_data()
+    foremen_lookup <- get_foremen_lookup()
+    
     # Filter by facility if not 'All' and not empty
     if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
       data <- data %>% filter(facility %in% input$facility_filter)
     }
-    foremen <- sort(unique(data$foreman))
-    foremen_choices <- c("All", foremen)
+    
+    # Get unique foremen numbers from data
+    foremen_nums <- sort(unique(na.omit(data$foreman)))
+    
+    # Create mapping from emp_num to shortname for display
+    foremen_names <- sapply(foremen_nums, function(num) {
+      match <- foremen_lookup$shortname[foremen_lookup$emp_num == num]
+      if(length(match) > 0) match[1] else num  # fallback to number if no match
+    })
+    
+    # Create choices with names as labels and numbers as values
+    foremen_choices <- setNames(
+      c("All", foremen_nums),
+      c("All", foremen_names)
+    )
+    
     updateSelectInput(session, "foreman_filter", choices = foremen_choices)
   })
 
@@ -394,45 +415,100 @@ WHERE ainspecnum IS NOT NULL
     if (group_col == "mmcd_all") {
       group_col <- "mmcd_all"
     }
+    
+    # Get facility and foreman lookups for labels
+    facilities <- get_facility_lookup()
+    foremen_lookup <- get_foremen_lookup()
+    
+    # Create facility name mapping
+    facility_names <- setNames(facilities$full_name, facilities$short_name)
+    
+    # Create foreman name mapping
+    foreman_names <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+    
     title_interval <- ifelse(input$time_interval == "week", "Weekly", "Monthly")
     title_group <- ifelse(input$group_by == "facility", "Facility", "Foreman")
-    facility_text <- ifelse(input$facility_filter == "All", "All Facilities", paste("Facility:", input$facility_filter))
-    foreman_text <- ifelse(input$foreman_filter == "All", "All Foremen", paste("Foreman:", input$foreman_filter))
+    
+    # Get facility and foreman lookups for display names in subtitle
+    facility_names <- setNames(facilities$full_name, facilities$short_name)
+    foreman_names <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+    
+    # Use full names in filter text
+    facility_text <- if ("All" %in% input$facility_filter) {
+      "All Facilities"
+    } else {
+      display_names <- sapply(input$facility_filter, function(f) facility_names[f] %||% f)
+      paste("Facility:", paste(display_names, collapse=", "))
+    }
+    
+    foreman_text <- if ("All" %in% input$foreman_filter) {
+      "All Foremen"
+    } else {
+      display_names <- sapply(input$foreman_filter, function(f) foreman_names[f] %||% f)
+      paste("Foreman:", paste(display_names, collapse=", "))
+    }
+    
     # Get color scales from db_helpers based on grouping
     custom_colors <- if(group_col == "facility") {
       get_facility_base_colors()
     } else if(group_col == "foreman") {
-      # Get foreman colors and lookup data
+      # Get the foreman colors from db_helpers
       foreman_colors <- get_foreman_colors()
       foremen_lookup <- get_foremen_lookup()
       
-      # Create mapping from emp_num to colors using the lookup table
+      # Debug info
+      cat("Available foreman colors:", paste(names(foreman_colors), collapse=", "), "\n")
+      cat("Foremen in data:", paste(unique(data[[group_col]]), collapse=", "), "\n")
+      cat("Lookup table entries:", paste(foremen_lookup$emp_num, collapse=", "), "\n")
+      
+      # Map colors from shortname to employee number
       emp_colors <- character(0)
-      if(nrow(foremen_lookup) > 0) {
-        # Match shortname to color first
-        matched_colors <- foreman_colors[foremen_lookup$shortname]
-        # Then create mapping from emp_num to those colors
-        emp_colors <- setNames(matched_colors, foremen_lookup$emp_num)
-        # Remove any NA values
-        emp_colors <- emp_colors[!is.na(emp_colors)]
+      for (emp_num in unique(data[[group_col]])) {
+        shortname <- foremen_lookup$shortname[foremen_lookup$emp_num == emp_num]
+        if (length(shortname) > 0 && shortname %in% names(foreman_colors)) {
+          emp_colors[emp_num] <- foreman_colors[shortname]
+        }
       }
       
-      # Print debug info
-      cat("Trend plot - Available foremen in data:", paste(unique(data[[group_col]]), collapse=", "), "\n")
-      cat("Trend plot - Employee numbers mapped:", paste(names(emp_colors), collapse=", "), "\n")
-      
-      # Return the employee number based colors
+      # Return the mapped colors
       emp_colors
     } else {
       NULL
     }
     
-    p <- ggplot(data, aes(x = time_group, y = count, color = !!sym(group_col), fill = !!sym(group_col), group = !!sym(group_col)))
+    # Create the plot using the original group_col values for color mapping
+    p <- ggplot(data, aes(x = time_group, y = count, 
+                         color = !!sym(group_col), 
+                         fill = !!sym(group_col), 
+                         group = !!sym(group_col)))
+    
     
     # Add color scales based on grouping
     if(!is.null(custom_colors)) {
-      p <- p + scale_color_manual(values = custom_colors, drop = FALSE) + 
-               scale_fill_manual(values = custom_colors, drop = FALSE)
+      # Add color scales with labels for the legend
+      if(group_col == "facility") {
+        # For facilities, map short names to full names in legend
+        p <- p + scale_color_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
+          drop = FALSE
+        ) + scale_fill_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
+          drop = FALSE
+        )
+      } else {
+        # For foremen, map employee numbers to names in legend
+        p <- p + scale_color_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
+          drop = FALSE
+        ) + scale_fill_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
+          drop = FALSE
+        )
+      }
     } else {
       p <- p + scale_color_discrete() + scale_fill_discrete()
     }
@@ -507,101 +583,97 @@ WHERE ainspecnum IS NOT NULL
     
     # Create color palette based on field count or facility
     if (input$group_by == "facility") {
-      # Get facility colors from db_helpers
+      # Get facility colors and lookup from db_helpers
       facility_colors <- get_facility_base_colors()
-      # Convert facility_colors to a function that returns colors
+      facilities <- get_facility_lookup()
+      facility_names <- setNames(facilities$full_name, facilities$short_name)
+      
+      # Create color palette function
       pal <- colorFactor(
         palette = facility_colors,
         domain = names(facility_colors))
       
-
+      # Create a named vector for legend labels
+      legend_labels <- sapply(names(facility_colors), function(code) facility_names[code] %||% code)
+      
       # Create map with facility coloring
       leaflet(data) %>%
-        # Add base map
         addProviderTiles(basemap) %>%
-        # Fit map to data bounds
         fitBounds(
           lng1 = min(st_coordinates(data)[,1]),
           lat1 = min(st_coordinates(data)[,2]),
           lng2 = max(st_coordinates(data)[,1]),
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
-        # Add points with larger size and black border
         addCircleMarkers(
           radius = ~pmin(15, (3 * size_multiplier)),
-          color = "black", # Black border
-          weight = 1.5, # Border thickness
+          color = "black",
+          weight = 1.5,
           fillColor = ~pal(facility),
           fillOpacity = 0.8,
           popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
-                          "<b>Facility:</b> ", facility, "<br>",
-                          "<b>Foreman:</b> ", foreman, "<br>",
-                          "<b>Location:</b> ", location, "<br>",
-                          "<b>Field Count:</b> ", fieldcount)
+                         "<b>Facility:</b> ", facility_names[facility], "<br>",
+                         "<b>Foreman:</b> ", foreman, "<br>",
+                         "<b>Location:</b> ", location, "<br>",
+                         "<b>Field Count:</b> ", fieldcount)
         ) %>%
-        # Add legend
         addLegend(
           position = "bottomright",
           title = "Facility",
-          pal = pal,
-          values = ~facility,
+          colors = facility_colors,
+          labels = legend_labels,
           opacity = 0.8
         )
     } else if (input$group_by == "foreman") {
-      # Get foreman colors and lookup data
+      # Get both colors and lookup exactly as documented
       foreman_colors <- get_foreman_colors()
       foremen_lookup <- get_foremen_lookup()
       
-      # Create mapping from emp_num to colors using the lookup table
-      emp_colors <- character(0)
-      if(nrow(foremen_lookup) > 0) {
-        # Match shortname to color first
-        matched_colors <- foreman_colors[foremen_lookup$shortname]
-        # Then create mapping from emp_num to those colors
-        emp_colors <- setNames(matched_colors, foremen_lookup$emp_num)
-        # Remove any NA values
-        emp_colors <- emp_colors[!is.na(emp_colors)]
-      }
+      # Create mapping from emp_num to colors exactly as shown in documentation
+      emp_colors <- setNames(
+        foreman_colors[foremen_lookup$shortname],
+        foremen_lookup$emp_num
+      )
       
-      # Print debug info
+      # Debug info
       cat("Map - Available foremen in data:", paste(unique(data$foreman), collapse=", "), "\n")
       cat("Map - Employee numbers mapped:", paste(names(emp_colors), collapse=", "), "\n")
+      cat("Map - Colors assigned:", paste(emp_colors, collapse=", "), "\n")
       
-      # Create color palette function using the mapped colors
+      # Create color palette function exactly as documented
       pal <- colorFactor(
         palette = emp_colors,
-        domain = names(emp_colors))
+        domain = names(emp_colors)
+      )
       
       # Create map with foreman coloring
       leaflet(data) %>%
-        # Add base map
         addProviderTiles(basemap) %>%
-        # Fit map to data bounds
         fitBounds(
           lng1 = min(st_coordinates(data)[,1]),
           lat1 = min(st_coordinates(data)[,2]),
           lng2 = max(st_coordinates(data)[,1]),
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
-        # Add points with larger size and black border
         addCircleMarkers(
           radius = ~pmin(15, (3 * size_multiplier)),
-          color = "black", # Black border
-          weight = 1.5, # Border thickness
-          fillColor = ~pal(foreman),
+          color = "black",
+          weight = 1.5,
+          fillColor = ~emp_colors[as.character(foreman)],
           fillOpacity = 0.8,
           popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
-                          "<b>Facility:</b> ", facility, "<br>",
-                          "<b>Foreman:</b> ", foreman, "<br>",
-                          "<b>Location:</b> ", location, "<br>",
-                          "<b>Field Count:</b> ", fieldcount)
+                         "<b>Facility:</b> ", facilities$full_name[facilities$short_name == facility], "<br>",
+                         "<b>Foreman:</b> ", foremen_lookup$shortname[foremen_lookup$emp_num == foreman], "<br>",
+                         "<b>Location:</b> ", location, "<br>",
+                         "<b>Field Count:</b> ", fieldcount)
         ) %>%
-        # Add legend
         addLegend(
           position = "bottomright",
           title = "Foreman",
-          pal = pal,
-          values = ~foreman,
+          colors = unname(emp_colors),
+          labels = sapply(names(emp_colors), function(emp_num) {
+            foremen_lookup$shortname[foremen_lookup$emp_num == emp_num]
+          }),
           opacity = 0.8
         )
     } else {

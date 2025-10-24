@@ -8,6 +8,9 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
+# Source the shared database helper functions
+source("../../shared/db_helpers.R")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -59,9 +62,9 @@ ui <- fluidPage(
                                      "Unknown (U)" = "U"),
                          selected = c("D", "W", "U")),
       
-      # Dropdown for facility filter
+      # Dropdown for facility filter - using db_helpers to get full names
       selectInput("facility_filter", "Facility:",
-                  choices = c("All" = "all", "E", "MO", "N", "Sj", "Sr", "W2", "Wm", "Wp"),
+                  choices = get_facility_choices(),
                   selected = "all"),
       
       # Dropdown for structure type filter  
@@ -78,8 +81,8 @@ ui <- fluidPage(
                tags$br(),
                tags$ul(
                  tags$li(tags$span(style = "color:gray", "Gray: Total structures")),
-                 tags$li(tags$span(style = "color:steelblue", "Blue: Structures with active treatments")),
-                 tags$li(tags$span(style = "color:orange", "Orange: Structures with treatments expiring within the selected days"))
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Structures with active treatments")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Structures with treatments expiring within the selected days"))
                )),
       
       helpText(tags$b("Date Simulation:"),
@@ -255,6 +258,11 @@ WHERE t.list_type = 'STR'
     y_label <- "Number of Structures"
     title_metric <- "Number of Structures"
     
+    # Map facility codes to full names for display
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$full_name, facilities$short_name)
+    data$facility_name <- facility_map[data$facility]
+    
     # Create a new column to determine which labels to show (avoiding overplot)
     data$show_active_label <- data$y_active != data$y_expiring
     
@@ -265,14 +273,17 @@ WHERE t.list_type = 'STR'
     status_types_text <- paste(input$status_types, collapse = ", ")
     facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
     
+    # Get status colors from db_helpers before creating the plot
+    status_colors <- get_status_colors()
+    
     # Create the plot
-    p <- ggplot(data, aes(x = facility)) +
+    p <- ggplot(data, aes(x = facility_name)) +
       # First draw total bars
       geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
       # Then overlay active bars
-      geom_bar(aes(y = y_active), stat = "identity", fill = "steelblue") +
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
       # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = "orange") +
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
       
       # Add labels on top of each bar
       geom_text(aes(y = y_total, label = y_total), vjust = -0.5, color = "black") +
@@ -292,6 +303,7 @@ WHERE t.list_type = 'STR'
       theme(
         plot.title = element_text(face = "bold", size = 16),
         axis.title = element_text(face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1),
         legend.position = "none"
       )
     
@@ -299,16 +311,16 @@ WHERE t.list_type = 'STR'
     if (any(data$show_active_label)) {
       p <- p + geom_text(data = data[data$show_active_label,],
                          aes(y = y_active, label = y_active),
-                         vjust = -0.5, color = "steelblue", fontface = "bold")
+                         vjust = -0.5, color = status_colors["active"], fontface = "bold")
     }
     
     # Add legend manually
     p + annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.9, ymax = y_max * 0.95,
                  fill = "gray80", alpha = 0.7) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.8, ymax = y_max * 0.85,
-               fill = "steelblue") +
+               fill = status_colors["active"]) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.7, ymax = y_max * 0.75,
-               fill = "orange") +
+               fill = status_colors["planned"]) +
       annotate("text", x = 0.1, y = y_max * 0.925,
                label = "Total", hjust = 0) +
       annotate("text", x = 0.1, y = y_max * 0.825,

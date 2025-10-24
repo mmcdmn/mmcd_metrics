@@ -22,6 +22,7 @@ RUN R -e "install.packages(c( \
 
 # Copy app files and config to correct locations
 COPY apps /srv/shiny-server/apps
+COPY shared /srv/shiny-server/shared
 COPY index.html /srv/shiny-server/
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 COPY startup.sh /startup.sh

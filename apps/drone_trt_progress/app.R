@@ -8,32 +8,11 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
-# Load environment variables from .env file (for local development)
-# or from Docker environment variables (for production)
-env_paths <- c(
-  "../../.env",           # For local development
-  "../../../.env",        # Alternative local path
-  "/srv/shiny-server/.env" # Docker path
-)
+# Source shared helper functions
+source("../../shared/db_helpers.R")
 
-# Try to load from .env file first
-env_loaded <- FALSE
-for (path in env_paths) {
-  if (file.exists(path)) {
-    readRenviron(path)
-    env_loaded <- TRUE
-    break
-  }
-}
-
-# If no .env file found, environment variables should already be set by Docker
-
-# Database configuration using environment variables
-db_host <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
+# Load environment variables
+load_env_variables()
 
 # Define UI for the application
 ui <- fluidPage(
@@ -67,7 +46,7 @@ ui <- fluidPage(
                tags$br(),
                tags$ul(
                  tags$li(tags$span(style = "color:gray", "Gray: Total sites/acres")),
-                 tags$li(tags$span(style = "color:steelblue", "Blue: Sites/acres with active treatments")),
+                 tags$li(tags$span(style = "color:green", "Green: Sites/acres with active treatments")),
                  tags$li(tags$span(style = "color:orange", "Orange: Sites/acres with treatments expiring within the selected days"))
                )),
       
@@ -96,14 +75,8 @@ server <- function(input, output) {
   
   # Fetch data from database
   raw_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    con <- get_db_connection()
+    if (is.null(con)) return(data.frame())
     
     # Build the drone designation filter based on user selection
     drone_types <- paste0("'", paste(input$drone_types, collapse = "','"), "'")
@@ -184,10 +157,12 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     # Count total drone sites and total acres by facility
     total_drone_sites <- drone_sites %>%
       group_by(facility) %>%
-      summarize(
+      summarise(
         total_sites = n(),
-        total_acres = sum(acres, na.rm = TRUE)
-      )
+        total_acres = sum(acres, na.rm = TRUE),
+        .groups = 'drop'
+      ) %>%
+      map_facility_names()
     
     # Count active drone sites and active acres by facility
     active_drone_sites <- drone_treatments %>%
@@ -269,14 +244,17 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     drone_types_text <- paste(input$drone_types, collapse = ", ")
     prehatch_filter_text <- ifelse(input$prehatch_only, "Prehatch Sites Only", "All Sites")
     
+    # Get colors from shared helper functions
+    status_colors <- get_status_colors()
+    
     # Create the plot
-    p <- ggplot(data, aes(x = facility)) +
+    p <- ggplot(data, aes(x = facility_display)) +
       # First draw total bars
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
+      geom_bar(aes(y = y_total), stat = "identity", fill = status_colors["total"], alpha = 0.7) +
       # Then overlay active bars
-      geom_bar(aes(y = y_active), stat = "identity", fill = "steelblue") +
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["Active Treatment"]) +
       # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = "orange") +
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["Pending"]) +
       
       # Add labels on top of each bar
       geom_text(aes(y = y_total, label = y_total), vjust = -0.5, color = "black") +
@@ -306,13 +284,13 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
                          vjust = -0.5, color = "steelblue", fontface = "bold")
     }
     
-    # Add legend manually
+    # Add legend manually using shared colors
     p + annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.9, ymax = y_max * 0.95,
-                 fill = "gray80", alpha = 0.7) +
+                 fill = status_colors["total"], alpha = 0.7) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.8, ymax = y_max * 0.85,
-               fill = "steelblue") +
+               fill = status_colors["Active Treatment"]) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.7, ymax = y_max * 0.75,
-               fill = "orange") +
+               fill = status_colors["Pending"]) +
       annotate("text", x = 0.1, y = y_max * 0.925,
                label = "Total", hjust = 0) +
       annotate("text", x = 0.1, y = y_max * 0.825,

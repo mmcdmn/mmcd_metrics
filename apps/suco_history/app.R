@@ -402,7 +402,13 @@ WHERE ainspecnum IS NOT NULL
     custom_colors <- if(group_col == "facility") {
       get_facility_base_colors()
     } else if(group_col == "foreman") {
-      get_foreman_colors()
+      # Get foreman colors and print debug info
+      foreman_colors <- get_foreman_colors()
+      # Print debug info
+      cat("Trend plot - Available foremen in data:", paste(unique(data[[group_col]]), collapse=", "), "\n")
+      cat("Trend plot - Foreman colors from helper:", paste(names(foreman_colors), collapse=", "), "\n")
+      # Return the colors
+      foreman_colors
     } else {
       NULL
     }
@@ -411,7 +417,8 @@ WHERE ainspecnum IS NOT NULL
     
     # Add color scales based on grouping
     if(!is.null(custom_colors)) {
-      p <- p + scale_color_manual(values = custom_colors) + scale_fill_manual(values = custom_colors)
+      p <- p + scale_color_manual(values = custom_colors, drop = FALSE) + 
+               scale_fill_manual(values = custom_colors, drop = FALSE)
     } else {
       p <- p + scale_color_discrete() + scale_fill_discrete()
     }
@@ -527,24 +534,16 @@ WHERE ainspecnum IS NOT NULL
           opacity = 0.8
         )
     } else if (input$group_by == "foreman") {
-      # Get foreman colors from db_helpers - these are already mapped to foreman names
+      # Get foreman colors and print debug info
       foreman_colors <- get_foreman_colors()
+      # Print debug info
+      cat("Map - Available foremen in data:", paste(unique(data$foreman), collapse=", "), "\n")
+      cat("Map - Foreman colors from helper:", paste(names(foreman_colors), collapse=", "), "\n")
       
-      # First ensure we only use foremen that exist in our data
-      data_foremen <- unique(na.omit(data$foreman))
-      # Filter the colors to only include foremen in our data
-      available_colors <- foreman_colors[intersect(names(foreman_colors), data_foremen)]
-      
-      # Add a gray color for any missing foremen
-      if (length(available_colors) < length(data_foremen)) {
-        missing_foremen <- setdiff(data_foremen, names(available_colors))
-        available_colors[missing_foremen] <- "#808080"
-      }
-      
-      # Create color palette function that uses exact foreman colors
+      # Create color palette function using the predefined foreman colors
       pal <- colorFactor(
-        palette = available_colors,
-        domain = data_foremen)
+        palette = unname(foreman_colors),  # Remove names from the palette
+        domain = unique(data$foreman))     # Use actual foremen from data
       
       # Create map with foreman coloring
       leaflet(data) %>%

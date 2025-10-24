@@ -506,22 +506,20 @@ server <- function(input, output, session) {
       return(leaflet() %>% addTiles())
     }
     
-    # Color mapping for status
-    colors <- c(
-      "Unknown" = "gray",
-      "Needs Inspection" = "yellow", 
-      "Under Threshold" = "blue",
-      "Needs Treatment" = "red",
-      "Active Treatment" = "green"
-    )
+    # Color mapping for status - sourced from db_helpers
+    color_map <- get_status_color_map()
     
-    data$color <- colors[data$site_status]
+    # Map colors to data
+    data$color <- sapply(data$site_status, function(status) {
+      if (status %in% names(color_map)) color_map[[status]] else color_map[["Unknown"]]
+    })
     
     leaflet(data) %>%
       addTiles() %>%
       addCircleMarkers(
         ~longitude, ~latitude,
         color = ~color,
+        fillColor = ~color,
         radius = 5,
         stroke = TRUE,
         fillOpacity = 0.8,
@@ -543,8 +541,8 @@ server <- function(input, output, session) {
       ) %>%
       addLegend(
         position = "bottomright",
-        colors = colors,
-        labels = names(colors),
+        colors = unlist(color_map),
+        labels = names(color_map),
         title = "Site Status"
       )
   })

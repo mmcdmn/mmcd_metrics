@@ -439,6 +439,18 @@ get_shiny_colors <- function() {
   ))
 }
 
+# Map status names to hex colors for visualizations (maps, charts, tables)
+get_status_color_map <- function() {
+  status_colors <- get_status_colors()
+  return(list(
+    "Unknown" = status_colors["unknown"],
+    "Needs Inspection" = status_colors["needs_action"], 
+    "Under Threshold" = status_colors["completed"],
+    "Needs Treatment" = status_colors["needs_treatment"],
+    "Active Treatment" = status_colors["active"]
+  ))
+}
+
 # Get color descriptions for different status types
 get_status_descriptions <- function() {
   return(c(

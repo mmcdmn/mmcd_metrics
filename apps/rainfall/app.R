@@ -249,6 +249,8 @@ ui <- dashboardPage(
 
 # Define Server
 server <- function(input, output, session) {
+   source_colors <- get_status_colors()
+  shiny_colors <- get_shiny_colors()
   
   # Load facility choices
   observe({
@@ -440,7 +442,6 @@ server <- function(input, output, session) {
       return(data.frame())
     })
   })
-  
   # Value boxes
   output$total_air_sites <- renderValueBox({
     data <- air_sites_data()
@@ -450,7 +451,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Total Air Sites",
       icon = icon("helicopter"),
-      color = "blue"
+      color = shiny_colors["completed"]
     )
   })
   
@@ -462,7 +463,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Needs Inspection", 
       icon = icon("search"),
-      color = "yellow"
+      color = shiny_colors["needs_action"]
     )
   })
   
@@ -474,7 +475,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Under Treatment Threshold",
       icon = icon("check-circle"),
-      color = "blue"
+      color = shiny_colors["completed"]
     )
   })
   
@@ -486,7 +487,7 @@ server <- function(input, output, session) {
       value = value,
       subtitle = "Needs Treatment",
       icon = icon("syringe"), 
-      color = "red"
+      color = shiny_colors["needs_treatment"]
     )
   })
   

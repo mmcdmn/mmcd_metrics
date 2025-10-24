@@ -420,26 +420,23 @@ get_status_colors <- function() {
     "active" = "#00CC00",      # Bright green for active/in-progress/treatment
     "completed" = "#4169E1",   # Royal blue for completed
     "planned" = "#FFA500",     # Orange for planned/pending
-    "needs_action" = "#FF4500", # Red-orange for needs inspection/treatment
+    "needs_action" = "#FF4500", # Red-orange for needs inspection
+    "needs_treatment" = "#FF0000", # Pure red for needs treatment
     "unknown" = "#A9A9A9"      # Dark gray for unknown status
   ))
 }
 
-# Map status types to semantic Shiny colors for valueBox
-get_status_semantic_color <- function(status_type) {
-  # Map status types to semantic color names that Shiny valueBox understands
-  color_map <- c(
-    "active" = "success",          # Green
-    "completed" = "info",          # Blue
-    "planned" = "warning",         # Orange
-    "needs_action" = "danger",     # Red
-    "unknown" = "default"          # Gray
-  )
-  
-  if (status_type %in% names(color_map)) {
-    return(color_map[status_type])
-  }
-  return("default")
+# Map hex colors to Shiny named colors for valueBox and dashboard elements
+# This converts db_helpers hex colors to Shiny's accepted named colors
+get_shiny_colors <- function() {
+  return(c(
+    "active" = "green",        # #00CC00 → green
+    "completed" = "blue",      # #4169E1 → blue
+    "planned" = "orange",      # #FFA500 → orange
+    "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)
+    "needs_treatment" = "red", # #FF0000 → red
+    "unknown" = "gray"         # #A9A9A9 → gray
+  ))
 }
 
 # Get color descriptions for different status types

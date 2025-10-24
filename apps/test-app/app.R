@@ -108,10 +108,10 @@ server <- function(input, output) {
         SELECT 
           abbrv,
           city,
-          address,
+          address1 as address,
           zip
         FROM gis_facility 
-        WHERE abbrv IS NOT NULL 
+        WHERE abbrv IS NOT NULL
         ORDER BY abbrv
       ")
       dbDisconnect(con)
@@ -122,6 +122,7 @@ server <- function(input, output) {
   # Facility Colors
   output$facilityColors <- renderDT({
     facilities <- get_facility_base_colors()
+    
     df <- data.frame(
       Abbreviation = names(facilities),
       Color = facilities,
@@ -153,17 +154,33 @@ server <- function(input, output) {
   
   # Foreman Colors
   output$foremanColors <- renderDT({
-    foremen <- get_foreman_colors()
-    df <- data.frame(
-      Foreman = names(foremen),
-      Color = foremen,
-      Preview = sprintf(
-        '<div style="background-color: %s; width: 100px; height: 20px; border: 1px solid #ddd;"></div>',
-        foremen
-      ),
-      stringsAsFactors = FALSE
-    )
-    df
+    # Get foremen from database to filter by facility
+    con <- get_db_connection()
+    if (!is.null(con)) {
+      valid_foremen <- dbGetQuery(con, "
+        SELECT DISTINCT e.foreman
+        FROM gis_employees e
+        JOIN gis_facility f ON e.facility_id = f.abbrv
+        WHERE e.foreman IS NOT NULL
+          AND f.abbrv NOT IN ('AW', 'MF', 'OT', 'OW', 'RW')
+      ")
+      dbDisconnect(con)
+      
+      foremen <- get_foreman_colors()
+      # Filter foremen colors to only include those from valid facilities
+      foremen <- foremen[names(foremen) %in% valid_foremen$foreman]
+      
+      df <- data.frame(
+        Foreman = names(foremen),
+        Color = foremen,
+        Preview = sprintf(
+          '<div style="background-color: %s; width: 100px; height: 20px; border: 1px solid #ddd;"></div>',
+          foremen
+        ),
+        stringsAsFactors = FALSE
+      )
+      df
+    }
   }, escape = FALSE, options = list(pageLength = 10))
   
   # Status Colors
@@ -193,8 +210,12 @@ server <- function(input, output) {
   
   # Color Preview
   output$colorPreview <- renderUI({
+    # Get facilities with exclusions
     facilities <- get_facility_base_colors()
+    facilities <- facilities[!names(facilities) %in% c("AW", "MF", "OT", "OW", "RW")]
+    
     foremen <- get_foreman_colors()
+    
     statuses <- get_status_colors()
     
     tagList(

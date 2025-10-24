@@ -108,7 +108,9 @@ get_facility_lookup <- function() {
         abbrv as short_name,
         city as full_name
       FROM gis_facility 
-      WHERE abbrv IS NOT NULL AND city IS NOT NULL
+      WHERE abbrv IS NOT NULL 
+        AND city IS NOT NULL
+        AND abbrv NOT IN ('AW', 'MF', 'OT', 'OW', 'RW')
       ORDER BY abbrv
     ")
     
@@ -273,6 +275,7 @@ get_facility_base_colors <- function() {
         city
       FROM gis_facility 
       WHERE abbrv IS NOT NULL 
+        AND abbrv NOT IN ('AW', 'MF', 'OT', 'OW', 'RW')
       ORDER BY abbrv
     ")
     

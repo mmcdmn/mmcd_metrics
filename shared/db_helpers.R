@@ -259,76 +259,130 @@ get_foremen_lookup <- function() {
   })
 }
 
-# Get facility base colors (hardcoded for consistency)
-get_facility_base_colors <- function() {
-  return(c(
-    "N" = "blue",
-    "E" = "red", 
-    "S" = "green",
-    "Sr" = "green",
-    "Sj" = "orange",
-    "W" = "purple",
-    "Wp" = "purple",
-    "Wm" = "purple", 
-    "W2" = "purple",
-    "MO" = "brown"
-  ))
-}
 
-# Generate foreman colors (shades of facility color)
-get_foreman_colors <- function() {
-  facility_colors <- get_facility_base_colors()
-  foremen <- get_foremen_lookup()
+
+# Get facility base colors - each facility gets a unique, maximally distinct color
+get_facility_base_colors <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(c())
   
+  tryCatch({
+    facilities <- dbGetQuery(con, "
+      SELECT DISTINCT 
+        abbrv,
+        city
+      FROM gis_facility 
+      WHERE abbrv IS NOT NULL 
+      ORDER BY abbrv
+    ")
+    
+    dbDisconnect(con)
+    
+    if (nrow(facilities) == 0) return(c())
+    
+    # Maximally distinct colors - completely unique for each facility
+    # These colors have been chosen to be as distinct as possible 
+    # while maintaining good visibility
+    base_colors <- c(
+      "#FF0000",  # Pure Red
+      "#0000FF",  # Pure Blue
+      "#00CC00",  # Bright Green
+      "#FF6600",  # Orange
+      "#9933CC",  # Purple
+      "#FF3399",  # Pink
+      "#00CCFF",  # Sky Blue
+      "#FFCC00",  # Gold
+      "#33CC33",  # Lime Green
+      "#FF99CC",  # Light Pink
+      "#6666FF",  # Cornflower Blue
+      "#FF9900"   # Dark Orange
+    )
+    
+    n_facilities <- nrow(facilities)
+    if (n_facilities > length(base_colors)) {
+      warning("More facilities than predefined colors - generating additional colors")
+      # Generate additional maximally distinct colors
+      h_values <- seq(0, 0.9, length.out = n_facilities)  # Spread hues evenly
+      s_values <- rep(0.8, n_facilities)  # Keep saturation constant
+      v_values <- rep(0.9, n_facilities)  # Keep value constant
+      
+      base_colors <- sapply(h_values, function(h) {
+        hsv(h = h, s = 0.8, v = 0.9)
+      })
+    }
+    
+    # Create named vector mapping facility abbreviations to colors
+    result <- setNames(base_colors[1:n_facilities], facilities$abbrv)
+    return(result)
+  }, error = function(e) {
+    warning(paste("Error loading facility colors:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(c())
+  })
+}# Generate foreman colors dynamically based on facility colors
+get_foreman_colors <- function() {
+  # Get current facilities and their colors
+  facility_colors <- get_facility_base_colors()
+  
+  # Get current active foremen
+  foremen <- get_foremen_lookup()
   if (nrow(foremen) == 0) return(c())
   
   foreman_colors <- c()
   
-  # Group foremen by facility and assign shades
+  # Process each facility's foremen
   for (facility in unique(foremen$facility)) {
+    # Get foremen for this facility
     facility_foremen <- foremen[foremen$facility == facility, ]
     base_color <- facility_colors[facility]
     
-    if (is.na(base_color)) base_color <- "gray"
-    
-    # Convert base color to HSV for better control
-    rgb_base <- col2rgb(base_color) / 255
-    hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
-    h <- hsv_base[1]  # Hue
-    s <- hsv_base[2]  # Saturation
-    v <- hsv_base[3]  # Value
-    
-    # Create shades for each foreman in the facility
-    n_foremen <- nrow(facility_foremen)
-    
-    # Generate distinct shades based on facility's base color
-    if (n_foremen == 1) {
-      colors <- base_color
-    } else {
-      shades <- character(n_foremen)
-      
-      # Create distinct variations that stay within the facility's color family
-      for (i in 1:n_foremen) {
-        # Calculate variations that maximize distinction while keeping color family
-        new_s <- max(0.4, min(1, s + (i - n_foremen/2) * 0.15))  # Vary saturation
-        new_v <- max(0.4, min(0.95, v + cos(i/n_foremen * pi) * 0.3))  # Vary brightness in wave pattern
-        
-        # Small hue variation to create more distinction while staying in color family
-        hue_shift <- (i - n_foremen/2) * 0.05  # Small hue shifts
-        new_h <- (h + hue_shift) %% 1  # Keep hue in valid range
-        
-        shades[i] <- hsv(new_h, new_s, new_v)
-      }
-      
-      # Ensure middle shade is close to facility base color
-      mid_point <- ceiling(n_foremen/2)
-      shades[mid_point] <- base_color
-      colors <- shades
+    if (is.na(base_color)) {
+      warning(paste("No base color found for facility:", facility))
+      next
     }
     
-    # Map colors to foreman numbers
-    foreman_colors <- c(foreman_colors, 
-                       setNames(colors, as.character(facility_foremen$foreman)))
+    # Convert base color to HSV for better shade generation
+    rgb_base <- col2rgb(base_color) / 255
+    hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
+    
+    n_foremen <- nrow(facility_foremen)
+    
+    if (n_foremen == 1) {
+      # Single foreman gets the facility base color
+      foreman_colors[as.character(facility_foremen$foreman)] <- base_color
+    } else {
+      # For multiple foremen, generate distinct shades
+      # Use golden ratio to spread colors evenly
+      golden_ratio <- 0.618033988749895
+      
+      # Generate shades for each foreman
+      shades <- character(n_foremen)
+      for (i in 1:n_foremen) {
+        # Use golden ratio to generate well-distributed values
+        sat_position <- (i * golden_ratio) %% 1
+        val_position <- ((i * golden_ratio * golden_ratio) %% 1)
+        
+        # Calculate new saturation and value
+        # Keep saturation between 0.5 and 1.0 for visibility
+        new_sat <- 0.5 + (sat_position * 0.5)
+        # Keep value between 0.4 and 0.9 for visibility
+        new_val <- 0.4 + (val_position * 0.5)
+        
+        # Create color
+        shades[i] <- hsv(h = hsv_base[1],     # Keep facility hue
+                        s = new_sat, 
+                        v = new_val)
+      }
+      
+      # Assign the base facility color to the middle foreman
+      mid_point <- ceiling(n_foremen/2)
+      shades[mid_point] <- base_color
+      
+      # Map colors to foremen
+      foreman_colors <- c(foreman_colors,
+                         setNames(shades,
+                                as.character(facility_foremen$foreman)))
+    }
   }
   
   return(foreman_colors)
@@ -354,33 +408,15 @@ format_display_date <- function(date_col) {
                 error = function(e) as.character(date_col)))
 }
 
-# Comprehensive status and treatment color mappings
+# Core status colors - single source of truth for all status indicators
 get_status_colors <- function() {
   return(c(
-    # General status colors
-    "U" = "gray",
-    "Unknown" = "gray",
-    "Needs Inspection" = "yellow", 
-    "Under Threshold" = "blue",
-    "Needs Treatment" = "red",
-    "Active Treatment" = "green",  # Combined with "active" - both mean active treatment
-    "Completed" = "lightgreen",
-    "Pending" = "orange",
-    "In Progress" = "lightblue",
-    
-    # Treatment progress specific colors
-    "total" = "gray80",
-    
-    # Priority colors
-    "RED" = "red",
-    "YELLOW" = "yellow", 
-    "GREEN" = "lightgreen",
-    "HIGH" = "red",
-    "MEDIUM" = "yellow",
-    "LOW" = "blue",
-    
-    # Special status colors
-    "PREHATCH" = "green"
+    # Core status colors - no duplicates or aliases
+    "active" = "#00CC00",      # Bright green for active/in-progress/treatment
+    "completed" = "#4169E1",   # Royal blue for completed
+    "planned" = "#FFA500",     # Orange for planned/pending
+    "needs_action" = "#FF4500", # Red-orange for needs inspection/treatment
+    "unknown" = "#A9A9A9"      # Dark gray for unknown status
   ))
 }
 

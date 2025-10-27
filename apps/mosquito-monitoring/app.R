@@ -10,6 +10,11 @@ library(plotrix)
 library(DBI)
 library(RPostgreSQL)
 
+# Source shared helper functions
+suppressWarnings({
+  source("../../shared/db_helpers.R")
+})
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -56,41 +61,9 @@ dbDisconnect(con)
 
 mosquito0$Year<- year(mosquito0$inspdate)
 
-colorspecieslist <- list("Total_Ae_+_Cq" = "#000000", Total_Ae_springs = "#008000", Total_Ae_summers = "#ffa500",
-                         Cq_perturbans_42 = "#800080", Total_Cx_vectors = "#FF0000", Cx_erraticus_32 = "#000000",
-                         Cx_pipiens_33 = "#0000FF", Cx_restuans_34 = "#008000", Cx_salinarius_35 = "#87cefa",
-                         Cx_tarsalis_36 = "#a52a2a", Cx_territans_37 = "#00ff7f", "Cx_restuans/pipiens_372" = "#40e0d0",
-                         Cx_unknown_371 = "#ffa500", An_barberi_27 = "#FFFF00", An_earlei_28 = "#ffc0cb",
-                         An_punctipennis_29 = "#0000FF", An_quadrimaculatus_30 = "#FF0000", An_walkeri_31 = "#ffa500",
-                         sp311an_un = "#800080", Total_Anopheles = "#87cefa", sp01_abser = "#FF0000", sp03_aurif = "#FFFF00",
-                         sp04_euedes = "#f08080", sp05_campest = "#adff2f", sp08_commun = "#483d8b", sp09_diant = "#00FFFF",
-                         sp118abpun = "#800080", sp11_excru = "#ffa500", sp12_fitch = "#a52a2a", sp13_flave = "#800000",
-                         sp14_imple = "#7fff00", sp15_intrud = "#ffd700", sp17_pioni = "#FF00FF", sp18_punct = "#0000FF",
-                         sp19_ripar = "#008000", sp20_spenc = "#ff1493", sp22_stimu = "#708090", sp23_provo = "#ff6347",
-                         Ae_cinereus_7 = "#006400", Ae_triseriatus_24 = "#0000FF", Ae_vexans_26 = "#FF0000",
-                         sp02_atrop = "#ff1493", Ae_canadensis_6 = "#000000", Ae_dorsalis_10 = "#808080", sp16_nigro = "#ffd700",
-                         sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
-                         sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
-                         Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-                         Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-                         Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
-                         sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF" )
-
-shapespecieslist <- list("Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_summers = 1, Cq_perturbans_42 = 1,
-                         Total_Cx_vectors = 1, Cx_erraticus_32 = 15, Cx_pipiens_33 = 15, Cx_restuans_34 = 15,
-                         Cx_salinarius_35 = 15, Cx_tarsalis_36 = 15, Cx_territans_37 = 15, "Cx_restuans/pipiens_372" = 15,
-                         Cx_unknown_371 = 15, An_barberi_27 = 4, An_earlei_28 = 4, An_punctipennis_29 = 4,
-                         An_quadrimaculatus_30 = 4, An_walkeri_31 = 4, sp311an_un = 4, Total_Anopheles = 4,
-                         sp01_abser = 19, sp03_aurif = 19, sp04_euedes = 19, sp05_campest = 19, sp08_commun = 19,
-                         sp09_diant = 19, sp118abpun = 19, sp11_excru = 19, sp12_fitch = 19, sp13_flave = 19,
-                         sp14_imple = 19, sp15_intrud = 19, sp17_pioni = 19, sp18_punct = 19, sp19_ripar = 19,
-                         sp20_spenc = 19, sp22_stimu = 19, sp23_provo = 19, Ae_cinereus_7 = 19, Ae_triseriatus_24 = 19,
-                         Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
-                         sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
-                         sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-                         Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-                         Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
-                         Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18)
+# Get mosquito species colors and shapes from centralized db_helpers
+colorspecieslist <- get_mosquito_species_colors()
+shapespecieslist <- get_mosquito_species_shapes()
               
 
 ui <- fluidPage(
@@ -100,8 +73,8 @@ ui <- fluidPage(
               
               titlePanel("CO2 Traps"),
               fluidRow(
-                column(3, selectInput("facility", "Facility", choices = c(unique(mosquito0$facility), "All"),
-                                      selected = "All")),
+                column(3, selectInput("facility", "Facility", choices = c("All Facilities" = "all"),
+                                      selected = "all")),
                 column(4, selectInput("species", "Species Selection", choices = unique(mosquito0$spp_name),
                                       selected = "Total_Ae_+_Cq",
                                       multiple = TRUE)),
@@ -129,8 +102,8 @@ ui <- fluidPage(
    #ALL Tab W/ Zone Selector
     tabPanel( "All",
               fluidRow(
-                column(3, selectInput("facilityONE", "Facility", choices = c(unique(mosquito0$facility), "All"),
-                                      selected = "All")),
+                column(3, selectInput("facilityONE", "Facility", choices = c("All Facilities" = "all"),
+                                      selected = "all")),
                 column(3, selectInput("speciesONE", "Species Selection", choices = unique(mosquito0$spp_name),
                                       selected = "Total_Ae_+_Cq",
                                       multiple = TRUE)),
@@ -159,11 +132,25 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
+  # Update facility choices with full names from db_helpers
+  observe({
+    tryCatch({
+      facility_choices <- get_facility_choices(include_all = TRUE)
+      updateSelectInput(session, "facility", choices = facility_choices)
+      updateSelectInput(session, "facilityONE", choices = facility_choices)
+    }, error = function(e) {
+      # Fallback to current data if db_helpers fails
+      facility_fallback <- c("All Facilities" = "all", setNames(unique(mosquito0$facility), unique(mosquito0$facility)))
+      updateSelectInput(session, "facility", choices = facility_fallback)
+      updateSelectInput(session, "facilityONE", choices = facility_fallback)
+    })
+  })
+  
   logscale <- reactiveVal(TRUE)
   whichplot <- reactiveVal(TRUE)
   #Filter will have to include facility for both and then seperate filtersfor each graph for year, sp, zone in one then do calculations
   mosquito <- reactive({
-    if (isTRUE(input$facility == "All")) {mosquito0}
+    if (isTRUE(input$facility == "all")) {mosquito0}
     else {
     mosquito0 %>%
     filter(facility %in% input$facility)
@@ -594,7 +581,7 @@ server <- function(input, output, session) {
   whichplotONE <- reactiveVal(TRUE)
   
   mosquitoONE <- reactive({
-    if(isTRUE(input$facility == "All")) {mosquito0}
+    if(isTRUE(input$facilityONE == "all")) {mosquito0}
     else {
       mosquito0 %>%
         filter(facility %in% input$facilityONE)

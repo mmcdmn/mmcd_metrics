@@ -45,9 +45,9 @@ ui <- fluidPage(
       helpText("This visualization shows drone sites by facility with three categories:",
                tags$br(),
                tags$ul(
-                 tags$li(tags$span(style = "color:gray", "Gray: Total sites/acres")),
-                 tags$li(tags$span(style = "color:green", "Green: Sites/acres with active treatments")),
-                 tags$li(tags$span(style = "color:orange", "Orange: Sites/acres with treatments expiring within the selected days"))
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["unknown"]), "Gray: Total sites/acres")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Sites/acres with active treatments")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Sites/acres with treatments expiring within the selected days"))
                )),
       
       helpText(tags$b("Drone Designations:"),
@@ -247,14 +247,19 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     # Get colors from shared helper functions
     status_colors <- get_status_colors()
     
+    # Map colors for this application's specific needs
+    total_color <- status_colors["unknown"]        # Gray for total sites
+    active_color <- status_colors["active"]        # Green for active treatments
+    expiring_color <- status_colors["planned"]     # Orange for expiring treatments
+    
     # Create the plot
     p <- ggplot(data, aes(x = facility_display)) +
       # First draw total bars
-      geom_bar(aes(y = y_total), stat = "identity", fill = status_colors["total"], alpha = 0.7) +
+      geom_bar(aes(y = y_total), stat = "identity", fill = total_color, alpha = 0.7) +
       # Then overlay active bars
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["Active Treatment"]) +
+      geom_bar(aes(y = y_active), stat = "identity", fill = active_color) +
       # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["Pending"]) +
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = expiring_color) +
       
       # Add labels on top of each bar
       geom_text(aes(y = y_total, label = y_total), vjust = -0.5, color = "black") +
@@ -274,6 +279,7 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       theme(
         plot.title = element_text(face = "bold", size = 16),
         axis.title = element_text(face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1),
         legend.position = "none"
       )
     
@@ -281,16 +287,16 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     if (any(data$show_active_label)) {
       p <- p + geom_text(data = data[data$show_active_label,],
                          aes(y = y_active, label = y_active),
-                         vjust = -0.5, color = "steelblue", fontface = "bold")
+                         vjust = -0.5, color = active_color, fontface = "bold")
     }
     
-    # Add legend manually using shared colors
+    # Add legend manually using mapped colors
     p + annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.9, ymax = y_max * 0.95,
-                 fill = status_colors["total"], alpha = 0.7) +
+                 fill = total_color, alpha = 0.7) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.8, ymax = y_max * 0.85,
-               fill = status_colors["Active Treatment"]) +
+               fill = active_color) +
       annotate("rect", xmin = -0.5, xmax = 0, ymin = y_max * 0.7, ymax = y_max * 0.75,
-               fill = status_colors["Pending"]) +
+               fill = expiring_color) +
       annotate("text", x = 0.1, y = y_max * 0.925,
                label = "Total", hjust = 0) +
       annotate("text", x = 0.1, y = y_max * 0.825,

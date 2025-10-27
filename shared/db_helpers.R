@@ -162,7 +162,7 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE")
+  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE","GREEN" = "PREHATCH")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)
@@ -417,7 +417,7 @@ format_display_date <- function(date_col) {
 get_status_colors <- function() {
   return(c(
     # Core status colors - no duplicates or aliases
-    "active" = "#00CC00",      # Bright green for active/in-progress/treatment
+    "active" = "#187018",      # forest green for active/in-progress/treatment
     "completed" = "#4169E1",   # Royal blue for completed
     "planned" = "#FFA500",     # Orange for planned/pending
     "needs_action" = "#FF4500", # Red-orange for needs inspection
@@ -430,7 +430,7 @@ get_status_colors <- function() {
 # This converts db_helpers hex colors to Shiny's accepted named colors
 get_shiny_colors <- function() {
   return(c(
-    "active" = "green",        # #00CC00 → green
+    "active" = "olive",          # #187018 → olive (closest to forest green)
     "completed" = "blue",      # #4169E1 → blue
     "planned" = "orange",      # #FFA500 → orange
     "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)
@@ -479,4 +479,234 @@ get_status_descriptions <- function() {
     # Special status descriptions
     "PREHATCH" = "Prehatch site status"
   ))
+}
+
+# Mosquito Species Visualization Functions
+# Centralized color and shape mappings for mosquito species in surveillance data
+
+# Get color mappings for mosquito species
+get_mosquito_species_colors <- function() {
+  return(list(
+    "Total_Ae_+_Cq" = "#000000", Total_Ae_springs = "#008000", Total_Ae_summers = "#ffa500",
+    Cq_perturbans_42 = "#800080", Total_Cx_vectors = "#FF0000", Cx_erraticus_32 = "#000000",
+    Cx_pipiens_33 = "#0000FF", Cx_restuans_34 = "#008000", Cx_salinarius_35 = "#87cefa",
+    Cx_tarsalis_36 = "#a52a2a", Cx_territans_37 = "#00ff7f", "Cx_restuans/pipiens_372" = "#40e0d0",
+    Cx_unknown_371 = "#ffa500", An_barberi_27 = "#FFFF00", An_earlei_28 = "#ffc0cb",
+    An_punctipennis_29 = "#0000FF", An_quadrimaculatus_30 = "#FF0000", An_walkeri_31 = "#ffa500",
+    sp311an_un = "#800080", Total_Anopheles = "#87cefa", sp01_abser = "#FF0000", sp03_aurif = "#FFFF00",
+    sp04_euedes = "#f08080", sp05_campest = "#adff2f", sp08_commun = "#483d8b", sp09_diant = "#00FFFF",
+    sp118abpun = "#800080", sp11_excru = "#ffa500", sp12_fitch = "#a52a2a", sp13_flave = "#800000",
+    sp14_imple = "#7fff00", sp15_intrud = "#ffd700", sp17_pioni = "#FF00FF", sp18_punct = "#0000FF",
+    sp19_ripar = "#008000", sp20_spenc = "#ff1493", sp22_stimu = "#708090", sp23_provo = "#ff6347",
+    Ae_cinereus_7 = "#006400", Ae_triseriatus_24 = "#0000FF", Ae_vexans_26 = "#FF0000",
+    sp02_atrop = "#ff1493", Ae_canadensis_6 = "#000000", Ae_dorsalis_10 = "#808080", sp16_nigro = "#ffd700",
+    sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
+    sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
+    Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
+    Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
+    Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+    sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
+  ))
+}
+
+# Get shape mappings for mosquito species (ggplot shape numbers)
+get_mosquito_species_shapes <- function() {
+  return(list(
+    "Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_summers = 1, Cq_perturbans_42 = 1,
+    Total_Cx_vectors = 1, Cx_erraticus_32 = 15, Cx_pipiens_33 = 15, Cx_restuans_34 = 15,
+    Cx_salinarius_35 = 15, Cx_tarsalis_36 = 15, Cx_territans_37 = 15, "Cx_restuans/pipiens_372" = 15,
+    Cx_unknown_371 = 15, An_barberi_27 = 4, An_earlei_28 = 4, An_punctipennis_29 = 4,
+    An_quadrimaculatus_30 = 4, An_walkeri_31 = 4, sp311an_un = 4, Total_Anopheles = 4,
+    sp01_abser = 19, sp03_aurif = 19, sp04_euedes = 19, sp05_campest = 19, sp08_commun = 19,
+    sp09_diant = 19, sp118abpun = 19, sp11_excru = 19, sp12_fitch = 19, sp13_flave = 19,
+    sp14_imple = 19, sp15_intrud = 19, sp17_pioni = 19, sp18_punct = 19, sp19_ripar = 19,
+    sp20_spenc = 19, sp22_stimu = 19, sp23_provo = 19, Ae_cinereus_7 = 19, Ae_triseriatus_24 = 19,
+    Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
+    sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
+    sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
+    Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
+    Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+    Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
+  ))
+}
+
+# Treatment Plan Type Colors
+# Dynamic function to get treatment plan types and assign consistent colors
+
+#' Get Treatment Plan Type Lookup
+#' 
+#' This function dynamically fetches the available treatment plan types from the database
+#' and returns them with their full names for display purposes.
+#' 
+#' Returns:
+#'   Data frame with columns: plan_code, plan_name, description
+get_treatment_plan_types <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) {
+    # Return default mapping if database is unavailable
+    return(data.frame(
+      plan_code = c("A", "D", "G", "N", "U"),
+      plan_name = c("Air", "Drone", "Ground", "None", "Unknown"),
+      description = c("Air treatment", "Drone treatment", "Ground treatment", "No treatment planned", "Unknown treatment type"),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  tryCatch({
+    # Get distinct treatment plan types from the current treatments table
+    plan_types <- dbGetQuery(con, "
+      SELECT DISTINCT 
+        airgrnd_plan as plan_code,
+        CASE 
+          WHEN airgrnd_plan = 'A' THEN 'Air'
+          WHEN airgrnd_plan = 'D' THEN 'Drone' 
+          WHEN airgrnd_plan = 'G' THEN 'Ground'
+          WHEN airgrnd_plan = 'N' THEN 'None'
+          WHEN airgrnd_plan = 'U' THEN 'Unknown'
+          ELSE airgrnd_plan
+        END as plan_name,
+        CASE 
+          WHEN airgrnd_plan = 'A' THEN 'Air treatment'
+          WHEN airgrnd_plan = 'D' THEN 'Drone treatment' 
+          WHEN airgrnd_plan = 'G' THEN 'Ground treatment'
+          WHEN airgrnd_plan = 'N' THEN 'No treatment planned'
+          WHEN airgrnd_plan = 'U' THEN 'Unknown treatment type'
+          ELSE 'Other treatment type'
+        END as description
+      FROM public.dblarv_insptrt_current 
+      WHERE airgrnd_plan IS NOT NULL
+      ORDER BY 
+        CASE airgrnd_plan 
+          WHEN 'A' THEN 1
+          WHEN 'D' THEN 2
+          WHEN 'G' THEN 3
+          WHEN 'N' THEN 4
+          WHEN 'U' THEN 5
+          ELSE 6
+        END
+    ")
+    
+    dbDisconnect(con)
+    return(plan_types)
+    
+  }, error = function(e) {
+    warning(paste("Error loading treatment plan types:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    
+    # Return default mapping if query fails
+    return(data.frame(
+      plan_code = c("A", "D", "G", "N", "U"),
+      plan_name = c("Air", "Drone", "Ground", "None", "Unknown"),
+      description = c("Air treatment", "Drone treatment", "Ground treatment", "No treatment planned", "Unknown treatment type"),
+      stringsAsFactors = FALSE
+    ))
+  })
+}
+
+#' Get Consistent Colors for Treatment Plan Types
+#' 
+#' This function generates and returns a consistent color mapping for treatment plan types.
+#' Each plan type gets assigned a unique, visually distinct color that remains consistent 
+#' across all visualizations.
+#' 
+#' Usage:
+#' ```r
+#' # Get colors for treatment plan types
+#' plan_colors <- get_treatment_plan_colors()
+#' 
+#' # In ggplot2 using plan codes (A, D, G, N, U):
+#' ggplot(data, aes(x = plan_type, y = acres, fill = airgrnd_plan)) +
+#'   scale_fill_manual(values = plan_colors)
+#' 
+#' # In ggplot2 using plan names (Air, Drone, Ground, None, Unknown):
+#' plan_name_colors <- get_treatment_plan_colors(use_names = TRUE)
+#' ggplot(data, aes(x = plan_name, y = acres, fill = plan_name)) +
+#'   scale_fill_manual(values = plan_name_colors)
+#' ```
+#' 
+#' Parameters:
+#'   use_names: If TRUE, returns colors mapped to plan names (Air, Drone, etc.)
+#'              If FALSE (default), returns colors mapped to plan codes (A, D, etc.)
+#' 
+#' Returns:
+#'   Named vector where names are either plan codes or plan names, and values are hex colors
+get_treatment_plan_colors <- function(use_names = FALSE) {
+  plan_types <- get_treatment_plan_types()
+  if (nrow(plan_types) == 0) return(c())
+  
+  # Define specific colors for common treatment plan types for consistency
+  predefined_colors <- c(
+    "A" = "#E41A1C",    # Red for Air
+    "D" = "#377EB8",    # Blue for Drone  
+    "G" = "#4DAF4A",    # Green for Ground
+    "N" = "#984EA3",    # Purple for None
+    "U" = "#FF7F00"     # Orange for Unknown
+  )
+  
+  # Start with predefined colors
+  colors <- character(nrow(plan_types))
+  names(colors) <- plan_types$plan_code
+  
+  # Assign predefined colors where available
+  for (i in seq_len(nrow(plan_types))) {
+    code <- plan_types$plan_code[i]
+    if (code %in% names(predefined_colors)) {
+      colors[code] <- predefined_colors[code]
+    }
+  }
+  
+  # For any codes not in predefined list, generate distinct colors
+  missing_codes <- plan_types$plan_code[!plan_types$plan_code %in% names(predefined_colors)]
+  if (length(missing_codes) > 0) {
+    additional_colors <- generate_distinct_colors(length(missing_codes))
+    names(additional_colors) <- missing_codes
+    colors[missing_codes] <- additional_colors
+  }
+  
+  # If use_names is TRUE, convert keys from codes to names
+  if (use_names) {
+    name_map <- setNames(plan_types$plan_name, plan_types$plan_code)
+    names(colors) <- name_map[names(colors)]
+  }
+  
+  return(colors)
+}
+
+#' Get Treatment Plan Choices for Select Inputs
+#' 
+#' Returns properly formatted choices for selectInput widgets with full names as labels
+#' and plan codes as values for database queries.
+#' 
+#' Usage:
+#' ```r
+#' # In UI:
+#' checkboxGroupInput(
+#'   "plan_types",
+#'   "Select Treatment Plan Types:",
+#'   choices = get_treatment_plan_choices(),
+#'   selected = c("A", "D", "G")
+#' )
+#' ```
+#' 
+#' Parameters:
+#'   include_all: If TRUE, includes "All Types" option
+#' 
+#' Returns:
+#'   Named vector suitable for selectInput choices
+get_treatment_plan_choices <- function(include_all = FALSE) {
+  plan_types <- get_treatment_plan_types()
+  
+  if (nrow(plan_types) == 0) {
+    return(c("Air (A)" = "A", "Drone (D)" = "D", "Ground (G)" = "G", "None (N)" = "N", "Unknown (U)" = "U"))
+  }
+  
+  # Create choices with format "Name (Code)" = "Code"
+  labels <- paste0(plan_types$plan_name, " (", plan_types$plan_code, ")")
+  choices <- setNames(plan_types$plan_code, labels)
+  
+  if (include_all) {
+    choices <- c("All Types" = "all", choices)
+  }
+  
+  return(choices)
 }

@@ -9,32 +9,8 @@ suppressPackageStartupMessages({
   library(tibble)
 })
 
-# Load environment variables from .env file (for local development)
-# or from Docker environment variables (for production)
-env_paths <- c(
-  "../../.env",           # For local development
-  "../../../.env",        # Alternative local path
-  "/srv/shiny-server/.env" # Docker path
-)
-
-# Try to load from .env file first
-env_loaded <- FALSE
-for (path in env_paths) {
-  if (file.exists(path)) {
-    readRenviron(path)
-    env_loaded <- TRUE
-    break
-  }
-}
-
-# If no .env file found, environment variables should already be set by Docker
-
-# Database configuration using environment variables
-db_host <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
+# Source the shared database helper functions
+source("../../shared/db_helpers.R")
 
 ui <- fluidPage(
   titlePanel("Cattail Inspection Progress by Facility"),
@@ -70,14 +46,9 @@ ui <- fluidPage(
 
 server <- function(input, output) {
   inspection_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    con <- get_db_connection()
+    if (is.null(con)) return(data.frame())
+    
     # Get actual inspections from archive (filter by year, date, reinspect, and join for zone)
     query_archive <- sprintf(
       paste(
@@ -146,15 +117,19 @@ server <- function(input, output) {
       }),
       type = "Goal"
     )
-    plot_data <- dplyr::bind_rows(actuals_long, goals_long)
+    
+    plot_data <- dplyr::bind_rows(actuals_long, goals_long) %>%
+      map_facility_names()
+    
     return(plot_data)
   })
 
   output$progressPlot <- renderPlot({
     plot_data <- inspection_data()
-    ggplot(plot_data, aes(x = facility, y = count, fill = type)) +
+    
+    ggplot(plot_data, aes(x = facility_display, y = count, fill = type)) +
       geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.7) +
-      scale_fill_manual(values = c("Actual Inspections" = "#2c5aa0", "Goal" = "#e67e22")) +
+      scale_fill_manual(values = c("Actual Inspections" = "#00CC00", "Goal" = "#FFA500")) +
       labs(
         title = "Cattail Inspections vs. Goal by Facility",
         x = "Facility",
@@ -162,10 +137,10 @@ server <- function(input, output) {
         fill = "Legend"
       ) +
       theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      theme(
+        axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1)
+      )
   })
 }
-
-shinyApp(ui = ui, server = server)
 
 shinyApp(ui = ui, server = server)

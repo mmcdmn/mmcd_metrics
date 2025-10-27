@@ -147,13 +147,14 @@ map_facility_names <- function(data, facility_col = "facility") {
     return(data)
   }
   
-  # Create a named vector for mapping
-  facility_map <- setNames(facilities$full_name, facilities$short_name)
+  # Create a named vector for mapping - handle case sensitivity
+  facility_map <- setNames(facilities$full_name, toupper(facilities$short_name))
   
   # Map the facility names, keeping original if no mapping found
+  # Convert data facility codes to uppercase for matching
   data[[paste0(facility_col, "_display")]] <- ifelse(
-    data[[facility_col]] %in% names(facility_map),
-    facility_map[data[[facility_col]]],
+    toupper(data[[facility_col]]) %in% names(facility_map),
+    facility_map[toupper(data[[facility_col]])],
     data[[facility_col]]
   )
   

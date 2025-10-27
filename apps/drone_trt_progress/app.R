@@ -45,9 +45,9 @@ ui <- fluidPage(
       helpText("This visualization shows drone sites by facility with three categories:",
                tags$br(),
                tags$ul(
-                 tags$li(tags$span(style = "color:#A9A9A9", "Gray: Total sites/acres")),
-                 tags$li(tags$span(style = "color:#00CC00", "Green: Sites/acres with active treatments")),
-                 tags$li(tags$span(style = "color:#FFA500", "Orange: Sites/acres with treatments expiring within the selected days"))
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["unknown"]), "Gray: Total sites/acres")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Sites/acres with active treatments")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Sites/acres with treatments expiring within the selected days"))
                )),
       
       helpText(tags$b("Drone Designations:"),
@@ -279,6 +279,7 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       theme(
         plot.title = element_text(face = "bold", size = 16),
         axis.title = element_text(face = "bold"),
+        axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1),
         legend.position = "none"
       )
     
@@ -286,7 +287,7 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     if (any(data$show_active_label)) {
       p <- p + geom_text(data = data[data$show_active_label,],
                          aes(y = y_active, label = y_active),
-                         vjust = -0.5, color = "steelblue", fontface = "bold")
+                         vjust = -0.5, color = active_color, fontface = "bold")
     }
     
     # Add legend manually using mapped colors

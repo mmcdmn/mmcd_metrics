@@ -85,13 +85,13 @@ server <- function(input, output) {
     current <- dbGetQuery(con, query_current)
     # Combine actuals
     actuals <- bind_rows(archive, current) %>%
-      mutate(facility = toupper(trimws(facility)), zone = as.character(zone)) %>%
+      mutate(facility = trimws(facility), zone = as.character(zone)) %>%
       group_by(facility, zone) %>%
       summarize(inspections = sum(as.numeric(inspections), na.rm = TRUE), .groups = "drop")
     actuals$inspections <- as.numeric(actuals$inspections)
     # Get goals
     goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
-      mutate(facility = toupper(trimws(facility)))
+      mutate(facility = trimws(facility))
     dbDisconnect(con)
     # Determine which zone to use based on goal_column
     selected_zone <- ifelse(input$goal_column == "p1_totsitecount", "1", "2")
@@ -127,9 +127,12 @@ server <- function(input, output) {
   output$progressPlot <- renderPlot({
     plot_data <- inspection_data()
     
+    # Get colors from centralized db_helpers
+    status_colors <- get_status_colors()
+    
     ggplot(plot_data, aes(x = facility_display, y = count, fill = type)) +
       geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.7) +
-      scale_fill_manual(values = c("Actual Inspections" = "#00CC00", "Goal" = "#FFA500")) +
+      scale_fill_manual(values = c("Actual Inspections" = unname(status_colors["active"]), "Goal" = unname(status_colors["planned"]))) +
       labs(
         title = "Cattail Inspections vs. Goal by Facility",
         x = "Facility",

@@ -618,13 +618,15 @@ server <- function(input, output, session) {
         `Material Used` = material_used
       )
     
+    # Get centralized status colors from db_helpers
+    color_map <- get_status_color_map()
+    status_names <- names(color_map)
+    status_colors <- unlist(color_map)
+    
     datatable(display_data,
               options = list(pageLength = 15, scrollX = TRUE)) %>%
       formatStyle("Status",
-                  backgroundColor = styleEqual(
-                    c("Unknown", "Needs Inspection", "Under Threshold", "Needs Treatment", "Active Treatment"),
-                    c("#f0f0f0", "#ffff99", "#cce7ff", "#f8d7da", "#d4edda")
-                  ))
+                  backgroundColor = styleEqual(status_names, status_colors))
   })
   
   # Flow Testing Logic

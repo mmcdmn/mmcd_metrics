@@ -10,6 +10,11 @@ library(plotrix)
 library(DBI)
 library(RPostgreSQL)
 
+# Source shared helper functions
+suppressWarnings({
+  source("../../shared/db_helpers.R")
+})
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -100,8 +105,8 @@ ui <- fluidPage(
               
               titlePanel("CO2 Traps"),
               fluidRow(
-                column(3, selectInput("facility", "Facility", choices = c(unique(mosquito0$facility), "All"),
-                                      selected = "All")),
+                column(3, selectInput("facility", "Facility", choices = c("All Facilities" = "all"),
+                                      selected = "all")),
                 column(4, selectInput("species", "Species Selection", choices = unique(mosquito0$spp_name),
                                       selected = "Total_Ae_+_Cq",
                                       multiple = TRUE)),
@@ -129,8 +134,8 @@ ui <- fluidPage(
    #ALL Tab W/ Zone Selector
     tabPanel( "All",
               fluidRow(
-                column(3, selectInput("facilityONE", "Facility", choices = c(unique(mosquito0$facility), "All"),
-                                      selected = "All")),
+                column(3, selectInput("facilityONE", "Facility", choices = c("All Facilities" = "all"),
+                                      selected = "all")),
                 column(3, selectInput("speciesONE", "Species Selection", choices = unique(mosquito0$spp_name),
                                       selected = "Total_Ae_+_Cq",
                                       multiple = TRUE)),
@@ -159,11 +164,25 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
+  # Update facility choices with full names from db_helpers
+  observe({
+    tryCatch({
+      facility_choices <- get_facility_choices(include_all = TRUE)
+      updateSelectInput(session, "facility", choices = facility_choices)
+      updateSelectInput(session, "facilityONE", choices = facility_choices)
+    }, error = function(e) {
+      # Fallback to current data if db_helpers fails
+      facility_fallback <- c("All Facilities" = "all", setNames(unique(mosquito0$facility), unique(mosquito0$facility)))
+      updateSelectInput(session, "facility", choices = facility_fallback)
+      updateSelectInput(session, "facilityONE", choices = facility_fallback)
+    })
+  })
+  
   logscale <- reactiveVal(TRUE)
   whichplot <- reactiveVal(TRUE)
   #Filter will have to include facility for both and then seperate filtersfor each graph for year, sp, zone in one then do calculations
   mosquito <- reactive({
-    if (isTRUE(input$facility == "All")) {mosquito0}
+    if (isTRUE(input$facility == "all")) {mosquito0}
     else {
     mosquito0 %>%
     filter(facility %in% input$facility)
@@ -594,7 +613,7 @@ server <- function(input, output, session) {
   whichplotONE <- reactiveVal(TRUE)
   
   mosquitoONE <- reactive({
-    if(isTRUE(input$facility == "All")) {mosquito0}
+    if(isTRUE(input$facilityONE == "all")) {mosquito0}
     else {
       mosquito0 %>%
         filter(facility %in% input$facilityONE)

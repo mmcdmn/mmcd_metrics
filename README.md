@@ -151,7 +151,6 @@ mmcd_metrics/
 - **Path**: `/test-app/`
 - **Purpose**: Testing and validation application
 - **Features**:
-  - No database required - safe for testing Shiny Server deployment
   - Useful for verifying application links on the dashboard
   - Testing environment for new features
 

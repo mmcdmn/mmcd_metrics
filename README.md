@@ -9,6 +9,7 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
 ## Table of Contents
 
 - [Architecture](#architecture)
+- [Centralized Helpers Module](#centralized-helpers-module-shareddb_helpersr)
 - [Applications](#applications)
   - [Mosquito Monitoring](#mosquito-monitoring)
   - [SUCO History](#suco-history)
@@ -31,28 +32,42 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
 
 ## Architecture
 
-This platform hosts multiple R Shiny applications in an organized, scalable structure:
+This platform hosts multiple R Shiny applications in an organized, scalable structure with a centralized helper module:
 
 ```
-apps/
-├── index.html                    # Main landing page
-├── mosquito-monitoring/          # CO2 trap surveillance data
-│   └── app.R
-├── suco_history/                 # SUCO surveillance analysis  
-│   └── app.R
-├── drone_trt_progress/           # Drone treatment progress tracking
-│   └── app.R
-├── drone_trt_history/            # Drone treatment historical analysis
-│   └── app.R
-├── struct_trt_progress/          # Structural treatment progress
-│   └── app.R
-├── struct_trt_history/           # Structural treatment history 
-│   └── app.R
-├── cattail_planned_trt/          # Cattail treatment planning
-│   └── app.R
-└── control_efficacy/             # Air treatment checkback efficacy
-    └── app.R
+mmcd_metrics/
+├── shared/
+│   └── db_helpers.R              # Centralized hub for all apps
+│       ├── Database connectivity functions
+│       ├── Shared facility and FOS data lookups
+│       ├── Centralized color definitions (update here changes colors everywhere)
+│       └── Common utility functions used across all applications
+├── apps/
+│   ├── index.html                # Main landing page
+│   ├── mosquito-monitoring/      # CO2 trap surveillance data
+│   │   └── app.R
+│   ├── suco_history/             # SUCO surveillance analysis  
+│   │   └── app.R
+│   ├── drone_trt_progress/       # Drone treatment progress tracking
+│   │   └── app.R
+│   ├── drone_trt_history/        # Drone treatment historical analysis
+│   │   └── app.R
+│   ├── struct_trt_progress/      # Structure treatment progress
+│   │   └── app.R
+│   ├── struct_trt_history/       # Structure treatment history 
+│   │   └── app.R
+│   ├── cattail_planned_trt/      # Cattail treatment planning
+│   │   └── app.R
+│   ├── cattail_inspection_progress/ # Cattail inspection progress tracking
+│   │   └── app.R
+│   ├── rainfall/                 # Air site status and rainfall analysis
+│   │   └── app.R
+│   ├── test-app/                 # Test application 
+│   │   └── app.R
+│   └── control_efficacy/         # Air treatment checkback efficacy
+│       └── app.R
 ```
+
 
 ## Applications
 
@@ -110,6 +125,35 @@ apps/
   - Planned treatment area visualization
   - Schedule and resource allocation tracking
   - Targeted cattail habitat management
+
+### Cattail Inspection Progress
+- **Path**: `/cattail_inspection_progress/`
+- **Purpose**: Track and monitor cattail inspection activities and progress
+- **Features**:
+  - Real-time inspection status monitoring
+  - Progress metrics and completion tracking
+  - Facility-level inspection performance analysis
+  - Centralized color system for consistent status visualization
+
+### Rainfall & Air Site Status
+- **Path**: `/rainfall/`
+- **Purpose**: Monitor air site status, rainfall impact, and treatment pipeline
+- **Features**:
+  - Interactive map showing site status with color-coded dots
+  - Rainfall tracking and analysis
+  - Treatment lifecycle management (Needs Inspection → Under Threshold → Needs Treatment → Active Treatment)
+  - Real-time status summary chart
+  - Detailed site information table
+  - Flow testing and validation tools
+  - **Uses centralized colors from `db_helpers.R`**: Changing colors in db_helpers automatically updates the map, chart, and table
+
+### Test Application
+- **Path**: `/test-app/`
+- **Purpose**: Testing and validation application
+- **Features**:
+  - No database required - safe for testing Shiny Server deployment
+  - Useful for verifying application links on the dashboard
+  - Testing environment for new features
 
 ### Control Efficacy
 - **Path**: `/control_efficacy/`
@@ -276,6 +320,36 @@ sudo systemctl start shiny-server
 sudo systemctl enable shiny-server
 ```
 
+### Centralized Helpers Module (`shared/db_helpers.R`)
+
+The `shared/db_helpers.R` file serves as the central hub for shared functionality across all applications:
+
+**Key Features:**
+- **Centralized Color Definitions**: All color assignments (hex colors for maps/tables, Shiny named colors for dashboards) are defined once here. Changing a color updates it everywhere in the program.
+- **Facility Data**: Shared lookups for facility names and properties
+- **FOS (Field Operations Supervisor) Data**: Centralized FOS name and assignment management
+- **Database Connectivity**: Shared database connection utilities
+- **Common Utility Functions**: Shared formatting, date handling, and data transformation functions
+
+**Color System:**
+- `get_status_colors()`: Returns hex color codes for all status types
+- `get_shiny_colors()`: Returns Shiny dashboard named colors (for valueBox, charts)
+- `get_status_color_map()`: Maps status display names to hex colors for visualizations (maps, tables)
+
+**How to Use in Your App:**
+```r
+# Source the helpers at the top of your app.R
+source("../../shared/db_helpers.R")
+
+# In your server function
+source_colors <- get_status_colors()
+shiny_colors <- get_shiny_colors()
+color_map <- get_status_color_map()
+
+# Access facility or FOS data
+facilities <- get_facility_choices(include_all = TRUE)
+```
+
 ## Application URLs
 
 ### Local Development
@@ -299,9 +373,35 @@ Replace `your-server.com` with your actual server address:
 mkdir -p $MMCD_WORKSPACE/apps/your-new-app
 ```
 
-
 ### Step 2: Create app.R File
-Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` (see other apps for examples).
+Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` and source the centralized helpers:
+
+```r
+# At the top of your app.R file
+suppressPackageStartupMessages({
+  library(shiny)
+  library(shinydashboard)
+  # ... other libraries
+})
+
+# Source the shared database helper functions
+suppressWarnings({
+  source("../../shared/db_helpers.R")
+})
+
+# In your server function, access shared utilities:
+server <- function(input, output, session) {
+  # Get centralized colors
+  source_colors <- get_status_colors()
+  shiny_colors <- get_shiny_colors()
+  color_map <- get_status_color_map()
+  
+  # Get facility choices
+  facilities <- get_facility_choices(include_all = TRUE)
+  
+  # ... rest of your app code
+}
+```
 
 ### Step 3: Update Landing Page
 Add your new application to `$MMCD_WORKSPACE/apps/index.html`:
@@ -543,37 +643,3 @@ sudo ufw status
 
 # For testing purposes, you can modify applications to use sample data instead of live connections
 ```
-
-## Development Workflow
-
-### Local Development Process
-1. **Clone repository**: `git clone https://github.com/ablepacifist/mmcd_metrics_1.git`
-2. **Create new app locally**: `mkdir -p $MMCD_WORKSPACE/apps/your-new-app`
-3. **Develop application**: Create `app.R` file with Shiny application code
-4. **Test locally**: `R -e "shiny::runApp('$MMCD_WORKSPACE/apps/your-new-app', port=3838)"`
-5. **Add to dashboard**: Update `$MMCD_WORKSPACE/apps/index.html` with new application link
-6. **Test integration**: Verify application works through dashboard
-7. **Commit changes**: `git add . && git commit -m "Add new application"`
-8. **Deploy to server**: Copy to `/srv/shiny-server/` and restart Shiny Server
-
-
-## Contributing
-
-1. Clone the repository
-2. Create a new branch for your application
-3. Follow the application structure guidelines
-4. Test thoroughly
-5. Update documentation
-6. Submit a pull request
-
-## License
-
-This project is maintained by the Metropolitan Mosquito Control District.
-
-## Support
-
-For technical support or questions about adding new applications, contact the MMCD IT team or Alex directly.
-
----
-*Last updated: October 2025*
-*Dependencies verified and tested on Ubuntu 24.04 LTS with R 4.5.1*

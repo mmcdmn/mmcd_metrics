@@ -529,3 +529,184 @@ get_mosquito_species_shapes <- function() {
     Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
   ))
 }
+
+# Treatment Plan Type Colors
+# Dynamic function to get treatment plan types and assign consistent colors
+
+#' Get Treatment Plan Type Lookup
+#' 
+#' This function dynamically fetches the available treatment plan types from the database
+#' and returns them with their full names for display purposes.
+#' 
+#' Returns:
+#'   Data frame with columns: plan_code, plan_name, description
+get_treatment_plan_types <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) {
+    # Return default mapping if database is unavailable
+    return(data.frame(
+      plan_code = c("A", "D", "G", "N", "U"),
+      plan_name = c("Air", "Drone", "Ground", "None", "Unknown"),
+      description = c("Air treatment", "Drone treatment", "Ground treatment", "No treatment planned", "Unknown treatment type"),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  tryCatch({
+    # Get distinct treatment plan types from the current treatments table
+    plan_types <- dbGetQuery(con, "
+      SELECT DISTINCT 
+        airgrnd_plan as plan_code,
+        CASE 
+          WHEN airgrnd_plan = 'A' THEN 'Air'
+          WHEN airgrnd_plan = 'D' THEN 'Drone' 
+          WHEN airgrnd_plan = 'G' THEN 'Ground'
+          WHEN airgrnd_plan = 'N' THEN 'None'
+          WHEN airgrnd_plan = 'U' THEN 'Unknown'
+          ELSE airgrnd_plan
+        END as plan_name,
+        CASE 
+          WHEN airgrnd_plan = 'A' THEN 'Air treatment'
+          WHEN airgrnd_plan = 'D' THEN 'Drone treatment' 
+          WHEN airgrnd_plan = 'G' THEN 'Ground treatment'
+          WHEN airgrnd_plan = 'N' THEN 'No treatment planned'
+          WHEN airgrnd_plan = 'U' THEN 'Unknown treatment type'
+          ELSE 'Other treatment type'
+        END as description
+      FROM public.dblarv_insptrt_current 
+      WHERE airgrnd_plan IS NOT NULL
+      ORDER BY 
+        CASE airgrnd_plan 
+          WHEN 'A' THEN 1
+          WHEN 'D' THEN 2
+          WHEN 'G' THEN 3
+          WHEN 'N' THEN 4
+          WHEN 'U' THEN 5
+          ELSE 6
+        END
+    ")
+    
+    dbDisconnect(con)
+    return(plan_types)
+    
+  }, error = function(e) {
+    warning(paste("Error loading treatment plan types:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    
+    # Return default mapping if query fails
+    return(data.frame(
+      plan_code = c("A", "D", "G", "N", "U"),
+      plan_name = c("Air", "Drone", "Ground", "None", "Unknown"),
+      description = c("Air treatment", "Drone treatment", "Ground treatment", "No treatment planned", "Unknown treatment type"),
+      stringsAsFactors = FALSE
+    ))
+  })
+}
+
+#' Get Consistent Colors for Treatment Plan Types
+#' 
+#' This function generates and returns a consistent color mapping for treatment plan types.
+#' Each plan type gets assigned a unique, visually distinct color that remains consistent 
+#' across all visualizations.
+#' 
+#' Usage:
+#' ```r
+#' # Get colors for treatment plan types
+#' plan_colors <- get_treatment_plan_colors()
+#' 
+#' # In ggplot2 using plan codes (A, D, G, N, U):
+#' ggplot(data, aes(x = plan_type, y = acres, fill = airgrnd_plan)) +
+#'   scale_fill_manual(values = plan_colors)
+#' 
+#' # In ggplot2 using plan names (Air, Drone, Ground, None, Unknown):
+#' plan_name_colors <- get_treatment_plan_colors(use_names = TRUE)
+#' ggplot(data, aes(x = plan_name, y = acres, fill = plan_name)) +
+#'   scale_fill_manual(values = plan_name_colors)
+#' ```
+#' 
+#' Parameters:
+#'   use_names: If TRUE, returns colors mapped to plan names (Air, Drone, etc.)
+#'              If FALSE (default), returns colors mapped to plan codes (A, D, etc.)
+#' 
+#' Returns:
+#'   Named vector where names are either plan codes or plan names, and values are hex colors
+get_treatment_plan_colors <- function(use_names = FALSE) {
+  plan_types <- get_treatment_plan_types()
+  if (nrow(plan_types) == 0) return(c())
+  
+  # Define specific colors for common treatment plan types for consistency
+  predefined_colors <- c(
+    "A" = "#E41A1C",    # Red for Air
+    "D" = "#377EB8",    # Blue for Drone  
+    "G" = "#4DAF4A",    # Green for Ground
+    "N" = "#984EA3",    # Purple for None
+    "U" = "#FF7F00"     # Orange for Unknown
+  )
+  
+  # Start with predefined colors
+  colors <- character(nrow(plan_types))
+  names(colors) <- plan_types$plan_code
+  
+  # Assign predefined colors where available
+  for (i in seq_len(nrow(plan_types))) {
+    code <- plan_types$plan_code[i]
+    if (code %in% names(predefined_colors)) {
+      colors[code] <- predefined_colors[code]
+    }
+  }
+  
+  # For any codes not in predefined list, generate distinct colors
+  missing_codes <- plan_types$plan_code[!plan_types$plan_code %in% names(predefined_colors)]
+  if (length(missing_codes) > 0) {
+    additional_colors <- generate_distinct_colors(length(missing_codes))
+    names(additional_colors) <- missing_codes
+    colors[missing_codes] <- additional_colors
+  }
+  
+  # If use_names is TRUE, convert keys from codes to names
+  if (use_names) {
+    name_map <- setNames(plan_types$plan_name, plan_types$plan_code)
+    names(colors) <- name_map[names(colors)]
+  }
+  
+  return(colors)
+}
+
+#' Get Treatment Plan Choices for Select Inputs
+#' 
+#' Returns properly formatted choices for selectInput widgets with full names as labels
+#' and plan codes as values for database queries.
+#' 
+#' Usage:
+#' ```r
+#' # In UI:
+#' checkboxGroupInput(
+#'   "plan_types",
+#'   "Select Treatment Plan Types:",
+#'   choices = get_treatment_plan_choices(),
+#'   selected = c("A", "D", "G")
+#' )
+#' ```
+#' 
+#' Parameters:
+#'   include_all: If TRUE, includes "All Types" option
+#' 
+#' Returns:
+#'   Named vector suitable for selectInput choices
+get_treatment_plan_choices <- function(include_all = FALSE) {
+  plan_types <- get_treatment_plan_types()
+  
+  if (nrow(plan_types) == 0) {
+    return(c("Air (A)" = "A", "Drone (D)" = "D", "Ground (G)" = "G", "None (N)" = "N", "Unknown (U)" = "U"))
+  }
+  
+  # Create choices with format "Name (Code)" = "Code"
+  labels <- paste0(plan_types$plan_name, " (", plan_types$plan_code, ")")
+  choices <- setNames(plan_types$plan_code, labels)
+  
+  if (include_all) {
+    choices <- c("All Types" = "all", choices)
+  }
+  
+  return(choices)
+}

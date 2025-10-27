@@ -430,7 +430,7 @@ get_status_colors <- function() {
 # This converts db_helpers hex colors to Shiny's accepted named colors
 get_shiny_colors <- function() {
   return(c(
-    "active" = "green",        # #00CC00 → green
+    "active" = "olive",        # #187018 → olive (closest to forest green)
     "completed" = "blue",      # #4169E1 → blue
     "planned" = "orange",      # #FFA500 → orange
     "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)

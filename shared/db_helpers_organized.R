@@ -1,33 +1,22 @@
-# Shared Database Helper Functions and Common Utilities
-# This file contains common database queries and utility functions used across multiple apps
+# =============================================================================
+# MMCD METRICS - DATABASE HELPER FUNCTIONS
+# =============================================================================
+# This file contains shared database connections, lookup functions, and 
+# utility functions used across multiple MMCD dashboard applications.
+#
+# ORGANIZATION:
+# 1. Library Dependencies
+# 2. Environment & Database Connection
+# 3. Core Lookup Functions  
+# 4. Color System Functions
+# 5. Visualization Helper Functions
+# 6. Status & Choice Functions
+# 7. Utility Functions
+# =============================================================================
 
-# Load required libraries (if not already loaded)
-if (!require(DBI, quietly = TRUE)) library(DBI)
-if (!require(RPostgres, quietly = TRUE)) library(RPostgres)
-if (!require(dplyr, quietly = TRUE)) library(dplyr)
-
-# Load environment variables helper
-load_env_variables <- function() {
-  env_paths <- c(
-    "../../.env",
-    "../../../.env", 
-    "/srv/shiny-server/.env"
-  )
-  
-  env_loaded <- FALSE
-  for (path in env_paths) {
-    if (file.exists(path)) {
-      readRenviron(path)
-      env_loaded <- TRUE
-      break
-    }
-  }
-  
-  return(env_loaded)
-}
-
-# Database Helper Functions for MMCD Metrics Applications
-# This file contains shared functions for database connections and common lookups
+# =============================================================================
+# 1. LIBRARY DEPENDENCIES
+# =============================================================================
 
 # Load required libraries
 suppressPackageStartupMessages({
@@ -35,6 +24,10 @@ suppressPackageStartupMessages({
   library(RPostgres)
   library(dplyr)
 })
+
+# =============================================================================
+# 2. ENVIRONMENT & DATABASE CONNECTION
+# =============================================================================
 
 # Load environment variables function
 load_env_vars <- function() {
@@ -57,38 +50,35 @@ load_env_vars <- function() {
     }
   }
   
-  # If no .env file found, environment variables should already be set by Docker
-  return(env_loaded)
+  # Environment variables might already be set (Docker)
+  required_vars <- c("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", 
+                     "POSTGRES_USER", "POSTGRES_PASSWORD")
+  
+  if (!env_loaded && !all(sapply(required_vars, function(var) Sys.getenv(var) != ""))) {
+    warning("Could not load environment variables from .env file and required variables are not set")
+    return(FALSE)
+  }
+  
+  return(TRUE)
 }
 
-# Database connection function
+# Centralized database connection function
 get_db_connection <- function() {
+  # Load environment variables
+  if (!load_env_vars()) {
+    warning("Failed to load environment variables")
+    return(NULL)
+  }
+  
   tryCatch({
-    # Load environment variables
-    load_env_vars()
-    
-    # Database configuration using environment variables
-    db_host <- Sys.getenv("DB_HOST")
-    db_port <- Sys.getenv("DB_PORT")
-    db_user <- Sys.getenv("DB_USER")
-    db_password <- Sys.getenv("DB_PASSWORD")
-    db_name <- Sys.getenv("DB_NAME")
-    
-    # Check if all required environment variables are set
-    if (any(c(db_host, db_port, db_user, db_password, db_name) == "")) {
-      warning("Missing required database environment variables")
-      return(NULL)
-    }
-    
     con <- dbConnect(
       RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
+      host = Sys.getenv("POSTGRES_HOST"),
+      port = as.numeric(Sys.getenv("POSTGRES_PORT")),
+      dbname = Sys.getenv("POSTGRES_DB"),
+      user = Sys.getenv("POSTGRES_USER"),
+      password = Sys.getenv("POSTGRES_PASSWORD")
     )
-    
     return(con)
   }, error = function(e) {
     warning(paste("Database connection failed:", e$message))
@@ -96,20 +86,30 @@ get_db_connection <- function() {
   })
 }
 
-# Facility lookup functions
+# =============================================================================
+# 3. CORE LOOKUP FUNCTIONS
+# =============================================================================
+
+# Get facility lookup table
 get_facility_lookup <- function() {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get facility lookup from gis_facility table, excluding special facilities
     facilities <- dbGetQuery(con, "
       SELECT DISTINCT 
-        abbrv as short_name,
-        city as full_name
-      FROM public.gis_facility
-      WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
-      ORDER BY abbrv
+        facility as short_name,
+        CASE 
+          WHEN facility = 'AP' THEN 'Arden Park'
+          WHEN facility = 'NM' THEN 'New Munich'
+          WHEN facility = 'LK' THEN 'Little Canada'
+          WHEN facility = 'HQ' THEN 'Headquarters'
+          ELSE facility
+        END as full_name
+      FROM employee_list 
+      WHERE facility IS NOT NULL 
+        AND facility != ''
+      ORDER BY facility
     ")
     
     dbDisconnect(con)
@@ -122,109 +122,10 @@ get_facility_lookup <- function() {
   })
 }
 
-# Get facility choices for selectInput widgets
-get_facility_choices <- function(include_all = TRUE) {
+# Get facility name mapping (short_name to full_name)
+get_facility_names <- function() {
   facilities <- get_facility_lookup()
-  
-  if (nrow(facilities) == 0) {
-    return(c("All Facilities" = "all"))
-  }
-  
-  choices <- setNames(facilities$short_name, facilities$full_name)
-  
-  if (include_all) {
-    choices <- c("All Facilities" = "all", choices)
-  }
-  
-  return(choices)
-}
-
-# Map facility short codes to full names for display
-map_facility_names <- function(data, facility_col = "facility") {
-  facilities <- get_facility_lookup()
-  
-  if (nrow(facilities) == 0 || !facility_col %in% names(data)) {
-    return(data)
-  }
-  
-  # Create a named vector for mapping
-  facility_map <- setNames(facilities$full_name, facilities$short_name)
-  
-  # Map the facility names, keeping original if no mapping found
-  data[[paste0(facility_col, "_display")]] <- ifelse(
-    data[[facility_col]] %in% names(facility_map),
-    facility_map[data[[facility_col]]],
-    data[[facility_col]]
-  )
-  
-  return(data)
-}
-
-# Priority lookup
-get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE","GREEN" = "PREHATCH")
-  
-  if (include_all) {
-    choices <- c("All Priorities" = "all", choices)
-  }
-  
-  return(choices)
-}
-
-# Material type lookup
-get_material_types <- function() {
-  con <- get_db_connection()
-  if (is.null(con)) return(data.frame())
-  
-  tryCatch({
-    materials <- dbGetQuery(con, "
-      SELECT 
-        list_type,
-        matcode,
-        display_text,
-        order_num,
-        heading,
-        startdate,
-        enddate,
-        tdose,
-        unit,
-        area,
-        tdosedisplay,
-        mattype
-      FROM lookup_matcode_entrylist 
-      ORDER BY matcode
-    ")
-    
-    dbDisconnect(con)
-    return(materials)
-    
-  }, error = function(e) {
-    warning(paste("Error loading material types:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
-    return(data.frame())
-  })
-}
-
-# Get material choices for selectInput widgets
-get_material_choices <- function(include_all = TRUE) {
-  materials <- get_material_types()
-  
-  if (nrow(materials) == 0) {
-    return(c("All Materials" = "all"))
-  }
-  
-  # Use display_text if available, otherwise fall back to matcode
-  labels <- ifelse(!is.na(materials$display_text) & materials$display_text != "", 
-                   materials$display_text, 
-                   materials$matcode)
-  
-  choices <- setNames(materials$matcode, labels)
-  
-  if (include_all) {
-    choices <- c("All Materials" = "all", choices)
-  }
-  
-  return(choices)
+  return(setNames(facilities$full_name, facilities$short_name))
 }
 
 # Get foremen (field supervisors) lookup table
@@ -233,7 +134,7 @@ get_foremen_lookup <- function() {
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-        # Get active field supervisors basic info
+    # Get active field supervisors basic info
     foremen <- dbGetQuery(con, "
       SELECT 
         emp_num,
@@ -282,7 +183,72 @@ get_species_lookup <- function() {
   })
 }
 
+# Get material types lookup table
+get_material_types <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    materials <- dbGetQuery(con, "
+      SELECT DISTINCT
+        matcode,
+        CASE 
+          WHEN matcode = 'ABTE' THEN 'Abate Pellets'
+          WHEN matcode = 'BACY' THEN 'Bacillus Y'
+          WHEN matcode = 'BSPH' THEN 'Bsph'
+          WHEN matcode = 'FOGP' THEN 'Fog (Pyrethrin)'
+          WHEN matcode = 'FOGU' THEN 'Fog (ULV)'
+          WHEN matcode = 'MTHO' THEN 'Methoprene'
+          WHEN matcode = 'NONE' THEN 'No Treatment'
+          WHEN matcode = 'OTHR' THEN 'Other'
+          WHEN matcode = 'PHYS' THEN 'Physical'
+          WHEN matcode = 'SCAN' THEN 'Scan Only'
+          WHEN matcode = 'UNKN' THEN 'Unknown'
+          ELSE matcode
+        END as display_text
+      FROM (
+        SELECT matcode FROM public.dblarv_insptrt_current WHERE matcode IS NOT NULL
+        UNION
+        SELECT matcode FROM public.dblarv_insptrt_archive WHERE matcode IS NOT NULL
+      ) materials
+      ORDER BY matcode
+    ")
+    
+    dbDisconnect(con)
+    return(materials)
+    
+  }, error = function(e) {
+    warning(paste("Error loading material types:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
+}
 
+# Get material choices for selectInput widgets
+get_material_choices <- function(include_all = TRUE) {
+  materials <- get_material_types()
+  
+  if (nrow(materials) == 0) {
+    return(c("All Materials" = "all"))
+  }
+  
+  # Use display_text if available, otherwise fall back to matcode
+  labels <- ifelse(!is.na(materials$display_text) & materials$display_text != "", 
+                   materials$display_text, 
+                   materials$matcode)
+  
+  choices <- setNames(materials$matcode, labels)
+  
+  if (include_all) {
+    choices <- c("All Materials" = "all", choices)
+  }
+  
+  return(choices)
+}
+
+# =============================================================================
+# 4. COLOR SYSTEM FUNCTIONS
+# =============================================================================
 
 # Internal helper function to generate visually distinct colors
 # This function creates a set of unique colors that are visually distinct from each other
@@ -446,26 +412,6 @@ get_foreman_colors <- function() {
   return(foreman_colors)
 }
 
-# Common date range options
-get_date_range_choices <- function() {
-  return(list(
-    "Last 7 days" = 7,
-    "Last 14 days" = 14,
-    "Last 30 days" = 30,
-    "Last 60 days" = 60,
-    "Last 90 days" = 90,
-    "Current year" = as.numeric(Sys.Date() - as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")))
-  ))
-}
-
-# Format date for display
-format_display_date <- function(date_col) {
-  ifelse(is.na(date_col) | date_col == "", 
-         "None", 
-         tryCatch(format(as.Date(date_col), "%m/%d/%y"), 
-                error = function(e) as.character(date_col)))
-}
-
 # Core status colors - single source of truth for all status indicators
 get_status_colors <- function() {
   return(c(
@@ -504,35 +450,9 @@ get_status_color_map <- function() {
   ))
 }
 
-# Get color descriptions for different status types
-get_status_descriptions <- function() {
-  return(c(
-    # General status descriptions
-    "U" = "Unknown status",
-    "Unknown" = "Unknown status",
-    "Needs Inspection" = "Requires inspection", 
-    "Under Threshold" = "Below treatment threshold",
-    "Needs Treatment" = "Requires treatment",
-    "Active Treatment" = "Currently being treated",
-    "Completed" = "Treatment completed",
-    "Pending" = "Treatment pending",
-    "In Progress" = "Work in progress",
-    
-    # Treatment progress descriptions
-    "total" = "Total sites/acres available",
-    
-    # Priority descriptions
-    "RED" = "High priority",
-    "YELLOW" = "Medium priority", 
-    "GREEN" = "PREHATCH",
-    "HIGH" = "High priority",
-    "MEDIUM" = "Medium priority",
-    "LOW" = "Low priority",
-    
-    # Special status descriptions
-    "PREHATCH" = "Prehatch site status"
-  ))
-}
+# =============================================================================
+# 5. VISUALIZATION HELPER FUNCTIONS
+# =============================================================================
 
 # Mosquito Species Visualization Functions
 # Centralized color and shape mappings for mosquito species in surveillance data
@@ -580,6 +500,40 @@ get_mosquito_species_shapes <- function() {
     Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
     Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
     Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
+  ))
+}
+
+# =============================================================================
+# 6. STATUS & CHOICE FUNCTIONS  
+# =============================================================================
+
+# Get color descriptions for different status types
+get_status_descriptions <- function() {
+  return(c(
+    # General status descriptions
+    "U" = "Unknown status",
+    "Unknown" = "Unknown status",
+    "Needs Inspection" = "Requires inspection", 
+    "Under Threshold" = "Below treatment threshold",
+    "Needs Treatment" = "Requires treatment",
+    "Active Treatment" = "Currently being treated",
+    "Completed" = "Treatment completed",
+    "Pending" = "Treatment pending",
+    "In Progress" = "Work in progress",
+    
+    # Treatment progress descriptions
+    "total" = "Total sites/acres available",
+    
+    # Priority descriptions
+    "RED" = "High priority",
+    "YELLOW" = "Medium priority", 
+    "GREEN" = "PREHATCH",
+    "HIGH" = "High priority",
+    "MEDIUM" = "Medium priority",
+    "LOW" = "Low priority",
+    
+    # Special status descriptions
+    "PREHATCH" = "Prehatch site status"
   ))
 }
 
@@ -764,8 +718,26 @@ get_treatment_plan_choices <- function(include_all = FALSE) {
   return(choices)
 }
 
-# Get facility name mapping (short_name to full_name)
-get_facility_names <- function() {
-  facilities <- get_facility_lookup()
-  return(setNames(facilities$full_name, facilities$short_name))
+# =============================================================================
+# 7. UTILITY FUNCTIONS
+# =============================================================================
+
+# Common date range options
+get_date_range_choices <- function() {
+  return(list(
+    "Last 7 days" = 7,
+    "Last 14 days" = 14,
+    "Last 30 days" = 30,
+    "Last 60 days" = 60,
+    "Last 90 days" = 90,
+    "Current year" = as.numeric(Sys.Date() - as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")))
+  ))
+}
+
+# Format date for display
+format_display_date <- function(date_col) {
+  ifelse(is.na(date_col) | date_col == "", 
+         "None", 
+         tryCatch(format(as.Date(date_col), "%m/%d/%y"), 
+                error = function(e) as.character(date_col)))
 }

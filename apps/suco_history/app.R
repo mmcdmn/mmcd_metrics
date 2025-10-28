@@ -2,7 +2,6 @@
 suppressPackageStartupMessages({
   library(shiny)
   library(DBI)
-  library(RPostgres)
   library(dplyr)
   library(tidyr)
   library(ggplot2)
@@ -36,13 +35,6 @@ for (path in env_paths) {
 }
 
 # If no .env file found, environment variables should already be set by Docker
-
-# Database configuration using environment variables
-db_host <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
 
 # Define UI for the application
 ui <- fluidPage(
@@ -180,41 +172,53 @@ server <- function(input, output, session) {
   
   # Fetch and join SUCO and species data
   suco_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(data.frame())  # Return empty data frame if connection fails
+    }
     
     # Date range for query
     start_date <- format(input$date_range[1], "%Y-%m-%d")
     end_date <- format(input$date_range[2], "%Y-%m-%d")
     
-    # Query current data for SUCOs (survtype = 7) with geometry - SIMPLIFIED for debugging
+    # Query current data for SUCOs (survtype = 7) with harborage lookup for current foreman assignments
     current_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility, s.foreman,
+s.id, s.ainspecnum, s.facility, 
+CASE 
+  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
+  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
+  ELSE NULL
+END as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-'' as harborage_facility
+COALESCE(h.facility, '') as harborage_facility
 FROM public.dbadult_insp_current s
+LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
+  AND s.inspdate >= h.startdate 
+  AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
     
-    # Query archive data for SUCOs - SIMPLIFIED for debugging
+    # Query archive data for SUCOs with harborage lookup for current foreman assignments
     archive_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility, s.foreman,
+s.id, s.ainspecnum, s.facility,
+CASE 
+  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
+  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
+  ELSE NULL
+END as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-'' as harborage_facility
+COALESCE(h.facility, '') as harborage_facility
 FROM public.dbadult_insp_archive s
+LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
+  AND s.inspdate >= h.startdate 
+  AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
@@ -222,19 +226,6 @@ AND s.inspdate BETWEEN '%s' AND '%s'
     # Execute queries
     current_data <- dbGetQuery(con, current_query)
     archive_data <- dbGetQuery(con, archive_query)
-    
-    # DEBUG: Check what we got from the database
-    cat("=== DATABASE DEBUG ===\n")
-    cat("Current data rows:", nrow(current_data), "\n")
-    cat("Archive data rows:", nrow(archive_data), "\n")
-    if(nrow(current_data) > 0) {
-      cat("Sample current foreman values:", paste(head(current_data$foreman, 5), collapse=", "), "\n")
-      cat("Current data NA foremen:", sum(is.na(current_data$foreman)), "\n")
-    }
-    if(nrow(archive_data) > 0) {
-      cat("Sample archive foreman values:", paste(head(archive_data$foreman, 5), collapse=", "), "\n")
-      cat("Archive data NA foremen:", sum(is.na(archive_data$foreman)), "\n")
-    }
     
     # Query species tables (current and archive)
     species_current_query <- sprintf("
@@ -250,8 +241,8 @@ WHERE ainspecnum IS NOT NULL
     species_current <- dbGetQuery(con, species_current_query)
     species_archive <- dbGetQuery(con, species_archive_query)
 
-    # Query species lookup table
-    species_lookup <- dbGetQuery(con, "SELECT sppcode, genus, species FROM public.lookup_specieslist")
+    # Query species lookup table using centralized function
+    species_lookup <- get_species_lookup()
 
     # Close connection
     dbDisconnect(con)
@@ -276,12 +267,6 @@ WHERE ainspecnum IS NOT NULL
       )
     
     # Debug: Check foreman data after SQL queries
-    cat("Debug - Raw foreman data from SQL:\n")
-    cat("Sample foreman values:", paste(head(all_data$foreman, 10), collapse=", "), "\n")
-    cat("Total records:", nrow(all_data), "\n")
-    cat("Records with non-NA foreman:", sum(!is.na(all_data$foreman)), "\n")
-    cat("Records with non-empty foreman:", sum(!is.na(all_data$foreman) & all_data$foreman != ""), "\n")
-
     # Combine species data
     all_species <- bind_rows(species_current, species_archive)
 
@@ -300,11 +285,6 @@ WHERE ainspecnum IS NOT NULL
       )
 
     # DEBUG: Check final data before returning
-    cat("=== FINAL DATA DEBUG ===\n")
-    cat("Total joined records:", nrow(joined_data), "\n")
-    cat("Final NA foremen:", sum(is.na(joined_data$foreman)), "\n")
-    cat("Final sample foreman values:", paste(head(joined_data$foreman, 10), collapse=", "), "\n")
-    cat("Unique facilities:", paste(unique(joined_data$facility), collapse=", "), "\n")
     
     return(joined_data)
   })
@@ -500,21 +480,33 @@ WHERE ainspecnum IS NOT NULL
       foreman_colors <- get_foreman_colors()
       foremen_lookup <- get_foremen_lookup()
       
-      # Ensure consistent formatting (but they're already 4-digit strings)
-      # foremen_lookup$emp_num is already properly formatted
-      
       # Debug info
-      cat("Available foreman colors:", paste(names(foreman_colors), collapse=", "), "\n")
-      cat("Foremen in data:", paste(unique(data[[group_col]]), collapse=", "), "\n")
-      cat("Lookup table entries:", paste(foremen_lookup$emp_num, collapse=", "), "\n")
       
-      # Create mapping from emp_num to colors - FOLLOW EXACT DOCUMENTATION with robust matching
-      emp_colors <- setNames(
-        foreman_colors[foremen_lookup$shortname],
-        trimws(as.character(foremen_lookup$emp_num))  # Ensure consistent string format
-      )
+      # Create mapping from foreman NUMBER to facility-based colors
+      # Step 1: Get the shortname for each foreman number in the data
+      # Step 2: Get the facility-based color for that shortname
       
-      # Remove any NA colors (where shortname doesn't match)
+      foremen_in_data <- unique(na.omit(data[[group_col]]))
+      emp_colors <- character(0)
+      
+      for (foreman_num in foremen_in_data) {
+        foreman_num_str <- trimws(as.character(foreman_num))
+        
+        # Find the shortname for this foreman number
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
+        
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          facility <- foremen_lookup$facility[matches[1]]
+          
+          # Get the facility-based color for this shortname
+          if(shortname %in% names(foreman_colors)) {
+            emp_colors[foreman_num_str] <- foreman_colors[shortname]
+          }
+        }
+      }
+      
+      # Remove any NA colors
       emp_colors <- emp_colors[!is.na(emp_colors)]
       
       # Return the mapped colors
@@ -731,32 +723,51 @@ WHERE ainspecnum IS NOT NULL
       # Ensure employee numbers are consistently formatted
       # foremen_lookup$emp_num is already properly formatted
       
-      # Debug info for data format
-      cat("=== MAP FOREMAN DEBUG ===\n")
-      cat("Map data rows:", nrow(data), "\n")
-      cat("Map - Raw foremen from data:", paste(unique(data$foreman), collapse=", "), "\n")
-      cat("Map - NA foremen in data:", sum(is.na(data$foreman)), "\n")
-      cat("Map - Lookup emp_nums:", paste(foremen_lookup$emp_num, collapse=", "), "\n")
-      cat("Map - Available foreman colors:", paste(names(foreman_colors), collapse=", "), "\n")
-      cat("Map - Foremen lookup shortnames:", paste(foremen_lookup$shortname, collapse=", "), "\n")
-      cat("Map - Foremen lookup facilities:", paste(foremen_lookup$facility, collapse=", "), "\n")
+      # Create mapping from foreman NUMBER to facility-based colors (same logic as plot)
+      foremen_in_data <- unique(na.omit(data$foreman))
+      emp_colors <- character(0)
       
-      # Create mapping from emp_num to colors - FOLLOW EXACT DOCUMENTATION with robust matching
-      emp_colors <- setNames(
-        foreman_colors[foremen_lookup$shortname],
-        trimws(as.character(foremen_lookup$emp_num))  # Ensure consistent string format
-      )
+      for (foreman_num in foremen_in_data) {
+        foreman_num_str <- trimws(as.character(foreman_num))
+        
+        # Find the shortname for this foreman number
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
+        
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          facility <- foremen_lookup$facility[matches[1]]
+          
+          
+          # Get the facility-based color for this shortname
+          if(shortname %in% names(foreman_colors)) {
+            emp_colors[foreman_num_str] <- foreman_colors[shortname]
+          }
+        }
+      }
       
-      # Remove any NA colors (where shortname doesn't match)
+      # Remove any NA colors
       emp_colors <- emp_colors[!is.na(emp_colors)]
       
-      # Debug info for final color mapping
-      cat("Map - Final emp_colors:", paste(names(emp_colors), "->", emp_colors, collapse="; "), "\n")
+      # Create ORDERED colors to ensure legend and map match exactly
+      # Order by facility, then by foreman within facility (same as legend)
+      ordered_foremen <- foremen_lookup[order(foremen_lookup$facility, foremen_lookup$shortname), ]
+      ordered_emp_colors <- character(0)
+      ordered_emp_numbers <- character(0)
       
-      # Create color palette function for leaflet
+      for (i in 1:nrow(ordered_foremen)) {
+        emp_num <- trimws(as.character(ordered_foremen$emp_num[i]))
+        if (emp_num %in% names(emp_colors)) {
+          ordered_emp_colors <- c(ordered_emp_colors, emp_colors[emp_num])
+          ordered_emp_numbers <- c(ordered_emp_numbers, emp_num)
+        }
+      }
+      names(ordered_emp_colors) <- ordered_emp_numbers
+      
+      # Create color palette function for leaflet using ORDERED colors
       pal <- colorFactor(
-        palette = emp_colors,
-        domain = names(emp_colors)
+        palette = ordered_emp_colors,
+        domain = names(ordered_emp_colors),
+        ordered = TRUE  # Maintain order
       )
       
       # Create popup text beforehand for foreman map too
@@ -816,26 +827,15 @@ WHERE ainspecnum IS NOT NULL
         addLegend(
           position = "bottomright",
           title = "FOS",
-          colors = {
-            # Order legend by facility, then by foreman within facility
-            ordered_foremen <- foremen_lookup[order(foremen_lookup$facility, foremen_lookup$shortname), ]
-            ordered_colors <- character(0)
-            for (i in 1:nrow(ordered_foremen)) {
-              emp_num <- ordered_foremen$emp_num[i]
-              if (emp_num %in% names(emp_colors)) {
-                ordered_colors <- c(ordered_colors, emp_colors[emp_num])
-              }
-            }
-            ordered_colors
-          },
+          colors = ordered_emp_colors,  # Use same ordered colors as map palette
           labels = {
-            # Order labels to match colors (by facility, then foreman)
-            ordered_foremen <- foremen_lookup[order(foremen_lookup$facility, foremen_lookup$shortname), ]
+            # Use same ordering as the map palette
             ordered_labels <- character(0)
-            for (i in 1:nrow(ordered_foremen)) {
-              emp_num <- ordered_foremen$emp_num[i]
-              if (emp_num %in% names(emp_colors)) {
-                ordered_labels <- c(ordered_labels, ordered_foremen$shortname[i])
+            for (i in 1:length(ordered_emp_numbers)) {
+              emp_num <- ordered_emp_numbers[i]
+              foreman_info <- foremen_lookup[trimws(as.character(foremen_lookup$emp_num)) == emp_num, ]
+              if(nrow(foreman_info) > 0) {
+                ordered_labels <- c(ordered_labels, foreman_info$shortname[1])
               }
             }
             ordered_labels
@@ -879,11 +879,6 @@ WHERE ainspecnum IS NOT NULL
     data <- filtered_data()
     group_col <- input$group_by
     
-    # Debug info
-    cat("Summary Table - Starting summary generation\n")
-    cat("Summary Table - Group by:", group_col, "\n")
-    cat("Summary Table - Data rows:", nrow(data), "\n")
-
     if (group_col == "mmcd_all") {
       # Summarize for the whole MMCD (no grouping)
       summary_data <- data %>%

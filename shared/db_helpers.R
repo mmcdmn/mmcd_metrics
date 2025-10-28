@@ -1,33 +1,11 @@
-# Shared Database Helper Functions and Common Utilities
-# This file contains common database queries and utility functions used across multiple apps
-
-# Load required libraries (if not already loaded)
-if (!require(DBI, quietly = TRUE)) library(DBI)
-if (!require(RPostgres, quietly = TRUE)) library(RPostgres)
-if (!require(dplyr, quietly = TRUE)) library(dplyr)
-
-# Load environment variables helper
-load_env_variables <- function() {
-  env_paths <- c(
-    "../../.env",
-    "../../../.env", 
-    "/srv/shiny-server/.env"
-  )
-  
-  env_loaded <- FALSE
-  for (path in env_paths) {
-    if (file.exists(path)) {
-      readRenviron(path)
-      env_loaded <- TRUE
-      break
-    }
-  }
-  
-  return(env_loaded)
-}
-
-# Database Helper Functions for MMCD Metrics Applications
-# This file contains shared functions for database connections and common lookups
+# =============================================================================
+# MMCD METRICS - DATABASE HELPER FUNCTIONS
+# =============================================================================
+# This file contains shared database connections, lookup functions, and 
+# utility functions used across multiple MMCD dashboard applications.
+# 
+# All apps should source this file: source("../../shared/db_helpers.R")
+# =============================================================================
 
 # Load required libraries
 suppressPackageStartupMessages({
@@ -57,8 +35,40 @@ load_env_vars <- function() {
     }
   }
   
-  # If no .env file found, environment variables should already be set by Docker
-  return(env_loaded)
+  # Environment variables might already be set (Docker)
+  required_vars <- c("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", 
+                     "POSTGRES_USER", "POSTGRES_PASSWORD")
+  
+  if (!env_loaded && !all(sapply(required_vars, function(var) Sys.getenv(var) != ""))) {
+    warning("Could not load environment variables from .env file and required variables are not set")
+    return(FALSE)
+  }
+  
+  return(TRUE)
+}
+
+# Centralized database connection function
+get_db_connection <- function() {
+  # Load environment variables
+  if (!load_env_vars()) {
+    warning("Failed to load environment variables")
+    return(NULL)
+  }
+  
+  tryCatch({
+    con <- dbConnect(
+      RPostgres::Postgres(),
+      host = Sys.getenv("POSTGRES_HOST"),
+      port = as.numeric(Sys.getenv("POSTGRES_PORT")),
+      dbname = Sys.getenv("POSTGRES_DB"),
+      user = Sys.getenv("POSTGRES_USER"),
+      password = Sys.getenv("POSTGRES_PASSWORD")
+    )
+    return(con)
+  }, error = function(e) {
+    warning(paste("Database connection failed:", e$message))
+    return(NULL)
+  })
 }
 
 # Database connection function
@@ -162,7 +172,7 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE")
+  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE","GREEN" = "PREHATCH")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)
@@ -251,6 +261,32 @@ get_foremen_lookup <- function() {
     
   }, error = function(e) {
     warning(paste("Error loading foremen lookup:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
+}
+
+# Get species lookup table
+get_species_lookup <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    # Get species lookup from lookup_specieslist table
+    species_lookup <- dbGetQuery(con, "
+      SELECT 
+        sppcode,
+        genus,
+        species
+      FROM lookup_specieslist 
+      ORDER BY genus, species
+    ")
+    
+    dbDisconnect(con)
+    return(species_lookup)
+    
+  }, error = function(e) {
+    warning(paste("Error loading species lookup:", e$message))
     if (!is.null(con)) dbDisconnect(con)
     return(data.frame())
   })
@@ -365,7 +401,7 @@ get_foreman_colors <- function() {
     base_color <- facility_colors[facility]
     if (is.na(base_color)) next
     
-    # Convert base color to HSV
+    # Convert base color to HSV for manipulation
     rgb_base <- col2rgb(base_color) / 255
     hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
     
@@ -374,17 +410,44 @@ get_foreman_colors <- function() {
       # Single foreman gets the facility base color
       foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
     } else {
-      # For multiple foremen, vary the saturation and value
-      saturations <- seq(0.6, 0.9, length.out = n_foremen)
-      values <- seq(0.7, 0.9, length.out = n_foremen)
+      # Sort foremen by shortname for consistent ordering
+      facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
+      base_hue <- hsv_base[1]
       
-      shades <- sapply(1:n_foremen, function(i) {
-        hsv(h = hsv_base[1], s = saturations[i], v = values[i])
-      })
+      # Use a smaller hue range for better facility color grouping
+      hue_range <- 0.08  # ±8% variation around facility color (was 15%)
       
-      # Assign colors to foremen
-      foreman_idx <- which(foremen$shortname %in% facility_foremen$shortname)
-      foreman_colors[foreman_idx] <- shades
+      # Create distinct but related colors for foremen in this facility
+      for (i in 1:n_foremen) {
+        foreman_name <- facility_foremen$shortname[i]
+        
+        # Calculate hue offset based on position
+        if (n_foremen == 2) {
+          # For 2 foremen: one slightly lighter, one slightly darker
+          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
+        } else {
+          # For 3+ foremen: spread across the hue range
+          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
+        }
+        
+        # Calculate foreman hue (keep within facility color family)
+        foreman_hue <- (base_hue + hue_offset) %% 1
+        
+        # Vary saturation and brightness more distinctly
+        if (n_foremen <= 3) {
+          # For small groups, use more pronounced saturation/value differences
+          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
+          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
+        } else {
+          # For larger groups, use smaller but still distinct differences
+          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
+          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
+        }
+        
+        # Assign the color for this foreman
+        foreman_idx <- which(foremen$shortname == foreman_name)
+        foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
+      }
     }
   }
   
@@ -417,7 +480,7 @@ format_display_date <- function(date_col) {
 get_status_colors <- function() {
   return(c(
     # Core status colors - no duplicates or aliases
-    "active" = "#00CC00",      # Bright green for active/in-progress/treatment
+    "active" = "#187018",      # forest green for active/in-progress/treatment
     "completed" = "#4169E1",   # Royal blue for completed
     "planned" = "#FFA500",     # Orange for planned/pending
     "needs_action" = "#FF4500", # Red-orange for needs inspection
@@ -430,12 +493,24 @@ get_status_colors <- function() {
 # This converts db_helpers hex colors to Shiny's accepted named colors
 get_shiny_colors <- function() {
   return(c(
-    "active" = "green",        # #00CC00 → green
+    "active" = "olive",          # #187018 → olive (closest to forest green)
     "completed" = "blue",      # #4169E1 → blue
     "planned" = "orange",      # #FFA500 → orange
     "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)
     "needs_treatment" = "red", # #FF0000 → red
     "unknown" = "gray"         # #A9A9A9 → gray
+  ))
+}
+
+# Map status names to hex colors for visualizations (maps, charts, tables)
+get_status_color_map <- function() {
+  status_colors <- get_status_colors()
+  return(list(
+    "Unknown" = status_colors["unknown"],
+    "Needs Inspection" = status_colors["planned"],      # Orange/yellow for needs inspection
+    "Under Threshold" = status_colors["completed"],
+    "Needs Treatment" = status_colors["needs_treatment"],
+    "Active Treatment" = status_colors["active"]
   ))
 }
 
@@ -467,4 +542,234 @@ get_status_descriptions <- function() {
     # Special status descriptions
     "PREHATCH" = "Prehatch site status"
   ))
+}
+
+# Mosquito Species Visualization Functions
+# Centralized color and shape mappings for mosquito species in surveillance data
+
+# Get color mappings for mosquito species
+get_mosquito_species_colors <- function() {
+  return(list(
+    "Total_Ae_+_Cq" = "#000000", Total_Ae_springs = "#008000", Total_Ae_summers = "#ffa500",
+    Cq_perturbans_42 = "#800080", Total_Cx_vectors = "#FF0000", Cx_erraticus_32 = "#000000",
+    Cx_pipiens_33 = "#0000FF", Cx_restuans_34 = "#008000", Cx_salinarius_35 = "#87cefa",
+    Cx_tarsalis_36 = "#a52a2a", Cx_territans_37 = "#00ff7f", "Cx_restuans/pipiens_372" = "#40e0d0",
+    Cx_unknown_371 = "#ffa500", An_barberi_27 = "#FFFF00", An_earlei_28 = "#ffc0cb",
+    An_punctipennis_29 = "#0000FF", An_quadrimaculatus_30 = "#FF0000", An_walkeri_31 = "#ffa500",
+    sp311an_un = "#800080", Total_Anopheles = "#87cefa", sp01_abser = "#FF0000", sp03_aurif = "#FFFF00",
+    sp04_euedes = "#f08080", sp05_campest = "#adff2f", sp08_commun = "#483d8b", sp09_diant = "#00FFFF",
+    sp118abpun = "#800080", sp11_excru = "#ffa500", sp12_fitch = "#a52a2a", sp13_flave = "#800000",
+    sp14_imple = "#7fff00", sp15_intrud = "#ffd700", sp17_pioni = "#FF00FF", sp18_punct = "#0000FF",
+    sp19_ripar = "#008000", sp20_spenc = "#ff1493", sp22_stimu = "#708090", sp23_provo = "#ff6347",
+    Ae_cinereus_7 = "#006400", Ae_triseriatus_24 = "#0000FF", Ae_vexans_26 = "#FF0000",
+    sp02_atrop = "#ff1493", Ae_canadensis_6 = "#000000", Ae_dorsalis_10 = "#808080", sp16_nigro = "#ffd700",
+    sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
+    sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
+    Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
+    Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
+    Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+    sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
+  ))
+}
+
+# Get shape mappings for mosquito species (ggplot shape numbers)
+get_mosquito_species_shapes <- function() {
+  return(list(
+    "Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_summers = 1, Cq_perturbans_42 = 1,
+    Total_Cx_vectors = 1, Cx_erraticus_32 = 15, Cx_pipiens_33 = 15, Cx_restuans_34 = 15,
+    Cx_salinarius_35 = 15, Cx_tarsalis_36 = 15, Cx_territans_37 = 15, "Cx_restuans/pipiens_372" = 15,
+    Cx_unknown_371 = 15, An_barberi_27 = 4, An_earlei_28 = 4, An_punctipennis_29 = 4,
+    An_quadrimaculatus_30 = 4, An_walkeri_31 = 4, sp311an_un = 4, Total_Anopheles = 4,
+    sp01_abser = 19, sp03_aurif = 19, sp04_euedes = 19, sp05_campest = 19, sp08_commun = 19,
+    sp09_diant = 19, sp118abpun = 19, sp11_excru = 19, sp12_fitch = 19, sp13_flave = 19,
+    sp14_imple = 19, sp15_intrud = 19, sp17_pioni = 19, sp18_punct = 19, sp19_ripar = 19,
+    sp20_spenc = 19, sp22_stimu = 19, sp23_provo = 19, Ae_cinereus_7 = 19, Ae_triseriatus_24 = 19,
+    Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
+    sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
+    sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
+    Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
+    Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+    Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
+  ))
+}
+
+# Treatment Plan Type Colors
+# Dynamic function to get treatment plan types and assign consistent colors
+
+#' Get Treatment Plan Type Lookup
+#' 
+#' This function dynamically fetches the available treatment plan types from the database
+#' and returns them with their full names for display purposes.
+#' 
+#' Returns:
+#'   Data frame with columns: plan_code, plan_name, description
+get_treatment_plan_types <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) {
+    # Return default mapping if database is unavailable
+    return(data.frame(
+      plan_code = c("A", "D", "G", "N", "U"),
+      plan_name = c("Air", "Drone", "Ground", "None", "Unknown"),
+      description = c("Air treatment", "Drone treatment", "Ground treatment", "No treatment planned", "Unknown treatment type"),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  tryCatch({
+    # Get distinct treatment plan types from the current treatments table
+    plan_types <- dbGetQuery(con, "
+      SELECT DISTINCT 
+        airgrnd_plan as plan_code,
+        CASE 
+          WHEN airgrnd_plan = 'A' THEN 'Air'
+          WHEN airgrnd_plan = 'D' THEN 'Drone' 
+          WHEN airgrnd_plan = 'G' THEN 'Ground'
+          WHEN airgrnd_plan = 'N' THEN 'None'
+          WHEN airgrnd_plan = 'U' THEN 'Unknown'
+          ELSE airgrnd_plan
+        END as plan_name,
+        CASE 
+          WHEN airgrnd_plan = 'A' THEN 'Air treatment'
+          WHEN airgrnd_plan = 'D' THEN 'Drone treatment' 
+          WHEN airgrnd_plan = 'G' THEN 'Ground treatment'
+          WHEN airgrnd_plan = 'N' THEN 'No treatment planned'
+          WHEN airgrnd_plan = 'U' THEN 'Unknown treatment type'
+          ELSE 'Other treatment type'
+        END as description
+      FROM public.dblarv_insptrt_current 
+      WHERE airgrnd_plan IS NOT NULL
+      ORDER BY 
+        CASE airgrnd_plan 
+          WHEN 'A' THEN 1
+          WHEN 'D' THEN 2
+          WHEN 'G' THEN 3
+          WHEN 'N' THEN 4
+          WHEN 'U' THEN 5
+          ELSE 6
+        END
+    ")
+    
+    dbDisconnect(con)
+    return(plan_types)
+    
+  }, error = function(e) {
+    warning(paste("Error loading treatment plan types:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    
+    # Return default mapping if query fails
+    return(data.frame(
+      plan_code = c("A", "D", "G", "N", "U"),
+      plan_name = c("Air", "Drone", "Ground", "None", "Unknown"),
+      description = c("Air treatment", "Drone treatment", "Ground treatment", "No treatment planned", "Unknown treatment type"),
+      stringsAsFactors = FALSE
+    ))
+  })
+}
+
+#' Get Consistent Colors for Treatment Plan Types
+#' 
+#' This function generates and returns a consistent color mapping for treatment plan types.
+#' Each plan type gets assigned a unique, visually distinct color that remains consistent 
+#' across all visualizations.
+#' 
+#' Usage:
+#' ```r
+#' # Get colors for treatment plan types
+#' plan_colors <- get_treatment_plan_colors()
+#' 
+#' # In ggplot2 using plan codes (A, D, G, N, U):
+#' ggplot(data, aes(x = plan_type, y = acres, fill = airgrnd_plan)) +
+#'   scale_fill_manual(values = plan_colors)
+#' 
+#' # In ggplot2 using plan names (Air, Drone, Ground, None, Unknown):
+#' plan_name_colors <- get_treatment_plan_colors(use_names = TRUE)
+#' ggplot(data, aes(x = plan_name, y = acres, fill = plan_name)) +
+#'   scale_fill_manual(values = plan_name_colors)
+#' ```
+#' 
+#' Parameters:
+#'   use_names: If TRUE, returns colors mapped to plan names (Air, Drone, etc.)
+#'              If FALSE (default), returns colors mapped to plan codes (A, D, etc.)
+#' 
+#' Returns:
+#'   Named vector where names are either plan codes or plan names, and values are hex colors
+get_treatment_plan_colors <- function(use_names = FALSE) {
+  plan_types <- get_treatment_plan_types()
+  if (nrow(plan_types) == 0) return(c())
+  
+  # Define specific colors for common treatment plan types for consistency
+  predefined_colors <- c(
+    "A" = "#E41A1C",    # Red for Air
+    "D" = "#377EB8",    # Blue for Drone  
+    "G" = "#4DAF4A",    # Green for Ground
+    "N" = "#984EA3",    # Purple for None
+    "U" = "#FF7F00"     # Orange for Unknown
+  )
+  
+  # Start with predefined colors
+  colors <- character(nrow(plan_types))
+  names(colors) <- plan_types$plan_code
+  
+  # Assign predefined colors where available
+  for (i in seq_len(nrow(plan_types))) {
+    code <- plan_types$plan_code[i]
+    if (code %in% names(predefined_colors)) {
+      colors[code] <- predefined_colors[code]
+    }
+  }
+  
+  # For any codes not in predefined list, generate distinct colors
+  missing_codes <- plan_types$plan_code[!plan_types$plan_code %in% names(predefined_colors)]
+  if (length(missing_codes) > 0) {
+    additional_colors <- generate_distinct_colors(length(missing_codes))
+    names(additional_colors) <- missing_codes
+    colors[missing_codes] <- additional_colors
+  }
+  
+  # If use_names is TRUE, convert keys from codes to names
+  if (use_names) {
+    name_map <- setNames(plan_types$plan_name, plan_types$plan_code)
+    names(colors) <- name_map[names(colors)]
+  }
+  
+  return(colors)
+}
+
+#' Get Treatment Plan Choices for Select Inputs
+#' 
+#' Returns properly formatted choices for selectInput widgets with full names as labels
+#' and plan codes as values for database queries.
+#' 
+#' Usage:
+#' ```r
+#' # In UI:
+#' checkboxGroupInput(
+#'   "plan_types",
+#'   "Select Treatment Plan Types:",
+#'   choices = get_treatment_plan_choices(),
+#'   selected = c("A", "D", "G")
+#' )
+#' ```
+#' 
+#' Parameters:
+#'   include_all: If TRUE, includes "All Types" option
+#' 
+#' Returns:
+#'   Named vector suitable for selectInput choices
+get_treatment_plan_choices <- function(include_all = FALSE) {
+  plan_types <- get_treatment_plan_types()
+  
+  if (nrow(plan_types) == 0) {
+    return(c("Air (A)" = "A", "Drone (D)" = "D", "Ground (G)" = "G", "None (N)" = "N", "Unknown (U)" = "U"))
+  }
+  
+  # Create choices with format "Name (Code)" = "Code"
+  labels <- paste0(plan_types$plan_name, " (", plan_types$plan_code, ")")
+  choices <- setNames(plan_types$plan_code, labels)
+  
+  if (include_all) {
+    choices <- c("All Types" = "all", choices)
+  }
+  
+  return(choices)
 }

@@ -506,22 +506,20 @@ server <- function(input, output, session) {
       return(leaflet() %>% addTiles())
     }
     
-    # Color mapping for status
-    colors <- c(
-      "Unknown" = "gray",
-      "Needs Inspection" = "yellow", 
-      "Under Threshold" = "blue",
-      "Needs Treatment" = "red",
-      "Active Treatment" = "green"
-    )
+    # Color mapping for status - sourced from db_helpers
+    color_map <- get_status_color_map()
     
-    data$color <- colors[data$site_status]
+    # Map colors to data
+    data$color <- sapply(data$site_status, function(status) {
+      if (status %in% names(color_map)) color_map[[status]] else color_map[["Unknown"]]
+    })
     
     leaflet(data) %>%
       addTiles() %>%
       addCircleMarkers(
         ~longitude, ~latitude,
         color = ~color,
+        fillColor = ~color,
         radius = 5,
         stroke = TRUE,
         fillOpacity = 0.8,
@@ -543,8 +541,8 @@ server <- function(input, output, session) {
       ) %>%
       addLegend(
         position = "bottomright",
-        colors = colors,
-        labels = names(colors),
+        colors = unlist(color_map),
+        labels = names(color_map),
         title = "Site Status"
       )
   })
@@ -561,17 +559,17 @@ server <- function(input, output, session) {
       count(site_status) %>%
       arrange(desc(n))
     
-    # Consistent color mapping
-    status_colors <- c(
-      "Unknown" = "gray",
-      "Needs Inspection" = "yellow", 
-      "Under Threshold" = "blue",
-      "Needs Treatment" = "red",
-      "Active Treatment" = "green"
-    )
-    
-    # Map colors to the actual statuses in the data
-    colors_for_chart <- status_colors[status_counts$site_status]
+    # Map statuses to Shiny named colors using sapply
+    colors_for_chart <- sapply(status_counts$site_status, function(status) {
+      switch(status,
+        "Unknown" = shiny_colors[["unknown"]],
+        "Needs Inspection" = shiny_colors[["needs_action"]],
+        "Under Threshold" = shiny_colors[["completed"]],
+        "Needs Treatment" = shiny_colors[["needs_treatment"]],
+        "Active Treatment" = shiny_colors[["active"]],
+        "gray"  # default
+      )
+    })
     
     plot_ly(status_counts, x = ~reorder(site_status, -n), y = ~n, type = "bar",
             marker = list(color = colors_for_chart)) %>%
@@ -620,13 +618,15 @@ server <- function(input, output, session) {
         `Material Used` = material_used
       )
     
+    # Get centralized status colors from db_helpers
+    color_map <- get_status_color_map()
+    status_names <- names(color_map)
+    status_colors <- unlist(color_map)
+    
     datatable(display_data,
               options = list(pageLength = 15, scrollX = TRUE)) %>%
       formatStyle("Status",
-                  backgroundColor = styleEqual(
-                    c("Unknown", "Needs Inspection", "Under Threshold", "Needs Treatment", "Active Treatment"),
-                    c("#f0f0f0", "#ffff99", "#cce7ff", "#f8d7da", "#d4edda")
-                  ))
+                  backgroundColor = styleEqual(status_names, status_colors))
   })
   
   # Flow Testing Logic

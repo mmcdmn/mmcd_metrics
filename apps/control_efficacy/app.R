@@ -25,6 +25,9 @@ library(ggplot2)
 library(lubridate)
 library(DT)
 
+# Source the shared database helper functions
+source("../../shared/db_helpers.R")
+
 # Database connection function
 get_db_connection <- function() {
   tryCatch({
@@ -92,7 +95,7 @@ ui <- dashboardPage(
               ),
               column(2,
                 selectInput("facility_filter", "Facility:",
-                  choices = c("All Facilities" = "all"),
+                  choices = get_facility_choices(),
                   selected = "all"
                 )
               ),
@@ -221,11 +224,6 @@ server <- function(input, output, session) {
     con <- get_db_connection()
     if (!is.null(con)) {
       tryCatch({
-        # Get facilities for filter (from air treatments - action = 'A')
-        facilities <- dbGetQuery(con, "SELECT DISTINCT facility FROM dblarv_insptrt_current WHERE action = 'A' ORDER BY facility")
-        fac_choices <- setNames(facilities$facility, facilities$facility)
-        fac_choices <- c("All Facilities" = "all", fac_choices)
-        
         # Get material codes for filter with display names from lookup table
         matcodes_query <- "
           SELECT DISTINCT 
@@ -255,9 +253,7 @@ server <- function(input, output, session) {
           mat_choices <- c("All Materials" = "all", mat_choices)
         }
         
-        updateSelectInput(session, "facility_filter", choices = fac_choices)
         updateSelectInput(session, "matcode_filter", choices = mat_choices)
-        values$facilities <- facilities
         
         dbDisconnect(con)
       }, error = function(e) {
@@ -725,11 +721,14 @@ server <- function(input, output, session) {
     treatments <- treatment_rounds()
     value <- ifelse(is.null(treatments), 0, nrow(treatments))
     
+    # Get colors from centralized helper
+    shiny_colors <- get_shiny_colors()
+    
     valueBox(
       value = value,
   subtitle = "Broods",
   icon = icon("helicopter"),
-      color = "blue"
+      color = shiny_colors["completed"]
     )
   })
   
@@ -737,11 +736,14 @@ server <- function(input, output, session) {
     treatments <- treatment_rounds()
     value <- ifelse(is.null(treatments), 0, sum(treatments$sites_treated, na.rm = TRUE))
     
+    # Get colors from centralized helper
+    shiny_colors <- get_shiny_colors()
+    
     valueBox(
       value = value,
       subtitle = "Sites Treated",
       icon = icon("map-marker"),
-      color = "green"
+      color = shiny_colors["active"]
     )
   })
   
@@ -749,11 +751,14 @@ server <- function(input, output, session) {
     treatments <- treatment_rounds()
     value <- ifelse(is.null(treatments), 0, sum(treatments$checkbacks_needed, na.rm = TRUE))
     
+    # Get colors from centralized helper
+    shiny_colors <- get_shiny_colors()
+    
     valueBox(
       value = value,
       subtitle = "Checkbacks Needed",
       icon = icon("tasks"),
-      color = "yellow"
+      color = shiny_colors["planned"]
     )
   })
   
@@ -761,11 +766,14 @@ server <- function(input, output, session) {
     status <- checkback_status()
     value <- ifelse(is.null(status), 0, sum(status$checkbacks_completed, na.rm = TRUE))
     
+    # Get colors from centralized helper
+    shiny_colors <- get_shiny_colors()
+    
     valueBox(
       value = value,
       subtitle = "Checkbacks Completed",
       icon = icon("check"),
-      color = "purple"
+      color = shiny_colors["completed"]
     )
   })
   
@@ -783,10 +791,18 @@ server <- function(input, output, session) {
     # Daily site counts by facility
     daily_summary <- treatments %>%
       group_by(inspdate, facility) %>%
-      summarise(sites_treated = n(), .groups = "drop")
+      summarise(sites_treated = n(), .groups = "drop") %>%
+      map_facility_names()
     
-    p <- ggplot(daily_summary, aes(x = inspdate, y = sites_treated, fill = facility)) +
+    # Get facility colors from centralized helper and map to display names
+    facility_colors <- get_facility_base_colors()
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$full_name, facilities$short_name)
+    display_colors <- setNames(facility_colors, facility_map[names(facility_colors)])
+    
+    p <- ggplot(daily_summary, aes(x = inspdate, y = sites_treated, fill = facility_display)) +
       geom_col(position = "dodge") +
+      scale_fill_manual(values = display_colors) +
       labs(
         title = "Air Treatment Activity Over Time",
         x = "Date",
@@ -827,9 +843,11 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     ) %>%
-      formatStyle("completion_rate",
-        backgroundColor = styleInterval(c(50, 80), c("#ffebee", "#fff3e0", "#e8f5e8"))
-      )
+      formatStyle("completion_rate", {
+        # Get colors from centralized helper for consistent styling
+        status_colors <- get_status_colors()
+        backgroundColor = styleInterval(c(50, 80), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
+      })
   })
   
   # Checkback timing plot
@@ -873,8 +891,11 @@ server <- function(input, output, session) {
     if (length(timing_data) > 0) {
       timing_df <- do.call(rbind, timing_data)
       
+      # Get colors from centralized helper
+      status_colors <- get_status_colors()
+      
       p <- ggplot(timing_df, aes(x = days_to_checkback)) +
-        geom_histogram(binwidth = 2, fill = "steelblue", alpha = 0.7) +
+        geom_histogram(binwidth = 2, fill = status_colors["active"], alpha = 0.7) +
         labs(
           title = "Days to Checkback",
           x = "Days After Treatment",
@@ -952,10 +973,12 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     ) %>%
-      formatStyle("Completion %",
-        backgroundColor = styleInterval(c(50, 80), c("#ffcdd2", "#ffecb3", "#c8e6c9")),
+      formatStyle("Completion %", {
+        # Get colors from centralized helper for consistent styling
+        status_colors <- get_status_colors()
+        backgroundColor = styleInterval(c(50, 80), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
         fontWeight = "bold"
-      )
+      })
   })
   
   # Site details table
@@ -1043,9 +1066,11 @@ server <- function(input, output, session) {
         ),
         rownames = FALSE
       ) %>%
-        formatStyle("Checkback Status",
-          backgroundColor = styleEqual(c("Completed", "Pending"), c("#c8e6c9", "#ffecb3"))
-        )
+        formatStyle("Checkback Status", {
+          # Get colors from centralized helper for consistent styling
+          status_colors <- get_status_colors()
+          backgroundColor = styleEqual(c("Completed", "Pending"), c(paste0(status_colors["active"], "44"), paste0(status_colors["planned"], "44")))
+        })
     } else {
       return(data.frame(Message = "No detailed site data available"))
     }
@@ -1097,12 +1122,20 @@ server <- function(input, output, session) {
     }
     
     if (length(efficacy_data) > 0) {
-      efficacy_df <- do.call(rbind, efficacy_data)
+      efficacy_df <- do.call(rbind, efficacy_data) %>%
+        map_facility_names()
+      
+      # Get facility colors from centralized helper and map to display names
+      facility_colors <- get_facility_base_colors()
+      facilities <- get_facility_lookup()
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      display_colors <- setNames(facility_colors, facility_map[names(facility_colors)])
       
       p <- ggplot(efficacy_df, aes(x = pre_treatment_dip, y = post_treatment_dip, 
-                                   color = facility, size = days_between)) +
+                                   color = facility_display, size = days_between)) +
         geom_point(alpha = 0.7) +
         geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray", size = 1) +
+        scale_color_manual(values = display_colors) +
         labs(
           title = "Treatment Efficacy: Pre vs Post Treatment Dip Counts",
           x = "Pre-Treatment Dip Count",
@@ -1157,14 +1190,18 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     ) %>%
-      formatStyle("Change from Previous",
-        backgroundColor = styleInterval(c(-0.1, 0.1), c("#ffcdd2", "#fff9c4", "#c8e6c9")),
+      formatStyle("Change from Previous", {
+        # Get colors from centralized helper for consistent styling
+        status_colors <- get_status_colors()
+        backgroundColor = styleInterval(c(-0.1, 0.1), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
         fontWeight = "bold"
-      ) %>%
-      formatStyle("Total Change",
-        backgroundColor = styleInterval(c(-0.1, 0.1), c("#ffcdd2", "#fff9c4", "#c8e6c9")),
+      }) %>%
+      formatStyle("Total Change", {
+        # Get colors from centralized helper for consistent styling
+        status_colors <- get_status_colors()
+        backgroundColor = styleInterval(c(-0.1, 0.1), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
         fontWeight = "bold"
-      )
+      })
   })
   
   # All checkbacks table

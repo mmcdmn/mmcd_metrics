@@ -292,6 +292,40 @@ get_species_lookup <- function() {
   })
 }
 
+# Get species code to name mapping
+get_species_code_map <- function() {
+  species_lookup <- get_species_lookup()
+  
+  if (nrow(species_lookup) == 0) {
+    return(character(0))
+  }
+  
+  # Create mapping from sppcode to formatted species name
+  species_map <- character(0)
+  
+  for (i in 1:nrow(species_lookup)) {
+    code <- as.character(species_lookup$sppcode[i])
+    genus <- species_lookup$genus[i]
+    species <- species_lookup$species[i]
+    
+    # Create formatted name
+    if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
+      # Use abbreviated genus (first 2 letters) + full species name
+      formatted_name <- paste0(substr(genus, 1, 2), ". ", species)
+    } else if (!is.na(genus) && genus != "") {
+      formatted_name <- genus
+    } else if (!is.na(species) && species != "") {
+      formatted_name <- species
+    } else {
+      formatted_name <- paste0("Species ", code)
+    }
+    
+    species_map[code] <- formatted_name
+  }
+  
+  return(species_map)
+}
+
 
 
 # Internal helper function to generate visually distinct colors

@@ -162,25 +162,6 @@ server <- function(input, output, session) {
     })
   }
   
-  # Add a mapping from spp code to readable species name
-  species_code_map <- c(
-    '26' = 'Cx. tarsalis',
-    '32' = 'Cx. erraticus',
-    '33' = 'Cx. pipiens',
-    '34' = 'Cx. restuans',
-    '35' = 'Cx. salinarius',
-    '36' = 'Cx. tarsalis',
-    '37' = 'Cx. territans',
-    '43' = 'Or. signifera',
-    '44' = 'Ps. ciliata',
-    '45' = 'Ps. columbiae',
-    '46' = 'Ps. ferox',
-    '47' = 'Ps. horrida',
-    '48' = 'Ur. sapphirina',
-    '49' = 'sp49_smith',
-    '50' = 'sp50_hende'
-  )
-  
   # Fetch and join SUCO and species data
   suco_data <- reactive({
     con <- get_db_connection()

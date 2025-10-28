@@ -374,17 +374,35 @@ get_foreman_colors <- function() {
       # Single foreman gets the facility base color
       foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
     } else {
-      # For multiple foremen, vary the saturation and value
-      saturations <- seq(0.6, 0.9, length.out = n_foremen)
-      values <- seq(0.7, 0.9, length.out = n_foremen)
+      # Sort ALL foremen in this facility by shortname for consistent ordering
+      facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
+      base_hue <- hsv_base[1]
+      hue_range <- 0.15  # ±15% variation around facility color
       
-      shades <- sapply(1:n_foremen, function(i) {
-        hsv(h = hsv_base[1], s = saturations[i], v = values[i])
-      })
-      
-      # Assign colors to foremen
-      foreman_idx <- which(foremen$shortname %in% facility_foremen$shortname)
-      foreman_colors[foreman_idx] <- shades
+      # Create consistent color assignments for ALL foremen in this facility
+      for (i in 1:n_foremen) {
+        foreman_name <- facility_foremen$shortname[i]
+        
+        # Use foreman's PERMANENT position within ALL facility foremen
+        # This position never changes regardless of filtering
+        hue_offset <- if (n_foremen == 1) {
+          0
+        } else {
+          # Map position to hue range: position 1 -> -hue_range, position n -> +hue_range
+          -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
+        }
+        
+        # Calculate consistent hue for this foreman (RELATED TO FACILITY)
+        foreman_hue <- (base_hue + hue_offset) %% 1
+        
+        # Use position-based saturation and value for consistency
+        saturation <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))  # 0.7 to 0.95
+        value <- 0.75 + (0.2 * (i - 1) / max(1, n_foremen - 1))        # 0.75 to 0.95
+        
+        # Assign the permanent color for this foreman
+        foreman_idx <- which(foremen$shortname == foreman_name)
+        foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
+      }
     }
   }
   

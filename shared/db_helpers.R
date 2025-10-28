@@ -36,6 +36,37 @@ suppressPackageStartupMessages({
   library(dplyr)
 })
 
+# =============================================================================
+# MMCD METRICS - DATABASE HELPER FUNCTIONS
+# =============================================================================
+# This file contains shared database connections, lookup functions, and 
+# utility functions used across multiple MMCD dashboard applications.
+#
+# ORGANIZATION:
+# 1. Library Dependencies
+# 2. Environment & Database Connection
+# 3. Core Lookup Functions  
+# 4. Color System Functions
+# 5. Visualization Helper Functions
+# 6. Status & Choice Functions
+# 7. Utility Functions
+# =============================================================================
+
+# =============================================================================
+# 1. LIBRARY DEPENDENCIES
+# =============================================================================
+
+# Load required libraries
+suppressPackageStartupMessages({
+  library(DBI)
+  library(RPostgres)
+  library(dplyr)
+})
+
+# =============================================================================
+# 2. ENVIRONMENT & DATABASE CONNECTION
+# =============================================================================
+
 # Load environment variables function
 load_env_vars <- function() {
   # Load environment variables from .env file (for local development)
@@ -57,8 +88,40 @@ load_env_vars <- function() {
     }
   }
   
-  # If no .env file found, environment variables should already be set by Docker
-  return(env_loaded)
+  # Environment variables might already be set (Docker)
+  required_vars <- c("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", 
+                     "POSTGRES_USER", "POSTGRES_PASSWORD")
+  
+  if (!env_loaded && !all(sapply(required_vars, function(var) Sys.getenv(var) != ""))) {
+    warning("Could not load environment variables from .env file and required variables are not set")
+    return(FALSE)
+  }
+  
+  return(TRUE)
+}
+
+# Centralized database connection function
+get_db_connection <- function() {
+  # Load environment variables
+  if (!load_env_vars()) {
+    warning("Failed to load environment variables")
+    return(NULL)
+  }
+  
+  tryCatch({
+    con <- dbConnect(
+      RPostgres::Postgres(),
+      host = Sys.getenv("POSTGRES_HOST"),
+      port = as.numeric(Sys.getenv("POSTGRES_PORT")),
+      dbname = Sys.getenv("POSTGRES_DB"),
+      user = Sys.getenv("POSTGRES_USER"),
+      password = Sys.getenv("POSTGRES_PASSWORD")
+    )
+    return(con)
+  }, error = function(e) {
+    warning(paste("Database connection failed:", e$message))
+    return(NULL)
+  })
 }
 
 # Database connection function
@@ -762,10 +825,4 @@ get_treatment_plan_choices <- function(include_all = FALSE) {
   }
   
   return(choices)
-}
-
-# Get facility name mapping (short_name to full_name)
-get_facility_names <- function() {
-  facilities <- get_facility_lookup()
-  return(setNames(facilities$full_name, facilities$short_name))
 }

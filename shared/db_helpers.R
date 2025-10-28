@@ -365,7 +365,7 @@ get_foreman_colors <- function() {
     base_color <- facility_colors[facility]
     if (is.na(base_color)) next
     
-    # Convert base color to HSV
+    # Convert base color to HSV for manipulation
     rgb_base <- col2rgb(base_color) / 255
     hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
     
@@ -374,32 +374,41 @@ get_foreman_colors <- function() {
       # Single foreman gets the facility base color
       foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
     } else {
-      # Sort ALL foremen in this facility by shortname for consistent ordering
+      # Sort foremen by shortname for consistent ordering
       facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
       base_hue <- hsv_base[1]
-      hue_range <- 0.15  # ±15% variation around facility color
       
-      # Create consistent color assignments for ALL foremen in this facility
+      # Use a smaller hue range for better facility color grouping
+      hue_range <- 0.08  # ±8% variation around facility color (was 15%)
+      
+      # Create distinct but related colors for foremen in this facility
       for (i in 1:n_foremen) {
         foreman_name <- facility_foremen$shortname[i]
         
-        # Use foreman's PERMANENT position within ALL facility foremen
-        # This position never changes regardless of filtering
-        hue_offset <- if (n_foremen == 1) {
-          0
+        # Calculate hue offset based on position
+        if (n_foremen == 2) {
+          # For 2 foremen: one slightly lighter, one slightly darker
+          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
         } else {
-          # Map position to hue range: position 1 -> -hue_range, position n -> +hue_range
-          -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
+          # For 3+ foremen: spread across the hue range
+          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
         }
         
-        # Calculate consistent hue for this foreman (RELATED TO FACILITY)
+        # Calculate foreman hue (keep within facility color family)
         foreman_hue <- (base_hue + hue_offset) %% 1
         
-        # Use position-based saturation and value for consistency
-        saturation <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))  # 0.7 to 0.95
-        value <- 0.75 + (0.2 * (i - 1) / max(1, n_foremen - 1))        # 0.75 to 0.95
+        # Vary saturation and brightness more distinctly
+        if (n_foremen <= 3) {
+          # For small groups, use more pronounced saturation/value differences
+          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
+          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
+        } else {
+          # For larger groups, use smaller but still distinct differences
+          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
+          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
+        }
         
-        # Assign the permanent color for this foreman
+        # Assign the color for this foreman
         foreman_idx <- which(foremen$shortname == foreman_name)
         foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
       }

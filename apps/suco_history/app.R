@@ -44,24 +44,23 @@ ui <- fluidPage(
   # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
-      # Time period selection
-      radioButtons("time_interval", "Time Interval:",
-                   choices = c("Weekly" = "week",
-                               "Monthly" = "month"),
-                   selected = "week"),
-      
       # Group by selection
       radioButtons("group_by", "Group By:",
-                   choices = c("Facility" = "facility",
-                               "Foreman" = "foreman",
-                               "MMCD (All)" = "mmcd_all"),
-                   selected = "facility"),
+                   choices = c("MMCD (All)" = "mmcd_all",
+                               "Facility" = "facility", 
+                               "FOS" = "foreman"),
+                   selected = "mmcd_all"),
       
       # Date range selection - default to current year
       dateRangeInput("date_range", "Select Date Range:",
                      start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
                      end = Sys.Date(),
                      format = "yyyy-mm-dd"),
+      
+      # Filter by zone (P1/P2)
+      checkboxGroupInput("zone_filter", "Filter by Zone:",
+                        choices = c("P1" = "1", "P2" = "2"),
+                        selected = c("1", "2")),
       
       # Filter by facility (multi-select)
       selectizeInput("facility_filter", "Filter by Facility:",
@@ -100,11 +99,23 @@ ui <- fluidPage(
     
     # Main panel for displaying the graphs
     mainPanel(
-      tabsetPanel(id = "tabset",
-                  tabPanel("Graph", value = "Graph", plotOutput("trend_plot", height = "500px")),
-                  tabPanel("Map", value = "Map", leafletOutput("map", height = "600px")),
-                  tabPanel("Summary Table", value = "Table", dataTableOutput("summary_table")),
-                  tabPanel("Top Locations", value = "TopLoc", plotlyOutput("location_plotly", height = "500px"))
+      tabsetPanel(id = "main_tabset",
+        tabPanel("Current Data", 
+          tabsetPanel(id = "current_tabset",
+            tabPanel("Graph", value = "CurrentGraph", plotOutput("current_trend_plot", height = "500px")),
+            tabPanel("Map", value = "CurrentMap", leafletOutput("current_map", height = "600px")),
+            tabPanel("Summary Table", value = "CurrentTable", dataTableOutput("current_summary_table")),
+            tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "500px"))
+          )
+        ),
+        tabPanel("All Data (Current + Archive)",
+          tabsetPanel(id = "all_tabset",
+            tabPanel("Graph", value = "AllGraph", plotOutput("trend_plot", height = "500px")),
+            tabPanel("Map", value = "AllMap", leafletOutput("map", height = "600px")),
+            tabPanel("Summary Table", value = "AllTable", dataTableOutput("summary_table")),
+            tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "500px"))
+          )
+        )
       )
     )
   )
@@ -193,11 +204,17 @@ END as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-COALESCE(h.facility, '') as harborage_facility
+COALESCE(h.facility, '') as harborage_facility,
+g.zone
 FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
   AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
+LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
@@ -214,11 +231,17 @@ END as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-COALESCE(h.facility, '') as harborage_facility
+COALESCE(h.facility, '') as harborage_facility,
+g.zone
 FROM public.dbadult_insp_archive s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
   AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
+LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
@@ -289,6 +312,285 @@ WHERE ainspecnum IS NOT NULL
     return(joined_data)
   })
   
+  # Current data only (no archive) - more efficient for fast loading
+  suco_data_current <- reactive({
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(data.frame())  # Return empty data frame if connection fails
+    }
+    
+    # Date range for query
+    start_date <- format(input$date_range[1], "%Y-%m-%d")
+    end_date <- format(input$date_range[2], "%Y-%m-%d")
+    
+    # Query current data ONLY (no archive) for SUCOs (survtype = 7) with harborage lookup for current foreman assignments
+    current_query <- sprintf("
+SELECT
+s.id, s.ainspecnum, s.facility, 
+CASE 
+  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
+  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
+  ELSE NULL
+END as foreman,
+s.inspdate, s.sitecode,
+s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
+s.x, s.y, ST_AsText(s.geometry) as geometry_text,
+COALESCE(h.facility, '') as harborage_facility,
+g.zone
+FROM public.dbadult_insp_current s
+LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
+  AND s.inspdate >= h.startdate 
+  AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
+LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
+WHERE s.survtype = '7'
+AND s.inspdate BETWEEN '%s' AND '%s'
+", start_date, end_date)
+    
+    # Execute query for current data only
+    current_data <- dbGetQuery(con, current_query)
+    
+    # Query species tables (current only)
+    species_current_query <- sprintf("
+SELECT ainspecnum, spp, cnt
+FROM public.dbadult_species_current
+WHERE ainspecnum IS NOT NULL
+")
+    species_current <- dbGetQuery(con, species_current_query)
+
+    # Query species lookup table using centralized function
+    species_lookup <- get_species_lookup()
+
+    # Close connection
+    dbDisconnect(con)
+
+    # Process current data only (no archive to combine)
+    all_data <- current_data %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        year = year(inspdate),
+        month = month(inspdate),
+        week_start = floor_date(inspdate, "week", week_start = 1),
+        month_label = format(inspdate, "%b %Y"),
+        location = ifelse(!is.na(park_name) & park_name != "", park_name,
+                          ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
+        # Use harborage facility when harborage foreman is used
+        # This ensures foreman colors match the correct facility
+        facility = ifelse(!is.na(harborage_facility) & harborage_facility != "", 
+                         harborage_facility, facility)
+      )
+    
+    # Join SUCO data with species data and lookup for names
+    joined_data <- all_data %>%
+      left_join(species_current, by = "ainspecnum") %>%
+      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
+      mutate(
+        species_name = dplyr::case_when(
+          !is.na(genus) & !is.na(species) ~ paste(genus, species),
+          !is.na(spp) ~ as.character(spp),
+          TRUE ~ NA_character_
+        ),
+        # Ensure foreman values are consistent strings
+        foreman = trimws(as.character(foreman))
+      )
+
+    return(joined_data)
+  })
+  
+  # Helper function to create trend plots - eliminates code duplication
+  create_trend_plot <- function(data_source) {
+    # Get aggregated data based on data source
+    if (data_source == "current") {
+      data <- aggregated_data_current()
+    } else {
+      data <- aggregated_data()
+    }
+    
+    if (nrow(data) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5,
+                   label = paste("No SUCO data available with the selected filters", 
+                                if(data_source == "current") "(Current Data)" else ""), size = 6) +
+          theme_void()
+      )
+    }
+    
+    # Use weekly labels (MM/DD format)
+    data$time_label <- format(data$time_group, "%m/%d")
+    
+    group_col <- input$group_by
+    if (group_col == "mmcd_all") {
+      group_col <- "mmcd_all"
+    }
+    
+    # Get facility and foreman lookups for labels
+    facilities <- get_facility_lookup()
+    foremen_lookup <- get_foremen_lookup()
+    
+    # Create facility name mapping
+    facility_names <- setNames(facilities$full_name, facilities$short_name)
+    
+    # Create foreman name mapping
+    foreman_names <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+    
+    title_interval <- "Weekly"
+    title_group <- case_when(
+      input$group_by == "facility" ~ "Facility",
+      input$group_by == "foreman" ~ "Foreman", 
+      input$group_by == "mmcd_all" ~ "MMCD (All)",
+      TRUE ~ "Group"
+    )
+    
+    # Create filter text for subtitle
+    facility_text <- if ("All" %in% input$facility_filter) {
+      "All Facilities"
+    } else {
+      display_names <- sapply(input$facility_filter, function(f) facility_names[f] %||% f)
+      paste("Facility:", paste(display_names, collapse=", "))
+    }
+    
+    foreman_text <- if ("All" %in% input$foreman_filter) {
+      "All Foremen"
+    } else {
+      display_names <- sapply(input$foreman_filter, function(f) foreman_names[f] %||% f)
+      paste("Foreman:", paste(display_names, collapse=", "))
+    }
+    
+    # Zone filter text
+    zone_text <- if (length(input$zone_filter) == 2) {
+      "Zones: P1, P2"
+    } else if (length(input$zone_filter) == 1) {
+      paste("Zone:", paste0("P", input$zone_filter))
+    } else {
+      "No Zones"
+    }
+    
+    # Get color scales from db_helpers based on grouping
+    custom_colors <- if(group_col == "facility") {
+      get_facility_base_colors()
+    } else if(group_col == "foreman") {
+      # Get the foreman colors from db_helpers
+      foreman_colors <- get_foreman_colors()
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Create mapping from foreman NUMBER to facility-based colors
+      foremen_in_data <- unique(na.omit(data[[group_col]]))
+      emp_colors <- character(0)
+      
+      for (foreman_num in foremen_in_data) {
+        foreman_num_str <- trimws(as.character(foreman_num))
+        
+        # Find the shortname for this foreman number
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
+        
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          facility <- foremen_lookup$facility[matches[1]]
+          
+          # Get the facility-based color for this shortname
+          if(shortname %in% names(foreman_colors)) {
+            emp_colors[foreman_num_str] <- foreman_colors[shortname]
+          }
+        }
+      }
+      
+      # Remove any NA colors
+      emp_colors <- emp_colors[!is.na(emp_colors)]
+      
+      # Return the mapped colors
+      emp_colors
+    } else {
+      NULL
+    }
+    
+    # Determine the plotting group column based on zone selection
+    plot_group_col <- if (length(input$zone_filter) > 1 && "combined_group" %in% names(data)) {
+      "combined_group"
+    } else if (length(input$zone_filter) > 1 && "zone_label" %in% names(data)) {
+      "zone_label"
+    } else {
+      group_col
+    }
+    
+    # Create the plot using the appropriate group column for color mapping
+    p <- ggplot(data, aes(x = time_group, y = count, 
+                         color = !!sym(plot_group_col), 
+                         fill = !!sym(plot_group_col), 
+                         group = !!sym(plot_group_col)))
+    
+    
+    # Add color scales based on grouping
+    if(!is.null(custom_colors)) {
+      # Add color scales with labels for the legend
+      if(group_col == "facility") {
+        # For facilities, map short names to full names in legend
+        p <- p + scale_color_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
+          drop = FALSE
+        ) + scale_fill_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
+          drop = FALSE
+        )
+      } else {
+        # For foremen, map employee numbers to names in legend
+        p <- p + scale_color_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
+          drop = FALSE
+        ) + scale_fill_manual(
+          values = custom_colors,
+          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
+          drop = FALSE
+        )
+      }
+    } else {
+      p <- p + scale_color_discrete() + scale_fill_discrete()
+    }
+    
+    if (input$graph_type == "bar") {
+      p <- p + geom_bar(stat = "identity", position = "dodge")
+    } else if (input$graph_type == "line") {
+      p <- p + geom_line(size = 1.2)
+    } else if (input$graph_type == "point") {
+      p <- p + geom_point(size = 3)
+    } else if (input$graph_type == "area") {
+      p <- p + geom_area(position = "stack", alpha = 0.6)
+    }
+    
+    subtitle_text <- paste(zone_text, "-", facility_text, "-", foreman_text)
+    if (data_source == "current") {
+      subtitle_text <- paste(subtitle_text, "(Current Data Only)")
+    }
+    
+    p <- p + labs(
+      title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
+      subtitle = subtitle_text,
+      x = "Week Starting",
+      y = "Number of SUCOs",
+      fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group),
+      color = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
+    ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 16),
+        axis.title = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom",
+        legend.title = element_text(face = "bold")
+      )
+    # Use weekly scale
+    p <- p + scale_x_date(
+      date_breaks = "2 weeks",
+      date_labels = "%m/%d",
+      limits = c(min(data$time_group), max(data$time_group))
+    )
+    return(p)
+  }
+  
   # Update species filter choices based on available data (use species_name)
   observe({
     data <- suco_data()
@@ -338,6 +640,32 @@ WHERE ainspecnum IS NOT NULL
   # Filter data based on user selections, now including multi-select for facility/foreman
   filtered_data <- reactive({
     data <- suco_data()
+    # Filter by zone if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      data <- data %>% filter(zone %in% input$zone_filter)
+    }
+    # Filter by facility if not 'All' and not empty
+    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
+      data <- data %>% filter(facility %in% input$facility_filter)
+    }
+    # Filter by foreman if not 'All' and not empty
+    if (!is.null(input$foreman_filter) && !("All" %in% input$foreman_filter)) {
+      data <- data %>% filter(foreman %in% input$foreman_filter)
+    }
+    # Filter by species if selected
+    if (input$species_filter != "All") {
+      data <- data %>% filter(species_name == input$species_filter)
+    }
+    return(data)
+  })
+  
+  # Filter current data based on user selections
+  filtered_data_current <- reactive({
+    data <- suco_data_current()
+    # Filter by zone if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      data <- data %>% filter(zone %in% input$zone_filter)
+    }
     # Filter by facility if not 'All' and not empty
     if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
       data <- data %>% filter(facility %in% input$facility_filter)
@@ -374,46 +702,165 @@ WHERE ainspecnum IS NOT NULL
     return(sf_data)
   })
   
+  # Process spatial data for mapping (current data only)
+  spatial_data_current <- reactive({
+    data <- filtered_data_current()
+    
+    # Create sf object for mapping
+    sf_data <- data %>%
+      # Use x and y coordinates if available, otherwise try to parse geometry
+      mutate(
+        longitude = as.numeric(x),
+        latitude = as.numeric(y),
+        has_coords = !is.na(longitude) & !is.na(latitude) &
+          longitude > -180 & longitude < 180 &
+          latitude > -90 & latitude < 90
+      ) %>%
+      filter(has_coords) %>%
+      # Create sf object
+      st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+    
+    return(sf_data)
+  })
+  
   # Aggregate data by selected time interval and grouping
   aggregated_data <- reactive({
     data <- filtered_data()
     
-    # Define the time interval column based on user selection
-    if (input$time_interval == "week") {
-      # For weekly, use the Monday start date of each week
-      data <- data %>%
-        mutate(time_group = week_start)
-    } else {
-      # For monthly, use the month and year
-      data <- data %>%
-        mutate(time_group = floor_date(inspdate, "month"))
-    }
+    # Use weekly intervals (Monday start date of each week)
+    data <- data %>%
+      mutate(time_group = week_start)
     
     # Define the grouping column
     group_col <- input$group_by
     
+    # Check if we should show zones as separate entities
+    show_zones_separately <- length(input$zone_filter) > 1
+    
     if (group_col == "mmcd_all") {
-      # Aggregate for the whole MMCD (no grouping by facility or foreman)
-      result <- data %>%
-        group_by(time_group) %>%
-        summarize(
-          count = n(),
-          total_fieldcount = sum(fieldcount, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        arrange(time_group)
-      # Add a dummy column for plotting
-      result$mmcd_all <- "MMCD (All)"
+      if (show_zones_separately) {
+        # Group by zone when both P1 and P2 are selected
+        result <- data %>%
+          group_by(time_group, zone) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group) %>%
+          mutate(zone_label = paste0("P", zone))
+      } else {
+        # Aggregate for the whole MMCD (no grouping by facility or foreman)
+        result <- data %>%
+          group_by(time_group) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group)
+        # Add a dummy column for plotting
+        result$mmcd_all <- "MMCD (All)"
+      }
     } else {
-      # Group and summarize data
-      result <- data %>%
-        group_by(time_group, !!sym(group_col)) %>%
-        summarize(
-          count = n(),
-          total_fieldcount = sum(fieldcount, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        arrange(time_group)
+      if (show_zones_separately) {
+        # Group by both the selected grouping column AND zone
+        result <- data %>%
+          group_by(time_group, !!sym(group_col), zone) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group) %>%
+          mutate(
+            combined_group = paste0(!!sym(group_col), " (P", zone, ")"),
+            zone_label = paste0("P", zone)
+          )
+      } else {
+        # Group and summarize data by the selected column only
+        result <- data %>%
+          group_by(time_group, !!sym(group_col)) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group)
+      }
+    }
+    
+    return(result)
+  })
+  
+  # Aggregate current data by selected time interval and grouping
+  aggregated_data_current <- reactive({
+    data <- filtered_data_current()
+    
+    # Use weekly intervals (Monday start date of each week)
+    data <- data %>%
+      mutate(time_group = week_start)
+    
+    # Define the grouping column
+    group_col <- input$group_by
+    
+    # Check if we should show zones as separate entities
+    show_zones_separately <- length(input$zone_filter) > 1
+    
+    if (group_col == "mmcd_all") {
+      if (show_zones_separately) {
+        # Group by zone when both P1 and P2 are selected
+        result <- data %>%
+          group_by(time_group, zone) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group) %>%
+          mutate(
+            mmcd_all = "MMCD (All)",
+            zone_label = paste0("P", zone),
+            combined_group = paste0("MMCD (All) (P", zone, ")")
+          )
+      } else {
+        # Group all data together for MMCD (All)
+        result <- data %>%
+          group_by(time_group) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group) %>%
+          mutate(mmcd_all = "MMCD (All)")
+      }
+    } else {
+      if (show_zones_separately) {
+        # Group by both the selected column and zone
+        result <- data %>%
+          group_by(time_group, !!sym(group_col), zone) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group) %>%
+          mutate(
+            combined_group = paste0(!!sym(group_col), " (P", zone, ")"),
+            zone_label = paste0("P", zone)
+          )
+      } else {
+        # Group and summarize data by the selected column only
+        result <- data %>%
+          group_by(time_group, !!sym(group_col)) %>%
+          summarize(
+            count = n(),
+            total_fieldcount = sum(fieldcount, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          arrange(time_group)
+      }
     }
     
     return(result)
@@ -421,175 +868,12 @@ WHERE ainspecnum IS NOT NULL
   
   # Generate trend plot
   output$trend_plot <- renderPlot({
-    data <- aggregated_data()
-    if (nrow(data) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5,
-                   label = "No SUCO data available with the selected filters", size = 6) +
-          theme_void()
-      )
-    }
-    if (input$time_interval == "week") {
-      data$time_label <- format(data$time_group, "%m/%d")
-    } else {
-      data$time_label <- format(data$time_group, "%b %Y")
-    }
-    group_col <- input$group_by
-    if (group_col == "mmcd_all") {
-      group_col <- "mmcd_all"
-    }
-    
-    # Get facility and foreman lookups for labels
-    facilities <- get_facility_lookup()
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Create facility name mapping
-    facility_names <- setNames(facilities$full_name, facilities$short_name)
-    
-    # Create foreman name mapping
-    foreman_names <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-    
-    title_interval <- ifelse(input$time_interval == "week", "Weekly", "Monthly")
-    title_group <- ifelse(input$group_by == "facility", "Facility", "Foreman")
-    
-    # Get facility and foreman lookups for display names in subtitle
-    facility_names <- setNames(facilities$full_name, facilities$short_name)
-    foreman_names <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-    
-    # Use full names in filter text
-    facility_text <- if ("All" %in% input$facility_filter) {
-      "All Facilities"
-    } else {
-      display_names <- sapply(input$facility_filter, function(f) facility_names[f] %||% f)
-      paste("Facility:", paste(display_names, collapse=", "))
-    }
-    
-    foreman_text <- if ("All" %in% input$foreman_filter) {
-      "All Foremen"
-    } else {
-      display_names <- sapply(input$foreman_filter, function(f) foreman_names[f] %||% f)
-      paste("Foreman:", paste(display_names, collapse=", "))
-    }
-    
-    # Get color scales from db_helpers based on grouping
-    custom_colors <- if(group_col == "facility") {
-      get_facility_base_colors()
-    } else if(group_col == "foreman") {
-      # Get the foreman colors from db_helpers
-      foreman_colors <- get_foreman_colors()
-      foremen_lookup <- get_foremen_lookup()
-      
-      # Debug info
-      
-      # Create mapping from foreman NUMBER to facility-based colors
-      # Step 1: Get the shortname for each foreman number in the data
-      # Step 2: Get the facility-based color for that shortname
-      
-      foremen_in_data <- unique(na.omit(data[[group_col]]))
-      emp_colors <- character(0)
-      
-      for (foreman_num in foremen_in_data) {
-        foreman_num_str <- trimws(as.character(foreman_num))
-        
-        # Find the shortname for this foreman number
-        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-        
-        if(length(matches) > 0) {
-          shortname <- foremen_lookup$shortname[matches[1]]
-          facility <- foremen_lookup$facility[matches[1]]
-          
-          # Get the facility-based color for this shortname
-          if(shortname %in% names(foreman_colors)) {
-            emp_colors[foreman_num_str] <- foreman_colors[shortname]
-          }
-        }
-      }
-      
-      # Remove any NA colors
-      emp_colors <- emp_colors[!is.na(emp_colors)]
-      
-      # Return the mapped colors
-      emp_colors
-    } else {
-      NULL
-    }
-    
-    # Create the plot using the original group_col values for color mapping
-    p <- ggplot(data, aes(x = time_group, y = count, 
-                         color = !!sym(group_col), 
-                         fill = !!sym(group_col), 
-                         group = !!sym(group_col)))
-    
-    
-    # Add color scales based on grouping
-    if(!is.null(custom_colors)) {
-      # Add color scales with labels for the legend
-      if(group_col == "facility") {
-        # For facilities, map short names to full names in legend
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
-          drop = FALSE
-        )
-      } else {
-        # For foremen, map employee numbers to names in legend
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
-          drop = FALSE
-        )
-      }
-    } else {
-      p <- p + scale_color_discrete() + scale_fill_discrete()
-    }
-    if (input$graph_type == "bar") {
-      p <- p + geom_bar(stat = "identity", position = "dodge")
-    } else if (input$graph_type == "line") {
-      p <- p + geom_line(size = 1.2)
-    } else if (input$graph_type == "point") {
-      p <- p + geom_point(size = 3)
-    } else if (input$graph_type == "area") {
-      p <- p + geom_area(position = "stack", alpha = 0.6)
-    }
-    p <- p + labs(
-      title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
-      subtitle = paste(facility_text, "-", foreman_text),
-      x = ifelse(input$time_interval == "week", "Week Starting", "Month"),
-      y = "Number of SUCOs",
-      fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group),
-      color = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
-    ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.title = element_text(face = "bold"),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom",
-        legend.title = element_text(face = "bold")
-      )
-    if (input$time_interval == "week") {
-      p <- p + scale_x_date(
-        date_breaks = "2 weeks",
-        date_labels = "%m/%d",
-        limits = c(min(data$time_group), max(data$time_group))
-      )
-    } else {
-      p <- p + scale_x_date(
-        date_breaks = "1 month",
-        date_labels = "%b %Y",
-        limits = c(min(data$time_group), max(data$time_group))
-      )
-    }
-    return(p)
+    create_trend_plot("all")
+  })
+  
+  # Generate current trend plot (for current data tab)
+  output$current_trend_plot <- renderPlot({
+    create_trend_plot("current")
   })
   
   # Generate map
@@ -631,6 +915,9 @@ WHERE ainspecnum IS NOT NULL
       foremen_lookup <- get_foremen_lookup()  # Add foremen lookup for popups
       foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)  # Ensure string format
       
+      # Create facility name mapping FIRST
+      facility_names <- setNames(facilities$full_name, facilities$short_name)
+      
       # Create popup text beforehand to avoid scope issues
       data <- data %>%
         mutate(
@@ -667,7 +954,6 @@ WHERE ainspecnum IS NOT NULL
                    "<b>Field Count:</b> ", fieldcount)
           }
         )
-      facility_names <- setNames(facilities$full_name, facilities$short_name)
       
       # Create color palette function
       pal <- colorFactor(
@@ -1023,7 +1309,7 @@ WHERE ainspecnum IS NOT NULL
           lng <- coords[1]
           lat <- coords[2]
           if (!is.na(lng) && !is.na(lat)) {
-            updateTabsetPanel(session, "tabset", selected = "Map")
+            updateTabsetPanel(session, "all_tabset", selected = "AllMap")
             leafletProxy("map") %>%
               setView(lng = lng, lat = lat, zoom = 15) %>%
               addCircleMarkers(lng = lng, lat = lat, radius = 15, color = "red", fill = TRUE, fillOpacity = 0.7, layerId = "highlighted_location")
@@ -1032,6 +1318,435 @@ WHERE ainspecnum IS NOT NULL
       }
     } else {
       leafletProxy("map") %>% clearGroup("highlighted_location")
+    }
+  })
+  
+  # ========== CURRENT DATA OUTPUTS (simplified to avoid duplication) ==========
+  
+  # Generate current map (uses same logic as main map but with current data)
+  output$current_map <- renderLeaflet({
+    # Use spatial_data_current() instead of spatial_data()
+    data <- spatial_data_current()
+    
+    # Get marker size multiplier
+    size_multiplier <- input$marker_size
+    
+    # Get facility and foremen lookups for display names
+    facilities <- get_facility_lookup()
+    
+    # Set up basemap provider
+    basemap <- switch(input$basemap,
+                      "osm" = providers$OpenStreetMap,
+                      "carto" = providers$CartoDB.Positron,
+                      "terrain" = providers$Stamen.Terrain,
+                      "satellite" = providers$Esri.WorldImagery,
+                      providers$CartoDB.Positron)
+    
+    # Handle case when no data is available
+    if (nrow(data) == 0) {
+      return(
+        leaflet() %>%
+          addProviderTiles(basemap) %>%
+          setView(lng = -93.2, lat = 45.0, zoom = 9) %>%
+          addControl(html = "<div style='background-color: white; padding: 10px;'><h4>No SUCO locations available with the selected filters (Current Data)</h4></div>",
+                     position = "topleft")
+      )
+    }
+    
+    # Create color palette based on field count or facility (SAME LOGIC AS MAIN MAP)
+    if (input$group_by == "facility") {
+      # Get facility colors and lookup from db_helpers
+      facility_colors <- get_facility_base_colors()
+      facilities <- get_facility_lookup()
+      foremen_lookup <- get_foremen_lookup()  # Add foremen lookup for popups
+      foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)  # Ensure string format
+      
+      # Create facility name mapping FIRST
+      facility_names <- setNames(facilities$full_name, facilities$short_name)
+      
+      # Create popup text beforehand to avoid scope issues
+      data <- data %>%
+        mutate(
+          popup_text = {
+            # Get proper foreman names with robust matching
+            foreman_names <- sapply(foreman, function(f) {
+              if (!is.na(f) && f != "" && !is.null(f)) {
+                # Ensure both foreman and emp_num are strings for comparison
+                foreman_str <- trimws(as.character(f))
+                
+                # Find matching foreman in lookup table
+                matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
+                
+                if(length(matches) > 0) {
+                  foremen_lookup$shortname[matches[1]]
+                } else {
+                  # Fallback: show the raw foreman ID if no match found
+                  paste0("FOS #", foreman_str)
+                }
+              } else {
+                "No FOS assigned"
+              }
+            })
+            
+            facility_names_vec <- sapply(facility, function(f) {
+              fname <- facility_names[f]
+              if(length(fname) > 0) fname[1] else f
+            })
+            
+            paste0("<b>Date:</b> ", inspdate, "<br>",
+                   "<b>Facility:</b> ", facility_names_vec, "<br>",
+                   "<b>FOS:</b> ", foreman_names, "<br>",
+                   "<b>Location:</b> ", location, "<br>",
+                   "<b>Field Count:</b> ", fieldcount, "<br>",
+                   "<b>Data Source:</b> Current Only")
+          }
+        )
+      
+      # Create color palette function
+      pal <- colorFactor(
+        palette = facility_colors,
+        domain = names(facility_colors))
+      
+      # Create a named vector for legend labels
+      legend_labels <- sapply(names(facility_colors), function(code) facility_names[code] %||% code)
+      
+      # Create map with facility coloring
+      leaflet(data) %>%
+        addProviderTiles(basemap) %>%
+        fitBounds(
+          lng1 = min(st_coordinates(data)[,1]),
+          lat1 = min(st_coordinates(data)[,2]),
+          lng2 = max(st_coordinates(data)[,1]),
+          lat2 = max(st_coordinates(data)[,2])
+        ) %>%
+        addCircleMarkers(
+          radius = ~pmin(15, (3 * size_multiplier)),
+          color = "black",
+          weight = 1.5,
+          fillColor = ~pal(facility),
+          fillOpacity = 0.8,
+          popup = ~popup_text
+        ) %>%
+        addLegend(
+          position = "bottomright",
+          title = "Facility (Current Data)",
+          colors = facility_colors,
+          labels = legend_labels,
+          opacity = 0.8
+        )
+    } else if (input$group_by == "foreman") {
+      # Filter out records with NA foreman before processing
+      data <- data %>% filter(!is.na(foreman) & foreman != "")
+      
+      # Check if we have any data left after filtering
+      if (nrow(data) == 0) {
+        return(
+          leaflet() %>%
+            addProviderTiles(basemap) %>%
+            setView(lng = -93.2, lat = 45.0, zoom = 9) %>%
+            addControl(html = "<div style='background-color: white; padding: 10px;'><h4>No SUCO locations with valid FOS data available (Current Data)</h4></div>",
+                       position = "topleft")
+        )
+      }
+      
+      # Get both colors and lookup exactly as documented
+      foreman_colors <- get_foreman_colors()
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Create mapping from foreman NUMBER to facility-based colors (same logic as plot)
+      foremen_in_data <- unique(na.omit(data$foreman))
+      emp_colors <- character(0)
+      
+      for (foreman_num in foremen_in_data) {
+        foreman_num_str <- trimws(as.character(foreman_num))
+        
+        # Find the shortname for this foreman number
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
+        
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          facility <- foremen_lookup$facility[matches[1]]
+          
+          # Get the facility-based color for this shortname
+          if(shortname %in% names(foreman_colors)) {
+            emp_colors[foreman_num_str] <- foreman_colors[shortname]
+          }
+        }
+      }
+      
+      # Remove any NA colors
+      emp_colors <- emp_colors[!is.na(emp_colors)]
+      
+      # Create ORDERED colors to ensure legend and map match exactly
+      # Order by facility, then by foreman within facility (same as legend)
+      ordered_foremen <- foremen_lookup[order(foremen_lookup$facility, foremen_lookup$shortname), ]
+      ordered_emp_colors <- character(0)
+      ordered_emp_numbers <- character(0)
+      
+      for (i in 1:nrow(ordered_foremen)) {
+        emp_num <- trimws(as.character(ordered_foremen$emp_num[i]))
+        if (emp_num %in% names(emp_colors)) {
+          ordered_emp_colors <- c(ordered_emp_colors, emp_colors[emp_num])
+          ordered_emp_numbers <- c(ordered_emp_numbers, emp_num)
+        }
+      }
+      names(ordered_emp_colors) <- ordered_emp_numbers
+      
+      # Create color palette function for leaflet using ORDERED colors
+      pal <- colorFactor(
+        palette = ordered_emp_colors,
+        domain = names(ordered_emp_colors),
+        ordered = TRUE  # Maintain order
+      )
+      
+      # Create popup text beforehand for foreman map too
+      data <- data %>%
+        mutate(
+          popup_text_foreman = {
+            # Get proper foreman names with robust matching
+            foreman_names <- sapply(foreman, function(f) {
+              if (!is.na(f) && f != "" && !is.null(f)) {
+                # Ensure both foreman and emp_num are strings for comparison
+                foreman_str <- trimws(as.character(f))
+                
+                # Find matching foreman in lookup table
+                matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
+                
+                if(length(matches) > 0) {
+                  foremen_lookup$shortname[matches[1]]
+                } else {
+                  # Fallback: show the raw foreman ID if no match found
+                  paste0("FOS #", foreman_str)
+                }
+              } else {
+                "No FOS assigned"
+              }
+            })
+            
+            facility_names_vec <- sapply(facility, function(f) {
+              fname <- facilities$full_name[facilities$short_name == f]
+              if(length(fname) > 0) fname[1] else f
+            })
+            
+            paste0("<b>Date:</b> ", inspdate, "<br>",
+                   "<b>Facility:</b> ", facility_names_vec, "<br>",
+                   "<b>FOS:</b> ", foreman_names, "<br>",
+                   "<b>Location:</b> ", location, "<br>",
+                   "<b>Field Count:</b> ", fieldcount, "<br>",
+                   "<b>Data Source:</b> Current Only")
+          }
+        )
+      
+      # Create map with foreman coloring
+      leaflet(data) %>%
+        addProviderTiles(basemap) %>%
+        fitBounds(
+          lng1 = min(st_coordinates(data)[,1]),
+          lat1 = min(st_coordinates(data)[,2]),
+          lng2 = max(st_coordinates(data)[,1]),
+          lat2 = max(st_coordinates(data)[,2])
+        ) %>%
+        addCircleMarkers(
+          radius = ~pmin(15, (3 * size_multiplier)),
+          color = "black",
+          weight = 1.5,
+          fillColor = ~pal(foreman),
+          fillOpacity = 0.8,
+          popup = ~popup_text_foreman
+        ) %>%
+        addLegend(
+          position = "bottomright",
+          title = "FOS (Current Data)",
+          colors = ordered_emp_colors,  # Use same ordered colors as map palette
+          labels = {
+            # Use same ordering as the map palette
+            ordered_labels <- character(0)
+            for (i in 1:length(ordered_emp_numbers)) {
+              emp_num <- ordered_emp_numbers[i]
+              foreman_info <- foremen_lookup[trimws(as.character(foremen_lookup$emp_num)) == emp_num, ]
+              if(nrow(foreman_info) > 0) {
+                ordered_labels <- c(ordered_labels, foreman_info$shortname[1])
+              }
+            }
+            ordered_labels
+          },
+          opacity = 0.8
+        )
+    } else {
+      # For MMCD (All) case, use a single color
+      leaflet(data) %>%
+        addProviderTiles(basemap) %>%
+        fitBounds(
+          lng1 = min(st_coordinates(data)[,1]),
+          lat1 = min(st_coordinates(data)[,2]),
+          lng2 = max(st_coordinates(data)[,1]),
+          lat2 = max(st_coordinates(data)[,2])
+        ) %>%
+        addCircleMarkers(
+          radius = ~pmin(15, (3 * size_multiplier)),
+          color = "black",
+          weight = 1.5,
+          fillColor = "#1f77b4", # Standard blue color
+          fillOpacity = 0.8,
+          popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
+                          "<b>Facility:</b> ", facility, "<br>",
+                          "<b>Foreman:</b> ", foreman, "<br>",
+                          "<b>Location:</b> ", location, "<br>",
+                          "<b>Field Count:</b> ", fieldcount, "<br>",
+                          "<b>Data Source:</b> Current Only")
+        ) %>%
+        addLegend(
+          position = "bottomright",
+          title = "MMCD (Current Data)",
+          colors = "#1f77b4",
+          labels = "All",
+          opacity = 0.8
+        )
+    }
+  })
+  
+  # Generate current summary table
+  output$current_summary_table <- renderDataTable({
+    # Use filtered_data_current() instead of filtered_data()
+    data <- filtered_data_current()
+    group_col <- input$group_by
+    
+    if (group_col == "mmcd_all") {
+      summary_data <- data %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        )
+      rownames(summary_data) <- "MMCD (All) - Current Data"
+    } else if (group_col == "facility") {
+      facilities <- get_facility_lookup()
+      all_facilities <- data.frame(
+        facility = facilities$short_name,
+        full_name = facilities$full_name
+      )
+      
+      summary_stats <- data %>%
+        group_by(facility) %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        )
+      
+      summary_data <- all_facilities %>%
+        left_join(summary_stats, by = "facility") %>%
+        mutate(
+          Total_SUCOs = replace_na(Total_SUCOs, 0),
+          Total_Locations = replace_na(Total_Locations, 0),
+          Total_Species_Count = replace_na(Total_Species_Count, 0),
+          First_SUCO = as.Date(First_SUCO),
+          Last_SUCO = as.Date(Last_SUCO)
+        ) %>%
+        arrange(desc(Total_SUCOs), facility)
+      
+      colnames(summary_data)[1:2] <- c("Facility", "Facility_Name")
+      
+    } else {  # foreman grouping
+      foremen_lookup <- get_foremen_lookup()
+      
+      all_foremen <- data.frame(
+        foreman = foremen_lookup$emp_num,
+        shortname = foremen_lookup$shortname,
+        facility = foremen_lookup$facility
+      )
+      
+      summary_stats <- data %>%
+        group_by(foreman) %>%
+        summarize(
+          Total_SUCOs = n(),
+          Total_Locations = n_distinct(sitecode),
+          Total_Species_Count = sum(cnt, na.rm = TRUE),
+          First_SUCO = min(inspdate),
+          Last_SUCO = max(inspdate)
+        )
+      
+      summary_data <- all_foremen %>%
+        left_join(summary_stats, by = c("foreman")) %>%
+        mutate(
+          Total_SUCOs = replace_na(Total_SUCOs, 0),
+          Total_Locations = replace_na(Total_Locations, 0),
+          Total_Species_Count = replace_na(Total_Species_Count, 0),
+          First_SUCO = as.Date(First_SUCO),
+          Last_SUCO = as.Date(Last_SUCO)
+        ) %>%
+        arrange(desc(Total_SUCOs), facility, shortname)
+      
+      colnames(summary_data)[1:3] <- c("Foreman", "Name", "Facility")
+    }
+    return(summary_data)
+  }, options = list(pageLength = 15, 
+                   searching = TRUE,
+                   columnDefs = list(list(
+                     targets = c("First_SUCO", "Last_SUCO"),
+                     render = JS("function(data, type, row) {
+                       return data ? data : 'N/A';
+                     }")
+                   ))))
+  
+  # Generate current location plot
+  output$current_location_plotly <- plotly::renderPlotly({
+    # Use filtered_data_current() instead of filtered_data()
+    data <- filtered_data_current()
+    top_locations <- data %>%
+      group_by(location) %>%
+      summarize(visits = n(), .groups = "drop") %>%
+      filter(!is.na(location)) %>%
+      arrange(desc(visits)) %>%
+      head(15)
+    if (nrow(top_locations) == 0) {
+      return(plotly::ggplotly(ggplot() + annotate("text", x = 0.5, y = 0.5, label = "No SUCO data available with the selected filters (Current Data)", size = 6) + theme_void()))
+    }
+    p <- ggplot(top_locations, aes(x = reorder(location, visits), y = visits, text = location)) +
+      geom_bar(stat = "identity", fill = "#1f77b4") +  # Blue to match current data theme
+      geom_text(aes(label = visits), hjust = 1.3, color = "black") +
+      coord_flip() +
+      labs(title = "Top SUCO Locations (Current Data Only)", x = "Location", y = "Number of Visits") +
+      theme_minimal() +
+      theme(plot.title = element_text(face = "bold", size = 16), axis.title = element_text(face = "bold"))
+    p <- plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = "current_location_plotly")
+    plotly::event_register(p, 'plotly_click')
+    p
+  })
+  
+  # Handle current location plot clicks
+  observe({
+    click <- plotly::event_data("plotly_click", source = "current_location_plotly")
+    if (!is.null(click)) {
+      idx <- click$pointNumber + 1
+      data <- filtered_data_current()
+      top_locations <- data %>%
+        group_by(location) %>%
+        summarize(visits = n(), .groups = "drop") %>%
+        arrange(desc(visits)) %>%
+        head(15)
+      if (idx > 0 && idx <= nrow(top_locations)) {
+        loc <- top_locations$location[idx]
+        spatial <- spatial_data_current()
+        if (nrow(spatial) > 0 && loc %in% spatial$location) {
+          point <- spatial[spatial$location == loc, ][1, ]
+          coords <- sf::st_coordinates(point)
+          lng <- coords[1]
+          lat <- coords[2]
+          if (!is.na(lng) && !is.na(lat)) {
+            updateTabsetPanel(session, "current_tabset", selected = "CurrentMap")
+            leafletProxy("current_map") %>%
+              setView(lng = lng, lat = lat, zoom = 15) %>%
+              addCircleMarkers(lng = lng, lat = lat, radius = 15, color = "red", fill = TRUE, fillOpacity = 0.7, layerId = "highlighted_location_current")
+          }
+        }
+      }
+    } else {
+      leafletProxy("current_map") %>% clearGroup("highlighted_location_current")
     }
   })
 }

@@ -1,59 +1,10 @@
-# Shared Database Helper Functions and Common Utilities
-# This file contains common database queries and utility functions used across multiple apps
-
-# Load required libraries (if not already loaded)
-if (!require(DBI, quietly = TRUE)) library(DBI)
-if (!require(RPostgres, quietly = TRUE)) library(RPostgres)
-if (!require(dplyr, quietly = TRUE)) library(dplyr)
-
-# Load environment variables helper
-load_env_variables <- function() {
-  env_paths <- c(
-    "../../.env",
-    "../../../.env", 
-    "/srv/shiny-server/.env"
-  )
-  
-  env_loaded <- FALSE
-  for (path in env_paths) {
-    if (file.exists(path)) {
-      readRenviron(path)
-      env_loaded <- TRUE
-      break
-    }
-  }
-  
-  return(env_loaded)
-}
-
-# Database Helper Functions for MMCD Metrics Applications
-# This file contains shared functions for database connections and common lookups
-
-# Load required libraries
-suppressPackageStartupMessages({
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-})
-
 # =============================================================================
 # MMCD METRICS - DATABASE HELPER FUNCTIONS
 # =============================================================================
 # This file contains shared database connections, lookup functions, and 
 # utility functions used across multiple MMCD dashboard applications.
-#
-# ORGANIZATION:
-# 1. Library Dependencies
-# 2. Environment & Database Connection
-# 3. Core Lookup Functions  
-# 4. Color System Functions
-# 5. Visualization Helper Functions
-# 6. Status & Choice Functions
-# 7. Utility Functions
-# =============================================================================
-
-# =============================================================================
-# 1. LIBRARY DEPENDENCIES
+# 
+# All apps should source this file: source("../../shared/db_helpers.R")
 # =============================================================================
 
 # Load required libraries
@@ -62,10 +13,6 @@ suppressPackageStartupMessages({
   library(RPostgres)
   library(dplyr)
 })
-
-# =============================================================================
-# 2. ENVIRONMENT & DATABASE CONNECTION
-# =============================================================================
 
 # Load environment variables function
 load_env_vars <- function() {

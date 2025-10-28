@@ -1,33 +1,11 @@
-# Shared Database Helper Functions and Common Utilities
-# This file contains common database queries and utility functions used across multiple apps
-
-# Load required libraries (if not already loaded)
-if (!require(DBI, quietly = TRUE)) library(DBI)
-if (!require(RPostgres, quietly = TRUE)) library(RPostgres)
-if (!require(dplyr, quietly = TRUE)) library(dplyr)
-
-# Load environment variables helper
-load_env_variables <- function() {
-  env_paths <- c(
-    "../../.env",
-    "../../../.env", 
-    "/srv/shiny-server/.env"
-  )
-  
-  env_loaded <- FALSE
-  for (path in env_paths) {
-    if (file.exists(path)) {
-      readRenviron(path)
-      env_loaded <- TRUE
-      break
-    }
-  }
-  
-  return(env_loaded)
-}
-
-# Database Helper Functions for MMCD Metrics Applications
-# This file contains shared functions for database connections and common lookups
+# =============================================================================
+# MMCD METRICS - DATABASE HELPER FUNCTIONS
+# =============================================================================
+# This file contains shared database connections, lookup functions, and 
+# utility functions used across multiple MMCD dashboard applications.
+# 
+# All apps should source this file: source("../../shared/db_helpers.R")
+# =============================================================================
 
 # Load required libraries
 suppressPackageStartupMessages({
@@ -57,8 +35,40 @@ load_env_vars <- function() {
     }
   }
   
-  # If no .env file found, environment variables should already be set by Docker
-  return(env_loaded)
+  # Environment variables might already be set (Docker)
+  required_vars <- c("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", 
+                     "POSTGRES_USER", "POSTGRES_PASSWORD")
+  
+  if (!env_loaded && !all(sapply(required_vars, function(var) Sys.getenv(var) != ""))) {
+    warning("Could not load environment variables from .env file and required variables are not set")
+    return(FALSE)
+  }
+  
+  return(TRUE)
+}
+
+# Centralized database connection function
+get_db_connection <- function() {
+  # Load environment variables
+  if (!load_env_vars()) {
+    warning("Failed to load environment variables")
+    return(NULL)
+  }
+  
+  tryCatch({
+    con <- dbConnect(
+      RPostgres::Postgres(),
+      host = Sys.getenv("POSTGRES_HOST"),
+      port = as.numeric(Sys.getenv("POSTGRES_PORT")),
+      dbname = Sys.getenv("POSTGRES_DB"),
+      user = Sys.getenv("POSTGRES_USER"),
+      password = Sys.getenv("POSTGRES_PASSWORD")
+    )
+    return(con)
+  }, error = function(e) {
+    warning(paste("Database connection failed:", e$message))
+    return(NULL)
+  })
 }
 
 # Database connection function
@@ -256,6 +266,32 @@ get_foremen_lookup <- function() {
   })
 }
 
+# Get species lookup table
+get_species_lookup <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    # Get species lookup from lookup_specieslist table
+    species_lookup <- dbGetQuery(con, "
+      SELECT 
+        sppcode,
+        genus,
+        species
+      FROM lookup_specieslist 
+      ORDER BY genus, species
+    ")
+    
+    dbDisconnect(con)
+    return(species_lookup)
+    
+  }, error = function(e) {
+    warning(paste("Error loading species lookup:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
+}
+
 
 
 # Internal helper function to generate visually distinct colors
@@ -365,7 +401,7 @@ get_foreman_colors <- function() {
     base_color <- facility_colors[facility]
     if (is.na(base_color)) next
     
-    # Convert base color to HSV
+    # Convert base color to HSV for manipulation
     rgb_base <- col2rgb(base_color) / 255
     hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
     
@@ -374,32 +410,41 @@ get_foreman_colors <- function() {
       # Single foreman gets the facility base color
       foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
     } else {
-      # Sort ALL foremen in this facility by shortname for consistent ordering
+      # Sort foremen by shortname for consistent ordering
       facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
       base_hue <- hsv_base[1]
-      hue_range <- 0.15  # ±15% variation around facility color
       
-      # Create consistent color assignments for ALL foremen in this facility
+      # Use a smaller hue range for better facility color grouping
+      hue_range <- 0.08  # ±8% variation around facility color (was 15%)
+      
+      # Create distinct but related colors for foremen in this facility
       for (i in 1:n_foremen) {
         foreman_name <- facility_foremen$shortname[i]
         
-        # Use foreman's PERMANENT position within ALL facility foremen
-        # This position never changes regardless of filtering
-        hue_offset <- if (n_foremen == 1) {
-          0
+        # Calculate hue offset based on position
+        if (n_foremen == 2) {
+          # For 2 foremen: one slightly lighter, one slightly darker
+          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
         } else {
-          # Map position to hue range: position 1 -> -hue_range, position n -> +hue_range
-          -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
+          # For 3+ foremen: spread across the hue range
+          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
         }
         
-        # Calculate consistent hue for this foreman (RELATED TO FACILITY)
+        # Calculate foreman hue (keep within facility color family)
         foreman_hue <- (base_hue + hue_offset) %% 1
         
-        # Use position-based saturation and value for consistency
-        saturation <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))  # 0.7 to 0.95
-        value <- 0.75 + (0.2 * (i - 1) / max(1, n_foremen - 1))        # 0.75 to 0.95
+        # Vary saturation and brightness more distinctly
+        if (n_foremen <= 3) {
+          # For small groups, use more pronounced saturation/value differences
+          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
+          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
+        } else {
+          # For larger groups, use smaller but still distinct differences
+          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
+          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
+        }
         
-        # Assign the permanent color for this foreman
+        # Assign the color for this foreman
         foreman_idx <- which(foremen$shortname == foreman_name)
         foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
       }

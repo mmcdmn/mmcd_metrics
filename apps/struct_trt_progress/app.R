@@ -63,15 +63,15 @@ ui <- fluidPage(
                                      "Unknown (U)" = "U"),
                          selected = c("D", "W", "U")),
       
-      # Dropdown for facility filter - using db_helpers to get full names
-      selectInput("facility_filter", "Facility:",
-                  choices = get_facility_choices(),
-                  selected = "all"),
+      # Dropdown for facility filter - using db_helpers to get full names (multi-select)
+      selectizeInput("facility_filter", "Filter by Facility:",
+                  choices = c("All"),  # Will be populated from get_facility_lookup()
+                  selected = "All", multiple = TRUE),
       
       # Group by selection
       selectInput("group_by", "Group by:",
                   choices = c("Facility" = "facility",
-                              "FOS (Foreman)" = "foreman", 
+                              "FOS" = "foreman", 
                               "All MMCD" = "mmcd_all"),
                   selected = "facility"),
       
@@ -119,7 +119,19 @@ ui <- fluidPage(
 )
 
 # Define server logic
-server <- function(input, output) {
+server <- function(input, output, session) {
+  
+  # Initialize facility choices from db_helpers
+  observe({
+    facilities <- get_facility_lookup()
+    # Create named vector with full names as labels and short names as values
+    facility_choices <- c("All" = "All")
+    facility_choices <- c(
+      facility_choices,
+      setNames(facilities$short_name, facilities$full_name)
+    )
+    updateSelectizeInput(session, "facility_filter", choices = facility_choices)
+  })
   
   # Fetch data from database
   raw_data <- reactive({
@@ -134,9 +146,6 @@ server <- function(input, output) {
     
     # Build the status filter based on user selection
     status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")
-    
-    # Build facility filter condition
-    facility_condition <- if (input$facility_filter == "all") "" else sprintf("AND facility = '%s'", input$facility_filter)
     
     # Build structure type filter condition  
     struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s_type = '%s'", input$structure_type_filter)
@@ -165,8 +174,7 @@ WHERE (s.status_udw IN (%s) OR s.status_udw IS NULL)
 AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
 %s
 %s
-%s
-", status_types, facility_condition, struct_type_condition, priority_condition)
+", status_types, struct_type_condition, priority_condition)
     
     structures <- dbGetQuery(con, structures_query)
     
@@ -212,6 +220,12 @@ WHERE t.list_type = 'STR'
     if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
       structures <- structures %>% filter(zone %in% input$zone_filter)
       structure_treatments <- structure_treatments %>% filter(zone %in% input$zone_filter)
+    }
+    
+    # Filter by facility if selected (like suco_history)
+    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
+      structures <- structures %>% filter(facility %in% input$facility_filter)
+      structure_treatments <- structure_treatments %>% filter(facility %in% input$facility_filter)
     }
     
     # Use custom date from input
@@ -370,35 +384,27 @@ WHERE t.list_type = 'STR'
       data$display_name <- data[[plot_group_col]]
     }
     
-    # Get colors based on grouping
-    custom_colors <- if(group_col == "facility") {
-      get_facility_base_colors()
+    # Get colors based on grouping - use new consolidated system with zone support
+    use_zones <- length(input$zone_filter) > 1
+    combined_groups <- plot_group_col == "combined_group"
+    
+    if(group_col == "facility") {
+      custom_colors <- get_facility_base_colors(alpha_zones = use_zones, combined_groups = combined_groups)
     } else if(group_col == "foreman") {
-      get_foreman_colors()
+      custom_colors <- get_foreman_colors(alpha_zones = use_zones, combined_groups = combined_groups)
     } else {
-      NULL
+      custom_colors <- NULL
     }
     
-    # Handle color mapping for combined groups
-    if (plot_group_col == "combined_group" && !is.null(custom_colors)) {
-      # Extract base names from combined groups
-      base_names <- unique(data$combined_group)
-      combined_colors <- character(0)
-      
-      for (combined_name in base_names) {
-        # Extract base name by removing zone info like " (P1)" or " (P2)"
-        base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
-        base_name <- trimws(base_name)
-        
-        # Map to existing color if available
-        if (base_name %in% names(custom_colors)) {
-          combined_colors[combined_name] <- custom_colors[base_name]
+    # If using zones, apply alpha manually to P2 colors
+    if (use_zones && !is.null(custom_colors)) {
+      # Apply 60% alpha to P2 zone colors
+      for (name in names(custom_colors)) {
+        if (grepl("\\(P2\\)", name)) {
+          # Convert to rgba with alpha
+          rgb_vals <- col2rgb(custom_colors[name])
+          custom_colors[name] <- sprintf("rgba(%d,%d,%d,0.6)", rgb_vals[1], rgb_vals[2], rgb_vals[3])
         }
-      }
-      
-      # Update custom_colors to use combined group mapping
-      if (length(combined_colors) > 0) {
-        custom_colors <- combined_colors
       }
     }
     
@@ -410,7 +416,17 @@ WHERE t.list_type = 'STR'
     
     # Set up the title with appropriate filters
     status_types_text <- paste(input$status_types, collapse = ", ")
-    facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
+    
+    # Handle facility text for multi-select
+    facility_text <- if (is.null(input$facility_filter) || "All" %in% input$facility_filter) {
+      "All Facilities"
+    } else {
+      # Get facility names for display
+      facilities <- get_facility_lookup()
+      facility_names <- setNames(facilities$full_name, facilities$short_name)
+      display_names <- sapply(input$facility_filter, function(f) facility_names[f] %||% f)
+      paste("Facility:", paste(display_names, collapse=", "))
+    }
     zone_text <- if (length(input$zone_filter) == 0) {
       "No Zones"
     } else if (length(input$zone_filter) == 1) {
@@ -428,7 +444,7 @@ WHERE t.list_type = 'STR'
         # First draw total bars
         geom_bar(aes(y = y_total), stat = "identity", alpha = 0.3) +
         # Then overlay active bars  
-        geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +
+        geom_bar(aes(y = y_active), stat = "identity") +
         # Finally overlay expiring bars
         geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
         scale_fill_manual(values = custom_colors, guide = "none")
@@ -455,7 +471,7 @@ WHERE t.list_type = 'STR'
         title = paste("Structures by", 
                       case_when(
                         group_col == "facility" ~ "Facility",
-                        group_col == "foreman" ~ "Foreman",
+                        group_col == "foreman" ~ "FOS",
                         group_col == "mmcd_all" ~ "MMCD (All)",
                         TRUE ~ group_col
                       ), "-", title_metric),
@@ -463,7 +479,7 @@ WHERE t.list_type = 'STR'
                          "- Expiring within", input$expiring_days, "days"),
         x = case_when(
           group_col == "facility" ~ "Facility",
-          group_col == "foreman" ~ "Foreman",
+          group_col == "foreman" ~ "FOS",
           group_col == "mmcd_all" ~ "MMCD (All)",
           TRUE ~ group_col
         ),

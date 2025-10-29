@@ -6,7 +6,6 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
   library(lubridate)
-  library(scales)  # For percent_format
   library(rlang)  # For sym() function
 })
 
@@ -43,23 +42,19 @@ db_name <- Sys.getenv("DB_NAME")
 # Define UI for the application
 ui <- fluidPage(
   # Application title
-  titlePanel("Structure Treatment Progress and History"),
+  titlePanel("Structures with Active and Expiring Treatments"),
   
   # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
-      # Progress-specific controls
-      conditionalPanel(
-        condition = "input.graph_tabs == 'Current Progress'",
-        # Slider to control the expiration window
-        sliderInput("expiring_days", "Days Until Expiration:",
-                    min = 1, max = 30, value = 7, step = 1),
-        
-        # Date input to simulate "today"
-        dateInput("custom_today", "Pretend Today is:",
-                  value = Sys.Date(), 
-                  format = "yyyy-mm-dd")
-      ),
+      # Slider to control the expiration window
+      sliderInput("expiring_days", "Days Until Expiration:",
+                  min = 1, max = 30, value = 7, step = 1),
+      
+      # Date input to simulate "today"
+      dateInput("custom_today", "Pretend Today is:",
+                value = Sys.Date(), 
+                format = "yyyy-mm-dd"),
       
       # Toggle for structure status types
       checkboxGroupInput("status_types", "Include Structure Status:",
@@ -68,15 +63,15 @@ ui <- fluidPage(
                                      "Unknown (U)" = "U"),
                          selected = c("D", "W", "U")),
       
-      # Dropdown for facility filter - using db_helpers to get full names (multi-select)
-      selectizeInput("facility_filter", "Filter by Facility:",
-                  choices = c("All"),  # Will be populated from get_facility_lookup()
-                  selected = "All", multiple = TRUE),
+      # Dropdown for facility filter - using db_helpers to get full names
+      selectInput("facility_filter", "Facility:",
+                  choices = get_facility_choices(),
+                  selected = "all"),
       
       # Group by selection
       selectInput("group_by", "Group by:",
                   choices = c("Facility" = "facility",
-                              "FOS" = "foreman", 
+                              "FOS (Foreman)" = "foreman", 
                               "All MMCD" = "mmcd_all"),
                   selected = "facility"),
       
@@ -95,28 +90,17 @@ ui <- fluidPage(
                   choices = c("All" = "all", "BLUE", "GREEN", "RED", "YELLOW"),
                   selected = "all"),
       
-      # Conditional help text based on active tab
-      conditionalPanel(
-        condition = "input.graph_tabs == 'Current Progress'",
-        helpText("This visualization shows structures by facility with three categories:",
-                 tags$br(),
-                 tags$ul(
-                   tags$li(tags$span(style = "color:gray", "Gray: Total structures")),
-                   tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Structures with active treatments")),
-                   tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Structures with treatments expiring within the selected days"))
-                 )),
-        
-        helpText(tags$b("Date Simulation:"),
-                 tags$br(),
-                 "Use 'Pretend Today is' to see what treatments would be active/expiring on any specific date. Only treatments that would still be active on that date are considered.")
-      ),
+      helpText("This visualization shows structures by facility with three categories:",
+               tags$br(),
+               tags$ul(
+                 tags$li(tags$span(style = "color:gray", "Gray: Total structures")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Structures with active treatments")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Structures with treatments expiring within the selected days"))
+               )),
       
-      conditionalPanel(
-        condition = "input.graph_tabs == 'Historical Trends'",
-        helpText("This visualization shows the historical proportion of structures with active treatment over time.",
-                 tags$br(),
-                 "Blue line: actual proportion | Red dashed line: seasonal average")
-      ),
+      helpText(tags$b("Date Simulation:"),
+               tags$br(),
+               "Use 'Pretend Today is' to see what treatments would be active/expiring on any specific date. Only treatments that would still be active on that date are considered."),
       
       helpText(tags$b("Structure Status:"),
                tags$br(),
@@ -129,44 +113,13 @@ ui <- fluidPage(
     
     # Main panel for displaying the graph
     mainPanel(
-      tabsetPanel(
-        id = "graph_tabs",
-        tabPanel("Current Progress", 
-          plotOutput("structureGraph", height = "600px")
-        ),
-        tabPanel("Historical Trends", 
-          # Add controls specific to historical view
-          fluidRow(
-            column(6,
-              selectInput("start_year", "Start Year:",
-                         choices = seq(2010, 2025), selected = 2018)
-            ),
-            column(6,
-              selectInput("end_year", "End Year:",
-                         choices = seq(2010, 2025), selected = 2025)
-            )
-          ),
-          plotOutput("historyGraph", height = "600px")
-        )
-      )
+      plotOutput("structureGraph", height = "600px")
     )
   )
 )
 
 # Define server logic
-server <- function(input, output, session) {
-  
-  # Initialize facility choices from db_helpers
-  observe({
-    facilities <- get_facility_lookup()
-    # Create named vector with full names as labels and short names as values
-    facility_choices <- c("All" = "All")
-    facility_choices <- c(
-      facility_choices,
-      setNames(facilities$short_name, facilities$full_name)
-    )
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices)
-  })
+server <- function(input, output) {
   
   # Fetch data from database
   raw_data <- reactive({
@@ -181,6 +134,9 @@ server <- function(input, output, session) {
     
     # Build the status filter based on user selection
     status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")
+    
+    # Build facility filter condition
+    facility_condition <- if (input$facility_filter == "all") "" else sprintf("AND facility = '%s'", input$facility_filter)
     
     # Build structure type filter condition  
     struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s_type = '%s'", input$structure_type_filter)
@@ -209,7 +165,8 @@ WHERE (s.status_udw IN (%s) OR s.status_udw IS NULL)
 AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
 %s
 %s
-", status_types, struct_type_condition, priority_condition)
+%s
+", status_types, facility_condition, struct_type_condition, priority_condition)
     
     structures <- dbGetQuery(con, structures_query)
     
@@ -255,12 +212,6 @@ WHERE t.list_type = 'STR'
     if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
       structures <- structures %>% filter(zone %in% input$zone_filter)
       structure_treatments <- structure_treatments %>% filter(zone %in% input$zone_filter)
-    }
-    
-    # Filter by facility if selected (like suco_history)
-    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
-      structures <- structures %>% filter(facility %in% input$facility_filter)
-      structure_treatments <- structure_treatments %>% filter(facility %in% input$facility_filter)
     }
     
     # Use custom date from input
@@ -365,188 +316,6 @@ WHERE t.list_type = 'STR'
     return(combined_data)
   })
   
-  # Historical data reactive for the Historical Trends tab
-  historical_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
-    
-    # Build the status filter based on user selection
-    status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")
-    
-    # Build structure type filter condition  
-    struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s.s_type = '%s'", input$structure_type_filter)
-    
-    # Build priority filter condition
-    priority_condition <- if (input$priority_filter == "all") "" else sprintf("AND s.priority = '%s'", input$priority_filter)
-    
-    # Fetch archive data
-    query_archive <- sprintf("
-SELECT
-  t.sitecode,
-  t.inspdate,
-  COALESCE(m.effect_days, 0) AS effect_days,
-  s.facility,
-  CASE 
-    WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-    ELSE NULL
-  END as foreman,
-  g.zone
-FROM public.dblarv_insptrt_archive t
-LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-LEFT JOIN public.loc_cxstruct s ON t.sitecode = s.sitecode
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND t.inspdate >= h.startdate 
-  AND (h.enddate IS NULL OR t.inspdate <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
-WHERE t.inspdate >= date '%d-01-01'
-AND t.inspdate < date '%d-01-01'
-AND t.list_type = 'STR'
-AND (s.status_udw IN (%s) OR s.status_udw IS NULL)
-%s
-%s
-", as.numeric(input$start_year), as.numeric(input$end_year) + 1, status_types, struct_type_condition, priority_condition)
-    
-    archive_data <- dbGetQuery(con, query_archive)
-    
-    # Fetch current data
-    query_current <- sprintf("
-SELECT
-  t.sitecode,
-  t.inspdate,
-  COALESCE(m.effect_days, 0) AS effect_days,
-  s.facility,
-  CASE 
-    WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-    ELSE NULL
-  END as foreman,
-  g.zone
-FROM public.dblarv_insptrt_current t
-LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-LEFT JOIN public.loc_cxstruct s ON t.sitecode = s.sitecode
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND t.inspdate >= h.startdate 
-  AND (h.enddate IS NULL OR t.inspdate <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
-WHERE t.inspdate >= date '%d-01-01'
-AND t.inspdate < date '%d-01-01'
-AND t.list_type = 'STR'
-AND (s.status_udw IN (%s) OR s.status_udw IS NULL)
-%s
-%s
-", as.numeric(input$start_year), as.numeric(input$end_year) + 1, status_types, struct_type_condition, priority_condition)
-    
-    current_data <- dbGetQuery(con, query_current)
-    
-    # Combine archive and current data
-    all_treatments <- rbind(archive_data, current_data)
-    
-    # Get total structures for proportion calculation
-    total_structures_query <- sprintf("
-SELECT 
-  s.sitecode,
-  s.facility,
-  CASE 
-    WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-    ELSE NULL
-  END as foreman,
-  g.zone
-FROM public.loc_cxstruct s
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND CURRENT_DATE >= h.startdate 
-  AND (h.enddate IS NULL OR CURRENT_DATE <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
-WHERE (s.status_udw IN (%s) OR s.status_udw IS NULL)
-AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
-%s
-%s
-", status_types, struct_type_condition, priority_condition)
-    
-    total_structures <- dbGetQuery(con, total_structures_query)
-    
-    dbDisconnect(con)
-    
-    return(list(treatments = all_treatments, total_structures = total_structures))
-  })
-  
-  # Process historical data based on filters
-  processed_historical_data <- reactive({
-    data_list <- historical_data()
-    treatments <- data_list$treatments
-    total_structures <- data_list$total_structures
-    
-    # Filter by facility if selected (same logic as current progress)
-    if (!is.null(input$facility_filter) && length(input$facility_filter) > 0 && !"All" %in% input$facility_filter) {
-      treatments <- treatments %>% filter(facility %in% input$facility_filter)
-      total_structures <- total_structures %>% filter(facility %in% input$facility_filter)
-    }
-    
-    # Filter by zone if selected
-    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
-      treatments <- treatments %>% filter(zone %in% input$zone_filter)
-      total_structures <- total_structures %>% filter(zone %in% input$zone_filter)
-    }
-    
-    # Calculate treatment end dates and determine which treatments were active each month
-    treatments <- treatments %>%
-      mutate(
-        inspdate = as.Date(inspdate),
-        treatment_end_date = inspdate + effect_days
-      )
-    
-    # Create monthly sequence
-    start_date <- as.Date(paste0(input$start_year, "-01-01"))
-    end_date <- as.Date(paste0(input$end_year, "-12-31"))
-    monthly_dates <- seq(start_date, end_date, by = "month")
-    
-    # For each month, calculate how many structures had active treatment
-    monthly_data <- data.frame()
-    
-    for (month_date in monthly_dates) {
-      month_date <- as.Date(month_date)
-      
-      # Find treatments that were active during this month
-      active_treatments <- treatments %>%
-        filter(
-          inspdate <= month_date,
-          treatment_end_date >= month_date
-        ) %>%
-        distinct(sitecode)
-      
-      # Count total structures for this time period
-      total_count <- nrow(total_structures)
-      
-      # Count treated structures for this month
-      treated_count <- nrow(active_treatments)
-      
-      monthly_data <- rbind(monthly_data, data.frame(
-        date = month_date,
-        total_structures = total_count,
-        treated_structures = treated_count,
-        proportion_active_treatment = if(total_count > 0) treated_count / total_count else 0
-      ))
-    }
-    
-    return(monthly_data)
-  })
-  
   # Generate the plot
   output$structureGraph <- renderPlot({
     # Get the processed data
@@ -601,27 +370,35 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
       data$display_name <- data[[plot_group_col]]
     }
     
-    # Get colors based on grouping - use new consolidated system with zone support
-    use_zones <- length(input$zone_filter) > 1
-    combined_groups <- plot_group_col == "combined_group"
-    
-    if(group_col == "facility") {
-      custom_colors <- get_facility_base_colors(alpha_zones = use_zones, combined_groups = combined_groups)
+    # Get colors based on grouping
+    custom_colors <- if(group_col == "facility") {
+      get_facility_base_colors()
     } else if(group_col == "foreman") {
-      custom_colors <- get_foreman_colors(alpha_zones = use_zones, combined_groups = combined_groups)
+      get_foreman_colors()
     } else {
-      custom_colors <- NULL
+      NULL
     }
     
-    # If using zones, apply alpha manually to P2 colors
-    if (use_zones && !is.null(custom_colors)) {
-      # Apply 60% alpha to P2 zone colors
-      for (name in names(custom_colors)) {
-        if (grepl("\\(P2\\)", name)) {
-          # Convert to rgba with alpha
-          rgb_vals <- col2rgb(custom_colors[name])
-          custom_colors[name] <- sprintf("rgba(%d,%d,%d,0.6)", rgb_vals[1], rgb_vals[2], rgb_vals[3])
+    # Handle color mapping for combined groups
+    if (plot_group_col == "combined_group" && !is.null(custom_colors)) {
+      # Extract base names from combined groups
+      base_names <- unique(data$combined_group)
+      combined_colors <- character(0)
+      
+      for (combined_name in base_names) {
+        # Extract base name by removing zone info like " (P1)" or " (P2)"
+        base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+        base_name <- trimws(base_name)
+        
+        # Map to existing color if available
+        if (base_name %in% names(custom_colors)) {
+          combined_colors[combined_name] <- custom_colors[base_name]
         }
+      }
+      
+      # Update custom_colors to use combined group mapping
+      if (length(combined_colors) > 0) {
+        custom_colors <- combined_colors
       }
     }
     
@@ -633,17 +410,7 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
     
     # Set up the title with appropriate filters
     status_types_text <- paste(input$status_types, collapse = ", ")
-    
-    # Handle facility text for multi-select
-    facility_text <- if (is.null(input$facility_filter) || "All" %in% input$facility_filter) {
-      "All Facilities"
-    } else {
-      # Get facility names for display
-      facilities <- get_facility_lookup()
-      facility_names <- setNames(facilities$full_name, facilities$short_name)
-      display_names <- sapply(input$facility_filter, function(f) facility_names[f] %||% f)
-      paste("Facility:", paste(display_names, collapse=", "))
-    }
+    facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
     zone_text <- if (length(input$zone_filter) == 0) {
       "No Zones"
     } else if (length(input$zone_filter) == 1) {
@@ -661,7 +428,7 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
         # First draw total bars
         geom_bar(aes(y = y_total), stat = "identity", alpha = 0.3) +
         # Then overlay active bars  
-        geom_bar(aes(y = y_active), stat = "identity") +
+        geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +
         # Finally overlay expiring bars
         geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
         scale_fill_manual(values = custom_colors, guide = "none")
@@ -688,7 +455,7 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
         title = paste("Structures by", 
                       case_when(
                         group_col == "facility" ~ "Facility",
-                        group_col == "foreman" ~ "FOS",
+                        group_col == "foreman" ~ "Foreman",
                         group_col == "mmcd_all" ~ "MMCD (All)",
                         TRUE ~ group_col
                       ), "-", title_metric),
@@ -696,7 +463,7 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
                          "- Expiring within", input$expiring_days, "days"),
         x = case_when(
           group_col == "facility" ~ "Facility",
-          group_col == "foreman" ~ "FOS",
+          group_col == "foreman" ~ "Foreman",
           group_col == "mmcd_all" ~ "MMCD (All)",
           TRUE ~ group_col
         ),
@@ -731,97 +498,6 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
                label = "Active", hjust = 0) +
       annotate("text", x = 0.1, y = y_max * 0.725,
                label = "Expiring", hjust = 0)
-  })
-  
-    # Generate the historical trends plot
-  output$historicalGraph <- renderPlot({
-    data <- processed_historical_data()
-    
-    if (nrow(data) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5,
-                   label = "No data available with the selected filters", size = 6) +
-          theme_void()
-      )
-    }
-    
-    # Calculate seasonal averages
-    treatment_trends <- data %>%
-      mutate(
-        month = month(date)
-      ) %>%
-      group_by(month) %>%
-      mutate(seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE)) %>%
-      ungroup() %>%
-      arrange(date)
-    
-    # Build filter text for subtitle
-    filter_parts <- c()
-    
-    if (!is.null(input$facility_filter) && length(input$facility_filter) > 0 && !"All" %in% input$facility_filter) {
-      if (length(input$facility_filter) == 1) {
-        filter_parts <- c(filter_parts, paste("Facility:", input$facility_filter[1]))
-      } else {
-        filter_parts <- c(filter_parts, paste("Facilities:", paste(input$facility_filter, collapse = ", ")))
-      }
-    }
-    
-    if (input$structure_type_filter != "all") {
-      filter_parts <- c(filter_parts, paste("Structure Type:", input$structure_type_filter))
-    }
-    
-    if (input$priority_filter != "all") {
-      filter_parts <- c(filter_parts, paste("Priority:", input$priority_filter))
-    }
-    
-    status_types_text <- paste(input$status_types, collapse = ", ")
-    filter_parts <- c(filter_parts, paste("Status:", status_types_text))
-    
-    if (length(input$zone_filter) == 1) {
-      filter_parts <- c(filter_parts, paste("Zone: P", input$zone_filter))
-    } else if (length(input$zone_filter) == 2) {
-      filter_parts <- c(filter_parts, paste("Zones: P", paste(input$zone_filter, collapse = ", P")))
-    }
-    
-    filter_text <- if (length(filter_parts) > 0) {
-      paste0(" (", paste(filter_parts, collapse = " | "), ")")
-    } else {
-      ""
-    }
-    
-    # Create the plot
-    ggplot(treatment_trends, aes(x = date)) +
-      geom_line(aes(y = proportion_active_treatment), color = "blue", size = 1) +
-      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1.2) +
-      labs(
-        title = sprintf(
-          "Proportion of Structures with Active Treatment (%d to %d)%s",
-          as.numeric(input$start_year),
-          as.numeric(input$end_year),
-          filter_text
-        ),
-        subtitle = "Blue: actual | Red dashed: seasonal average",
-        x = "Date",
-        y = "Proportion of Active Treatment"
-      ) +
-      scale_y_continuous(
-        labels = scales::percent_format(),
-        breaks = seq(0, 1, by = 0.1)
-      ) +
-      scale_x_date(
-        date_breaks = "6 months",
-        date_labels = "%b %Y",
-        expand = expansion(mult = c(0.02, 0.02))
-      ) +
-      theme_minimal() +
-      theme(
-        axis.text.x = element_text(angle = 45, hjust = 1, size = 12, face = "bold"),
-        axis.text.y = element_text(size = 12, face = "bold"),
-        axis.title = element_text(size = 14, face = "bold"),
-        plot.title = element_text(size = 16, face = "bold"),
-        plot.subtitle = element_text(size = 12)
-      )
   })
 }
 

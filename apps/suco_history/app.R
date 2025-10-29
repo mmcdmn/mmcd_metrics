@@ -457,7 +457,6 @@ WHERE ainspecnum IS NOT NULL
                          harborage_facility, facility)
       )
     
-    # Debug: Check foreman data after SQL queries
     # Combine species data
     all_species <- bind_rows(species_current, species_archive)
 
@@ -474,9 +473,6 @@ WHERE ainspecnum IS NOT NULL
         # Ensure foreman values are consistent strings
         foreman = trimws(as.character(foreman))
       )
-
-    # DEBUG: Check final data before returning
-    
     return(joined_data)
   })
   
@@ -500,15 +496,23 @@ WHERE ainspecnum IS NOT NULL
       start_date <- format(input$date_range[1], "%Y-%m-%d")
       end_date <- format(input$date_range[2], "%Y-%m-%d")
       
-      # Query with essential fields and proper zone detection
+      # Query with essential fields and proper zone detection, including harborage lookup
       current_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility, s.foreman,
+s.id, s.ainspecnum, s.facility, 
+CASE 
+  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
+  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
+  ELSE NULL
+END as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y,
 g.zone
 FROM public.dbadult_insp_current s
+LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
+  AND s.inspdate >= h.startdate 
+  AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
 LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
@@ -675,7 +679,7 @@ WHERE ainspecnum IS NOT NULL
       NULL
     }
     
-    # Determine the plotting group column based on zone selection
+    # Determine the plotting group column and handle color mapping for combined zones
     plot_group_col <- if (length(input$zone_filter) > 1 && "combined_group" %in% names(data)) {
       "combined_group"
     } else if (length(input$zone_filter) > 1 && "zone_label" %in% names(data)) {
@@ -684,17 +688,57 @@ WHERE ainspecnum IS NOT NULL
       group_col
     }
     
+    # If using combined groups, create color mapping based on base names
+    if (plot_group_col %in% c("combined_group", "zone_label") && !is.null(custom_colors)) {
+      # Extract base names from combined groups (remove zone info)
+      base_names <- unique(data[[plot_group_col]])
+      combined_colors <- character(0)
+      
+      for (combined_name in base_names) {
+        # Extract base name by removing zone info like " (P1)" or " (P2)"
+        base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+        base_name <- trimws(base_name)
+        
+        # Map to existing color if available
+        if (base_name %in% names(custom_colors)) {
+          combined_colors[combined_name] <- custom_colors[base_name]
+        }
+      }
+      
+      # Update custom_colors to use combined group mapping
+      if (length(combined_colors) > 0) {
+        custom_colors <- combined_colors
+      }
+      
+      # Add zone column for visual differentiation
+      if ("combined_group" %in% names(data)) {
+        data$zone_type <- ifelse(grepl("\\(P1\\)", data$combined_group), "P1", 
+                                ifelse(grepl("\\(P2\\)", data$combined_group), "P2", "Unknown"))
+      }
+    }
+    
     # Create the plot using the appropriate group column for color mapping
-    p <- ggplot(data, aes(x = time_group, y = count, 
-                         color = !!sym(plot_group_col), 
-                         fill = !!sym(plot_group_col), 
-                         group = !!sym(plot_group_col)))
+    plot_aes <- if (plot_group_col %in% c("combined_group", "zone_label") && "zone_type" %in% names(data)) {
+      # Use color and fill for facility/foreman, alpha will be added separately
+      aes(x = time_group, y = count, 
+          color = !!sym(plot_group_col), 
+          fill = !!sym(plot_group_col), 
+          group = !!sym(plot_group_col))
+    } else {
+      # Standard mapping when single zone or no zone info
+      aes(x = time_group, y = count, 
+          color = !!sym(plot_group_col), 
+          fill = !!sym(plot_group_col), 
+          group = !!sym(plot_group_col))
+    }
+    
+    p <- ggplot(data, plot_aes)
     
     
     # Add color scales based on grouping
     if(!is.null(custom_colors)) {
       # Add color scales with labels for the legend
-      if(group_col == "facility") {
+      if(group_col == "facility" && plot_group_col != "combined_group") {
         # For facilities, map short names to full names in legend
         p <- p + scale_color_manual(
           values = custom_colors,
@@ -705,7 +749,7 @@ WHERE ainspecnum IS NOT NULL
           labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
           drop = FALSE
         )
-      } else {
+      } else if(group_col == "foreman" && plot_group_col != "combined_group") {
         # For foremen, map employee numbers to names in legend
         p <- p + scale_color_manual(
           values = custom_colors,
@@ -716,6 +760,45 @@ WHERE ainspecnum IS NOT NULL
           labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
           drop = FALSE
         )
+      } else if(plot_group_col == "combined_group") {
+        # For combined groups, use the mapped colors directly
+        p <- p + scale_color_manual(
+          values = custom_colors,
+          drop = FALSE
+        ) + scale_fill_manual(
+          values = custom_colors,
+          drop = FALSE
+        )
+        
+        # Add discrete alpha scale for zone differentiation that shows in legend
+        if ("zone_type" %in% names(data)) {
+          # Create a factor for zone_type to ensure proper legend
+          data$zone_factor <- factor(data$zone_type, levels = c("P1", "P2"))
+          
+          # Rebuild plot with alpha aesthetic
+          p <- ggplot(data, aes(x = time_group, y = count, 
+                               color = !!sym(plot_group_col), 
+                               fill = !!sym(plot_group_col),
+                               alpha = zone_factor,
+                               group = !!sym(plot_group_col))) +
+            scale_color_manual(
+              values = custom_colors,
+              drop = FALSE
+            ) + scale_fill_manual(
+              values = custom_colors,
+              drop = FALSE
+            ) +
+            scale_alpha_manual(
+              name = "Zone",
+              values = c("P1" = 1.0, "P2" = 0.6),
+              labels = c("P1" = "P1 (Solid)", "P2" = "P2 (Faded)"),
+              drop = FALSE
+            )
+        }
+      } else {
+        # Default case
+        p <- p + scale_color_manual(values = custom_colors, drop = FALSE) + 
+                 scale_fill_manual(values = custom_colors, drop = FALSE)
       }
     } else {
       p <- p + scale_color_discrete() + scale_fill_discrete()

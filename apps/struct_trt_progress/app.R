@@ -63,10 +63,10 @@ ui <- fluidPage(
                                      "Unknown (U)" = "U"),
                          selected = c("D", "W", "U")),
       
-      # Dropdown for facility filter - using db_helpers to get full names
-      selectInput("facility_filter", "Facility:",
-                  choices = get_facility_choices(),
-                  selected = "all"),
+      # Dropdown for facility filter - using db_helpers to get full names with multiple selection
+      selectizeInput("facility_filter", "Facility:",
+                    choices = get_facility_choices(),
+                    selected = "all", multiple = TRUE),
       
       # Group by selection
       selectInput("group_by", "Group by:",
@@ -79,15 +79,6 @@ ui <- fluidPage(
       checkboxGroupInput("zone_filter", "Zones:",
                          choices = c("P1" = "1", "P2" = "2"),
                          selected = c("1", "2")),
-      
-      # Year inputs for historical analysis
-      selectInput("start_year", "Start Year:",
-                  choices = seq(2010, 2025),
-                  selected = 2018),
-      
-      selectInput("end_year", "End Year:",
-                  choices = seq(2010, 2025),
-                  selected = 2025),
       
       # Dropdown for structure type filter  
       selectInput("structure_type_filter", "Structure Type:",
@@ -126,7 +117,19 @@ ui <- fluidPage(
         tabPanel("Current Progress", 
                  plotOutput("structureGraph", height = "600px")
         ),
-        tabPanel("Historical Trends", 
+        tabPanel("Historical Trends",
+                 fluidRow(
+                   column(3,
+                          selectInput("start_year", "Start Year:",
+                                      choices = seq(2010, 2025),
+                                      selected = 2018)
+                   ),
+                   column(3,
+                          selectInput("end_year", "End Year:",
+                                      choices = seq(2010, 2025),
+                                      selected = 2025)
+                   )
+                 ),
                  plotOutput("historicalGraph", height = "600px")
         )
       )
@@ -137,12 +140,13 @@ ui <- fluidPage(
 # Define server logic
 server <- function(input, output) {
   
-  # Helper functions copied from struct_trt_history
-  get_facility_condition <- function(facility) {
-    if (facility == "all") {
+  # Helper functions copied from struct_trt_history - updated for multiple facility selection
+  get_facility_condition <- function(facility_filter) {
+    if (is.null(facility_filter) || ("all" %in% facility_filter)) {
       return("") # No filtering
     } else {
-      return(sprintf("AND trt.facility = '%s'", facility)) # Filter by the specified facility
+      facility_list <- paste0("'", paste(facility_filter, collapse = "','"), "'")
+      return(sprintf("AND trt.facility IN (%s)", facility_list))
     }
   }
   
@@ -182,10 +186,11 @@ server <- function(input, output) {
     }
   }
   
-  get_facility_condition_total <- function(facility, structure_type, priority, include_status_values) {
+  get_facility_condition_total <- function(facility_filter, structure_type, priority, include_status_values) {
     conditions <- c()
-    if (facility != "all") {
-      conditions <- c(conditions, sprintf("facility = '%s'", facility))
+    if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
+      facility_list <- paste0("'", paste(facility_filter, collapse = "','"), "'")
+      conditions <- c(conditions, sprintf("facility IN (%s)", facility_list))
     }
     if (structure_type != "all") {
       # Handle compound types and case-insensitivity for total structure count
@@ -321,8 +326,13 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
     # Build the status filter based on user selection
     status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")
     
-    # Build facility filter condition
-    facility_condition <- if (input$facility_filter == "all") "" else sprintf("AND facility = '%s'", input$facility_filter)
+    # Build facility filter condition - handle multiple selection
+    facility_condition <- if (is.null(input$facility_filter) || ("all" %in% input$facility_filter)) {
+      ""
+    } else {
+      facility_list <- paste0("'", paste(input$facility_filter, collapse = "','"), "'")
+      sprintf("AND facility IN (%s)", facility_list)
+    }
     
     # Build structure type filter condition  
     struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s_type = '%s'", input$structure_type_filter)
@@ -596,7 +606,11 @@ WHERE t.list_type = 'STR'
     
     # Set up the title with appropriate filters
     status_types_text <- paste(input$status_types, collapse = ", ")
-    facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
+    facility_text <- if (is.null(input$facility_filter) || ("all" %in% input$facility_filter)) {
+      "All Facilities"
+    } else {
+      paste("Facilities:", paste(input$facility_filter, collapse = ", "))
+    }
     zone_text <- if (length(input$zone_filter) == 0) {
       "No Zones"
     } else if (length(input$zone_filter) == 1) {
@@ -825,16 +839,28 @@ WHERE 1=1
     
     # Create filter description for title
     filters <- c()
-    if (input$facility_filter != "all") filters <- c(filters, paste("Facility:", input$facility_filter))
+    if (!is.null(input$facility_filter) && !("all" %in% input$facility_filter)) {
+      if (length(input$facility_filter) == 1) {
+        filters <- c(filters, paste("Facility:", input$facility_filter))
+      } else {
+        filters <- c(filters, paste("Facilities:", paste(input$facility_filter, collapse = ", ")))
+      }
+    }
     if (input$structure_type_filter != "all") filters <- c(filters, paste("Type:", input$structure_type_filter))
     if (input$priority_filter != "all") filters <- c(filters, paste("Priority:", input$priority_filter))
     
-    # Map facility code to full name if a specific facility is selected
-    if (input$facility_filter != "all") {
+    # Map facility codes to full names if specific facilities are selected
+    if (!is.null(input$facility_filter) && !("all" %in% input$facility_filter)) {
       facilities <- get_facility_lookup()
-      facility_full_name <- facilities$full_name[facilities$short_name == input$facility_filter]
-      if (length(facility_full_name) > 0) {
-        filters <- c(filters[-1], paste("Facility:", facility_full_name))  # Replace facility filter with full name
+      facility_full_names <- sapply(input$facility_filter, function(f) {
+        full_name <- facilities$full_name[facilities$short_name == f]
+        if (length(full_name) > 0) full_name else f
+      })
+      # Replace facility filter with full names
+      if (length(input$facility_filter) == 1) {
+        filters[1] <- paste("Facility:", facility_full_names)
+      } else {
+        filters[1] <- paste("Facilities:", paste(facility_full_names, collapse = ", "))
       }
     }
     

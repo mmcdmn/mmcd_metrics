@@ -266,7 +266,6 @@ server <- function(input, output, session) {
   # Main data reactive - gets all air sites with calculated status
   air_sites_data <- reactive({
     input$refresh_data  # Trigger on refresh button
-    
     req(input$analysis_date, input$lookback_period, input$rain_threshold, input$treatment_threshold)
     
     con <- get_db_connection()

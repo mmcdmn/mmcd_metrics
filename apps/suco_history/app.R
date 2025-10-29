@@ -11,6 +11,7 @@ suppressPackageStartupMessages({
   library(sf) # For handling spatial data
   library(stringr) # For string manipulation
   library(plotly)
+  library(later) # For delayed execution to prevent infinite loops
 })
 
 # Source the shared database helper functions
@@ -45,19 +46,46 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       # Group by selection
+      h4("Analysis Options"),
       radioButtons("group_by", "Group By:",
                    choices = c("MMCD (All)" = "mmcd_all",
                                "Facility" = "facility", 
                                "FOS" = "foreman"),
                    selected = "mmcd_all"),
       
-      # Date range selection - default to current year
-      dateRangeInput("date_range", "Select Date Range:",
+      hr(),
+      
+      # Date shortcuts
+      h4("Date Selection"),
+      fluidRow(
+        column(4, actionButton("this_year", "This Year", class = "btn-primary btn-sm", style = "width: 100%;")),
+        column(4, actionButton("this_month", "This Month", class = "btn-info btn-sm", style = "width: 100%;")),
+        column(4, actionButton("this_week", "This Week", class = "btn-success btn-sm", style = "width: 100%;"))
+      ),
+      br(),
+      
+      # Year slider (only visible for All Data tab with multi-year capability)
+      conditionalPanel(
+        condition = "input.main_tabset == 'All Data (Current + Archive)'",
+        tags$style(type = "text/css", ".irs-grid-pol.small {height: 0px;}",
+                   ".irs-grid-text {font-size: 8pt;}"),
+        sliderInput("year_range", "Year Range:",
+                    min = 2015, max = as.numeric(format(Sys.Date(), "%Y")),
+                    value = c(as.numeric(format(Sys.Date(), "%Y")), as.numeric(format(Sys.Date(), "%Y"))),
+                    sep = "", step = 1),
+        br()
+      ),
+      
+      # Date range selection - behavior depends on which tab is active
+      dateRangeInput("date_range", "Custom Date Range:",
                      start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
                      end = Sys.Date(),
                      format = "yyyy-mm-dd"),
       
+      hr(),
+      
       # Filter by zone (P1/P2)
+      h4("Location Filters"),
       checkboxGroupInput("zone_filter", "Filter by Zone:",
                         choices = c("P1" = "1", "P2" = "2"),
                         selected = c("1", "2")),
@@ -74,6 +102,11 @@ ui <- fluidPage(
       
       # Add species filter to sidebarPanel
       selectInput("species_filter", "Filter by Species:", choices = c("All"), selected = "All"),
+      
+      hr(),
+      
+      # Display and visualization options
+      h4("Display Options"),
       # Graph type selector
       selectInput("graph_type", "Graph Type:",
                   choices = c("Bar" = "bar", "Line" = "line", "Point" = "point", "Area" = "area"),
@@ -123,6 +156,193 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
+  # Reactive values to prevent infinite loops between date controls
+  updating_date_range <- reactiveVal(FALSE)
+  updating_year_range <- reactiveVal(FALSE)
+  
+  # Date shortcut handlers - behavior depends on active tab
+  observeEvent(input$this_year, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    start_date <- as.Date(paste0(current_year, "-01-01"))
+    end_date <- Sys.Date()
+    
+    # Set flag to prevent infinite loop
+    updating_date_range(TRUE)
+    updating_year_range(TRUE)
+    
+    # Always update date range to current year
+    updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+    
+    # Only update year slider if on All Data tab
+    if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+      updateSliderInput(session, "year_range", value = c(current_year, current_year))
+    }
+    
+    # Reset flags after a short delay
+    later::later(function() {
+      updating_date_range(FALSE)
+      updating_year_range(FALSE)
+    }, 0.1)
+  })
+  
+  observeEvent(input$this_month, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    current_month <- as.numeric(format(Sys.Date(), "%m"))
+    start_date <- as.Date(paste0(current_year, "-", sprintf("%02d", current_month), "-01"))
+    end_date <- Sys.Date()
+    
+    # Set flag to prevent infinite loop
+    updating_date_range(TRUE)
+    updating_year_range(TRUE)
+    
+    # Always update date range to current month
+    updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+    
+    # Only update year slider if on All Data tab
+    if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+      updateSliderInput(session, "year_range", value = c(current_year, current_year))
+    }
+    
+    # Reset flags after a short delay
+    later::later(function() {
+      updating_date_range(FALSE)
+      updating_year_range(FALSE)
+    }, 0.1)
+  })
+  
+  observeEvent(input$this_week, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    # Get start of current week (Monday)
+    start_date <- floor_date(Sys.Date(), "week", week_start = 1)
+    end_date <- Sys.Date()
+    
+    # Set flag to prevent infinite loop
+    updating_date_range(TRUE)
+    updating_year_range(TRUE)
+    
+    # Always update date range to current week
+    updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+    
+    # Only update year slider if on All Data tab
+    if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+      updateSliderInput(session, "year_range", value = c(current_year, current_year))
+    }
+    
+    # Reset flags after a short delay
+    later::later(function() {
+      updating_date_range(FALSE)
+      updating_year_range(FALSE)
+    }, 0.1)
+  })
+  
+  # Year slider handler - only works when on All Data tab and not updating
+  observeEvent(input$year_range, {
+    # Only process if we're on the All Data tab and not already updating
+    if (!updating_year_range() && 
+        !is.null(input$main_tabset) && 
+        input$main_tabset == "All Data (Current + Archive)") {
+      
+      start_year <- input$year_range[1]
+      end_year <- input$year_range[2]
+      
+      # Create date range from year selection
+      start_date <- as.Date(paste0(start_year, "-01-01"))
+      end_date <- if (end_year == as.numeric(format(Sys.Date(), "%Y"))) {
+        # If current year is selected as end, use today's date
+        Sys.Date()
+      } else {
+        # Otherwise use end of that year
+        as.Date(paste0(end_year, "-12-31"))
+      }
+      
+      # Set flag and update date range input
+      updating_date_range(TRUE)
+      updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+      
+      # Reset flag after a short delay
+      later::later(function() {
+        updating_date_range(FALSE)
+      }, 0.1)
+    }
+  }, ignoreInit = TRUE)  # Ignore initial trigger
+  
+  # Custom date range handler - behavior depends on active tab and not updating
+  observeEvent(input$date_range, {
+    if (!updating_date_range() && 
+        !is.null(input$date_range) && 
+        length(input$date_range) == 2) {
+      
+      start_year <- as.numeric(format(input$date_range[1], "%Y"))
+      end_year <- as.numeric(format(input$date_range[2], "%Y"))
+      current_year <- as.numeric(format(Sys.Date(), "%Y"))
+      
+      # If on Current Data tab, restrict to current year only
+      if (!is.null(input$main_tabset) && input$main_tabset == "Current Data") {
+        if (start_year != current_year || end_year != current_year) {
+          # Force dates back to current year
+          new_start <- as.Date(paste0(current_year, "-01-01"))
+          new_end <- Sys.Date()
+          
+          updating_date_range(TRUE)
+          updateDateRangeInput(session, "date_range", start = new_start, end = new_end)
+          
+          # Show a notification
+          showNotification("Current Data tab is limited to current year data only. Use 'All Data' tab for multi-year analysis.", 
+                          type = "warning", duration = 3)
+          
+          # Reset flag after a short delay
+          later::later(function() {
+            updating_date_range(FALSE)
+          }, 0.1)
+        }
+      } else if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+        # On All Data tab, update year slider to match
+        if (!identical(c(start_year, end_year), input$year_range)) {
+          updating_year_range(TRUE)
+          updateSliderInput(session, "year_range", value = c(start_year, end_year))
+          
+          # Reset flag after a short delay
+          later::later(function() {
+            updating_year_range(FALSE)
+          }, 0.1)
+        }
+      }
+    }
+  }, ignoreInit = TRUE)  # Ignore initial trigger
+  
+  # Tab change handler - adjust date controls when switching tabs
+  observeEvent(input$main_tabset, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    
+    if (input$main_tabset == "Current Data") {
+      # When switching to Current Data, restrict to current year
+      current_start <- input$date_range[1]
+      current_end <- input$date_range[2]
+      
+      if (!is.null(current_start) && !is.null(current_end)) {
+        start_year <- as.numeric(format(current_start, "%Y"))
+        end_year <- as.numeric(format(current_end, "%Y"))
+        
+        # If date range extends beyond current year, reset to current year
+        if (start_year != current_year || end_year != current_year) {
+          new_start <- as.Date(paste0(current_year, "-01-01"))
+          new_end <- Sys.Date()
+          
+          updating_date_range(TRUE)
+          updateDateRangeInput(session, "date_range", start = new_start, end = new_end)
+          
+          showNotification("Switched to Current Data - date range limited to current year.", 
+                          type = "info", duration = 2)
+          
+          # Reset flag after a short delay
+          later::later(function() {
+            updating_date_range(FALSE)
+          }, 0.1)
+        }
+      }
+    }
+  }, ignoreInit = TRUE)
+  
   # Initialize facility choices from db_helpers
   observe({
     facilities <- get_facility_lookup()
@@ -276,7 +496,7 @@ WHERE ainspecnum IS NOT NULL
 
     # Join SUCO data with species data and lookup for names
     joined_data <- all_data %>%
-      left_join(all_species, by = "ainspecnum") %>%
+      left_join(all_species, by = "ainspecnum", relationship = "many-to-many") %>%
       left_join(species_lookup, by = c("spp" = "sppcode")) %>%
       mutate(
         species_name = dplyr::case_when(
@@ -364,7 +584,7 @@ WHERE ainspecnum IS NOT NULL
     
     # Join SUCO data with species data and lookup for names
     joined_data <- all_data %>%
-      left_join(species_current, by = "ainspecnum") %>%
+      left_join(species_current, by = "ainspecnum", relationship = "many-to-many") %>%
       left_join(species_lookup, by = c("spp" = "sppcode")) %>%
       mutate(
         species_name = dplyr::case_when(

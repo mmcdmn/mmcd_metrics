@@ -71,7 +71,7 @@ ui <- fluidPage(
       # Group by selection
       selectInput("group_by", "Group by:",
                   choices = c("Facility" = "facility",
-                              "FOS (Foreman)" = "foreman", 
+                              "FOS" = "foreman", 
                               "All MMCD" = "mmcd_all"),
                   selected = "facility"),
       
@@ -326,32 +326,33 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
     # Build the status filter based on user selection
     status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")
     
-    # Build facility filter condition - handle multiple selection
+    # Build facility filter condition - handle multiple selection with table alias
     facility_condition <- if (is.null(input$facility_filter) || ("all" %in% input$facility_filter)) {
       ""
     } else {
       facility_list <- paste0("'", paste(input$facility_filter, collapse = "','"), "'")
-      sprintf("AND facility IN (%s)", facility_list)
+      sprintf("AND s.facility IN (%s)", facility_list)
     }
     
     # Build structure type filter condition  
-    struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s_type = '%s'", input$structure_type_filter)
+    struct_type_condition <- if (input$structure_type_filter == "all") "" else sprintf("AND s.s_type = '%s'", input$structure_type_filter)
     
     # Build priority filter condition
-    priority_condition <- if (input$priority_filter == "all") "" else sprintf("AND priority = '%s'", input$priority_filter)
+    priority_condition <- if (input$priority_filter == "all") "" else sprintf("AND s.priority = '%s'", input$priority_filter)
     
     # Query to get structures from loc_cxstruct with zone and foreman information
+    # Only include foremen who are currently active in employee_list
     structures_query <- sprintf("
-SELECT s.sitecode, s.facility, s.status_udw, s.s_type, s.priority,
-CASE 
-  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-  ELSE NULL
-END as foreman,
-g.zone
+SELECT s.sitecode, s.facility, s.status_udw, s.s_type, s.priority, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN s.foreman
+         ELSE NULL
+       END as foreman, 
+       g.zone
 FROM public.loc_cxstruct s
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND CURRENT_DATE >= h.startdate 
-  AND (h.enddate IS NULL OR CURRENT_DATE <= h.enddate)
+LEFT JOIN public.employee_list e ON s.foreman = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
 LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
@@ -368,7 +369,7 @@ AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
     
     # Query to get treatment information from current treatments
     treatments_query <- "
-SELECT t.sitecode, t.facility, t.inspdate, t.matcode, m.effect_days
+SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.foreman, m.effect_days
 FROM public.dblarv_insptrt_current t
 LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
 WHERE t.list_type = 'STR'
@@ -380,9 +381,11 @@ WHERE t.list_type = 'STR'
     # Process the data
     # Identify structures with treatments
     structure_treatments <- treatments %>%
-      inner_join(structures, by = c("sitecode", "facility"))
-    
-    # Calculate treatment status (active) - will be recalculated in processed_data with custom date
+      inner_join(structures, by = c("sitecode", "facility"), suffix = c("_trt", "_struct")) %>%
+      mutate(
+        # ONLY use structure foreman (jurisdictional assignment) - ignore treatment foreman completely
+        foreman = foreman_struct
+      )    # Calculate treatment status (active) - will be recalculated in processed_data with custom date
     structure_treatments <- structure_treatments %>%
       mutate(
         inspdate = as.Date(inspdate),
@@ -432,6 +435,10 @@ WHERE t.list_type = 'STR'
       # Add a constant column for "All MMCD" grouping
       structures$mmcd_all <- "All MMCD"
       structure_treatments$mmcd_all <- "All MMCD"
+    } else if (group_col == "foreman") {
+      # Only include structures that have a foreman assigned (jurisdictional assignment)
+      structures <- structures %>% filter(!is.na(foreman) & foreman != "")
+      structure_treatments <- structure_treatments %>% filter(!is.na(foreman) & foreman != "")
     }
     
     # Add combined group column for zone differentiation when both zones selected
@@ -553,13 +560,53 @@ WHERE t.list_type = 'STR'
         data$display_name <- paste0(facility_map[data[[group_col]]], " (P", gsub(".*\\(P([12])\\).*", "\\1", data$combined_group), ")")
       }
     } else if (group_col == "foreman") {
-      # Map foreman numbers to names
+      # Map foreman numbers to names and set proper ordering by facility
       foremen_lookup <- get_foremen_lookup()
       foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-      data$display_name <- foreman_map[as.character(data[[group_col]])]
+      
+      # Handle NA values properly
+      data$display_name <- ifelse(
+        is.na(data[[group_col]]) | data[[group_col]] == "",
+        "Unassigned FOS",
+        foreman_map[as.character(data[[group_col]])]
+      )
+      # Handle any remaining NAs from missing foreman numbers in lookup
+      data$display_name <- ifelse(
+        is.na(data$display_name),
+        paste0("FOS #", data[[group_col]]),
+        data$display_name
+      )
+      
+      # Set factor levels to order by facility grouping (foremen_lookup is already ordered by facility, shortname)
+      ordered_foreman_names <- c("Unassigned FOS", foremen_lookup$shortname)
+      # Add any FOS # names that might exist
+      fos_pattern_names <- unique(data$display_name[grepl("^FOS #", data$display_name)])
+      all_foreman_levels <- c(ordered_foreman_names, fos_pattern_names)
+      data$display_name <- factor(data$display_name, levels = all_foreman_levels)
+      
       if (plot_group_col == "combined_group") {
         # Update combined group with foreman names
-        data$display_name <- paste0(foreman_map[as.character(data[[group_col]])], " (P", gsub(".*\\(P([12])\\).*", "\\1", data$combined_group), ")")
+        base_foreman_name <- ifelse(
+          is.na(data[[group_col]]) | data[[group_col]] == "",
+          "Unassigned FOS",
+          foreman_map[as.character(data[[group_col]])]
+        )
+        base_foreman_name <- ifelse(
+          is.na(base_foreman_name),
+          paste0("FOS #", data[[group_col]]),
+          base_foreman_name
+        )
+        data$display_name <- paste0(base_foreman_name, " (P", gsub(".*\\(P([12])\\).*", "\\1", data$combined_group), ")")
+        
+        # Set factor levels for combined groups with proper facility ordering
+        combined_levels <- c()
+        for (foreman_name in ordered_foreman_names) {
+          combined_levels <- c(combined_levels, paste0(foreman_name, " (P1)"), paste0(foreman_name, " (P2)"))
+        }
+        # Add any FOS # combined names
+        fos_combined_names <- unique(data$display_name[grepl("^FOS #.*\\(P[12]\\)", data$display_name)])
+        all_combined_levels <- c(combined_levels, fos_combined_names)
+        data$display_name <- factor(data$display_name, levels = all_combined_levels)
       }
     } else {
       # For "All MMCD" or other cases
@@ -570,7 +617,32 @@ WHERE t.list_type = 'STR'
     custom_colors <- if(group_col == "facility") {
       get_facility_base_colors()
     } else if(group_col == "foreman") {
-      get_foreman_colors()
+      # Follow suco_history pattern exactly - map foreman NUMBERS to facility-based colors
+      foreman_colors <- get_foreman_colors()  # These are keyed by shortname
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Create mapping from foreman NUMBER to facility-based colors
+      foremen_in_data <- unique(na.omit(data[[group_col]]))
+      emp_colors <- character(0)
+      
+      for (foreman_num in foremen_in_data) {
+        foreman_num_str <- trimws(as.character(foreman_num))
+        
+        # Find the shortname for this foreman number
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
+        
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          
+          # Get the facility-based color for this shortname
+          if(shortname %in% names(foreman_colors)) {
+            emp_colors[foreman_num_str] <- foreman_colors[shortname]
+          }
+        }
+      }
+      
+      # Return emp_colors keyed by foreman numbers (what plot_group_col contains)
+      emp_colors
     } else {
       NULL
     }
@@ -655,7 +727,7 @@ WHERE t.list_type = 'STR'
         title = paste("Structures by", 
                       case_when(
                         group_col == "facility" ~ "Facility",
-                        group_col == "foreman" ~ "Foreman",
+                        group_col == "foreman" ~ "FOS",
                         group_col == "mmcd_all" ~ "MMCD (All)",
                         TRUE ~ group_col
                       ), "-", title_metric),
@@ -663,7 +735,7 @@ WHERE t.list_type = 'STR'
                          "- Expiring within", input$expiring_days, "days"),
         x = case_when(
           group_col == "facility" ~ "Facility",
-          group_col == "foreman" ~ "Foreman",
+          group_col == "foreman" ~ "FOS",
           group_col == "mmcd_all" ~ "MMCD (All)",
           TRUE ~ group_col
         ),

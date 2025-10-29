@@ -80,6 +80,15 @@ ui <- fluidPage(
                          choices = c("P1" = "1", "P2" = "2"),
                          selected = c("1", "2")),
       
+      # Year inputs for historical analysis
+      selectInput("start_year", "Start Year:",
+                  choices = seq(2010, 2025),
+                  selected = 2018),
+      
+      selectInput("end_year", "End Year:",
+                  choices = seq(2010, 2025),
+                  selected = 2025),
+      
       # Dropdown for structure type filter  
       selectInput("structure_type_filter", "Structure Type:",
                   choices = c("All" = "all", "AP", "CB", "CG", "cv", "CV", "CV/PR", "CV/RR", "DR", "PC", "Pool", "PR", "RG", "RR", "SP", "SS", "US", "W", "wo", "WO", "XX"),
@@ -127,6 +136,176 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output) {
+  
+  # Helper functions copied from struct_trt_history
+  get_facility_condition <- function(facility) {
+    if (facility == "all") {
+      return("") # No filtering
+    } else {
+      return(sprintf("AND trt.facility = '%s'", facility)) # Filter by the specified facility
+    }
+  }
+  
+  # Function to construct structure type filter condition for SQL
+  get_structure_type_condition <- function(structure_type) {
+    if (structure_type == "all") {
+      return("")
+    } else {
+      # Handle compound types (e.g., CV/PR matches both CV and PR)
+      # Use case-insensitive matching with UPPER()
+      return(sprintf("AND (UPPER(loc.s_type) = '%s' OR UPPER(loc.s_type) LIKE '%%/%s' OR UPPER(loc.s_type) LIKE '%s/%%' OR UPPER(loc.s_type) LIKE '%%/%s/%%')", 
+                     toupper(structure_type), toupper(structure_type), toupper(structure_type), toupper(structure_type)))
+    }
+  }
+  
+  # Function to construct priority filter condition for SQL
+  get_priority_condition <- function(priority) {
+    if (priority == "all") {
+      return("")
+    } else {
+      return(sprintf("AND loc.priority = '%s'", priority))
+    }
+  }
+  
+  # Function to construct status_udw filter condition for SQL
+  get_status_condition <- function(include_status_values) {
+    if (is.null(include_status_values) || length(include_status_values) == 0) {
+      # If no status values selected, exclude all structures with status_udw
+      return("AND loc.status_udw IS NULL")
+    } else if (length(include_status_values) == 3) {
+      # If all status values selected, include all structures
+      return("")
+    } else {
+      # Include only selected status values (case-insensitive)
+      status_list <- paste0("'", include_status_values, "'", collapse = ", ")
+      return(sprintf("AND (loc.status_udw IS NULL OR UPPER(loc.status_udw) IN (%s))", status_list))
+    }
+  }
+  
+  get_facility_condition_total <- function(facility, structure_type, priority, include_status_values) {
+    conditions <- c()
+    if (facility != "all") {
+      conditions <- c(conditions, sprintf("facility = '%s'", facility))
+    }
+    if (structure_type != "all") {
+      # Handle compound types and case-insensitivity for total structure count
+      conditions <- c(conditions, sprintf("(UPPER(s_type) = '%s' OR UPPER(s_type) LIKE '%%/%s' OR UPPER(s_type) LIKE '%s/%%' OR UPPER(s_type) LIKE '%%/%s/%%')", 
+                                        toupper(structure_type), toupper(structure_type), toupper(structure_type), toupper(structure_type)))
+    }
+    if (priority != "all") {
+      conditions <- c(conditions, sprintf("priority = '%s'", priority))
+    }
+    
+    # Handle status filter
+    if (is.null(include_status_values) || length(include_status_values) == 0) {
+      conditions <- c(conditions, "status_udw IS NULL")
+    } else if (length(include_status_values) < 3) {
+      # If not all status values selected, filter accordingly
+      status_list <- paste0("'", include_status_values, "'", collapse = ", ")
+      conditions <- c(conditions, sprintf("(status_udw IS NULL OR UPPER(status_udw) IN (%s))", status_list))
+    }
+    # If all 3 status values selected, no additional condition needed
+    
+    if (length(conditions) > 0) {
+      return(paste("AND", paste(conditions, collapse = " AND ")))
+    } else {
+      return("")
+    }
+  }
+  
+  # Treatment data reactive function - copied from struct_trt_history
+  treatment_data <- reactive({
+    con <- dbConnect(
+      RPostgres::Postgres(),
+      dbname = db_name,
+      host = db_host,
+      port = as.numeric(db_port),
+      user = db_user,
+      password = db_password
+    )
+    
+    # Fetch archive data with structure info
+    query_archive <- sprintf(
+      "
+SELECT
+trt.sitecode,
+trt.inspdate,
+COALESCE(mat.effect_days, 0) AS effect_days,
+loc.s_type,
+loc.priority,
+loc.facility
+FROM public.dblarv_insptrt_archive trt
+LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
+LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+WHERE trt.inspdate >= date '%d-01-01'
+AND trt.inspdate < date '%d-01-01'
+AND trt.list_type = 'STR'
+%s
+%s
+%s
+%s
+",
+      as.numeric(input$start_year),
+      as.numeric(input$end_year) + 1,
+      get_facility_condition(input$facility_filter),
+      get_structure_type_condition(input$structure_type_filter),
+      get_priority_condition(input$priority_filter),
+      get_status_condition(input$status_types)
+    )
+    archive_data <- dbGetQuery(con, query_archive)
+    
+    # Fetch current data with structure info
+    query_current <- sprintf(
+      "
+SELECT
+trt.sitecode,
+trt.inspdate,
+COALESCE(mat.effect_days, 0) AS effect_days,
+loc.s_type,
+loc.priority,
+loc.facility
+FROM public.dblarv_insptrt_current trt
+LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
+LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+WHERE trt.inspdate >= date '%d-01-01'
+AND trt.inspdate < date '%d-01-01'
+AND trt.list_type = 'STR'
+%s
+%s
+%s
+%s
+",
+      as.numeric(input$start_year),
+      as.numeric(input$end_year) + 1,
+      get_facility_condition(input$facility_filter),
+      get_structure_type_condition(input$structure_type_filter),
+      get_priority_condition(input$priority_filter),
+      get_status_condition(input$status_types)
+    )
+    current_data <- dbGetQuery(con, query_current)
+    
+    #Fetch Total Structures (active structures only)
+    query_total_structures <- sprintf(
+      "
+SELECT COUNT(DISTINCT sitecode) AS total_structures
+FROM loc_cxstruct
+WHERE 1=1
+AND (enddate IS NULL OR enddate > CURRENT_DATE)
+%s
+",
+      get_facility_condition_total(input$facility_filter, input$structure_type_filter, input$priority_filter, input$status_types)
+    )
+    
+    total_structures <- dbGetQuery(con, query_total_structures)$total_structures
+    dbDisconnect(con)
+    
+    # Combine and process data
+    combined_data <- bind_rows(archive_data, current_data) %>%
+      mutate(inspdate = as.Date(inspdate),
+             enddate = inspdate + effect_days)
+    
+    list(data = combined_data, total_structures = total_structures)
+  })
   
   # Fetch data from database
   raw_data <- reactive({

@@ -310,39 +310,6 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)  # Ignore initial trigger
   
-  # Tab change handler - adjust date controls when switching tabs
-  observeEvent(input$main_tabset, {
-    current_year <- as.numeric(format(Sys.Date(), "%Y"))
-    
-    if (input$main_tabset == "Current Data") {
-      # When switching to Current Data, restrict to current year
-      current_start <- input$date_range[1]
-      current_end <- input$date_range[2]
-      
-      if (!is.null(current_start) && !is.null(current_end)) {
-        start_year <- as.numeric(format(current_start, "%Y"))
-        end_year <- as.numeric(format(current_end, "%Y"))
-        
-        # If date range extends beyond current year, reset to current year
-        if (start_year != current_year || end_year != current_year) {
-          new_start <- as.Date(paste0(current_year, "-01-01"))
-          new_end <- Sys.Date()
-          
-          updating_date_range(TRUE)
-          updateDateRangeInput(session, "date_range", start = new_start, end = new_end)
-          
-          showNotification("Switched to Current Data - date range limited to current year.", 
-                          type = "info", duration = 2)
-          
-          # Reset flag after a short delay
-          later::later(function() {
-            updating_date_range(FALSE)
-          }, 0.1)
-        }
-      }
-    }
-  }, ignoreInit = TRUE)
-  
   # Initialize facility choices from db_helpers
   observe({
     facilities <- get_facility_lookup()
@@ -515,88 +482,90 @@ WHERE ainspecnum IS NOT NULL
   
   # Current data only (no archive) - more efficient for fast loading
   suco_data_current <- reactive({
-    con <- get_db_connection()
-    if (is.null(con)) {
-      return(data.frame())  # Return empty data frame if connection fails
+    # Simple checks only
+    req(input$date_range, input$main_tabset)
+    
+    # Only run when actually on Current Data tab
+    if (input$main_tabset != "Current Data") {
+      return(data.frame())
     }
     
-    # Date range for query
-    start_date <- format(input$date_range[1], "%Y-%m-%d")
-    end_date <- format(input$date_range[2], "%Y-%m-%d")
-    
-    # Query current data ONLY (no archive) for SUCOs (survtype = 7) with harborage lookup for current foreman assignments
-    current_query <- sprintf("
+    tryCatch({
+      con <- get_db_connection()
+      if (is.null(con)) {
+        return(data.frame())
+      }
+      
+      # Date range for query
+      start_date <- format(input$date_range[1], "%Y-%m-%d")
+      end_date <- format(input$date_range[2], "%Y-%m-%d")
+      
+      # Query with essential fields and proper zone detection
+      current_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility, 
-CASE 
-  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
-  ELSE NULL
-END as foreman,
+s.id, s.ainspecnum, s.facility, s.foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-COALESCE(h.facility, '') as harborage_facility,
+s.x, s.y,
 g.zone
 FROM public.dbadult_insp_current s
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND s.inspdate >= h.startdate 
-  AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
 LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
-    
-    # Execute query for current data only
-    current_data <- dbGetQuery(con, current_query)
-    
-    # Query species tables (current only)
-    species_current_query <- sprintf("
+      
+      current_data <- dbGetQuery(con, current_query)
+      
+      # Get species data
+      species_current_query <- "
 SELECT ainspecnum, spp, cnt
 FROM public.dbadult_species_current
 WHERE ainspecnum IS NOT NULL
-")
-    species_current <- dbGetQuery(con, species_current_query)
-
-    # Query species lookup table using centralized function
-    species_lookup <- get_species_lookup()
-
-    # Close connection
-    dbDisconnect(con)
-
-    # Process current data only (no archive to combine)
-    all_data <- current_data %>%
-      mutate(
-        inspdate = as.Date(inspdate),
-        year = year(inspdate),
-        month = month(inspdate),
-        week_start = floor_date(inspdate, "week", week_start = 1),
-        month_label = format(inspdate, "%b %Y"),
-        location = ifelse(!is.na(park_name) & park_name != "", park_name,
-                          ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
-        # Use harborage facility when harborage foreman is used
-        # This ensures foreman colors match the correct facility
-        facility = ifelse(!is.na(harborage_facility) & harborage_facility != "", 
-                         harborage_facility, facility)
-      )
-    
-    # Join SUCO data with species data and lookup for names
-    joined_data <- all_data %>%
-      left_join(species_current, by = "ainspecnum", relationship = "many-to-many") %>%
-      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
-      mutate(
-        species_name = dplyr::case_when(
-          !is.na(genus) & !is.na(species) ~ paste(genus, species),
-          !is.na(spp) ~ as.character(spp),
-          TRUE ~ NA_character_
-        ),
-        # Ensure foreman values are consistent strings
-        foreman = trimws(as.character(foreman))
-      )
-
-    return(joined_data)
+"
+      species_current <- dbGetQuery(con, species_current_query)
+      
+      # Get species lookup
+      species_lookup <- get_species_lookup()
+      
+      dbDisconnect(con)
+      
+      if (nrow(current_data) == 0) {
+        return(data.frame())
+      }
+      
+      # Process data with all required fields
+      processed_data <- current_data %>%
+        mutate(
+          inspdate = as.Date(inspdate),
+          year = year(inspdate),
+          month = month(inspdate),
+          week_start = floor_date(inspdate, "week", week_start = 1),
+          month_label = format(inspdate, "%b %Y"),
+          location = ifelse(!is.na(park_name) & park_name != "", park_name,
+                            ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
+          foreman = trimws(as.character(foreman)),
+          zone = as.character(zone)
+        ) %>%
+        left_join(species_current, by = "ainspecnum", relationship = "many-to-many") %>%
+        left_join(species_lookup, by = c("spp" = "sppcode")) %>%
+        mutate(
+          species_name = case_when(
+            !is.na(genus) & !is.na(species) ~ paste(genus, species),
+            !is.na(spp) ~ as.character(spp),
+            TRUE ~ NA_character_
+          )
+        )
+      
+      return(processed_data)
+      
+    }, error = function(e) {
+      cat("Error in suco_data_current:", e$message, "\n")
+      return(data.frame())
+    })
   })
   
   # Helper function to create trend plots - eliminates code duplication

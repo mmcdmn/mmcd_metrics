@@ -6,6 +6,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
   library(lubridate)
+  library(rlang)  # For sym() function
 })
 
 # Source the shared database helper functions
@@ -66,6 +67,18 @@ ui <- fluidPage(
       selectInput("facility_filter", "Facility:",
                   choices = get_facility_choices(),
                   selected = "all"),
+      
+      # Group by selection
+      selectInput("group_by", "Group by:",
+                  choices = c("Facility" = "facility",
+                              "FOS (Foreman)" = "foreman", 
+                              "All MMCD" = "mmcd_all"),
+                  selected = "facility"),
+      
+      # Zone filter checkboxes
+      checkboxGroupInput("zone_filter", "Zones:",
+                         choices = c("P1" = "1", "P2" = "2"),
+                         selected = c("1", "2")),
       
       # Dropdown for structure type filter  
       selectInput("structure_type_filter", "Structure Type:",
@@ -131,12 +144,25 @@ server <- function(input, output) {
     # Build priority filter condition
     priority_condition <- if (input$priority_filter == "all") "" else sprintf("AND priority = '%s'", input$priority_filter)
     
-    # Query to get structures from loc_cxstruct
+    # Query to get structures from loc_cxstruct with zone and foreman information
     structures_query <- sprintf("
-SELECT sitecode, facility, status_udw, s_type, priority
-FROM public.loc_cxstruct
-WHERE (status_udw IN (%s) OR status_udw IS NULL)
-AND (enddate IS NULL OR enddate > CURRENT_DATE)
+SELECT s.sitecode, s.facility, s.status_udw, s.s_type, s.priority,
+CASE 
+  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
+  ELSE NULL
+END as foreman,
+g.zone
+FROM public.loc_cxstruct s
+LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
+  AND CURRENT_DATE >= h.startdate 
+  AND (h.enddate IS NULL OR CURRENT_DATE <= h.enddate)
+LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
+WHERE (s.status_udw IN (%s) OR s.status_udw IS NULL)
+AND (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
 %s
 %s
 %s
@@ -182,6 +208,12 @@ WHERE t.list_type = 'STR'
     structures <- data$structures
     structure_treatments <- data$structure_treatments
     
+    # Filter by zone if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      structures <- structures %>% filter(zone %in% input$zone_filter)
+      structure_treatments <- structure_treatments %>% filter(zone %in% input$zone_filter)
+    }
+    
     # Use custom date from input
     current_date <- as.Date(input$custom_today)
     
@@ -198,42 +230,90 @@ WHERE t.list_type = 'STR'
           treatment_end_date >= current_date
       )
     
-    # Count total structures by facility
+    # Determine grouping column
+    group_col <- input$group_by
+    if (group_col == "mmcd_all") {
+      # Add a constant column for "All MMCD" grouping
+      structures$mmcd_all <- "All MMCD"
+      structure_treatments$mmcd_all <- "All MMCD"
+    }
+    
+    # Add combined group column for zone differentiation when both zones selected
+    if (length(input$zone_filter) > 1) {
+      structures$combined_group <- paste0(structures[[group_col]], " (P", structures$zone, ")")
+      structure_treatments$combined_group <- paste0(structure_treatments[[group_col]], " (P", structure_treatments$zone, ")")
+    }
+    
+    # Count total structures by group
     total_structures <- structures %>%
-      group_by(facility) %>%
+      group_by(!!sym(group_col)) %>%
       summarize(
-        total_structures = n()
+        total_structures = n(),
+        .groups = 'drop'
       )
     
-    # Count active structures by facility
+    # Count active structures by group
     # Need to handle overlapping treatments by taking distinct sitecodes only
     active_structures <- structure_treatments %>%
       filter(is_active == TRUE) %>%
-      distinct(sitecode, facility) %>%
-      group_by(facility) %>%
+      distinct(sitecode, !!sym(group_col)) %>%
+      group_by(!!sym(group_col)) %>%
       summarize(
-        active_structures = n()
+        active_structures = n(),
+        .groups = 'drop'
       )
     
-    # Count expiring structures by facility
+    # Count expiring structures by group
     expiring_structures <- structure_treatments %>%
       filter(is_expiring == TRUE) %>%
-      distinct(sitecode, facility) %>%
-      group_by(facility) %>%
+      distinct(sitecode, !!sym(group_col)) %>%
+      group_by(!!sym(group_col)) %>%
       summarize(
-        expiring_structures = n()
+        expiring_structures = n(),
+        .groups = 'drop'
       )
     
-    # Combine all the counts
-    result <- total_structures %>%
-      left_join(active_structures, by = "facility") %>%
-      left_join(expiring_structures, by = "facility") %>%
+    # Combine all counts by group
+    combined_data <- total_structures %>%
+      left_join(active_structures, by = group_col) %>%
+      left_join(expiring_structures, by = group_col) %>%
       mutate(
         active_structures = ifelse(is.na(active_structures), 0, active_structures),
         expiring_structures = ifelse(is.na(expiring_structures), 0, expiring_structures)
       )
     
-    return(result)
+    # Add zone information when both zones are selected
+    if (length(input$zone_filter) > 1) {
+      # Recalculate with combined groups for zone differentiation
+      total_by_combined <- structures %>%
+        group_by(combined_group) %>%
+        summarize(total_structures = n(), .groups = 'drop')
+      
+      active_by_combined <- structure_treatments %>%
+        filter(is_active == TRUE) %>%
+        distinct(sitecode, combined_group) %>%
+        group_by(combined_group) %>%
+        summarize(active_structures = n(), .groups = 'drop')
+      
+      expiring_by_combined <- structure_treatments %>%
+        filter(is_expiring == TRUE) %>%
+        distinct(sitecode, combined_group) %>%
+        group_by(combined_group) %>%
+        summarize(expiring_structures = n(), .groups = 'drop')
+      
+      combined_data <- total_by_combined %>%
+        left_join(active_by_combined, by = "combined_group") %>%
+        left_join(expiring_by_combined, by = "combined_group") %>%
+        mutate(
+          active_structures = ifelse(is.na(active_structures), 0, active_structures),
+          expiring_structures = ifelse(is.na(expiring_structures), 0, expiring_structures)
+        )
+      
+      # Add the original group column for color mapping
+      combined_data[[group_col]] <- gsub("\\s*\\([^)]+\\)$", "", combined_data$combined_group)
+    }
+    
+    return(combined_data)
   })
   
   # Generate the plot
@@ -258,10 +338,69 @@ WHERE t.list_type = 'STR'
     y_label <- "Number of Structures"
     title_metric <- "Number of Structures"
     
-    # Map facility codes to full names for display
-    facilities <- get_facility_lookup()
-    facility_map <- setNames(facilities$full_name, facilities$short_name)
-    data$facility_name <- facility_map[data$facility]
+    # Determine the plotting group column and handle display names
+    group_col <- input$group_by
+    plot_group_col <- if (length(input$zone_filter) > 1 && "combined_group" %in% names(data)) {
+      "combined_group"
+    } else {
+      group_col
+    }
+    
+    # Create display names based on grouping
+    if (group_col == "facility") {
+      # Map facility codes to full names for display
+      facilities <- get_facility_lookup()
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      data$display_name <- facility_map[data[[group_col]]]
+      if (plot_group_col == "combined_group") {
+        # Update combined group with full names
+        data$display_name <- paste0(facility_map[data[[group_col]]], " (P", gsub(".*\\(P([12])\\).*", "\\1", data$combined_group), ")")
+      }
+    } else if (group_col == "foreman") {
+      # Map foreman numbers to names
+      foremen_lookup <- get_foremen_lookup()
+      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+      data$display_name <- foreman_map[as.character(data[[group_col]])]
+      if (plot_group_col == "combined_group") {
+        # Update combined group with foreman names
+        data$display_name <- paste0(foreman_map[as.character(data[[group_col]])], " (P", gsub(".*\\(P([12])\\).*", "\\1", data$combined_group), ")")
+      }
+    } else {
+      # For "All MMCD" or other cases
+      data$display_name <- data[[plot_group_col]]
+    }
+    
+    # Get colors based on grouping
+    custom_colors <- if(group_col == "facility") {
+      get_facility_base_colors()
+    } else if(group_col == "foreman") {
+      get_foreman_colors()
+    } else {
+      NULL
+    }
+    
+    # Handle color mapping for combined groups
+    if (plot_group_col == "combined_group" && !is.null(custom_colors)) {
+      # Extract base names from combined groups
+      base_names <- unique(data$combined_group)
+      combined_colors <- character(0)
+      
+      for (combined_name in base_names) {
+        # Extract base name by removing zone info like " (P1)" or " (P2)"
+        base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+        base_name <- trimws(base_name)
+        
+        # Map to existing color if available
+        if (base_name %in% names(custom_colors)) {
+          combined_colors[combined_name] <- custom_colors[base_name]
+        }
+      }
+      
+      # Update custom_colors to use combined group mapping
+      if (length(combined_colors) > 0) {
+        custom_colors <- combined_colors
+      }
+    }
     
     # Create a new column to determine which labels to show (avoiding overplot)
     data$show_active_label <- data$y_active != data$y_expiring
@@ -272,30 +411,62 @@ WHERE t.list_type = 'STR'
     # Set up the title with appropriate filters
     status_types_text <- paste(input$status_types, collapse = ", ")
     facility_text <- ifelse(input$facility_filter == "all", "All Facilities", paste("Facility:", input$facility_filter))
+    zone_text <- if (length(input$zone_filter) == 0) {
+      "No Zones"
+    } else if (length(input$zone_filter) == 1) {
+      paste("Zone: P", input$zone_filter)
+    } else {
+      paste("Zone:", paste0("P", input$zone_filter))
+    }
     
     # Get status colors from db_helpers before creating the plot
     status_colors <- get_status_colors()
     
-    # Create the plot
-    p <- ggplot(data, aes(x = facility_name)) +
-      # First draw total bars
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
-      # Then overlay active bars
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
-      # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
-      
+    # Create the plot - use colors when available
+    if (!is.null(custom_colors) && group_col != "mmcd_all") {
+      p <- ggplot(data, aes(x = display_name, fill = !!sym(plot_group_col))) +
+        # First draw total bars
+        geom_bar(aes(y = y_total), stat = "identity", alpha = 0.3) +
+        # Then overlay active bars  
+        geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +
+        # Finally overlay expiring bars
+        geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
+        scale_fill_manual(values = custom_colors, guide = "none")
+    } else {
+      # Default colors when no custom scheme available
+      p <- ggplot(data, aes(x = display_name)) +
+        # First draw total bars
+        geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
+        # Then overlay active bars
+        geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
+        # Finally overlay expiring bars
+        geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"])
+    }
+    
+    # Add labels and formatting
+    p <- p +
       # Add labels on top of each bar
-      geom_text(aes(y = y_total, label = y_total), vjust = -0.5, color = "black") +
+      geom_text(aes(x = display_name, y = y_total, label = y_total), vjust = -0.5, color = "black") +
       # Add expiring labels
-      geom_text(aes(y = y_expiring, label = y_expiring), vjust = 1.5, color = "black", fontface = "bold") +
+      geom_text(aes(x = display_name, y = y_expiring, label = y_expiring), vjust = 1.5, color = "black", fontface = "bold") +
       
       # Add labels and title
       labs(
-        title = paste("Structures by Facility -", title_metric),
-        subtitle = paste("Status types:", status_types_text, "-", facility_text,
+        title = paste("Structures by", 
+                      case_when(
+                        group_col == "facility" ~ "Facility",
+                        group_col == "foreman" ~ "Foreman",
+                        group_col == "mmcd_all" ~ "MMCD (All)",
+                        TRUE ~ group_col
+                      ), "-", title_metric),
+        subtitle = paste("Status types:", status_types_text, "-", zone_text, "-", facility_text,
                          "- Expiring within", input$expiring_days, "days"),
-        x = "Facility",
+        x = case_when(
+          group_col == "facility" ~ "Facility",
+          group_col == "foreman" ~ "Foreman",
+          group_col == "mmcd_all" ~ "MMCD (All)",
+          TRUE ~ group_col
+        ),
         y = y_label
       ) +
       # Customize appearance

@@ -7,11 +7,11 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(lubridate)
   library(scales)
-  library(leaflet) # For interactive maps
-  library(sf) # For handling spatial data
-  library(stringr) # For string manipulation
+  library(leaflet) 
+  library(sf) 
+  library(stringr) 
   library(plotly)
-  library(later) # For delayed execution to prevent infinite loops
+  library(later) 
 })
 
 # Source the shared database helper functions
@@ -612,7 +612,7 @@ WHERE ainspecnum IS NOT NULL
     title_interval <- "Weekly"
     title_group <- case_when(
       input$group_by == "facility" ~ "Facility",
-      input$group_by == "foreman" ~ "Foreman", 
+      input$group_by == "foreman" ~ "FOS", 
       input$group_by == "mmcd_all" ~ "MMCD (All)",
       TRUE ~ "Group"
     )
@@ -688,120 +688,118 @@ WHERE ainspecnum IS NOT NULL
       group_col
     }
     
-    # If using combined groups, create color mapping based on base names
-    if (plot_group_col %in% c("combined_group", "zone_label") && !is.null(custom_colors)) {
-      # Extract base names from combined groups (remove zone info)
-      base_names <- unique(data[[plot_group_col]])
-      combined_colors <- character(0)
-      
-      for (combined_name in base_names) {
-        # Extract base name by removing zone info like " (P1)" or " (P2)"
-        base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
-        base_name <- trimws(base_name)
+    # Get colors based on grouping - with optional zone support
+    if (group_col == "facility") {
+      if (length(input$zone_filter) > 1 && plot_group_col == "combined_group") {
+        # Zone-aware facility colors
+        color_result <- get_facility_base_colors(
+          alpha_zones = input$zone_filter,
+          combined_groups = unique(data$combined_group)
+        )
+        custom_colors <- color_result$colors
+        alpha_values <- color_result$alpha_values
         
-        # Map to existing color if available
-        if (base_name %in% names(custom_colors)) {
-          combined_colors[combined_name] <- custom_colors[base_name]
+        # Add zone factor for alpha mapping
+        data$zone_factor <- factor(
+          gsub(".*\\(P([12])\\).*", "\\1", data$combined_group),
+          levels = c("1", "2")
+        )
+      } else {
+        # Standard facility colors
+        custom_colors <- get_facility_base_colors()
+        alpha_values <- NULL
+      }
+    } else if (group_col == "foreman") {
+      # Get foremen lookup for mapping emp_num to shortname
+      foremen_lookup <- get_foremen_lookup()
+      
+      if (length(input$zone_filter) > 1 && plot_group_col == "combined_group") {
+        # Zone-aware foreman colors
+        # The combined_group will be like "7002 (P1)", "8203 (P2)", etc.
+        # We need to map these to shortname-based colors
+        
+        foreman_colors <- get_foreman_colors()  # These are keyed by shortname
+        emp_colors <- character(0)
+        
+        # Get unique combined groups from data
+        unique_combined <- unique(data$combined_group)
+        
+        for (combined_name in unique_combined) {
+          # Extract emp_num from combined group like "7002 (P1)"
+          emp_num <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+          emp_num <- trimws(emp_num)
+          
+          # Find corresponding shortname
+          matches <- which(trimws(as.character(foremen_lookup$emp_num)) == emp_num)
+          if (length(matches) > 0) {
+            shortname <- foremen_lookup$shortname[matches[1]]
+            
+            # Get color for this shortname
+            if (shortname %in% names(foreman_colors)) {
+              emp_colors[combined_name] <- foreman_colors[shortname]
+            }
+          }
         }
+        
+        custom_colors <- emp_colors
+        alpha_values <- c("1" = 1.0, "2" = 0.6)
+        
+        # Add zone factor for alpha mapping
+        data$zone_factor <- factor(
+          gsub(".*\\(P([12])\\).*", "\\1", data$combined_group),
+          levels = c("1", "2")
+        )
+      } else {
+        # Standard foreman colors - map from shortname to emp_num
+        foreman_colors <- get_foreman_colors()
+        emp_colors <- character(0)
+        
+        for (i in 1:nrow(foremen_lookup)) {
+          shortname <- trimws(foremen_lookup$shortname[i])
+          emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
+          
+          if (shortname %in% names(foreman_colors)) {
+            emp_colors[emp_num] <- foreman_colors[shortname]
+          }
+        }
+        
+        custom_colors <- emp_colors
+        alpha_values <- NULL
       }
-      
-      # Update custom_colors to use combined group mapping
-      if (length(combined_colors) > 0) {
-        custom_colors <- combined_colors
-      }
-      
-      # Add zone column for visual differentiation
-      if ("combined_group" %in% names(data)) {
-        data$zone_type <- ifelse(grepl("\\(P1\\)", data$combined_group), "P1", 
-                                ifelse(grepl("\\(P2\\)", data$combined_group), "P2", "Unknown"))
-      }
-    }
-    
-    # Create the plot using the appropriate group column for color mapping
-    plot_aes <- if (plot_group_col %in% c("combined_group", "zone_label") && "zone_type" %in% names(data)) {
-      # Use color and fill for facility/foreman, alpha will be added separately
-      aes(x = time_group, y = count, 
-          color = !!sym(plot_group_col), 
-          fill = !!sym(plot_group_col), 
-          group = !!sym(plot_group_col))
     } else {
-      # Standard mapping when single zone or no zone info
-      aes(x = time_group, y = count, 
-          color = !!sym(plot_group_col), 
-          fill = !!sym(plot_group_col), 
-          group = !!sym(plot_group_col))
+      custom_colors <- NULL
+      alpha_values <- NULL
     }
     
-    p <- ggplot(data, plot_aes)
+    # Create the plot using the appropriate aesthetics
+    if (!is.null(alpha_values)) {
+      # Zone-aware plotting with alpha
+      p <- ggplot(data, aes(x = time_group, y = count, 
+                           color = !!sym(plot_group_col), 
+                           fill = !!sym(plot_group_col),
+                           alpha = zone_factor,
+                           group = !!sym(plot_group_col)))
+    } else {
+      # Standard plotting without alpha
+      p <- ggplot(data, aes(x = time_group, y = count, 
+                           color = !!sym(plot_group_col), 
+                           fill = !!sym(plot_group_col), 
+                           group = !!sym(plot_group_col)))
+    }
     
     
     # Add color scales based on grouping
     if(!is.null(custom_colors)) {
-      # Add color scales with labels for the legend
-      if(group_col == "facility" && plot_group_col != "combined_group") {
-        # For facilities, map short names to full names in legend
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
-          drop = FALSE
-        )
-      } else if(group_col == "foreman" && plot_group_col != "combined_group") {
-        # For foremen, map employee numbers to names in legend
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
-          drop = FALSE
-        )
-      } else if(plot_group_col == "combined_group") {
-        # For combined groups, use the mapped colors directly
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          drop = FALSE
-        )
-        
-        # Add discrete alpha scale for zone differentiation that shows in legend
-        if ("zone_type" %in% names(data)) {
-          # Create a factor for zone_type to ensure proper legend
-          data$zone_factor <- factor(data$zone_type, levels = c("P1", "P2"))
-          
-          # Rebuild plot with alpha aesthetic
-          p <- ggplot(data, aes(x = time_group, y = count, 
-                               color = !!sym(plot_group_col), 
-                               fill = !!sym(plot_group_col),
-                               alpha = zone_factor,
-                               group = !!sym(plot_group_col))) +
-            scale_color_manual(
-              values = custom_colors,
-              drop = FALSE
-            ) + scale_fill_manual(
-              values = custom_colors,
-              drop = FALSE
-            ) +
-            scale_alpha_manual(
-              name = "Zone",
-              values = c("P1" = 1.0, "P2" = 0.6),
-              labels = c("P1" = "P1 (Solid)", "P2" = "P2 (Faded)"),
-              drop = FALSE
-            )
-        }
-      } else {
-        # Default case
-        p <- p + scale_color_manual(values = custom_colors, drop = FALSE) + 
-                 scale_fill_manual(values = custom_colors, drop = FALSE)
-      }
+      p <- p + scale_color_manual(values = custom_colors, drop = FALSE) + 
+               scale_fill_manual(values = custom_colors, drop = FALSE)
     } else {
       p <- p + scale_color_discrete() + scale_fill_discrete()
+    }
+    
+    # Add zone alpha differentiation if available
+    if (!is.null(alpha_values)) {
+      p <- add_zone_alpha_to_plot(p, alpha_values, 
+                                  representative_color = if(!is.null(custom_colors)) custom_colors[1] else NULL)
     }
     
     if (input$graph_type == "bar") {
@@ -1502,7 +1500,7 @@ WHERE ainspecnum IS NOT NULL
         arrange(desc(Total_SUCOs), facility, shortname)
       
       # Rename columns
-      colnames(summary_data)[1:3] <- c("Foreman", "Name", "Facility")
+      colnames(summary_data)[1:3] <- c("FOS", "Name", "Facility")
     }
     return(summary_data)
   }, options = list(pageLength = 15, 
@@ -1934,7 +1932,7 @@ WHERE ainspecnum IS NOT NULL
         ) %>%
         arrange(desc(Total_SUCOs), facility, shortname)
       
-      colnames(summary_data)[1:3] <- c("Foreman", "Name", "Facility")
+      colnames(summary_data)[1:3] <- c("FOS", "Name", "Facility")
     }
     return(summary_data)
   }, options = list(pageLength = 15, 

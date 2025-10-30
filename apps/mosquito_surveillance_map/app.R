@@ -54,6 +54,9 @@ if (is.null(con)) {
 
 dfmap <- dbReadTable(con, "dbadult_mapdata_forr_calclat")
 
+# Fix integer64 issue - convert to regular numeric
+dfmap$mosqcount <- as.numeric(dfmap$mosqcount)
+
 # Debug: Check data range and sample the actual data
 cat("Data loaded - Date range:", min(dfmap$inspdate), "to", max(dfmap$inspdate), "\n")
 cat("Data loaded - Mosquito count range:", min(dfmap$mosqcount, na.rm = TRUE), "to", max(dfmap$mosqcount, na.rm = TRUE), "\n")

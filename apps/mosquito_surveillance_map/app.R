@@ -57,21 +57,6 @@ dfmap <- dbReadTable(con, "dbadult_mapdata_forr_calclat")
 # Fix integer64 issue - convert to regular numeric
 dfmap$mosqcount <- as.numeric(dfmap$mosqcount)
 
-# Debug: Check data range and sample the actual data
-cat("Data loaded - Date range:", min(dfmap$inspdate), "to", max(dfmap$inspdate), "\n")
-cat("Data loaded - Mosquito count range:", min(dfmap$mosqcount, na.rm = TRUE), "to", max(dfmap$mosqcount, na.rm = TRUE), "\n")
-cat("Data loaded - Total records:", nrow(dfmap), "\n")
-
-# Check data types and sample values
-cat("Data types:\n")
-cat("inspdate class:", class(dfmap$inspdate), "\n")
-cat("mosqcount class:", class(dfmap$mosqcount), "\n")
-
-# Show sample records with high mosquito counts
-high_count_sample <- dfmap[dfmap$mosqcount > 100 & !is.na(dfmap$mosqcount), ][1:5, c("inspdate", "mosqcount", "spp_name", "loc_code")]
-cat("Sample high count records:\n")
-print(high_count_sample)
-
 dfmapMISS <- dbReadTable(con, "dbadult_mapdata_forr_missing")
 
 dbDisconnect(con)
@@ -168,37 +153,25 @@ TitleStringAVG <- reactive({
 })
 # Main table Processing
 mosquito <- reactive({
-    if (isTRUE(input$survtype == "All")) {
-      result <- dfmap2163UTM
-      cat("mosquito() - All survtype: ", nrow(result), "records\n")
-      result
-    } else {
-      result <- dfmap2163UTM %>%
+    if (isTRUE(input$survtype == "All")) {dfmap2163UTM}
+    else {
+      dfmap2163UTM %>%
         filter(survtypename %in% input$survtype)
-      cat("mosquito() - Filtered survtype:", input$survtype, ":", nrow(result), "records\n")
-      result
     }
   })
 
 mosqsppFilter <- reactive({
-  result <- mosquito() %>%
+  mosquito() %>%
     filter(spp_name %in% input$species)
-  cat("mosqsppFilter() - Species:", input$species, ":", nrow(result), "records\n")
-  result
   })
 
 mosqdateFilter <- reactive({
-  result <- mosqsppFilter() %>% 
+  mosqsppFilter() %>% 
     filter(between(inspdate, input$daterange[1], input$daterange[2]))
-  cat("mosqdateFilter() - Date range:", input$daterange[1], "to", input$daterange[2], ":", nrow(result), "records\n")
-  if(nrow(result) > 0) {
-    cat("mosqdateFilter() - Mosquito count range:", min(result$mosqcount, na.rm = TRUE), "to", max(result$mosqcount, na.rm = TRUE), "\n")
-  }
-  result
   })
 
 MAPdata0 <- reactive({
-  result <- mosqdateFilter() %>%
+  mosqdateFilter() %>%
     group_by(loc_code) %>%
     summarise(
       Sum = sum(mosqcount, na.rm = TRUE), 
@@ -207,23 +180,6 @@ MAPdata0 <- reactive({
       spp_name = first(spp_name),
       .groups = 'drop'
     )
-  
-  # Debug output - print summary to console
-  cat("MAPdata0 debug:\n")
-  cat("Number of records:", nrow(result), "\n")
-  cat("Sum range:", min(result$Sum, na.rm = TRUE), "to", max(result$Sum, na.rm = TRUE), "\n")
-  cat("Sum distribution:\n")
-  print(table(cut(result$Sum, breaks = c(-Inf, 0, 2.5, 4.5, 49.5, 129.5, 299.5, 999.5, Inf))))
-  
-  result
-})
-
-# Add debug reactive to show what categories are being created
-MAPdataDebug <- reactive({
-  data <- MAPdata()
-  cat("MAPdata categories created:\n")
-  print(table(data$mosq_category))
-  data
 })
 
 LABELdataSum <- reactive({

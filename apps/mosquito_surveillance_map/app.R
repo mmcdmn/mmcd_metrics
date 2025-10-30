@@ -54,6 +54,11 @@ if (is.null(con)) {
 
 dfmap <- dbReadTable(con, "dbadult_mapdata_forr_calclat")
 
+# Debug: Check data range
+cat("Data loaded - Date range:", min(dfmap$inspdate), "to", max(dfmap$inspdate), "\n")
+cat("Data loaded - Mosquito count range:", min(dfmap$mosqcount, na.rm = TRUE), "to", max(dfmap$mosqcount, na.rm = TRUE), "\n")
+cat("Data loaded - Total records:", nrow(dfmap), "\n")
+
 dfmapMISS <- dbReadTable(con, "dbadult_mapdata_forr_missing")
 
 dbDisconnect(con)
@@ -168,10 +173,26 @@ mosqdateFilter <- reactive({
   })
 
 MAPdata0 <- reactive({
-  mosqdateFilter() %>%
+  result <- mosqdateFilter() %>%
     group_by(loc_code) %>%
     summarise(Sum = sum(mosqcount), Avg = round(mean(mosqcount), 2), geometry = geometry, spp_name = spp_name, loc_code = loc_code)
+  
+  # Debug output - print summary to console
+  cat("MAPdata0 debug:\n")
+  cat("Number of records:", nrow(result), "\n")
+  cat("Sum range:", min(result$Sum, na.rm = TRUE), "to", max(result$Sum, na.rm = TRUE), "\n")
+  cat("Sum distribution:\n")
+  print(table(cut(result$Sum, breaks = c(-Inf, 0, 2.5, 4.5, 49.5, 129.5, 299.5, 999.5, Inf))))
+  
+  result
+})
 
+# Add debug reactive to show what categories are being created
+MAPdataDebug <- reactive({
+  data <- MAPdata()
+  cat("MAPdata categories created:\n")
+  print(table(data$mosq_category))
+  data
 })
 
 LABELdataSum <- reactive({

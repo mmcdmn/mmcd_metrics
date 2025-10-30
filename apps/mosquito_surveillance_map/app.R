@@ -155,21 +155,33 @@ TitleStringAVG <- reactive({
 })
 # Main table Processing
 mosquito <- reactive({
-    if (isTRUE(input$survtype == "All")) {dfmap2163UTM}
-    else {
-      dfmap2163UTM %>%
+    if (isTRUE(input$survtype == "All")) {
+      result <- dfmap2163UTM
+      cat("mosquito() - All survtype: ", nrow(result), "records\n")
+      result
+    } else {
+      result <- dfmap2163UTM %>%
         filter(survtypename %in% input$survtype)
+      cat("mosquito() - Filtered survtype:", input$survtype, ":", nrow(result), "records\n")
+      result
     }
   })
 
 mosqsppFilter <- reactive({
-  mosquito() %>%
+  result <- mosquito() %>%
     filter(spp_name %in% input$species)
+  cat("mosqsppFilter() - Species:", input$species, ":", nrow(result), "records\n")
+  result
   })
 
 mosqdateFilter <- reactive({
-  mosqsppFilter() %>% 
+  result <- mosqsppFilter() %>% 
     filter(between(inspdate, input$daterange[1], input$daterange[2]))
+  cat("mosqdateFilter() - Date range:", input$daterange[1], "to", input$daterange[2], ":", nrow(result), "records\n")
+  if(nrow(result) > 0) {
+    cat("mosqdateFilter() - Mosquito count range:", min(result$mosqcount, na.rm = TRUE), "to", max(result$mosqcount, na.rm = TRUE), "\n")
+  }
+  result
   })
 
 MAPdata0 <- reactive({

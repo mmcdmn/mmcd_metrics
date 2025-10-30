@@ -177,7 +177,7 @@ MAPdata <- reactive({
     if(input$survtype == "All"){
   MAPdata0() %>%
     mutate(mosq_category = cut(Sum, 
-                               breaks = c(-Inf, 0, 2, 4, 49, 129, 299, 999, Inf),
+                               breaks = c(-Inf, 0, 2.5, 4.5, 49.5, 129.5, 299.5, 999.5, Inf),
                                labels = c("0", 
                                           "1-2", 
                                           "3-4", 
@@ -190,7 +190,7 @@ MAPdata <- reactive({
     if(input$survtype == "Sweep"){          
     MAPdata0() %>%
     mutate(mosq_category = cut(Sum, 
-                               breaks = c(-Inf, 0, 2, 10, 20, 50, Inf),
+                               breaks = c(-Inf, 0, 2.5, 10.5, 20.5, 50.5, Inf),
                                labels = c("0", 
                                           "1-2", 
                                           "3-10", 
@@ -202,7 +202,7 @@ MAPdata <- reactive({
     if(input$survtype == "Gravid"){
     MAPdata0() %>%
       mutate(mosq_category = cut(Sum, 
-                               breaks = c(-Inf, 0, 4, 9, 29, 49, Inf),
+                               breaks = c(-Inf, 0, 4.5, 9.5, 29.5, 49.5, Inf),
                                labels = c("0", 
                                "1-4", 
                                "5-9", 
@@ -214,7 +214,7 @@ MAPdata <- reactive({
     if((input$survtype == "CO2(reg)" | input$survtype == "CO2(elev)") && (input$species == "Cx_pipiens_33" | input$species == "Cx_restuans_34" | input$species == "Cx_restuans/pipiens_372" | input$species == "Cx_salinarius_35" | input$species == "Cx_tarsalis_36")){
       MAPdata0() %>%
                                    mutate(mosq_category = cut(Sum, 
-                                                              breaks = c(-Inf, 0, 4, 9, 29, 49, Inf),
+                                                              breaks = c(-Inf, 0, 4.5, 9.5, 29.5, 49.5, Inf),
                                                               labels = c("0", 
                                                                          "1-4", 
                                                                          "5-9", 
@@ -225,7 +225,7 @@ MAPdata <- reactive({
       if((input$survtype == "CO2(reg)" | input$survtype == "CO2(elev)") && (input$species == "Cs_melanura_39")){
         MAPdata0() %>%
           mutate(mosq_category = cut(Sum, 
-                                     breaks = c(-Inf, 0, 4, 9, 49, Inf),
+                                     breaks = c(-Inf, 0, 4.5, 9.5, 49.5, Inf),
                                      labels = c("0", 
                                                 "1-4", 
                                                 "5-9", 
@@ -235,7 +235,7 @@ MAPdata <- reactive({
       } else {                                                          
       MAPdata0() %>%
       mutate(mosq_category = cut(Sum, 
-                               breaks = c(-Inf, 0, 49, 129, 299, 999, Inf),
+                               breaks = c(-Inf, 0, 49.5, 129.5, 299.5, 999.5, Inf),
                                labels = c("0", 
                                "1-49", 
                                "50-129", 
@@ -249,7 +249,7 @@ MAPdata <- reactive({
 MAPdataAVG <- reactive({ if(input$survtype == "All"){
   MAPdata0() %>%
     mutate(mosq_category = cut(Avg, 
-                               breaks = c(-Inf, 0, 2, 4, 49, 129, 299, 999, Inf),
+                               breaks = c(-Inf, 0, 2.5, 4.5, 49.5, 129.5, 299.5, 999.5, Inf),
                                labels = c("0", 
                                           "1-2", 
                                           "3-4", 
@@ -262,7 +262,7 @@ MAPdataAVG <- reactive({ if(input$survtype == "All"){
                                  if(input$survtype == "Sweep"){          
                                    MAPdata0() %>%
                                      mutate(mosq_category = cut(Avg, 
-                                                                breaks = c(-Inf, 0, 2, 10, 20, 50, Inf),
+                                                                breaks = c(-Inf, 0, 2.5, 10.5, 20.5, 50.5, Inf),
                                                                 labels = c("0", 
                                                                            "1-2", 
                                                                            "3-10", 
@@ -274,7 +274,7 @@ MAPdataAVG <- reactive({ if(input$survtype == "All"){
                                                                   if(input$survtype == "Gravid"){
                                                                     MAPdata0() %>%
                                                                       mutate(mosq_category = cut(Avg, 
-                                                                                                 breaks = c(-Inf, 0, 4, 9, 29, 49, Inf),
+                                                                                                 breaks = c(-Inf, 0, 4.5, 9.5, 29.5, 49.5, Inf),
                                                                                                  labels = c("0", 
                                                                                                             "1-4", 
                                                                                                             "5-9", 
@@ -286,7 +286,7 @@ MAPdataAVG <- reactive({ if(input$survtype == "All"){
                                                                     if((input$survtype == "CO2(reg)" | input$survtype == "CO2(elev)") && (input$species == "Cx_pipiens_33" | input$species == "Cx_restuans_34" | input$species == "Cx_restuans/pipiens_372" | input$species == "Cx_salinarius_35" | input$species == "Cx_tarsalis_36")){
                                                                       MAPdata0() %>%
                                                                         mutate(mosq_category = cut(Avg, 
-                                                                                                   breaks = c(-Inf, 0, 4, 9, 29, 49, Inf),
+                                                                                                   breaks = c(-Inf, 0, 4.5, 9.5, 29.5, 49.5, Inf),
                                                                                                    labels = c("0", 
                                                                                                               "1-4", 
                                                                                                               "5-9", 
@@ -297,7 +297,7 @@ MAPdataAVG <- reactive({ if(input$survtype == "All"){
                                                                                                      if((input$survtype == "CO2(reg)" | input$survtype == "CO2(elev)") && (input$species == "Cs_melanura_39")){
                                                                                                        MAPdata0() %>%
                                                                                                          mutate(mosq_category = cut(Avg, 
-                                                                                                                                    breaks = c(-Inf, 0, 4, 9, 49, Inf),
+                                                                                                                                    breaks = c(-Inf, 0, 4.5, 9.5, 49.5, Inf),
                                                                                                                                     labels = c("0", 
                                                                                                                                                "1-4", 
                                                                                                                                                "5-9", 
@@ -307,7 +307,7 @@ MAPdataAVG <- reactive({ if(input$survtype == "All"){
                                                                                                      } else {                                                          
                                                                                                        MAPdata0() %>%
                                                                                                          mutate(mosq_category = cut(Avg, 
-                                                                                                                                    breaks = c(-Inf, 0, 49, 129, 299, 999, Inf),
+                                                                                                                                    breaks = c(-Inf, 0, 49.5, 129.5, 299.5, 999.5, Inf),
                                                                                                                                     labels = c("0", 
                                                                                                                                                "1-49", 
                                                                                                                                                "50-129", 

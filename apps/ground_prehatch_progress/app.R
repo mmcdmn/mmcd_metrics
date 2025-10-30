@@ -87,18 +87,18 @@ ui <- dashboardPage(
     tags$head(
       tags$style(HTML("
         .content-wrapper, .right-side {
-          margin-top: 130px !important;
+          margin-top: 160px !important;
         }
         .main-header {
-          height: 120px !important;
+          height: 250px !important;
           background-color: #3c8dbc !important;
         }
         .main-header .navbar {
-          height: 120px !important;
+          height: 250px !important;
           background-color: #3c8dbc !important;
         }
         .main-sidebar {
-          margin-top: 120px !important;
+          margin-top: 150px !important;
         }
         .skin-blue .main-header .navbar {
           background-color: #3c8dbc !important;

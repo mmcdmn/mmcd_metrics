@@ -71,16 +71,29 @@ dfmapMISS2163UTM <- st_transform(dfmapMISS4326, crs=2163)
 
 ui <- fluidPage(
   theme = bslib::bs_theme(bootswatch = "united"),
+  
+  # Add header with data last updated info
+  fluidRow(
+    column(12,
+      div(style = "background-color: #f8f9fa; padding: 10px; margin-bottom: 10px; border-radius: 5px;",
+        h4("Mosquito Surveillance Map", style = "margin: 0; display: inline-block;"),
+        div(style = "float: right; margin-top: 5px;",
+          textOutput("lastUpdated", inline = TRUE)
+        )
+      )
+    )
+  ),
+  
   plotlyOutput("MAP", height = "1000px"), 
   absolutePanel(id = "controls", class = "panel panel-default", fixed = TRUE,
-                draggable = FALSE, top = 60, left = 20, right = "auto", bottom = "auto",
+                draggable = FALSE, top = 120, left = 20, right = "auto", bottom = "auto",
                 width = 330, height = "auto",
                 
                 selectInput("species", "Species Selection", choices = unique(dfmap$spp_name),
                                       selected = "Total_Ae_+_Cq",
                                       multiple = FALSE),
                 dateRangeInput("daterange", "Insp Date Range",
-                                   min(dfmap$inspdate), max(dfmap$inspdate), start = "2024-09-01", end = "2024-09-08"),
+                                   min(dfmap$inspdate), max(dfmap$inspdate), start = "2025-09-01", end = "2025-10-01"),
                 selectInput("survtype", "Surveillance Selection", choices = c("Sweep", "CO2(reg)", "Gravid", "CO2(elev)", "All"),
                                       selected = "All",
                                       multiple = FALSE),
@@ -95,6 +108,12 @@ ui <- fluidPage(
 
 
 server <- function(input, output) {
+
+  # Display when data was last updated
+  output$lastUpdated <- renderText({
+    last_update_date <- max(dfmap$inspdate, na.rm = TRUE)
+    paste("Data last updated:", format(last_update_date, "%B %d, %Y"))
+  })
 
   # output$report <- downloadHandler(
   #   # For PDF output, change this to "report.pdf"

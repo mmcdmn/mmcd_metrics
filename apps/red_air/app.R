@@ -19,43 +19,8 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
 })
 
-# Load environment variables
-env_paths <- c(
-  "../../.env",
-  "../../../.env", 
-  "/srv/shiny-server/.env"
-)
-
-env_loaded <- FALSE
-for (path in env_paths) {
-  if (file.exists(path)) {
-    readRenviron(path)
-    env_loaded <- TRUE
-    break
-  }
-}
-
-# Database configuration
-db_host <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
-
-# Database connection helper
-get_db_connection <- function() {
-  tryCatch({
-    dbConnect(RPostgres::Postgres(),
-             host = db_host,
-             port = db_port,
-             dbname = db_name,
-             user = db_user,
-             password = db_password)
-  }, error = function(e) {
-    showNotification(paste("Database connection error:", e$message), type = "error")
-    return(NULL)
-  })
-}
+# Database connection is now handled by db_helpers.R
+# No need for manual database configuration - using shared get_db_connection()
 
 # Define UI
 ui <- dashboardPage(
@@ -135,8 +100,16 @@ ui <- dashboardPage(
                 )
               ),
               column(4,
-                actionButton("refresh_data", "Refresh Data", class = "btn-primary")
+                checkboxGroupInput("zone_filter", "Filter by Zone:",
+                  choices = c("P1" = "1", "P2" = "2"),
+                  selected = c("1", "2"))
               )
+            ),
+            fluidRow(
+              column(4,
+                actionButton("refresh_data", "Refresh Data", class = "btn-primary")
+              ),
+              column(8, "")
             )
           )
         ),
@@ -291,6 +264,14 @@ server <- function(input, output, session) {
         sprintf("AND b.priority = '%s'", input$priority_filter)
       }
       
+      # Build zone filter
+      zone_condition <- if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+        zone_list <- paste0("'", input$zone_filter, "'", collapse = ",")
+        sprintf("AND g.zone IN (%s)", zone_list)
+      } else {
+        ""
+      }
+      
       # Get all active air sites with rainfall data and status calculation
       query <- sprintf("
         WITH ActiveAirSites AS (
@@ -300,12 +281,19 @@ server <- function(input, output, session) {
             b.acres,
             b.priority,
             b.prehatch,
+            g.zone,
             ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
             ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
           FROM loc_breeding_sites b
+          LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
+            OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+            OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
+            OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
+            OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
           WHERE (b.enddate IS NULL OR b.enddate > '%s')
             AND b.air_gnd = 'A'
             AND b.geom IS NOT NULL
+            %s
             %s
             %s
         ),
@@ -409,6 +397,7 @@ server <- function(input, output, session) {
         analysis_date,     # Active sites filter
         facility_condition,
         priority_condition, # Priority filter
+        zone_condition,    # Zone filter
         analysis_date,     # Rainfall start date
         lookback_days,     # Rainfall lookback period
         analysis_date,     # Rainfall end date
@@ -526,6 +515,7 @@ server <- function(input, output, session) {
           "Site: ", sitecode, "<br/>",
           "Status: ", site_status, "<br/>",
           "Facility: ", facility, "<br/>",
+          "Zone: P", ifelse(is.na(zone), "?", zone), "<br/>",
           "Total Rainfall: ", round(total_rainfall, 2), " inches<br/>",
           "Days Since Rain: ", days_since_rain,
           ifelse(site_status %in% c("Under Threshold", "Needs Treatment"),
@@ -590,6 +580,7 @@ server <- function(input, output, session) {
     # Select and rename columns for display
     display_data <- data %>%
       mutate(
+        formatted_zone = ifelse(is.na(zone), "Unknown", paste0("P", zone)),
         formatted_inspection_date = ifelse(is.na(last_inspection_date) | last_inspection_date == "", 
                                          "None", 
                                          tryCatch(format(as.Date(last_inspection_date), "%m/%d/%y"), 
@@ -605,6 +596,7 @@ server <- function(input, output, session) {
       select(
         `Site Code` = sitecode,
         Facility = facility,
+        Zone = formatted_zone,
         Status = site_status,
         Priority = priority,
         `Total Rainfall` = total_rainfall,

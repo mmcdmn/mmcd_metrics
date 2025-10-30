@@ -35,15 +35,10 @@ for (path in env_paths) {
 
 # If no .env file found, environment variables should already be set by Docker
 
-# Database configuration using environment variables
-host_db <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
-drv <- dbDriver("PostgreSQL")
-
-con <- dbConnect(drv, dbname = db_name, host=host_db, port=db_port, user=db_user, password=db_password )
+con <- get_db_connection()
+if (is.null(con)) {
+  stop("Database connection failed")
+}
 
 mosquito0NAS <- dbReadTable(con, "dbadult_mon_nt_co2_tall2_forr")
 

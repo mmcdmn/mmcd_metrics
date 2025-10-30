@@ -32,13 +32,6 @@ for (path in env_paths) {
 
 # If no .env file found, environment variables should already be set by Docker
 
-# Database configuration using environment variables
-db_host <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
-
 # Define UI for the application
 ui <- fluidPage(
   # Application title
@@ -220,14 +213,10 @@ server <- function(input, output) {
   
   # Treatment data reactive function - copied from struct_trt_history
   treatment_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(list(data = data.frame(), total_structures = 0))
+    }
     
     # Fetch archive data with structure info
     query_archive <- sprintf(
@@ -314,14 +303,10 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
   
   # Fetch data from database
   raw_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(data.frame())
+    }
     
     # Build the status filter based on user selection
     status_types <- paste0("'", paste(input$status_types, collapse = "','"), "'")

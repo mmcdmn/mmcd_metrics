@@ -140,7 +140,7 @@ ui <- fluidPage(
 # Define server logic
 server <- function(input, output) {
   
-  # Helper functions copied from struct_trt_history - updated for multiple facility selection
+  # Helper functions 
   get_facility_condition <- function(facility_filter) {
     if (is.null(facility_filter) || ("all" %in% facility_filter)) {
       return("") # No filtering
@@ -905,174 +905,39 @@ WHERE 1=1
           ),
           group_name = "All MMCD"
         )
+
+      # Calculate seasonal average curve (average proportion for each calendar day across all years)
+      seasonal_curve <- treatment_trends %>%
+        mutate(day_of_year = format(date, "%m-%d")) %>%
+        group_by(day_of_year) %>%
+        summarize(
+          seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      # Join seasonal average back to treatment_trends
+      treatment_trends <- treatment_trends %>%
+        mutate(day_of_year = format(date, "%m-%d")) %>%
+        left_join(seasonal_curve, by = "day_of_year")
         
     } else {
-      # Grouping by facility or foreman - create separate lines for each group
-      # Use the archived and current data directly with group-by logic
-      
-      con <- get_db_connection()
-      if (is.null(con)) {
-        return(
-          ggplot() +
-            annotate(
-              "text",
-              x = 0.5,
-              y = 0.5,
-              label = "Database connection failed.",
-              size = 6
-            ) +
-            theme_void()
-        )
-      }
-      
-      # Build the appropriate SELECT and GROUP BY based on grouping
-      group_select <- if (group_col == "facility") {
-        "trt.facility"
-      } else if (group_col == "foreman") {
-        "s.foreman"
-      } else {
-        "'All'"
-      }
-      
-      # Query both archive and current treatments with grouping
-      facility_condition <- get_facility_condition_total(input$facility_filter, input$structure_type_filter, input$priority_filter, input$status_types)
-      
-      query_grouped_treatments <- sprintf("
-WITH grouped_treatments AS (
-  SELECT 
-    %s as group_name,
-    trt.sitecode,
-    trt.inspdate,
-    COALESCE(m.effect_days, 0) as effect_days,
-    (trt.inspdate + COALESCE(m.effect_days, 0)) as treatment_end_date
-  FROM public.dblarv_insptrt_archive trt
-  LEFT JOIN public.mattype_list_targetdose m ON trt.matcode = m.matcode
-  LEFT JOIN public.loc_cxstruct s ON trt.sitecode = s.sitecode
-  WHERE trt.list_type = 'STR'
-    AND trt.inspdate >= '%s'
-    AND trt.inspdate <= '%s'
-    %s
-  
-  UNION ALL
-  
-  SELECT 
-    %s as group_name,
-    trt.sitecode,
-    trt.inspdate,
-    COALESCE(m.effect_days, 0) as effect_days,
-    (trt.inspdate + COALESCE(m.effect_days, 0)) as treatment_end_date
-  FROM public.dblarv_insptrt_current trt
-  LEFT JOIN public.mattype_list_targetdose m ON trt.matcode = m.matcode
-  LEFT JOIN public.loc_cxstruct s ON trt.sitecode = s.sitecode
-  WHERE trt.list_type = 'STR'
-    AND trt.inspdate >= '%s'
-    AND trt.inspdate <= '%s'
-    %s
-),
-structure_totals AS (
-  SELECT 
-    %s as group_name,
-    COUNT(DISTINCT s.sitecode) as total_structures
-  FROM public.loc_cxstruct s
-  WHERE (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
-    %s
-  GROUP BY %s
-)
-SELECT 
-  gt.group_name,
-  gt.sitecode,
-  gt.inspdate,
-  gt.effect_days,
-  gt.treatment_end_date,
-  st.total_structures
-FROM grouped_treatments gt
-LEFT JOIN structure_totals st ON gt.group_name = st.group_name
-WHERE gt.group_name IS NOT NULL
-ORDER BY gt.group_name, gt.inspdate
-", 
-        group_select, start_date, end_date, facility_condition,
-        group_select, start_date, end_date, facility_condition,
-        group_select, facility_condition, group_select
+      # Grouping by facility or foreman - not yet implemented
+      return(
+        ggplot() +
+          annotate(
+            "text",
+            x = 0.5,
+            y = 0.5,
+            label = "This feature is not yet working.\nTry MMCD (All) in the group by to see a preview\nof the data without the grouping by facility or FOS.",
+            size = 5,
+            hjust = 0.5,
+            vjust = 0.5
+          ) +
+          theme_void() +
+          labs(title = "Historical Trends - Feature Under Development")
       )
-      
-      grouped_data <- dbGetQuery(con, query_grouped_treatments)
-      dbDisconnect(con)
-      
-      if (nrow(grouped_data) == 0) {
-        return(
-          ggplot() +
-            annotate(
-              "text",
-              x = 0.5,
-              y = 0.5,
-              label = "No treatment data available for selected grouping and date range.",
-              size = 6
-            ) +
-            theme_void()
-        )
-      }
-      
-      # Process each group to create time series
-      all_group_trends <- data.frame()
-      
-      for (group_name in unique(grouped_data$group_name)) {
-        group_treatments <- grouped_data %>% filter(group_name == !!group_name)
-        group_total <- unique(group_treatments$total_structures)[1]
-        
-        if (is.na(group_total) || group_total == 0) next
-        
-        # Create treatment periods and merge overlapping ones (same logic as mmcd_all)
-        treatment_periods <- group_treatments %>%
-          select(sitecode, inspdate, effect_days) %>%
-          mutate(enddate = inspdate + effect_days) %>%
-          arrange(sitecode, inspdate)
-        
-        merged_treatments <- treatment_periods %>%
-          group_by(sitecode) %>%
-          arrange(inspdate) %>%
-          mutate(
-            lag_enddate = lag(inspdate + effect_days, default = as.Date("1900-01-01")),
-            new_period = inspdate > lag_enddate,
-            period_id = cumsum(new_period)
-          ) %>%
-          group_by(sitecode, period_id) %>%
-          summarize(
-            start_date = min(inspdate),
-            end_date = max(inspdate + effect_days),
-            .groups = "drop"
-          )
-        
-        daily_treatment_changes <- data.frame(
-          date = c(merged_treatments$start_date, merged_treatments$end_date),
-          change = c(rep(1, nrow(merged_treatments)), rep(-1, nrow(merged_treatments)))
-        ) %>%
-          group_by(date) %>%
-          summarize(treatment_change = sum(change)) %>%
-          arrange(date)
-        
-        # Calculate time series for this group
-        group_trends <- data.frame(date = date_range) %>%
-          left_join(daily_treatment_changes, by = "date") %>%
-          mutate(
-            treatment_change = ifelse(is.na(treatment_change), 0, treatment_change)
-          ) %>%
-          arrange(date) %>%
-          mutate(
-            active_treatments = cumsum(treatment_change),
-            proportion_active_treatment = ifelse(
-              group_total > 0, 
-              active_treatments / group_total, 
-              0
-            ),
-            group_name = group_name
-          )
-        
-        all_group_trends <- bind_rows(all_group_trends, group_trends)
-      }
-      
-      treatment_trends <- all_group_trends
     }
-    
+
     # Create filter description for title
     filters <- c()
     if (!is.null(input$facility_filter) && !("all" %in% input$facility_filter)) {
@@ -1158,8 +1023,10 @@ ORDER BY gt.group_name, gt.inspdate
       TRUE ~ paste("by", group_col)
     )
     
-    p <- ggplot(treatment_trends, aes(x = date, y = proportion_active_treatment, color = display_name)) +
-      geom_line(size = 1.2) +
+    p <- ggplot(treatment_trends, aes(x = date, y = proportion_active_treatment)) +
+      geom_line(aes(color = display_name), size = 1.2) +
+      # Add seasonal average line for MMCD (All) grouping
+      {if (group_col == "mmcd_all") geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1.2)} +
       labs(
         title = sprintf(
           "Proportion of Structures with Active Treatment %s (%d to %d)%s",
@@ -1168,6 +1035,7 @@ ORDER BY gt.group_name, gt.inspdate
           as.numeric(input$end_year),
           filter_text
         ),
+        subtitle = if (group_col == "mmcd_all") "Blue: actual | Red dashed: seasonal average" else NULL,
         x = "Date",
         y = "Proportion of Active Treatment",
         color = case_when(

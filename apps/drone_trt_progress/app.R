@@ -12,7 +12,7 @@ suppressPackageStartupMessages({
 source("../../shared/db_helpers.R")
 
 # Load environment variables
-load_env_variables()
+load_env_vars()
 
 # Define UI for the application
 ui <- fluidPage(

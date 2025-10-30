@@ -54,10 +54,20 @@ if (is.null(con)) {
 
 dfmap <- dbReadTable(con, "dbadult_mapdata_forr_calclat")
 
-# Debug: Check data range
+# Debug: Check data range and sample the actual data
 cat("Data loaded - Date range:", min(dfmap$inspdate), "to", max(dfmap$inspdate), "\n")
 cat("Data loaded - Mosquito count range:", min(dfmap$mosqcount, na.rm = TRUE), "to", max(dfmap$mosqcount, na.rm = TRUE), "\n")
 cat("Data loaded - Total records:", nrow(dfmap), "\n")
+
+# Check data types and sample values
+cat("Data types:\n")
+cat("inspdate class:", class(dfmap$inspdate), "\n")
+cat("mosqcount class:", class(dfmap$mosqcount), "\n")
+
+# Show sample records with high mosquito counts
+high_count_sample <- dfmap[dfmap$mosqcount > 100 & !is.na(dfmap$mosqcount), ][1:5, c("inspdate", "mosqcount", "spp_name", "loc_code")]
+cat("Sample high count records:\n")
+print(high_count_sample)
 
 dfmapMISS <- dbReadTable(con, "dbadult_mapdata_forr_missing")
 

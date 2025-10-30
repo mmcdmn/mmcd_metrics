@@ -17,7 +17,7 @@ source("../../shared/db_helpers.R")
 ui <- dashboardPage(
   dashboardHeader(
     title = "Ground Prehatch Progress",
-    # Add filters to the header using tags$li
+    # Add filters to the header using tags$li - moved expiry controls to the right
     tags$li(
       style = "padding: 5px 8px; margin: 2px;",
       selectizeInput("facility_filter", "Facility:",
@@ -63,14 +63,14 @@ ui <- dashboardPage(
       class = "dropdown"
     ),
     tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      sliderInput("expiring_days", "Days Until Expiring:",
-                 min = 1, max = 60, value = 14, step = 1),
+      style = "padding: 5px 8px; margin: 2px; float: right;",
+      checkboxInput("show_expiring_only", "Expiring Only", value = FALSE),
       class = "dropdown"
     ),
     tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      checkboxInput("show_expiring_only", "Expiring Only", value = FALSE),
+      style = "padding: 5px 8px; margin: 2px; float: right;",
+      sliderInput("expiring_days", "Days Until Expiring:",
+                 min = 1, max = 60, value = 14, step = 1),
       class = "dropdown"
     )
   ),

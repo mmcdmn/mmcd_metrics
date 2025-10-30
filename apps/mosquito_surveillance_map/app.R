@@ -175,7 +175,13 @@ mosqdateFilter <- reactive({
 MAPdata0 <- reactive({
   result <- mosqdateFilter() %>%
     group_by(loc_code) %>%
-    summarise(Sum = sum(mosqcount), Avg = round(mean(mosqcount), 2), geometry = geometry, spp_name = spp_name, loc_code = loc_code)
+    summarise(
+      Sum = sum(mosqcount, na.rm = TRUE), 
+      Avg = round(mean(mosqcount, na.rm = TRUE), 2), 
+      geometry = first(geometry), 
+      spp_name = first(spp_name),
+      .groups = 'drop'
+    )
   
   # Debug output - print summary to console
   cat("MAPdata0 debug:\n")

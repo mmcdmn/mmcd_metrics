@@ -13,6 +13,9 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
+# Source shared database helpers
+source("../../shared/db_helpers.R")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -31,14 +34,7 @@ for (path in env_paths) {
   }
 }
 
-# If no .env file found, environment variables should already be set by Docker
-
-# Database configuration using environment variables
-db_host <- Sys.getenv("DB_HOST")
-db_port <- Sys.getenv("DB_PORT")
-db_user <- Sys.getenv("DB_USER")
-db_password <- Sys.getenv("DB_PASSWORD")
-db_name <- Sys.getenv("DB_NAME")
+# Database connection is now handled by db_helpers.R
 
 # Define UI for the application
 ui <- fluidPage(
@@ -96,14 +92,10 @@ server <- function(input, output) {
   
   # Fetch all raw data
   raw_data <- reactive({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(NULL)
+    }
     # Get archive data
     archive_query <- sprintf("
 SELECT

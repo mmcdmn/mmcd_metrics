@@ -292,6 +292,40 @@ get_species_lookup <- function() {
   })
 }
 
+# Get species code to name mapping
+get_species_code_map <- function() {
+  species_lookup <- get_species_lookup()
+  
+  if (nrow(species_lookup) == 0) {
+    return(character(0))
+  }
+  
+  # Create mapping from sppcode to formatted species name
+  species_map <- character(0)
+  
+  for (i in 1:nrow(species_lookup)) {
+    code <- as.character(species_lookup$sppcode[i])
+    genus <- species_lookup$genus[i]
+    species <- species_lookup$species[i]
+    
+    # Create formatted name
+    if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
+      # Use abbreviated genus (first 2 letters) + full species name
+      formatted_name <- paste0(substr(genus, 1, 2), ". ", species)
+    } else if (!is.na(genus) && genus != "") {
+      formatted_name <- genus
+    } else if (!is.na(species) && species != "") {
+      formatted_name <- species
+    } else {
+      formatted_name <- paste0("Species ", code)
+    }
+    
+    species_map[code] <- formatted_name
+  }
+  
+  return(species_map)
+}
+
 
 
 # Internal helper function to generate visually distinct colors
@@ -318,25 +352,33 @@ generate_distinct_colors <- function(n) {
 #' This function generates and returns a consistent color mapping for facilities.
 #' Each facility gets assigned a unique color that remains consistent across all visualizations.
 #' 
+#' @param alpha_zones Optional. Vector of zone identifiers (e.g., c("1", "2")) to apply 
+#'   alpha transparency for zone differentiation. P1 zones get full opacity (1.0), 
+#'   P2 zones get reduced opacity (0.6). If NULL, returns standard colors.
+#' @param combined_groups Optional. Vector of combined group names (e.g., "AP (P1)", "NM (P2)")
+#'   to extract base facility names from for color mapping. Used with alpha_zones.
+#' 
 #' Usage:
 #' ```r
-#' # In ggplot2:
+#' # Standard facility colors:
 #' facility_colors <- get_facility_base_colors()
 #' ggplot(data, aes(x = x, y = y, color = facility)) +
 #'   scale_color_manual(values = facility_colors)
 #'
-#' # In leaflet:
-#' pal <- colorFactor(
-#'   palette = facility_colors,
-#'   domain = names(facility_colors)
+#' # Zone-aware colors with alpha:
+#' zone_colors <- get_facility_base_colors(
+#'   alpha_zones = c("1", "2"), 
+#'   combined_groups = unique(data$combined_group)
 #' )
+#' ggplot(data, aes(x = x, y = y, color = combined_group, alpha = zone_factor)) +
+#'   scale_color_manual(values = zone_colors$colors) +
+#'   scale_alpha_manual(values = zone_colors$alpha_values)
 #' ```
 #' 
 #' Returns:
-#'   Named vector where names are facility short names (e.g., "AP", "NM") and 
-#'   values are hex color codes. Can be used directly in scale_color_manual() 
-#'   or similar functions.
-get_facility_base_colors <- function() {
+#'   If alpha_zones is NULL: Named vector where names are facility short names and values are hex colors.
+#'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
+get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
   facilities <- get_facility_lookup()
   if (nrow(facilities) == 0) return(c())
   
@@ -345,6 +387,26 @@ get_facility_base_colors <- function() {
   
   # Map colors to facility short names
   result <- setNames(colors, facilities$short_name)
+  
+  # Handle zone differentiation if requested
+  if (!is.null(alpha_zones) && length(alpha_zones) > 1 && !is.null(combined_groups)) {
+    # Extract base names from combined groups and map to colors
+    combined_colors <- character(0)
+    for (combined_name in combined_groups) {
+      base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+      base_name <- trimws(base_name)
+      if (base_name %in% names(result)) {
+        combined_colors[combined_name] <- result[base_name]
+      }
+    }
+    
+    # Return zone-aware result
+    return(list(
+      colors = combined_colors,
+      alpha_values = c("1" = 1.0, "2" = 0.6)
+    ))
+  }
+  
   return(result)
 }
 
@@ -354,37 +416,39 @@ get_facility_base_colors <- function() {
 #' color is a variation of their facility's base color. This ensures that foremen from
 #' the same facility have similar but distinguishable colors.
 #' 
+#' @param alpha_zones Optional. Vector of zone identifiers (e.g., c("1", "2")) to apply 
+#'   alpha transparency for zone differentiation. P1 zones get full opacity (1.0), 
+#'   P2 zones get reduced opacity (0.6). If NULL, returns standard colors.
+#' @param combined_groups Optional. Vector of combined group names (e.g., "John S. (P1)", "Jane D. (P2)")
+#'   to extract base foreman names from for color mapping. Used with alpha_zones.
+#' 
 #' Important Notes:
 #' 1. The foreman colors are based on employee numbers (e.g., "7002", "8203")
 #' 2. You must use get_foremen_lookup() to map between employee numbers and names
 #' 
 #' Usage:
 #' ```r
-#' # Get both colors and lookup
+#' # Standard foreman colors:
 #' foreman_colors <- get_foreman_colors()
 #' foremen_lookup <- get_foremen_lookup()
-#' 
-#' # Create mapping from emp_num to colors
-#' emp_colors <- setNames(
-#'   foreman_colors[foremen_lookup$shortname],
-#'   foremen_lookup$emp_num
-#' )
-#' 
-#' # In ggplot2:
+#' emp_colors <- setNames(foreman_colors[foremen_lookup$shortname], foremen_lookup$emp_num)
 #' ggplot(data, aes(x = x, y = y, color = foreman)) +
 #'   scale_color_manual(values = emp_colors)
 #' 
-#' # In leaflet:
-#' pal <- colorFactor(
-#'   palette = emp_colors,
-#'   domain = names(emp_colors)
+#' # Zone-aware colors:
+#' zone_colors <- get_foreman_colors(
+#'   alpha_zones = c("1", "2"), 
+#'   combined_groups = unique(data$combined_group)
 #' )
+#' ggplot(data, aes(x = x, y = y, color = combined_group, alpha = zone_factor)) +
+#'   scale_color_manual(values = zone_colors$colors) +
+#'   scale_alpha_manual(values = zone_colors$alpha_values)
 #' ```
 #' 
 #' Returns:
-#'   Named vector where names are foreman shortnames and values are hex color codes.
-#'   Must be mapped to employee numbers using get_foremen_lookup() for use with data.
-get_foreman_colors <- function() {
+#'   If alpha_zones is NULL: Named vector where names are foreman shortnames and values are hex colors.
+#'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
+get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
   foremen <- get_foremen_lookup()
   if (nrow(foremen) == 0) return(c())
   
@@ -453,6 +517,26 @@ get_foreman_colors <- function() {
   
   # Create named vector
   names(foreman_colors) <- foremen$shortname
+  
+  # Handle zone differentiation if requested
+  if (!is.null(alpha_zones) && length(alpha_zones) > 1 && !is.null(combined_groups)) {
+    # Extract base names from combined groups and map to colors
+    combined_colors <- character(0)
+    for (combined_name in combined_groups) {
+      base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+      base_name <- trimws(base_name)
+      if (base_name %in% names(foreman_colors)) {
+        combined_colors[combined_name] <- foreman_colors[base_name]
+      }
+    }
+    
+    # Return zone-aware result
+    return(list(
+      colors = combined_colors,
+      alpha_values = c("1" = 1.0, "2" = 0.6)
+    ))
+  }
+  
   return(foreman_colors)
 }
 
@@ -772,4 +856,45 @@ get_treatment_plan_choices <- function(include_all = FALSE) {
   }
   
   return(choices)
+}
+
+# =============================================================================
+# COLOR HELPER FUNCTIONS - ONE STOP SHOP
+# =============================================================================
+# Centralized color management with optional zone differentiation support.
+# All color functions support optional alpha_zones parameter for P1/P2 zones.
+
+#' Apply Zone Differentiation to ggplot
+#' 
+#' Helper function to add zone alpha scaling to plots when using zone-aware colors.
+#' Use this with the zone-aware results from get_facility_base_colors() or get_foreman_colors().
+#' 
+#' @param plot ggplot object
+#' @param alpha_values Named vector of alpha values (from color function result$alpha_values)
+#' @param representative_color Optional hex color for legend display (if NULL, uses gray)
+#' @return Modified ggplot object with zone alpha scale and legend
+#' @export
+add_zone_alpha_to_plot <- function(plot, alpha_values, representative_color = NULL) {
+  if (is.null(alpha_values)) {
+    return(plot)
+  }
+  
+  # Choose representative fill for legend
+  rep_fill <- ifelse(is.null(representative_color), "#808080", representative_color)
+  
+  plot <- plot +
+    ggplot2::scale_alpha_manual(
+      name = "Zone",
+      values = alpha_values,
+      labels = c("1" = "P1 (Solid)", "2" = "P2 (Faded)"),
+      drop = FALSE
+    ) +
+    ggplot2::guides(alpha = ggplot2::guide_legend(
+      override.aes = list(
+        fill = rep(rep_fill, length.out = length(alpha_values)),
+        alpha = unname(alpha_values)
+      )
+    ))
+  
+  return(plot)
 }

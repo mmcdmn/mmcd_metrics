@@ -21,8 +21,8 @@ ui <- dashboardPage(
     tags$li(
       style = "padding: 5px 8px; margin: 2px;",
       selectizeInput("facility_filter", "Facility:",
-                    choices = NULL,
-                    selected = "none", 
+                    choices = c("All" = "all"),
+                    selected = "all", 
                     multiple = TRUE,
                     options = list(placeholder = "Select facilities...")),
       class = "dropdown"
@@ -30,17 +30,26 @@ ui <- dashboardPage(
     tags$li(
       style = "padding: 5px 8px; margin: 2px;",
       selectizeInput("foreman_filter", "FOS:",
-                    choices = NULL,
-                    selected = "none",
+                    choices = c("All" = "all"),
+                    selected = "all",
                     multiple = TRUE,
                     options = list(placeholder = "Select FOS...")),
       class = "dropdown"
     ),
     tags$li(
       style = "padding: 5px 8px; margin: 2px;",
-      radioButtons("view_level", "View:",
-                  choices = c("Facility" = "facility",
-                             "Zone" = "zone", 
+      checkboxGroupInput("zone_filter", "Filter by Zone:",
+                        choices = c("P1" = "1", "P2" = "2"),
+                        selected = c("1", "2"),
+                        inline = TRUE),
+      class = "dropdown"
+    ),
+    tags$li(
+      style = "padding: 5px 8px; margin: 2px;",
+      radioButtons("group_by", "Group by:",
+                  choices = c("All MMCD" = "mmcd_all",
+                             "Facility" = "facility", 
+                             "FOS" = "foreman",
                              "Section" = "sectcode"),
                   selected = "facility",
                   inline = TRUE),
@@ -74,7 +83,7 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
-    # Add CSS to prevent header overlap with tabs and fix styling
+    # Add minimal CSS to prevent header overlap with sidebar tabs
     tags$head(
       tags$style(HTML("
         .content-wrapper, .right-side {
@@ -83,68 +92,19 @@ ui <- dashboardPage(
         .main-header {
           height: 120px !important;
           background-color: #3c8dbc !important;
-          z-index: 1030 !important;
         }
         .main-header .navbar {
           height: 120px !important;
           background-color: #3c8dbc !important;
-          border: none !important;
-        }
-        .main-header .navbar-header {
-          background-color: #3c8dbc !important;
-        }
-        .main-header .navbar-toggle {
-          background-color: #3c8dbc !important;
-          border: none !important;
-        }
-        .main-header .navbar .nav > li > a {
-          height: 120px !important;
-          line-height: 120px !important;
-        }
-        .main-header .navbar .dropdown-menu {
-          margin-top: 0px !important;
-        }
-        .skin-blue .main-header .navbar .dropdown-menu li a {
-          color: #333 !important;
         }
         .main-sidebar {
           margin-top: 120px !important;
-          z-index: 1020 !important;
-        }
-        .navbar-custom-menu {
-          background-color: #3c8dbc !important;
         }
         .skin-blue .main-header .navbar {
           background-color: #3c8dbc !important;
         }
-        .skin-blue .main-header .navbar-custom-menu > .navbar-nav > li {
-          background-color: #3c8dbc !important;
-        }
         .skin-blue .main-header .logo {
           background-color: #367fa9 !important;
-        }
-        .skin-blue .main-header .logo:hover {
-          background-color: #357ca5 !important;
-        }
-        /* Fix any remaining black areas in header */
-        .navbar-nav, .navbar-right, .navbar-left {
-          background-color: #3c8dbc !important;
-        }
-        .navbar > .container .navbar-brand, .navbar > .container-fluid .navbar-brand {
-          background-color: #3c8dbc !important;
-        }
-        /* Fix sidebar menu positioning and ensure clickability */
-        .sidebar-menu {
-          margin-top: 20px !important;
-        }
-        .sidebar-menu > li > a {
-          position: relative !important;
-          z-index: 1040 !important;
-        }
-        /* Ensure header elements don't block sidebar navigation */
-        .main-header .navbar .navbar-nav > li {
-          position: relative !important;
-          z-index: 1000 !important;
         }
       "))
     ),
@@ -166,7 +126,7 @@ ui <- dashboardPage(
               valueBoxOutput("expiring_pct", width = 2)
             ),
             conditionalPanel(
-              condition = "input.view_level == 'sectcode'",
+              condition = "input.group_by == 'sectcode'",
               div(
                 style = "background-color: #f8f9fa; padding: 8px; border-radius: 4px; margin-top: 10px;",
                 HTML("<i class='fa fa-info-circle' style='color: #17a2b8;'></i> 
@@ -235,39 +195,29 @@ server <- function(input, output, session) {
     facility_choices <- get_facility_choices(include_all = TRUE)
     # Add "None" option at the beginning
     facility_choices <- c("None (No Data)" = "none", facility_choices)
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "none")
+    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
   })
   
-  # Control section filtering based on facility selection
+  # Initialize foreman choices from db_helpers  
   observe({
-    # If 'all' is in facility filter, disable section view
-    if (!is.null(input$facility_filter) && ("all" %in% input$facility_filter)) {
-      if (input$view_level == "sectcode") {
-        updateRadioButtons(session, "view_level", selected = "facility")
-      }
-    }
+    foremen_lookup <- get_foremen_lookup()
+    foremen_choices <- c("All" = "all")
+    foremen_choices <- c(
+      foremen_choices,
+      setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+    )
+    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
   
-  # Update available view levels based on facility selection
-  observe({
-    if (!is.null(input$facility_filter) && ("all" %in% input$facility_filter)) {
-      # When 'All' is selected, only allow facility and zone views
-      choices <- c("Facility" = "facility", "Priority Zone" = "zone")
-    } else {
-      # When specific facilities are selected, allow all views
-      choices <- c("Facility" = "facility", "Priority Zone" = "zone", "Section" = "sectcode")
-    }
-    
-    current_selection <- input$view_level
-    if (!(current_selection %in% choices)) {
-      current_selection <- "facility"
-    }
-    
-    updateRadioButtons(session, "view_level", choices = choices, selected = current_selection)
-  })
+  # Note: Section grouping is always allowed - user guidance provided in UI conditional panel
+
+  # Note: Section grouping is now always available regardless of facility selection
+  # The conditional panel in the UI provides user guidance about section filtering
   
   # Fetch ground prehatch data
   ground_data <- reactive({
+    req(input$zone_filter, input$group_by)  # Ensure required inputs are available
+    
     con <- get_db_connection()
     if (is.null(con)) return(data.frame())
     
@@ -280,36 +230,37 @@ server <- function(input, output, session) {
       
       query <- sprintf("
 WITH ActiveSites_g AS (
-  SELECT sc.facility, sc.zone, sc.fosarea, left(sitecode,7) AS sectcode,
-         sitecode, acres, air_gnd, priority, prehatch, drone, remarks
+  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+         sc.fosarea as foreman
   FROM loc_breeding_sites b
   LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-  WHERE (enddate IS NULL OR enddate>'%s-05-01')
-    AND air_gnd='G'
-  ORDER BY facility, sectcode, sitecode, prehatch
+  WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
+    AND b.air_gnd='G'
+  ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
 )
-SELECT sitecnts.facility, sitecnts.zone, sitecnts.fosarea, sitecnts.sectcode,
+SELECT sitecnts.facility, sitecnts.zone, sitecnts.fosarea, sitecnts.sectcode, sitecnts.foreman,
        tot_ground, not_prehatch_sites, prehatch_sites_cnt, drone_sites_cnt,
        COALESCE(ph_treated_cnt, 0) AS ph_treated_cnt,
        COALESCE(ph_expiring_cnt, 0) AS ph_expiring_cnt,
        COALESCE(ph_expired_cnt, 0) AS ph_expired_cnt,
        prehatch_sites_cnt-(COALESCE(ph_treated_cnt,0)+COALESCE(ph_expiring_cnt, 0)) AS ph_notactivetrt_cnt
 FROM
-(SELECT facility, zone, fosarea, sectcode,
+(SELECT facility, zone, fosarea, sectcode, foreman,
         COUNT(CASE WHEN (air_gnd='G') THEN 1 END) AS tot_ground,
         COUNT(CASE WHEN (air_gnd='G' AND prehatch IS NULL) THEN 1 END) AS not_prehatch_sites,
         COUNT(CASE WHEN (air_gnd='G' AND prehatch IN ('PREHATCH','BRIQUET')) THEN 1 END) AS prehatch_sites_cnt,
         COUNT(CASE WHEN (air_gnd='G' AND drone IN ('Y','M','C')) THEN 1 END) AS drone_sites_cnt
  FROM ActiveSites_g a
- GROUP BY facility, zone, fosarea, sectcode
- ORDER BY facility, zone, fosarea, sectcode) sitecnts
+ GROUP BY facility, zone, fosarea, sectcode, foreman
+ ORDER BY facility, zone, fosarea, sectcode, foreman) sitecnts
 LEFT JOIN(
-SELECT facility, zone, fosarea, sectcode,
+SELECT facility, zone, fosarea, sectcode, foreman,
        COUNT(CASE WHEN (prehatch_status='treated') THEN 1 END) AS ph_treated_cnt,
        COUNT(CASE WHEN (prehatch_status='expiring') THEN 1 END) AS ph_expiring_cnt,
        COUNT(CASE WHEN (prehatch_status='expired') THEN 1 END) AS ph_expired_cnt
 FROM (  
-  SELECT facility, zone, fosarea, sectcode, sitecode,
+  SELECT facility, zone, fosarea, sectcode, foreman, sitecode,
          CASE
            WHEN age > COALESCE(effect_days::integer, 150)::double precision THEN 'expired'::text
            WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
@@ -319,7 +270,7 @@ FROM (
          inspdate, matcode, age, effect_days, days_retrt_early
   FROM (  
     SELECT DISTINCT ON (a.sitecode)
-           a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone,
+           a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman,
            c.pkey_pg AS insptrt_id,
            date_part('days'::text, '%s'::timestamp - c.inspdate::timestamp with time zone) AS age,
            c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
@@ -330,9 +281,9 @@ FROM (
   ) s_grd
   ORDER BY sitecode
 ) list
-GROUP BY facility, zone, fosarea, sectcode
-ORDER BY facility, zone, fosarea, sectcode
-) trtcnts ON trtcnts.sectcode = sitecnts.sectcode
+GROUP BY facility, zone, fosarea, sectcode, foreman
+ORDER BY facility, zone, fosarea, sectcode, foreman
+) trtcnts ON trtcnts.sectcode = sitecnts.sectcode AND COALESCE(trtcnts.foreman, '') = COALESCE(sitecnts.foreman, '')
 ORDER BY sectcode", current_year, simulation_date, current_year, simulation_date)
       
       result <- dbGetQuery(con, query)
@@ -444,21 +395,29 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, expiring_days, simul
       }
     }
     
-    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "none")
+    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
   })
   
   # Filter data based on user selections
   filtered_data <- reactive({
+    req(input$zone_filter, input$group_by, input$facility_filter)
+    # Don't require foreman_filter since it starts as NULL
+    
     data <- ground_data()
     
     if (nrow(data) == 0) return(data)
     
     # Return empty data if "none" is selected for facility or foreman
-    if (!is.null(input$facility_filter) && ("none" %in% input$facility_filter)) {
+    if (!is.null(input$facility_filter) && ("none" %in% input$facility_filter) && length(input$facility_filter) == 1) {
       return(data.frame())
     }
-    if (!is.null(input$foreman_filter) && ("none" %in% input$foreman_filter)) {
+    if (!is.null(input$foreman_filter) && ("none" %in% input$foreman_filter) && length(input$foreman_filter) == 1) {
       return(data.frame())
+    }
+    
+    # Filter by zone if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      data <- data %>% filter(zone %in% input$zone_filter)
     }
     
     # Filter by facility
@@ -466,19 +425,22 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, expiring_days, simul
       data <- data %>% filter(facility %in% input$facility_filter)
     }
     
-    # Filter by foreman (fosarea)
+    # Filter by foreman
     if (!is.null(input$foreman_filter) && !("all" %in% input$foreman_filter)) {
-      data <- data %>% filter(fosarea %in% input$foreman_filter)
+      data <- data %>% filter(foreman %in% input$foreman_filter)
     }
     
     return(data)
   })
   
-  # Aggregate data based on view level
+  # Aggregate data based on grouping level  
   aggregated_data <- reactive({
     data <- filtered_data()
     
     if (nrow(data) == 0) return(data)
+
+    # Map facility names for display
+    data <- map_facility_names(data)
 
     # If "Show Only Expiring Sites" is checked, filter to only expiring sites before aggregation
     if (input$show_expiring_only) {
@@ -490,12 +452,12 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, expiring_days, simul
         return(data.frame())
       }
       
-      # Filter the main data to only include facilities/zones/sections that have expiring sites
-      if (input$view_level == "facility") {
+      # Filter based on grouping level
+      if (input$group_by == "facility") {
         data <- data %>% filter(facility %in% expiring_sites$facility)
-      } else if (input$view_level == "zone") {
-        data <- data %>% filter(paste0(facility, "_", zone) %in% paste0(expiring_sites$facility, "_", expiring_sites$zone))
-      } else {
+      } else if (input$group_by == "foreman") {
+        data <- data %>% filter(foreman %in% expiring_sites$foreman)
+      } else if (input$group_by == "sectcode") {
         data <- data %>% filter(sectcode %in% expiring_sites$sectcode)
       }
       
@@ -504,34 +466,163 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, expiring_days, simul
       }
     }
 
-    group_vars <- switch(input$view_level,
-                        "facility" = "facility",
-                        "zone" = c("facility", "zone"),
-                        "sectcode" = c("facility", "zone", "sectcode"))
+    # Check if we should show zones as separate entities
+    show_zones_separately <- length(input$zone_filter) > 1
 
-    # Create display variable
-    if (input$view_level == "facility") {
-      data$display_name <- data$facility_display
-    } else if (input$view_level == "zone") {
-      data$display_name <- paste0(data$facility_display, " - Priority Zone ", data$zone)
-    } else {
-      data$display_name <- paste0(data$facility_display, " - ", data$sectcode)
+    # Define grouping and display based on group_by selection
+    if (input$group_by == "mmcd_all") {
+      if (show_zones_separately) {
+        # Group by zone when both P1 and P2 are selected
+        result <- data %>%
+          group_by(zone) %>%
+          summarise(
+            tot_ground = sum(tot_ground, na.rm = TRUE),
+            not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+            prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+            drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+            ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+            ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+            ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+            ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            display_name = paste0("MMCD (All) - P", zone),
+            group_name = "mmcd_all",
+            combined_group = paste0("MMCD (All) (P", zone, ")")
+          )
+      } else {
+        # Aggregate everything together for MMCD (All)
+        result <- data %>%
+          summarise(
+            tot_ground = sum(tot_ground, na.rm = TRUE),
+            not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+            prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+            drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+            ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+            ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+            ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+            ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            display_name = "MMCD (All)",
+            group_name = "mmcd_all"
+          )
+      }
+    } else if (input$group_by == "facility") {
+      if (show_zones_separately) {
+        # Group by facility and zone
+        result <- data %>%
+          group_by(facility, facility_display, zone) %>%
+          summarise(
+            tot_ground = sum(tot_ground, na.rm = TRUE),
+            not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+            prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+            drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+            ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+            ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+            ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+            ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            display_name = paste0(facility_display, " (P", zone, ")"),
+            group_name = facility,
+            combined_group = paste0(facility, " (P", zone, ")")
+          )
+      } else {
+        # Group by facility only
+        result <- data %>%
+          group_by(facility, facility_display) %>%
+          summarise(
+            tot_ground = sum(tot_ground, na.rm = TRUE),
+            not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+            prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+            drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+            ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+            ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+            ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+            ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            display_name = facility_display,
+            group_name = facility
+          )
+      }
+    } else if (input$group_by == "foreman") {
+      # Get foreman lookup for display names
+      foremen_lookup <- get_foremen_lookup()
+      
+      if (show_zones_separately) {
+        # Group by foreman and zone
+        result <- data %>%
+          group_by(foreman, zone) %>%
+          summarise(
+            tot_ground = sum(tot_ground, na.rm = TRUE),
+            not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+            prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+            drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+            ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+            ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+            ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+            ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            foreman_name = sapply(foreman, function(f) {
+              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
+              if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
+            }),
+            display_name = paste0(foreman_name, " (P", zone, ")"),
+            group_name = foreman,
+            combined_group = paste0(foreman, " (P", zone, ")")
+          )
+      } else {
+        # Group by foreman only
+        result <- data %>%
+          group_by(foreman) %>%
+          summarise(
+            tot_ground = sum(tot_ground, na.rm = TRUE),
+            not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+            prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+            drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+            ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+            ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+            ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+            ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            foreman_name = sapply(foreman, function(f) {
+              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
+              if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
+            }),
+            display_name = foreman_name,
+            group_name = foreman
+          )
+      }
+    } else if (input$group_by == "sectcode") {
+      # Section grouping - always show individual sections, but filter by zone
+      result <- data %>%
+        group_by(facility, facility_display, zone, sectcode) %>%
+        summarise(
+          tot_ground = sum(tot_ground, na.rm = TRUE),
+          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = paste0(facility_display, " - ", sectcode),
+          group_name = sectcode
+        )
     }
-
-    # Aggregate the data
-    result <- data %>%
-      group_by(across(all_of(c(group_vars, "display_name")))) %>%
-      summarise(
-        tot_ground = sum(tot_ground, na.rm = TRUE),
-        not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
-        prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
-        drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
-        ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
-        ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
-        ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-        ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
-        .groups = "drop"
-      )
     
     return(result)
   })
@@ -694,9 +785,10 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, expiring_days, simul
       labs(
         title = chart_title,
         x = case_when(
-          input$view_level == "facility" ~ "Facility",
-          input$view_level == "zone" ~ "Priority Zone",
-          input$view_level == "sectcode" ~ "Section"
+          input$group_by == "mmcd_all" ~ "MMCD",
+          input$group_by == "facility" ~ "Facility",
+          input$group_by == "foreman" ~ "FOS",
+          input$group_by == "sectcode" ~ "Section"
         ),
         y = "Number of Sites",
         fill = "Treatment Status"
@@ -786,10 +878,10 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, current_expiring_day
       result <- map_facility_names(result)
       
       # Return empty data if "none" is selected for facility or foreman
-      if (!is.null(input$facility_filter) && ("none" %in% input$facility_filter)) {
+      if (!is.null(input$facility_filter) && ("none" %in% input$facility_filter) && length(input$facility_filter) == 1) {
         return(data.frame())
       }
-      if (!is.null(input$foreman_filter) && ("none" %in% input$foreman_filter)) {
+      if (!is.null(input$foreman_filter) && ("none" %in% input$foreman_filter) && length(input$foreman_filter) == 1) {
         return(data.frame())
       }
       

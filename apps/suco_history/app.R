@@ -7,10 +7,11 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(lubridate)
   library(scales)
-  library(leaflet) # For interactive maps
-  library(sf) # For handling spatial data
-  library(stringr) # For string manipulation
+  library(leaflet) 
+  library(sf) 
+  library(stringr) 
   library(plotly)
+  library(later) 
 })
 
 # Source the shared database helper functions
@@ -45,19 +46,46 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       # Group by selection
+      h4("Analysis Options"),
       radioButtons("group_by", "Group By:",
                    choices = c("MMCD (All)" = "mmcd_all",
                                "Facility" = "facility", 
                                "FOS" = "foreman"),
                    selected = "mmcd_all"),
       
-      # Date range selection - default to current year
-      dateRangeInput("date_range", "Select Date Range:",
+      hr(),
+      
+      # Date shortcuts
+      h4("Date Selection"),
+      fluidRow(
+        column(4, actionButton("this_year", "This Year", class = "btn-primary btn-sm", style = "width: 100%;")),
+        column(4, actionButton("this_month", "This Month", class = "btn-info btn-sm", style = "width: 100%;")),
+        column(4, actionButton("this_week", "This Week", class = "btn-success btn-sm", style = "width: 100%;"))
+      ),
+      br(),
+      
+      # Year slider (only visible for All Data tab with multi-year capability)
+      conditionalPanel(
+        condition = "input.main_tabset == 'All Data (Current + Archive)'",
+        tags$style(type = "text/css", ".irs-grid-pol.small {height: 0px;}",
+                   ".irs-grid-text {font-size: 8pt;}"),
+        sliderInput("year_range", "Year Range:",
+                    min = 2015, max = as.numeric(format(Sys.Date(), "%Y")),
+                    value = c(as.numeric(format(Sys.Date(), "%Y")), as.numeric(format(Sys.Date(), "%Y"))),
+                    sep = "", step = 1),
+        br()
+      ),
+      
+      # Date range selection - behavior depends on which tab is active
+      dateRangeInput("date_range", "Custom Date Range:",
                      start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
                      end = Sys.Date(),
                      format = "yyyy-mm-dd"),
       
+      hr(),
+      
       # Filter by zone (P1/P2)
+      h4("Location Filters"),
       checkboxGroupInput("zone_filter", "Filter by Zone:",
                         choices = c("P1" = "1", "P2" = "2"),
                         selected = c("1", "2")),
@@ -74,6 +102,11 @@ ui <- fluidPage(
       
       # Add species filter to sidebarPanel
       selectInput("species_filter", "Filter by Species:", choices = c("All"), selected = "All"),
+      
+      hr(),
+      
+      # Display and visualization options
+      h4("Display Options"),
       # Graph type selector
       selectInput("graph_type", "Graph Type:",
                   choices = c("Bar" = "bar", "Line" = "line", "Point" = "point", "Area" = "area"),
@@ -123,6 +156,160 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
+  # Reactive values to prevent infinite loops between date controls
+  updating_date_range <- reactiveVal(FALSE)
+  updating_year_range <- reactiveVal(FALSE)
+  
+  # Date shortcut handlers - behavior depends on active tab
+  observeEvent(input$this_year, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    start_date <- as.Date(paste0(current_year, "-01-01"))
+    end_date <- Sys.Date()
+    
+    # Set flag to prevent infinite loop
+    updating_date_range(TRUE)
+    updating_year_range(TRUE)
+    
+    # Always update date range to current year
+    updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+    
+    # Only update year slider if on All Data tab
+    if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+      updateSliderInput(session, "year_range", value = c(current_year, current_year))
+    }
+    
+    # Reset flags after a short delay
+    later::later(function() {
+      updating_date_range(FALSE)
+      updating_year_range(FALSE)
+    }, 0.1)
+  })
+  
+  observeEvent(input$this_month, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    current_month <- as.numeric(format(Sys.Date(), "%m"))
+    start_date <- as.Date(paste0(current_year, "-", sprintf("%02d", current_month), "-01"))
+    end_date <- Sys.Date()
+    
+    # Set flag to prevent infinite loop
+    updating_date_range(TRUE)
+    updating_year_range(TRUE)
+    
+    # Always update date range to current month
+    updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+    
+    # Only update year slider if on All Data tab
+    if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+      updateSliderInput(session, "year_range", value = c(current_year, current_year))
+    }
+    
+    # Reset flags after a short delay
+    later::later(function() {
+      updating_date_range(FALSE)
+      updating_year_range(FALSE)
+    }, 0.1)
+  })
+  
+  observeEvent(input$this_week, {
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    # Get start of current week (Monday)
+    start_date <- floor_date(Sys.Date(), "week", week_start = 1)
+    end_date <- Sys.Date()
+    
+    # Set flag to prevent infinite loop
+    updating_date_range(TRUE)
+    updating_year_range(TRUE)
+    
+    # Always update date range to current week
+    updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+    
+    # Only update year slider if on All Data tab
+    if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+      updateSliderInput(session, "year_range", value = c(current_year, current_year))
+    }
+    
+    # Reset flags after a short delay
+    later::later(function() {
+      updating_date_range(FALSE)
+      updating_year_range(FALSE)
+    }, 0.1)
+  })
+  
+  # Year slider handler - only works when on All Data tab and not updating
+  observeEvent(input$year_range, {
+    # Only process if we're on the All Data tab and not already updating
+    if (!updating_year_range() && 
+        !is.null(input$main_tabset) && 
+        input$main_tabset == "All Data (Current + Archive)") {
+      
+      start_year <- input$year_range[1]
+      end_year <- input$year_range[2]
+      
+      # Create date range from year selection
+      start_date <- as.Date(paste0(start_year, "-01-01"))
+      end_date <- if (end_year == as.numeric(format(Sys.Date(), "%Y"))) {
+        # If current year is selected as end, use today's date
+        Sys.Date()
+      } else {
+        # Otherwise use end of that year
+        as.Date(paste0(end_year, "-12-31"))
+      }
+      
+      # Set flag and update date range input
+      updating_date_range(TRUE)
+      updateDateRangeInput(session, "date_range", start = start_date, end = end_date)
+      
+      # Reset flag after a short delay
+      later::later(function() {
+        updating_date_range(FALSE)
+      }, 0.1)
+    }
+  }, ignoreInit = TRUE)  # Ignore initial trigger
+  
+  # Custom date range handler - behavior depends on active tab and not updating
+  observeEvent(input$date_range, {
+    if (!updating_date_range() && 
+        !is.null(input$date_range) && 
+        length(input$date_range) == 2) {
+      
+      start_year <- as.numeric(format(input$date_range[1], "%Y"))
+      end_year <- as.numeric(format(input$date_range[2], "%Y"))
+      current_year <- as.numeric(format(Sys.Date(), "%Y"))
+      
+      # If on Current Data tab, restrict to current year only
+      if (!is.null(input$main_tabset) && input$main_tabset == "Current Data") {
+        if (start_year != current_year || end_year != current_year) {
+          # Force dates back to current year
+          new_start <- as.Date(paste0(current_year, "-01-01"))
+          new_end <- Sys.Date()
+          
+          updating_date_range(TRUE)
+          updateDateRangeInput(session, "date_range", start = new_start, end = new_end)
+          
+          # Show a notification
+          showNotification("Current Data tab is limited to current year data only. Use 'All Data' tab for multi-year analysis.", 
+                          type = "warning", duration = 3)
+          
+          # Reset flag after a short delay
+          later::later(function() {
+            updating_date_range(FALSE)
+          }, 0.1)
+        }
+      } else if (!is.null(input$main_tabset) && input$main_tabset == "All Data (Current + Archive)") {
+        # On All Data tab, update year slider to match
+        if (!identical(c(start_year, end_year), input$year_range)) {
+          updating_year_range(TRUE)
+          updateSliderInput(session, "year_range", value = c(start_year, end_year))
+          
+          # Reset flag after a short delay
+          later::later(function() {
+            updating_year_range(FALSE)
+          }, 0.1)
+        }
+      }
+    }
+  }, ignoreInit = TRUE)  # Ignore initial trigger
+  
   # Initialize facility choices from db_helpers
   observe({
     facilities <- get_facility_lookup()
@@ -161,25 +348,6 @@ server <- function(input, output, session) {
       })
     })
   }
-  
-  # Add a mapping from spp code to readable species name
-  species_code_map <- c(
-    '26' = 'Cx. tarsalis',
-    '32' = 'Cx. erraticus',
-    '33' = 'Cx. pipiens',
-    '34' = 'Cx. restuans',
-    '35' = 'Cx. salinarius',
-    '36' = 'Cx. tarsalis',
-    '37' = 'Cx. territans',
-    '43' = 'Or. signifera',
-    '44' = 'Ps. ciliata',
-    '45' = 'Ps. columbiae',
-    '46' = 'Ps. ferox',
-    '47' = 'Ps. horrida',
-    '48' = 'Ur. sapphirina',
-    '49' = 'sp49_smith',
-    '50' = 'sp50_hende'
-  )
   
   # Fetch and join SUCO and species data
   suco_data <- reactive({
@@ -289,13 +457,12 @@ WHERE ainspecnum IS NOT NULL
                          harborage_facility, facility)
       )
     
-    # Debug: Check foreman data after SQL queries
     # Combine species data
     all_species <- bind_rows(species_current, species_archive)
 
     # Join SUCO data with species data and lookup for names
     joined_data <- all_data %>%
-      left_join(all_species, by = "ainspecnum") %>%
+      left_join(all_species, by = "ainspecnum", relationship = "many-to-many") %>%
       left_join(species_lookup, by = c("spp" = "sppcode")) %>%
       mutate(
         species_name = dplyr::case_when(
@@ -306,25 +473,31 @@ WHERE ainspecnum IS NOT NULL
         # Ensure foreman values are consistent strings
         foreman = trimws(as.character(foreman))
       )
-
-    # DEBUG: Check final data before returning
-    
     return(joined_data)
   })
   
   # Current data only (no archive) - more efficient for fast loading
   suco_data_current <- reactive({
-    con <- get_db_connection()
-    if (is.null(con)) {
-      return(data.frame())  # Return empty data frame if connection fails
+    # Simple checks only
+    req(input$date_range, input$main_tabset)
+    
+    # Only run when actually on Current Data tab
+    if (input$main_tabset != "Current Data") {
+      return(data.frame())
     }
     
-    # Date range for query
-    start_date <- format(input$date_range[1], "%Y-%m-%d")
-    end_date <- format(input$date_range[2], "%Y-%m-%d")
-    
-    # Query current data ONLY (no archive) for SUCOs (survtype = 7) with harborage lookup for current foreman assignments
-    current_query <- sprintf("
+    tryCatch({
+      con <- get_db_connection()
+      if (is.null(con)) {
+        return(data.frame())
+      }
+      
+      # Date range for query
+      start_date <- format(input$date_range[1], "%Y-%m-%d")
+      end_date <- format(input$date_range[2], "%Y-%m-%d")
+      
+      # Query with essential fields and proper zone detection, including harborage lookup
+      current_query <- sprintf("
 SELECT
 s.id, s.ainspecnum, s.facility, 
 CASE 
@@ -334,8 +507,7 @@ CASE
 END as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-COALESCE(h.facility, '') as harborage_facility,
+s.x, s.y,
 g.zone
 FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
@@ -344,58 +516,60 @@ LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
 LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
   OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
-    
-    # Execute query for current data only
-    current_data <- dbGetQuery(con, current_query)
-    
-    # Query species tables (current only)
-    species_current_query <- sprintf("
+      
+      current_data <- dbGetQuery(con, current_query)
+      
+      # Get species data
+      species_current_query <- "
 SELECT ainspecnum, spp, cnt
 FROM public.dbadult_species_current
 WHERE ainspecnum IS NOT NULL
-")
-    species_current <- dbGetQuery(con, species_current_query)
-
-    # Query species lookup table using centralized function
-    species_lookup <- get_species_lookup()
-
-    # Close connection
-    dbDisconnect(con)
-
-    # Process current data only (no archive to combine)
-    all_data <- current_data %>%
-      mutate(
-        inspdate = as.Date(inspdate),
-        year = year(inspdate),
-        month = month(inspdate),
-        week_start = floor_date(inspdate, "week", week_start = 1),
-        month_label = format(inspdate, "%b %Y"),
-        location = ifelse(!is.na(park_name) & park_name != "", park_name,
-                          ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
-        # Use harborage facility when harborage foreman is used
-        # This ensures foreman colors match the correct facility
-        facility = ifelse(!is.na(harborage_facility) & harborage_facility != "", 
-                         harborage_facility, facility)
-      )
-    
-    # Join SUCO data with species data and lookup for names
-    joined_data <- all_data %>%
-      left_join(species_current, by = "ainspecnum") %>%
-      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
-      mutate(
-        species_name = dplyr::case_when(
-          !is.na(genus) & !is.na(species) ~ paste(genus, species),
-          !is.na(spp) ~ as.character(spp),
-          TRUE ~ NA_character_
-        ),
-        # Ensure foreman values are consistent strings
-        foreman = trimws(as.character(foreman))
-      )
-
-    return(joined_data)
+"
+      species_current <- dbGetQuery(con, species_current_query)
+      
+      # Get species lookup
+      species_lookup <- get_species_lookup()
+      
+      dbDisconnect(con)
+      
+      if (nrow(current_data) == 0) {
+        return(data.frame())
+      }
+      
+      # Process data with all required fields
+      processed_data <- current_data %>%
+        mutate(
+          inspdate = as.Date(inspdate),
+          year = year(inspdate),
+          month = month(inspdate),
+          week_start = floor_date(inspdate, "week", week_start = 1),
+          month_label = format(inspdate, "%b %Y"),
+          location = ifelse(!is.na(park_name) & park_name != "", park_name,
+                            ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
+          foreman = trimws(as.character(foreman)),
+          zone = as.character(zone)
+        ) %>%
+        left_join(species_current, by = "ainspecnum", relationship = "many-to-many") %>%
+        left_join(species_lookup, by = c("spp" = "sppcode")) %>%
+        mutate(
+          species_name = case_when(
+            !is.na(genus) & !is.na(species) ~ paste(genus, species),
+            !is.na(spp) ~ as.character(spp),
+            TRUE ~ NA_character_
+          )
+        )
+      
+      return(processed_data)
+      
+    }, error = function(e) {
+      cat("Error in suco_data_current:", e$message, "\n")
+      return(data.frame())
+    })
   })
   
   # Helper function to create trend plots - eliminates code duplication
@@ -438,7 +612,7 @@ WHERE ainspecnum IS NOT NULL
     title_interval <- "Weekly"
     title_group <- case_when(
       input$group_by == "facility" ~ "Facility",
-      input$group_by == "foreman" ~ "Foreman", 
+      input$group_by == "foreman" ~ "FOS", 
       input$group_by == "mmcd_all" ~ "MMCD (All)",
       TRUE ~ "Group"
     )
@@ -505,7 +679,7 @@ WHERE ainspecnum IS NOT NULL
       NULL
     }
     
-    # Determine the plotting group column based on zone selection
+    # Determine the plotting group column and handle color mapping for combined zones
     plot_group_col <- if (length(input$zone_filter) > 1 && "combined_group" %in% names(data)) {
       "combined_group"
     } else if (length(input$zone_filter) > 1 && "zone_label" %in% names(data)) {
@@ -514,41 +688,118 @@ WHERE ainspecnum IS NOT NULL
       group_col
     }
     
-    # Create the plot using the appropriate group column for color mapping
-    p <- ggplot(data, aes(x = time_group, y = count, 
-                         color = !!sym(plot_group_col), 
-                         fill = !!sym(plot_group_col), 
-                         group = !!sym(plot_group_col)))
+    # Get colors based on grouping - with optional zone support
+    if (group_col == "facility") {
+      if (length(input$zone_filter) > 1 && plot_group_col == "combined_group") {
+        # Zone-aware facility colors
+        color_result <- get_facility_base_colors(
+          alpha_zones = input$zone_filter,
+          combined_groups = unique(data$combined_group)
+        )
+        custom_colors <- color_result$colors
+        alpha_values <- color_result$alpha_values
+        
+        # Add zone factor for alpha mapping
+        data$zone_factor <- factor(
+          gsub(".*\\(P([12])\\).*", "\\1", data$combined_group),
+          levels = c("1", "2")
+        )
+      } else {
+        # Standard facility colors
+        custom_colors <- get_facility_base_colors()
+        alpha_values <- NULL
+      }
+    } else if (group_col == "foreman") {
+      # Get foremen lookup for mapping emp_num to shortname
+      foremen_lookup <- get_foremen_lookup()
+      
+      if (length(input$zone_filter) > 1 && plot_group_col == "combined_group") {
+        # Zone-aware foreman colors
+        # The combined_group will be like "7002 (P1)", "8203 (P2)", etc.
+        # We need to map these to shortname-based colors
+        
+        foreman_colors <- get_foreman_colors()  # These are keyed by shortname
+        emp_colors <- character(0)
+        
+        # Get unique combined groups from data
+        unique_combined <- unique(data$combined_group)
+        
+        for (combined_name in unique_combined) {
+          # Extract emp_num from combined group like "7002 (P1)"
+          emp_num <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+          emp_num <- trimws(emp_num)
+          
+          # Find corresponding shortname
+          matches <- which(trimws(as.character(foremen_lookup$emp_num)) == emp_num)
+          if (length(matches) > 0) {
+            shortname <- foremen_lookup$shortname[matches[1]]
+            
+            # Get color for this shortname
+            if (shortname %in% names(foreman_colors)) {
+              emp_colors[combined_name] <- foreman_colors[shortname]
+            }
+          }
+        }
+        
+        custom_colors <- emp_colors
+        alpha_values <- c("1" = 1.0, "2" = 0.6)
+        
+        # Add zone factor for alpha mapping
+        data$zone_factor <- factor(
+          gsub(".*\\(P([12])\\).*", "\\1", data$combined_group),
+          levels = c("1", "2")
+        )
+      } else {
+        # Standard foreman colors - map from shortname to emp_num
+        foreman_colors <- get_foreman_colors()
+        emp_colors <- character(0)
+        
+        for (i in 1:nrow(foremen_lookup)) {
+          shortname <- trimws(foremen_lookup$shortname[i])
+          emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
+          
+          if (shortname %in% names(foreman_colors)) {
+            emp_colors[emp_num] <- foreman_colors[shortname]
+          }
+        }
+        
+        custom_colors <- emp_colors
+        alpha_values <- NULL
+      }
+    } else {
+      custom_colors <- NULL
+      alpha_values <- NULL
+    }
+    
+    # Create the plot using the appropriate aesthetics
+    if (!is.null(alpha_values)) {
+      # Zone-aware plotting with alpha
+      p <- ggplot(data, aes(x = time_group, y = count, 
+                           color = !!sym(plot_group_col), 
+                           fill = !!sym(plot_group_col),
+                           alpha = zone_factor,
+                           group = !!sym(plot_group_col)))
+    } else {
+      # Standard plotting without alpha
+      p <- ggplot(data, aes(x = time_group, y = count, 
+                           color = !!sym(plot_group_col), 
+                           fill = !!sym(plot_group_col), 
+                           group = !!sym(plot_group_col)))
+    }
     
     
     # Add color scales based on grouping
     if(!is.null(custom_colors)) {
-      # Add color scales with labels for the legend
-      if(group_col == "facility") {
-        # For facilities, map short names to full names in legend
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) facility_names[v] %||% v),
-          drop = FALSE
-        )
-      } else {
-        # For foremen, map employee numbers to names in legend
-        p <- p + scale_color_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
-          drop = FALSE
-        ) + scale_fill_manual(
-          values = custom_colors,
-          labels = function(x) sapply(x, function(v) foreman_names[v] %||% v),
-          drop = FALSE
-        )
-      }
+      p <- p + scale_color_manual(values = custom_colors, drop = FALSE) + 
+               scale_fill_manual(values = custom_colors, drop = FALSE)
     } else {
       p <- p + scale_color_discrete() + scale_fill_discrete()
+    }
+    
+    # Add zone alpha differentiation if available
+    if (!is.null(alpha_values)) {
+      p <- add_zone_alpha_to_plot(p, alpha_values, 
+                                  representative_color = if(!is.null(custom_colors)) custom_colors[1] else NULL)
     }
     
     if (input$graph_type == "bar") {
@@ -1249,7 +1500,7 @@ WHERE ainspecnum IS NOT NULL
         arrange(desc(Total_SUCOs), facility, shortname)
       
       # Rename columns
-      colnames(summary_data)[1:3] <- c("Foreman", "Name", "Facility")
+      colnames(summary_data)[1:3] <- c("FOS", "Name", "Facility")
     }
     return(summary_data)
   }, options = list(pageLength = 15, 
@@ -1681,7 +1932,7 @@ WHERE ainspecnum IS NOT NULL
         ) %>%
         arrange(desc(Total_SUCOs), facility, shortname)
       
-      colnames(summary_data)[1:3] <- c("Foreman", "Name", "Facility")
+      colnames(summary_data)[1:3] <- c("FOS", "Name", "Facility")
     }
     return(summary_data)
   }, options = list(pageLength = 15, 

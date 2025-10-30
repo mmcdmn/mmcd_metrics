@@ -772,7 +772,7 @@ WHERE t.list_type = 'STR'
                label = "Expiring", hjust = 0)
   })
 
-  # Historical plot - EXACT copy from struct_trt_history
+  # Historical plot - Modified to support grouping by facility and FOS
   output$historicalGraph <- renderPlot({
     td <- treatment_data()
     data <- td$data
@@ -793,121 +793,285 @@ WHERE t.list_type = 'STR'
       )
     }
     
-    # Handle cases where total_structures is missing or zero
-    if (is.null(total_structures) || is.na(total_structures) || total_structures == 0) {
-      return(
-        ggplot() +
-          annotate(
-            "text",
-            x = 0.5,
-            y = 0.5,
-            label = "No structure data available or total structures is zero.",
-            size = 6
-          ) +
-          theme_void()
-      )
-    }
-    
     # Generate the full date range for time series
     start_date <- as.Date(sprintf("%d-03-01", as.numeric(input$start_year)))
     end_date <- as.Date(sprintf("%d-12-31", as.numeric(input$end_year)))
     date_range <- seq.Date(start_date, end_date, by = "day")
     
-    # Get structure start/end dates to calculate dynamic totals
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
+    # Determine grouping column
+    group_col <- input$group_by
     
-    query_structure_dates <- sprintf(
-      "
+    if (group_col == "mmcd_all") {
+      # Original aggregated approach for "All MMCD"
+      # Get structure start/end dates to calculate dynamic totals
+      con <- get_db_connection()
+      if (is.null(con)) {
+        return(
+          ggplot() +
+            annotate(
+              "text",
+              x = 0.5,
+              y = 0.5,
+              label = "Database connection failed.",
+              size = 6
+            ) +
+            theme_void()
+        )
+      }
+      
+      query_structure_dates <- sprintf(
+        "
 SELECT sitecode, startdate, enddate
 FROM loc_cxstruct
 WHERE 1=1
 %s
 ",
-      get_facility_condition_total(input$facility_filter, input$structure_type_filter, input$priority_filter, input$status_types)
-    )
-    structure_dates <- dbGetQuery(con, query_structure_dates)
-    dbDisconnect(con)
-    
-    # Create a dataframe of daily changes for treatments (by sitecode to avoid double-counting)
-    # First, get unique treatment periods by sitecode
-    treatment_periods <- data %>%
-      select(sitecode, inspdate, effect_days) %>%
-      mutate(enddate = inspdate + effect_days) %>%
-      arrange(sitecode, inspdate)
-    
-    # For each sitecode, merge overlapping treatment periods
-    merged_treatments <- treatment_periods %>%
-      group_by(sitecode) %>%
-      arrange(inspdate) %>%
-      mutate(
-        # Create groups for overlapping treatments
-        lag_enddate = lag(inspdate + effect_days, default = as.Date("1900-01-01")),
-        new_period = inspdate > lag_enddate,
-        period_id = cumsum(new_period)
-      ) %>%
-      group_by(sitecode, period_id) %>%
-      summarize(
-        start_date = min(inspdate),
-        end_date = max(inspdate + effect_days),
-        .groups = "drop"
+        get_facility_condition_total(input$facility_filter, input$structure_type_filter, input$priority_filter, input$status_types)
       )
-    
-    daily_treatment_changes <- data.frame(
-      date = c(merged_treatments$start_date, merged_treatments$end_date),
-      change = c(rep(1, nrow(merged_treatments)), rep(-1, nrow(merged_treatments))) # +1 for start, -1 for end
-    ) %>%
-      group_by(date) %>%
-      summarize(treatment_change = sum(change)) %>%
-      arrange(date)
-    
-    # Create a dataframe of daily changes for structure counts
-    structure_changes <- data.frame()
-    if (nrow(structure_dates) > 0) {
-      start_changes <- structure_dates %>%
-        filter(!is.na(startdate)) %>%
-        mutate(date = as.Date(startdate), structure_change = 1) %>%
-        select(date, structure_change)
+      structure_dates <- dbGetQuery(con, query_structure_dates)
+      dbDisconnect(con)
       
-      end_changes <- structure_dates %>%
-        filter(!is.na(enddate)) %>%
-        mutate(date = as.Date(enddate), structure_change = -1) %>%
-        select(date, structure_change)
+      # Create a dataframe of daily changes for treatments (by sitecode to avoid double-counting)
+      # First, get unique treatment periods by sitecode
+      treatment_periods <- data %>%
+        select(sitecode, inspdate, effect_days) %>%
+        mutate(enddate = inspdate + effect_days) %>%
+        arrange(sitecode, inspdate)
       
-      structure_changes <- bind_rows(start_changes, end_changes) %>%
-        group_by(date) %>%
-        summarize(structure_change = sum(structure_change)) %>%
-        arrange(date)
-    }
-    
-    # Calculate cumulative active treatments and total structures over time
-    all_dates <- data.frame(date = date_range)
-    treatment_trends <- all_dates %>%
-      left_join(daily_treatment_changes, by = "date") %>%
-      left_join(structure_changes, by = "date") %>%
-      mutate(
-        treatment_change = ifelse(is.na(treatment_change), 0, treatment_change),
-        structure_change = ifelse(is.na(structure_change), 0, structure_change)
-      ) %>%
-      arrange(date) %>%
-      mutate(
-        active_treatments = cumsum(treatment_change),
-        total_structures_dynamic = total_structures + cumsum(structure_change)
-      ) %>%
-      # Avoid division by zero
-      mutate(
-        proportion_active_treatment = ifelse(
-          total_structures_dynamic > 0, 
-          active_treatments / total_structures_dynamic, 
-          0
+      # For each sitecode, merge overlapping treatment periods
+      merged_treatments <- treatment_periods %>%
+        group_by(sitecode) %>%
+        arrange(inspdate) %>%
+        mutate(
+          # Create groups for overlapping treatments
+          lag_enddate = lag(inspdate + effect_days, default = as.Date("1900-01-01")),
+          new_period = inspdate > lag_enddate,
+          period_id = cumsum(new_period)
+        ) %>%
+        group_by(sitecode, period_id) %>%
+        summarize(
+          start_date = min(inspdate),
+          end_date = max(inspdate + effect_days),
+          .groups = "drop"
         )
+      
+      daily_treatment_changes <- data.frame(
+        date = c(merged_treatments$start_date, merged_treatments$end_date),
+        change = c(rep(1, nrow(merged_treatments)), rep(-1, nrow(merged_treatments))) # +1 for start, -1 for end
+      ) %>%
+        group_by(date) %>%
+        summarize(treatment_change = sum(change)) %>%
+        arrange(date)
+      
+      # Create a dataframe of daily changes for structure counts
+      structure_changes <- data.frame()
+      if (nrow(structure_dates) > 0) {
+        start_changes <- structure_dates %>%
+          filter(!is.na(startdate)) %>%
+          mutate(date = as.Date(startdate), structure_change = 1) %>%
+          select(date, structure_change)
+        
+        end_changes <- structure_dates %>%
+          filter(!is.na(enddate)) %>%
+          mutate(date = as.Date(enddate), structure_change = -1) %>%
+          select(date, structure_change)
+        
+        structure_changes <- bind_rows(start_changes, end_changes) %>%
+          group_by(date) %>%
+          summarize(structure_change = sum(structure_change)) %>%
+          arrange(date)
+      }
+      
+      # Calculate cumulative active treatments and total structures over time
+      all_dates <- data.frame(date = date_range)
+      treatment_trends <- all_dates %>%
+        left_join(daily_treatment_changes, by = "date") %>%
+        left_join(structure_changes, by = "date") %>%
+        mutate(
+          treatment_change = ifelse(is.na(treatment_change), 0, treatment_change),
+          structure_change = ifelse(is.na(structure_change), 0, structure_change)
+        ) %>%
+        arrange(date) %>%
+        mutate(
+          active_treatments = cumsum(treatment_change),
+          total_structures_dynamic = total_structures + cumsum(structure_change)
+        ) %>%
+        # Avoid division by zero
+        mutate(
+          proportion_active_treatment = ifelse(
+            total_structures_dynamic > 0, 
+            active_treatments / total_structures_dynamic, 
+            0
+          ),
+          group_name = "All MMCD"
+        )
+        
+    } else {
+      # Grouping by facility or foreman - create separate lines for each group
+      # Use the archived and current data directly with group-by logic
+      
+      con <- get_db_connection()
+      if (is.null(con)) {
+        return(
+          ggplot() +
+            annotate(
+              "text",
+              x = 0.5,
+              y = 0.5,
+              label = "Database connection failed.",
+              size = 6
+            ) +
+            theme_void()
+        )
+      }
+      
+      # Build the appropriate SELECT and GROUP BY based on grouping
+      group_select <- if (group_col == "facility") {
+        "trt.facility"
+      } else if (group_col == "foreman") {
+        "s.foreman"
+      } else {
+        "'All'"
+      }
+      
+      # Query both archive and current treatments with grouping
+      facility_condition <- get_facility_condition_total(input$facility_filter, input$structure_type_filter, input$priority_filter, input$status_types)
+      
+      query_grouped_treatments <- sprintf("
+WITH grouped_treatments AS (
+  SELECT 
+    %s as group_name,
+    trt.sitecode,
+    trt.inspdate,
+    COALESCE(m.effect_days, 0) as effect_days,
+    (trt.inspdate + COALESCE(m.effect_days, 0)) as treatment_end_date
+  FROM public.dblarv_insptrt_archive trt
+  LEFT JOIN public.mattype_list_targetdose m ON trt.matcode = m.matcode
+  LEFT JOIN public.loc_cxstruct s ON trt.sitecode = s.sitecode
+  WHERE trt.list_type = 'STR'
+    AND trt.inspdate >= '%s'
+    AND trt.inspdate <= '%s'
+    %s
+  
+  UNION ALL
+  
+  SELECT 
+    %s as group_name,
+    trt.sitecode,
+    trt.inspdate,
+    COALESCE(m.effect_days, 0) as effect_days,
+    (trt.inspdate + COALESCE(m.effect_days, 0)) as treatment_end_date
+  FROM public.dblarv_insptrt_current trt
+  LEFT JOIN public.mattype_list_targetdose m ON trt.matcode = m.matcode
+  LEFT JOIN public.loc_cxstruct s ON trt.sitecode = s.sitecode
+  WHERE trt.list_type = 'STR'
+    AND trt.inspdate >= '%s'
+    AND trt.inspdate <= '%s'
+    %s
+),
+structure_totals AS (
+  SELECT 
+    %s as group_name,
+    COUNT(DISTINCT s.sitecode) as total_structures
+  FROM public.loc_cxstruct s
+  WHERE (s.enddate IS NULL OR s.enddate > CURRENT_DATE)
+    %s
+  GROUP BY %s
+)
+SELECT 
+  gt.group_name,
+  gt.sitecode,
+  gt.inspdate,
+  gt.effect_days,
+  gt.treatment_end_date,
+  st.total_structures
+FROM grouped_treatments gt
+LEFT JOIN structure_totals st ON gt.group_name = st.group_name
+WHERE gt.group_name IS NOT NULL
+ORDER BY gt.group_name, gt.inspdate
+", 
+        group_select, start_date, end_date, facility_condition,
+        group_select, start_date, end_date, facility_condition,
+        group_select, facility_condition, group_select
       )
+      
+      grouped_data <- dbGetQuery(con, query_grouped_treatments)
+      dbDisconnect(con)
+      
+      if (nrow(grouped_data) == 0) {
+        return(
+          ggplot() +
+            annotate(
+              "text",
+              x = 0.5,
+              y = 0.5,
+              label = "No treatment data available for selected grouping and date range.",
+              size = 6
+            ) +
+            theme_void()
+        )
+      }
+      
+      # Process each group to create time series
+      all_group_trends <- data.frame()
+      
+      for (group_name in unique(grouped_data$group_name)) {
+        group_treatments <- grouped_data %>% filter(group_name == !!group_name)
+        group_total <- unique(group_treatments$total_structures)[1]
+        
+        if (is.na(group_total) || group_total == 0) next
+        
+        # Create treatment periods and merge overlapping ones (same logic as mmcd_all)
+        treatment_periods <- group_treatments %>%
+          select(sitecode, inspdate, effect_days) %>%
+          mutate(enddate = inspdate + effect_days) %>%
+          arrange(sitecode, inspdate)
+        
+        merged_treatments <- treatment_periods %>%
+          group_by(sitecode) %>%
+          arrange(inspdate) %>%
+          mutate(
+            lag_enddate = lag(inspdate + effect_days, default = as.Date("1900-01-01")),
+            new_period = inspdate > lag_enddate,
+            period_id = cumsum(new_period)
+          ) %>%
+          group_by(sitecode, period_id) %>%
+          summarize(
+            start_date = min(inspdate),
+            end_date = max(inspdate + effect_days),
+            .groups = "drop"
+          )
+        
+        daily_treatment_changes <- data.frame(
+          date = c(merged_treatments$start_date, merged_treatments$end_date),
+          change = c(rep(1, nrow(merged_treatments)), rep(-1, nrow(merged_treatments)))
+        ) %>%
+          group_by(date) %>%
+          summarize(treatment_change = sum(change)) %>%
+          arrange(date)
+        
+        # Calculate time series for this group
+        group_trends <- data.frame(date = date_range) %>%
+          left_join(daily_treatment_changes, by = "date") %>%
+          mutate(
+            treatment_change = ifelse(is.na(treatment_change), 0, treatment_change)
+          ) %>%
+          arrange(date) %>%
+          mutate(
+            active_treatments = cumsum(treatment_change),
+            proportion_active_treatment = ifelse(
+              group_total > 0, 
+              active_treatments / group_total, 
+              0
+            ),
+            group_name = group_name
+          )
+        
+        all_group_trends <- bind_rows(all_group_trends, group_trends)
+      }
+      
+      treatment_trends <- all_group_trends
+    }
     
     # Create filter description for title
     filters <- c()
@@ -938,45 +1102,83 @@ WHERE 1=1
     
     filter_text <- if (length(filters) > 0) paste(" -", paste(filters, collapse = ", ")) else ""
     
-    # Plot the data
-    # Compute seasonal average curve (average proportion for each calendar day across all years)
-    seasonal_curve <- treatment_trends %>%
-      mutate(day_of_year = format(date, "%m-%d")) %>%
-      group_by(day_of_year) %>%
-      summarize(
-        seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
-        .groups = "drop"
+    # Get colors for groups
+    if (group_col == "facility") {
+      group_colors <- get_facility_base_colors()
+      # Map display names if needed
+      if (group_col == "facility") {
+        facilities <- get_facility_lookup()
+        facility_map <- setNames(facilities$full_name, facilities$short_name)
+        treatment_trends$display_name <- ifelse(
+          treatment_trends$group_name %in% names(facility_map),
+          facility_map[treatment_trends$group_name],
+          treatment_trends$group_name
+        )
+      } else {
+        treatment_trends$display_name <- treatment_trends$group_name
+      }
+    } else if (group_col == "foreman") {
+      # Get foreman colors following suco_history pattern
+      foreman_colors <- get_foreman_colors()
+      foremen_lookup <- get_foremen_lookup()
+      
+      # Map foreman numbers to names and colors
+      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+      group_colors <- character(0)
+      
+      unique_groups <- unique(treatment_trends$group_name)
+      for (foreman_num in unique_groups) {
+        foreman_num_str <- trimws(as.character(foreman_num))
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
+        
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          if(shortname %in% names(foreman_colors)) {
+            group_colors[foreman_num_str] <- foreman_colors[shortname]
+          }
+        }
+      }
+      
+      # Set display names
+      treatment_trends$display_name <- ifelse(
+        treatment_trends$group_name %in% names(foreman_map),
+        foreman_map[treatment_trends$group_name],
+        paste0("FOS #", treatment_trends$group_name)
       )
+    } else {
+      group_colors <- NULL
+      treatment_trends$display_name <- treatment_trends$group_name
+    }
     
-    # Join seasonal average back to full date range
-    treatment_trends <- treatment_trends %>%
-      mutate(day_of_year = format(date, "%m-%d")) %>%
-      left_join(seasonal_curve, by = "day_of_year")
+    # Create the plot
+    group_title <- case_when(
+      group_col == "facility" ~ "by Facility",
+      group_col == "foreman" ~ "by FOS", 
+      group_col == "mmcd_all" ~ "(All MMCD)",
+      TRUE ~ paste("by", group_col)
+    )
     
-    avg_window_start <- end_date - years(10)
-    avg_value <- treatment_trends %>%
-      filter(date >= avg_window_start & date <= end_date) %>%
-      summarize(mean_prop = mean(proportion_active_treatment, na.rm = TRUE)) %>%
-      pull(mean_prop)
-    
-    # Plot the data with 10-year average line
-    ggplot(treatment_trends, aes(x = date)) +
-      geom_line(aes(y = proportion_active_treatment), color = "blue", size = 1) +
-      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1.2) +
+    p <- ggplot(treatment_trends, aes(x = date, y = proportion_active_treatment, color = display_name)) +
+      geom_line(size = 1.2) +
       labs(
         title = sprintf(
-          "Proportion of Structures with Active Treatment (%d to %d)%s",
+          "Proportion of Structures with Active Treatment %s (%d to %d)%s",
+          group_title,
           as.numeric(input$start_year),
           as.numeric(input$end_year),
           filter_text
         ),
-        subtitle = "Blue: actual | Red dashed: seasonal average",
         x = "Date",
-        y = "Proportion of Active Treatment"
+        y = "Proportion of Active Treatment",
+        color = case_when(
+          group_col == "facility" ~ "Facility",
+          group_col == "foreman" ~ "FOS",
+          TRUE ~ "Group"
+        )
       ) +
       scale_y_continuous(
         labels = scales::percent_format(),
-        breaks = seq(0, 1, by = 0.1)  # Show every 10%
+        breaks = seq(0, 1, by = 0.1)
       ) +
       scale_x_date(
         date_breaks = "6 months",
@@ -989,9 +1191,29 @@ WHERE 1=1
         axis.text.y = element_text(size = 12, face = "bold"),
         axis.title = element_text(size = 14, face = "bold"),
         plot.title = element_text(size = 16, face = "bold"),
-        plot.subtitle = element_text(size = 12),
-        panel.grid.minor = element_blank()  # Remove minor grid lines for cleaner look
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom"
       )
+    
+    # Apply custom colors if available
+    if (!is.null(group_colors) && length(group_colors) > 0) {
+      # Create color mapping for display names
+      display_colors <- character(0)
+      for (i in seq_len(nrow(treatment_trends))) {
+        group_val <- treatment_trends$group_name[i]
+        display_val <- treatment_trends$display_name[i]
+        if (group_val %in% names(group_colors)) {
+          display_colors[display_val] <- group_colors[group_val]
+        }
+      }
+      display_colors <- display_colors[!duplicated(names(display_colors))]
+      
+      if (length(display_colors) > 0) {
+        p <- p + scale_color_manual(values = display_colors)
+      }
+    }
+    
+    return(p)
   })
 }
 

@@ -6,6 +6,8 @@
 
 A comprehensive analytics platform for the Metropolitan Mosquito Control District, providing interactive dashboards for mosquito surveillance, treatment analysis, and operational metrics.
 
+> **📋 Recent Updates**: The platform has been restructured to provide comprehensive dashboards with combined functionality. Apps now feature tabbed interfaces that integrate related functionality (e.g., drone treatment progress + history, cattail inspection + planning) for a streamlined user experience.
+
 ## Table of Contents
 
 - [Architecture](#architecture)
@@ -13,11 +15,10 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
 - [Applications](#applications)
   - [Mosquito Monitoring](#mosquito-monitoring)
   - [SUCO History](#suco-history)
-  - [Drone Treatment Progress](#drone-treatment-progress)
-  - [Structural Treatment Progress](#structural-treatment-progress)
-  - [Cattail Planned Treatments](#cattail-planned-treatments)
+  - [Drone Treatment](#drone-treatment)
+  - [Structural Treatment](#structural-treatment)
+  - [Cattail Management](#cattail-management)
   - [Control Efficacy](#control-efficacy)
-  - [Drone Treatment History](#drone-treatment-history)
 - [Installation & Deployment](#installation--deployment)
   - [Prerequisites - System Dependencies](#prerequisites---system-dependencies)
   - [R Package Installation](#r-package-installation)
@@ -48,19 +49,18 @@ mmcd_metrics/
 │   │   └── app.R
 │   ├── suco_history/             # SUCO surveillance analysis  
 │   │   └── app.R
-│   ├── drone_trt_progress/       # Drone treatment progress tracking
+│   ├── drone/                    # Comprehensive drone treatment (progress + history + site averages)
+│   │   ├── app.R
+│   │   ├── historical_functions.R
+│   │   └── site_average_functions.R
+│   ├── struct_trt/               # Structure treatment (progress + history)
 │   │   └── app.R
-│   ├── drone_trt_history/        # Drone treatment historical analysis
+│   ├── cattail/                  # Comprehensive cattail management (inspection + planning)
+│   │   ├── app.R
+│   │   └── planned_treatment_functions.R
+│   ├── red_air/                  # Air site status and rainfall analysis
 │   │   └── app.R
-│   ├── struct_trt_progress/      # Structure treatment progress
-│   │   └── app.R
-│   ├── struct_trt_history/       # Structure treatment history 
-│   │   └── app.R
-│   ├── cattail_planned_trt/      # Cattail treatment planning
-│   │   └── app.R
-│   ├── cattail_inspection_progress/ # Cattail inspection progress tracking
-│   │   └── app.R
-│   ├── rainfall/                 # Air site status and rainfall analysis
+│   ├── ground_prehatch_progress/ # Ground prehatch treatment progress
 │   │   └── app.R
 │   ├── test-app/                 # Test application 
 │   │   └── app.R
@@ -91,52 +91,48 @@ mmcd_metrics/
   - Top locations identification
   - Spatial data visualization
 
-### Drone Treatment Progress
-- **Path**: `/drone_trt_progress/`
-- **Purpose**: Real-time tracking of drone-based treatment operations
+### Drone Treatment
+- **Path**: `/drone/`
+- **Purpose**: Comprehensive drone treatment tracking with real-time progress and historical analysis
 - **Features**:
-  - Active treatment area monitoring
-  - Progress metrics and coverage analysis
-  - Aerial mosquito control operations tracking
-  - Interactive date range selection
+  - **Progress Tab**: Real-time tracking of drone-based treatment operations
+  - **Historical Tab**: Historical trend analysis with percentage and count views
+  - **Site Average Tab**: Site-level average calculations and trend analysis
+  - Active treatment area monitoring and coverage analysis
+  - P1/P2 zone filtering with alpha transparency
+  - Multiple display metrics (sites, treatments, acres)
+  - Facility, FOS, and section grouping options
+  - Interactive date range selection and customizable time periods
+  - Modular external function files for maintainable code
 
 
-### Structural Treatment Progress
-- **Path**: `/struct_trt_progress/`
-- **Purpose**: Monitor current structural treatment activities
+### Structural Treatment
+- **Path**: `/struct_trt/`
+- **Purpose**: Comprehensive structural treatment tracking with current progress and historical analysis
 - **Features**:
-  - Proportion of structures under treatment tracking (current only)
-  - Customizable treatment duration settings
-  - Real-time calculations
-  - Date simulation ("pretend today is")
-
-### Structural Treatment History
-- **Path**: `/struct_trt_history/`
-- **Purpose**: Historical analysis of structure treatment activities
-- **Features**:
+  - **Progress Tab**: Monitor current structural treatment activities
+  - **History Tab**: Historical analysis of structure treatment activities
+  - Proportion of structures under treatment tracking
+  - Customizable treatment duration settings and real-time calculations
   - Historical time series and breakdowns by facility, type, and priority
-  - Formerly the main "Progress" app
-  - Snapshot and priority breakdowns
+  - Date simulation ("pretend today is") functionality
+  - Snapshot and priority breakdowns for comprehensive analysis
 
-### Cattail Planned Treatments
-- **Path**: `/cattail_planned_trt/`
-- **Purpose**: Planning and tracking dashboard for cattail marsh treatments
+### Cattail Management
+- **Path**: `/cattail/`
+- **Purpose**: Comprehensive cattail management dashboard with inspection tracking and treatment planning
 - **Features**:
-  - Planned treatment area visualization
-  - Schedule and resource allocation tracking
-  - Targeted cattail habitat management
-
-### Cattail Inspection Progress
-- **Path**: `/cattail_inspection_progress/`
-- **Purpose**: Track and monitor cattail inspection activities and progress
-- **Features**:
-  - Real-time inspection status monitoring
-  - Progress metrics and completion tracking
+  - **Inspection Progress Tab**: Track completed cattail inspections versus annual goals
+  - **Treatment Planning Tab**: Planning and tracking dashboard for cattail treatments
+  - Real-time inspection status monitoring and progress metrics
   - Facility-level inspection performance analysis
+  - Planned treatment area visualization and resource allocation
+  - Schedule and resource allocation tracking for targeted cattail habitat management
   - Centralized color system for consistent status visualization
+  - Modular external function files for treatment planning functionality
 
-### Rainfall & Air Site Status
-- **Path**: `/rainfall/`
+### Red Air Pipeline
+- **Path**: `/red_air/`
 - **Purpose**: Monitor air site status, rainfall impact, and treatment pipeline
 - **Features**:
   - Interactive map showing site status with color-coded dots
@@ -165,14 +161,6 @@ mmcd_metrics/
   - Dip count change visualization (pre vs post treatment)
   - Site-level treatment and checkback details
   - Multi-day treatment campaign support
-
-### Drone Treatment History
-- **Path**: `/drone_trt_history/`
-- **Purpose**: Historical analysis of drone treatment operations
-- **Features**:
-  - Trend visualization and effectiveness metrics
-  - Comprehensive records of past treatments
-  - Historical treatment pattern analysis
 
 ## Installation & Deployment
 
@@ -355,10 +343,12 @@ facilities <- get_facility_choices(include_all = TRUE)
 - **Main Dashboard**: `http://localhost:3838/`
 - **Mosquito Monitoring**: `http://localhost:3838/mosquito-monitoring/`
 - **SUCO History**: `http://localhost:3838/suco_history/`
-- **Drone Treatment Progress**: `http://localhost:3838/drone_trt_progress/`
-- **Structural Treatment Progress**: `http://localhost:3838/struct_trt_progress/`
-- **Cattail Planned Treatments**: `http://localhost:3838/cattail_planned_trt/`
-- **Drone Treatment History**: `http://localhost:3838/drone_trt_history/`
+- **Drone Treatment**: `http://localhost:3838/drone/`
+- **Structural Treatment**: `http://localhost:3838/struct_trt/`
+- **Cattail Management**: `http://localhost:3838/cattail/`
+- **Control Efficacy**: `http://localhost:3838/control_efficacy/`
+- **Ground Prehatch Progress**: `http://localhost:3838/ground_prehatch_progress/`
+- **Red Air Pipeline**: `http://localhost:3838/red_air/`
 
 ### Production Server
 Replace `your-server.com` with your actual server address:

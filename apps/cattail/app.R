@@ -12,34 +12,69 @@ suppressPackageStartupMessages({
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
 
+# Source the planned treatment functions
+source("planned_treatment_functions.R")
+
 ui <- fluidPage(
-  titlePanel("Cattail Inspection Progress by Facility"),
-  sidebarLayout(
-    sidebarPanel(
-      selectInput(
-        "goal_year",
-        "Year:",
-        choices = 2010:2025,
-        selected = as.numeric(format(Sys.Date(), "%Y"))
-      ),
-      selectInput(
-        "goal_column",
-        "Goal Type:",
-        choices = c(
-          "Primary Goal (p1_totsitecount)" = "p1_totsitecount",
-          "Secondary Goal (p2_totsitecount)" = "p2_totsitecount"
+  titlePanel("Cattail Inspection Progress and Treatment Planning"),
+  
+  tabsetPanel(
+    # First tab: Inspection Progress
+    tabPanel("Inspection Progress",
+      sidebarLayout(
+        sidebarPanel(
+          selectInput(
+            "goal_year",
+            "Year:",
+            choices = 2010:2025,
+            selected = as.numeric(format(Sys.Date(), "%Y"))
+          ),
+          selectInput(
+            "goal_column",
+            "Goal Type:",
+            choices = c(
+              "Primary Goal (p1_totsitecount)" = "p1_totsitecount",
+              "Secondary Goal (p2_totsitecount)" = "p2_totsitecount"
+            ),
+            selected = "p1_totsitecount"
+          ),
+          dateInput(
+            "custom_today",
+            "Pretend Today is:",
+            value = Sys.Date(),
+            format = "yyyy-mm-dd"
+          )
         ),
-        selected = "p1_totsitecount"
-      ),
-      dateInput(
-        "custom_today",
-        "Pretend Today is:",
-        value = Sys.Date(),
-        format = "yyyy-mm-dd"
+        mainPanel(
+          plotOutput("progressPlot", height = "600px")
+        )
       )
     ),
-    mainPanel(
-      plotOutput("progressPlot", height = "600px")
+    
+    # Second tab: Treatment Planning
+    tabPanel("Treatment Planning",
+      sidebarLayout(
+        sidebarPanel(
+          # Dropdown to select facility
+          selectInput(
+            "facility",
+            "Select Facility:",
+            choices = get_facility_choices(),
+            selected = "all"
+          ),
+          
+          # Checkboxes to select treatment plan types
+          checkboxGroupInput(
+            "plan_types",
+            "Select Treatment Plan Types:",
+            choices = get_treatment_plan_choices(),
+            selected = c("A", "D", "G", "N", "U")
+          )
+        ),
+        
+        # Main panel for displaying the graph
+        mainPanel(plotOutput("treatmentGraph", height = "600px"))
+      )
     )
   )
 )
@@ -143,6 +178,11 @@ server <- function(input, output) {
       theme(
         axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1)
       )
+  })
+  
+  # Treatment Planning plot using external functions
+  output$treatmentGraph <- renderPlot({
+    create_treatment_plan_plot(input$facility, input$plan_types)
   })
 }
 

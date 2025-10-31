@@ -149,6 +149,25 @@ get_facility_choices <- function(include_all = TRUE) {
   return(choices)
 }
 
+# Get foreman (FOS) choices for selectInput widgets
+get_foreman_choices <- function(include_all = TRUE) {
+  foremen <- get_foremen_lookup()
+  
+  if (nrow(foremen) == 0) {
+    return(c("All FOS" = "all"))
+  }
+  
+  # Create choices with shortname as value and "shortname (facility)" as display
+  display_names <- paste0(foremen$shortname, " (", foremen$facility, ")")
+  choices <- setNames(foremen$shortname, display_names)
+  
+  if (include_all) {
+    choices <- c("All FOS" = "all", choices)
+  }
+  
+  return(choices)
+}
+
 # Map facility short codes to full names for display
 map_facility_names <- function(data, facility_col = "facility") {
   facilities <- get_facility_lookup()

@@ -60,9 +60,42 @@ ui <- fluidPage(
                ))
     ),
     
-    # Main panel for displaying the graph
+    # Main panel for displaying the graphs with tabs
     mainPanel(
-      plotOutput("droneGraph", height = "600px")
+      tabsetPanel(
+        tabPanel("Current Progress", 
+                 plotOutput("droneGraph", height = "600px")
+        ),
+        tabPanel("Historical Trends",
+                 # Historical controls row
+                 fluidRow(
+                   column(3,
+                          radioButtons("hist_count_type", "Display Metric:",
+                                       choices = c("Number of Treatments" = "treatments",
+                                                   "Number of Unique Sites" = "sites"),
+                                       selected = "treatments")
+                   ),
+                   column(3,
+                          selectInput("hist_start_year", "Start Year:",
+                                      choices = seq(2010, 2025),
+                                      selected = 2018)
+                   ),
+                   column(3,
+                          selectInput("hist_end_year", "End Year:",
+                                      choices = seq(2010, 2025),
+                                      selected = 2025)
+                   ),
+                   column(3,
+                          checkboxInput("hist_show_percentages", "Show Percentages", value = FALSE)
+                   )
+                 ),
+                 plotOutput("historicalGraph", height = "600px"),
+                 plotOutput("siteAvgSizeGraph", height = "400px"),
+                 tableOutput("summaryTable"),
+                 h4("5 Smallest and 5 Largest Drone Sites per Year"),
+                 tableOutput("siteExtremesTable")
+        )
+      )
     )
   )
 )
@@ -304,6 +337,317 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       annotate("text", x = 0.1, y = y_max * 0.725,
                label = "Expiring", hjust = 0)
   })
+  
+  # Historical data reactive
+  historical_raw_data <- reactive({
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(NULL)
+    }
+    
+    # Get archive data
+    archive_query <- sprintf("
+      SELECT facility, sitecode, inspdate, action
+      FROM public.dblarv_insptrt_archive
+      WHERE action = 'D'
+      AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
+    ", input$hist_start_year, input$hist_end_year)
+    
+    archive_data <- dbGetQuery(con, archive_query)
+    
+    # Get current data  
+    current_query <- sprintf("
+      SELECT facility, sitecode, inspdate, action, airgrnd_plan
+      FROM public.dblarv_insptrt_current
+      WHERE (airgrnd_plan = 'D' OR action = 'D')
+      AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
+    ", input$hist_start_year, input$hist_end_year)
+    
+    current_data <- dbGetQuery(con, current_query)
+    
+    # Get site size info from loc_breeding_sites
+    sitecodes <- unique(c(archive_data$sitecode, current_data$sitecode))
+    if (length(sitecodes) > 0) {
+      sitecodes_str <- paste(sprintf("'%s'", sitecodes), collapse = ",")
+      lbs_query <- sprintf("
+        SELECT sitecode, acres, facility 
+        FROM public.loc_breeding_sites 
+        WHERE sitecode IN (%s)", sitecodes_str)
+      lbs_data <- dbGetQuery(con, lbs_query)
+    } else {
+      lbs_data <- data.frame(sitecode=character(), acres=numeric(), facility=character())
+    }
+    
+    dbDisconnect(con)
+    
+    list(
+      archive = archive_data,
+      current = current_data,
+      lbs = lbs_data
+    )
+  })
+  
+  # Process historical data based on user selections
+  historical_processed_data <- reactive({
+    # Get raw data
+    data_list <- historical_raw_data()
+    if (is.null(data_list)) return(data.frame())
+    
+    # Process archive data
+    archive_data <- data_list$archive %>%
+      mutate(
+        source = "Archive",
+        year = year(inspdate)
+      )
+    
+    # Process current data
+    current_data <- data_list$current %>%
+      mutate(
+        source = "Current", 
+        year = year(inspdate)
+      )
+    
+    # Combine the data
+    all_data <- bind_rows(archive_data, current_data)
+    
+    # Process based on count type
+    if (input$hist_count_type == "treatments") {
+      # Count all treatments
+      results <- all_data %>%
+        group_by(facility, year) %>%
+        summarize(count = n(), .groups = "drop")
+    } else {
+      # Count unique sites
+      results <- all_data %>%
+        group_by(facility, year) %>%
+        summarize(count = n_distinct(sitecode), .groups = "drop")
+    }
+    
+    # Make sure we have entries for all years in the range
+    all_years <- seq(from = input$hist_start_year, to = input$hist_end_year)
+    all_facilities <- unique(all_data$facility)
+    
+    # Create complete grid
+    if (length(all_facilities) > 0) {
+      expanded_grid <- expand.grid(
+        facility = all_facilities,
+        year = all_years
+      )
+      
+      # Join with actual data
+      results <- expanded_grid %>%
+        left_join(results, by = c("facility", "year")) %>%
+        mutate(count = ifelse(is.na(count), 0, count))
+    } else {
+      # Handle case with no data
+      results <- data.frame(facility = character(), year = integer(), count = integer())
+    }
+    
+    return(results)
+  })
+  
+  # Historical plot output
+  output$historicalGraph <- renderPlot({
+    data <- historical_processed_data()
+    if (nrow(data) == 0) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No data available for the selected criteria", cex = 1.5)
+      return()
+    }
+    
+    if (input$hist_show_percentages) {
+      # Show as percentages
+      data <- data %>%
+        group_by(year) %>%
+        mutate(percentage = round(count / sum(count) * 100, 1)) %>%
+        ungroup()
+      
+      p <- ggplot(data, aes(x = year, y = percentage, fill = facility)) +
+        geom_col(position = "stack") +
+        labs(
+          title = "Drone Treatments by Facility (Percentage)",
+          x = "Year",
+          y = "Percentage (%)",
+          fill = "Facility"
+        ) +
+        scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+        scale_x_continuous(breaks = seq(min(data$year), max(data$year), 1)) +
+        theme_minimal() +
+        theme(
+          legend.position = "bottom",
+          axis.text.x = element_text(angle = 45, hjust = 1)
+        )
+    } else {
+      # Show raw counts
+      p <- ggplot(data, aes(x = year, y = count, fill = facility)) +
+        geom_col(position = "stack") +
+        labs(
+          title = paste("Drone", ifelse(input$hist_count_type == "treatments", "Treatments", "Sites Treated"), "by Facility"),
+          x = "Year", 
+          y = ifelse(input$hist_count_type == "treatments", "Number of Treatments", "Number of Sites"),
+          fill = "Facility"
+        ) +
+        scale_x_continuous(breaks = seq(min(data$year), max(data$year), 1)) +
+        theme_minimal() +
+        theme(
+          legend.position = "bottom",
+          axis.text.x = element_text(angle = 45, hjust = 1)
+        )
+    }
+    
+    print(p)
+  })
+  
+  # Site average size graph output
+  output$siteAvgSizeGraph <- renderPlot({
+    data_list <- historical_raw_data()
+    if (is.null(data_list)) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No data available", cex = 1.5)
+      return()
+    }
+    
+    # Combine archive and current data
+    archive_data <- data_list$archive %>% mutate(source = "Archive")
+    current_data <- data_list$current %>% mutate(source = "Current")
+    all_data <- bind_rows(archive_data, current_data)
+    
+    if (nrow(all_data) == 0) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No treatment data available", cex = 1.5)
+      return()
+    }
+    
+    # Join with site size data
+    site_data <- all_data %>%
+      inner_join(data_list$lbs, by = "sitecode") %>%
+      mutate(year = year(inspdate)) %>%
+      group_by(facility.x, year) %>%
+      summarize(avg_acres = mean(acres, na.rm = TRUE), .groups = "drop") %>%
+      rename(facility = facility.x)
+    
+    if (nrow(site_data) == 0) {
+      plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
+      text(1, 1, "No site size data available", cex = 1.5)
+      return()
+    }
+    
+    p <- ggplot(site_data, aes(x = year, y = avg_acres, color = facility)) +
+      geom_line(size = 1.2) +
+      geom_point(size = 3) +
+      labs(
+        title = "Average Site Size Treated by Drone (Acres)",
+        x = "Year",
+        y = "Average Acres",
+        color = "Facility"
+      ) +
+      scale_x_continuous(breaks = seq(min(site_data$year), max(site_data$year), 1)) +
+      theme_minimal() +
+      theme(
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      )
+    
+    print(p)
+  })
+  
+  # Summary table output
+  output$summaryTable <- renderTable({
+    data <- historical_processed_data()
+    if (nrow(data) == 0) {
+      return(data.frame(Message = "No data available for the selected criteria"))
+    }
+    
+    # Create summary by facility and overall
+    summary_by_facility <- data %>%
+      group_by(facility) %>%
+      summarize(
+        Total = sum(count),
+        Average = round(mean(count), 1),
+        Min = min(count),
+        Max = max(count),
+        .groups = "drop"
+      )
+    
+    # Add overall totals
+    overall <- data %>%
+      group_by(year) %>%
+      summarize(total_year = sum(count), .groups = "drop") %>%
+      summarize(
+        facility = "OVERALL",
+        Total = sum(total_year),
+        Average = round(mean(total_year), 1),
+        Min = min(total_year),
+        Max = max(total_year)
+      )
+    
+    # Combine
+    result <- bind_rows(summary_by_facility, overall)
+    
+    # Rename for display
+    result <- result %>%
+      rename(
+        Facility = facility,
+        `Total Count` = Total,
+        `Avg per Year` = Average,
+        `Min Year` = Min,
+        `Max Year` = Max
+      )
+    
+    return(result)
+  }, striped = TRUE, hover = TRUE, spacing = "m")
+  
+  # Site extremes table output  
+  output$siteExtremesTable <- renderTable({
+    data_list <- historical_raw_data()
+    if (is.null(data_list)) {
+      return(data.frame(Message = "No data available"))
+    }
+    
+    # Combine archive and current data
+    archive_data <- data_list$archive %>% mutate(source = "Archive")
+    current_data <- data_list$current %>% mutate(source = "Current")
+    all_data <- bind_rows(archive_data, current_data)
+    
+    if (nrow(all_data) == 0) {
+      return(data.frame(Message = "No treatment data available"))
+    }
+    
+    # Join with site size data
+    site_data <- all_data %>%
+      inner_join(data_list$lbs, by = "sitecode") %>%
+      select(sitecode, acres, facility.x) %>%
+      distinct() %>%
+      rename(facility = facility.x)
+    
+    if (nrow(site_data) == 0) {
+      return(data.frame(Message = "No site size data available"))
+    }
+    
+    # Find extremes
+    largest_sites <- site_data %>%
+      arrange(desc(acres)) %>%
+      head(5) %>%
+      mutate(Category = "Largest Sites") %>%
+      select(Category, sitecode, acres, facility)
+    
+    smallest_sites <- site_data %>%
+      arrange(acres) %>%
+      head(5) %>%
+      mutate(Category = "Smallest Sites") %>%
+      select(Category, sitecode, acres, facility)
+    
+    # Combine
+    result <- bind_rows(largest_sites, smallest_sites) %>%
+      rename(
+        Type = Category,
+        `Site Code` = sitecode,
+        `Acres` = acres,
+        `Facility` = facility
+      )
+    
+    return(result)
+  }, striped = TRUE, hover = TRUE, spacing = "m")
 }
 
 # Run the application

@@ -22,18 +22,44 @@ ui <- fluidPage(
   # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
-      # Toggle button to switch between sites and acres
-      radioButtons("display_metric", "Display Metric:",
-                   choices = c("Number of Sites" = "sites",
-                               "Total Acres" = "acres"),
-                   selected = "sites"),
+      # Current Progress tab controls
+      conditionalPanel(
+        condition = "input.tabs == 'current'",
+        radioButtons("current_display_metric", "Display Metric:",
+                     choices = c("Number of Sites" = "sites",
+                                 "Total Acres" = "acres"),
+                     selected = "sites"),
+        
+        # Slider to control the expiration window
+        sliderInput("expiring_days", "Days Until Expiration:",
+                    min = 1, max = 30, value = 7, step = 1)
+      ),
       
-      # Slider to control the expiration window
-      sliderInput("expiring_days", "Days Until Expiration:",
-                  min = 1, max = 30, value = 7, step = 1),
+      # Historical Trends tab controls
+      conditionalPanel(
+        condition = "input.tabs == 'historical'",
+        radioButtons("hist_display_metric", "Display Metric:",
+                     choices = c("Number of Sites" = "sites",
+                                 "Number of Treatments" = "treatments"),
+                     selected = "sites")
+      ),
       
       # Toggle for prehatch filter
       checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = FALSE),
+      
+      # Zone filter
+      checkboxGroupInput("zone_filter", "Filter by Zone:",
+                        choices = c("P1" = "1", "P2" = "2"),
+                        selected = c("1", "2"),
+                        inline = TRUE),
+      
+      # Group by option
+      radioButtons("group_by", "Group by:",
+                  choices = c("Facility" = "facility", 
+                             "FOS" = "foreman",
+                             "Section" = "sectcode"),
+                  selected = "facility",
+                  inline = TRUE),
       
       # Toggle for drone designation types
       checkboxGroupInput("drone_types", "Include Drone Designations:",
@@ -63,18 +89,13 @@ ui <- fluidPage(
     # Main panel for displaying the graphs with tabs
     mainPanel(
       tabsetPanel(
-        tabPanel("Current Progress", 
+        id = "tabs",
+        tabPanel("Current Progress", value = "current",
                  plotOutput("droneGraph", height = "600px")
         ),
-        tabPanel("Historical Trends",
+        tabPanel("Historical Trends", value = "historical",
                  # Historical controls row
                  fluidRow(
-                   column(3,
-                          radioButtons("hist_count_type", "Display Metric:",
-                                       choices = c("Number of Treatments" = "treatments",
-                                                   "Number of Unique Sites" = "sites"),
-                                       selected = "treatments")
-                   ),
                    column(3,
                           selectInput("hist_start_year", "Start Year:",
                                       choices = seq(2010, 2025),
@@ -115,12 +136,13 @@ server <- function(input, output) {
     drone_types <- paste0("'", paste(input$drone_types, collapse = "','"), "'")
     
     # Query to get drone sites from loc_breeding_sites including acres and prehatch status
-    # Include both drone='Y' and air_gnd='D' as indicators
+    # Include both drone='Y','M','C'? and air_gnd='D' as indicators
     drone_sites_query <- sprintf("
-SELECT sitecode, facility, acres, prehatch, drone
-FROM public.loc_breeding_sites
-WHERE (drone IN (%s) OR air_gnd = 'D')
-AND enddate IS NULL
+SELECT b.sitecode, b.facility, b.acres, b.prehatch, b.drone, sc.zone
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+WHERE (b.drone IN (%s) OR b.air_gnd = 'D')
+AND b.enddate IS NULL
 ", drone_types)
     
     drone_sites <- dbGetQuery(con, drone_sites_query)
@@ -165,6 +187,15 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     drone_sites <- data$drone_sites
     drone_treatments <- data$drone_treatments
     
+    # Apply zone filter if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      drone_sites <- drone_sites %>%
+        filter(zone %in% input$zone_filter)
+      
+      drone_treatments <- drone_treatments %>%
+        filter(zone %in% input$zone_filter)
+    }
+    
     # Apply prehatch filter if selected
     if (input$prehatch_only) {
       # Filter to only prehatch sites
@@ -187,51 +218,287 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
           treatment_end_date <= expiring_end_date
       )
     
-    # Count total drone sites and total acres by facility
-    total_drone_sites <- drone_sites %>%
-      group_by(facility) %>%
-      summarise(
-        total_sites = n(),
-        total_acres = sum(acres, na.rm = TRUE),
-        .groups = 'drop'
-      ) %>%
-      map_facility_names()
+    # Define grouping and display based on group_by selection
+    show_zones_separately <- length(input$zone_filter) > 1
     
-    # Count active drone sites and active acres by facility
-    active_drone_sites <- drone_treatments %>%
-      filter(is_active == TRUE) %>%
-      distinct(sitecode, facility, acres) %>%
-      group_by(facility) %>%
-      summarize(
-        active_sites = n(),
-        active_acres = sum(acres, na.rm = TRUE)
-      )
+    # Count total drone sites and total acres
+    if (input$group_by == "facility") {
+      if (show_zones_separately) {
+        # Group by facility and zone
+        total_drone_sites <- drone_sites %>%
+          group_by(facility, zone) %>%
+          summarise(
+            total_sites = n(),
+            total_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(
+            combined_group = paste0(facility_display, " (P", zone, ")"),
+            zone_factor = as.character(zone)
+          )
+      } else {
+        # Group only by facility when showing single zone
+        total_drone_sites <- drone_sites %>%
+          group_by(facility) %>%
+          summarise(
+            total_sites = n(),
+            total_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility")
+      }
+    } else if (input$group_by == "foreman") {
+      if (show_zones_separately) {
+        # Group by foreman and zone
+        total_drone_sites <- drone_sites %>%
+          group_by(foreman, zone) %>%
+          summarise(
+            total_sites = n(),
+            total_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          mutate(
+            combined_group = paste0("FOS #", foreman, " (P", zone, ")"),
+            zone_factor = as.character(zone)
+          )
+      } else {
+        # Group only by foreman when showing single zone
+        total_drone_sites <- drone_sites %>%
+          group_by(foreman) %>%
+          summarise(
+            total_sites = n(),
+            total_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          mutate(foreman_display = paste0("FOS #", foreman))
+      }
+    } else if (input$group_by == "sectcode") {
+      if (show_zones_separately) {
+        # Group by facility, sectcode and zone
+        total_drone_sites <- drone_sites %>%
+          group_by(facility, sectcode, zone) %>%
+          summarise(
+            total_sites = n(),
+            total_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(
+            combined_group = paste0(facility_display, " - ", sectcode, " (P", zone, ")"),
+            zone_factor = as.character(zone)
+          )
+      } else {
+        # Group by facility and sectcode when showing single zone
+        total_drone_sites <- drone_sites %>%
+          group_by(facility, sectcode) %>%
+          summarise(
+            total_sites = n(),
+            total_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
+      }
+    }
+
+    # Count active drone sites and active acres
+    if (input$group_by == "facility") {
+      if (show_zones_separately) {
+        active_drone_sites <- drone_treatments %>%
+          filter(is_active == TRUE) %>%
+          distinct(sitecode, facility, acres, zone) %>%
+          group_by(facility, zone) %>%
+          summarize(
+            active_sites = n(),
+            active_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(combined_group = paste0(facility_display, " (P", zone, ")"))
+      } else {
+        active_drone_sites <- drone_treatments %>%
+          filter(is_active == TRUE) %>%
+          distinct(sitecode, facility, acres) %>%
+          group_by(facility) %>%
+          summarize(
+            active_sites = n(),
+            active_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility")
+      }
+    } else if (input$group_by == "foreman") {
+      if (show_zones_separately) {
+        active_drone_sites <- drone_treatments %>%
+          filter(is_active == TRUE) %>%
+          distinct(sitecode, foreman, acres, zone) %>%
+          group_by(foreman, zone) %>%
+          summarize(
+            active_sites = n(),
+            active_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          mutate(combined_group = paste0("FOS #", foreman, " (P", zone, ")"))
+      } else {
+        active_drone_sites <- drone_treatments %>%
+          filter(is_active == TRUE) %>%
+          distinct(sitecode, foreman, acres) %>%
+          group_by(foreman) %>%
+          summarize(
+            active_sites = n(),
+            active_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          mutate(foreman_display = paste0("FOS #", foreman))
+      }
+    } else if (input$group_by == "sectcode") {
+      if (show_zones_separately) {
+        active_drone_sites <- drone_treatments %>%
+          filter(is_active == TRUE) %>%
+          distinct(sitecode, facility, sectcode, acres, zone) %>%
+          group_by(facility, sectcode, zone) %>%
+          summarize(
+            active_sites = n(),
+            active_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(combined_group = paste0(facility_display, " - ", sectcode, " (P", zone, ")"))
+      } else {
+        active_drone_sites <- drone_treatments %>%
+          filter(is_active == TRUE) %>%
+          distinct(sitecode, facility, sectcode, acres) %>%
+          group_by(facility, sectcode) %>%
+          summarize(
+            active_sites = n(),
+            active_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
+      }
+    }
     
-    # Count expiring drone sites and expiring acres by facility
-    expiring_drone_sites <- drone_treatments %>%
-      filter(is_expiring == TRUE) %>%
-      distinct(sitecode, facility, acres) %>%
-      group_by(facility) %>%
-      summarize(
-        expiring_sites = n(),
-        expiring_acres = sum(acres, na.rm = TRUE)
-      )
-    
-    # Combine all the counts and acres
-    result <- total_drone_sites %>%
-      left_join(active_drone_sites, by = "facility") %>%
-      left_join(expiring_drone_sites, by = "facility") %>%
-      mutate(
-        active_sites = ifelse(is.na(active_sites), 0, active_sites),
-        active_acres = ifelse(is.na(active_acres), 0, active_acres),
-        expiring_sites = ifelse(is.na(expiring_sites), 0, expiring_sites),
-        expiring_acres = ifelse(is.na(expiring_acres), 0, expiring_acres),
-        # Round acres to whole numbers
-        total_acres = round(total_acres),
-        active_acres = round(active_acres),
-        expiring_acres = round(expiring_acres)
-      )
-    
+    # Count expiring drone sites and expiring acres
+    if (input$group_by == "facility") {
+      if (show_zones_separately) {
+        expiring_drone_sites <- drone_treatments %>%
+          filter(is_expiring == TRUE) %>%
+          distinct(sitecode, facility, acres, zone) %>%
+          group_by(facility, zone) %>%
+          summarize(
+            expiring_sites = n(),
+            expiring_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(combined_group = paste0(facility_display, " (P", zone, ")"))
+      } else {
+        expiring_drone_sites <- drone_treatments %>%
+          filter(is_expiring == TRUE) %>%
+          distinct(sitecode, facility, acres) %>%
+          group_by(facility) %>%
+          summarize(
+            expiring_sites = n(),
+            expiring_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility")
+      }
+    } else if (input$group_by == "foreman") {
+      if (show_zones_separately) {
+        expiring_drone_sites <- drone_treatments %>%
+          filter(is_expiring == TRUE) %>%
+          distinct(sitecode, foreman, acres, zone) %>%
+          group_by(foreman, zone) %>%
+          summarize(
+            expiring_sites = n(),
+            expiring_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          mutate(combined_group = paste0("FOS #", foreman, " (P", zone, ")"))
+      } else {
+        expiring_drone_sites <- drone_treatments %>%
+          filter(is_expiring == TRUE) %>%
+          distinct(sitecode, foreman, acres) %>%
+          group_by(foreman) %>%
+          summarize(
+            expiring_sites = n(),
+            expiring_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          mutate(foreman_display = paste0("FOS #", foreman))
+      }
+    } else if (input$group_by == "sectcode") {
+      if (show_zones_separately) {
+        expiring_drone_sites <- drone_treatments %>%
+          filter(is_expiring == TRUE) %>%
+          distinct(sitecode, facility, sectcode, acres, zone) %>%
+          group_by(facility, sectcode, zone) %>%
+          summarize(
+            expiring_sites = n(),
+            expiring_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(combined_group = paste0(facility_display, " - ", sectcode, " (P", zone, ")"))
+      } else {
+        expiring_drone_sites <- drone_treatments %>%
+          filter(is_expiring == TRUE) %>%
+          distinct(sitecode, facility, sectcode, acres) %>%
+          group_by(facility, sectcode) %>%
+          summarize(
+            expiring_sites = n(),
+            expiring_acres = sum(acres, na.rm = TRUE),
+            .groups = 'drop'
+          ) %>%
+          map_facility_names(facility_col = "facility") %>%
+          mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
+      }
+    }
+
+    # Combine all the counts and acres  
+    if (show_zones_separately) {
+      # Use combined_group as the joining key
+      result <- total_drone_sites %>%
+        left_join(active_drone_sites, by = "combined_group") %>%
+        left_join(expiring_drone_sites, by = "combined_group") %>%
+        mutate(
+          active_sites = ifelse(is.na(active_sites), 0, active_sites),
+          active_acres = ifelse(is.na(active_acres), 0, active_acres),
+          expiring_sites = ifelse(is.na(expiring_sites), 0, expiring_sites),
+          expiring_acres = ifelse(is.na(expiring_acres), 0, expiring_acres),
+          # Round acres to whole numbers
+          total_acres = round(total_acres),
+          active_acres = round(active_acres),
+          expiring_acres = round(expiring_acres)
+        )
+    } else {
+      # Use appropriate joining key based on group_by selection
+      if (input$group_by == "facility") {
+        join_key <- "facility"
+      } else if (input$group_by == "foreman") {
+        join_key <- "foreman" 
+      } else if (input$group_by == "sectcode") {
+        join_key <- c("facility", "sectcode")
+      }
+      
+      result <- total_drone_sites %>%
+        left_join(active_drone_sites, by = join_key) %>%
+        left_join(expiring_drone_sites, by = join_key) %>%
+        mutate(
+          active_sites = ifelse(is.na(active_sites), 0, active_sites),
+          active_acres = ifelse(is.na(active_acres), 0, active_acres),
+          expiring_sites = ifelse(is.na(expiring_sites), 0, expiring_sites),
+          expiring_acres = ifelse(is.na(expiring_acres), 0, expiring_acres),
+          # Round acres to whole numbers
+          total_acres = round(total_acres),
+          active_acres = round(active_acres),
+          expiring_acres = round(expiring_acres)
+        )
+    }
+
     return(result)
   })
   
@@ -250,8 +517,11 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       )
     }
     
+    # Determine if we're showing zones separately
+    show_zones_separately <- length(input$zone_filter) > 1
+    
     # Choose which metric to display based on user input
-    if (input$display_metric == "sites") {
+    if (input$current_display_metric == "sites") {
       # Display number of sites
       data$y_total <- data$total_sites
       data$y_active <- data$active_sites
@@ -276,6 +546,10 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     # Set up the title with appropriate filters
     drone_types_text <- paste(input$drone_types, collapse = ", ")
     prehatch_filter_text <- ifelse(input$prehatch_only, "Prehatch Sites Only", "All Sites")
+    zone_filter_text <- ifelse(length(input$zone_filter) == 2, "P1+P2", 
+                               ifelse(length(input$zone_filter) == 1, 
+                                      ifelse("1" %in% input$zone_filter, "P1 Only", "P2 Only"), 
+                                      "No Zones"))
     
     # Get colors from shared helper functions
     status_colors <- get_status_colors()
@@ -285,8 +559,40 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     active_color <- status_colors["active"]        # Green for active treatments
     expiring_color <- status_colors["planned"]     # Orange for expiring treatments
     
+    # Determine x-axis variable and get facility colors
+    if (show_zones_separately) {
+      x_var <- "combined_group"
+      # Get zone-aware facility colors
+      facility_colors <- get_facility_base_colors(
+        alpha_zones = input$zone_filter,
+        combined_groups = unique(data$combined_group)
+      )
+      
+      # For the stacked bars, we need to apply alpha to the fill colors manually
+      # since geom_bar doesn't work well with alpha aesthetics for this use case
+      total_color <- status_colors["unknown"]
+      active_color <- status_colors["active"] 
+      expiring_color <- status_colors["planned"]
+    } else {
+      # Determine x-axis variable based on grouping
+      if (input$group_by == "facility") {
+        x_var <- "facility_display"
+      } else if (input$group_by == "foreman") {
+        x_var <- "foreman_display"
+      } else if (input$group_by == "sectcode") {
+        x_var <- "sectcode_display"
+      }
+      
+      # Get standard facility colors
+      facility_colors <- get_facility_base_colors()
+      
+      total_color <- status_colors["unknown"]
+      active_color <- status_colors["active"]
+      expiring_color <- status_colors["planned"]
+    }
+    
     # Create the plot
-    p <- ggplot(data, aes(x = facility_display)) +
+    p <- ggplot(data, aes_string(x = x_var)) +
       # First draw total bars
       geom_bar(aes(y = y_total), stat = "identity", fill = total_color, alpha = 0.7) +
       # Then overlay active bars
@@ -300,11 +606,18 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       geom_text(aes(y = y_expiring, label = y_expiring), vjust = 1.5, color = "black", fontface = "bold") +
       
       # Add labels and title
+      group_label <- case_when(
+        input$group_by == "facility" ~ "Facility",
+        input$group_by == "foreman" ~ "FOS", 
+        input$group_by == "sectcode" ~ "Section",
+        TRUE ~ "Group"
+      )
+      
       labs(
-        title = paste("Drone Sites by Facility -", title_metric),
-        subtitle = paste("Drone types:", drone_types_text, "-", prehatch_filter_text,
+        title = paste("Drone Sites by", group_label, "-", title_metric),
+        subtitle = paste("Zones:", zone_filter_text, "- Drone types:", drone_types_text, "-", prehatch_filter_text,
                          "- Expiring within", input$expiring_days, "days"),
-        x = "Facility",
+        x = group_label,
         y = y_label
       ) +
       # Customize appearance
@@ -351,7 +664,7 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       FROM public.dblarv_insptrt_archive
       WHERE action = 'D'
       AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
-    ", input$hist_start_year, input$hist_end_year)
+    ", as.integer(input$hist_start_year), as.integer(input$hist_end_year))
     
     archive_data <- dbGetQuery(con, archive_query)
     
@@ -361,21 +674,28 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       FROM public.dblarv_insptrt_current
       WHERE (airgrnd_plan = 'D' OR action = 'D')
       AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
-    ", input$hist_start_year, input$hist_end_year)
+    ", as.integer(input$hist_start_year), as.integer(input$hist_end_year))
     
     current_data <- dbGetQuery(con, current_query)
     
     # Get site size info from loc_breeding_sites
+    # Build drone_types filter from UI (Y/M/C) to apply the same designation filtering used by current data
+    drone_types <- paste0("'", paste(input$drone_types, collapse = "','"), "'")
+
     sitecodes <- unique(c(archive_data$sitecode, current_data$sitecode))
     if (length(sitecodes) > 0) {
       sitecodes_str <- paste(sprintf("'%s'", sitecodes), collapse = ",")
-      lbs_query <- sprintf("
-        SELECT sitecode, acres, facility 
-        FROM public.loc_breeding_sites 
-        WHERE sitecode IN (%s)", sitecodes_str)
+      lbs_query <- sprintf(
+        "SELECT b.sitecode, b.acres, b.facility, b.prehatch, b.drone, sc.zone
+        FROM public.loc_breeding_sites b
+        LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+        WHERE b.sitecode IN (%s)
+        AND (b.drone IN (%s) OR b.air_gnd = 'D')
+        AND b.enddate IS NULL",
+        sitecodes_str, drone_types)
       lbs_data <- dbGetQuery(con, lbs_query)
     } else {
-      lbs_data <- data.frame(sitecode=character(), acres=numeric(), facility=character())
+      lbs_data <- data.frame(sitecode=character(), acres=numeric(), facility=character(), prehatch=character(), drone=character(), zone=character())
     }
     
     dbDisconnect(con)
@@ -392,6 +712,9 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     # Get raw data
     data_list <- historical_raw_data()
     if (is.null(data_list)) return(data.frame())
+    
+    # Get LBS data for prehatch information
+    lbs_data <- data_list$lbs
     
     # Process archive data
     archive_data <- data_list$archive %>%
@@ -410,39 +733,202 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     # Combine the data
     all_data <- bind_rows(archive_data, current_data)
     
-    # Process based on count type
-    if (input$hist_count_type == "treatments") {
-      # Count all treatments
-      results <- all_data %>%
-        group_by(facility, year) %>%
-        summarize(count = n(), .groups = "drop")
-    } else {
-      # Count unique sites
-      results <- all_data %>%
-        group_by(facility, year) %>%
-        summarize(count = n_distinct(sitecode), .groups = "drop")
+    # Join with lbs_data to get prehatch information
+    all_data <- all_data %>%
+      left_join(lbs_data, by = c("sitecode", "facility"))
+    
+    # Apply zone filter if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      all_data <- all_data %>%
+        filter(zone %in% input$zone_filter)
+    }
+    
+    # Apply prehatch filter if selected
+    if (input$prehatch_only) {
+      all_data <- all_data %>%
+        filter(prehatch == 'PREHATCH')
+    }
+    
+    # Process based on count type and grouping selection
+    show_zones_separately <- length(input$zone_filter) > 1
+    
+    # Define grouping based on group_by selection and zone separation
+    if (input$group_by == "facility") {
+      if (show_zones_separately) {
+        # Group by facility, zone, and year when showing multiple zones
+        if (input$hist_display_metric == "treatments") {
+          # Count all treatments
+          results <- all_data %>%
+            group_by(facility, zone, year) %>%
+            summarize(count = n(), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(combined_group = paste0(facility_display, " (P", zone, ")"))
+        } else {
+          # Count unique sites
+          results <- all_data %>%
+            group_by(facility, zone, year) %>%
+            summarize(count = n_distinct(sitecode), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(combined_group = paste0(facility_display, " (P", zone, ")"))
+        }
+      } else {
+        # Group only by facility and year when showing single zone
+        if (input$hist_display_metric == "treatments") {
+          # Count all treatments
+          results <- all_data %>%
+            group_by(facility, year) %>%
+            summarize(count = n(), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility")
+        } else {
+          # Count unique sites
+          results <- all_data %>%
+            group_by(facility, year) %>%
+            summarize(count = n_distinct(sitecode), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility")
+        }
+      }
+    } else if (input$group_by == "foreman") {
+      if (show_zones_separately) {
+        # Group by foreman, zone, and year when showing multiple zones
+        if (input$hist_display_metric == "treatments") {
+          # Count all treatments
+          results <- all_data %>%
+            group_by(foreman, zone, year) %>%
+            summarize(count = n(), .groups = "drop") %>%
+            mutate(combined_group = paste0("FOS #", foreman, " (P", zone, ")"))
+        } else {
+          # Count unique sites
+          results <- all_data %>%
+            group_by(foreman, zone, year) %>%
+            summarize(count = n_distinct(sitecode), .groups = "drop") %>%
+            mutate(combined_group = paste0("FOS #", foreman, " (P", zone, ")"))
+        }
+      } else {
+        # Group only by foreman and year when showing single zone
+        if (input$hist_display_metric == "treatments") {
+          # Count all treatments
+          results <- all_data %>%
+            group_by(foreman, year) %>%
+            summarize(count = n(), .groups = "drop") %>%
+            mutate(foreman_display = paste0("FOS #", foreman))
+        } else {
+          # Count unique sites
+          results <- all_data %>%
+            group_by(foreman, year) %>%
+            summarize(count = n_distinct(sitecode), .groups = "drop") %>%
+            mutate(foreman_display = paste0("FOS #", foreman))
+        }
+      }
+    } else if (input$group_by == "sectcode") {
+      if (show_zones_separately) {
+        # Group by facility, sectcode, zone, and year when showing multiple zones
+        if (input$hist_display_metric == "treatments") {
+          # Count all treatments
+          results <- all_data %>%
+            group_by(facility, sectcode, zone, year) %>%
+            summarize(count = n(), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(combined_group = paste0(facility_display, " - ", sectcode, " (P", zone, ")"))
+        } else {
+          # Count unique sites
+          results <- all_data %>%
+            group_by(facility, sectcode, zone, year) %>%
+            summarize(count = n_distinct(sitecode), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(combined_group = paste0(facility_display, " - ", sectcode, " (P", zone, ")"))
+        }
+      } else {
+        # Group by facility, sectcode and year when showing single zone
+        if (input$hist_display_metric == "treatments") {
+          # Count all treatments
+          results <- all_data %>%
+            group_by(facility, sectcode, year) %>%
+            summarize(count = n(), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
+        } else {
+          # Count unique sites
+          results <- all_data %>%
+            group_by(facility, sectcode, year) %>%
+            summarize(count = n_distinct(sitecode), .groups = "drop") %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
+        }
+      }
     }
     
     # Make sure we have entries for all years in the range
-    all_years <- seq(from = input$hist_start_year, to = input$hist_end_year)
-    all_facilities <- unique(all_data$facility)
+    all_years <- seq(from = as.integer(input$hist_start_year), to = as.integer(input$hist_end_year))
     
-    # Create complete grid
-    if (length(all_facilities) > 0) {
-      expanded_grid <- expand.grid(
-        facility = all_facilities,
-        year = all_years
-      )
-      
-      # Join with actual data
-      results <- expanded_grid %>%
-        left_join(results, by = c("facility", "year")) %>%
-        mutate(count = ifelse(is.na(count), 0, count))
+    # Create complete grid based on zone separation and grouping
+    if (show_zones_separately) {
+      all_combined_groups <- unique(results$combined_group)
+      if (length(all_combined_groups) > 0) {
+        expanded_grid <- expand.grid(
+          combined_group = all_combined_groups,
+          year = all_years
+        )
+        
+        # Join with actual data
+        results <- expanded_grid %>%
+          left_join(results, by = c("combined_group", "year")) %>%
+          mutate(
+            count = ifelse(is.na(count), 0, count),
+            # Extract zone from combined_group for alpha mapping
+            zone_factor = gsub(".*\\(P([12])\\).*", "\\1", combined_group)
+          )
+      } else {
+        # Handle case with no data
+        results <- data.frame(combined_group = character(), year = integer(), count = integer(), zone_factor = character())
+      }
     } else {
-      # Handle case with no data
-      results <- data.frame(facility = character(), year = integer(), count = integer())
+      # Create expanded grid based on grouping type
+      if (input$group_by == "facility") {
+        unique_groups <- unique(results$facility)
+        if (length(unique_groups) > 0) {
+          expanded_grid <- expand.grid(
+            facility = unique_groups,
+            year = all_years
+          )
+          results <- expanded_grid %>%
+            left_join(results, by = c("facility", "year")) %>%
+            mutate(count = ifelse(is.na(count), 0, count))
+        } else {
+          results <- data.frame(facility = character(), year = integer(), count = integer())
+        }
+      } else if (input$group_by == "foreman") {
+        unique_groups <- unique(results$foreman)
+        if (length(unique_groups) > 0) {
+          expanded_grid <- expand.grid(
+            foreman = unique_groups,
+            year = all_years
+          )
+          results <- expanded_grid %>%
+            left_join(results, by = c("foreman", "year")) %>%
+            mutate(count = ifelse(is.na(count), 0, count)) %>%
+            mutate(foreman_display = paste0("FOS #", foreman))
+        } else {
+          results <- data.frame(foreman = character(), year = integer(), count = integer())
+        }
+      } else if (input$group_by == "sectcode") {
+        unique_groups <- unique(results[c("facility", "sectcode")])
+        if (nrow(unique_groups) > 0) {
+          expanded_grid <- expand.grid(
+            facility = unique(unique_groups$facility),
+            sectcode = unique(unique_groups$sectcode),
+            year = all_years
+          )
+          results <- expanded_grid %>%
+            left_join(results, by = c("facility", "sectcode", "year")) %>%
+            mutate(count = ifelse(is.na(count), 0, count)) %>%
+            map_facility_names(facility_col = "facility") %>%
+            mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
+        } else {
+          results <- data.frame(facility = character(), sectcode = character(), year = integer(), count = integer())
+        }
+      }
     }
-    
+
     return(results)
   })
   
@@ -455,6 +941,41 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       return()
     }
     
+    # Determine if we're showing zones separately
+    show_zones_separately <- length(input$zone_filter) > 1
+    
+    # Create filter text for title
+    prehatch_filter_text <- ifelse(input$prehatch_only, " (Prehatch Sites Only)", "")
+    zone_filter_text <- ifelse(length(input$zone_filter) == 2, "", 
+                               ifelse(length(input$zone_filter) == 1, 
+                                      ifelse("1" %in% input$zone_filter, " (P1 Only)", " (P2 Only)"), 
+                                      " (No Zones)"))
+    
+    # Get facility colors
+    if (show_zones_separately) {
+      facility_colors <- get_facility_base_colors(
+        alpha_zones = input$zone_filter,
+        combined_groups = unique(data$combined_group)
+      )
+      fill_var <- "combined_group"
+      color_values <- facility_colors$colors
+      alpha_var <- "zone_factor"
+      alpha_values <- facility_colors$alpha_values
+    } else {
+      facility_colors <- get_facility_base_colors()
+      # Determine fill variable based on grouping
+      if (input$group_by == "facility") {
+        fill_var <- "facility"
+      } else if (input$group_by == "foreman") {
+        fill_var <- "foreman"
+      } else if (input$group_by == "sectcode") {
+        fill_var <- "facility"  # Use facility for sectcode grouping colors
+      }
+      color_values <- facility_colors
+      alpha_var <- NULL
+      alpha_values <- NULL
+    }
+    
     if (input$hist_show_percentages) {
       # Show as percentages
       data <- data %>%
@@ -462,14 +983,51 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
         mutate(percentage = round(count / sum(count) * 100, 1)) %>%
         ungroup()
       
-      p <- ggplot(data, aes(x = year, y = percentage, fill = facility)) +
-        geom_col(position = "stack") +
-        labs(
-          title = "Drone Treatments by Facility (Percentage)",
-          x = "Year",
-          y = "Percentage (%)",
-          fill = "Facility"
-        ) +
+      if (show_zones_separately) {
+        p <- ggplot(data, aes_string(x = "year", y = "percentage", fill = fill_var, alpha = alpha_var)) +
+          geom_col(position = "stack") +
+          scale_fill_manual(values = color_values) +
+          scale_alpha_manual(values = alpha_values) +
+          guides(alpha = "none") +  # Hide alpha legend
+          labs(
+            title = paste0("Drone Treatments by ", case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS",
+              input$group_by == "sectcode" ~ "Section",
+              TRUE ~ "Group"
+            ), " (Percentage)", zone_filter_text, prehatch_filter_text),
+            x = "Year",
+            y = "Percentage (%)",
+            fill = case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS",
+              input$group_by == "sectcode" ~ "Section",
+              TRUE ~ "Group"
+            )
+          )
+      } else {
+        p <- ggplot(data, aes_string(x = "year", y = "percentage", fill = fill_var)) +
+          geom_col(position = "stack") +
+          scale_fill_manual(values = color_values) +
+          labs(
+            title = paste0("Drone Treatments by ", case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS", 
+              input$group_by == "sectcode" ~ "Section",
+              TRUE ~ "Group"
+            ), " (Percentage)", zone_filter_text, prehatch_filter_text),
+            x = "Year",
+            y = "Percentage (%)",
+            fill = case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS",
+              input$group_by == "sectcode" ~ "Section", 
+              TRUE ~ "Group"
+            )
+          )
+      }
+      
+      p <- p +
         scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
         scale_x_continuous(breaks = seq(min(data$year), max(data$year), 1)) +
         theme_minimal() +
@@ -479,14 +1037,51 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
         )
     } else {
       # Show raw counts
-      p <- ggplot(data, aes(x = year, y = count, fill = facility)) +
-        geom_col(position = "stack") +
-        labs(
-          title = paste("Drone", ifelse(input$hist_count_type == "treatments", "Treatments", "Sites Treated"), "by Facility"),
-          x = "Year", 
-          y = ifelse(input$hist_count_type == "treatments", "Number of Treatments", "Number of Sites"),
-          fill = "Facility"
-        ) +
+      if (show_zones_separately) {
+        p <- ggplot(data, aes_string(x = "year", y = "count", fill = fill_var, alpha = alpha_var)) +
+          geom_col(position = "stack") +
+          scale_fill_manual(values = color_values) +
+          scale_alpha_manual(values = alpha_values) +
+          guides(alpha = "none") +  # Hide alpha legend
+          labs(
+            title = paste0("Drone ", ifelse(input$hist_display_metric == "treatments", "Treatments", "Sites Treated"), " by ", case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS", 
+              input$group_by == "sectcode" ~ "Section",
+              TRUE ~ "Group"
+            ), zone_filter_text, prehatch_filter_text),
+            x = "Year", 
+            y = ifelse(input$hist_display_metric == "treatments", "Number of Treatments", "Number of Sites"),
+            fill = case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS",
+              input$group_by == "sectcode" ~ "Section",
+              TRUE ~ "Group"
+            )
+          )
+      } else {
+        p <- ggplot(data, aes_string(x = "year", y = "count", fill = fill_var)) +
+          geom_col(position = "stack") +
+          scale_fill_manual(values = color_values) +
+          labs(
+            title = paste0("Drone ", ifelse(input$hist_display_metric == "treatments", "Treatments", "Sites Treated"), " by ", case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS",
+              input$group_by == "sectcode" ~ "Section", 
+              TRUE ~ "Group"
+            ), zone_filter_text, prehatch_filter_text),
+            x = "Year", 
+            y = ifelse(input$hist_display_metric == "treatments", "Number of Treatments", "Number of Sites"),
+            fill = case_when(
+              input$group_by == "facility" ~ "Facility",
+              input$group_by == "foreman" ~ "FOS",
+              input$group_by == "sectcode" ~ "Section",
+              TRUE ~ "Group"
+            )
+          )
+      }
+      
+      p <- p +
         scale_x_continuous(breaks = seq(min(data$year), max(data$year), 1)) +
         theme_minimal() +
         theme(
@@ -518,13 +1113,41 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       return()
     }
     
-    # Join with site size data
+    # Join with site size data (including prehatch info)
     site_data <- all_data %>%
       inner_join(data_list$lbs, by = "sitecode") %>%
-      mutate(year = year(inspdate)) %>%
-      group_by(facility.x, year) %>%
-      summarize(avg_acres = mean(acres, na.rm = TRUE), .groups = "drop") %>%
-      rename(facility = facility.x)
+      mutate(year = year(inspdate))
+    
+    # Apply zone filter if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      site_data <- site_data %>%
+        filter(zone %in% input$zone_filter)
+    }
+    
+    # Apply prehatch filter if selected
+    if (input$prehatch_only) {
+      site_data <- site_data %>%
+        filter(prehatch == 'PREHATCH')
+    }
+    
+    # Calculate average acres by facility and year
+    show_zones_separately <- length(input$zone_filter) > 1
+    
+    if (show_zones_separately) {
+      site_data <- site_data %>%
+        group_by(facility.x, zone, year) %>%
+        summarize(avg_acres = mean(acres, na.rm = TRUE), .groups = "drop") %>%
+        rename(facility = facility.x) %>%
+        mutate(
+          combined_group = paste0(facility, " (P", zone, ")"),
+          zone_factor = as.character(zone)
+        )
+    } else {
+      site_data <- site_data %>%
+        group_by(facility.x, year) %>%
+        summarize(avg_acres = mean(acres, na.rm = TRUE), .groups = "drop") %>%
+        rename(facility = facility.x)
+    }
     
     if (nrow(site_data) == 0) {
       plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
@@ -532,15 +1155,72 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       return()
     }
     
-    p <- ggplot(site_data, aes(x = year, y = avg_acres, color = facility)) +
-      geom_line(size = 1.2) +
-      geom_point(size = 3) +
-      labs(
-        title = "Average Site Size Treated by Drone (Acres)",
-        x = "Year",
-        y = "Average Acres",
-        color = "Facility"
-      ) +
+    # Create filter text for title
+    prehatch_filter_text <- ifelse(input$prehatch_only, " (Prehatch Sites Only)", "")
+    zone_filter_text <- ifelse(length(input$zone_filter) == 2, "", 
+                               ifelse(length(input$zone_filter) == 1, 
+                                      ifelse("1" %in% input$zone_filter, " (P1 Only)", " (P2 Only)"), 
+                                      " (No Zones)"))
+    
+    # Get facility colors
+    if (show_zones_separately) {
+      facility_colors <- get_facility_base_colors(
+        alpha_zones = input$zone_filter,
+        combined_groups = unique(site_data$combined_group)
+      )
+      color_var <- "combined_group"
+      color_values <- facility_colors$colors
+    } else {
+      facility_colors <- get_facility_base_colors()
+      color_var <- "facility"
+      color_values <- facility_colors
+    }
+    
+    # Get facility colors for site data plot
+    if (show_zones_separately) {
+      facility_colors <- get_facility_base_colors(
+        alpha_zones = input$zone_filter,
+        combined_groups = unique(site_data$combined_group)
+      )
+      color_var <- "combined_group"
+      color_values <- facility_colors$colors
+      alpha_var <- "zone_factor"
+      alpha_values <- facility_colors$alpha_values
+    } else {
+      facility_colors <- get_facility_base_colors()
+      color_var <- "facility"
+      color_values <- facility_colors
+      alpha_var <- NULL
+      alpha_values <- NULL
+    }
+    
+    if (show_zones_separately) {
+      p <- ggplot(site_data, aes_string(x = "year", y = "avg_acres", color = color_var, alpha = alpha_var)) +
+        geom_line(size = 1.2) +
+        geom_point(size = 3) +
+        scale_color_manual(values = color_values) +
+        scale_alpha_manual(values = alpha_values) +
+        guides(alpha = "none") +  # Hide alpha legend
+        labs(
+          title = paste0("Average Site Size Treated by Drone (Acres)", zone_filter_text, prehatch_filter_text),
+          x = "Year",
+          y = "Average Acres",
+          color = "Facility"
+        )
+    } else {
+      p <- ggplot(site_data, aes_string(x = "year", y = "avg_acres", color = color_var)) +
+        geom_line(size = 1.2) +
+        geom_point(size = 3) +
+        scale_color_manual(values = color_values) +
+        labs(
+          title = paste0("Average Site Size Treated by Drone (Acres)", zone_filter_text, prehatch_filter_text),
+          x = "Year",
+          y = "Average Acres",
+          color = "Facility"
+        )
+    }
+    
+    p <- p +
       scale_x_continuous(breaks = seq(min(site_data$year), max(site_data$year), 1)) +
       theme_minimal() +
       theme(
@@ -613,12 +1293,28 @@ LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
       return(data.frame(Message = "No treatment data available"))
     }
     
-    # Join with site size data
+    # Join with site size data (including prehatch info)
     site_data <- all_data %>%
       inner_join(data_list$lbs, by = "sitecode") %>%
-      select(sitecode, acres, facility.x) %>%
+      select(sitecode, acres, facility.x, prehatch, zone) %>%
       distinct() %>%
       rename(facility = facility.x)
+    
+    # Apply zone filter if selected
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      site_data <- site_data %>%
+        filter(zone %in% input$zone_filter)
+    }
+    
+    # Apply prehatch filter if selected
+    if (input$prehatch_only) {
+      site_data <- site_data %>%
+        filter(prehatch == 'PREHATCH')
+    }
+    
+    # Remove prehatch and zone columns for final output
+    site_data <- site_data %>%
+      select(-prehatch, -zone)
     
     if (nrow(site_data) == 0) {
       return(data.frame(Message = "No site size data available"))

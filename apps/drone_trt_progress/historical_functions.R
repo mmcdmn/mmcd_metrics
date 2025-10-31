@@ -1,5 +1,9 @@
-# Historical data functions - COPIED EXACTLY FROM BACKUP
-# Modified to accept input parameters instead of accessing input directly
+# Historical data functions
+
+# Shared function to get raw historical data - used by both historical and site average functions
+get_shared_historical_data <- function(hist_start_year, hist_end_year, drone_types) {
+  return(get_historical_raw_data(hist_start_year, hist_end_year, drone_types))
+}
 
 # Historical data function
 get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types) {
@@ -47,7 +51,6 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types)
     simple_lbs_data <- dbGetQuery(con, simple_lbs_query)
     
     if (nrow(simple_lbs_data) > 0) {
-      # For now, let's just get all the LBS data without restrictive filtering
       # The historical data should work regardless of the drone designation
       lbs_query <- sprintf(
         "SELECT b.sitecode, b.acres, b.facility, b.prehatch, b.drone, b.air_gnd,
@@ -185,8 +188,13 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
     results <- all_data %>%
       group_by(!!group_var, year) %>%
       summarize(count = n(), .groups = "drop")
+  } else if (hist_display_metric == "acres") {
+    # Sum acres treated
+    results <- all_data %>%
+      group_by(!!group_var, year) %>%
+      summarize(count = sum(acres, na.rm = TRUE), .groups = "drop")
   } else {
-    # Count unique sites
+    # Count unique sites (default for "sites")
     results <- all_data %>%
       group_by(!!group_var, year) %>%
       summarize(count = n_distinct(sitecode), .groups = "drop")
@@ -450,7 +458,7 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
     # Show as percentages
     data <- data %>%
       group_by(year) %>%
-      mutate(percentage = round(count / sum(count) * 100, 1)) %>%
+      mutate(percentage = ifelse(sum(count) == 0, 0, round(count / sum(count) * 100, 1))) %>%
       ungroup()
     
     # Build ggplot with optional alpha mapping
@@ -473,7 +481,11 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
     }
     
     p <- p + labs(
-      title = paste0("Drone Treatments by ", case_when(
+      title = paste0("Drone ", case_when(
+        hist_display_metric == "treatments" ~ "Treatments",
+        hist_display_metric == "acres" ~ "Acres Treated", 
+        TRUE ~ "Sites Treated"
+      ), " by ", case_when(
         group_by == "facility" ~ "Facility",
         group_by == "foreman" ~ "FOS",
         group_by == "sectcode" ~ "Section",
@@ -517,14 +529,22 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
     }
     
     p <- p + labs(
-      title = paste0("Drone ", ifelse(hist_display_metric == "treatments", "Treatments", "Sites Treated"), " by ", case_when(
+      title = paste0("Drone ", case_when(
+        hist_display_metric == "treatments" ~ "Treatments",
+        hist_display_metric == "acres" ~ "Acres Treated",
+        TRUE ~ "Sites Treated"
+      ), " by ", case_when(
         group_by == "facility" ~ "Facility",
         group_by == "foreman" ~ "FOS", 
         group_by == "sectcode" ~ "Section",
         TRUE ~ "Group"
       ), zone_filter_text, prehatch_filter_text),
       x = "Year", 
-      y = ifelse(hist_display_metric == "treatments", "Number of Treatments", "Number of Sites"),
+      y = case_when(
+        hist_display_metric == "treatments" ~ "Number of Treatments",
+        hist_display_metric == "acres" ~ "Number of Acres",
+        TRUE ~ "Number of Sites"
+      ),
       fill = case_when(
         group_by == "facility" ~ "Facility",
         group_by == "foreman" ~ "FOS",

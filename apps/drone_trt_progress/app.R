@@ -27,8 +27,9 @@ suppressPackageStartupMessages({
 # Source shared helper functions
 source("../../shared/db_helpers.R")
 
-# Source historical functions (EXACT copy from backup)
+# Source external function files
 source("historical_functions.R")
+source("site_average_functions.R")
 
 # Load environment variables
 load_env_vars()
@@ -258,7 +259,8 @@ ui <- fluidPage(
         condition = "input.tabs == 'historical'",
         radioButtons("hist_display_metric", "Display Metric:",
                      choices = c("Number of Sites" = "sites",
-                                 "Number of Treatments" = "treatments"),
+                                 "Number of Treatments" = "treatments",
+                                 "Number of Acres" = "acres"),
                      selected = "sites")
       ),
       
@@ -269,13 +271,13 @@ ui <- fluidPage(
                          choices = c("P1" = "1", "P2" = "2"),
                          selected = c("1", "2")),
       
-      checkboxGroupInput("facility_filter", "Select Facilities:",
-                         choices = get_facility_choices(),
-                         selected = "all"),
+      selectizeInput("facility_filter", "Facility:",
+                    choices = get_facility_choices(),
+                    selected = "all", multiple = TRUE),
       
-      checkboxGroupInput("foreman_filter", "Select FOS:",
-                         choices = get_foreman_choices(),
-                         selected = "all"),
+      selectizeInput("foreman_filter", "FOS:",
+                    choices = get_foreman_choices(),
+                    selected = "all", multiple = TRUE),
       
       # Group by controls (dynamic based on tab)
       conditionalPanel(
@@ -313,11 +315,6 @@ ui <- fluidPage(
                           selectInput("hist_end_year", "End Year:",
                                       choices = seq(2010, 2025),
                                       selected = 2025)
-                   ),
-                   column(3,
-                          selectInput("hist_display_metric", "Display:",
-                                      choices = c("Sites" = "sites", "Treatments" = "treatments"),
-                                      selected = "sites")
                    ),
                    column(3,
                           checkboxInput("hist_show_percentages", "Show Percentages", value = FALSE)
@@ -741,11 +738,17 @@ server <- function(input, output, session) {
   
   # Site average plot  
   output$siteAvgPlot <- renderPlot({
-    # Implementation for site average plotting
-    # [This would contain the site average plotting logic]
-    ggplot() + 
-      geom_text(aes(x = 0.5, y = 0.5, label = "Site Average plot - To be implemented"), size = 6) +
-      theme_void()
+    p <- create_site_average_plot(
+      zone_filter = input$zone_filter,
+      facility_filter = input$facility_filter,
+      foreman_filter = input$foreman_filter,
+      prehatch_only = input$prehatch_only,
+      group_by = input$group_by,
+      hist_start_year = input$hist_start_year,
+      hist_end_year = input$hist_end_year,
+      drone_types = input$drone_types
+    )
+    print(p)
   })
 }
 

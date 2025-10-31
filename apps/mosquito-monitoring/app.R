@@ -10,16 +10,55 @@ library(plotrix)
 library(DBI)
 library(RPostgreSQL)
 
+# Source shared helper functions - only for db connection
+suppressWarnings({
+  source("../../shared/db_helpers.R")
+})
 
-host_db <- 'data.mmcd.org'
-db_port <- '5432'
-db_user <- 'mmcd_read'
-db_password <- 'mmcd2012'
-drv <- dbDriver("PostgreSQL")
+# Mosquito-specific database connection function with integer64 handling
+get_mosquito_db_connection <- function() {
+  # First try the centralized connection (in case env vars are set for mosquito DB)
+  con <- get_db_connection()
+  if (!is.null(con)) {
+    return(con)
+  }
+  
+  # Fallback to mosquito-specific hardcoded connection
+  tryCatch({
+    host_db <- 'data.mmcd.org'
+    db_port <- '5432'
+    db_user <- 'mmcd_read'
+    db_password <- 'mmcd2012'
+    drv <- dbDriver("PostgreSQL")
+    con <- dbConnect(drv, dbname = "mmcd_data", host=host_db, port=db_port, user=db_user, password=db_password)
+    return(con)
+  }, error = function(e) {
+    warning(paste("Mosquito database connection failed:", e$message))
+    return(NULL)
+  })
+}
 
-con <- dbConnect(drv, dbname = "mmcd_data", host=host_db, port=db_port, user=db_user, password=db_password)
+# Function to handle integer64 conversion
+convert_integer64_columns <- function(data) {
+  # Convert any integer64 columns to regular integers/numerics
+  for (col in names(data)) {
+    if (inherits(data[[col]], "integer64")) {
+      data[[col]] <- as.numeric(data[[col]])
+    }
+  }
+  return(data)
+}
+
+# Use the mosquito-specific connection
+con <- get_mosquito_db_connection()
+if (is.null(con)) {
+  stop("Failed to connect to mosquito database")
+}
 
 mosquito0NAS <- dbReadTable(con, "dbadult_mon_nt_co2_tall2_forr")
+
+# Convert any integer64 columns to regular numeric
+mosquito0NAS <- convert_integer64_columns(mosquito0NAS)
 
 mosquito0 <- na.omit(mosquito0NAS)
 

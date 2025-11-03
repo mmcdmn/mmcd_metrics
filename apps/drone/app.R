@@ -1,18 +1,3 @@
-# =============================================================================
-# DRONE TREATMENT PROGRESS DASHBOARD
-# =============================================================================
-# This application shows current progress and historical trends for drone 
-# treatment sites with filtering and grouping capabilities.
-# 
-# Features:
-# - Current progress view with active/expiring treatments
-# - Historical trends analysis
-# - Site average historical analysis
-# - Multi-level filtering (zone, facility, FOS, prehatch)
-# - Dynamic grouping options
-# - Zone-aware color coding and alpha transparency
-# =============================================================================
-
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -658,6 +643,20 @@ server <- function(input, output, session) {
     # Get status colors
     status_colors <- get_status_colors()
     
+    # Add labels and formatting (BEFORE creating plot)
+    metric_label <- ifelse(input$current_display_metric == "sites", "Number of Sites", "Total Acres")
+    zone_text <- if (length(input$zone_filter) == 2) "" else 
+      if (length(input$zone_filter) == 1) 
+        ifelse("1" %in% input$zone_filter, " (P1 Only)", " (P2 Only)") else " (No Zones)"
+    prehatch_text <- ifelse(input$prehatch_only, " - Prehatch Only", "")
+    
+    group_label <- case_when(
+      input$group_by == "facility" ~ "Facility",
+      input$group_by == "foreman" ~ "FOS", 
+      input$group_by == "sectcode" ~ "Section",
+      TRUE ~ "Group"
+    )
+    
     # Create plot
     if (!is.null(custom_colors) && input$group_by != "mmcd_all") {
       p <- ggplot(data, aes(x = .data[[x_var]], fill = !!sym(fill_var))) +
@@ -672,20 +671,7 @@ server <- function(input, output, session) {
         geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"])
     }
     
-    # Add labels and formatting
-    metric_label <- ifelse(input$current_display_metric == "sites", "Number of Sites", "Total Acres")
-    zone_text <- if (length(input$zone_filter) == 2) "" else 
-      if (length(input$zone_filter) == 1) 
-        ifelse("1" %in% input$zone_filter, " (P1 Only)", " (P2 Only)") else " (No Zones)"
-    prehatch_text <- ifelse(input$prehatch_only, " - Prehatch Only", "")
-    
-    group_label <- case_when(
-      input$group_by == "facility" ~ "Facility",
-      input$group_by == "foreman" ~ "FOS", 
-      input$group_by == "sectcode" ~ "Section",
-      TRUE ~ "Group"
-    )
-    
+    # Add formatting
     p <- p +
       labs(
         title = paste0("Drone Sites Progress by ", group_label, zone_text, prehatch_text),
@@ -695,10 +681,13 @@ server <- function(input, output, session) {
       ) +
       theme_minimal() +
       theme(
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none"
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 16, face = "bold"),
+        plot.title = element_text(face = "bold", size = 18),
+        axis.title = element_text(face = "bold", size = 18),
+        axis.text = element_text(size = 13),
+        legend.title = element_text(face = "bold", size = 12),
+        legend.text = element_text(size = 11)
       )
-    
     print(p)
   })
   
@@ -721,9 +710,12 @@ server <- function(input, output, session) {
       drone_types = input$drone_types,
       facility_filter = input$facility_filter,
       foreman_filter = input$foreman_filter
-    )
+    ) +
+      theme(
+        axis.text.x = element_text(size = 14, face = "bold")
+      )
     print(p)
-  })
+  }, height = 900)
   
   # =============================================================================
   # SITE AVERAGE SECTION

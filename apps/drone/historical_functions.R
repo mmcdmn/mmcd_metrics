@@ -455,11 +455,24 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
   }
 
   if (hist_show_percentages) {
+    # DEBUG: Print what data we have before percentage calculation
+    cat("DEBUG: Years in data before percentage calculation:", paste(sort(unique(data$year)), collapse=", "), "\n")
+    cat("DEBUG: Number of rows before percentage calculation:", nrow(data), "\n")
+    if (show_zones_separately) {
+      cat("DEBUG: Combined groups:", paste(unique(data$combined_group), collapse=", "), "\n")
+    } else {
+      cat("DEBUG: Groups in fill_var (", fill_var, "):", paste(unique(data[[fill_var]]), collapse=", "), "\n")
+    }
+    
     # Show as percentages
     data <- data %>%
       group_by(year) %>%
       mutate(percentage = ifelse(sum(count) == 0, 0, round(count / sum(count) * 100, 1))) %>%
       ungroup()
+    
+    # DEBUG: Print what data we have after percentage calculation
+    cat("DEBUG: Years in data after percentage calculation:", paste(sort(unique(data$year)), collapse=", "), "\n")
+    cat("DEBUG: Number of rows after percentage calculation:", nrow(data), "\n")
     
     # Build ggplot with optional alpha mapping
     if (show_zones_separately && !is.null(alpha_values)) {

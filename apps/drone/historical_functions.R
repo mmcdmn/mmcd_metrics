@@ -455,76 +455,27 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
   }
 
   if (hist_show_percentages) {
-    # DEBUG: Print what data we have before percentage calculation
-    cat("DEBUG: Years in data before percentage calculation:", paste(sort(unique(data$year)), collapse=", "), "\n")
-    cat("DEBUG: Number of rows before percentage calculation:", nrow(data), "\n")
-    if (show_zones_separately) {
-      cat("DEBUG: Combined groups:", paste(unique(data$combined_group), collapse=", "), "\n")
-    } else {
-      cat("DEBUG: Groups in fill_var (", fill_var, "):", paste(unique(data[[fill_var]]), collapse=", "), "\n")
-    }
-    
     # Show as percentages
+    # First, filter out any groups that have NO data across ALL years
+    groups_with_data <- data %>%
+      group_by(!!sym(fill_var)) %>%
+      summarise(total_count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+      filter(total_count > 0) %>%
+      pull(!!sym(fill_var))
+    
+    # Keep only groups with data, but keep ALL years for those groups
     data <- data %>%
+      filter(!!sym(fill_var) %in% groups_with_data) %>%
       group_by(year) %>%
-      mutate(percentage = ifelse(sum(count) == 0, 0, round(count / sum(count) * 100, 1))) %>%
-      ungroup()
-    
-    # DEBUG: Print what data we have after percentage calculation
-    cat("DEBUG: Years in data after percentage calculation:", paste(sort(unique(data$year)), collapse=", "), "\n")
-    cat("DEBUG: Number of rows after percentage calculation:", nrow(data), "\n")
-    
-    # DEBUG: Check for missing values that might cause ggplot to drop rows
-    cat("DEBUG: Rows with NA in fill_var (", fill_var, "):", sum(is.na(data[[fill_var]])), "\n")
-    if (show_zones_separately) {
-      cat("DEBUG: Rows with NA in zone_factor:", sum(is.na(data$zone_factor)), "\n")
-    }
-    cat("DEBUG: Rows with NA/Inf in percentage:", sum(is.na(data$percentage) | is.infinite(data$percentage)), "\n")
-    cat("DEBUG: Percentage range:", paste(range(data$percentage, na.rm=TRUE), collapse=" to "), "\n")
-    
-    # DEBUG: Show any problematic rows
-    problematic_rows <- data[is.na(data[[fill_var]]) | 
-                            (show_zones_separately & is.na(data$zone_factor)) |
-                            is.na(data$percentage) | is.infinite(data$percentage), ]
-    if (nrow(problematic_rows) > 0) {
-      cat("DEBUG: Problematic rows that ggplot might drop:\n")
-      print(problematic_rows[, c("year", fill_var, if(show_zones_separately) "zone_factor", "count", "percentage")])
-    }
-    
-    # DEBUG: Check alpha_values mapping if using zones
-    if (show_zones_separately && !is.null(alpha_values)) {
-      cat("DEBUG: Alpha values available:", paste(names(alpha_values), "=", alpha_values, collapse=", "), "\n")
-      cat("DEBUG: Zone factors in data:", paste(unique(data$zone_factor), collapse=", "), "\n")
-      missing_alpha <- data$zone_factor[!data$zone_factor %in% names(alpha_values)]
-      if (length(missing_alpha) > 0) {
-        cat("DEBUG: Zone factors missing from alpha_values:", paste(unique(missing_alpha), collapse=", "), "\n")
-      }
-    }
-    
-    # DEBUG: Check color mapping
-    if (!is.null(custom_colors)) {
-      cat("DEBUG: Colors available:", paste(names(custom_colors), collapse=", "), "\n")
-      cat("DEBUG: Fill values in data:", paste(unique(data[[fill_var]]), collapse=", "), "\n")
-      missing_colors <- data[[fill_var]][!data[[fill_var]] %in% names(custom_colors)]
-      if (length(missing_colors) > 0) {
-        cat("DEBUG: Fill values missing from custom_colors:", paste(unique(missing_colors), collapse=", "), "\n")
-      }
-    }
-    
-    # DEBUG: Check percentage totals by year - they should sum to 100%
-    year_totals <- data %>%
-      group_by(year) %>%
-      summarize(total_pct = sum(percentage, na.rm = TRUE), .groups = "drop")
-    cat("DEBUG: Percentage totals by year:\n")
-    for(i in 1:nrow(year_totals)) {
-      cat("  ", year_totals$year[i], ": ", round(year_totals$total_pct[i], 1), "%\n", sep="")
-    }
-    
-    # Show years where totals don't add to 100%
-    problematic_years <- year_totals$year[abs(year_totals$total_pct - 100) > 0.1]
-    if (length(problematic_years) > 0) {
-      cat("DEBUG: Years with percentage totals != 100%:", paste(problematic_years, collapse=", "), "\n")
-    }
+      mutate(
+        year_total = sum(count, na.rm = TRUE),
+        percentage = case_when(
+          year_total == 0 ~ 0,  # If no data for the year, set to 0
+          TRUE ~ round(count / year_total * 100, 1)
+        )
+      ) %>%
+      ungroup() %>%
+      select(-year_total)
     
     # Build ggplot with optional alpha mapping
     if (show_zones_separately && !is.null(alpha_values)) {

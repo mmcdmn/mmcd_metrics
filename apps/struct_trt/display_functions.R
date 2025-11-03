@@ -167,90 +167,72 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     ) %>%
     {map_facility_names(.)}
   
-  # Determine grouping
-  group_col <- case_when(
-    group_by == "facility" ~ "facility",
-    group_by == "foreman" ~ "foreman",
-    group_by == "mmcd_all" ~ "mmcd_all",
-    TRUE ~ "facility"
-  )
+  # Determine grouping - ALWAYS use mmcd_all for historical trends
+  # Historical trends shows overall MMCD progress regardless of grouping selection
+  group_col <- "mmcd_all"
+  group_title <- "for All MMCD"
   
   # Add group column for mmcd_all case
-  if (group_col == "mmcd_all") {
-    treatments_data$mmcd_all <- "All MMCD"
-  }
-  
-  # Create treatment changes for each group
-  if (group_col == "mmcd_all") {
-    # Calculate daily treatment changes for all MMCD
-    treatment_starts <- treatments_data %>%
-      group_by(inspdate) %>%
-      summarize(treatment_change = n(), .groups = 'drop') %>%
-      rename(date = inspdate)
-    
-    treatment_ends <- treatments_data %>%
-      group_by(enddate) %>%
-      summarize(treatment_change = -n(), .groups = 'drop') %>%
-      rename(date = enddate)
-    
-    daily_treatment_changes <- bind_rows(treatment_starts, treatment_ends) %>%
-      group_by(date) %>%
-      summarize(treatment_change = sum(treatment_change), .groups = 'drop')
-    
-    # Calculate structure changes (assuming relatively stable for this timeframe)
-    structure_changes <- data.frame(date = as.Date(character(0)), structure_change = numeric(0))
-    
-    # Calculate cumulative active treatments and total structures over time
-    all_dates <- data.frame(date = date_range)
-    treatment_trends <- all_dates %>%
-      left_join(daily_treatment_changes, by = "date") %>%
-      left_join(structure_changes, by = "date") %>%
-      mutate(
-        treatment_change = ifelse(is.na(treatment_change), 0, treatment_change),
-        structure_change = ifelse(is.na(structure_change), 0, structure_change)
-      ) %>%
-      arrange(date) %>%
-      mutate(
-        active_treatments = cumsum(treatment_change),
-        total_structures_dynamic = total_structures + cumsum(structure_change)
-      ) %>%
-      # Avoid division by zero
-      mutate(
-        proportion_active_treatment = ifelse(
-          total_structures_dynamic > 0, 
-          active_treatments / total_structures_dynamic, 
-          0
-        ),
-        group_name = "All MMCD"
-      )
+  treatments_data$mmcd_all <- "All MMCD"
 
-    # Calculate seasonal average curve (average proportion for each calendar day across all years)
-    seasonal_curve <- treatment_trends %>%
-      mutate(day_of_year = format(date, "%m-%d")) %>%
-      group_by(day_of_year) %>%
-      summarize(
-        seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
-        .groups = "drop"
-      )
-    
-    # Add seasonal average to main data
-    treatment_trends <- treatment_trends %>%
-      mutate(day_of_year = format(date, "%m-%d")) %>%
-      left_join(seasonal_curve, by = "day_of_year")
-    
-    # Set display name
-    treatment_trends$display_name <- treatment_trends$group_name
-  } else {
-    # Handle facility or foreman grouping (simplified for now)
-    treatment_trends <- data.frame(
-      date = date_range,
-      proportion_active_treatment = 0,
-      group_name = "Data",
-      display_name = "Data"
+  # Calculate daily treatment changes for all MMCD
+  treatment_starts <- treatments_data %>%
+    group_by(inspdate) %>%
+    summarize(treatment_change = n(), .groups = 'drop') %>%
+    rename(date = inspdate)
+
+  treatment_ends <- treatments_data %>%
+    group_by(enddate) %>%
+    summarize(treatment_change = -n(), .groups = 'drop') %>%
+    rename(date = enddate)
+
+  daily_treatment_changes <- bind_rows(treatment_starts, treatment_ends) %>%
+    group_by(date) %>%
+    summarize(treatment_change = sum(treatment_change), .groups = 'drop')
+
+  # Calculate structure changes (assuming relatively stable for this timeframe)
+  structure_changes <- data.frame(date = as.Date(character(0)), structure_change = numeric(0))
+
+  # Calculate cumulative active treatments and total structures over time
+  all_dates <- data.frame(date = date_range)
+  treatment_trends <- all_dates %>%
+    left_join(daily_treatment_changes, by = "date") %>%
+    left_join(structure_changes, by = "date") %>%
+    mutate(
+      treatment_change = ifelse(is.na(treatment_change), 0, treatment_change),
+      structure_change = ifelse(is.na(structure_change), 0, structure_change)
+    ) %>%
+    arrange(date) %>%
+    mutate(
+      active_treatments = cumsum(treatment_change),
+      total_structures_dynamic = total_structures + cumsum(structure_change)
+    ) %>%
+    # Avoid division by zero
+    mutate(
+      proportion_active_treatment = ifelse(
+        total_structures_dynamic > 0, 
+        active_treatments / total_structures_dynamic, 
+        0
+      ),
+      group_name = "All MMCD"
     )
-  }
+
+  # Calculate seasonal average curve (average proportion for each calendar day across all years)
+  seasonal_curve <- treatment_trends %>%
+    mutate(day_of_year = format(date, "%m-%d")) %>%
+    group_by(day_of_year) %>%
+    summarize(
+      seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
+      .groups = "drop"
+    )
   
-  # Set up filter text
+  # Add seasonal average to main data
+  treatment_trends <- treatment_trends %>%
+    mutate(day_of_year = format(date, "%m-%d")) %>%
+    left_join(seasonal_curve, by = "day_of_year")
+  
+  # Set display name
+  treatment_trends$display_name <- treatment_trends$group_name  # Set up filter text
   filter_conditions <- character(0)
   if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
     filter_conditions <- c(filter_conditions, paste("Facilities:", paste(facility_filter, collapse = ", ")))
@@ -309,10 +291,10 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   )
   
   p <- ggplot(treatment_trends, aes(x = date, y = proportion_active_treatment)) +
-    geom_line(aes(color = display_name), size = 1.2) +
+    geom_line(aes(color = display_name), linewidth = 1.2) +
     # Add seasonal average line for MMCD (All) grouping
     {if (group_col == "mmcd_all" && "seasonal_avg" %in% names(treatment_trends)) {
-      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", size = 1.2)
+      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", linewidth = 1.2)
     }} +
     labs(
       title = sprintf(
@@ -332,7 +314,7 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
       )
     ) +
     scale_y_continuous(
-      labels = scales::percent_format(),
+      labels = scales::percent_format(accuracy = 0.01),
       breaks = seq(0, 1, by = 0.1)
     ) +
     scale_x_date(

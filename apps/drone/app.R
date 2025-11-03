@@ -20,7 +20,7 @@ source("site_average_functions.R")
 load_env_vars()
 
 # =============================================================================
-# HELPER FUNCTIONS
+# USER INTERFACE
 # =============================================================================
 
 #' Load raw data from database
@@ -53,9 +53,9 @@ load_raw_data <- function(drone_types = c("Y", "M", "C")) {
     
     drone_sites <- dbGetQuery(con, drone_sites_query)
     
-    # Query to get treatment information
+    # Query to get treatment information with recorded treated acres
     treatments_query <- "
-    SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres, t.foreman, m.effect_days
+    SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days
     FROM public.dblarv_insptrt_current t
     LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
@@ -70,8 +70,8 @@ load_raw_data <- function(drone_types = c("Y", "M", "C")) {
     drone_treatments <- treatments %>%
       inner_join(drone_sites, by = c("sitecode", "facility"), suffix = c("_trt", "_site")) %>%
       mutate(
-        # Use treatment acres if available, otherwise use site acres
-        acres = ifelse(is.na(acres_trt), acres_site, acres_trt),
+        # Use recorded treated acres from treatment records
+        acres = treated_acres,
         # Use site foreman (jurisdictional assignment). Ignore treatment foreman
         foreman = foreman_site,
         prehatch = prehatch,
@@ -165,7 +165,8 @@ create_zone_groups <- function(data, group_col) {
 #' @param zone_filter Vector of selected zones
 #' @return Named vector of colors or list with colors and alpha values
 get_visualization_colors <- function(group_by, data, show_zones_separately = FALSE, 
-                                     zone_filter = NULL, for_historical = FALSE) {
+                                     zone_filter = NULL, for_historical = FALSE,
+                                     sectcode_facility_mapping = NULL) {
   
   if (group_by == "facility") {
     if (show_zones_separately && for_historical) {
@@ -210,7 +211,26 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
       return(emp_colors)
     }
   } else if (group_by == "sectcode") {
-    return(get_foreman_colors())
+    # For sectcode, use the provided sectcode-to-facility mapping
+    if (!is.null(sectcode_facility_mapping) && nrow(sectcode_facility_mapping) > 0) {
+      facility_colors <- get_facility_base_colors()
+      sectcode_colors <- character(0)
+      
+      # Map each sectcode to its facility's color
+      for (i in 1:nrow(sectcode_facility_mapping)) {
+        sectcode_val <- sectcode_facility_mapping$sectcode[i]
+        facility_val <- sectcode_facility_mapping$facility[i]
+        
+        if (!is.na(sectcode_val) && !is.na(facility_val) && facility_val %in% names(facility_colors)) {
+          sectcode_colors[as.character(sectcode_val)] <- facility_colors[facility_val]
+        }
+      }
+      
+      return(sectcode_colors)
+    } else {
+      # Fallback to facility colors
+      return(get_facility_base_colors())
+    }
   } else {
     return(get_facility_base_colors())
   }
@@ -246,7 +266,30 @@ ui <- fluidPage(
                      choices = c("Number of Sites" = "sites",
                                  "Number of Treatments" = "treatments",
                                  "Number of Acres" = "acres"),
-                     selected = "sites")
+                     selected = "sites"),
+        selectInput("hist_start_year", "Start Year:",
+                   choices = seq(2010, 2025),
+                   selected = 2018),
+        selectInput("hist_end_year", "End Year:",
+                   choices = seq(2010, 2025),
+                   selected = 2025),
+        checkboxInput("hist_show_percentages", "Show Percentages", value = FALSE)
+      ),
+      
+      # Site Statistics tab controls
+      conditionalPanel(
+        condition = "input.tabs == 'site_stats'",
+        radioButtons("site_stat_type", "Show:",
+                    choices = c("Average" = "average",
+                              "Largest" = "largest", 
+                              "Smallest" = "smallest"),
+                    selected = "average"),
+        selectInput("site_start_year", "Start Year:",
+                   choices = seq(2010, 2025),
+                   selected = 2018),
+        selectInput("site_end_year", "End Year:",
+                   choices = seq(2010, 2025),
+                   selected = 2025)
       ),
       
       # Shared controls
@@ -275,7 +318,7 @@ ui <- fluidPage(
       ),
       
       conditionalPanel(
-        condition = "input.tabs == 'historical' || input.tabs == 'historical_site_avg'",
+        condition = "input.tabs == 'historical' || input.tabs == 'site_stats'",
         radioButtons("group_by", "Group By:",
                      choices = c("Facility" = "facility",
                                  "FOS" = "foreman"),
@@ -288,26 +331,20 @@ ui <- fluidPage(
       tabsetPanel(
         id = "tabs",
         tabPanel("Current Progress", value = "current", plotOutput("currentPlot")),
-        tabPanel("Historical Trends", value = "historical",
-                 # Historical controls row
+        tabPanel("Historical Trends", value = "historical", plotOutput("historicalPlot")),
+        tabPanel("Site Statistics", value = "site_stats",
+                 # Plot and table layout
                  fluidRow(
-                   column(3,
-                          selectInput("hist_start_year", "Start Year:",
-                                      choices = seq(2010, 2025),
-                                      selected = 2018)
-                   ),
-                   column(3,
-                          selectInput("hist_end_year", "End Year:",
-                                      choices = seq(2010, 2025),
-                                      selected = 2025)
-                   ),
-                   column(3,
-                          checkboxInput("hist_show_percentages", "Show Percentages", value = FALSE)
+                   column(8, plotOutput("siteStatsPlot")),
+                   column(4, 
+                          h4("Site Rankings"),
+                          h5("5 Largest Sites"),
+                          tableOutput("largestSitesTable"),
+                          h5("5 Smallest Sites"),
+                          tableOutput("smallestSitesTable")
                    )
-                 ),
-                 plotOutput("historicalPlot")
-        ),
-        tabPanel("Site Average", value = "historical_site_avg", plotOutput("siteAvgPlot"))
+                 )
+        )
       )
     )
   )
@@ -321,7 +358,7 @@ server <- function(input, output, session) {
   
   # Update group by options when switching to historical tabs
   observeEvent(input$tabs, {
-    if (input$tabs %in% c("historical", "historical_site_avg")) {
+    if (input$tabs %in% c("historical", "site_stats")) {
       if (input$group_by == "sectcode") {
         updateRadioButtons(session, "group_by",
                           choices = c("Facility" = "facility", 
@@ -398,6 +435,15 @@ server <- function(input, output, session) {
     # Determine grouping and zone separation
     group_col <- input$group_by
     show_zones_separately <- length(input$zone_filter) > 1
+    
+    # Create sectcode-to-facility mapping for color mapping (if needed)
+    sectcode_facility_mapping <- NULL
+    if (group_col == "sectcode") {
+      sectcode_facility_mapping <- drone_sites %>%
+        select(sectcode, facility) %>%
+        distinct() %>%
+        filter(!is.na(sectcode), !is.na(facility))
+    }
     
     # Filter by foreman assignment if grouping by foreman
     if (group_col == "foreman") {
@@ -535,16 +581,24 @@ server <- function(input, output, session) {
           combined_data$display_name
         )
       } else if (group_col == "sectcode") {
-        # Add sectcode display formatting
-        sectcode_facility_map <- drone_sites %>%
-          select(sectcode, facility) %>%
-          distinct()
-        
-        combined_data <- combined_data %>%
-          left_join(sectcode_facility_map, by = "sectcode") %>%
-          map_facility_names(facility_col = "facility") %>%
-          mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
-        combined_data$display_name <- combined_data$sectcode_display
+        # Add sectcode display formatting for non-zone-separated data
+        if (!is.null(sectcode_facility_mapping) && nrow(sectcode_facility_mapping) > 0) {
+          # Create a mapping from sectcode to facility display name
+          sectcode_facility_map <- sectcode_facility_mapping %>%
+            map_facility_names(facility_col = "facility") %>%
+            select(sectcode, facility_display)
+          
+          # Join with combined_data using the sectcode column  
+          combined_data <- combined_data %>%
+            left_join(sectcode_facility_map, by = "sectcode") %>%
+            mutate(
+              sectcode_display = paste0(facility_display, " - ", sectcode),
+              display_name = sectcode_display
+            )
+        } else {
+          # Fallback: just use sectcode as display name
+          combined_data$display_name <- combined_data$sectcode
+        }
       }
     }
     
@@ -567,12 +621,39 @@ server <- function(input, output, session) {
         )
     }
     
-    return(combined_data)
+    # Failsafe: Ensure display_name always exists
+    if (!"display_name" %in% colnames(combined_data)) {
+      if (show_zones_separately) {
+        # For zone-separated data, use combined_group as display_name
+        combined_data$display_name <- combined_data$combined_group
+      } else {
+        # For non-zone-separated data, use the appropriate column
+        if (group_col == "sectcode" && "sectcode" %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data$sectcode
+        } else if (group_col == "facility" && "facility" %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data$facility  
+        } else if (group_col == "foreman" && "foreman" %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data$foreman
+        } else if (group_col %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data[[group_col]]
+        } else {
+          # Ultimate fallback - use row numbers
+          combined_data$display_name <- paste("Item", seq_len(nrow(combined_data)))
+        }
+      }
+    }
+    
+    return(list(
+      data = combined_data,
+      sectcode_facility_mapping = sectcode_facility_mapping
+    ))
   })
   
   # Current progress plot
   output$currentPlot <- renderPlot({
-    data <- processed_data()
+    result <- processed_data()
+    data <- result$data
+    sectcode_facility_mapping <- result$sectcode_facility_mapping
     
     if (nrow(data) == 0) {
       return(ggplot() + 
@@ -602,7 +683,8 @@ server <- function(input, output, session) {
       data = data,
       show_zones_separately = show_zones_separately,
       zone_filter = input$zone_filter,
-      for_historical = FALSE
+      for_historical = FALSE,
+      sectcode_facility_mapping = sectcode_facility_mapping
     )
     
     # Handle zone-separated color mapping for current progress
@@ -689,7 +771,7 @@ server <- function(input, output, session) {
         legend.text = element_text(size = 11)
       )
     print(p)
-  })
+  }, height = 900)
   
   # =============================================================================
   # HISTORICAL TRENDS SECTION  
@@ -718,30 +800,404 @@ server <- function(input, output, session) {
   }, height = 900)
   
   # =============================================================================
-  # SITE AVERAGE SECTION
+  # SITE STATISTICS SECTION
   # =============================================================================
   
-  # Historical raw data for site averages
-  historical_raw_data <- reactive({
-    # Implementation for site average data processing
-    # [This would contain the site average processing logic]
-    return(data.frame())  # Placeholder
-  })
-  
-  # Site average plot  
-  output$siteAvgPlot <- renderPlot({
-    p <- create_site_average_plot(
+  # Site statistics data processing
+  site_stats_data <- reactive({
+    # Get historical data for site statistics
+    data <- get_historical_processed_data(
+      hist_start_year = input$site_start_year,
+      hist_end_year = input$site_end_year,
+      drone_types = c("Y", "M", "C"),
       zone_filter = input$zone_filter,
       facility_filter = input$facility_filter,
       foreman_filter = input$foreman_filter,
       prehatch_only = input$prehatch_only,
       group_by = input$group_by,
-      hist_start_year = input$hist_start_year,
-      hist_end_year = input$hist_end_year,
-      drone_types = input$drone_types
+      hist_display_metric = "sites"
     )
+    
+    if (nrow(data) == 0) {
+      return(data.frame())
+    }
+    
+    # Calculate statistics by site
+    site_stats <- data %>%
+      group_by(!!sym(if(length(input$zone_filter) > 1) "combined_group" else input$group_by)) %>%
+      summarize(
+        total_sites = sum(count, na.rm = TRUE),
+        avg_sites_per_year = round(mean(count, na.rm = TRUE), 1),
+        max_sites = max(count, na.rm = TRUE),
+        min_sites = min(count, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # Add display names
+    group_col <- if(length(input$zone_filter) > 1) "combined_group" else input$group_by
+    
+    if (input$group_by == "facility" && length(input$zone_filter) <= 1) {
+      # Add facility display names
+      facilities <- get_facility_lookup()
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      site_stats$display_name <- ifelse(
+        site_stats[[group_col]] %in% names(facility_map),
+        facility_map[site_stats[[group_col]]],
+        site_stats[[group_col]]
+      )
+    } else if (input$group_by == "foreman" && length(input$zone_filter) <= 1) {
+      # Add foreman display names
+      foremen_lookup <- get_foremen_lookup()
+      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+      site_stats$display_name <- ifelse(
+        is.na(site_stats[[group_col]]) | site_stats[[group_col]] == "",
+        "Unassigned FOS",
+        foreman_map[as.character(trimws(site_stats[[group_col]]))]
+      )
+      site_stats$display_name <- ifelse(
+        is.na(site_stats$display_name),
+        paste0("FOS #", site_stats[[group_col]]),
+        site_stats$display_name
+      )
+    } else {
+      # Use combined group names as display names
+      site_stats$display_name <- site_stats[[group_col]]
+    }
+    
+    return(site_stats)
+  })
+  
+  # Individual sitecode data for tables and stats
+  sitecode_data <- reactive({
+    # Get input values with defaults
+    start_year <- if(is.null(input$site_start_year)) 2018 else as.integer(input$site_start_year)
+    end_year <- if(is.null(input$site_end_year)) 2025 else as.integer(input$site_end_year)
+    
+    # Get database connection and calculate directly in SQL to avoid duplication
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(data.frame())
+    }
+    
+    # Get individual treatment records - each treatment as a separate row
+    query <- sprintf("
+    WITH treatment_data AS (
+        SELECT 
+            facility, 
+            sitecode, 
+            inspdate, 
+            matcode, 
+            amts as amount_used,
+            acres as recorded_acres,
+            zone,
+            foreman,
+            EXTRACT(YEAR FROM inspdate) as year
+        FROM public.dblarv_insptrt_current
+        WHERE (airgrnd_plan = 'D' OR action = 'D')
+            AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
+            AND matcode IS NOT NULL
+            AND acres IS NOT NULL
+            AND acres > 0
+        
+        UNION ALL
+        
+        SELECT 
+            facility, 
+            sitecode, 
+            inspdate, 
+            matcode, 
+            amts as amount_used,
+            acres as recorded_acres,
+            zone,
+            foreman,
+            EXTRACT(YEAR FROM inspdate) as year
+        FROM public.dblarv_insptrt_archive
+        WHERE action = 'D'
+            AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
+            AND matcode IS NOT NULL
+            AND acres IS NOT NULL
+            AND acres > 0
+    ),
+    -- Get deduplicated location data for prehatch info
+    location_data AS (
+        SELECT DISTINCT ON (sitecode, facility)
+            sitecode, 
+            facility, 
+            prehatch
+        FROM public.loc_breeding_sites
+        ORDER BY sitecode, facility
+    )
+    -- Return individual treatment records, not aggregated
+    SELECT DISTINCT
+        t.sitecode,
+        t.facility,
+        t.recorded_acres as acres,
+        t.inspdate,
+        t.year,
+        t.matcode,
+        t.zone,
+        t.foreman,
+        l.prehatch,
+        -- Add a unique treatment ID for identification
+        ROW_NUMBER() OVER (ORDER BY t.sitecode, t.inspdate) as treatment_id
+    FROM treatment_data t
+    LEFT JOIN location_data l ON t.sitecode = l.sitecode AND t.facility = l.facility
+    ORDER BY t.sitecode, t.inspdate DESC
+    ", start_year, end_year, start_year, end_year)
+    
+    result <- dbGetQuery(con, query)
+    dbDisconnect(con)
+    
+    if (nrow(result) == 0) {
+      return(data.frame())
+    }
+    
+    # Apply filters
+    if (!is.null(input$zone_filter) && length(input$zone_filter) > 0) {
+      # Include NULL zones if both zones are selected (which is the default)
+      if (length(input$zone_filter) >= 2) {
+        # If both zones selected, don't filter by zone (show all including NULL)
+      } else {
+        result <- result %>% filter(zone %in% input$zone_filter)
+      }
+    }
+    
+    if (!is.null(input$facility_filter) && length(input$facility_filter) > 0 && 
+        !("all" %in% input$facility_filter)) {
+      result <- result %>% filter(facility %in% input$facility_filter)
+    }
+    
+    if (!is.null(input$foreman_filter) && length(input$foreman_filter) > 0 && 
+        !("all" %in% input$foreman_filter)) {
+      foremen_lookup <- get_foremen_lookup()
+      selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% input$foreman_filter]
+      result <- result %>% filter(foreman %in% selected_emp_nums)
+    }
+    
+    if (!is.null(input$prehatch_only) && input$prehatch_only) {
+      result <- result %>% filter(prehatch == 'PREHATCH')
+    }
+    
+    return(result)
+  })
+  
+  # Site statistics data for plotting (aggregated from individual treatment records)
+  site_stats_data <- reactive({
+    sitecode_data_raw <- sitecode_data()
+    
+    if (nrow(sitecode_data_raw) == 0) {
+      return(data.frame())
+    }
+    
+    # Apply zone separation if needed
+    show_zones_separately <- length(input$zone_filter) > 1
+    
+    if (show_zones_separately) {
+      sitecode_data_raw$combined_group <- paste0(sitecode_data_raw[[input$group_by]], " (P", sitecode_data_raw$zone, ")")
+      group_col <- "combined_group"
+    } else {
+      group_col <- input$group_by
+    }
+    
+    # Calculate statistics by group from individual treatment records
+    site_stats <- sitecode_data_raw %>%
+      group_by(!!sym(group_col)) %>%
+      summarize(
+        avg_site_acres = round(mean(acres, na.rm = TRUE), 1),
+        max_site_acres = max(acres, na.rm = TRUE),
+        min_site_acres = min(acres, na.rm = TRUE),
+        total_sites = n_distinct(sitecode),
+        total_treatments = n(),
+        total_treated_acres = sum(acres, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+        # Add display names
+    if (input$group_by == "facility" && !show_zones_separately) {
+      # Add facility display names
+      facilities <- get_facility_lookup()
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      site_stats$display_name <- ifelse(
+        site_stats[[group_col]] %in% names(facility_map),
+        facility_map[site_stats[[group_col]]],
+        site_stats[[group_col]]
+      )
+    } else if (input$group_by == "foreman" && !show_zones_separately) {
+      # Add foreman display names
+      foremen_lookup <- get_foremen_lookup()
+      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+      site_stats$display_name <- ifelse(
+        is.na(site_stats[[group_col]]) | site_stats[[group_col]] == "",
+        "Unassigned FOS",
+        foreman_map[as.character(trimws(site_stats[[group_col]]))]
+      )
+      site_stats$display_name <- ifelse(
+        is.na(site_stats$display_name),
+        paste0("FOS #", site_stats[[group_col]]),
+        site_stats$display_name
+      )
+    } else if (input$group_by == "facility" && show_zones_separately) {
+      # Handle facility names with zones - extract facility code and map to full name
+      facilities <- get_facility_lookup()
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      site_stats$display_name <- site_stats[[group_col]]
+      # Transform short names to long names
+      for (i in 1:nrow(site_stats)) {
+        combined_value <- site_stats[[group_col]][i]
+        facility_code <- gsub(" \\(P.*\\)", "", combined_value)
+        zone_part <- gsub(".*( \\(P.*\\))", "\\1", combined_value)
+        if (facility_code %in% names(facility_map)) {
+          site_stats$display_name[i] <- paste0(facility_map[facility_code], zone_part)
+        }
+      }
+    } else if (input$group_by == "foreman" && show_zones_separately) {
+      # Handle foreman names with zones
+      foremen_lookup <- get_foremen_lookup()
+      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+      site_stats$display_name <- site_stats[[group_col]]
+      # Transform "1234 (PNA)" to "Smith J (PNA)"
+      for (i in 1:nrow(site_stats)) {
+        combined_value <- site_stats[[group_col]][i]
+        foreman_code <- gsub(" \\(P.*\\)", "", combined_value)
+        zone_part <- gsub(".*( \\(P.*\\))", "\\1", combined_value)
+        if (!is.na(foreman_code) && foreman_code != "") {
+          foreman_display <- foreman_map[as.character(trimws(foreman_code))]
+          if (!is.na(foreman_display)) {
+            site_stats$display_name[i] <- paste0(foreman_display, zone_part)
+          } else {
+            site_stats$display_name[i] <- paste0("FOS #", foreman_code, zone_part)
+          }
+        } else {
+          site_stats$display_name[i] <- paste0("Unassigned FOS", zone_part)
+        }
+      }
+    } else {
+      # Use combined group names as display names
+      site_stats$display_name <- site_stats[[group_col]]
+    }
+    
+    return(site_stats)
+  })
+  
+  # Site statistics plot
+  output$siteStatsPlot <- renderPlot({
+    data <- site_stats_data()
+    
+    if (nrow(data) == 0) {
+      return(ggplot() + 
+             geom_text(aes(x = 0.5, y = 0.5, label = "No data available"), size = 6) +
+             theme_void())
+    }
+    
+    # Determine which metric to show and filter appropriately
+    if (input$site_stat_type == "smallest") {
+      # For smallest, filter out groups with zero minimum values
+      data <- data %>% filter(min_site_acres > 0)
+      y_var <- "min_site_acres"
+      y_label <- "Minimum Treated Acres per Site"
+      title_text <- "Smallest Drone Sites by Treated Acres"
+    } else if (input$site_stat_type == "largest") {
+      y_var <- "max_site_acres"
+      y_label <- "Maximum Treated Acres per Site"
+      title_text <- "Largest Drone Sites by Treated Acres"
+    } else {
+      y_var <- "avg_site_acres"
+      y_label <- "Average Treated Acres per Site"
+      title_text <- "Average Drone Site Treated Acres"
+    }
+    
+    # Check if we still have data after filtering
+    if (nrow(data) == 0) {
+      return(ggplot() + 
+             geom_text(aes(x = 0.5, y = 0.5, label = "No data available for this metric"), size = 6) +
+             theme_void())
+    }
+    
+    # Get colors
+    group_col <- if(length(input$zone_filter) > 1) "combined_group" else input$group_by
+    custom_colors <- get_visualization_colors(
+      group_by = input$group_by,
+      data = data,
+      show_zones_separately = length(input$zone_filter) > 1,
+      zone_filter = input$zone_filter,
+      for_historical = FALSE,
+      sectcode_facility_mapping = NULL  # Historical doesn't need this mapping
+    )
+    
+    # Create plot
+    p <- ggplot(data, aes(x = reorder(display_name, !!sym(y_var)), y = !!sym(y_var))) +
+      geom_col(fill = "steelblue", alpha = 0.7) +
+      coord_flip() +
+      labs(
+        title = title_text,
+        x = case_when(
+          input$group_by == "facility" ~ "Facility",
+          input$group_by == "foreman" ~ "FOS"
+        ),
+        y = y_label
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 16),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 12)
+      )
+    
     print(p)
   })
+  
+  # Largest sites table (individual treatments)
+  output$largestSitesTable <- renderTable({
+    data <- sitecode_data()
+    
+    if (nrow(data) == 0) {
+      return(data.frame("No data available" = character(0)))
+    }
+    
+    # Add facility display names
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$full_name, facilities$short_name)
+    
+    data %>%
+      arrange(desc(acres)) %>%
+      head(10) %>%
+      mutate(
+        facility_display = ifelse(
+          facility %in% names(facility_map),
+          facility_map[facility],
+          facility
+        )
+      ) %>%
+      select(sitecode, acres, facility_display, matcode, year) %>%
+      rename("Sitecode" = sitecode, "Treated Acres" = acres, "Facility" = facility_display, "Material" = matcode, "Year" = year)
+  }, striped = TRUE, spacing = "xs")
+  
+  # Smallest sites table (individual treatments)
+  output$smallestSitesTable <- renderTable({
+    data <- sitecode_data()
+    
+    if (nrow(data) == 0) {
+      return(data.frame("No data available" = character(0)))
+    }
+    
+    # Add facility display names
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$full_name, facilities$short_name)
+    
+    data %>%
+      filter(acres > 0) %>%
+      arrange(acres) %>%
+      head(10) %>%
+      mutate(
+        facility_display = ifelse(
+          facility %in% names(facility_map),
+          facility_map[facility],
+          facility
+        )
+      ) %>%
+      select(sitecode, acres, facility_display, matcode, year) %>%
+      rename("Sitecode" = sitecode, "Treated Acres" = acres, "Facility" = facility_display, "Material" = matcode, "Year" = year)
+  }, striped = TRUE, spacing = "xs")
 }
 
 # =============================================================================

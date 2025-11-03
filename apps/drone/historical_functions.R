@@ -474,6 +474,23 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
     cat("DEBUG: Years in data after percentage calculation:", paste(sort(unique(data$year)), collapse=", "), "\n")
     cat("DEBUG: Number of rows after percentage calculation:", nrow(data), "\n")
     
+    # DEBUG: Check for missing values that might cause ggplot to drop rows
+    cat("DEBUG: Rows with NA in fill_var (", fill_var, "):", sum(is.na(data[[fill_var]])), "\n")
+    if (show_zones_separately) {
+      cat("DEBUG: Rows with NA in zone_factor:", sum(is.na(data$zone_factor)), "\n")
+    }
+    cat("DEBUG: Rows with NA/Inf in percentage:", sum(is.na(data$percentage) | is.infinite(data$percentage)), "\n")
+    cat("DEBUG: Percentage range:", paste(range(data$percentage, na.rm=TRUE), collapse=" to "), "\n")
+    
+    # DEBUG: Show any problematic rows
+    problematic_rows <- data[is.na(data[[fill_var]]) | 
+                            (show_zones_separately & is.na(data$zone_factor)) |
+                            is.na(data$percentage) | is.infinite(data$percentage), ]
+    if (nrow(problematic_rows) > 0) {
+      cat("DEBUG: Problematic rows that ggplot might drop:\n")
+      print(problematic_rows[, c("year", fill_var, if(show_zones_separately) "zone_factor", "count", "percentage")])
+    }
+    
     # Build ggplot with optional alpha mapping
     if (show_zones_separately && !is.null(alpha_values)) {
       p <- ggplot(data, aes(x = year, y = percentage, fill = .data[[fill_var]], alpha = zone_factor)) +

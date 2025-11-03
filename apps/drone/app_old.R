@@ -12,6 +12,11 @@ suppressPackageStartupMessages({
 # Source shared helper functions
 source("../../shared/db_helpers.R")
 
+# Source modular function files
+source("data_functions.R")
+source("display_functions.R")
+source("ui_helpers.R")
+
 # Source external function files
 source("historical_functions.R")
 source("site_average_functions.R")
@@ -210,46 +215,7 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
       return(emp_colors)
     }
   } else if (group_by == "sectcode") {
-    # For sectcode, map to foreman colors by extracting the foreman from data
-    sectcodes_in_data <- unique(na.omit(data$sectcode))
-    sectcode_colors <- character(0)
-    
-    # Get foreman lookup and facility colors for mapping
-    foremen_lookup <- get_foremen_lookup()
-    facility_colors <- get_facility_base_colors()
-    
-    # Create mapping for each sectcode to its foreman's color
-    for (i in seq_along(sectcodes_in_data)) {
-      sectcode_val <- sectcodes_in_data[i]
-      # Find any row with this sectcode and get its foreman
-      matching_rows <- which(data$sectcode == sectcode_val)
-      if (length(matching_rows) > 0) {
-        first_row <- matching_rows[1]
-        foreman_for_sectcode <- data$foreman[first_row]
-        facility_for_sectcode <- data$facility[first_row]
-        
-        # Map foreman to facility color
-        if (!is.na(foreman_for_sectcode) && !is.na(facility_for_sectcode)) {
-          foreman_num_str <- trimws(as.character(foreman_for_sectcode))
-          matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-          
-          if (length(matches) > 0) {
-            shortname <- foremen_lookup$shortname[matches[1]]
-            # Use facility color for this foreman
-            if (!is.na(facility_for_sectcode) && facility_for_sectcode %in% names(facility_colors)) {
-              sectcode_colors[as.character(sectcode_val)] <- facility_colors[facility_for_sectcode]
-            }
-          }
-        }
-      }
-    }
-    
-    # Return the mapped colors, or facility colors as fallback
-    if (length(sectcode_colors) > 0) {
-      return(sectcode_colors)
-    } else {
-      return(facility_colors)
-    }
+    return(get_foreman_colors())
   } else {
     return(get_facility_base_colors())
   }

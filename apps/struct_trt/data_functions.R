@@ -35,7 +35,7 @@ get_status_condition <- function(status_types) {
     return("AND FALSE") # No statuses selected, return no results
   } else {
     status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-    return(sprintf("AND loc.status IN (%s)", status_list))
+    return(sprintf("AND loc.status_udw IN (%s)", status_list))
   }
 }
 
@@ -62,14 +62,14 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
   # Status condition
   if (!is.null(status_types) && length(status_types) > 0) {
     status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-    conditions <- c(conditions, sprintf("AND status IN (%s)", status_list))
+    conditions <- c(conditions, sprintf("AND status_udw IN (%s)", status_list))
   }
   
   return(paste(conditions, collapse = " "))
 }
 
 # Function to get current structure treatment data
-get_current_structure_data <- function(custom_today, expiring_days, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter) {
+get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days = 7, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -81,16 +81,15 @@ SELECT
   trt.sitecode,
   trt.inspdate,
   trt.facility,
-  trt.fosarea as foreman,
+  loc.foreman,
   COALESCE(mat.effect_days, 0) AS effect_days,
   loc.s_type,
   loc.priority,
-  loc.status,
-  sc.zone
+  loc.status_udw as status,
+  loc.zone
 FROM public.dblarv_insptrt_current trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode  
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
-LEFT JOIN public.gis_sectcode sc ON LEFT(trt.sitecode, 7) = sc.sectcode
 WHERE trt.list_type = 'STR'
 %s
 %s
@@ -117,7 +116,7 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
-    total_structures <- dbGetQuery(con, query_total)$total_structures
+    total_structures <- as.integer(dbGetQuery(con, query_total)$total_structures)
     dbDisconnect(con)
     
     # Process the data
@@ -149,7 +148,7 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
 }
 
 # Function to get historical structure treatment data
-get_historical_structure_data <- function(start_year, end_year, facility_filter, structure_type_filter, priority_filter, status_types) {
+get_historical_structure_data <- function(start_year = 2023, end_year = 2025, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -228,7 +227,7 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
-    total_structures <- dbGetQuery(con, query_total_structures)$total_structures
+    total_structures <- as.integer(dbGetQuery(con, query_total_structures)$total_structures)
     dbDisconnect(con)
     
     # Combine and process data
@@ -249,7 +248,7 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
 }
 
 # Function to get all structures for total counts
-get_all_structures <- function(facility_filter, structure_type_filter, priority_filter, status_types, zone_filter) {
+get_all_structures <- function(facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -262,11 +261,10 @@ SELECT
   loc.facility,
   loc.s_type,
   loc.priority,
-  loc.status,
-  sc.zone,
-  sc.fosarea as foreman
+  loc.status_udw as status,
+  loc.zone,
+  loc.foreman
 FROM public.loc_cxstruct loc
-LEFT JOIN public.gis_sectcode sc ON LEFT(loc.sitecode, 7) = sc.sectcode
 WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",
@@ -293,7 +291,7 @@ WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 }
 
 # Function to process and aggregate structure data by group
-aggregate_structure_data <- function(structures, treatments, group_by, zone_filter) {
+aggregate_structure_data <- function(structures, treatments, group_by = "facility", zone_filter = c("1", "2")) {
   if (nrow(structures) == 0) {
     return(data.frame())
   }
@@ -328,9 +326,27 @@ aggregate_structure_data <- function(structures, treatments, group_by, zone_filt
       group_by(combined_group) %>%
       summarize(total_structures = n(), .groups = 'drop')
   } else {
-    total_structures <- structures %>%
-      group_by(!!sym(group_col)) %>%
-      summarize(total_structures = n(), .groups = 'drop')
+    # For single zone, preserve additional info for later use
+    if (group_col == "facility") {
+      total_structures <- structures %>%
+        group_by(!!sym(group_col)) %>%
+        summarize(
+          total_structures = n(),
+          facility_display = first(facility_display),
+          .groups = 'drop'
+        )
+    } else if (group_col == "foreman") {
+      total_structures <- structures %>%
+        group_by(!!sym(group_col)) %>%
+        summarize(
+          total_structures = n(),
+          .groups = 'drop'
+        )
+    } else {
+      total_structures <- structures %>%
+        group_by(!!sym(group_col)) %>%
+        summarize(total_structures = n(), .groups = 'drop')
+    }
   }
   
   # Count active structures by group
@@ -373,9 +389,31 @@ aggregate_structure_data <- function(structures, treatments, group_by, zone_filt
       mutate(
         active_structures = ifelse(is.na(active_structures), 0, active_structures),
         expiring_structures = ifelse(is.na(expiring_structures), 0, expiring_structures),
-        display_name = combined_group,
         group_name = sapply(strsplit(combined_group, " \\(P"), function(x) x[1])
       )
+    
+    # Create proper display names based on group type
+    if (group_col == "foreman") {
+      # For foreman, convert employee numbers to shortnames with zones
+      foremen_lookup <- get_foremen_lookup()
+      combined_data$display_name <- sapply(combined_data$combined_group, function(cg) {
+        # Extract emp_num and zone from combined_group like "0203 (P1)"
+        parts <- strsplit(cg, " \\(P")[[1]]
+        emp_num <- parts[1]
+        zone_part <- if(length(parts) > 1) paste0(" (P", parts[2]) else ""
+        
+        # Look up shortname
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(emp_num)))
+        if(length(matches) > 0) {
+          shortname <- foremen_lookup$shortname[matches[1]]
+          return(paste0(shortname, zone_part))
+        } else {
+          return(paste0("FOS #", emp_num, zone_part))
+        }
+      })
+    } else {
+      combined_data$display_name <- combined_data$combined_group
+    }
   } else {
     join_col <- group_col
     combined_data <- total_structures %>%

@@ -20,36 +20,50 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
       y_expiring = expiring_structures
     )
   
-  # Determine plot group column
-  plot_group_col <- if (length(zone_filter) > 1) "group_name" else group_by
+  # Determine plot group column - always use display_name for consistency
+  plot_group_col <- "display_name"
   
   # Get zone and facility colors for custom coloring
-  zone_colors <- get_zone_colors()
-  facility_colors <- get_facility_colors()
-  
   # Set up custom colors based on grouping
   custom_colors <- NULL
   if (group_by == "facility" && length(zone_filter) == 1) {
-    # Single zone - use facility colors with zone alpha
-    zone_alpha <- zone_colors[[paste0("P", zone_filter[1])]]$alpha
-    custom_colors <- sapply(facility_colors, function(color) {
-      adjustcolor(color, alpha.f = zone_alpha)
-    })
-  } else if (group_by == "facility" && length(zone_filter) > 1) {
-    # Multiple zones - create combined colors
-    combined_colors <- character(0)
-    for (group_name in unique(data$group_name)) {
-      if (group_name %in% names(facility_colors)) {
-        base_color <- facility_colors[[group_name]]
-        # Create colors for each zone
-        for (zone in zone_filter) {
-          zone_alpha <- zone_colors[[paste0("P", zone)]]$alpha
-          combined_key <- paste0(group_name, " (P", zone, ")")
-          combined_colors[combined_key] <- adjustcolor(base_color, alpha.f = zone_alpha)
-        }
+    # Single zone - use basic facility colors mapped to display names
+    facility_colors <- get_facility_base_colors()
+    # Map facility short names to display names
+    custom_colors <- character(0)
+    for (i in 1:nrow(data)) {
+      facility_short <- data$group_name[i]
+      display_name <- data$display_name[i]
+      if (facility_short %in% names(facility_colors)) {
+        custom_colors[display_name] <- facility_colors[facility_short]
       }
     }
-    custom_colors <- combined_colors
+  } else if (group_by == "facility" && length(zone_filter) > 1) {
+    # Multiple zones - use zone-aware colors
+    zone_result <- get_facility_base_colors(
+      alpha_zones = zone_filter,
+      combined_groups = unique(data$display_name)
+    )
+    custom_colors <- zone_result$colors
+  } else if (group_by == "foreman" && length(zone_filter) == 1) {
+    # Single zone - use basic foreman colors mapped to display names
+    foreman_colors <- get_foreman_colors()
+    # Map foreman shortnames to display names directly
+    custom_colors <- character(0)
+    for (i in 1:nrow(data)) {
+      display_name <- data$display_name[i]
+      # The display_name is already the shortname, so use it directly
+      if (display_name %in% names(foreman_colors)) {
+        custom_colors[display_name] <- foreman_colors[display_name]
+      }
+    }
+  } else if (group_by == "foreman" && length(zone_filter) > 1) {
+    # Multiple zones - use zone-aware foreman colors
+    zone_result <- get_foreman_colors(
+      alpha_zones = zone_filter,
+      combined_groups = unique(data$display_name)
+    )
+    custom_colors <- zone_result$colors
   }
   
   # Create a new column to determine which labels to show (avoiding overplot)
@@ -184,7 +198,7 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
       summarize(treatment_change = sum(treatment_change), .groups = 'drop')
     
     # Calculate structure changes (assuming relatively stable for this timeframe)
-    structure_changes <- data.frame(date = character(0), structure_change = numeric(0))
+    structure_changes <- data.frame(date = as.Date(character(0)), structure_change = numeric(0))
     
     # Calculate cumulative active treatments and total structures over time
     all_dates <- data.frame(date = date_range)
@@ -268,7 +282,7 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   # Get group colors
   group_colors <- NULL
   if (group_col == "facility") {
-    group_colors <- get_facility_colors()
+    group_colors <- get_facility_base_colors()
   }
   
   # Set display names for non-MMCD groupings

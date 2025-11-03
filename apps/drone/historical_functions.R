@@ -491,6 +491,26 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
       print(problematic_rows[, c("year", fill_var, if(show_zones_separately) "zone_factor", "count", "percentage")])
     }
     
+    # DEBUG: Check alpha_values mapping if using zones
+    if (show_zones_separately && !is.null(alpha_values)) {
+      cat("DEBUG: Alpha values available:", paste(names(alpha_values), "=", alpha_values, collapse=", "), "\n")
+      cat("DEBUG: Zone factors in data:", paste(unique(data$zone_factor), collapse=", "), "\n")
+      missing_alpha <- data$zone_factor[!data$zone_factor %in% names(alpha_values)]
+      if (length(missing_alpha) > 0) {
+        cat("DEBUG: Zone factors missing from alpha_values:", paste(unique(missing_alpha), collapse=", "), "\n")
+      }
+    }
+    
+    # DEBUG: Check color mapping
+    if (!is.null(custom_colors)) {
+      cat("DEBUG: Colors available:", paste(names(custom_colors), collapse=", "), "\n")
+      cat("DEBUG: Fill values in data:", paste(unique(data[[fill_var]]), collapse=", "), "\n")
+      missing_colors <- data[[fill_var]][!data[[fill_var]] %in% names(custom_colors)]
+      if (length(missing_colors) > 0) {
+        cat("DEBUG: Fill values missing from custom_colors:", paste(unique(missing_colors), collapse=", "), "\n")
+      }
+    }
+    
     # Build ggplot with optional alpha mapping
     if (show_zones_separately && !is.null(alpha_values)) {
       p <- ggplot(data, aes(x = year, y = percentage, fill = .data[[fill_var]], alpha = zone_factor)) +

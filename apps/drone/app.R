@@ -165,7 +165,8 @@ create_zone_groups <- function(data, group_col) {
 #' @param zone_filter Vector of selected zones
 #' @return Named vector of colors or list with colors and alpha values
 get_visualization_colors <- function(group_by, data, show_zones_separately = FALSE, 
-                                     zone_filter = NULL, for_historical = FALSE) {
+                                     zone_filter = NULL, for_historical = FALSE,
+                                     sectcode_facility_mapping = NULL) {
   
   if (group_by == "facility") {
     if (show_zones_separately && for_historical) {
@@ -210,45 +211,25 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
       return(emp_colors)
     }
   } else if (group_by == "sectcode") {
-    # For sectcode, map to foreman colors by extracting the foreman from data
-    sectcodes_in_data <- unique(na.omit(data$sectcode))
-    sectcode_colors <- character(0)
-    
-    # Get foreman lookup and facility colors for mapping
-    foremen_lookup <- get_foremen_lookup()
-    facility_colors <- get_facility_base_colors()
-    
-    # Create mapping for each sectcode to its foreman's color
-    for (i in seq_along(sectcodes_in_data)) {
-      sectcode_val <- sectcodes_in_data[i]
-      # Find any row with this sectcode and get its foreman
-      matching_rows <- which(data$sectcode == sectcode_val)
-      if (length(matching_rows) > 0) {
-        first_row <- matching_rows[1]
-        foreman_for_sectcode <- data$foreman[first_row]
-        facility_for_sectcode <- data$facility[first_row]
+    # For sectcode, use the provided sectcode-to-facility mapping
+    if (!is.null(sectcode_facility_mapping) && nrow(sectcode_facility_mapping) > 0) {
+      facility_colors <- get_facility_base_colors()
+      sectcode_colors <- character(0)
+      
+      # Map each sectcode to its facility's color
+      for (i in 1:nrow(sectcode_facility_mapping)) {
+        sectcode_val <- sectcode_facility_mapping$sectcode[i]
+        facility_val <- sectcode_facility_mapping$facility[i]
         
-        # Map foreman to facility color
-        if (!is.na(foreman_for_sectcode) && !is.na(facility_for_sectcode)) {
-          foreman_num_str <- trimws(as.character(foreman_for_sectcode))
-          matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-          
-          if (length(matches) > 0) {
-            shortname <- foremen_lookup$shortname[matches[1]]
-            # Use facility color for this foreman
-            if (!is.na(facility_for_sectcode) && facility_for_sectcode %in% names(facility_colors)) {
-              sectcode_colors[as.character(sectcode_val)] <- facility_colors[facility_for_sectcode]
-            }
-          }
+        if (!is.na(sectcode_val) && !is.na(facility_val) && facility_val %in% names(facility_colors)) {
+          sectcode_colors[as.character(sectcode_val)] <- facility_colors[facility_val]
         }
       }
-    }
-    
-    # Return the mapped colors, or facility colors as fallback
-    if (length(sectcode_colors) > 0) {
+      
       return(sectcode_colors)
     } else {
-      return(facility_colors)
+      # Fallback to facility colors
+      return(get_facility_base_colors())
     }
   } else {
     return(get_facility_base_colors())
@@ -455,6 +436,15 @@ server <- function(input, output, session) {
     group_col <- input$group_by
     show_zones_separately <- length(input$zone_filter) > 1
     
+    # Create sectcode-to-facility mapping for color mapping (if needed)
+    sectcode_facility_mapping <- NULL
+    if (group_col == "sectcode") {
+      sectcode_facility_mapping <- drone_sites %>%
+        select(sectcode, facility) %>%
+        distinct() %>%
+        filter(!is.na(sectcode), !is.na(facility))
+    }
+    
     # Filter by foreman assignment if grouping by foreman
     if (group_col == "foreman") {
       drone_sites <- drone_sites %>% filter(!is.na(foreman) & foreman != "")
@@ -591,16 +581,24 @@ server <- function(input, output, session) {
           combined_data$display_name
         )
       } else if (group_col == "sectcode") {
-        # Add sectcode display formatting
-        sectcode_facility_map <- drone_sites %>%
-          select(sectcode, facility) %>%
-          distinct()
-        
-        combined_data <- combined_data %>%
-          left_join(sectcode_facility_map, by = "sectcode") %>%
-          map_facility_names(facility_col = "facility") %>%
-          mutate(sectcode_display = paste0(facility_display, " - ", sectcode))
-        combined_data$display_name <- combined_data$sectcode_display
+        # Add sectcode display formatting for non-zone-separated data
+        if (!is.null(sectcode_facility_mapping) && nrow(sectcode_facility_mapping) > 0) {
+          # Create a mapping from sectcode to facility display name
+          sectcode_facility_map <- sectcode_facility_mapping %>%
+            map_facility_names(facility_col = "facility") %>%
+            select(sectcode, facility_display)
+          
+          # Join with combined_data using the sectcode column  
+          combined_data <- combined_data %>%
+            left_join(sectcode_facility_map, by = "sectcode") %>%
+            mutate(
+              sectcode_display = paste0(facility_display, " - ", sectcode),
+              display_name = sectcode_display
+            )
+        } else {
+          # Fallback: just use sectcode as display name
+          combined_data$display_name <- combined_data$sectcode
+        }
       }
     }
     
@@ -623,12 +621,39 @@ server <- function(input, output, session) {
         )
     }
     
-    return(combined_data)
+    # Failsafe: Ensure display_name always exists
+    if (!"display_name" %in% colnames(combined_data)) {
+      if (show_zones_separately) {
+        # For zone-separated data, use combined_group as display_name
+        combined_data$display_name <- combined_data$combined_group
+      } else {
+        # For non-zone-separated data, use the appropriate column
+        if (group_col == "sectcode" && "sectcode" %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data$sectcode
+        } else if (group_col == "facility" && "facility" %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data$facility  
+        } else if (group_col == "foreman" && "foreman" %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data$foreman
+        } else if (group_col %in% colnames(combined_data)) {
+          combined_data$display_name <- combined_data[[group_col]]
+        } else {
+          # Ultimate fallback - use row numbers
+          combined_data$display_name <- paste("Item", seq_len(nrow(combined_data)))
+        }
+      }
+    }
+    
+    return(list(
+      data = combined_data,
+      sectcode_facility_mapping = sectcode_facility_mapping
+    ))
   })
   
   # Current progress plot
   output$currentPlot <- renderPlot({
-    data <- processed_data()
+    result <- processed_data()
+    data <- result$data
+    sectcode_facility_mapping <- result$sectcode_facility_mapping
     
     if (nrow(data) == 0) {
       return(ggplot() + 
@@ -658,7 +683,8 @@ server <- function(input, output, session) {
       data = data,
       show_zones_separately = show_zones_separately,
       zone_filter = input$zone_filter,
-      for_historical = FALSE
+      for_historical = FALSE,
+      sectcode_facility_mapping = sectcode_facility_mapping
     )
     
     # Handle zone-separated color mapping for current progress
@@ -1094,7 +1120,8 @@ server <- function(input, output, session) {
       data = data,
       show_zones_separately = length(input$zone_filter) > 1,
       zone_filter = input$zone_filter,
-      for_historical = FALSE
+      for_historical = FALSE,
+      sectcode_facility_mapping = NULL  # Historical doesn't need this mapping
     )
     
     # Create plot

@@ -511,6 +511,21 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
       }
     }
     
+    # DEBUG: Check percentage totals by year - they should sum to 100%
+    year_totals <- data %>%
+      group_by(year) %>%
+      summarize(total_pct = sum(percentage, na.rm = TRUE), .groups = "drop")
+    cat("DEBUG: Percentage totals by year:\n")
+    for(i in 1:nrow(year_totals)) {
+      cat("  ", year_totals$year[i], ": ", round(year_totals$total_pct[i], 1), "%\n", sep="")
+    }
+    
+    # Show years where totals don't add to 100%
+    problematic_years <- year_totals$year[abs(year_totals$total_pct - 100) > 0.1]
+    if (length(problematic_years) > 0) {
+      cat("DEBUG: Years with percentage totals != 100%:", paste(problematic_years, collapse=", "), "\n")
+    }
+    
     # Build ggplot with optional alpha mapping
     if (show_zones_separately && !is.null(alpha_values)) {
       p <- ggplot(data, aes(x = year, y = percentage, fill = .data[[fill_var]], alpha = zone_factor)) +

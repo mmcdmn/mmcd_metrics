@@ -148,11 +148,18 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
 }
 
 # Function to get historical structure treatment data
-get_historical_structure_data <- function(start_year = 2023, end_year = 2025, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U")) {
+get_historical_structure_data <- function(start_year = 2023, end_year = 2025, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
+    # Construct zone filter condition for location table
+    zone_condition <- ""
+    if (!is.null(zone_filter) && length(zone_filter) > 0) {
+      zone_list <- paste0("'", paste(zone_filter, collapse = "','"), "'")
+      zone_condition <- sprintf("AND loc.zone IN (%s)", zone_list)
+    }
+    
     # Fetch archive data
     query_archive <- sprintf(
       "
@@ -162,7 +169,8 @@ trt.inspdate,
 COALESCE(mat.effect_days, 0) AS effect_days,
 loc.s_type,
 loc.priority,
-loc.facility
+loc.facility,
+loc.zone
 FROM public.dblarv_insptrt_archive trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
@@ -173,9 +181,11 @@ AND trt.list_type = 'STR'
 %s
 %s
 %s
+%s
 ",
       as.numeric(start_year),
       as.numeric(end_year) + 1,
+      zone_condition,
       get_facility_condition(facility_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
@@ -193,7 +203,8 @@ trt.inspdate,
 COALESCE(mat.effect_days, 0) AS effect_days,
 loc.s_type,
 loc.priority,
-loc.facility
+loc.facility,
+loc.zone
 FROM public.dblarv_insptrt_current trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
@@ -204,9 +215,11 @@ AND trt.list_type = 'STR'
 %s
 %s
 %s
+%s
 ",
       as.numeric(start_year),
       as.numeric(end_year) + 1,
+      zone_condition,
       get_facility_condition(facility_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
@@ -227,7 +240,7 @@ AND (enddate IS NULL OR enddate > CURRENT_DATE)
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
-    total_structures <- as.integer(dbGetQuery(con, query_total_structures)$total_structures)
+    total_structures <- as.numeric(dbGetQuery(con, query_total_structures)$total_structures)
     dbDisconnect(con)
     
     # Combine and process data

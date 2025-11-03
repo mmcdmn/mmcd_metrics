@@ -116,7 +116,7 @@ ui <- fluidPage(
                   selected = "bar"),
       # Map Controls
       conditionalPanel(
-        condition = "input.tabset == 'Map'",
+        condition = "input.current_tabset == 'CurrentMap' || input.all_tabset == 'AllMap'",
         hr(),
         h4("Map Options"),
         
@@ -124,6 +124,7 @@ ui <- fluidPage(
         selectInput("basemap", "Base Map:",
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
+                                "Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
                     selected = "carto"),
         

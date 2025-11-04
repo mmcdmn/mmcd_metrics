@@ -94,7 +94,8 @@ create_suco_map <- function(data, input, data_source = "all") {
                  "<b>Facility:</b> ", facility_names_vec, "<br>",
                  "<b>FOS:</b> ", foreman_names, "<br>",
                  "<b>Location:</b> ", location, "<br>",
-                 "<b>Field Count:</b> ", fieldcount)
+                 "<b>Species Count:</b> ", display_species_count, "<br>",
+                 "<b>Species Found:</b><br>", species_summary)
         }
       )
     
@@ -116,7 +117,7 @@ create_suco_map <- function(data, input, data_source = "all") {
         lat2 = max(st_coordinates(data)[,2])
       ) %>%
       addCircleMarkers(
-        radius = ~pmin(15, (3 * size_multiplier)),
+        radius = ~marker_size,
         color = "black",
         weight = 1.5,
         fillColor = ~pal(facility),
@@ -229,7 +230,8 @@ create_suco_map <- function(data, input, data_source = "all") {
                  "<b>Facility:</b> ", facility_names_vec, "<br>",
                  "<b>FOS:</b> ", foreman_names, "<br>",
                  "<b>Location:</b> ", location, "<br>",
-                 "<b>Field Count:</b> ", fieldcount)
+                 "<b>Species Count:</b> ", display_species_count, "<br>",
+                 "<b>Species Found:</b><br>", species_summary)
         }
       )
     
@@ -243,7 +245,7 @@ create_suco_map <- function(data, input, data_source = "all") {
         lat2 = max(st_coordinates(data)[,2])
       ) %>%
       addCircleMarkers(
-        radius = ~pmin(15, (3 * size_multiplier)),
+        radius = ~marker_size,
         color = "black",
         weight = 1.5,
         fillColor = ~pal(foreman),
@@ -279,7 +281,7 @@ create_suco_map <- function(data, input, data_source = "all") {
         lat2 = max(st_coordinates(data)[,2])
       ) %>%
       addCircleMarkers(
-        radius = ~pmin(15, (3 * size_multiplier)),
+        radius = ~marker_size,
         color = "black",
         weight = 1.5,
         fillColor = "#1f77b4", # Standard blue color
@@ -288,7 +290,8 @@ create_suco_map <- function(data, input, data_source = "all") {
                         "<b>Facility:</b> ", facility, "<br>",
                         "<b>Foreman:</b> ", foreman, "<br>",
                         "<b>Location:</b> ", location, "<br>",
-                        "<b>Field Count:</b> ", fieldcount)
+                        "<b>Species Count:</b> ", display_species_count, "<br>",
+                        "<b>Species Found:</b><br>", species_summary)
       ) %>%
       addLegend(
         position = "bottomright",
@@ -301,7 +304,7 @@ create_suco_map <- function(data, input, data_source = "all") {
 }
 
 # Create location plotly chart (consolidates location_plotly and current_location_plotly)
-create_location_plotly <- function(top_locations_data, data_source = "all") {
+create_location_plotly <- function(top_locations_data, data_source = "all", mode = "visits") {
   if (nrow(top_locations_data) == 0) {
     empty_plot <- plotly::plot_ly() %>%
       plotly::add_annotations(
@@ -319,26 +322,73 @@ create_location_plotly <- function(top_locations_data, data_source = "all") {
     return(empty_plot)
   }
   
-  # Create the plotly bar chart
-  chart_title <- if (data_source == "current") {
-    "Top SUCO Locations (Current Data Only)"
+  # Determine chart properties based on mode
+  if (mode == "species") {
+    chart_title <- if (data_source == "current") {
+      "Top Locations by Species Count - Individual Samples (Current Data Only)"
+    } else {
+      "Top Locations by Species Count - Individual Samples"
+    }
+    chart_subtitle <- "Each segment represents one SUCO sample. Hover for details."
+    y_label <- "Species Count per Sample"
+    value_col <- "species_count"
+    # Use consistent color scheme for both current and all data
+    fill_colors <- scale_fill_viridis_c(option = "viridis", name = "Date")
   } else {
-    "Top SUCO Locations"
+    chart_title <- if (data_source == "current") {
+      "Top SUCO Locations - Individual Samples (Current Data Only)"
+    } else {
+      "Top SUCO Locations - Individual Samples"
+    }
+    chart_subtitle <- "Each segment represents one SUCO sample. Colors show sample dates."
+    y_label <- "Individual Samples"
+    value_col <- "visits"
+    # Use consistent color scheme for both current and all data
+    fill_colors <- scale_fill_viridis_c(option = "viridis", name = "Date")
   }
   
-  # Create ggplot
-  p <- ggplot(top_locations_data, aes(x = reorder(location, visits), y = visits, text = location)) +
-    geom_bar(stat = "identity", fill = if(data_source == "current") "#1f77b4" else "steelblue") +
-    geom_text(aes(label = visits), hjust = 1.3, color = "black") +
+  # Calculate location totals for ordering
+  location_totals <- top_locations_data %>%
+    group_by(location) %>%
+    summarize(total = sum(.data[[value_col]], na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(total))
+  
+  # Reorder data by location totals
+  top_locations_data$location <- factor(top_locations_data$location, 
+                                       levels = location_totals$location)
+  
+  # Create stacked bar chart
+  p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
+                                     fill = date_numeric, 
+                                     text = paste("Location:", location, "<br>",
+                                                 "Date:", format(inspdate, "%m/%d/%y"), "<br>",
+                                                 "Species Found:<br>",
+                                                 gsub("<br>", "<br>", species_summary)))) +
+    geom_bar(stat = "identity", position = "stack", na.rm = TRUE) +
+    fill_colors +
     coord_flip() +
-    labs(title = chart_title, x = "Location", y = "Number of Visits") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +  # Better scale handling
+    labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +
     theme_minimal() +
-    theme(plot.title = element_text(face = "bold", size = 16), 
-          axis.title = element_text(face = "bold"))
+    theme(
+      plot.title = element_text(face = "bold", size = 16), 
+      plot.subtitle = element_text(size = 12, color = "gray40", margin = margin(b = 15)),
+      axis.title = element_text(face = "bold"),
+      legend.position = "right",  # Show legend to explain color scale
+      legend.title = element_text(face = "bold", size = 12),
+      legend.text = element_text(size = 10)
+    ) +
+    guides(fill = guide_colorbar(
+      title = "Sample Date\n(Newer → Lighter)",
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = 1,
+      barheight = 8
+    ))
   
   # Convert to plotly with appropriate source for click events
   source_name <- if (data_source == "current") "current_location_plotly" else "location_plotly"
-  p <- plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = source_name)
+  p <- plotly::ggplotly(p, tooltip = "text", source = source_name)
   
   # Register the click event
   plotly::event_register(p, 'plotly_click')
@@ -403,7 +453,7 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     "All Foremen"
   } else {
     display_names <- sapply(input$foreman_filter, function(f) foreman_names[f] %||% f)
-    paste("Foreman:", paste(display_names, collapse=", "))
+    paste("FOS:", paste(display_names, collapse=", "))
   }
   
   # Zone filter text
@@ -561,7 +611,7 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
                        y = avg_sucos_per_week + max_height * 0.05, 
                        label = paste("Avg:", round(avg_sucos_per_week, 1), "SUCOs/week"), 
                        color = "red", 
-                       size = 3.5, 
+                       size = 4.5, 
                        hjust = 1,
                        fontface = "bold")
     }
@@ -572,11 +622,18 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     subtitle_text <- paste(subtitle_text, "(Current Data Only)")
   }
   
+  # Create y-axis label based on species filter
+  y_axis_label <- if (!is.null(input$species_filter) && input$species_filter != "All") {
+    paste0("Number of SUCOs with ", input$species_filter)
+  } else {
+    "Number of SUCOs"
+  }
+  
   p <- p + labs(
     title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
     subtitle = subtitle_text,
-    x = "Week Starting",
-    y = "Number of SUCOs",
+    x = "Epi Week",
+    y = y_axis_label,
     fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group),
     color = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
   ) +
@@ -587,14 +644,40 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
       axis.title = element_text(face = "bold", size = 14),
       axis.text = element_text(face = "bold", size = 13),
       axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(face = "bold", size = 14),
+      axis.title.y = element_text(size = 15, face = "bold"),
       legend.position = "bottom",
       legend.title = element_text(face = "bold", size = 14),
       legend.text = element_text(size = 14, face = "bold")
     )
-  # Use weekly scale
+  
+  # Identify year boundaries for vertical separator lines
+  year_boundaries <- data %>%
+    mutate(year = epiyear(time_group)) %>%
+    group_by(year) %>%
+    summarize(min_time = min(time_group), max_time = max(time_group), .groups = "drop") %>%
+    arrange(year)
+  
+  # Add vertical lines at year boundaries (except the first one)
+  if (nrow(year_boundaries) > 1) {
+    for (i in 2:nrow(year_boundaries)) {
+      p <- p + geom_vline(xintercept = as.numeric(year_boundaries$min_time[i]), 
+                         color = "gray60", 
+                         linetype = "solid", 
+                         size = 1.5, 
+                         alpha = 0.7)
+    }
+  }
+  
+  # Use epi week scale instead of traditional date labels
+  # Create a mapping of time_group to epi_week_label for x-axis
+  epi_labels <- data %>%
+    distinct(time_group, epi_week_label) %>%
+    arrange(time_group)
+  
   p <- p + scale_x_date(
-    date_breaks = "2 weeks",
-    date_labels = "%m/%d",
+    breaks = epi_labels$time_group,
+    labels = epi_labels$epi_week_label,
     limits = c(min(data$time_group), max(data$time_group))
   )
   return(p)

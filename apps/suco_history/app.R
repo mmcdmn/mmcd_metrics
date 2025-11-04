@@ -113,7 +113,15 @@ ui <- fluidPage(
       # Graph type selector
       selectInput("graph_type", "Graph Type:",
                   choices = c("Bar" = "bar", "Stacked Bar" = "stacked_bar", "Line" = "line", "Point" = "point", "Area" = "area"),
-                  selected = "bar"),
+                  selected = "stacked_bar"),
+      
+      # Top locations mode toggle
+      conditionalPanel(
+        condition = "input.current_tabset == 'CurrentTopLoc' || input.all_tabset == 'AllTopLoc'",
+        selectInput("top_locations_mode", "Top Locations Display:",
+                    choices = c("Most Visited" = "visits", "Most Species" = "species"),
+                    selected = "visits")
+      ),
       # Map Controls
       conditionalPanel(
         condition = "input.current_tabset == 'CurrentMap' || input.all_tabset == 'AllMap'",
@@ -142,7 +150,8 @@ ui <- fluidPage(
             tabPanel("Graph", value = "CurrentGraph", plotOutput("current_trend_plot", height = "500px")),
             tabPanel("Map", value = "CurrentMap", leafletOutput("current_map", height = "600px")),
             tabPanel("Summary Table", value = "CurrentTable", dataTableOutput("current_summary_table")),
-            tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "500px"))
+            tabPanel("Detailed Samples", value = "CurrentDetailed", dataTableOutput("current_detailed_table")),
+            tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "700px"))
           )
         ),
         tabPanel("All Data (Current + Archive)",
@@ -150,7 +159,8 @@ ui <- fluidPage(
             tabPanel("Graph", value = "AllGraph", plotOutput("trend_plot", height = "500px")),
             tabPanel("Map", value = "AllMap", leafletOutput("map", height = "600px")),
             tabPanel("Summary Table", value = "AllTable", dataTableOutput("summary_table")),
-            tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "500px"))
+            tabPanel("Detailed Samples", value = "AllDetailed", dataTableOutput("detailed_table")),
+            tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "700px"))
           )
         )
       )
@@ -223,12 +233,10 @@ server <- function(input, output, session) {
   })
   
   # Helper function to create trend plots - eliminates code duplication
-  # Update species filter choices based on available data (use species_name)
+  # Update species filter choices based on available data (use new function)
   observe({
-    data <- suco_data()
-    
-    # Get unique species
-    spp_choices <- sort(unique(na.omit(data$species_name)))
+    # Get species choices using the new function
+    spp_choices <- get_available_species(input$date_range)
     spp_choices <- c("All", spp_choices)
     
     # Update select input
@@ -288,13 +296,13 @@ server <- function(input, output, session) {
   # Process spatial data for mapping
   spatial_data <- reactive({
     data <- filtered_data()
-    create_spatial_data(data)
+    create_spatial_data(data, input$species_filter)
   })
   
   # Process spatial data for mapping (current data only)
   spatial_data_current <- reactive({
     data <- filtered_data_current()
-    create_spatial_data(data)
+    create_spatial_data(data, input$species_filter)
   })
   
   # Aggregate data by selected time interval and grouping
@@ -325,11 +333,6 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     create_suco_map(spatial_data(), input, "all")
   })
-  
-  # Generate current map (for current data tab)
-  output$current_map <- renderLeaflet({
-    create_suco_map(spatial_data_current(), input, "current")
-  })
 
 
   # Generate summary table
@@ -346,11 +349,26 @@ server <- function(input, output, session) {
                      }")
                    ))))
   
+  # Generate detailed samples table
+  output$detailed_table <- renderDataTable({
+    data <- filtered_data()
+    detailed_data <- create_detailed_samples_table(data, input$species_filter)
+    return(detailed_data)
+  }, options = list(pageLength = 25, 
+                   searching = TRUE,
+                   scrollX = TRUE,
+                   columnDefs = list(list(
+                     targets = c("Species_Found"),
+                     render = JS("function(data, type, row) {
+                       return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
+                     }")
+                   ))))
+  
   # Generate location plot (top locations with most SUCOs)
   output$location_plotly <- plotly::renderPlotly({
     data <- filtered_data()
-    top_locations <- get_top_locations(data)
-    create_location_plotly(top_locations, "all")
+    top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
+    create_location_plotly(top_locations, "all", input$top_locations_mode)
   })
   
   # React to plotly click and update map and tab
@@ -359,11 +377,7 @@ server <- function(input, output, session) {
     if (!is.null(click)) {
       idx <- click$pointNumber + 1  # R is 1-based
       data <- filtered_data()
-      top_locations <- data %>%
-        group_by(location) %>%
-        summarize(visits = n(), .groups = "drop") %>%
-        arrange(desc(visits)) %>%
-        head(15)
+      top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
       if (idx > 0 && idx <= nrow(top_locations)) {
         loc <- top_locations$location[idx]
         # Use spatial_data() for accurate coordinates (same as map)
@@ -463,8 +477,7 @@ server <- function(input, output, session) {
                    "<b>Facility:</b> ", facility_names_vec, "<br>",
                    "<b>FOS:</b> ", foreman_names, "<br>",
                    "<b>Location:</b> ", location, "<br>",
-                   "<b>Field Count:</b> ", fieldcount, "<br>",
-                   "<b>Data Source:</b> Current Only")
+                   "<b>Species Found:</b><br>", species_summary)
           }
         )
       
@@ -486,7 +499,7 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~pmin(15, (3 * size_multiplier)),
+          radius = ~marker_size,
           color = "black",
           weight = 1.5,
           fillColor = ~pal(facility),
@@ -598,8 +611,7 @@ server <- function(input, output, session) {
                    "<b>Facility:</b> ", facility_names_vec, "<br>",
                    "<b>FOS:</b> ", foreman_names, "<br>",
                    "<b>Location:</b> ", location, "<br>",
-                   "<b>Field Count:</b> ", fieldcount, "<br>",
-                   "<b>Data Source:</b> Current Only")
+                   "<b>Species Found:</b><br>", species_summary)
           }
         )
       
@@ -613,7 +625,7 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~pmin(15, (3 * size_multiplier)),
+          radius = ~marker_size,
           color = "black",
           weight = 1.5,
           fillColor = ~pal(foreman),
@@ -649,7 +661,7 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~pmin(15, (3 * size_multiplier)),
+          radius = ~marker_size,
           color = "black",
           weight = 1.5,
           fillColor = "#1f77b4", # Standard blue color
@@ -658,8 +670,7 @@ server <- function(input, output, session) {
                           "<b>Facility:</b> ", facility, "<br>",
                           "<b>Foreman:</b> ", foreman, "<br>",
                           "<b>Location:</b> ", location, "<br>",
-                          "<b>Field Count:</b> ", fieldcount, "<br>",
-                          "<b>Data Source:</b> Current Only")
+                          "<b>Species Found:</b><br>", species_summary)
         ) %>%
         addLegend(
           position = "bottomright",
@@ -685,11 +696,26 @@ server <- function(input, output, session) {
                      }")
                    ))))
   
+  # Generate current detailed samples table
+  output$current_detailed_table <- renderDataTable({
+    data <- filtered_data_current()
+    detailed_data <- create_detailed_samples_table(data, input$species_filter)
+    return(detailed_data)
+  }, options = list(pageLength = 25, 
+                   searching = TRUE,
+                   scrollX = TRUE,
+                   columnDefs = list(list(
+                     targets = c("Species_Found"),
+                     render = JS("function(data, type, row) {
+                       return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
+                     }")
+                   ))))
+  
   # Generate current location plot
   output$current_location_plotly <- plotly::renderPlotly({
     data <- filtered_data_current()
-    top_locations <- get_top_locations(data)
-    create_location_plotly(top_locations, "current")
+    top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
+    create_location_plotly(top_locations, "current", input$top_locations_mode)
   })
   
   # Handle current location plot clicks
@@ -698,11 +724,7 @@ server <- function(input, output, session) {
     if (!is.null(click)) {
       idx <- click$pointNumber + 1
       data <- filtered_data_current()
-      top_locations <- data %>%
-        group_by(location) %>%
-        summarize(visits = n(), .groups = "drop") %>%
-        arrange(desc(visits)) %>%
-        head(15)
+      top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
       if (idx > 0 && idx <= nrow(top_locations)) {
         loc <- top_locations$location[idx]
         spatial <- spatial_data_current()

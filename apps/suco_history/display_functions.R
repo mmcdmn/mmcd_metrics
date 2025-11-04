@@ -3,6 +3,19 @@
 
 source("../../shared/db_helpers.R")
 
+# Helper function to convert zone UI selection to filter vector
+convert_zone_selection <- function(zone_input) {
+  if (is.null(zone_input)) {
+    return(c("1", "2"))  # Default to all zones
+  }
+  
+  if (zone_input == "all") {
+    return(c("1", "2"))  # P1 + P2 means both zones
+  } else {
+    return(as.character(zone_input))  # Single zone selection
+  }
+}
+
 # Create SUCO map (consolidates map and current_map functionality)
 # Function to create SUCO map with flexible data source
 create_suco_map <- function(data, input, data_source = "all") {
@@ -394,13 +407,12 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   }
   
   # Zone filter text
-  zone_text <- if (length(input$zone_filter) == 2) {
-    "Zones: P1, P2"
-  } else if (length(input$zone_filter) == 1) {
-    paste("Zone:", paste0("P", input$zone_filter))
-  } else {
-    "No Zones"
-  }
+  zone_text <- case_when(
+    input$zone_filter == "all" ~ "Zones: P1 + P2",
+    input$zone_filter == "1" ~ "Zone: P1",
+    input$zone_filter == "2" ~ "Zone: P2",
+    TRUE ~ "Zone: All"
+  )
   
   # Get color scales from db_helpers based on grouping
   custom_colors <- if(group_col == "facility") {
@@ -441,152 +453,52 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   }
   
   # Determine the plotting group column and handle color mapping for combined zones
-  plot_group_col <- if (length(input$zone_filter) > 1 && "combined_group" %in% names(data)) {
-    "combined_group"
-  } else if (length(input$zone_filter) > 1 && "zone_label" %in% names(data)) {
-    "zone_label"
-  } else {
-    group_col
-  }
+  # With the current implementation, zones are never shown separately
+  # "P1 + P2" combines zones into single bars/lines
+  zones_selected <- convert_zone_selection(input$zone_filter)
+  show_zones_separately <- FALSE  # Never show zones separately in this version
   
-  # Get colors based on grouping - with optional zone support
+  plot_group_col <- group_col
+  
+  # Get colors based on grouping - simplified since zones are never shown separately
   if (group_col == "facility") {
-    if (length(input$zone_filter) > 1 && plot_group_col == "combined_group") {
-      # Zone-aware facility colors
-      color_result <- get_facility_base_colors(
-        alpha_zones = input$zone_filter,
-        combined_groups = unique(data$combined_group)
-      )
-      custom_colors <- color_result$colors
-      alpha_values <- color_result$alpha_values
-      
-      # Add zone factor for alpha mapping
-      data$zone_factor <- factor(
-        gsub(".*\\(P([12])\\).*", "\\1", data$combined_group),
-        levels = c("1", "2")
-      )
-    } else {
-      # Standard facility colors
-      custom_colors <- get_facility_base_colors()
-      alpha_values <- NULL
-    }
+    # Standard facility colors
+    custom_colors <- get_facility_base_colors()
+    alpha_values <- NULL
   } else if (group_col == "foreman") {
     # Get foremen lookup for mapping emp_num to shortname
     foremen_lookup <- get_foremen_lookup()
     
-    if (length(input$zone_filter) > 1 && plot_group_col == "combined_group") {
-      # Zone-aware foreman colors
-      # The combined_group will be like "7002 (P1)", "8203 (P2)", etc.
-      # We need to map these to shortname-based colors
+    # Standard foreman colors - map from shortname to emp_num
+    foreman_colors <- get_foreman_colors()
+    emp_colors <- character(0)
+    
+    for (i in 1:nrow(foremen_lookup)) {
+      shortname <- trimws(foremen_lookup$shortname[i])
+      emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
       
-      foreman_colors <- get_foreman_colors()  # These are keyed by shortname
-      emp_colors <- character(0)
-      
-      # Get unique combined groups from data
-      unique_combined <- unique(data$combined_group)
-      
-      for (combined_name in unique_combined) {
-        # Extract emp_num from combined group like "7002 (P1)"
-        emp_num <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
-        emp_num <- trimws(emp_num)
-        
-        # Find corresponding shortname
-        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == emp_num)
-        if (length(matches) > 0) {
-          shortname <- foremen_lookup$shortname[matches[1]]
-          
-          # Get color for this shortname
-          if (shortname %in% names(foreman_colors)) {
-            emp_colors[combined_name] <- foreman_colors[shortname]
-          }
-        }
+      if (shortname %in% names(foreman_colors)) {
+        emp_colors[emp_num] <- foreman_colors[shortname]
       }
-      
-      custom_colors <- emp_colors
-      alpha_values <- c("1" = 1.0, "2" = 0.6)
-      
-      # Add zone factor for alpha mapping
-      data$zone_factor <- factor(
-        gsub(".*\\(P([12])\\).*", "\\1", data$combined_group),
-        levels = c("1", "2")
-      )
-    } else {
-      # Standard foreman colors - map from shortname to emp_num
-      foreman_colors <- get_foreman_colors()
-      emp_colors <- character(0)
-      
-      for (i in 1:nrow(foremen_lookup)) {
-        shortname <- trimws(foremen_lookup$shortname[i])
-        emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
-        
-        if (shortname %in% names(foreman_colors)) {
-          emp_colors[emp_num] <- foreman_colors[shortname]
-        }
-      }
-      
-      custom_colors <- emp_colors
-      alpha_values <- NULL
     }
+    
+    custom_colors <- emp_colors
+    alpha_values <- NULL
   } else {
     custom_colors <- NULL
     alpha_values <- NULL
   }
   
-  # Create the plot using the appropriate aesthetics
-  if (!is.null(alpha_values)) {
-    # Zone-aware plotting with alpha
-    p <- ggplot(data, aes(x = time_group, y = count, 
-                         color = !!sym(plot_group_col), 
-                         fill = !!sym(plot_group_col),
-                         alpha = zone_factor,
-                         group = !!sym(plot_group_col)))
-  } else {
-    # Standard plotting without alpha
-    p <- ggplot(data, aes(x = time_group, y = count, 
-                         color = !!sym(plot_group_col), 
-                         fill = !!sym(plot_group_col), 
-                         group = !!sym(plot_group_col)))
-  }
+  # Create the plot using standard aesthetics (no alpha since zones aren't shown separately)
+  p <- ggplot(data, aes(x = time_group, y = count, 
+                       color = !!sym(plot_group_col), 
+                       fill = !!sym(plot_group_col), 
+                       group = !!sym(plot_group_col)))
   
   # Add color scales based on grouping
   if(!is.null(custom_colors)) {
-    # Create label mapping for display
-    if (plot_group_col == "combined_group") {
-      # For combined groups like "BH (P1)", "RG (P2)", map to display names
-      if (group_col == "facility") {
-        labels_mapping <- function(x) {
-          sapply(x, function(combined) {
-            # Extract facility code and zone from combined group like "BH (P1)"
-            parts <- strsplit(combined, " \\(")[[1]]
-            if (length(parts) >= 2) {
-              facility_code <- parts[1]
-              zone_part <- gsub("\\)", "", parts[2])  # Remove closing parenthesis
-              facility_name <- facility_names[facility_code] %||% facility_code
-              paste0(facility_name, " (", zone_part, ")")
-            } else {
-              combined
-            }
-          })
-        }
-      } else if (group_col == "foreman") {
-        labels_mapping <- function(x) {
-          sapply(x, function(combined) {
-            # Extract emp_num and zone from combined group like "7002 (P1)"
-            parts <- strsplit(combined, " \\(")[[1]]
-            if (length(parts) >= 2) {
-              emp_num <- parts[1]
-              zone_part <- gsub("\\)", "", parts[2])  # Remove closing parenthesis
-              foreman_name <- foreman_names[emp_num] %||% paste0("FOS #", emp_num)
-              paste0(foreman_name, " (", zone_part, ")")
-            } else {
-              combined
-            }
-          })
-        }
-      } else {
-        labels_mapping <- NULL
-      }
-    } else if (group_col == "facility") {
+    # Create label mapping for display (simplified since no combined groups)
+    if (group_col == "facility") {
       # Map facility short_names to full_names for labels
       labels_mapping <- function(x) sapply(x, function(code) facility_names[code] %||% code)
     } else if (group_col == "foreman") {
@@ -610,12 +522,49 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   
   if (input$graph_type == "bar") {
     p <- p + geom_bar(stat = "identity", position = "dodge")
+  } else if (input$graph_type == "stacked_bar") {
+    p <- p + geom_bar(stat = "identity", position = "stack")
   } else if (input$graph_type == "line") {
     p <- p + geom_line(size = 1.2)
   } else if (input$graph_type == "point") {
     p <- p + geom_point(size = 3)
   } else if (input$graph_type == "area") {
     p <- p + geom_area(position = "stack", alpha = 0.6)
+  }
+  
+  # Add average line for "All Data (Current + Archive)" only
+  if (data_source == "all") {
+    # Calculate average SUCOs per week based on TOTAL SUCOs per week (not per group)
+    # First, get the total SUCOs per week by summing across all groups
+    weekly_totals <- data %>%
+      group_by(time_group) %>%
+      summarize(total_count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+      filter(total_count > 0)  # Only count weeks with actual SUCOs
+    
+    if (nrow(weekly_totals) > 0) {
+      avg_sucos_per_week <- mean(weekly_totals$total_count, na.rm = TRUE)
+      
+      # For stacked bars, use the maximum total height for positioning
+      max_height <- if (input$graph_type == "stacked_bar") {
+        max(weekly_totals$total_count, na.rm = TRUE)
+      } else {
+        max(data$count, na.rm = TRUE)
+      }
+      
+      p <- p + geom_hline(yintercept = avg_sucos_per_week, 
+                         color = "red", 
+                         linetype = "dashed", 
+                         size = 1.2, 
+                         alpha = 0.8) +
+               annotate("text", 
+                       x = max(data$time_group) - days(7), 
+                       y = avg_sucos_per_week + max_height * 0.05, 
+                       label = paste("Avg:", round(avg_sucos_per_week, 1), "SUCOs/week"), 
+                       color = "red", 
+                       size = 3.5, 
+                       hjust = 1,
+                       fontface = "bold")
+    }
   }
   
   subtitle_text <- paste(zone_text, "-", facility_text, "-", foreman_text)
@@ -633,11 +582,14 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   ) +
     theme_minimal() +
     theme(
-      plot.title = element_text(face = "bold", size = 16),
-      axis.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", size = 20),
+      plot.subtitle = element_text(size = 14, face = "bold"),
+      axis.title = element_text(face = "bold", size = 14),
+      axis.text = element_text(face = "bold", size = 13),
       axis.text.x = element_text(angle = 45, hjust = 1),
       legend.position = "bottom",
-      legend.title = element_text(face = "bold")
+      legend.title = element_text(face = "bold", size = 14),
+      legend.text = element_text(size = 14, face = "bold")
     )
   # Use weekly scale
   p <- p + scale_x_date(

@@ -280,8 +280,11 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
   # Define the grouping column
   group_col <- group_by
   
-  # Check if we should show zones as separate entities
-  show_zones_separately <- length(zone_filter) > 1
+  # We should NOT show zones separately when user selects "P1 + P2" 
+  # Zones should only be shown separately when user wants to compare zones
+  # For now, we'll only show zones separately if explicitly requested (never in this version)
+  # This means "P1 + P2" will always combine the zones into single bars/lines
+  show_zones_separately <- FALSE
   
   if (group_col == "mmcd_all") {
     if (show_zones_separately) {

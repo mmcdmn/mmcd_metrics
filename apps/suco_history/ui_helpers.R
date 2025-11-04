@@ -152,3 +152,16 @@ handle_location_click <- function(click_data, data_function, spatial_data_functi
     leafletProxy(map_id) %>% clearGroup(paste0("highlighted_location_", map_id))
   }
 }
+
+# Helper function to convert zone UI selection to filter vector
+convert_zone_selection <- function(zone_input) {
+  if (is.null(zone_input)) {
+    return(c("1", "2"))  # Default to all zones
+  }
+  
+  if (zone_input == "all") {
+    return(c("1", "2"))  # P1 + P2 means both zones
+  } else {
+    return(as.character(zone_input))  # Single zone selection
+  }
+}

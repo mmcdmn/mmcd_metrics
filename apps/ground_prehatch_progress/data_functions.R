@@ -66,7 +66,7 @@ FROM (
 GROUP BY facility, zone, fosarea, sectcode, foreman
 ORDER BY facility, zone, fosarea, sectcode, foreman
 ) trtcnts ON trtcnts.sectcode = sitecnts.sectcode AND COALESCE(trtcnts.foreman, '') = COALESCE(sitecnts.foreman, '')
-ORDER BY sectcode", current_year, simulation_date, current_year, simulation_date)
+ORDER BY sectcode", current_year, format(simulation_date, "%Y-%m-%d"), current_year, format(simulation_date, "%Y-%m-%d"))
     
     result <- dbGetQuery(con, query)
     dbDisconnect(con)
@@ -128,7 +128,7 @@ LEFT JOIN (
   ORDER BY sitecode
 ) s USING (sitecode, sectcode, facility, fosarea, zone, foreman)
 WHERE a.prehatch IN ('PREHATCH','BRIQUET')
-ORDER BY a.facility, a.sectcode, a.sitecode", current_year, expiring_days, simulation_date, current_year, simulation_date)
+ORDER BY a.facility, a.sectcode, a.sitecode", current_year, format(simulation_date, "%Y-%m-%d"), current_year, format(simulation_date, "%Y-%m-%d"))
     
     result <- dbGetQuery(con, query)
     dbDisconnect(con)

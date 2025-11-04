@@ -113,7 +113,7 @@ ui <- fluidPage(
       # Graph type selector
       selectInput("graph_type", "Graph Type:",
                   choices = c("Bar" = "bar", "Stacked Bar" = "stacked_bar", "Line" = "line", "Point" = "point", "Area" = "area"),
-                  selected = "bar"),
+                  selected = "stacked_bar"),
       # Map Controls
       conditionalPanel(
         condition = "input.current_tabset == 'CurrentMap' || input.all_tabset == 'AllMap'",

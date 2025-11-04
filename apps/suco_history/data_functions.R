@@ -22,14 +22,14 @@ get_suco_data <- function(data_source = "all", date_range = NULL) {
   
   if (data_source == "current") {
     # Current data only - from dbadult_insp_current table
+    # Use loc_harborage as authoritative source for foreman and facility
+    # Fallback to gis_sectcode facility if harborage doesn't have data
+    # Additional fallback to original inspection data for foreman if harborage is NULL
     current_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility, 
-CASE 
-  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
-  ELSE NULL
-END as foreman,
+s.id, s.ainspecnum, 
+COALESCE(h.facility, g.facility, s.facility) as facility,
+COALESCE(h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y,
@@ -73,6 +73,9 @@ WHERE ainspecnum IS NOT NULL
         year = year(inspdate),
         month = month(inspdate),
         week_start = floor_date(inspdate, "week", week_start = 1),
+        epi_week = epiweek(inspdate),
+        epi_year = epiyear(inspdate),
+        epi_week_label = paste0(" ", epi_week),
         month_label = format(inspdate, "%b %Y"),
         location = ifelse(!is.na(park_name) & park_name != "", park_name,
                           ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
@@ -94,18 +97,17 @@ WHERE ainspecnum IS NOT NULL
   } else {
     # All data - both current and archive
     # Query current data for SUCOs (survtype = 7) with harborage lookup for current foreman assignments
+    # Use loc_harborage as authoritative source for foreman and facility
+    # Fallback to gis_sectcode facility if harborage doesn't have data
+    # Additional fallback to original inspection data for foreman if harborage is NULL
     current_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility, 
-CASE 
-  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
-  ELSE NULL
-END as foreman,
+s.id, s.ainspecnum, 
+COALESCE(h.facility, g.facility, s.facility) as facility,
+COALESCE(h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-COALESCE(h.facility, '') as harborage_facility,
 g.zone
 FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
@@ -121,18 +123,17 @@ AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
     
     # Query archive data for SUCOs with harborage lookup for current foreman assignments
+    # Use loc_harborage as authoritative source for foreman and facility
+    # Fallback to gis_sectcode facility if harborage doesn't have data
+    # Additional fallback to original inspection data for foreman if harborage is NULL
     archive_query <- sprintf("
 SELECT
-s.id, s.ainspecnum, s.facility,
-CASE 
-  WHEN h.foreman IS NOT NULL AND h.foreman != '' THEN h.foreman 
-  WHEN s.foreman IS NOT NULL AND s.foreman != '' THEN s.foreman
-  ELSE NULL
-END as foreman,
+s.id, s.ainspecnum, 
+COALESCE(h.facility, g.facility, s.facility) as facility,
+COALESCE(h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-COALESCE(h.facility, '') as harborage_facility,
 g.zone
 FROM public.dbadult_insp_archive s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
@@ -181,15 +182,13 @@ WHERE ainspecnum IS NOT NULL
         year = year(inspdate),
         month = month(inspdate),
         week_start = floor_date(inspdate, "week", week_start = 1),
+        epi_week = epiweek(inspdate),
+        epi_year = epiyear(inspdate),
+        epi_week_label = paste0("EW ", epi_week),
         month_label = format(inspdate, "%b %Y"),
         location = ifelse(!is.na(park_name) & park_name != "", park_name,
-                          ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
-        # Use harborage facility when harborage foreman is used
-        # This ensures foreman colors match the correct facility
-        facility = ifelse(!is.na(harborage_facility) & harborage_facility != "", 
-                         harborage_facility, facility)
+                          ifelse(!is.na(address1) & address1 != "", address1, sitecode))
       )
-    
     # Combine species data
     all_species <- bind_rows(species_current, species_archive)
 
@@ -294,6 +293,7 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
         summarize(
           count = n(),
           total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          epi_week_label = first(epi_week_label),
           .groups = "drop"
         ) %>%
         arrange(time_group) %>%
@@ -305,6 +305,7 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
         summarize(
           count = n(),
           total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          epi_week_label = first(epi_week_label),
           .groups = "drop"
         ) %>%
         arrange(time_group)
@@ -319,6 +320,7 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
         summarize(
           count = n(),
           total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          epi_week_label = first(epi_week_label),
           .groups = "drop"
         ) %>%
         arrange(time_group) %>%
@@ -333,6 +335,7 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
         summarize(
           count = n(),
           total_fieldcount = sum(fieldcount, na.rm = TRUE),
+          epi_week_label = first(epi_week_label),
           .groups = "drop"
         ) %>%
         arrange(time_group)

@@ -2,7 +2,7 @@
 # Functions for creating charts and visualizations
 
 # Function to create current progress chart
-create_current_progress_chart <- function(data, group_by, facility_filter, status_types, zone_filter) {
+create_current_progress_chart <- function(data, group_by, facility_filter, status_types, zone_filter, combine_zones = FALSE) {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -26,8 +26,8 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
   # Get zone and facility colors for custom coloring
   # Set up custom colors based on grouping
   custom_colors <- NULL
-  if (group_by == "facility" && length(zone_filter) == 1) {
-    # Single zone - use basic facility colors mapped to display names
+  if (group_by == "facility" && (length(zone_filter) == 1 || combine_zones)) {
+    # Single zone OR combined zones - use basic facility colors mapped to display names
     facility_colors <- get_facility_base_colors()
     # Map facility short names to display names
     custom_colors <- character(0)
@@ -38,13 +38,42 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
         custom_colors[display_name] <- facility_colors[facility_short]
       }
     }
-  } else if (group_by == "facility" && length(zone_filter) > 1) {
-    # Multiple zones - use zone-aware colors
+  } else if (group_by == "facility" && length(zone_filter) > 1 && !combine_zones) {
+    # Multiple zones shown separately - need to map display names back to short names for colors
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$short_name, facilities$full_name)  # reverse mapping
+    
+    # Extract short names from display names for color mapping
+    short_groups <- sapply(unique(data$display_name), function(display_name) {
+      # Extract facility name without zone, e.g., "North (P1)" -> "North"
+      base_name <- gsub("\\s*\\([^)]+\\)$", "", display_name)
+      base_name <- trimws(base_name)
+      
+      # Map back to short name, e.g., "North" -> "N"
+      if (base_name %in% names(facility_map)) {
+        short_name <- facility_map[base_name]
+        # Recreate combined group with short name for color mapping
+        zone_part <- gsub("^[^(]*", "", display_name)  # extract "(P1)" part
+        return(paste0(short_name, zone_part))
+      } else {
+        return(display_name)  # fallback
+      }
+    })
+    
     zone_result <- get_facility_base_colors(
       alpha_zones = zone_filter,
-      combined_groups = unique(data$display_name)
+      combined_groups = short_groups
     )
-    custom_colors <- zone_result$colors
+    
+    # Map the colors back to display names
+    custom_colors <- character(0)
+    for (i in 1:length(unique(data$display_name))) {
+      display_name <- unique(data$display_name)[i]
+      short_group <- short_groups[i]
+      if (short_group %in% names(zone_result$colors)) {
+        custom_colors[display_name] <- zone_result$colors[short_group]
+      }
+    }
   } else if (group_by == "foreman" && length(zone_filter) == 1) {
     # Single zone - use basic foreman colors mapped to display names
     foreman_colors <- get_foreman_colors()
@@ -135,10 +164,13 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
     scale_y_continuous(limits = c(0, y_max)) +
     theme_minimal() +
     theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(face = "bold", size = 12),
-      axis.text = element_text(size = 10),
-      panel.grid.minor = element_blank()
+      plot.title = element_text(face = "bold", size = 16),
+      axis.title = element_text(face = "bold", size = 14),
+      axis.title.y = element_text(face = "bold", size = 16),  # Make y-axis title larger and bold
+      axis.text = element_text(size = 12, face = "bold"),     # Make all axis text bold
+      axis.text.y = element_text(size = 14, face = "bold"),   # Make y-axis text larger and bold
+      panel.grid.minor = element_blank(),
+      plot.margin = margin(20, 20, 20, 20)  # Add some margin for better spacing
     )
   
   return(p)
@@ -163,6 +195,8 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   treatments_data <- treatments_data %>%
     mutate(
       inspdate = as.Date(inspdate),
+      # Handle NULL effect_days - use 30 days as default when NULL or 0
+      effect_days = ifelse(is.na(effect_days) | effect_days == 0, 30, effect_days),
       enddate = as.Date(inspdate) + effect_days
     ) %>%
     {map_facility_names(.)}
@@ -175,43 +209,43 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   # Add group column for mmcd_all case
   treatments_data$mmcd_all <- "All MMCD"
 
-  # Calculate daily treatment changes for all MMCD
-  treatment_starts <- treatments_data %>%
-    group_by(inspdate) %>%
-    summarize(treatment_change = n(), .groups = 'drop') %>%
-    rename(date = inspdate)
-
-  treatment_ends <- treatments_data %>%
-    group_by(enddate) %>%
-    summarize(treatment_change = -n(), .groups = 'drop') %>%
-    rename(date = enddate)
-
-  daily_treatment_changes <- bind_rows(treatment_starts, treatment_ends) %>%
-    group_by(date) %>%
-    summarize(treatment_change = sum(treatment_change), .groups = 'drop')
+  # Calculate unique sites with active treatments for each date (fixing overlapping treatment issue)
+  # For each date, count how many unique sites have at least one active treatment
+  unique_active_sites_per_date <- map_dfr(date_range, function(current_date) {
+    active_sites <- treatments_data %>%
+      filter(
+        inspdate <= current_date & 
+        (is.na(enddate) | enddate > current_date)
+      ) %>%
+      distinct(sitecode) %>%
+      nrow()
+    
+    data.frame(
+      date = current_date,
+      active_unique_sites = active_sites
+    )
+  })
 
   # Calculate structure changes (assuming relatively stable for this timeframe)
   structure_changes <- data.frame(date = as.Date(character(0)), structure_change = numeric(0))
 
-  # Calculate cumulative active treatments and total structures over time
+  # Calculate proportion using unique sites with active treatments
   all_dates <- data.frame(date = date_range)
   treatment_trends <- all_dates %>%
-    left_join(daily_treatment_changes, by = "date") %>%
+    left_join(unique_active_sites_per_date, by = "date") %>%
     left_join(structure_changes, by = "date") %>%
     mutate(
-      treatment_change = ifelse(is.na(treatment_change), 0, treatment_change),
       structure_change = ifelse(is.na(structure_change), 0, structure_change)
     ) %>%
     arrange(date) %>%
     mutate(
-      active_treatments = cumsum(treatment_change),
       total_structures_dynamic = total_structures + cumsum(structure_change)
     ) %>%
-    # Avoid division by zero
+    # Avoid division by zero and use unique sites count
     mutate(
       proportion_active_treatment = ifelse(
         total_structures_dynamic > 0, 
-        active_treatments / total_structures_dynamic, 
+        active_unique_sites / total_structures_dynamic, 
         0
       ),
       group_name = "All MMCD"
@@ -270,7 +304,12 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   # Set display names for non-MMCD groupings
   if (group_col != "mmcd_all") {
     if (group_col == "facility") {
-      treatment_trends$display_name <- treatment_trends$group_name
+      # Use the mapped facility display names created by map_facility_names()
+      if ("facility_display" %in% names(treatment_trends)) {
+        treatment_trends$display_name <- treatment_trends$facility_display
+      } else {
+        treatment_trends$display_name <- treatment_trends$group_name
+      }
     } else if (group_col == "foreman") {
       foremen_lookup <- get_foremen_lookup()
       treatment_trends$display_name <- sapply(treatment_trends$group_name, function(f) {

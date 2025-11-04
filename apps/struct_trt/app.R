@@ -8,6 +8,7 @@ suppressPackageStartupMessages({
   library(lubridate)
   library(rlang)
   library(purrr)  # For map_dfr function
+  library(tibble) # For deframe function
 })
 
 # Source the shared database helper functions
@@ -213,7 +214,8 @@ server <- function(input, output) {
       input$structure_type_filter,
       input$priority_filter,
       input$status_types,
-      parsed_zone_filter()
+      parsed_zone_filter(),
+      combine_zones()
     )
   })
 }

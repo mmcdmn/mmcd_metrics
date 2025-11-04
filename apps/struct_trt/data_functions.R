@@ -190,6 +190,7 @@ COALESCE(mat.effect_days, 30) AS effect_days,
 loc.s_type,
 loc.priority,
 loc.facility,
+loc.foreman,
 loc.zone
 FROM public.dblarv_insptrt_archive trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
@@ -224,6 +225,7 @@ COALESCE(mat.effect_days, 30) AS effect_days,
 loc.s_type,
 loc.priority,
 loc.facility,
+loc.foreman,
 loc.zone
 FROM public.dblarv_insptrt_current trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode

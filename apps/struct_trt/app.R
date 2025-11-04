@@ -7,6 +7,8 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(lubridate)
   library(rlang)
+  library(purrr)  # For map_dfr function
+  library(tibble) # For deframe function
 })
 
 # Source the shared database helper functions
@@ -60,23 +62,26 @@ ui <- fluidPage(
                               "All MMCD" = "mmcd_all"),
                   selected = "facility"),
       
-      checkboxGroupInput("zone_filter", "Zones:",
-                         choices = c("P1" = "1", "P2" = "2"),
-                         selected = c("1", "2")),
+      radioButtons("zone_filter", "Zone Display:",
+                   choices = c("P1 Only" = "1", 
+                              "P2 Only" = "2", 
+                              "P1 and P2 Separate" = "1,2", 
+                              "Combined P1+P2" = "combined"),
+                   selected = "1,2"),
       
       selectInput("structure_type_filter", "Structure Type:",
-                  choices = c("All" = "all", "AP", "CB", "CG", "cv", "CV", "CV/PR", "CV/RR", "DR", "PC", "Pool", "PR", "RG", "RR", "SP", "SS", "US", "W", "wo", "WO", "XX"),
+                  choices = get_structure_type_choices(include_all = TRUE),
                   selected = "all"),
       
       selectInput("priority_filter", "Priority:",
                   choices = c("All" = "all", "BLUE", "GREEN", "RED", "YELLOW"),
                   selected = "all"),
       
-      helpText("This visualization shows structures by facility with three categories:",
+      helpText("This visualization shows structures with layered bars:",
                tags$br(),
                tags$ul(
-                 tags$li(tags$span(style = "color:gray", "Gray: Total structures")),
-                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Green: Structures with active treatments")),
+                 tags$li(tags$span(style = "color:gray", "Faded color: Total structures (background)")),
+                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Solid color: Structures with active treatments")),
                  tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Structures with treatments expiring within the selected days"))
                )),
       
@@ -96,14 +101,14 @@ ui <- fluidPage(
     mainPanel(
       tabsetPanel(
         tabPanel("Current Progress", 
-                 plotOutput("structureGraph", height = "600px")
+                 plotOutput("structureGraph", height = "800px")
         ),
         tabPanel("Historical Trends",
                  fluidRow(
                    column(3,
                           selectInput("start_year", "Start Year:",
                                       choices = seq(2010, 2025),
-                                      selected = 2018)
+                                      selected = 2024)
                    ),
                    column(3,
                           selectInput("end_year", "End Year:",
@@ -120,6 +125,22 @@ ui <- fluidPage(
 
 server <- function(input, output) {
   
+  # Parse zone filter input
+  parsed_zone_filter <- reactive({
+    if (input$zone_filter == "combined") {
+      return(c("1", "2"))  # Include both zones but will be combined
+    } else if (input$zone_filter == "1,2") {
+      return(c("1", "2"))  # Include both zones separately
+    } else {
+      return(input$zone_filter)  # Single zone
+    }
+  })
+  
+  # Flag for whether to combine zones
+  combine_zones <- reactive({
+    input$zone_filter == "combined"
+  })
+  
   current_data <- reactive({
     get_current_structure_data(
       input$custom_today,
@@ -128,7 +149,7 @@ server <- function(input, output) {
       input$structure_type_filter,
       input$priority_filter,
       input$status_types,
-      input$zone_filter
+      parsed_zone_filter()
     )
   })
   
@@ -138,7 +159,7 @@ server <- function(input, output) {
       input$structure_type_filter,
       input$priority_filter,
       input$status_types,
-      input$zone_filter
+      parsed_zone_filter()
     )
   })
   
@@ -150,7 +171,7 @@ server <- function(input, output) {
       input$structure_type_filter,
       input$priority_filter,
       input$status_types,
-      input$zone_filter
+      parsed_zone_filter()
     )
   })
   
@@ -162,7 +183,8 @@ server <- function(input, output) {
       structures,
       treatments,
       input$group_by,
-      input$zone_filter
+      parsed_zone_filter(),
+      combine_zones()
     )
   })
   
@@ -174,7 +196,8 @@ server <- function(input, output) {
       input$group_by,
       input$facility_filter,
       input$status_types,
-      input$zone_filter
+      parsed_zone_filter(),
+      combine_zones()
     )
   })
   
@@ -191,7 +214,8 @@ server <- function(input, output) {
       input$structure_type_filter,
       input$priority_filter,
       input$status_types,
-      input$zone_filter
+      parsed_zone_filter(),
+      combine_zones()
     )
   })
 }

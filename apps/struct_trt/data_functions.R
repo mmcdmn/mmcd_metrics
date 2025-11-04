@@ -16,7 +16,17 @@ get_structure_type_condition <- function(structure_type) {
   if (structure_type == "all") {
     return("")
   } else {
-    return(sprintf("AND loc.s_type = '%s'", structure_type))
+    # Handle case-insensitive matching and combinations like CV/PR
+    if (toupper(structure_type) == "CV") {
+      # Match CV, cv, and CV/PR, cv/pr combinations (case-insensitive)
+      return("AND (UPPER(loc.s_type) = 'CV' OR UPPER(loc.s_type) LIKE 'CV/%' OR UPPER(loc.s_type) LIKE '%/CV')")
+    } else if (toupper(structure_type) == "PR") {
+      # Match PR and PR combinations like CV/PR (case-insensitive)
+      return("AND (UPPER(loc.s_type) = 'PR' OR UPPER(loc.s_type) LIKE 'PR/%' OR UPPER(loc.s_type) LIKE '%/PR')")
+    } else {
+      # For other types, use case-insensitive exact match
+      return(sprintf("AND UPPER(loc.s_type) = UPPER('%s')", structure_type))
+    }
   }
 }
 
@@ -51,7 +61,17 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
   
   # Structure type condition
   if (structure_type_filter != "all") {
-    conditions <- c(conditions, sprintf("AND s_type = '%s'", structure_type_filter))
+    # Handle case-insensitive matching and combinations like CV/PR
+    if (toupper(structure_type_filter) == "CV") {
+      # Match CV, cv, and CV/PR, cv/pr combinations (case-insensitive)
+      conditions <- c(conditions, "AND (UPPER(s_type) = 'CV' OR UPPER(s_type) LIKE 'CV/%' OR UPPER(s_type) LIKE '%/CV')")
+    } else if (toupper(structure_type_filter) == "PR") {
+      # Match PR and PR combinations like CV/PR (case-insensitive)
+      conditions <- c(conditions, "AND (UPPER(s_type) = 'PR' OR UPPER(s_type) LIKE 'PR/%' OR UPPER(s_type) LIKE '%/PR')")
+    } else {
+      # For other types, use case-insensitive exact match
+      conditions <- c(conditions, sprintf("AND UPPER(s_type) = UPPER('%s')", structure_type_filter))
+    }
   }
   
   # Priority condition
@@ -82,7 +102,7 @@ SELECT
   trt.inspdate,
   trt.facility,
   loc.foreman,
-  COALESCE(mat.effect_days, 0) AS effect_days,
+  COALESCE(mat.effect_days, 30) AS effect_days,
   loc.s_type,
   loc.priority,
   loc.status_udw as status,
@@ -107,7 +127,7 @@ WHERE trt.list_type = 'STR'
     # Get total structures count
     query_total <- sprintf(
       "
-SELECT COUNT(DISTINCT sitecode) AS total_structures
+SELECT COUNT(DISTINCT sitecode)::bigint AS total_structures
 FROM loc_cxstruct
 WHERE 1=1
 AND (enddate IS NULL OR enddate > CURRENT_DATE)
@@ -166,10 +186,11 @@ get_historical_structure_data <- function(start_year = 2023, end_year = 2025, fa
 SELECT
 trt.sitecode,
 trt.inspdate,
-COALESCE(mat.effect_days, 0) AS effect_days,
+COALESCE(mat.effect_days, 30) AS effect_days,
 loc.s_type,
 loc.priority,
 loc.facility,
+loc.foreman,
 loc.zone
 FROM public.dblarv_insptrt_archive trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
@@ -200,10 +221,11 @@ AND trt.list_type = 'STR'
 SELECT
 trt.sitecode,
 trt.inspdate,
-COALESCE(mat.effect_days, 0) AS effect_days,
+COALESCE(mat.effect_days, 30) AS effect_days,
 loc.s_type,
 loc.priority,
 loc.facility,
+loc.foreman,
 loc.zone
 FROM public.dblarv_insptrt_current trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
@@ -304,7 +326,7 @@ WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 }
 
 # Function to process and aggregate structure data by group
-aggregate_structure_data <- function(structures, treatments, group_by = "facility", zone_filter = c("1", "2")) {
+aggregate_structure_data <- function(structures, treatments, group_by = "facility", zone_filter = c("1", "2"), combine_zones = FALSE) {
   if (nrow(structures) == 0) {
     return(data.frame())
   }
@@ -326,7 +348,8 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   }
   
   # Create combined group for zone display
-  if (length(zone_filter) > 1) {
+  if (length(zone_filter) > 1 && !combine_zones) {
+    # Show zones separately (e.g., "North (P1)", "North (P2)")
     structures$combined_group <- paste0(structures[[group_col]], " (P", structures$zone, ")")
     if (nrow(treatments) > 0) {
       treatments$combined_group <- paste0(treatments[[group_col]], " (P", treatments$zone, ")")
@@ -334,12 +357,13 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   }
   
   # Count total structures by group
-  if (length(zone_filter) > 1) {
+  if (length(zone_filter) > 1 && !combine_zones) {
+    # Separate zones - group by combined_group
     total_structures <- structures %>%
       group_by(combined_group) %>%
       summarize(total_structures = n(), .groups = 'drop')
   } else {
-    # For single zone, preserve additional info for later use
+    # For single zone OR combined zones, group by main column
     if (group_col == "facility") {
       total_structures <- structures %>%
         group_by(!!sym(group_col)) %>%
@@ -364,7 +388,8 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   
   # Count active structures by group
   if (nrow(treatments) > 0) {
-    if (length(zone_filter) > 1) {
+    if (length(zone_filter) > 1 && !combine_zones) {
+      # Separate zones
       active_structures <- treatments %>%
         filter(is_active == TRUE) %>%
         distinct(sitecode, combined_group) %>%
@@ -377,6 +402,7 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
         group_by(combined_group) %>%
         summarize(expiring_structures = n(), .groups = 'drop')
     } else {
+      # Single zone OR combined zones
       active_structures <- treatments %>%
         filter(is_active == TRUE) %>%
         distinct(sitecode, !!sym(group_col)) %>%
@@ -395,7 +421,8 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   }
   
   # Combine all counts
-  if (length(zone_filter) > 1) {
+  if (length(zone_filter) > 1 && !combine_zones) {
+    # Separate zones - use combined_group
     combined_data <- total_structures %>%
       left_join(active_structures, by = "combined_group") %>%
       left_join(expiring_structures, by = "combined_group") %>%
@@ -422,6 +449,25 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
           return(paste0(shortname, zone_part))
         } else {
           return(paste0("FOS #", emp_num, zone_part))
+        }
+      })
+    } else if (group_col == "facility") {
+      # For facility, map short names to full names with zones
+      facilities <- get_facility_lookup()
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      
+      combined_data$display_name <- sapply(combined_data$combined_group, function(cg) {
+        # Extract facility and zone from combined_group like "Sr (P2)"
+        parts <- strsplit(cg, " \\(P")[[1]]
+        facility_short <- parts[1]
+        zone_part <- if(length(parts) > 1) paste0(" (P", parts[2]) else ""
+        
+        # Map facility name
+        if (facility_short %in% names(facility_map)) {
+          facility_long <- facility_map[facility_short]
+          return(paste0(facility_long, zone_part))
+        } else {
+          return(cg)  # fallback to original if no mapping found
         }
       })
     } else {

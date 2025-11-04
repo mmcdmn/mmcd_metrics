@@ -33,7 +33,7 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
 
 ## Architecture
 
-This platform hosts multiple R Shiny applications in an organized, scalable structure with a centralized helper module:
+This platform hosts multiple R Shiny applications in an organized, scalable structure with a **modular architecture** and centralized helper module:
 
 ```
 mmcd_metrics/
@@ -47,26 +47,41 @@ mmcd_metrics/
 │   ├── index.html                # Main landing page
 │   ├── mosquito-monitoring/      # CO2 trap surveillance data
 │   │   └── app.R
-│   ├── suco_history/             # SUCO surveillance analysis  
-│   │   └── app.R
-│   ├── drone/                    # Comprehensive drone treatment (progress + history + site averages)
-│   │   ├── app.R
-│   │   ├── historical_functions.R
-│   │   └── site_average_functions.R
-│   ├── struct_trt/               # Structure treatment (progress + history)
-│   │   └── app.R
-│   ├── cattail/                  # Comprehensive cattail management (inspection + planning)
-│   │   ├── app.R
-│   │   └── planned_treatment_functions.R
-│   ├── red_air/                  # Air site status and rainfall analysis
-│   │   └── app.R
-│   ├── ground_prehatch_progress/ # Ground prehatch treatment progress
+│   ├── suco_history/             # SUCO surveillance analysis (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing and database queries
+│   │   ├── display_functions.R   # Visualization and chart generation
+│   │   └── ui_helpers.R          # UI component functions
+│   ├── drone/                    # Comprehensive drone treatment (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── historical_functions.R  # Historical data analysis functions
+│   │   └── site_average_functions.R # Site-level average calculations
+│   ├── struct_trt/               # Structure treatment (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing functions
+│   │   └── display_functions.R   # Visualization functions
+│   ├── ground_prehatch_progress/ # Ground prehatch treatment (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing functions
+│   │   └── display_functions.R   # Visualization functions
+│   ├── cattail/                  # Comprehensive cattail management (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   └── planned_treatment_functions.R # Treatment planning functions
+│   ├── red_air/                  # Air site status and rainfall analysis (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── air_status_functions.R # Air site status processing
+│   │   └── flow_testing_functions.R # Flow testing and validation
+│   ├── mosquito_surveillance_map/ # Mosquito surveillance mapping
 │   │   └── app.R
 │   ├── test-app/                 # Test application 
 │   │   └── app.R
-│   └── control_efficacy/         # Air treatment checkback efficacy
+│   ├── control_efficacy/         # Air treatment checkback efficacy
+│   │   └── app.R
+│   └── treatment-analysis/       # Treatment analysis dashboard
 │       └── app.R
 ```
+
+
 
 
 ## Applications
@@ -84,20 +99,31 @@ mmcd_metrics/
 ### SUCO History
 - **Path**: `/suco_history/`
 - **Purpose**: Surveillance Count (SUCO) historical analysis dashboard
+- **Modular Structure**:
+  - **`app.R`**: Main UI and server logic with tabbed interface
+  - **`data_functions.R`**: Database queries, species mapping, spatial data processing, and top locations analysis
+  - **`display_functions.R`**: Interactive maps with leaflet, trend charts, and plotly visualizations
+  - **`ui_helpers.R`**: UI component functions and interface helpers
 - **Features**:
-  - Interactive maps with leaflet
-  - Facility and foreman filtering
-  - Temporal trend analysis (weekly/monthly)
-  - Top locations identification
-  - Spatial data visualization
+  - Interactive maps with leaflet and custom marker sizing
+  - Facility and foreman filtering with consistent colors from `db_helpers.R`
+  - Temporal trend analysis (weekly/monthly with epidemiological weeks)
+  - Top locations identification with species-based analysis
+  - Spatial data visualization with P1/P2 zone support
+  - Species filtering and detailed popup information
+  - Comprehensive tooltip customization and stacked bar charts
 
 ### Drone Treatment
 - **Path**: `/drone/`
 - **Purpose**: Comprehensive drone treatment tracking with real-time progress and historical analysis
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with multi-tab interface
+  - **`historical_functions.R`**: Historical trend analysis and data processing functions
+  - **`site_average_functions.R`**: Site-level average calculations and statistical analysis
 - **Features**:
   - **Progress Tab**: Real-time tracking of drone-based treatment operations
-  - **Historical Tab**: Historical trend analysis with percentage and count views
-  - **Site Average Tab**: Site-level average calculations and trend analysis
+  - **Historical Tab**: Historical trend analysis with percentage and count views (powered by `historical_functions.R`)
+  - **Site Average Tab**: Site-level average calculations and trend analysis (powered by `site_average_functions.R`)
   - Active treatment area monitoring and coverage analysis
   - P1/P2 zone filtering with alpha transparency
   - Multiple display metrics (sites, treatments, acres)
@@ -109,38 +135,61 @@ mmcd_metrics/
 ### Structural Treatment
 - **Path**: `/struct_trt/`
 - **Purpose**: Comprehensive structural treatment tracking with current progress and historical analysis
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with dual-tab interface
+  - **`data_functions.R`**: Database queries, treatment calculations, and data processing
+  - **`display_functions.R`**: Chart generation, progress visualizations, and historical analysis displays
 - **Features**:
-  - **Progress Tab**: Monitor current structural treatment activities
-  - **History Tab**: Historical analysis of structure treatment activities
+  - **Progress Tab**: Monitor current structural treatment activities (powered by `data_functions.R`)
+  - **History Tab**: Historical analysis of structure treatment activities (powered by `display_functions.R`)
   - Proportion of structures under treatment tracking
   - Customizable treatment duration settings and real-time calculations
   - Historical time series and breakdowns by facility, type, and priority
   - Date simulation ("pretend today is") functionality
   - Snapshot and priority breakdowns for comprehensive analysis
 
-### Cattail Management
+### Cattail 
 - **Path**: `/cattail/`
-- **Purpose**: Comprehensive cattail management dashboard with inspection tracking and treatment planning
+- **Purpose**: Comprehensive cattail  dashboard with inspection tracking and treatment planning
 - **Features**:
   - **Inspection Progress Tab**: Track completed cattail inspections versus annual goals
   - **Treatment Planning Tab**: Planning and tracking dashboard for cattail treatments
   - Real-time inspection status monitoring and progress metrics
   - Facility-level inspection performance analysis
   - Planned treatment area visualization and resource allocation
-  - Schedule and resource allocation tracking for targeted cattail habitat management
+  - Schedule and resource allocation tracking for targeted cattail habitat 
   - Centralized color system for consistent status visualization
   - Modular external function files for treatment planning functionality
+
+### Ground Prehatch Progress
+- **Path**: `/ground_prehatch_progress/`
+- **Purpose**: Track and analyze ground prehatch treatment progress and performance
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with dashboard interface
+  - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
+  - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
+- **Features**:
+  - Real-time progress tracking of ground prehatch treatments
+  - Performance metrics and completion rate analysis (powered by `data_functions.R`)
+  - Interactive visualizations and progress charts (powered by `display_functions.R`)
+  - Facility-level performance comparisons
+  - Treatment timeline analysis and goal tracking
+  - Consistent color schemes from centralized `db_helpers.R`
 
 ### Red Air Pipeline
 - **Path**: `/red_air/`
 - **Purpose**: Monitor air site status, rainfall impact, and treatment pipeline
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with interactive dashboard
+  - **`air_status_functions.R`**: Air site status processing and lifecycle management
+  - **`flow_testing_functions.R`**: Flow testing, validation tools, and pipeline analysis
 - **Features**:
-  - Interactive map showing site status with color-coded dots
+  - Interactive map showing site status with color-coded dots (powered by `air_status_functions.R`)
   - Rainfall tracking and analysis
-  - Treatment lifecycle management (Needs Inspection → Under Threshold → Needs Treatment → Active Treatment)
+  - Treatment lifecycle management: Needs Inspection → Under Threshold → Needs Treatment → Active Treatment
   - Real-time status summary chart
   - Detailed site information table
-  - Flow testing and validation tools
+  - Flow testing and validation tools (powered by `flow_testing_functions.R`)
   - **Uses centralized colors from `db_helpers.R`**: Changing colors in db_helpers automatically updates the map, chart, and table
 
 ### Test Application
@@ -362,24 +411,32 @@ Replace `your-server.com` with your actual server address:
 mkdir -p $MMCD_WORKSPACE/apps/your-new-app
 ```
 
-### Step 2: Create app.R File
-Create `$MMCD_WORKSPACE/apps/your-new-app/app.R` and source the centralized helpers:
+### Step 2: Create Modular App Structure
 
+
+```bash
+# Create the application directory structure
+mkdir -p $MMCD_WORKSPACE/apps/your-new-app
+cd $MMCD_WORKSPACE/apps/your-new-app
+```
+
+#### Create `app.R` (Main Application File)
 ```r
-# At the top of your app.R file
+# Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
   library(shinydashboard)
-  # ... other libraries
+  library(DBI)
+  library(dplyr)
+  # ... other libraries as needed
 })
 
 # Source the shared database helper functions
-suppressWarnings({
-  source("../../shared/db_helpers.R")
-})
+source("../../shared/db_helpers.R")
 
-# In your server function, access shared utilities:
+
 server <- function(input, output, session) {
+
   # Get centralized colors
   source_colors <- get_status_colors()
   shiny_colors <- get_shiny_colors()
@@ -388,8 +445,7 @@ server <- function(input, output, session) {
   # Get facility choices
   facilities <- get_facility_choices(include_all = TRUE)
   
-  # ... rest of your app code
-}
+
 ```
 
 ### Step 3: Update Landing Page
@@ -403,17 +459,19 @@ Add your new application to `$MMCD_WORKSPACE/apps/index.html`:
 </div>
 ```
 
+
 ### Step 4: Deploy to Shiny Server
 ```bash
-# Copy to Shiny Server
+# Copy the entire application directory to Shiny Server
 sudo cp -r $MMCD_WORKSPACE/apps/your-new-app /srv/shiny-server/
 sudo chown -R shiny:shiny /srv/shiny-server/your-new-app
 
 # IMPORTANT: Always copy updated index.html after making changes
 sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 
-# Restart Shiny Server
+# Restart Shiny Server to ensure new applications are loaded
 sudo systemctl restart shiny-server
+
 ```
 
 ### Environment Variables Setup

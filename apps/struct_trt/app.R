@@ -149,7 +149,8 @@ server <- function(input, output) {
       input$facility_filter,
       input$structure_type_filter,
       input$priority_filter,
-      input$status_types
+      input$status_types,
+      input$zone_filter
     )
   })
   

@@ -12,9 +12,9 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types)
     return(NULL)
   }
   
-  # Get archive data
+  # Get archive data with recorded treated acres
   archive_query <- sprintf("
-    SELECT facility, sitecode, inspdate, action
+    SELECT facility, sitecode, inspdate, action, matcode, amts as amount, acres as treated_acres
     FROM public.dblarv_insptrt_archive
     WHERE action = 'D'
     AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
@@ -22,9 +22,9 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types)
   
   archive_data <- dbGetQuery(con, archive_query)
   
-  # Get current data  
+  # Get current data with recorded treated acres
   current_query <- sprintf("
-    SELECT facility, sitecode, inspdate, action, airgrnd_plan
+    SELECT facility, sitecode, inspdate, action, airgrnd_plan, matcode, amts as amount, acres as treated_acres
     FROM public.dblarv_insptrt_current
     WHERE (airgrnd_plan = 'D' OR action = 'D')
     AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
@@ -189,10 +189,10 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
       group_by(!!group_var, year) %>%
       summarize(count = n(), .groups = "drop")
   } else if (hist_display_metric == "acres") {
-    # Sum acres treated
+    # Sum acres treated (using treated_acres from treatment records)
     results <- all_data %>%
       group_by(!!group_var, year) %>%
-      summarize(count = sum(acres, na.rm = TRUE), .groups = "drop")
+      summarize(count = sum(treated_acres, na.rm = TRUE), .groups = "drop")
   } else {
     # Count unique sites (default for "sites")
     results <- all_data %>%
@@ -456,10 +456,26 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
 
   if (hist_show_percentages) {
     # Show as percentages
+    # First, filter out any groups that have NO data across ALL years
+    groups_with_data <- data %>%
+      group_by(!!sym(fill_var)) %>%
+      summarise(total_count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+      filter(total_count > 0) %>%
+      pull(!!sym(fill_var))
+    
+    # Keep only groups with data, but keep ALL years for those groups
     data <- data %>%
+      filter(!!sym(fill_var) %in% groups_with_data) %>%
       group_by(year) %>%
-      mutate(percentage = ifelse(sum(count) == 0, 0, round(count / sum(count) * 100, 1))) %>%
-      ungroup()
+      mutate(
+        year_total = sum(count, na.rm = TRUE),
+        percentage = case_when(
+          year_total == 0 ~ 0,  # If no data for the year, set to 0
+          TRUE ~ round(count / year_total * 100, 1)
+        )
+      ) %>%
+      ungroup() %>%
+      select(-year_total)
     
     # Build ggplot with optional alpha mapping
     if (show_zones_separately && !is.null(alpha_values)) {

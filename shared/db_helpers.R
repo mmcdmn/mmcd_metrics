@@ -200,6 +200,55 @@ get_priority_choices <- function(include_all = TRUE) {
   return(choices)
 }
 
+# Structure type lookup from database
+get_structure_type_choices <- function(include_all = TRUE) {
+  con <- get_db_connection()
+  if (is.null(con)) {
+    # Fallback to hardcoded values if database connection fails
+    choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                 "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                 "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+  } else {
+    tryCatch({
+      # Get structure types from lookup table
+      structure_types <- dbGetQuery(con, "
+        SELECT DISTINCT 
+          code,
+          definition
+        FROM public.lookup_cx_stype
+        ORDER BY code ASC
+      ")
+      
+      dbDisconnect(con)
+      
+      if (nrow(structure_types) > 0) {
+        # Create named vector with full names as labels and codes as values
+        choices <- setNames(structure_types$code, 
+                           paste0(structure_types$definition, " (", structure_types$code, ")"))
+      } else {
+        # Fallback if no data returned
+        choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                     "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                     "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+      }
+      
+    }, error = function(e) {
+      warning(paste("Error loading structure types:", e$message))
+      if (!is.null(con)) dbDisconnect(con)
+      # Fallback to hardcoded values
+      choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                   "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                   "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+    })
+  }
+  
+  if (include_all) {
+    choices <- c("All Types" = "all", choices)
+  }
+  
+  return(choices)
+}
+
 # Material type lookup
 get_material_types <- function() {
   con <- get_db_connection()

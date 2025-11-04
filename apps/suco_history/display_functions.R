@@ -403,7 +403,7 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     "All Foremen"
   } else {
     display_names <- sapply(input$foreman_filter, function(f) foreman_names[f] %||% f)
-    paste("Foreman:", paste(display_names, collapse=", "))
+    paste("FOS:", paste(display_names, collapse=", "))
   }
   
   # Zone filter text
@@ -561,7 +561,7 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
                        y = avg_sucos_per_week + max_height * 0.05, 
                        label = paste("Avg:", round(avg_sucos_per_week, 1), "SUCOs/week"), 
                        color = "red", 
-                       size = 3.5, 
+                       size = 4.5, 
                        hjust = 1,
                        fontface = "bold")
     }
@@ -572,11 +572,18 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     subtitle_text <- paste(subtitle_text, "(Current Data Only)")
   }
   
+  # Create y-axis label based on species filter
+  y_axis_label <- if (!is.null(input$species_filter) && input$species_filter != "All") {
+    paste0("Number of SUCOs with ", input$species_filter)
+  } else {
+    "Number of SUCOs"
+  }
+  
   p <- p + labs(
     title = paste(title_interval, "SUCO Counts by", ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)),
     subtitle = subtitle_text,
-    x = "Week Starting",
-    y = "Number of SUCOs",
+    x = "Epi Week",
+    y = y_axis_label,
     fill = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group),
     color = ifelse(input$group_by == "mmcd_all", "MMCD (All)", title_group)
   ) +
@@ -587,14 +594,40 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
       axis.title = element_text(face = "bold", size = 14),
       axis.text = element_text(face = "bold", size = 13),
       axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(face = "bold", size = 14),
+      axis.title.y = element_text(size = 15, face = "bold"),
       legend.position = "bottom",
       legend.title = element_text(face = "bold", size = 14),
       legend.text = element_text(size = 14, face = "bold")
     )
-  # Use weekly scale
+  
+  # Identify year boundaries for vertical separator lines
+  year_boundaries <- data %>%
+    mutate(year = epiyear(time_group)) %>%
+    group_by(year) %>%
+    summarize(min_time = min(time_group), max_time = max(time_group), .groups = "drop") %>%
+    arrange(year)
+  
+  # Add vertical lines at year boundaries (except the first one)
+  if (nrow(year_boundaries) > 1) {
+    for (i in 2:nrow(year_boundaries)) {
+      p <- p + geom_vline(xintercept = as.numeric(year_boundaries$min_time[i]), 
+                         color = "gray60", 
+                         linetype = "solid", 
+                         size = 1.5, 
+                         alpha = 0.7)
+    }
+  }
+  
+  # Use epi week scale instead of traditional date labels
+  # Create a mapping of time_group to epi_week_label for x-axis
+  epi_labels <- data %>%
+    distinct(time_group, epi_week_label) %>%
+    arrange(time_group)
+  
   p <- p + scale_x_date(
-    date_breaks = "2 weeks",
-    date_labels = "%m/%d",
+    breaks = epi_labels$time_group,
+    labels = epi_labels$epi_week_label,
     limits = c(min(data$time_group), max(data$time_group))
   )
   return(p)

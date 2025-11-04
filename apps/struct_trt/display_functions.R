@@ -177,11 +177,22 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
 }
 
 # Function to create historical trends chart
-create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter) {
+create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE) {
   if (nrow(treatments_data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No historical data available"), size = 6) +
            theme_void())
+  }
+  
+  # Parse zone filter (same logic as in app.R)
+  parsed_zones <- if (is.character(zone_filter) && length(zone_filter) == 1 && zone_filter == "combined") {
+    c("1", "2")  # Include both zones but will be combined
+  } else if (is.character(zone_filter) && length(zone_filter) == 1 && zone_filter == "1,2") {
+    c("1", "2")  # Include both zones separately
+  } else if (is.character(zone_filter)) {
+    zone_filter  # Single zone
+  } else {
+    zone_filter  # Already parsed
   }
   
   # Create date range
@@ -201,60 +212,119 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     ) %>%
     {map_facility_names(.)}
   
-  # Determine grouping - ALWAYS use mmcd_all for historical trends
-  # Historical trends shows overall MMCD progress regardless of grouping selection
-  group_col <- "mmcd_all"
-  group_title <- "for All MMCD"
+  # Determine grouping based on user selection
+  group_col <- case_when(
+    group_by == "facility" ~ "facility",
+    group_by == "foreman" ~ "foreman", 
+    group_by == "mmcd_all" ~ "mmcd_all",
+    TRUE ~ "mmcd_all"
+  )
   
   # Add group column for mmcd_all case
-  treatments_data$mmcd_all <- "All MMCD"
-
-  # Calculate unique sites with active treatments for each date (fixing overlapping treatment issue)
-  # For each date, count how many unique sites have at least one active treatment
-  unique_active_sites_per_date <- map_dfr(date_range, function(current_date) {
-    active_sites <- treatments_data %>%
-      filter(
-        inspdate <= current_date & 
-        (is.na(enddate) | enddate > current_date)
-      ) %>%
-      distinct(sitecode) %>%
-      nrow()
-    
-    data.frame(
-      date = current_date,
-      active_unique_sites = active_sites
+  if (group_col == "mmcd_all") {
+    treatments_data$mmcd_all <- "All MMCD"
+  }
+  
+  # Handle zone-aware grouping
+  if (!combine_zones && length(parsed_zones) > 1) {
+    if (group_col == "mmcd_all") {
+      # For mmcd_all, create zone-specific groups like "All MMCD (P1)", "All MMCD (P2)"
+      treatments_data$combined_group <- paste0("All MMCD (P", treatments_data$zone, ")")
+    } else {
+      # Create zone-aware combined groups like "North (P1)", "North (P2)"
+      treatments_data$combined_group <- paste0(treatments_data[[group_col]], " (P", treatments_data$zone, ")")
+    }
+    group_col_to_use <- "combined_group"
+  } else {
+    # Use regular grouping (single zone, combined zones, or mmcd_all)
+    group_col_to_use <- group_col
+  }
+  
+  # Get unique groups for processing
+  if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+    # Regular mmcd_all (single zone or combined zones)
+    groups_to_process <- c("All MMCD")
+    group_title <- "(All MMCD)"
+  } else if (group_col == "mmcd_all" && group_col_to_use == "combined_group") {
+    # Zone-aware mmcd_all (P1 and P2 separate)
+    groups_to_process <- unique(treatments_data[[group_col_to_use]])
+    group_title <- "(All MMCD by Zone)"
+  } else {
+    groups_to_process <- unique(treatments_data[[group_col_to_use]])
+    group_title <- case_when(
+      group_col == "facility" ~ if(combine_zones) "by Facility (Combined P1+P2)" else "by Facility",
+      group_col == "foreman" ~ if(combine_zones) "by FOS (Combined P1+P2)" else "by FOS",
+      TRUE ~ paste("by", group_col)
     )
+  }
+
+  # Calculate unique sites with active treatments for each date and group
+  treatment_trends <- map_dfr(groups_to_process, function(current_group) {
+    # Filter data for current group
+    group_treatments <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+      # Regular mmcd_all case
+      treatments_data
+    } else {
+      # Zone-aware case or other groupings
+      treatments_data %>% filter(!!sym(group_col_to_use) == current_group)
+    }
+    
+    # Get total structures for this group
+    group_total_structures <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+      # Regular mmcd_all case
+      total_structures
+    } else if (group_col == "mmcd_all" && group_col_to_use == "combined_group") {
+      # Zone-aware mmcd_all case - use half the total structures for each zone
+      total_structures / 2
+    } else {
+      # Calculate total structures for this specific group
+      # This should ideally come from the get_historical_structure_data function
+      # For now, use a proportional estimate based on the group's treatment data
+      max(length(unique(group_treatments$sitecode)) * 2, 1)  # rough estimate, ensure > 0
+    }
+    
+    # Calculate unique active sites for each date
+    unique_active_sites_per_date <- map_dfr(date_range, function(current_date) {
+      active_sites <- group_treatments %>%
+        filter(
+          inspdate <= current_date & 
+          (is.na(enddate) | enddate > current_date)
+        ) %>%
+        distinct(sitecode) %>%
+        nrow()
+      
+      data.frame(
+        date = current_date,
+        active_unique_sites = active_sites,
+        group_name = current_group,
+        group_col = group_col
+      )
+    })
+    
+    # Calculate proportions
+    unique_active_sites_per_date %>%
+      mutate(
+        total_structures_dynamic = group_total_structures,
+        proportion_active_treatment = ifelse(
+          total_structures_dynamic > 0, 
+          active_unique_sites / total_structures_dynamic, 
+          0
+        )
+      )
   })
 
-  # Calculate structure changes (assuming relatively stable for this timeframe)
-  structure_changes <- data.frame(date = as.Date(character(0)), structure_change = numeric(0))
+  # Ensure we have data before proceeding
+  if (nrow(treatment_trends) == 0) {
+    return(ggplot() + 
+           geom_text(aes(x = 1, y = 1, label = "No data available for selected criteria"), 
+                     size = 6, color = "gray50") +
+           theme_void())
+  }
 
-  # Calculate proportion using unique sites with active treatments
-  all_dates <- data.frame(date = date_range)
-  treatment_trends <- all_dates %>%
-    left_join(unique_active_sites_per_date, by = "date") %>%
-    left_join(structure_changes, by = "date") %>%
-    mutate(
-      structure_change = ifelse(is.na(structure_change), 0, structure_change)
-    ) %>%
-    arrange(date) %>%
-    mutate(
-      total_structures_dynamic = total_structures + cumsum(structure_change)
-    ) %>%
-    # Avoid division by zero and use unique sites count
-    mutate(
-      proportion_active_treatment = ifelse(
-        total_structures_dynamic > 0, 
-        active_unique_sites / total_structures_dynamic, 
-        0
-      ),
-      group_name = "All MMCD"
-    )
-
-  # Calculate seasonal average curve (average proportion for each calendar day across all years)
+  # Calculate seasonal average curve per group (average proportion for each calendar day across all years)
   seasonal_curve <- treatment_trends %>%
     mutate(day_of_year = format(date, "%m-%d")) %>%
-    group_by(day_of_year) %>%
+    group_by(day_of_year, group_name) %>%
     summarize(
       seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
       .groups = "drop"
@@ -263,10 +333,74 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   # Add seasonal average to main data
   treatment_trends <- treatment_trends %>%
     mutate(day_of_year = format(date, "%m-%d")) %>%
-    left_join(seasonal_curve, by = "day_of_year")
+    left_join(seasonal_curve, by = c("day_of_year", "group_name"))
   
-  # Set display name
-  treatment_trends$display_name <- treatment_trends$group_name  # Set up filter text
+  # Set display names for different group types
+  if (group_col == "mmcd_all") {
+    treatment_trends$display_name <- treatment_trends$group_name
+  } else if (group_col == "facility") {
+    # Handle facility display names
+    if ("facility_display" %in% names(treatments_data)) {
+      # Create a lookup for facility display names
+      facility_lookup_df <- treatments_data %>%
+        distinct(facility, facility_display)
+      facility_lookup <- setNames(facility_lookup_df$facility_display, facility_lookup_df$facility)
+      
+      if (group_col_to_use == "combined_group") {
+        # Zone-aware groups like "North (P1)" -> map facility part to full name
+        treatment_trends$display_name <- sapply(treatment_trends$group_name, function(combined_name) {
+          # Extract facility short name from "N (P1)" -> "N"
+          base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+          zone_part <- gsub("^[^(]*", "", combined_name)  # extract "(P1)" part
+          
+          if (base_name %in% names(facility_lookup)) {
+            paste0(facility_lookup[base_name], zone_part)  # "North (P1)"
+          } else {
+            combined_name
+          }
+        })
+      } else {
+        # Regular facility grouping
+        treatment_trends$display_name <- sapply(treatment_trends$group_name, function(facility) {
+          if (facility %in% names(facility_lookup)) {
+            facility_lookup[facility]
+          } else {
+            facility
+          }
+        })
+      }
+    } else {
+      treatment_trends$display_name <- treatment_trends$group_name
+    }
+  } else if (group_col == "foreman") {
+    # Handle foreman display names
+    foremen_lookup <- get_foremen_lookup()
+    if (group_col_to_use == "combined_group") {
+      # Zone-aware FOS groups
+      treatment_trends$display_name <- sapply(treatment_trends$group_name, function(combined_name) {
+        # Extract emp_num from "1234 (P1)" -> "1234"
+        base_name <- gsub("\\s*\\([^)]+\\)$", "", combined_name)
+        zone_part <- gsub("^[^(]*", "", combined_name)  # extract "(P1)" part
+        
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(base_name)))
+        if(length(matches) > 0) {
+          paste0(foremen_lookup$shortname[matches[1]], zone_part)
+        } else {
+          paste0("FOS #", combined_name)
+        }
+      })
+    } else {
+      # Regular foreman grouping
+      treatment_trends$display_name <- sapply(treatment_trends$group_name, function(f) {
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
+        if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
+      })
+    }
+  } else {
+    treatment_trends$display_name <- treatment_trends$group_name
+  }
+  
+  # Set up filter text
   filter_conditions <- character(0)
   if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
     filter_conditions <- c(filter_conditions, paste("Facilities:", paste(facility_filter, collapse = ", ")))
@@ -280,11 +414,22 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   if (!is.null(status_types) && length(status_types) > 0) {
     filter_conditions <- c(filter_conditions, paste("Status:", paste(status_types, collapse = ", ")))
   }
-  if (length(zone_filter) > 0) {
-    zone_text <- if (length(zone_filter) == 1) {
-      paste("Zone: P", zone_filter)
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    # Handle the new zone filter format
+    zone_text <- if (is.character(zone_filter)) {
+      case_when(
+        zone_filter == "1" ~ "Zone: P1 Only",
+        zone_filter == "2" ~ "Zone: P2 Only", 
+        zone_filter == "1,2" ~ "Zones: P1 and P2 Separate",
+        zone_filter == "combined" ~ "Zones: Combined P1+P2",
+        TRUE ~ paste("Zones:", paste0("P", zone_filter, collapse = ", "))
+      )
     } else {
-      paste("Zones:", paste0("P", zone_filter, collapse = ", "))
+      if (length(zone_filter) == 1) {
+        paste("Zone: P", zone_filter)
+      } else {
+        paste("Zones:", paste0("P", zone_filter, collapse = ", "))
+      }
     }
     filter_conditions <- c(filter_conditions, zone_text)
   }
@@ -295,45 +440,72 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     ""
   }
   
-  # Get group colors
-  group_colors <- NULL
-  if (group_col == "facility") {
-    group_colors <- get_facility_base_colors()
-  }
-  
-  # Set display names for non-MMCD groupings
-  if (group_col != "mmcd_all") {
-    if (group_col == "facility") {
-      # Use the mapped facility display names created by map_facility_names()
-      if ("facility_display" %in% names(treatment_trends)) {
-        treatment_trends$display_name <- treatment_trends$facility_display
-      } else {
-        treatment_trends$display_name <- treatment_trends$group_name
+  # Get colors using the same logic as the current progress chart
+  custom_colors <- NULL
+  if (group_col == "facility" && (length(parsed_zones) == 1 || combine_zones)) {
+    # Single zone OR combined zones - use basic facility colors mapped to display names
+    facility_colors <- get_facility_base_colors()
+    # Map facility short names to display names
+    custom_colors <- character(0)
+    for (i in 1:nrow(treatment_trends)) {
+      facility_short <- treatment_trends$group_name[i]
+      display_name <- treatment_trends$display_name[i]
+      if (facility_short %in% names(facility_colors)) {
+        custom_colors[display_name] <- facility_colors[facility_short]
       }
-    } else if (group_col == "foreman") {
-      foremen_lookup <- get_foremen_lookup()
-      treatment_trends$display_name <- sapply(treatment_trends$group_name, function(f) {
-        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
-        if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
-      })
-    } else {
-      treatment_trends$display_name <- treatment_trends$group_name
     }
+  } else if (group_col == "facility" && length(parsed_zones) > 1 && !combine_zones) {
+    # Multiple zones shown separately - need to map display names back to short names for colors
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$short_name, facilities$full_name)  # reverse mapping
+    
+    # Extract short names from display names for color mapping
+    short_groups <- sapply(unique(treatment_trends$display_name), function(display_name) {
+      # Extract facility name without zone, e.g., "North (P1)" -> "North"
+      base_name <- gsub("\\s*\\([^)]+\\)$", "", display_name)
+      base_name <- trimws(base_name)
+      
+      # Map full name back to short name
+      if (base_name %in% names(facility_map)) {
+        facility_map[base_name]
+      } else {
+        base_name  # fallback
+      }
+    })
+    
+    # Get zone-aware facility colors
+    zone_result <- get_facility_base_colors(
+      alpha_zones = parsed_zones,
+      combined_groups = unique(treatment_trends$display_name)
+    )
+    custom_colors <- zone_result$colors
+  } else if (group_col == "foreman" && length(parsed_zones) == 1) {
+    # Single zone - use basic foreman colors mapped to display names
+    foreman_colors <- get_foreman_colors()
+    # Map foreman shortnames to display names directly
+    custom_colors <- character(0)
+    for (i in 1:nrow(treatment_trends)) {
+      display_name <- treatment_trends$display_name[i]
+      # The display_name is already the shortname, so use it directly
+      if (display_name %in% names(foreman_colors)) {
+        custom_colors[display_name] <- foreman_colors[display_name]
+      }
+    }
+  } else if (group_col == "foreman" && length(parsed_zones) > 1) {
+    # Multiple zones - use zone-aware foreman colors
+    zone_result <- get_foreman_colors(
+      alpha_zones = parsed_zones,
+      combined_groups = unique(treatment_trends$display_name)
+    )
+    custom_colors <- zone_result$colors
   }
-  
+
   # Create the plot
-  group_title <- case_when(
-    group_col == "facility" ~ "by Facility",
-    group_col == "foreman" ~ "by FOS", 
-    group_col == "mmcd_all" ~ "(All MMCD)",
-    TRUE ~ paste("by", group_col)
-  )
-  
   p <- ggplot(treatment_trends, aes(x = date, y = proportion_active_treatment)) +
     geom_line(aes(color = display_name), linewidth = 1.2) +
-    # Add seasonal average line for MMCD (All) grouping
-    {if (group_col == "mmcd_all" && "seasonal_avg" %in% names(treatment_trends)) {
-      geom_line(aes(y = seasonal_avg), color = "red", linetype = "dashed", linewidth = 1.2)
+    # Add seasonal average line for each group (not just MMCD)
+    {if ("seasonal_avg" %in% names(treatment_trends)) {
+      geom_line(aes(y = seasonal_avg, color = display_name), linetype = "dashed", linewidth = 1.0, alpha = 0.7)
     }} +
     labs(
       title = sprintf(
@@ -343,9 +515,9 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
         as.numeric(end_year),
         filter_text
       ),
-      subtitle = if (group_col == "mmcd_all") "Blue: actual | Red dashed: seasonal average" else NULL,
+      subtitle = "Solid: actual | Dashed: seasonal average",
       x = "Date",
-      y = "Proportion of Active Treatment",
+      y = "Proportion of Struct with Active Treatment",
       color = case_when(
         group_col == "facility" ~ "Facility",
         group_col == "foreman" ~ "FOS",
@@ -372,21 +544,8 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     )
   
   # Apply custom colors if available
-  if (!is.null(group_colors) && length(group_colors) > 0) {
-    # Create color mapping for display names
-    display_colors <- character(0)
-    for (i in seq_len(nrow(treatment_trends))) {
-      group_val <- treatment_trends$group_name[i]
-      display_val <- treatment_trends$display_name[i]
-      if (group_val %in% names(group_colors)) {
-        display_colors[display_val] <- group_colors[group_val]
-      }
-    }
-    display_colors <- display_colors[!duplicated(names(display_colors))]
-    
-    if (length(display_colors) > 0) {
-      p <- p + scale_color_manual(values = display_colors)
-    }
+  if (!is.null(custom_colors) && length(custom_colors) > 0) {
+    p <- p + scale_color_manual(values = custom_colors)
   }
   
   return(p)

@@ -89,9 +89,9 @@ ui <- fluidPage(
       
       # Filter by zone (P1/P2)
       h4("Location Filters"),
-      checkboxGroupInput("zone_filter", "Filter by Zone:",
-                        choices = c("P1" = "1", "P2" = "2"),
-                        selected = c("1", "2")),
+      selectInput("zone_filter", "Filter by Zone:",
+                  choices = c("P1 + P2" = "all", "P1" = "1", "P2" = "2"),
+                  selected = "all"),
       
       # Filter by facility (multi-select)
       selectizeInput("facility_filter", "Filter by Facility:",
@@ -112,11 +112,11 @@ ui <- fluidPage(
       h4("Display Options"),
       # Graph type selector
       selectInput("graph_type", "Graph Type:",
-                  choices = c("Bar" = "bar", "Line" = "line", "Point" = "point", "Area" = "area"),
+                  choices = c("Bar" = "bar", "Stacked Bar" = "stacked_bar", "Line" = "line", "Point" = "point", "Area" = "area"),
                   selected = "bar"),
       # Map Controls
       conditionalPanel(
-        condition = "input.tabset == 'Map'",
+        condition = "input.current_tabset == 'CurrentMap' || input.all_tabset == 'AllMap'",
         hr(),
         h4("Map Options"),
         
@@ -124,6 +124,7 @@ ui <- fluidPage(
         selectInput("basemap", "Base Map:",
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
+                                "Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
                     selected = "carto"),
         
@@ -271,13 +272,17 @@ server <- function(input, output, session) {
   # Filter data based on user selections
   filtered_data <- reactive({
     data <- suco_data()
-    filter_suco_data(data, input$facility_filter, input$foreman_filter, input$zone_filter, input$date_range, input$species_filter)
+    # Convert zone selection to the format expected by filter_suco_data
+    zones <- convert_zone_selection(input$zone_filter)
+    filter_suco_data(data, input$facility_filter, input$foreman_filter, zones, input$date_range, input$species_filter)
   })
   
   # Filter current data based on user selections
   filtered_data_current <- reactive({
     data <- suco_data_current()
-    filter_suco_data(data, input$facility_filter, input$foreman_filter, input$zone_filter, input$date_range, input$species_filter)
+    # Convert zone selection to the format expected by filter_suco_data
+    zones <- convert_zone_selection(input$zone_filter)
+    filter_suco_data(data, input$facility_filter, input$foreman_filter, zones, input$date_range, input$species_filter)
   })
   
   # Process spatial data for mapping
@@ -295,13 +300,15 @@ server <- function(input, output, session) {
   # Aggregate data by selected time interval and grouping
   aggregated_data <- reactive({
     data <- filtered_data()
-    aggregate_suco_data(data, input$group_by, input$zone_filter)
+    zones <- convert_zone_selection(input$zone_filter)
+    aggregate_suco_data(data, input$group_by, zones)
   })
   
   # Aggregate current data by selected time interval and grouping
   aggregated_data_current <- reactive({
     data <- filtered_data_current()
-    aggregate_suco_data(data, input$group_by, input$zone_filter)
+    zones <- convert_zone_selection(input$zone_filter)
+    aggregate_suco_data(data, input$group_by, zones)
   })
   
   # Generate trend plot

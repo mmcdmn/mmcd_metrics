@@ -142,6 +142,7 @@ ui <- fluidPage(
             tabPanel("Graph", value = "CurrentGraph", plotOutput("current_trend_plot", height = "500px")),
             tabPanel("Map", value = "CurrentMap", leafletOutput("current_map", height = "600px")),
             tabPanel("Summary Table", value = "CurrentTable", dataTableOutput("current_summary_table")),
+            tabPanel("Detailed Samples", value = "CurrentDetailed", dataTableOutput("current_detailed_table")),
             tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "500px"))
           )
         ),
@@ -150,6 +151,7 @@ ui <- fluidPage(
             tabPanel("Graph", value = "AllGraph", plotOutput("trend_plot", height = "500px")),
             tabPanel("Map", value = "AllMap", leafletOutput("map", height = "600px")),
             tabPanel("Summary Table", value = "AllTable", dataTableOutput("summary_table")),
+            tabPanel("Detailed Samples", value = "AllDetailed", dataTableOutput("detailed_table")),
             tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "500px"))
           )
         )
@@ -223,12 +225,10 @@ server <- function(input, output, session) {
   })
   
   # Helper function to create trend plots - eliminates code duplication
-  # Update species filter choices based on available data (use species_name)
+  # Update species filter choices based on available data (use new function)
   observe({
-    data <- suco_data()
-    
-    # Get unique species
-    spp_choices <- sort(unique(na.omit(data$species_name)))
+    # Get species choices using the new function
+    spp_choices <- get_available_species(input$date_range)
     spp_choices <- c("All", spp_choices)
     
     # Update select input
@@ -288,13 +288,13 @@ server <- function(input, output, session) {
   # Process spatial data for mapping
   spatial_data <- reactive({
     data <- filtered_data()
-    create_spatial_data(data)
+    create_spatial_data(data, input$species_filter)
   })
   
   # Process spatial data for mapping (current data only)
   spatial_data_current <- reactive({
     data <- filtered_data_current()
-    create_spatial_data(data)
+    create_spatial_data(data, input$species_filter)
   })
   
   # Aggregate data by selected time interval and grouping
@@ -325,11 +325,6 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     create_suco_map(spatial_data(), input, "all")
   })
-  
-  # Generate current map (for current data tab)
-  output$current_map <- renderLeaflet({
-    create_suco_map(spatial_data_current(), input, "current")
-  })
 
 
   # Generate summary table
@@ -343,6 +338,21 @@ server <- function(input, output, session) {
                      targets = c("First_SUCO", "Last_SUCO"),
                      render = JS("function(data, type, row) {
                        return data ? data : 'N/A';
+                     }")
+                   ))))
+  
+  # Generate detailed samples table
+  output$detailed_table <- renderDataTable({
+    data <- filtered_data()
+    detailed_data <- create_detailed_samples_table(data, input$species_filter)
+    return(detailed_data)
+  }, options = list(pageLength = 25, 
+                   searching = TRUE,
+                   scrollX = TRUE,
+                   columnDefs = list(list(
+                     targets = c("Species_Found"),
+                     render = JS("function(data, type, row) {
+                       return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
                      }")
                    ))))
   
@@ -463,8 +473,7 @@ server <- function(input, output, session) {
                    "<b>Facility:</b> ", facility_names_vec, "<br>",
                    "<b>FOS:</b> ", foreman_names, "<br>",
                    "<b>Location:</b> ", location, "<br>",
-                   "<b>Field Count:</b> ", fieldcount, "<br>",
-                   "<b>Data Source:</b> Current Only")
+                   "<b>Species Found:</b><br>", species_summary)
           }
         )
       
@@ -486,7 +495,7 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~pmin(15, (3 * size_multiplier)),
+          radius = ~marker_size,
           color = "black",
           weight = 1.5,
           fillColor = ~pal(facility),
@@ -598,8 +607,7 @@ server <- function(input, output, session) {
                    "<b>Facility:</b> ", facility_names_vec, "<br>",
                    "<b>FOS:</b> ", foreman_names, "<br>",
                    "<b>Location:</b> ", location, "<br>",
-                   "<b>Field Count:</b> ", fieldcount, "<br>",
-                   "<b>Data Source:</b> Current Only")
+                   "<b>Species Found:</b><br>", species_summary)
           }
         )
       
@@ -613,7 +621,7 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~pmin(15, (3 * size_multiplier)),
+          radius = ~marker_size,
           color = "black",
           weight = 1.5,
           fillColor = ~pal(foreman),
@@ -649,7 +657,7 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~pmin(15, (3 * size_multiplier)),
+          radius = ~marker_size,
           color = "black",
           weight = 1.5,
           fillColor = "#1f77b4", # Standard blue color
@@ -658,8 +666,7 @@ server <- function(input, output, session) {
                           "<b>Facility:</b> ", facility, "<br>",
                           "<b>Foreman:</b> ", foreman, "<br>",
                           "<b>Location:</b> ", location, "<br>",
-                          "<b>Field Count:</b> ", fieldcount, "<br>",
-                          "<b>Data Source:</b> Current Only")
+                          "<b>Species Found:</b><br>", species_summary)
         ) %>%
         addLegend(
           position = "bottomright",
@@ -682,6 +689,21 @@ server <- function(input, output, session) {
                      targets = c("First_SUCO", "Last_SUCO"),
                      render = JS("function(data, type, row) {
                        return data ? data : 'N/A';
+                     }")
+                   ))))
+  
+  # Generate current detailed samples table
+  output$current_detailed_table <- renderDataTable({
+    data <- filtered_data_current()
+    detailed_data <- create_detailed_samples_table(data, input$species_filter)
+    return(detailed_data)
+  }, options = list(pageLength = 25, 
+                   searching = TRUE,
+                   scrollX = TRUE,
+                   columnDefs = list(list(
+                     targets = c("Species_Found"),
+                     render = JS("function(data, type, row) {
+                       return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
                      }")
                    ))))
   

@@ -94,7 +94,8 @@ create_suco_map <- function(data, input, data_source = "all") {
                  "<b>Facility:</b> ", facility_names_vec, "<br>",
                  "<b>FOS:</b> ", foreman_names, "<br>",
                  "<b>Location:</b> ", location, "<br>",
-                 "<b>Field Count:</b> ", fieldcount)
+                 "<b>Species Count:</b> ", display_species_count, "<br>",
+                 "<b>Species Found:</b><br>", species_summary)
         }
       )
     
@@ -116,7 +117,7 @@ create_suco_map <- function(data, input, data_source = "all") {
         lat2 = max(st_coordinates(data)[,2])
       ) %>%
       addCircleMarkers(
-        radius = ~pmin(15, (3 * size_multiplier)),
+        radius = ~marker_size,
         color = "black",
         weight = 1.5,
         fillColor = ~pal(facility),
@@ -229,7 +230,8 @@ create_suco_map <- function(data, input, data_source = "all") {
                  "<b>Facility:</b> ", facility_names_vec, "<br>",
                  "<b>FOS:</b> ", foreman_names, "<br>",
                  "<b>Location:</b> ", location, "<br>",
-                 "<b>Field Count:</b> ", fieldcount)
+                 "<b>Species Count:</b> ", display_species_count, "<br>",
+                 "<b>Species Found:</b><br>", species_summary)
         }
       )
     
@@ -243,7 +245,7 @@ create_suco_map <- function(data, input, data_source = "all") {
         lat2 = max(st_coordinates(data)[,2])
       ) %>%
       addCircleMarkers(
-        radius = ~pmin(15, (3 * size_multiplier)),
+        radius = ~marker_size,
         color = "black",
         weight = 1.5,
         fillColor = ~pal(foreman),
@@ -279,7 +281,7 @@ create_suco_map <- function(data, input, data_source = "all") {
         lat2 = max(st_coordinates(data)[,2])
       ) %>%
       addCircleMarkers(
-        radius = ~pmin(15, (3 * size_multiplier)),
+        radius = ~marker_size,
         color = "black",
         weight = 1.5,
         fillColor = "#1f77b4", # Standard blue color
@@ -288,7 +290,8 @@ create_suco_map <- function(data, input, data_source = "all") {
                         "<b>Facility:</b> ", facility, "<br>",
                         "<b>Foreman:</b> ", foreman, "<br>",
                         "<b>Location:</b> ", location, "<br>",
-                        "<b>Field Count:</b> ", fieldcount)
+                        "<b>Species Count:</b> ", display_species_count, "<br>",
+                        "<b>Species Found:</b><br>", species_summary)
       ) %>%
       addLegend(
         position = "bottomright",

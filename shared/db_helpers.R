@@ -345,6 +345,192 @@ get_species_code_map <- function() {
   return(species_map)
 }
 
+#' Enhanced Species Name Mapping for SUCO Applications
+#' 
+#' This function provides enhanced species name mapping with flexible formatting options
+#' specifically designed for SUCO surveillance applications. It builds on the existing
+#' get_species_lookup() and get_species_code_map() functions to provide consistent
+#' species name formatting across all visualizations.
+#' 
+#' @param format_style Character. Options: "full" (Genus species), "abbreviated" (Ae. albopictus), 
+#'   "code_only" (spp code), "display" (smart formatting for UI)
+#' @param include_code Logical. If TRUE, includes species code in parentheses
+#' 
+#' Usage:
+#' ```r
+#' # Get full scientific names
+#' full_names <- get_enhanced_species_mapping(format_style = "full")
+#' # "52" = "Aedes albopictus"
+#' 
+#' # Get abbreviated names for space-constrained displays
+#' abbrev_names <- get_enhanced_species_mapping(format_style = "abbreviated")
+#' # "52" = "Ae. albopictus"
+#' 
+#' # Get display names with codes for clarity
+#' display_names <- get_enhanced_species_mapping(format_style = "display", include_code = TRUE)
+#' # "52" = "Aedes albopictus (52)"
+#' ```
+#' 
+#' Returns:
+#'   Named vector where names are species codes and values are formatted species names
+get_enhanced_species_mapping <- function(format_style = "display", include_code = FALSE) {
+  species_lookup <- get_species_lookup()
+  
+  if (nrow(species_lookup) == 0) {
+    return(character(0))
+  }
+  
+  # Create mapping
+  species_map <- character(0)
+  
+  for (i in 1:nrow(species_lookup)) {
+    code <- as.character(species_lookup$sppcode[i])
+    genus <- species_lookup$genus[i]
+    species <- species_lookup$species[i]
+    
+    # Format based on style
+    formatted_name <- switch(format_style,
+      "full" = {
+        if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
+          paste(genus, species)
+        } else if (!is.na(genus) && genus != "") {
+          genus
+        } else if (!is.na(species) && species != "") {
+          species
+        } else {
+          paste0("Species ", code)
+        }
+      },
+      "abbreviated" = {
+        if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
+          paste0(substr(genus, 1, 2), ". ", species)
+        } else if (!is.na(genus) && genus != "") {
+          genus
+        } else if (!is.na(species) && species != "") {
+          species
+        } else {
+          paste0("Species ", code)
+        }
+      },
+      "code_only" = {
+        code
+      },
+      "display" = {
+        # Smart formatting: use full name for clarity
+        if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
+          paste(genus, species)
+        } else if (!is.na(genus) && genus != "") {
+          genus
+        } else if (!is.na(species) && species != "") {
+          species
+        } else {
+          paste0("Species ", code)
+        }
+      },
+      # Default to display format
+      {
+        if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
+          paste(genus, species)
+        } else if (!is.na(genus) && genus != "") {
+          genus
+        } else if (!is.na(species) && species != "") {
+          species
+        } else {
+          paste0("Species ", code)
+        }
+      }
+    )
+    
+    # Add code if requested
+    if (include_code && format_style != "code_only") {
+      formatted_name <- paste0(formatted_name, " (", code, ")")
+    }
+    
+    species_map[code] <- formatted_name
+  }
+  
+  return(species_map)
+}
+
+#' Get Consistent Color Scheme for Top Locations Charts
+#' 
+#' This function provides a consistent color scheme for top locations visualizations
+#' across different modes (visits vs species) and data sources (current vs all).
+#' It ensures visual consistency while maintaining distinguishability between different
+#' chart types.
+#' 
+#' @param chart_type Character. Either "visits" or "species" to determine color palette
+#' @param data_source Character. Either "current" or "all" for slight palette variations
+#' 
+#' Usage:
+#' ```r
+#' # For visits-based charts
+#' visits_colors <- get_top_locations_colors("visits", "current")
+#' ggplot(data, aes(fill = date_numeric)) +
+#'   visits_colors$scale_function +
+#'   visits_colors$theme_additions
+#' 
+#' # For species-based charts  
+#' species_colors <- get_top_locations_colors("species", "all")
+#' ```
+#' 
+#' Returns:
+#'   List containing:
+#'   - scale_function: ggplot2 scale function (scale_fill_viridis_c or scale_fill_gradient)
+#'   - legend_title: Appropriate legend title
+#'   - color_description: Description for tooltips/legends
+get_top_locations_colors <- function(chart_type = "visits", data_source = "all") {
+  
+  # Define consistent base colors for MMCD applications
+  # Using colorbrewer-inspired palettes for better accessibility
+  base_colors <- list(
+    visits = list(
+      current = c("#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#fee090", "#fdae61", "#f46d43", "#d73027"),
+      all = c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#fee090", "#fdae61", "#f46d43")
+    ),
+    species = list(
+      current = c("#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837"),
+      all = c("#40004b", "#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#d9f0d3", "#a6dba0", "#5aae61")
+    )
+  )
+  
+  # Get appropriate colors
+  colors <- base_colors[[chart_type]][[data_source]]
+  
+  # Create scale function - use gradient for better continuous mapping
+  scale_function <- scale_fill_gradientn(
+    name = "Sample Date",
+    colors = colors,
+    guide = guide_colorbar(
+      title = "Sample Date\n(Older → Newer)",
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = 1,
+      barheight = 8
+    )
+  )
+  
+  # Determine legend title and description
+  legend_title <- switch(chart_type,
+    "visits" = "Sample Date (Visits)",
+    "species" = "Sample Date (Species)",
+    "Sample Date"
+  )
+  
+  color_description <- switch(chart_type,
+    "visits" = "Colors represent when SUCO visits occurred, from older (darker) to newer (lighter)",
+    "species" = "Colors represent when species samples were collected, from older (darker) to newer (lighter)",
+    "Colors represent sample dates from older to newer"
+  )
+  
+  return(list(
+    scale_function = scale_function,
+    legend_title = legend_title,
+    color_description = color_description,
+    colors = colors
+  ))
+}
+
 
 
 # Internal helper function to generate visually distinct colors

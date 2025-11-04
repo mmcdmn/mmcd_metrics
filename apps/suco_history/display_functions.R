@@ -332,11 +332,8 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
     chart_subtitle <- "Each segment represents one SUCO sample. Hover for details."
     y_label <- "Species Count per Sample"
     value_col <- "species_count"
-    fill_colors <- if(data_source == "current") {
-      scale_fill_viridis_c(option = "plasma", name = "Date")
-    } else {
-      scale_fill_viridis_c(option = "viridis", name = "Date")
-    }
+    # Use consistent color scheme for both current and all data
+    fill_colors <- scale_fill_viridis_c(option = "viridis", name = "Date")
   } else {
     chart_title <- if (data_source == "current") {
       "Top SUCO Locations - Individual Samples (Current Data Only)"
@@ -346,11 +343,8 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
     chart_subtitle <- "Each segment represents one SUCO sample. Colors show sample dates."
     y_label <- "Individual Samples"
     value_col <- "visits"
-    fill_colors <- if(data_source == "current") {
-      scale_fill_viridis_c(option = "plasma", name = "Date")
-    } else {
-      scale_fill_viridis_c(option = "viridis", name = "Date")
-    }
+    # Use consistent color scheme for both current and all data
+    fill_colors <- scale_fill_viridis_c(option = "viridis", name = "Date")
   }
   
   # Calculate location totals for ordering
@@ -370,9 +364,10 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
                                                  "Date:", format(inspdate, "%m/%d/%y"), "<br>",
                                                  "Species Found:<br>",
                                                  gsub("<br>", "<br>", species_summary)))) +
-    geom_bar(stat = "identity", position = "stack") +
+    geom_bar(stat = "identity", position = "stack", na.rm = TRUE) +
     fill_colors +
     coord_flip() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +  # Better scale handling
     labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +
     theme_minimal() +
     theme(

@@ -1,6 +1,12 @@
 # Data functions for SUCO History app
 # These functions handle both current-only and current+archive data
 
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(lubridate)
+  library(sf)
+})
+
 source("../../shared/db_helpers.R")
 
 # Get available species list for filter dropdown
@@ -56,10 +62,14 @@ get_available_species <- function(date_range = NULL) {
     species_data <- dbGetQuery(con, species_query)
     dbDisconnect(con)
     
-    # Create species names
+    # Use enhanced species mapping from db_helpers
+    species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
+    
+    # Create species names using the mapping
     species_names <- species_data %>%
       mutate(
         species_name = case_when(
+          !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
           !is.na(genus) & !is.na(species) ~ paste(genus, species),
           !is.na(spp) ~ as.character(spp),
           TRUE ~ NA_character_
@@ -160,11 +170,16 @@ WHERE ainspecnum IS NOT NULL
       left_join(species_current, by = "ainspecnum", relationship = "many-to-many") %>%
       left_join(species_lookup, by = c("spp" = "sppcode")) %>%
       mutate(
-        species_name = case_when(
-          !is.na(genus) & !is.na(species) ~ paste(genus, species),
-          !is.na(spp) ~ as.character(spp),
-          TRUE ~ NA_character_
-        )
+        species_name = {
+          # Use enhanced species mapping from db_helpers
+          species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
+          case_when(
+            !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
+            !is.na(genus) & !is.na(species) ~ paste(genus, species),
+            !is.na(spp) ~ as.character(spp),
+            TRUE ~ NA_character_
+          )
+        }
       )
     
     # Create species summary for each unique SUCO inspection
@@ -316,11 +331,16 @@ WHERE ainspecnum IS NOT NULL
       left_join(all_species, by = "ainspecnum", relationship = "many-to-many") %>%
       left_join(species_lookup, by = c("spp" = "sppcode")) %>%
       mutate(
-        species_name = dplyr::case_when(
-          !is.na(genus) & !is.na(species) ~ paste(genus, species),
-          !is.na(spp) ~ as.character(spp),
-          TRUE ~ NA_character_
-        ),
+        species_name = {
+          # Use enhanced species mapping from db_helpers
+          species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
+          dplyr::case_when(
+            !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
+            !is.na(genus) & !is.na(species) ~ paste(genus, species),
+            !is.na(spp) ~ as.character(spp),
+            TRUE ~ NA_character_
+          )
+        },
         # Ensure foreman values are consistent strings
         foreman = trimws(as.character(foreman))
       )

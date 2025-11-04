@@ -460,8 +460,19 @@ create_spatial_data <- function(data, species_filter = "All") {
       # Add small random offset (max 0.0001 degrees ≈ 11 meters) for overlapping points
       longitude_adj = longitude + runif(n(), -0.0001, 0.0001),
       latitude_adj = latitude + runif(n(), -0.0001, 0.0001),
-      # Calculate size based on species count (smaller range: min 3, max 12)
-      marker_size = pmax(3, pmin(12, 3 + (display_species_count / max(c(display_species_count, 1), na.rm = TRUE)) * 9))
+      # Calculate size based on species count using staged/exponential approach
+      marker_size = case_when(
+        display_species_count == 0 ~ 4,      # Stage 1: No species
+        display_species_count == 1 ~ 6,      # Stage 2: 1 species
+        display_species_count <= 5 ~ 8,      # Stage 3: 2-5 species
+        display_species_count <= 10 ~ 10,    # Stage 4: 6-10 species
+        display_species_count <= 20 ~ 12,    # Stage 5: 11-20 species
+        display_species_count <= 30 ~ 14,    # Stage 6: 21-30 species
+        display_species_count <= 50 ~ 16,    # Stage 7: 31-50 species
+        display_species_count <= 75 ~ 18,    # Stage 8: 51-75 species
+        display_species_count <= 100 ~ 20,   # Stage 9: 76-100 species
+        TRUE ~ 22                             # Stage 10: 100+ species
+      )
     ) %>%
     ungroup() %>%
     # Create sf object with adjusted coordinates
@@ -650,18 +661,103 @@ create_summary_stats <- function(data, group_by, data_source = "all") {
 }
 
 # Get top locations for plotly chart
-get_top_locations <- function(data) {
+get_top_locations <- function(data, mode = "visits", species_filter = "All") {
   if (nrow(data) == 0) {
     return(data.frame())
   }
   
-  # Always group by location for top locations
-  top_locations <- data %>%
-    group_by(location) %>%
-    summarize(visits = n(), .groups = "drop") %>%
-    filter(!is.na(location)) %>%  # Remove NA locations
-    arrange(desc(visits)) %>%
-    head(15)
+  if (mode == "species") {
+    # Mode: Top locations by species count
+    if (species_filter != "All") {
+      # Filter for specific species and sum their counts
+      sample_data <- data %>%
+        mutate(
+          # Extract count for specific species from species_summary
+          species_count = sapply(species_summary, function(summary) {
+            if (is.na(summary) || summary == "No species data available" || summary == "No species identified") {
+              return(0)
+            }
+            lines <- unlist(strsplit(summary, "<br>"))
+            species_line <- lines[grepl(species_filter, lines, fixed = TRUE)]
+            if (length(species_line) > 0) {
+              count_match <- regexpr(": ([0-9]+)", species_line[1])
+              if (count_match > 0) {
+                count_str <- regmatches(species_line[1], count_match)
+                return(as.numeric(gsub(": ", "", count_str)))
+              }
+            }
+            return(0)
+          })
+        ) %>%
+        filter(species_count > 0) %>%
+        # Add sample identifiers for stacking
+        mutate(
+          sample_id = paste0("Sample_", row_number()),
+          date_label = format(inspdate, "%m/%d"),
+          date_numeric = as.numeric(inspdate)  # For continuous color scale
+        )
+      
+      # Get top locations by total species count
+      top_location_names <- sample_data %>%
+        group_by(location) %>%
+        summarize(total_species = sum(species_count, na.rm = TRUE), .groups = "drop") %>%
+        arrange(desc(total_species)) %>%
+        head(25) %>%
+        pull(location)
+      
+      # Return sample-level data for top locations
+      top_locations <- sample_data %>%
+        filter(location %in% top_location_names) %>%
+        select(location, species_count, sample_id, date_label, date_numeric, inspdate, species_summary) %>%
+        arrange(desc(species_count))
+        
+    } else {
+      # All species - use total species count
+      sample_data <- data %>%
+        mutate(
+          sample_id = paste0("Sample_", row_number()),
+          date_label = format(inspdate, "%m/%d"),
+          date_numeric = as.numeric(inspdate)  # For continuous color scale
+        )
+      
+      # Get top locations by total species count
+      top_location_names <- sample_data %>%
+        group_by(location) %>%
+        summarize(total_species = sum(total_species_count, na.rm = TRUE), .groups = "drop") %>%
+        arrange(desc(total_species)) %>%
+        head(25) %>%
+        pull(location)
+      
+      # Return sample-level data for top locations
+      top_locations <- sample_data %>%
+        filter(location %in% top_location_names) %>%
+        select(location, species_count = total_species_count, sample_id, date_label, date_numeric, inspdate, species_summary) %>%
+        arrange(desc(species_count))
+    }
+  } else {
+    # Mode: Top locations by visits (individual samples as stacks)
+    sample_data <- data %>%
+      mutate(
+        sample_id = paste0("Sample_", row_number()),
+        date_label = format(inspdate, "%m/%d"),
+        date_numeric = as.numeric(inspdate),  # For continuous color scale
+        visit_count = 1  # Each sample represents one visit
+      )
+    
+    # Get top locations by total visit count
+    top_location_names <- sample_data %>%
+      group_by(location) %>%
+      summarize(total_visits = n(), .groups = "drop") %>%
+      arrange(desc(total_visits)) %>%
+      head(25) %>%
+      pull(location)
+    
+    # Return sample-level data for top locations
+    top_locations <- sample_data %>%
+      filter(location %in% top_location_names) %>%
+      select(location, visits = visit_count, sample_id, date_label, date_numeric, inspdate, species_summary) %>%
+      arrange(location, inspdate)
+  }
   
   return(top_locations)
 }

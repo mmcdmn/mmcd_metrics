@@ -114,6 +114,14 @@ ui <- fluidPage(
       selectInput("graph_type", "Graph Type:",
                   choices = c("Bar" = "bar", "Stacked Bar" = "stacked_bar", "Line" = "line", "Point" = "point", "Area" = "area"),
                   selected = "stacked_bar"),
+      
+      # Top locations mode toggle
+      conditionalPanel(
+        condition = "input.current_tabset == 'CurrentTopLoc' || input.all_tabset == 'AllTopLoc'",
+        selectInput("top_locations_mode", "Top Locations Display:",
+                    choices = c("Most Visited" = "visits", "Most Species" = "species"),
+                    selected = "visits")
+      ),
       # Map Controls
       conditionalPanel(
         condition = "input.current_tabset == 'CurrentMap' || input.all_tabset == 'AllMap'",
@@ -143,7 +151,7 @@ ui <- fluidPage(
             tabPanel("Map", value = "CurrentMap", leafletOutput("current_map", height = "600px")),
             tabPanel("Summary Table", value = "CurrentTable", dataTableOutput("current_summary_table")),
             tabPanel("Detailed Samples", value = "CurrentDetailed", dataTableOutput("current_detailed_table")),
-            tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "500px"))
+            tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "700px"))
           )
         ),
         tabPanel("All Data (Current + Archive)",
@@ -152,7 +160,7 @@ ui <- fluidPage(
             tabPanel("Map", value = "AllMap", leafletOutput("map", height = "600px")),
             tabPanel("Summary Table", value = "AllTable", dataTableOutput("summary_table")),
             tabPanel("Detailed Samples", value = "AllDetailed", dataTableOutput("detailed_table")),
-            tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "500px"))
+            tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "700px"))
           )
         )
       )
@@ -359,8 +367,8 @@ server <- function(input, output, session) {
   # Generate location plot (top locations with most SUCOs)
   output$location_plotly <- plotly::renderPlotly({
     data <- filtered_data()
-    top_locations <- get_top_locations(data)
-    create_location_plotly(top_locations, "all")
+    top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
+    create_location_plotly(top_locations, "all", input$top_locations_mode)
   })
   
   # React to plotly click and update map and tab
@@ -369,11 +377,7 @@ server <- function(input, output, session) {
     if (!is.null(click)) {
       idx <- click$pointNumber + 1  # R is 1-based
       data <- filtered_data()
-      top_locations <- data %>%
-        group_by(location) %>%
-        summarize(visits = n(), .groups = "drop") %>%
-        arrange(desc(visits)) %>%
-        head(15)
+      top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
       if (idx > 0 && idx <= nrow(top_locations)) {
         loc <- top_locations$location[idx]
         # Use spatial_data() for accurate coordinates (same as map)
@@ -710,8 +714,8 @@ server <- function(input, output, session) {
   # Generate current location plot
   output$current_location_plotly <- plotly::renderPlotly({
     data <- filtered_data_current()
-    top_locations <- get_top_locations(data)
-    create_location_plotly(top_locations, "current")
+    top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
+    create_location_plotly(top_locations, "current", input$top_locations_mode)
   })
   
   # Handle current location plot clicks
@@ -720,11 +724,7 @@ server <- function(input, output, session) {
     if (!is.null(click)) {
       idx <- click$pointNumber + 1
       data <- filtered_data_current()
-      top_locations <- data %>%
-        group_by(location) %>%
-        summarize(visits = n(), .groups = "drop") %>%
-        arrange(desc(visits)) %>%
-        head(15)
+      top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
       if (idx > 0 && idx <= nrow(top_locations)) {
         loc <- top_locations$location[idx]
         spatial <- spatial_data_current()

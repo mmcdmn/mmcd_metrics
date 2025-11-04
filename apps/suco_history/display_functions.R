@@ -304,7 +304,7 @@ create_suco_map <- function(data, input, data_source = "all") {
 }
 
 # Create location plotly chart (consolidates location_plotly and current_location_plotly)
-create_location_plotly <- function(top_locations_data, data_source = "all") {
+create_location_plotly <- function(top_locations_data, data_source = "all", mode = "visits") {
   if (nrow(top_locations_data) == 0) {
     empty_plot <- plotly::plot_ly() %>%
       plotly::add_annotations(
@@ -322,26 +322,78 @@ create_location_plotly <- function(top_locations_data, data_source = "all") {
     return(empty_plot)
   }
   
-  # Create the plotly bar chart
-  chart_title <- if (data_source == "current") {
-    "Top SUCO Locations (Current Data Only)"
+  # Determine chart properties based on mode
+  if (mode == "species") {
+    chart_title <- if (data_source == "current") {
+      "Top Locations by Species Count - Individual Samples (Current Data Only)"
+    } else {
+      "Top Locations by Species Count - Individual Samples"
+    }
+    chart_subtitle <- "Each segment represents one SUCO sample. Hover for details."
+    y_label <- "Species Count per Sample"
+    value_col <- "species_count"
+    fill_colors <- if(data_source == "current") {
+      scale_fill_viridis_c(option = "plasma", name = "Date")
+    } else {
+      scale_fill_viridis_c(option = "viridis", name = "Date")
+    }
   } else {
-    "Top SUCO Locations"
+    chart_title <- if (data_source == "current") {
+      "Top SUCO Locations - Individual Samples (Current Data Only)"
+    } else {
+      "Top SUCO Locations - Individual Samples"
+    }
+    chart_subtitle <- "Each segment represents one SUCO sample. Colors show sample dates."
+    y_label <- "Individual Samples"
+    value_col <- "visits"
+    fill_colors <- if(data_source == "current") {
+      scale_fill_viridis_c(option = "plasma", name = "Date")
+    } else {
+      scale_fill_viridis_c(option = "viridis", name = "Date")
+    }
   }
   
-  # Create ggplot
-  p <- ggplot(top_locations_data, aes(x = reorder(location, visits), y = visits, text = location)) +
-    geom_bar(stat = "identity", fill = if(data_source == "current") "#1f77b4" else "steelblue") +
-    geom_text(aes(label = visits), hjust = 1.3, color = "black") +
+  # Calculate location totals for ordering
+  location_totals <- top_locations_data %>%
+    group_by(location) %>%
+    summarize(total = sum(.data[[value_col]], na.rm = TRUE), .groups = "drop") %>%
+    arrange(desc(total))
+  
+  # Reorder data by location totals
+  top_locations_data$location <- factor(top_locations_data$location, 
+                                       levels = location_totals$location)
+  
+  # Create stacked bar chart
+  p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
+                                     fill = date_numeric, 
+                                     text = paste("Location:", location, "<br>",
+                                                 "Date:", format(inspdate, "%m/%d/%y"), "<br>",
+                                                 "Species Found:<br>",
+                                                 gsub("<br>", "<br>", species_summary)))) +
+    geom_bar(stat = "identity", position = "stack") +
+    fill_colors +
     coord_flip() +
-    labs(title = chart_title, x = "Location", y = "Number of Visits") +
+    labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +
     theme_minimal() +
-    theme(plot.title = element_text(face = "bold", size = 16), 
-          axis.title = element_text(face = "bold"))
+    theme(
+      plot.title = element_text(face = "bold", size = 16), 
+      plot.subtitle = element_text(size = 12, color = "gray40", margin = margin(b = 15)),
+      axis.title = element_text(face = "bold"),
+      legend.position = "right",  # Show legend to explain color scale
+      legend.title = element_text(face = "bold", size = 12),
+      legend.text = element_text(size = 10)
+    ) +
+    guides(fill = guide_colorbar(
+      title = "Sample Date\n(Newer → Lighter)",
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = 1,
+      barheight = 8
+    ))
   
   # Convert to plotly with appropriate source for click events
   source_name <- if (data_source == "current") "current_location_plotly" else "location_plotly"
-  p <- plotly::ggplotly(p, tooltip = c("x", "y", "text"), source = source_name)
+  p <- plotly::ggplotly(p, tooltip = "text", source = source_name)
   
   # Register the click event
   plotly::event_register(p, 'plotly_click')

@@ -70,29 +70,8 @@ create_progress_chart <- function(data, group_by, show_expiring_only = FALSE, ex
   return(ggplotly(p, tooltip = c("x", "y", "fill")))
 }
 
-# Function to create value boxes
-create_value_box <- function(value, subtitle, icon, color) {
-  valueBox(
-    value = value,
-    subtitle = subtitle,
-    icon = icon(icon),
-    color = color
-  )
-}
-
-# Function to create all value boxes
+# Function to create all value boxes (like red_air does)
 create_value_boxes <- function(data) {
-  if (nrow(data) == 0) {
-    return(list(
-      total_sites = create_value_box(0, "Total Ground Sites", "map-marker", "blue"),
-      prehatch_sites = create_value_box(0, "Prehatch Sites", "bug", "green"),
-      treated_sites = create_value_box(0, "Treated Sites", "check-circle", "green"),
-      needs_treatment = create_value_box(0, "Needs Treatment", "exclamation-triangle", "red"),
-      treated_pct = create_value_box("0%", "Treated %", "percent", "green"),
-      expiring_pct = create_value_box("0%", "Expiring %", "clock", "yellow")
-    ))
-  }
-  
   # Calculate totals
   total_ground <- sum(data$tot_ground, na.rm = TRUE)
   total_prehatch <- sum(data$prehatch_sites_cnt, na.rm = TRUE)
@@ -105,12 +84,12 @@ create_value_boxes <- function(data) {
   expiring_pct <- if (total_prehatch > 0) round(100 * total_expiring / total_prehatch, 1) else 0
   
   return(list(
-    total_sites = create_value_box(total_ground, "Total Ground Sites", "map-marker", "blue"),
-    prehatch_sites = create_value_box(total_prehatch, "Prehatch Sites", "bug", "green"),
-    treated_sites = create_value_box(total_treated, "Treated Sites", "check-circle", "green"),
-    needs_treatment = create_value_box(total_needs_treatment, "Needs Treatment", "exclamation-triangle", "red"),
-    treated_pct = create_value_box(paste0(treated_pct, "%"), "Treated %", "percent", "green"),
-    expiring_pct = create_value_box(paste0(expiring_pct, "%"), "Expiring %", "clock", "yellow")
+    total_ground = total_ground,
+    total_prehatch = total_prehatch,
+    total_treated = total_treated,
+    total_needs_treatment = total_needs_treatment,
+    treated_pct = treated_pct,
+    expiring_pct = expiring_pct
   ))
 }
 

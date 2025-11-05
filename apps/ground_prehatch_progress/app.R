@@ -17,67 +17,10 @@ source("../../shared/db_helpers.R")
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")
+source("ui_helpers.R")
 
 ui <- dashboardPage(
-  dashboardHeader(
-    title = "Ground Prehatch Progress",
-    # Add filters to the header using tags$li - moved expiry controls to the right
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      selectizeInput("facility_filter", "Facility:",
-                    choices = c("All" = "all"),
-                    selected = "all", 
-                    multiple = TRUE,
-                    options = list(placeholder = "Select facilities...")),
-      class = "dropdown"
-    ),
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      selectizeInput("foreman_filter", "FOS:",
-                    choices = c("All" = "all"),
-                    selected = "all",
-                    multiple = TRUE,
-                    options = list(placeholder = "Select FOS...")),
-      class = "dropdown"
-    ),
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      checkboxGroupInput("zone_filter", "Filter by Zone:",
-                        choices = c("P1" = "1", "P2" = "2"),
-                        selected = c("1", "2"),
-                        inline = TRUE),
-      class = "dropdown"
-    ),
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      radioButtons("group_by", "Group by:",
-                  choices = c("All MMCD" = "mmcd_all",
-                             "Facility" = "facility", 
-                             "FOS" = "foreman",
-                             "Section" = "sectcode"),
-                  selected = "facility",
-                  inline = TRUE),
-      class = "dropdown"
-    ),
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px;",
-      dateInput("custom_today", "Pretend Today is:",
-               value = Sys.Date(), 
-               format = "yyyy-mm-dd"),
-      class = "dropdown"
-    ),
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px; float: right;",
-      checkboxInput("show_expiring_only", "Expiring Only", value = FALSE),
-      class = "dropdown"
-    ),
-    tags$li(
-      style = "padding: 5px 8px; margin: 2px; float: right;",
-      sliderInput("expiring_days", "Days Until Expiring:",
-                 min = 1, max = 60, value = 14, step = 1),
-      class = "dropdown"
-    )
-  ),
+  dashboardHeader(title = "Ground Prehatch Treatment Progress"),
   
   dashboardSidebar(
     sidebarMenu(
@@ -87,88 +30,70 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
-    # Add minimal CSS to prevent header overlap with sidebar tabs
-    tags$head(
-      tags$style(HTML("
-        .content-wrapper, .right-side {
-          margin-top: 160px !important;
-        }
-        .main-header {
-          height: 250px !important;
-          background-color: #3c8dbc !important;
-        }
-        .main-header .navbar {
-          height: 250px !important;
-          background-color: #3c8dbc !important;
-        }
-        .main-sidebar {
-          margin-top: 150px !important;
-        }
-        .skin-blue .main-header .navbar {
-          background-color: #3c8dbc !important;
-        }
-        .skin-blue .main-header .logo {
-          background-color: #367fa9 !important;
-        }
-      "))
+    # Filter panel - always visible
+    create_filter_panel(),
+    
+    # Help text (collapsible)
+    div(id = "help-section",
+      tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
+             style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
+             HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
+      div(style = "display: none;",
+        create_help_text()
+      )
     ),
+    
     tabItems(
       # Overview tab
       tabItem(tabName = "overview",
-        fluidRow(
-          box(
-            title = "Summary Statistics",
-            status = "info", 
-            solidHeader = TRUE,
-            width = 12,
-            fluidRow(
-              valueBoxOutput("total_sites", width = 2),
-              valueBoxOutput("prehatch_sites", width = 2),
-              valueBoxOutput("treated_sites", width = 2),
-              valueBoxOutput("needs_treatment", width = 2),
-              valueBoxOutput("treated_pct", width = 2),
-              valueBoxOutput("expiring_pct", width = 2)
-            ),
-            conditionalPanel(
-              condition = "input.group_by == 'sectcode'",
-              div(
-                style = "background-color: #f8f9fa; padding: 8px; border-radius: 4px; margin-top: 10px;",
-                HTML("<i class='fa fa-info-circle' style='color: #17a2b8;'></i> 
-                     <strong>Note:</strong> Section filtering is only available when a specific facility is selected (not 'All').")
-              )
-            )
-          )
+        br(),
+        
+        # Section info panel
+        create_section_info_panel(),
+        
+        # Summary statistics
+        div(
+          h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
+          create_overview_value_boxes()
         ),
-        fluidRow(
-          box(
-            title = "Ground Prehatch Treatment Progress",
-            status = "primary",
-            solidHeader = TRUE,
-            width = 12,
-            plotlyOutput("progress_chart")
-          )
-        )
+        
+        br(),
+        
+        # Progress chart
+        create_progress_chart_box()
       ),
       
       # Details tab  
       tabItem(tabName = "details",
-        fluidRow(
-          box(
-            title = "Site Details",
-            status = "primary",
-            solidHeader = TRUE,
-            width = 12,
-            downloadButton("download_details_data", "Download CSV", class = "btn-primary"),
-            br(), br(),
-            DT::dataTableOutput("details_table")
-          )
-        )
+        br(),
+        
+        # Section info panel
+        create_section_info_panel(),
+        
+        # Details table
+        create_details_table_box()
       )
     )
   )
 )
 
 server <- function(input, output, session) {
+  
+  # Parse zone filter input
+  parsed_zone_filter <- reactive({
+    if (input$zone_filter == "combined") {
+      return(c("1", "2"))  # Include both zones but will be combined
+    } else if (input$zone_filter == "1,2") {
+      return(c("1", "2"))  # Include both zones separately
+    } else {
+      return(input$zone_filter)  # Single zone
+    }
+  })
+  
+  # Flag for whether to combine zones
+  combine_zones <- reactive({
+    input$zone_filter == "combined"
+  })
   
   # Initialize facility choices from db_helpers
   observe({
@@ -189,12 +114,12 @@ server <- function(input, output, session) {
 
   # Fetch ground prehatch data
   ground_data <- reactive({
-    req(input$zone_filter, input$group_by)  # Ensure required inputs are available
+    req(parsed_zone_filter(), input$group_by)  # Ensure required inputs are available
     
     # Use custom date if provided, otherwise use current date
     simulation_date <- if (!is.null(input$custom_today)) input$custom_today else Sys.Date()
     
-    get_ground_prehatch_data(input$zone_filter, simulation_date)
+    get_ground_prehatch_data(parsed_zone_filter(), simulation_date)
   })
   
   # Fetch site details data
@@ -225,12 +150,12 @@ server <- function(input, output, session) {
   
   # Filter data based on user selections
   filtered_data <- reactive({
-    req(input$zone_filter, input$group_by, input$facility_filter)
+    req(parsed_zone_filter(), input$group_by, input$facility_filter)
     # Don't require foreman_filter since it starts as NULL
     
     data <- ground_data()
     
-    filter_ground_data(data, input$zone_filter, input$facility_filter, input$foreman_filter)
+    filter_ground_data(data, parsed_zone_filter(), input$facility_filter, input$foreman_filter)
   })
   
   # Aggregate data based on grouping level  
@@ -241,9 +166,10 @@ server <- function(input, output, session) {
     aggregate_data_by_group(
       data, 
       input$group_by, 
-      input$zone_filter, 
+      parsed_zone_filter(), 
       input$show_expiring_only, 
-      site_data
+      site_data,
+      combine_zones()
     )
   })
   
@@ -251,7 +177,7 @@ server <- function(input, output, session) {
   details_data <- reactive({
     site_data <- site_details()
     
-    filter_ground_data(site_data, input$zone_filter, input$facility_filter, input$foreman_filter)
+    filter_ground_data(site_data, parsed_zone_filter(), input$facility_filter, input$foreman_filter)
   })
   
   # Create value boxes
@@ -260,13 +186,72 @@ server <- function(input, output, session) {
     create_value_boxes(data)
   })
   
-  # Render value boxes
-  output$total_sites <- renderValueBox({ value_boxes()$total_sites })
-  output$prehatch_sites <- renderValueBox({ value_boxes()$prehatch_sites })
-  output$treated_sites <- renderValueBox({ value_boxes()$treated_sites })
-  output$needs_treatment <- renderValueBox({ value_boxes()$needs_treatment })
-  output$treated_pct <- renderValueBox({ value_boxes()$treated_pct })
-  output$expiring_pct <- renderValueBox({ value_boxes()$expiring_pct })
+  # Render value boxes using colors from db_helpers
+  output$total_sites <- renderValueBox({
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_ground,
+      subtitle = "Total Ground Sites",
+      icon = icon("map-marker"),
+      color = shiny_colors["completed"]
+    )
+  })
+  
+  output$prehatch_sites <- renderValueBox({
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_prehatch,
+      subtitle = "Prehatch Sites",
+      icon = icon("egg"),
+      color = shiny_colors["planned"]
+    )
+  })
+  
+  output$treated_sites <- renderValueBox({
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_treated,
+      subtitle = "Treated Sites",
+      icon = icon("check-circle"),
+      color = shiny_colors["active"]
+    )
+  })
+  
+  output$needs_treatment <- renderValueBox({
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_needs_treatment,
+      subtitle = "Needs Treatment",
+      icon = icon("exclamation-triangle"),
+      color = shiny_colors["needs_treatment"]
+    )
+  })
+  
+  output$treated_pct <- renderValueBox({
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = paste0(data$treated_pct, "%"),
+      subtitle = "Treated %",
+      icon = icon("percent"),
+      color = shiny_colors["active"]
+    )
+  })
+  
+  output$expiring_pct <- renderValueBox({
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = paste0(data$expiring_pct, "%"),
+      subtitle = "Expiring %",
+      icon = icon("clock"),
+      color = shiny_colors["needs_action"]
+    )
+  })
   
   # Render progress chart
   output$progress_chart <- renderPlotly({

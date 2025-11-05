@@ -1,0 +1,13 @@
+Rainfall Triggering: Look for ANY consecutive lookback_period days (default 3) within the last 14 days where the sum >= rainfall threshold
+Status Transitions:
+Unknown → Needs Inspection (when rainfall triggers)
+Under Threshold → Needs Inspection (when NEW rainfall triggers)
+Needs Inspection → Under Threshold (when inspected with numdip < threshold)
+Needs Inspection → Needs Treatment (when inspected with numdip >= threshold)
+Needs Treatment → Active Treatment (when treated)
+Active Treatment → Unknown (when treatment expires)
+
+
+
+Check for ANY consecutive N-day period (default 3 days) within last 14 days where sum >= rainfall threshold
+SQL: Uses generate_series(0, 14 - lookback_days) to check all possible consecutive periods

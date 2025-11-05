@@ -179,7 +179,9 @@ create_site_timeline_data <- function(sitecode, analysis_date = Sys.Date()) {
   dates <- seq(from = analysis_date - 30, to = analysis_date, by = "day")
   
   # Simulate realistic rainfall patterns
-  set.seed(as.numeric(as.Date(sitecode, format = "TEST-%03d")))
+  # Extract number from sitecode like "TEST-001" to create reproducible seed
+  site_num <- as.numeric(gsub("TEST-", "", sitecode))
+  set.seed(site_num * 123)  # Use site number times a constant for seed
   rainfall_events <- sample(1:length(dates), size = sample(3:8, 1))
   
   timeline <- data.frame(

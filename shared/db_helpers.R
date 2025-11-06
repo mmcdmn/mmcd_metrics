@@ -191,7 +191,7 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE","GREEN" = "PREHATCH")
+  choices <- c("RED" = "RED", "YELLOW" = "YELLOW", "BLUE" = "BLUE", "GREEN" = "GREEN")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)

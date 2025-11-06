@@ -66,9 +66,9 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
-                selectInput("facility_filter", "Facility:",
-                  choices = c("All Facilities" = "all"),
-                  selected = "all"
+                checkboxGroupInput("facility_filter", "Facilities:",
+                  choices = c("Loading..." = "LOADING"),
+                  selected = "LOADING"
                 )
               )
             ),
@@ -96,9 +96,9 @@ ui <- dashboardPage(
                 )
               ),
               column(4,
-                selectInput("priority_filter", "Priority:",
-                  choices = c("All Priorities" = "all", "RED" = "RED"),
-                  selected = "RED"
+                checkboxGroupInput("priority_filter", "Priorities:",
+                  choices = c("Loading..." = "LOADING"),
+                  selected = "LOADING"
                 )
               ),
               column(4,
@@ -109,9 +109,15 @@ ui <- dashboardPage(
             ),
             fluidRow(
               column(4,
-                actionButton("refresh_data", "Refresh Data", class = "btn-primary")
+                actionButton("refresh_data", "Refresh Data", class = "btn-primary btn-lg", 
+                           style = "width: 100%;")
               ),
-              column(8, "")
+              column(8,
+                div(style = "padding-top: 10px;",
+                  tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+                  " Click 'Refresh Data' to load current site status information with the selected filters."
+                )
+              )
             )
           )
         ),
@@ -262,115 +268,241 @@ ui <- dashboardPage(
 # Define Server
 server <- function(input, output, session) {
   
-  # Load facility choices
+  # Load filter choices on startup
   observe({
     tryCatch({
-      # Use the shared function to get facility choices
-      fac_choices <- get_facility_choices(include_all = TRUE)
-      updateSelectInput(session, "facility_filter", choices = fac_choices)
+      # Load facility choices using shared function
+      facility_lookup <- get_facility_lookup()
+      if (nrow(facility_lookup) > 0) {
+        facility_choices <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+        updateCheckboxGroupInput(session, "facility_filter", 
+                                choices = facility_choices,
+                                selected = facility_lookup$short_name)
+      } else {
+        # Fallback if database lookup fails
+        facility_choices <- c("MMCD", "SMCD", "RMCD")
+        updateCheckboxGroupInput(session, "facility_filter", 
+                                choices = facility_choices,
+                                selected = facility_choices)
+      }
+      
+      # Load priority choices using shared function
+      priority_choices <- get_priority_choices(include_all = FALSE)
+      priority_choices <- priority_choices[names(priority_choices) != "All Priorities"]
+      updateCheckboxGroupInput(session, "priority_filter", 
+                              choices = priority_choices,
+                              selected = priority_choices)
+      
+      # Load zone choices
+      zone_choices <- get_available_zones()
+      updateCheckboxGroupInput(session, "zone_filter", 
+                              choices = setNames(zone_choices, paste0("P", zone_choices)),
+                              selected = zone_choices)
+      
+      showNotification("Filter options loaded successfully", type = "message")
     }, error = function(e) {
-      showNotification(paste("Error loading facilities:", e$message), type = "error")
+      showNotification(paste("Error loading filter options:", e$message), type = "error")
     })
   })
   
   # Main data reactive - gets all air sites with calculated status using external function
-  air_sites_data <- reactive({
-    input$refresh_data  # Trigger on refresh button
+  # Only loads data when refresh button is clicked
+  air_sites_data <- eventReactive(input$refresh_data, {
     req(input$analysis_date, input$lookback_period, input$rain_threshold, input$treatment_threshold)
     
-    get_air_sites_data(
-      analysis_date = input$analysis_date,
-      lookback_period = input$lookback_period,
-      rain_threshold = input$rain_threshold,
-      treatment_threshold = input$treatment_threshold,
-      facility_filter = input$facility_filter,
-      priority_filter = input$priority_filter,
-      zone_filter = input$zone_filter
-    )
-  })
+    showNotification("Loading air sites data...", type = "message", duration = 2)
+    
+    tryCatch({
+      data <- get_air_sites_data(
+        analysis_date = input$analysis_date,
+        lookback_period = input$lookback_period,
+        rain_threshold = input$rain_threshold,
+        treatment_threshold = input$treatment_threshold,
+        facility_filter = input$facility_filter,
+        priority_filter = input$priority_filter,
+        zone_filter = input$zone_filter
+      )
+      
+      showNotification(paste("Loaded", nrow(data), "air sites"), type = "message", duration = 3)
+      return(data)
+      
+    }, error = function(e) {
+      showNotification(paste("Error loading data:", e$message), type = "error", duration = 5)
+      return(data.frame())  # Return empty data frame on error
+    })
+  }, ignoreNULL = FALSE)
   
   # Value boxes using external data
   output$total_air_sites <- renderValueBox({
-    data <- air_sites_data()
-    valueBox(
-      value = nrow(data),
-      subtitle = "Total Air Sites",
-      icon = icon("helicopter"),
-      color = "blue"
-    )
+    if (input$refresh_data == 0) {
+      valueBox(
+        value = "—",
+        subtitle = "Total Air Sites",
+        icon = icon("helicopter"),
+        color = "light-blue"
+      )
+    } else {
+      data <- air_sites_data()
+      valueBox(
+        value = nrow(data),
+        subtitle = "Total Air Sites",
+        icon = icon("helicopter"),
+        color = "blue"
+      )
+    }
   })
   
   output$sites_needs_inspection <- renderValueBox({
-    data <- air_sites_data()
-    count <- sum(data$site_status == "Needs Inspection", na.rm = TRUE)
-    valueBox(
-      value = count,
-      subtitle = "Needs Inspection",
-      icon = icon("search"),
-      color = "yellow"
-    )
+    if (input$refresh_data == 0) {
+      valueBox(
+        value = "—",
+        subtitle = "Needs Inspection",
+        icon = icon("search"),
+        color = "light-blue"
+      )
+    } else {
+      data <- air_sites_data()
+      count <- sum(data$site_status == "Needs Inspection", na.rm = TRUE)
+      valueBox(
+        value = count,
+        subtitle = "Needs Inspection",
+        icon = icon("search"),
+        color = "yellow"
+      )
+    }
   })
   
   output$sites_unknown <- renderValueBox({
-    data <- air_sites_data()
-    count <- sum(data$site_status == "Unknown", na.rm = TRUE)
-    valueBox(
-      value = count,
-      subtitle = "Unknown",
-      icon = icon("question-circle"),
-      color = "light-blue"
-    )
+    if (input$refresh_data == 0) {
+      valueBox(
+        value = "—",
+        subtitle = "Unknown",
+        icon = icon("question-circle"),
+        color = "light-blue"
+      )
+    } else {
+      data <- air_sites_data()
+      count <- sum(data$site_status == "Unknown", na.rm = TRUE)
+      valueBox(
+        value = count,
+        subtitle = "Unknown",
+        icon = icon("question-circle"),
+        color = "light-blue"
+      )
+    }
   })
   
   output$sites_active_treatment <- renderValueBox({
-    data <- air_sites_data()
-    count <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
-    valueBox(
-      value = count,
-      subtitle = "Active Treatment",
-      icon = icon("spray-can"),
-      color = "purple"
-    )
+    if (input$refresh_data == 0) {
+      valueBox(
+        value = "—",
+        subtitle = "Active Treatment",
+        icon = icon("spray-can"),
+        color = "light-blue"
+      )
+    } else {
+      data <- air_sites_data()
+      count <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
+      valueBox(
+        value = count,
+        subtitle = "Active Treatment",
+        icon = icon("spray-can"),
+        color = "purple"
+      )
+    }
   })
   
   output$sites_under_threshold <- renderValueBox({
-    data <- air_sites_data()
-    count <- sum(data$site_status == "Under Threshold", na.rm = TRUE)
-    valueBox(
-      value = count,
-      subtitle = "Under Threshold",
-      icon = icon("check-circle"),
-      color = "green"
-    )
+    if (input$refresh_data == 0) {
+      valueBox(
+        value = "—",
+        subtitle = "Under Threshold",
+        icon = icon("check-circle"),
+        color = "light-blue"
+      )
+    } else {
+      data <- air_sites_data()
+      count <- sum(data$site_status == "Under Threshold", na.rm = TRUE)
+      valueBox(
+        value = count,
+        subtitle = "Under Threshold",
+        icon = icon("check-circle"),
+        color = "green"
+      )
+    }
   })
   
   output$sites_needs_treatment <- renderValueBox({
-    data <- air_sites_data()
-    count <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
-    valueBox(
-      value = count,
-      subtitle = "Needs Treatment",
-      icon = icon("exclamation-triangle"),
-      color = "red"
-    )
+    if (input$refresh_data == 0) {
+      valueBox(
+        value = "—",
+        subtitle = "Needs Treatment",
+        icon = icon("exclamation-triangle"),
+        color = "light-blue"
+      )
+    } else {
+      data <- air_sites_data()
+      count <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
+      valueBox(
+        value = count,
+        subtitle = "Needs Treatment",
+        icon = icon("exclamation-triangle"),
+        color = "red"
+      )
+    }
   })
   
   # Status map using external function
   output$status_map <- renderLeaflet({
-    data <- air_sites_data()
-    create_status_map(data, input$status_filter)
+    if (input$refresh_data == 0) {
+      # Show empty map with message
+      leaflet() %>%
+        addTiles() %>%
+        setView(lng = -93.2, lat = 44.9, zoom = 10) %>%
+        addPopups(lng = -93.2, lat = 44.9, 
+                 popup = "Click 'Refresh Data' to load air sites", 
+                 options = popupOptions(closeButton = FALSE))
+    } else {
+      data <- air_sites_data()
+      create_status_map(data, input$status_filter)
+    }
   })
   
   # Status chart using external function
   output$status_chart <- renderPlotly({
-    data <- air_sites_data()
-    create_status_chart(data, input$status_filter)
+    if (input$refresh_data == 0) {
+      # Show empty chart with message
+      plot_ly() %>%
+        add_annotations(
+          text = "Click 'Refresh Data' to load status chart",
+          x = 0.5, y = 0.5,
+          xref = "paper", yref = "paper",
+          showarrow = FALSE,
+          font = list(size = 16)
+        ) %>%
+        layout(
+          xaxis = list(visible = FALSE),
+          yaxis = list(visible = FALSE),
+          showlegend = FALSE
+        )
+    } else {
+      data <- air_sites_data()
+      create_status_chart(data, input$status_filter)
+    }
   })
   
   # Site details table using external function
   output$site_details_table <- renderDT({
-    data <- air_sites_data()
-    create_site_details_table(data, input$status_filter)
+    if (input$refresh_data == 0) {
+      DT::datatable(
+        data.frame(Message = "Click 'Refresh Data' to load site details"),
+        options = list(dom = 't', ordering = FALSE, searching = FALSE),
+        rownames = FALSE
+      )
+    } else {
+      data <- air_sites_data()
+      create_site_details_table(data, input$status_filter)
+    }
   })
   
   # Flow Testing Functionality
@@ -509,25 +641,42 @@ server <- function(input, output, session) {
     validate_business_logic()
   })
   
+  # 14-Day Persistence Test
+  output$persistence_test_output <- renderText({
+    input$run_persistence_test
+    test_14_day_persistence()
+  })
+  
+  # Enhanced Business Logic Validation
+  output$validation_test_output <- renderText({
+    input$run_validation_test
+    validate_business_logic()
+  })
+  
   # Flow testing functionality using external functions
   flow_test_data <- eventReactive(input$run_flow_test, {
-    synth_params <- if (input$test_data_type == "synthetic") {
-      list(
-        total_sites = input$synth_total_sites,
-        rain_pct = input$synth_rain_pct,
-        inspect_pct = input$synth_inspect_pct,
-        above_thresh_pct = input$synth_above_thresh_pct
+    tryCatch({
+      synth_params <- if (!is.null(input$test_data_type) && length(input$test_data_type) > 0 && input$test_data_type == "synthetic") {
+        list(
+          total_sites = if (!is.null(input$synth_total_sites)) input$synth_total_sites else 50,
+          rain_pct = if (!is.null(input$synth_rain_pct)) input$synth_rain_pct else 30,
+          inspect_pct = if (!is.null(input$synth_inspect_pct)) input$synth_inspect_pct else 40,
+          above_thresh_pct = if (!is.null(input$synth_above_thresh_pct)) input$synth_above_thresh_pct else 20
+        )
+      } else {
+        NULL
+      }
+      
+      get_flow_test_data(
+        start_date = if (!is.null(input$test_start_date)) input$test_start_date else Sys.Date() - 30,
+        end_date = if (!is.null(input$test_end_date)) input$test_end_date else Sys.Date(),
+        data_type = if (!is.null(input$test_data_type) && length(input$test_data_type) > 0) input$test_data_type else "synthetic",
+        synth_params = synth_params
       )
-    } else {
-      NULL
-    }
-    
-    get_flow_test_data(
-      start_date = input$test_start_date,
-      end_date = input$test_end_date,
-      data_type = input$test_data_type,
-      synth_params = synth_params
-    )
+    }, error = function(e) {
+      cat("Error in flow_test_data:", e$message, "\n")
+      return(data.frame())
+    })
   })
   
   output$flow_test_results <- DT::renderDataTable({
@@ -545,20 +694,21 @@ server <- function(input, output, session) {
     create_flow_summary(data)
   })
   
+  output$flow_diagram_content <- renderUI({
+    if (!is.null(input$run_flow_test) && input$run_flow_test > 0) {
+      data <- flow_test_data()
+      HTML(create_flow_diagram_with_counts(data))
+    } else {
+      tags$div(
+        style = "text-align: center; color: #666; padding: 20px;",
+        h4("Click 'Run Flow Test' to see the status flow diagram with actual site counts")
+      )
+    }
+  })
+  
   output$validation_summary <- renderText({
     data <- flow_test_data()
     create_validation_summary(data)
-  })
-  
-  # Timeline plots for individual sites
-  output$timeline_plot1 <- renderPlotly({
-    timeline_data <- create_site_timeline_data(input$timeline_site1, Sys.Date())
-    create_site_timeline_plot(timeline_data)
-  })
-  
-  output$timeline_plot2 <- renderPlotly({
-    timeline_data <- create_site_timeline_data(input$timeline_site2, Sys.Date())
-    create_site_timeline_plot(timeline_data)
   })
 }
 

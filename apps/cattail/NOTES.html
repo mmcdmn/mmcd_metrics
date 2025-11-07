@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Cattail Inspection Progress - Technical Notes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            border-bottom: 2px solid #95a5a6;
+            padding-bottom: 5px;
+            margin-top: 30px;
+        }
+        h3 {
+            color: #555;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #666;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border-left: 4px solid #3498db;
+        }
+        pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        ul, ol {
+            margin-left: 20px;
+        }
+        li {
+            margin-bottom: 5px;
+        }
+        strong {
+            color: #2c3e50;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .critical {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .example {
+            background-color: #e7f3fe;
+            border-left: 4px solid #2196F3;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .success {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        @media print {
+            body {
+                max-width: 100%;
+                font-size: 11pt;
+            }
+            h1 {
+                page-break-before: always;
+            }
+            h1:first-child {
+                page-break-before: avoid;
+            }
+            h2, h3 {
+                page-break-after: avoid;
+            }
+            pre {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<h1>Cattail Inspection Progress - Technical Notes</h1>
+
+<h2>Overview</h2>
+<p>This Shiny app tracks cattail larval mosquito inspection progress across three perspectives:</p>
+<ol>
+    <li><strong>Progress vs Goal</strong> - Current year actual inspections compared to facility-specific goals</li>
+    <li><strong>Historical Comparison</strong> - Current year performance vs previous years' baseline</li>
+    <li><strong>Treatment Planning</strong> - Planned treatments by facility and plan type</li>
+</ol>
+
+<h2>Data Sources</h2>
+
+<h3>Tables Used</h3>
+
+<h4>Primary Inspection Tables</h4>
+<ul>
+    <li><strong><code>dblarv_insptrt_current</code></strong> - Active larval inspection records
+        <ul>
+            <li>Contains ongoing inspections for current operations</li>
+            <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>action</code>, <code>inspdate</code>, <code>reinspect</code></li>
+            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+        </ul>
+    </li>
+    <li><strong><code>dblarv_insptrt_archive</code></strong> - Historical larval inspection records
+        <ul>
+            <li>Contains closed/archived inspections from previous years</li>
+            <li>Same schema as current table</li>
+            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+        </ul>
+    </li>
+</ul>
+
+<h4>Supporting Tables</h4>
+<ul>
+    <li><strong><code>loc_breeding_sites</code></strong> - Site lifecycle tracking
+        <ul>
+            <li><strong>CRITICAL</strong>: This is the ONLY table with <code>enddate</code> column</li>
+            <li>Tracks when sites are opened and closed</li>
+            <li><strong>CAN HAVE MULTIPLE ROWS PER SITECODE</strong> with different enddates</li>
+            <li>Used to filter out sites that no longer exist</li>
+        </ul>
+    </li>
+    <li><strong><code>gis_sectcode</code></strong> - Section/zone information
+        <ul>
+            <li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
+            <li>Join pattern:<br>
+                <pre><code>LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode</code></pre>
+            </li>
+            <li>Note: Some sitecodes use directional suffixes (N, S, E, W) instead of '-'</li>
+        </ul>
+    </li>
+    <li><strong><code>cattail_pctcomplete_base</code></strong> - Goal/target data
+        <ul>
+            <li>Contains facility-specific goals for P1 and P2 zones</li>
+            <li>Fields: <code>facility</code>, <code>p1_totsitecount</code>, <code>p2_totsitecount</code></li>
+            <li><strong>ONLY USED FOR PROGRESS VS GOAL TAB</strong> - not for historical comparison</li>
+        </ul>
+    </li>
+</ul>
+
+<h3>Action Codes</h3>
+<ul>
+    <li><strong>Action '9'</strong> - Cattail inspections (this is the focus of the app)</li>
+    <li>Other actions are filtered out</li>
+</ul>
+
+<h3>Reinspect Flag</h3>
+<ul>
+    <li><strong>reinspect IS NULL OR reinspect = 'f'</strong> - First inspection (counted)</li>
+    <li><strong>reinspect = 't'</strong> - Re-inspection (excluded to avoid double-counting)</li>
+</ul>
+
+<h2>Critical Data Integrity Issue: Site Enddate Filtering</h2>
+
+<div class="critical">
+    <h3>The Problem</h3>
+    <p><strong>Inspection tables do NOT have enddate columns.</strong> Sites that have been closed (enddate in past) can still have records in inspection tables, which would incorrectly inflate counts.</p>
+</div>
+
+<div class="success">
+    <h3>The Solution</h3>
+    <p><strong>ALWAYS join with <code>loc_breeding_sites</code> and filter by enddate:</strong></p>
+    <pre><code>LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
+WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)</code></pre>
+</div>
+
+<h3>Why This Matters</h3>
+<ul>
+    <li>Site <code>190208-003</code> had 11 rows in <code>loc_breeding_sites</code>, ALL with past enddates</li>
+    <li>Without the join, inspections from 2019-2023 appeared in results</li>
+    <li>This caused "ghost sites" to appear in historical data</li>
+    <li><strong>EVERY query that counts sites MUST include this filter</strong></li>
+</ul>
+
+<h3>Which Queries Need This Filter?</h3>
+<ul>
+    <li>✅ <strong>Historical Comparison queries</strong> - Archive AND Current tables (both historical and current year queries)</li>
+    <li>✅ <strong>Sites table queries</strong> - Any query showing site details</li>
+    <li>❌ <strong>Progress vs Goal queries</strong> - These are year-specific and don't need active site filtering (the goal is based on that year's operation)</li>
+</ul>
+
+<h2>Tab 1: Progress vs Goal</h2>
+
+<h3>Purpose</h3>
+<p>Compare actual unique site inspections to facility-specific goals for the selected year and zone.</p>
+
+<h3>Key Features</h3>
+<ul>
+    <li><strong>Year selector</strong> - Choose year to analyze (defaults to current year)</li>
+    <li><strong>Goal Type selector</strong> - P1 (Primary Goal) or P2 (Secondary Goal)</li>
+    <li><strong>Custom Date slider</strong> - Analyze progress "as of" a specific date in the year</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+    <li>Query <code>dblarv_insptrt_archive</code> and <code>dblarv_insptrt_current</code> for:
+        <ul>
+            <li>Action = '9' (cattail)</li>
+            <li>Selected year</li>
+            <li>Inspections on or before custom date</li>
+            <li>Exclude reinspects</li>
+        </ul>
+    </li>
+    <li>Join with <code>gis_sectcode</code> to get zone information</li>
+    <li>Group by facility and zone, COUNT total inspections</li>
+    <li>Query <code>cattail_pctcomplete_base</code> for goals (p1_totsitecount or p2_totsitecount)</li>
+    <li>Filter to selected zone only (zone '1' for P1, zone '2' for P2)</li>
+    <li>Create side-by-side bar chart:
+        <ul>
+            <li>Green bars: Actual inspections</li>
+            <li>Gray bars: Goal</li>
+        </ul>
+    </li>
+</ol>
+
+<h3>SQL Query Pattern</h3>
+<pre><code>-- Get actuals from archive
+SELECT a.facility, g.zone, COUNT(*) AS inspections
+FROM public.dblarv_insptrt_archive a
+LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, ...) = LEFT(g.sectcode, ...)
+WHERE a.action = '9'
+  AND EXTRACT(YEAR FROM a.inspdate) = [year]
+  AND a.inspdate <= '[custom_date]'
+  AND (a.reinspect IS NULL OR a.reinspect = 'f')
+GROUP BY a.facility, g.zone
+
+-- Combine with current
+UNION with same query on dblarv_insptrt_current
+
+-- Get goals
+SELECT facility, p1_totsitecount, p2_totsitecount 
+FROM public.cattail_pctcomplete_base</code></pre>
+
+<div class="note">
+    <strong>NOTE</strong>: No <code>loc_breeding_sites</code> join needed here because we're measuring year-specific operational progress, not active site status.
+</div>
+
+<h2>Tab 2: Historical Comparison</h2>
+
+<h3>Purpose</h3>
+<p>Compare current year's unique site inspections to a historical baseline (average of previous X years) by zone.</p>
+
+<h3>Key Features</h3>
+<ul>
+    <li><strong>Zone selector</strong> - P1 (Zone 1) or P2 (Zone 2)
+        <ul>
+            <li><strong>IMPORTANT</strong>: This is NOT "goal type" - it's just zone filtering</li>
+            <li>The goal table is NOT used in this tab at all</li>
+        </ul>
+    </li>
+    <li><strong>Previous X years slider</strong> - Number of historical years to compare (1-10, default 3)</li>
+    <li><strong>Facility filter</strong> - Multi-select to focus on specific facilities or all</li>
+    <li><strong>Sites table view toggle</strong>:
+        <ul>
+            <li>"All sites in last X years" - Show all sites inspected historically</li>
+            <li>"Sites NOT checked this year" - Show sites needing attention</li>
+        </ul>
+    </li>
+</ul>
+
+<h3>Historical Baseline Calculation</h3>
+<p><strong>Historical Baseline</strong> = Unique sites inspected in years [current_year - X] through [current_year - 1]</p>
+
+<div class="example">
+    <strong>Example</strong> (current year = 2025, X = 3):
+    <ul>
+        <li>Historical range: 2022, 2023, 2024 (excludes 2025)</li>
+        <li>Query finds ALL unique sites inspected across those 3 years</li>
+        <li>This is a <strong>COMBINED count</strong>, not an average</li>
+    </ul>
+    <p><strong>Current Year</strong> = Unique sites inspected in 2025</p>
+</div>
+
+<h3>Graph Query</h3>
+<p><strong>Historical Baseline Query:</strong></p>
+<pre><code>WHERE EXTRACT(YEAR FROM a.inspdate) >= [current_year - X]
+  AND EXTRACT(YEAR FROM a.inspdate) <= [current_year - 1]
+  AND g.zone = '[selected_zone]'
+  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)  -- Critical!</code></pre>
+
+<p><strong>Current Year Query:</strong></p>
+<pre><code>WHERE EXTRACT(YEAR FROM a.inspdate) = [current_year]
+  AND g.zone = '[selected_zone]'
+  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)  -- Critical!</code></pre>
+
+<ul>
+    <li>Combines archive + current tables with UNION ALL</li>
+    <li>Joins with <code>gis_sectcode</code> for zone filtering</li>
+    <li><strong>Joins with <code>loc_breeding_sites</code> to exclude ended sites</strong></li>
+    <li>Groups by facility</li>
+    <li>Uses <code>COUNT(DISTINCT sitecode)</code> to avoid duplicates</li>
+</ul>
+
+<h3>Chart Display</h3>
+<p>Side-by-side bars for clear comparison:</p>
+<ul>
+    <li>Gray bars: Historical Baseline</li>
+    <li>Green bars: Current Year</li>
+    <li>Legend at top shows which is which</li>
+</ul>
+
+<h3>Why COUNT(DISTINCT sitecode)?</h3>
+<p>A site can be inspected multiple times in a year (e.g., monthly checks). Using <code>COUNT(DISTINCT sitecode)</code> ensures:</p>
+<ul>
+    <li>Site with 1 inspection = counted once</li>
+    <li>Site with 5 inspections = counted once</li>
+    <li>This gives unique site count, not total inspection count</li>
+</ul>
+
+<div class="example">
+    <strong>Example for Sr facility in 2025:</strong>
+    <ul>
+        <li>Total inspections: 1,822</li>
+        <li>Unique sites: 1,662</li>
+        <li>Difference: 160 sites had multiple inspections</li>
+    </ul>
+</div>
+
+
+<h2>Tab 3: Treatment Planning</h2>
+
+<h3>Purpose</h3>
+<p>Show planned treatments (not actual inspections) grouped by facility and plan type.</p>
+
+<h3>Key Features</h3>
+<ul>
+    <li><strong>View by</strong>: Acres or Number of Sites</li>
+    <li><strong>Facility filter</strong>: Select specific facility or all</li>
+    <li><strong>Plan type checkboxes</strong>: A, D, G, N, U (different treatment plan categories)</li>
+</ul>
+
+<div class="note">
+    <strong>NOTE</strong>: This tab's queries and logic are in <code>planned_treatment_functions.R</code>
+</div>
+
+<h2>Code Organization</h2>
+
+<h3>File Structure</h3>
+<pre><code>cattail/
+├── app.R                          # Main UI and server logic (NO SQL!)
+├── progress_functions.R           # Progress vs Goal tab functions
+├── historical_functions.R         # Historical Comparison tab functions
+├── planned_treatment_functions.R  # Treatment Planning tab functions
+├── test_sr_counts.R              # Test script for Sr facility counts
+├── test_sr_zone_comparison.R     # Test script for zone-specific counts
+└── NOTES.md                       # Documentation (markdown)
+└── NOTES.html                     # Documentation (this file)</code></pre>
+
+<h3>Design Principles</h3>
+<ol>
+    <li><strong>Separation of Concerns</strong>: UI/server in app.R, ALL SQL in function files</li>
+    <li><strong>No SQL in app.R</strong>: Every query is wrapped in a function</li>
+    <li><strong>Consistent Patterns</strong>: All tabs follow same structure:
+        <ul>
+            <li>eventReactive for data loading on refresh button</li>
+            <li>Function calls with input parameters</li>
+            <li>Render functions for plots and tables</li>
+        </ul>
+    </li>
+</ol>
+
+<h3>Function Files</h3>
+
+<h4>progress_functions.R</h4>
+<ul>
+    <li><code>get_progress_data(year, goal_column, custom_today)</code> - Query actuals and goals</li>
+    <li><code>create_progress_plot(data)</code> - Render progress bar chart</li>
+</ul>
+
+<h4>historical_functions.R</h4>
+<ul>
+    <li><code>get_historical_progress_data(hist_years, hist_zone, hist_facility_filter)</code> - Query historical + current year data</li>
+    <li><code>create_historical_progress_plot(data, hist_years)</code> - Render side-by-side comparison chart</li>
+    <li><code>get_sites_table_data(hist_years, hist_zone, hist_facility_filter, sites_view_type)</code> - Query site details</li>
+</ul>
+
+<h4>planned_treatment_functions.R</h4>
+<ul>
+    <li>Functions for treatment planning tab</li>
+</ul>
+
+<h3>Shared Utilities (shared/db_helpers.R)</h3>
+<ul>
+    <li><code>get_db_connection()</code> - Database connection helper</li>
+    <li><code>get_facility_choices()</code> - Facility dropdown options</li>
+    <li><code>get_facility_base_colors()</code> - Color mapping for facilities</li>
+    <li><code>get_status_colors()</code> - Color mapping for status types (active, planned, etc.)</li>
+    <li><code>map_facility_names()</code> - Convert facility codes to display names</li>
+</ul>
+
+<h2>Common Data Patterns</h2>
+
+<h3>Facility Codes</h3>
+<p>Display names are mapped via <code>map_facility_names()</code> from db_helpers.</p>
+
+<h3>Zone Mapping</h3>
+<p>Zones are extracted from site codes via <code>gis_sectcode</code> join:</p>
+<pre><code>LEFT JOIN public.gis_sectcode g 
+  ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode</code></pre>
+<p>This matches the first 6 characters of the sitecode and tries multiple suffix patterns ('-', 'N', 'S', 'E', 'W') to find the corresponding sectcode and get the zone.</p>
+
+<h3>Known Test Results (as of Nov 2025)</h3>
+<table>
+    <tr>
+        <th>Facility</th>
+        <th>Zone</th>
+        <th>2024</th>
+        <th>2025</th>
+        <th>Change</th>
+    </tr>
+    <tr>
+        <td>Sr</td>
+        <td>P1 (Zone 1)</td>
+        <td>858</td>
+        <td>1,207</td>
+        <td>+40%</td>
+    </tr>
+    <tr>
+        <td>Sr</td>
+        <td>P2 (Zone 2)</td>
+        <td>122</td>
+        <td>170</td>
+        <td>+39%</td>
+    </tr>
+</table>
+
+
+<hr>
+<p style="text-align: center; color: #999; margin-top: 40px;">
+    <em>Last updated: November 2025</em>
+</p>
+
+</body>
+</html>

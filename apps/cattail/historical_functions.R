@@ -29,7 +29,11 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       a.sitecode,
       g.zone
     FROM public.dblarv_insptrt_archive a
-    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
     LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
     WHERE a.action = '9'
       AND EXTRACT(YEAR FROM a.inspdate) >= %d
@@ -46,7 +50,11 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       a.sitecode,
       g.zone
     FROM public.dblarv_insptrt_current a
-    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
     LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
     WHERE a.action = '9'
       AND EXTRACT(YEAR FROM a.inspdate) >= %d
@@ -75,7 +83,11 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       a.sitecode,
       g.zone
     FROM public.dblarv_insptrt_archive a
-    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
     LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
     WHERE a.action = '9'
       AND EXTRACT(YEAR FROM a.inspdate) = %d
@@ -91,7 +103,11 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       a.sitecode,
       g.zone
     FROM public.dblarv_insptrt_current a
-    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+      OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
     LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
     WHERE a.action = '9'
       AND EXTRACT(YEAR FROM a.inspdate) = %d
@@ -208,7 +224,11 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.sitecode,
         a.facility
       FROM public.dblarv_insptrt_current a
-      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
       LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
@@ -223,7 +243,11 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.sitecode,
         a.facility
       FROM public.dblarv_insptrt_archive a
-      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
       LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
@@ -237,7 +261,11 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.sitecode,
         a.facility
       FROM public.dblarv_insptrt_current a
-      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
       LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) = %d
@@ -251,7 +279,11 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.sitecode,
         a.facility
       FROM public.dblarv_insptrt_archive a
-      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
       LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) = %d
@@ -331,7 +363,11 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         g.zone,
         ROW_NUMBER() OVER (PARTITION BY a.sitecode, a.facility ORDER BY a.inspdate DESC) as rn
       FROM public.dblarv_insptrt_current a
-      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
       LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
@@ -352,7 +388,11 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         g.zone,
         ROW_NUMBER() OVER (PARTITION BY a.sitecode, a.facility ORDER BY a.inspdate DESC) as rn
       FROM public.dblarv_insptrt_archive a
-      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)
+      LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
+        OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
       LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) >= %d

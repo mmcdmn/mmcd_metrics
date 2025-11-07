@@ -305,16 +305,19 @@ FROM public.cattail_pctcomplete_base</code></pre>
 </ul>
 
 <h3>Historical Baseline Calculation</h3>
-<p><strong>Historical Baseline</strong> = Unique sites inspected in years [current_year - X] through [current_year - 1]</p>
+<p><strong>Historical Baseline</strong> = ALL unique sites inspected in years [current_year - X] through [current_year - 1]</p>
 
 <div class="example">
     <strong>Example</strong> (current year = 2025, X = 3):
     <ul>
         <li>Historical range: 2022, 2023, 2024 (excludes 2025)</li>
-        <li>Query finds ALL unique sites inspected across those 3 years</li>
-        <li>This is a <strong>COMBINED count</strong>, not an average</li>
+        <li>Query finds ALL unique sites inspected across those 3 years COMBINED</li>
+        <li>This is a <strong>TOTAL COMBINED COUNT</strong>, not an average</li>
+        <li>If a site was inspected in 2022, 2023, and 2024, it's counted once</li>
+        <li>If a site was only inspected in 2023, it's counted once</li>
     </ul>
     <p><strong>Current Year</strong> = Unique sites inspected in 2025</p>
+    <p><strong>Important</strong>: This shows TOTAL unique sites over X years, NOT the average per year.</p>
 </div>
 
 <h3>Graph Query</h3>

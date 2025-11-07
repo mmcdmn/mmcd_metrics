@@ -145,14 +145,18 @@ Compare current year's unique site inspections to a historical baseline (average
   - "Sites NOT checked this year" - Show sites needing attention
 
 ### Historical Baseline Calculation
-**Historical Baseline** = Unique sites inspected in years [current_year - X] through [current_year - 1]
+**Historical Baseline** = ALL unique sites inspected in years [current_year - X] through [current_year - 1]
 
 Example (current year = 2025, X = 3):
 - Historical range: 2022, 2023, 2024 (excludes 2025)
-- Query finds ALL unique sites inspected across those 3 years
-- This is a **COMBINED count**, not an average
+- Query finds ALL unique sites inspected across those 3 years COMBINED
+- This is a **TOTAL COMBINED COUNT**, not an average
+- If a site was inspected in 2022, 2023, and 2024, it's counted once
+- If a site was only inspected in 2023, it's counted once
 
 **Current Year** = Unique sites inspected in 2025
+
+**Important**: This shows TOTAL unique sites over X years, NOT the average per year.
 
 ### Data Flow
 
@@ -458,7 +462,7 @@ Potential improvements:
 
 1. **Site enddate filtering is CRITICAL** - Must join `loc_breeding_sites` on historical queries
 2. **COUNT DISTINCT for unique sites** - Sites can have multiple inspections
-3. **Historical baseline is COMBINED count** - Not an average, all sites across X years
+3. **Historical baseline is TOTAL COMBINED count** - NOT an average, ALL unique sites across X years
 4. **Zone ≠ Goal** - Historical tab uses zones for geographic filtering, not goal targets
 5. **Separate SQL from UI** - All queries in function files, never in app.R
 6. **Test your queries** - Use test scripts to validate counts match expected results

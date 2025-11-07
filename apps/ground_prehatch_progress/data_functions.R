@@ -176,7 +176,7 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
 }
 
 # Function to aggregate data based on grouping level
-aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_expiring_only = FALSE, site_details = NULL) {
+aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_expiring_only = FALSE, site_details = NULL, combine_zones = FALSE) {
   if (nrow(data) == 0) return(data)
   
   # Map facility names for display
@@ -205,7 +205,9 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
   }
   
   # Determine if zones should be shown separately
-  show_zones_separately <- !is.null(zone_filter) && length(zone_filter) == 1
+  # For single zone, never show separately (just show the zone)
+  # For multiple zones, show separately only if combine_zones is FALSE
+  show_zones_separately <- !is.null(zone_filter) && length(zone_filter) > 1 && !combine_zones
   
   if (group_by == "mmcd_all") {
     if (show_zones_separately) {

@@ -24,6 +24,7 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
   - [R Package Installation](#r-package-installation)
   - [Shiny Server Setup](#shiny-server-setup)
   - [Quick Local Testing](#quick-local-testing)
+  - [Running Apps Individually with R (Without Docker)](#running-apps-individually-with-r-without-docker)
   - [Production Deployment](#production-deployment)
 - [Application URLs](#application-urls)
 - [Adding New Applications](#adding-new-applications)
@@ -63,7 +64,8 @@ mmcd_metrics/
 │   ├── ground_prehatch_progress/ # Ground prehatch treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
-│   │   └── display_functions.R   # Visualization functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   └── ui_helpers.R          # UI component functions
 │   ├── cattail/                  # Comprehensive cattail management (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   └── planned_treatment_functions.R # Treatment planning functions
@@ -165,15 +167,20 @@ mmcd_metrics/
 - **Path**: `/ground_prehatch_progress/`
 - **Purpose**: Track and analyze ground prehatch treatment progress and performance
 - **Modular Structure**:
-  - **`app.R`**: Main application logic with dashboard interface
+  - **`app.R`**: Main application logic with clean tabbed interface
   - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
   - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
+  - **`ui_helpers.R`**: UI component functions and reusable interface elements
 - **Features**:
-  - Real-time progress tracking of ground prehatch treatments
+  - **Clean persistent filter panel**: All controls stay visible when switching between tabs
+  - **Responsive design**: Modern layout with gradient headers and improved spacing
+  - **Progress Overview Tab**: Real-time progress tracking with summary value boxes
+  - **Detailed View Tab**: Comprehensive site details table with download functionality
+  - **Modular UI components**: Reusable UI functions in ui_helpers.R for maintainable code
   - Performance metrics and completion rate analysis (powered by `data_functions.R`)
   - Interactive visualizations and progress charts (powered by `display_functions.R`)
-  - Facility-level performance comparisons
-  - Treatment timeline analysis and goal tracking
+  - Facility-level performance comparisons with P1/P2 zone support
+  - Treatment timeline analysis and goal tracking with date simulation
   - Consistent color schemes from centralized `db_helpers.R`
 
 ### Red Air Pipeline
@@ -261,18 +268,26 @@ sudo apt install -y gfortran cmake libabsl-dev
 Install R packages in the correct order to handle dependencies. For Shiny Server deployment, packages must be installed system-wide to be accessible to the shiny user:
 
 ```bash
-# Install core Shiny and data manipulation packages (user-level)
-R -e "install.packages(c('shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', 'plotrix', 'dtplyr', 'vroom', 'tidyverse'), repos='https://cran.rstudio.com/')"
-
-# Install spatial analysis dependencies (user-level)
-R -e "install.packages(c('classInt', 's2'), repos='https://cran.rstudio.com/')"
-
-# Install geospatial and mapping packages (user-level)
-R -e "install.packages(c('sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster'), repos='https://cran.rstudio.com/')"
+# Install ALL required packages in one command (user-level)
+R -e "install.packages(c( \
+  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
+  'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
+  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
+  'classInt', 's2', \
+  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
+  'plotly', 'purrr', 'tibble' \
+), repos='https://cran.rstudio.com/')"
 
 # IMPORTANT: For Shiny Server deployment, also install packages system-wide
 # This ensures the shiny user can access all required packages
-sudo R -e "install.packages(c('shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', 'plotrix', 'dtplyr', 'vroom', 'tidyverse', 'classInt', 's2', 'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster'), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+sudo R -e "install.packages(c( \
+  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
+  'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
+  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
+  'classInt', 's2', \
+  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
+  'plotly', 'purrr', 'tibble' \
+), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 ```
 
 ### Shiny Server Setup
@@ -319,6 +334,173 @@ Access the applications:
 - Main Dashboard: `http://localhost:3838/`
 - Individual Applications: `http://localhost:3838/app-name/`
 
+### Running Apps Individually with R (Without Docker)
+
+You can run any Shiny app directly using R without Docker or Shiny Server. This is ideal for local development and testing.
+
+#### Windows Setup
+
+**Step 1: Install R**
+
+Download and install R from [CRAN](https://cran.r-project.org/bin/windows/base/):
+```powershell
+# Or use Windows Package Manager
+winget install RProject.R
+
+# Or use Chocolatey
+choco install r.project
+```
+
+**Step 2: Install Required R Packages**
+
+Open PowerShell and run:
+```powershell
+# Install ALL required packages to user library
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "dir.create(Sys.getenv('R_LIBS_USER'), recursive=TRUE, showWarnings=FALSE); install.packages(c('shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', 'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', 'plotrix', 'dtplyr', 'vroom', 'tidyverse', 'classInt', 's2', 'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', 'plotly', 'purrr', 'tibble'), repos='https://cran.rstudio.com/', lib=Sys.getenv('R_LIBS_USER'), dependencies=TRUE)"
+```
+
+> **Note**: Adjust the R path (`C:\Program Files\R\R-4.5.2\bin\R.exe`) to match your installed version.
+
+**Verify Installation (Optional)**
+
+Run the verification script to confirm all packages are installed:
+```powershell
+& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" verify_packages.R
+```
+
+**Step 3: Configure Environment Variables**
+
+Create a `.env` file in the project root with your database credentials:
+```bash
+# Copy the example file
+cp .env.example .env
+
+# Edit .env with your database credentials:
+DB_HOST=your-database-host
+DB_PORT=5432
+DB_USER=your-username
+DB_PASSWORD=your-password
+DB_NAME=your-database-name
+```
+
+**Step 4: Run an App**
+
+Navigate to any app directory and run it:
+```powershell
+# Navigate to the app directory
+cd c:\Users\yourusername\Documents\mmcd_metrics\apps\test-app
+
+# Run the app
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=3838, host='127.0.0.1', launch.browser=FALSE)"
+```
+
+The app will be available at: **http://127.0.0.1:3838**
+
+#### Linux/Mac Setup
+
+**Step 1: Install R**
+```bash
+# Ubuntu/Debian
+sudo apt install r-base r-base-dev
+
+# macOS (using Homebrew)
+brew install r
+```
+
+**Step 2: Install Required R Packages**
+```bash
+# Install ALL required packages
+R -e "install.packages(c( \
+  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
+  'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
+  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
+  'classInt', 's2', \
+  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
+  'plotly', 'purrr', 'tibble' \
+), repos='https://cran.rstudio.com/', dependencies=TRUE)"
+```
+
+**Step 3: Configure Environment Variables**
+```bash
+# Copy and edit the .env file
+cp .env.example .env
+nano .env  # or use your preferred editor
+```
+
+**Step 4: Run an App**
+```bash
+# Navigate to any app directory
+cd apps/test-app
+
+# Run the app
+R -e "shiny::runApp(port=3838, host='127.0.0.1', launch.browser=FALSE)"
+```
+
+#### Running Different Apps
+
+You can run any app in the `apps/` directory:
+
+```powershell
+# Windows examples:
+
+# Test app (minimal database requirements)
+cd apps\test-app
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=3838, host='127.0.0.1')"
+
+# Simple test app (no database required)
+cd apps\simple-test
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=3838, host='127.0.0.1')"
+
+# Mosquito monitoring app
+cd apps\mosquito-monitoring
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=3838, host='127.0.0.1')"
+
+# SUCO history app
+cd apps\suco_history
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=3838, host='127.0.0.1')"
+```
+
+```bash
+# Linux/Mac examples:
+cd apps/test-app && R -e "shiny::runApp(port=3838)"
+cd apps/mosquito-monitoring && R -e "shiny::runApp(port=3838)"
+cd apps/suco_history && R -e "shiny::runApp(port=3838)"
+```
+
+#### Using RStudio (Optional)
+
+If you have RStudio installed:
+
+1. Open RStudio
+2. Open the `app.R` file from any app directory (e.g., `apps/test-app/app.R`)
+3. Click the **"Run App"** button in the top-right of the editor
+4. The app will launch in a browser or RStudio viewer
+
+#### Stopping the App
+
+To stop a running Shiny app:
+- Press `Ctrl+C` in the terminal/PowerShell window
+- Or close the terminal window
+
+#### Troubleshooting
+
+**"Package not found" errors:**
+```powershell
+# Install the missing package
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "install.packages('package-name', repos='https://cran.rstudio.com/', lib=Sys.getenv('R_LIBS_USER'))"
+```
+
+**"Cannot connect to database" errors:**
+- Verify your `.env` file exists and contains correct credentials
+- Ensure you have network access to the database server
+- Check that the database server allows connections from your IP
+
+**Port already in use:**
+```powershell
+# Use a different port
+& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=4000, host='127.0.0.1')"
+```
+
 ### Production Deployment
 
 For a complete production setup on a fresh Ubuntu machine:
@@ -334,10 +516,15 @@ sudo apt install -y r-base r-base-dev gdebi-core \
     libfontconfig1-dev libfreetype-dev libpng-dev \
     libharfbuzz-dev libfribidi-dev gfortran cmake libabsl-dev
 
-# Step 3: Install R packages (run each command and wait for completion)
-R -e "install.packages(c('shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', 'plotrix', 'dtplyr', 'vroom', 'tidyverse'), repos='https://cran.rstudio.com/')"
-R -e "install.packages(c('classInt', 's2'), repos='https://cran.rstudio.com/')"
-R -e "install.packages(c('sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster'), repos='https://cran.rstudio.com/')"
+# Step 3: Install R packages (single command with all required packages)
+R -e "install.packages(c( \
+  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
+  'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
+  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
+  'classInt', 's2', \
+  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
+  'plotly', 'purrr', 'tibble' \
+), repos='https://cran.rstudio.com/')"
 
 # Step 4: Clone repository
 git clone https://github.com/ablepacifist/mmcd_metrics_1.git

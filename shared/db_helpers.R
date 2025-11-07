@@ -191,7 +191,7 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("HIGH" = "RED", "MEDIUM" = "YELLOW", "LOW" = "BLUE","GREEN" = "PREHATCH")
+  choices <- c("RED" = "RED", "YELLOW" = "YELLOW", "BLUE" = "BLUE", "GREEN" = "GREEN")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)
@@ -973,10 +973,7 @@ get_treatment_plan_types <- function() {
           WHEN airgrnd_plan = 'N' THEN 'No treatment planned'
           WHEN airgrnd_plan = 'U' THEN 'Unknown treatment type'
           ELSE 'Other treatment type'
-        END as description
-      FROM public.dblarv_insptrt_current 
-      WHERE airgrnd_plan IS NOT NULL
-      ORDER BY 
+        END as description,
         CASE airgrnd_plan 
           WHEN 'A' THEN 1
           WHEN 'D' THEN 2
@@ -984,7 +981,10 @@ get_treatment_plan_types <- function() {
           WHEN 'N' THEN 4
           WHEN 'U' THEN 5
           ELSE 6
-        END
+        END as sort_order
+      FROM public.dblarv_insptrt_current 
+      WHERE airgrnd_plan IS NOT NULL
+      ORDER BY sort_order
     ")
     
     dbDisconnect(con)

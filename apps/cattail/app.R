@@ -7,6 +7,7 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(purrr)
   library(tibble)
+  library(DT)
 })
 
 # Source the shared database helper functions
@@ -15,12 +16,18 @@ source("../../shared/db_helpers.R")
 # Source the planned treatment functions
 source("planned_treatment_functions.R")
 
+# Source the progress functions
+source("progress_functions.R")
+
+# Source the historical comparison functions
+source("historical_functions.R")
+
 ui <- fluidPage(
   titlePanel("Cattail Inspection Progress and Treatment Planning"),
   
   tabsetPanel(
-    # First tab: Inspection Progress
-    tabPanel("Inspection Progress",
+    # First tab: Progress vs Goal
+    tabPanel("Progress vs Goal",
       sidebarLayout(
         sidebarPanel(
           selectInput(
@@ -43,6 +50,14 @@ ui <- fluidPage(
             "Pretend Today is:",
             value = Sys.Date(),
             format = "yyyy-mm-dd"
+          ),
+          
+          # Refresh button
+          actionButton(
+            "refresh_goal_progress",
+            "Refresh Data",
+            icon = icon("refresh"),
+            style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
           )
         ),
         mainPanel(
@@ -51,10 +66,77 @@ ui <- fluidPage(
       )
     ),
     
-    # Second tab: Treatment Planning
+    # Second tab: Historical Comparison
+    tabPanel("Historical Comparison",
+      sidebarLayout(
+        sidebarPanel(
+          selectInput(
+            "hist_zone",
+            "Zone:",
+            choices = c(
+              "P1 (Zone 1)" = "1",
+              "P2 (Zone 2)" = "2"
+            ),
+            selected = "1"
+          ),
+          
+          numericInput(
+            "hist_years",
+            "Compare to previous X years:",
+            value = 3,
+            min = 1,
+            max = 10,
+            step = 1
+          ),
+          
+          selectizeInput(
+            "hist_facility_filter",
+            "Filter Sites by Facility:",
+            choices = get_facility_choices(),
+            selected = "all",
+            multiple = TRUE
+          ),
+          
+          radioButtons(
+            "sites_view_type",
+            "Sites Table View:",
+            choices = c(
+              "All sites in last X years" = "all",
+              "Sites NOT checked this year" = "unchecked"
+            ),
+            selected = "all"
+          ),
+          
+          # Refresh button
+          actionButton(
+            "refresh_historical",
+            "Refresh Data",
+            icon = icon("refresh"),
+            style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
+          )
+        ),
+        mainPanel(
+          h4("Historical Progress Comparison", style = "font-weight: bold; margin-top: 20px;"),
+          plotOutput("historicalProgressPlot", height = "500px"),
+          hr(),
+          h4("Site Inspection Details", style = "font-weight: bold; margin-top: 20px;"),
+          DT::dataTableOutput("sitesTable")
+        )
+      )
+    ),
+    
+    # Third tab: Treatment Planning
     tabPanel("Treatment Planning",
       sidebarLayout(
         sidebarPanel(
+          # Radio buttons to select view type
+          radioButtons(
+            "view_type",
+            "View By:",
+            choices = c("Acres" = "acres", "Number of Sites" = "sites"),
+            selected = "acres"
+          ),
+          
           # Dropdown to select facility
           selectInput(
             "facility",
@@ -69,120 +151,129 @@ ui <- fluidPage(
             "Select Treatment Plan Types:",
             choices = get_treatment_plan_choices(),
             selected = c("A", "D", "G", "N", "U")
+          ),
+          
+          # Refresh button
+          actionButton(
+            "refresh_treatment",
+            "Refresh Data",
+            icon = icon("refresh"),
+            style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
           )
         ),
         
-        # Main panel for displaying the graph
-        mainPanel(plotOutput("treatmentGraph", height = "600px"))
+        # Main panel for displaying the graph and table
+        mainPanel(
+          plotOutput("treatmentGraph", height = "600px"),
+          hr(),
+          h4("Site Details", style = "font-weight: bold; margin-top: 20px;"),
+          DT::dataTableOutput("siteDetailsTable")
+        )
       )
     )
   )
 )
 
 server <- function(input, output) {
-  inspection_data <- reactive({
-    con <- get_db_connection()
-    if (is.null(con)) return(data.frame())
-    
-    # Get actual inspections from archive (filter by year, date, reinspect, and join for zone)
-    query_archive <- sprintf(
-      paste(
-        "SELECT a.facility, g.zone, COUNT(*) AS inspections",
-        "FROM public.dblarv_insptrt_archive a",
-        "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)",
-        "WHERE a.action = '9'",
-        "  AND EXTRACT(YEAR FROM a.inspdate) = %d",
-        "  AND a.inspdate <= '%s'",
-        "  AND (a.reinspect IS NULL OR a.reinspect = 'f')",
-        "GROUP BY a.facility, g.zone",
-        sep = "\n"
-      ),
-      as.numeric(input$goal_year),
-      as.character(input$custom_today)
-    )
-    archive <- dbGetQuery(con, query_archive)
-    # Get actual inspections from current (filter by year, date, reinspect, and join for zone)
-    query_current <- sprintf(
-      paste(
-        "SELECT a.facility, g.zone, COUNT(*) AS inspections",
-        "FROM public.dblarv_insptrt_current a",
-        "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, POSITION('-' IN a.sitecode)-1) = LEFT(g.sectcode, LENGTH(g.sectcode)-1)",
-        "WHERE a.action = '9'",
-        "  AND EXTRACT(YEAR FROM a.inspdate) = %d",
-        "  AND a.inspdate <= '%s'",
-        "  AND (a.reinspect IS NULL OR a.reinspect = 'f')",
-        "GROUP BY a.facility, g.zone",
-        sep = "\n"
-      ),
-      as.numeric(input$goal_year),
-      as.character(input$custom_today)
-    )
-    current <- dbGetQuery(con, query_current)
-    # Combine actuals
-    actuals <- bind_rows(archive, current) %>%
-      mutate(facility = trimws(facility), zone = as.character(zone)) %>%
-      group_by(facility, zone) %>%
-      summarize(inspections = sum(as.numeric(inspections), na.rm = TRUE), .groups = "drop")
-    actuals$inspections <- as.numeric(actuals$inspections)
-    # Get goals
-    goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
-      mutate(facility = trimws(facility))
-    dbDisconnect(con)
-    # Determine which zone to use based on goal_column
-    selected_zone <- ifelse(input$goal_column == "p1_totsitecount", "1", "2")
-    # Filter actuals for the selected zone
-    actuals_zone <- actuals %>% filter(zone == selected_zone)
-    # Build a complete facility list for this zone
-    all_facilities <- union(actuals_zone$facility, goals$facility)
-    # Build actuals and goals for all facilities in this zone
-    # Use tibble and purrr for robust construction
-    actuals_long <- tibble::tibble(
-      facility = all_facilities,
-      count = purrr::map_dbl(all_facilities, function(f) {
-        val <- actuals_zone$inspections[actuals_zone$facility == f]
-        if (length(val) == 0) 0 else val
-      }),
-      type = "Actual Inspections"
-    )
-    goals_long <- tibble::tibble(
-      facility = all_facilities,
-      count = purrr::map_dbl(all_facilities, function(f) {
-        val <- goals[[input$goal_column]][goals$facility == f]
-        if (length(val) == 0) 0 else val
-      }),
-      type = "Goal"
-    )
-    
-    plot_data <- dplyr::bind_rows(actuals_long, goals_long) %>%
-      map_facility_names()
-    
-    return(plot_data)
-  })
-
-  output$progressPlot <- renderPlot({
-    plot_data <- inspection_data()
-    
-    # Get colors from centralized db_helpers
-    status_colors <- get_status_colors()
-    
-    ggplot(plot_data, aes(x = facility_display, y = count, fill = type)) +
-      geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.7) +
-      scale_fill_manual(values = c("Actual Inspections" = unname(status_colors["active"]), "Goal" = unname(status_colors["planned"]))) +
-      labs(
-        title = "Cattail Inspections vs. Goal by Facility",
-        x = "Facility",
-        y = "Number of Sites",
-        fill = "Legend"
-      ) +
-      theme_minimal() +
-      theme(
-        axis.text.x = element_text(face = "bold", size = 16, color = "black", angle = 45, hjust = 1)
-      )
+  # Progress vs Goal tab - data loads on refresh button
+  goal_progress_data <- eventReactive(input$refresh_goal_progress, {
+    get_progress_data(input$goal_year, input$goal_column, input$custom_today)
   })
   
-  # Treatment Planning plot using external functions
+  output$progressPlot <- renderPlot({
+    data <- goal_progress_data()
+    create_progress_plot(data)
+  })
+  
+  # Historical Comparison tab - data loads on refresh button
+  historical_progress_data <- eventReactive(input$refresh_historical, {
+    get_historical_progress_data(input$hist_years, input$hist_zone, input$hist_facility_filter)
+  })
+  
+  # Historical progress plot - overlaid bars like drone app
+  output$historicalProgressPlot <- renderPlot({
+    data <- historical_progress_data()
+    create_historical_progress_plot(data, input$hist_years)
+  })
+  
+  # Sites table data - sites inspected in last X years (with toggle for unchecked this year)
+  sites_table_data <- eventReactive(input$refresh_historical, {
+    get_sites_table_data(input$hist_years, input$hist_zone, input$hist_facility_filter, input$sites_view_type)
+  })
+  
+  # Sites table output
+  output$sitesTable <- DT::renderDataTable({
+    site_data <- sites_table_data()
+    
+    if (nrow(site_data) == 0) {
+      return(data.frame(Message = "No site data available."))
+    }
+    
+    # Rename columns for display
+    display_data <- site_data %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        `Last Inspection` = last_inspection,
+        Wet = wet,
+        Acres = acres,
+        `Acres Plan` = acres_plan
+      )
+    
+    DT::datatable(
+      display_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        order = list(list(1, 'asc'))
+      ),
+      rownames = FALSE
+    )
+  })
+  
+  # Treatment Planning - fetch data only on refresh
+  treatment_data <- eventReactive(input$refresh_treatment, {
+    get_treatment_plan_data()
+  })
+  
   output$treatmentGraph <- renderPlot({
-    create_treatment_plan_plot(input$facility, input$plan_types)
+    data <- treatment_data()
+    create_treatment_plan_plot_with_data(data, input$facility, input$plan_types, input$view_type)
+  })
+  
+  # Site details table
+  output$siteDetailsTable <- DT::renderDataTable({
+    # Fetch site data only when refresh is clicked
+    req(input$refresh_treatment)
+    
+    site_data <- get_site_details_data(input$facility, input$plan_types)
+    
+    if (nrow(site_data) == 0) {
+      return(data.frame(Message = "No site data available for the selected filters."))
+    }
+    
+    # Select and rename columns for display - only relevant columns
+    display_data <- site_data %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        `Plan Type` = plan_name,
+        `Inspection Date` = inspdate,
+        Wet = wet,
+        `Num Dip` = numdip,
+        Acres = acres,
+        `Acres Plan` = acres_plan
+      )
+    
+    DT::datatable(
+      display_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        order = list(list(1, 'asc'), list(2, 'asc'))
+      ),
+      rownames = FALSE
+    )
   })
 }
 

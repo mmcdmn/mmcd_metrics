@@ -6,7 +6,7 @@ suppressPackageStartupMessages({
   library(leaflet)
 })
 
-get_air_sites_data_enhanced <- function(analysis_date, facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2) {
+get_air_sites_data_enhanced <- function(analysis_date, facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bit_effect_days_override = NULL) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -28,6 +28,26 @@ get_air_sites_data_enhanced <- function(analysis_date, facility_filter = NULL, p
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       zone_list <- paste(sprintf("'%s'", zone_filter), collapse=", ")
       zone_condition <- sprintf("AND g.zone IN (%s)", zone_list)
+    }
+
+    # Build BIT effect days override condition
+    # If override is provided, use it for Bti_gran (BIT), otherwise use database value
+    bit_override_sql <- ""
+    if (!is.null(bit_effect_days_override) && !is.na(bit_effect_days_override) && bit_effect_days_override > 0) {
+      bit_override_sql <- sprintf("
+          -- Override effect days for BIT (Bti_gran)
+          CASE 
+            WHEN rt.mattype = 'Bti_gran' THEN %d
+            WHEN mt.effect_days IS NOT NULL AND mt.effect_days > 0 THEN mt.effect_days
+            ELSE NULL
+          END", bit_effect_days_override)
+    } else {
+      bit_override_sql <- "
+          -- Use database effect days
+          CASE 
+            WHEN mt.effect_days IS NOT NULL AND mt.effect_days > 0 THEN mt.effect_days
+            ELSE NULL
+          END"
     }
 
     # Enhanced query with inspection and treatment data
@@ -90,10 +110,10 @@ get_air_sites_data_enhanced <- function(analysis_date, facility_filter = NULL, p
           rt.last_treatment_date,
           rt.matcode,
           rt.mattype as last_treatment_material,
-          -- Calculate treatment expiry based on material effect days
+          -- Calculate treatment expiry based on material effect days (with BIT override if specified)
           CASE 
-            WHEN mt.effect_days IS NOT NULL AND mt.effect_days > 0
-            THEN rt.last_treatment_date + INTERVAL '1 day' * mt.effect_days
+            WHEN %s IS NOT NULL
+            THEN rt.last_treatment_date + INTERVAL '1 day' * (%s)
             ELSE NULL
           END as treatment_expiry
         FROM RecentTreatments rt
@@ -129,7 +149,7 @@ get_air_sites_data_enhanced <- function(analysis_date, facility_filter = NULL, p
       LEFT JOIN InspectionInfo i ON a.sitecode = i.sitecode
       ORDER BY a.sitecode
     ", analysis_date, facility_condition, priority_condition, zone_condition, 
-       analysis_date, analysis_date)
+       analysis_date, analysis_date, bit_override_sql, bit_override_sql)
     
     result <- dbGetQuery(con, query)
     

@@ -90,8 +90,19 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
+                numericInput("bit_effect_days_override", "BIT Effect Days Override:",
+                  value = NA,
+                  min = 1,
+                  max = 60,
+                  step = 1
+                ),
+                tags$small(class = "text-muted", "Leave empty to use default from database")
+              )
+            ),
+            fluidRow(
+              column(12, style = "text-align: center; padding-top: 10px;",
                 actionButton("refresh_data", "Refresh Data", class = "btn-primary btn-lg", 
-                           style = "width: 100%; margin-top: 25px;")
+                           style = "width: 30%;")
               )
             ),
             fluidRow(
@@ -165,6 +176,15 @@ ui <- dashboardPage(
               )
             ),
             fluidRow(
+              column(3,
+                numericInput("process_bit_effect_days_override", "BIT Effect Days Override:",
+                  value = NA,
+                  min = 1,
+                  max = 60,
+                  step = 1
+                ),
+                tags$small(class = "text-muted", "Leave empty to use default")
+              ),
               column(6,
                 checkboxGroupInput("process_status_filter", "Status Filter (for Flow Chart):",
                   choices = c("Unknown" = "Unknown",
@@ -285,6 +305,54 @@ server <- function(input, output, session) {
     })
   })
   
+##============Synchronization Logic============
+
+  # Synchronize analysis date between tabs
+  observeEvent(input$analysis_date, {
+    updateDateInput(session, "process_analysis_date", value = input$analysis_date)
+  })
+  
+  observeEvent(input$process_analysis_date, {
+    updateDateInput(session, "analysis_date", value = input$process_analysis_date)
+  })
+  
+  # Synchronize facility filter between tabs
+  observeEvent(input$facility_filter, {
+    updateSelectizeInput(session, "process_facility_filter", selected = input$facility_filter)
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$process_facility_filter, {
+    updateSelectizeInput(session, "facility_filter", selected = input$process_facility_filter)
+  }, ignoreInit = TRUE)
+  
+  # Synchronize larvae threshold between tabs
+  observeEvent(input$larvae_threshold, {
+    updateNumericInput(session, "process_larvae_threshold", value = input$larvae_threshold)
+  })
+  
+  observeEvent(input$process_larvae_threshold, {
+    updateNumericInput(session, "larvae_threshold", value = input$process_larvae_threshold)
+  })
+  
+  # Synchronize material filter between tabs
+  observeEvent(input$material_filter, {
+    updateSelectizeInput(session, "process_material_filter", selected = input$material_filter)
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$process_material_filter, {
+    updateSelectizeInput(session, "material_filter", selected = input$process_material_filter)
+  }, ignoreInit = TRUE)
+  
+  # Synchronize BIT effect days override between tabs
+  observeEvent(input$bit_effect_days_override, {
+    updateNumericInput(session, "process_bit_effect_days_override", value = input$bit_effect_days_override)
+  })
+  
+  observeEvent(input$process_bit_effect_days_override, {
+    updateNumericInput(session, "bit_effect_days_override", value = input$process_bit_effect_days_override)
+  })
+  
+  # ============ AIR SITE STATUS TAB LOGIC ============
   # Reactive data
   air_sites_data <- eventReactive(input$refresh_data, {
     get_air_sites_data_enhanced(
@@ -292,7 +360,8 @@ server <- function(input, output, session) {
       facility_filter = input$facility_filter,
       priority_filter = input$priority_filter,
       zone_filter = input$zone_filter,
-      larvae_threshold = input$larvae_threshold
+      larvae_threshold = input$larvae_threshold,
+      bit_effect_days_override = input$bit_effect_days_override
     )
   })
   
@@ -457,7 +526,8 @@ server <- function(input, output, session) {
       facility_filter = input$process_facility_filter,
       priority_filter = NULL,  # Include all priorities for process tracking
       zone_filter = NULL,      # Include all zones for process tracking
-      larvae_threshold = input$process_larvae_threshold
+      larvae_threshold = input$process_larvae_threshold,
+      bit_effect_days_override = input$process_bit_effect_days_override
     )
     
     # Apply material filter for active treatments

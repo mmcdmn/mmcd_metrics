@@ -178,7 +178,7 @@ create_historical_progress_plot <- function(data, hist_years) {
       name = "Period"
     ) +
     labs(
-      title = sprintf("Cattail Inspections: %d vs Previous %d Years Average", 
+      title = sprintf("Cattail Inspections: %d vs Previous %d Years (Combined Total)", 
                      current_year, hist_years),
       x = "Facility",
       y = "Number of Unique Sites Inspected"

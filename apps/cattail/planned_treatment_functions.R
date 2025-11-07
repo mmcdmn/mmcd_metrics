@@ -8,12 +8,14 @@ get_treatment_plan_data <- function() {
   
   # Query to fetch data with acres_plan
   query <- "
-SELECT facility, airgrnd_plan, SUM(acres_plan) as total_acres
-FROM public.dblarv_insptrt_current
-WHERE action = '9'
-AND acres_plan IS NOT NULL
-GROUP BY airgrnd_plan, facility
-ORDER BY airgrnd_plan, facility
+SELECT a.facility, a.airgrnd_plan, SUM(a.acres_plan) as total_acres
+FROM public.dblarv_insptrt_current a
+LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
+WHERE a.action = '9'
+AND a.acres_plan IS NOT NULL
+AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
+GROUP BY a.airgrnd_plan, a.facility
+ORDER BY a.airgrnd_plan, a.facility
 "
   
   result <- dbGetQuery(con, query)
@@ -32,11 +34,64 @@ ORDER BY airgrnd_plan, facility
   return(result)
 }
 
-# Function to create treatment plan plot
-create_treatment_plan_plot <- function(facility_filter, plan_types_filter) {
-  # Get data
-  data <- get_treatment_plan_data()
+# Function to get site details for treatment planning
+get_site_details_data <- function(facility_filter, plan_types_filter) {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
   
+  # Build facility filter clause
+  facility_clause <- if (facility_filter != "all") {
+    sprintf("AND facility = '%s'", facility_filter)
+  } else {
+    ""
+  }
+  
+  # Build plan types filter clause
+  plan_types_quoted <- paste0("'", plan_types_filter, "'", collapse = ", ")
+  plan_types_clause <- sprintf("AND airgrnd_plan IN (%s)", plan_types_quoted)
+  
+  # Query to fetch site details - using only real columns
+  query <- sprintf("
+SELECT 
+  a.sitecode,
+  a.facility,
+  a.airgrnd_plan,
+  a.inspdate,
+  a.wet,
+  a.numdip,
+  a.acres,
+  a.acres_plan
+FROM public.dblarv_insptrt_current a
+LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
+WHERE a.action = '9'
+  AND a.acres_plan IS NOT NULL
+  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
+  %s
+  %s
+ORDER BY a.facility, a.airgrnd_plan, a.sitecode
+", facility_clause, plan_types_clause)
+  
+  result <- dbGetQuery(con, query)
+  dbDisconnect(con)
+  
+  # Add plan type names
+  result$plan_name <- factor(
+    result$airgrnd_plan,
+    levels = c("A", "D", "G", "N", "U"),
+    labels = c("Air", "Drone", "Ground", "None", "Unknown")
+  )
+  
+  # Round acres
+  result$acres_plan <- round(result$acres_plan, 1)
+  
+  # Format inspection date
+  result$inspdate <- as.Date(result$inspdate)
+  
+  return(result)
+}
+
+# Function to create treatment plan plot with pre-fetched data
+create_treatment_plan_plot_with_data <- function(data, facility_filter, plan_types_filter, view_type = "acres") {
   # Filter based on selected facility
   if (facility_filter != "all") {
     data <- data %>% filter(facility == facility_filter)
@@ -60,36 +115,52 @@ create_treatment_plan_plot <- function(facility_filter, plan_types_filter) {
     )
   }
   
+  # Determine what to display based on view_type
+  y_column <- if (view_type == "sites") "site_count" else "total_acres"
+  y_label <- if (view_type == "sites") "Number of Sites" else "Total Acres"
+  title_suffix <- if (view_type == "sites") "(Number of Sites)" else "(Acres)"
+  
   # Calculate summary stats if "all" is selected
   if (facility_filter == "all") {
     summary_data <- data %>%
       group_by(plan_type, airgrnd_plan) %>%
-      summarize(total_acres = sum(total_acres, na.rm = TRUE),
-                .groups = "drop")
+      summarize(
+        total_acres = sum(total_acres, na.rm = TRUE),
+        site_count = n(),
+        .groups = "drop"
+      )
     
     # Plot summary data for all facilities
     # Get centralized colors for treatment plan types
     plan_colors <- get_treatment_plan_colors(use_names = TRUE)
     
     p <- ggplot(summary_data,
-                aes(x = plan_type, y = total_acres, fill = plan_type)) +
+                aes(x = plan_type, y = .data[[y_column]], fill = plan_type)) +
       geom_bar(stat = "identity") +
       scale_fill_manual(values = plan_colors) +
       labs(
-        title = "Treatment Plan Acres by Type (All Facilities)",
+        title = paste("Treatment Plan", title_suffix, "by Type (All Facilities)"),
         x = "Treatment Plan Type",
-        y = "Total Acres",
+        y = y_label,
         fill = "Plan Type"
       ) +
       theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold", size = 16),
+        axis.text.y = element_text(face = "bold", size = 16),
+        axis.title.x = element_text(face = "bold", size = 16),
+        axis.title.y = element_text(face = "bold", size = 16),
+        legend.text = element_text(face = "bold", size = 14),
+        legend.title = element_text(face = "bold", size = 14)
+      )
     
-    # Add acre values on top of bars
+    # Add values on top of bars
     p + geom_text(
-      aes(label = scales::comma(total_acres)),
+      aes(label = scales::comma(.data[[y_column]])),
       vjust = -0.5,
       color = "black",
-      size = 4
+      size = 5,
+      fontface = "bold"
     )
     
   } else {
@@ -104,28 +175,51 @@ create_treatment_plan_plot <- function(facility_filter, plan_types_filter) {
                                facility_map[facility_filter], 
                                facility_filter)
     
-    p <- ggplot(data, aes(x = plan_type, y = total_acres, fill = plan_type)) +
+    # Calculate site count for specific facility
+    facility_data <- data %>%
+      group_by(plan_type, airgrnd_plan) %>%
+      summarize(
+        total_acres = sum(total_acres, na.rm = TRUE),
+        site_count = n(),
+        .groups = "drop"
+      )
+    
+    p <- ggplot(facility_data, aes(x = plan_type, y = .data[[y_column]], fill = plan_type)) +
       geom_bar(stat = "identity") +
       scale_fill_manual(values = plan_colors) +
       labs(
         title = paste(
-          "Treatment Plan Acres by Type -",
+          "Treatment Plan", title_suffix, "by Type -",
           facility_display,
           "Facility"
         ),
         x = "Treatment Plan Type",
-        y = "Total Acres",
+        y = y_label,
         fill = "Plan Type"
       ) +
       theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold", size = 16),
+        axis.text.y = element_text(face = "bold", size = 16),
+        axis.title.x = element_text(face = "bold", size = 16),
+        axis.title.y = element_text(face = "bold", size = 16),
+        legend.text = element_text(face = "bold", size = 14),
+        legend.title = element_text(face = "bold", size = 14)
+      )
     
-    # Add acre values on top of bars
+    # Add values on top of bars
     p + geom_text(
-      aes(label = scales::comma(total_acres)),
+      aes(label = scales::comma(.data[[y_column]])),
       vjust = -0.5,
       color = "black",
-      size = 4
+      size = 5,
+      fontface = "bold"
     )
   }
+}
+
+# Function to create treatment plan plot (legacy wrapper)
+create_treatment_plan_plot <- function(facility_filter, plan_types_filter, view_type = "acres") {
+  data <- get_treatment_plan_data()
+  create_treatment_plan_plot_with_data(data, facility_filter, plan_types_filter, view_type)
 }

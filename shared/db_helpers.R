@@ -973,10 +973,7 @@ get_treatment_plan_types <- function() {
           WHEN airgrnd_plan = 'N' THEN 'No treatment planned'
           WHEN airgrnd_plan = 'U' THEN 'Unknown treatment type'
           ELSE 'Other treatment type'
-        END as description
-      FROM public.dblarv_insptrt_current 
-      WHERE airgrnd_plan IS NOT NULL
-      ORDER BY 
+        END as description,
         CASE airgrnd_plan 
           WHEN 'A' THEN 1
           WHEN 'D' THEN 2
@@ -984,7 +981,10 @@ get_treatment_plan_types <- function() {
           WHEN 'N' THEN 4
           WHEN 'U' THEN 5
           ELSE 6
-        END
+        END as sort_order
+      FROM public.dblarv_insptrt_current 
+      WHERE airgrnd_plan IS NOT NULL
+      ORDER BY sort_order
     ")
     
     dbDisconnect(con)

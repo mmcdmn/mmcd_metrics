@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Sites Treatment Tracking - Technical Notes</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #7f8c8d;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+        }
+        .callout {
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid;
+            border-radius: 4px;
+        }
+        .callout-critical {
+            background-color: #fee;
+            border-color: #e74c3c;
+        }
+        .callout-note {
+            background-color: #fef9e7;
+            border-color: #f39c12;
+        }
+        .callout-success {
+            background-color: #eafaf1;
+            border-color: #27ae60;
+        }
+        .callout-info {
+            background-color: #ebf5fb;
+            border-color: #3498db;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .check {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        .cross {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        @media print {
+            body {
+                background-color: white;
+            }
+            .container {
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Drone Sites Treatment Tracking - Technical Notes</h1>
+
+        <h2>Overview</h2>
+        <p>This Shiny app tracks drone-treated mosquito breeding sites across three perspectives:</p>
+        <ol>
+            <li><strong>Current Progress</strong> - Sites with active/expiring treatments, aggregated by facility, FOS, or section</li>
+            <li><strong>Historical Trends</strong> - Multi-year trends in drone treatments (sites, treatments, or acres)</li>
+            <li><strong>Site Statistics</strong> - Site-level statistics showing average, largest, and smallest treated sites</li>
+        </ol>
+
+        <h2>Data Sources</h2>
+
+        <h3>Tables Used</h3>
+
+        <h4>Primary Treatment Tables</h4>
+        <ul>
+            <li><strong><code>dblarv_insptrt_current</code></strong> - Active larval treatment records
+                <ul>
+                    <li>Contains ongoing treatments for current operations</li>
+                    <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>acres</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code></li>
+                    <li>Filter: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code> (drone treatments)</li>
+                    <li><span class="callout-note">NOTE: Does NOT have <code>zone</code> or <code>enddate</code> columns</span></li>
+                </ul>
+            </li>
+            <li><strong><code>dblarv_insptrt_archive</code></strong> - Historical larval treatment records
+                <ul>
+                    <li>Contains closed/archived treatments from previous years</li>
+                    <li>Same schema as current table</li>
+                    <li>Filter: <code>action = 'D'</code> (drone treatments)</li>
+                    <li><span class="callout-note">NOTE: Does NOT have <code>zone</code> or <code>enddate</code> columns</span></li>
+                </ul>
+            </li>
+        </ul>
+
+        <h4>Supporting Tables</h4>
+        <ul>
+            <li><strong><code>loc_breeding_sites</code></strong> - Site information and lifecycle tracking
+                <ul>
+                    <li class="callout-critical">CRITICAL: This is the ONLY table with <code>enddate</code> column</li>
+                    <li>Tracks site characteristics: <code>acres</code>, <code>prehatch</code>, <code>drone</code> designation</li>
+                    <li>CAN HAVE MULTIPLE ROWS PER SITECODE with different enddates</li>
+                    <li>Used to filter out sites that no longer exist</li>
+                    <li>Join pattern: MUST filter by <code>enddate IS NULL</code> to get active sites only</li>
+                </ul>
+            </li>
+            <li><strong><code>gis_sectcode</code></strong> - Section/zone information
+                <ul>
+                    <li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
+                    <li>Provides FOS (Field Operations Supervisor) area assignments</li>
+                    <li>Join pattern: <code>LEFT JOIN public.gis_sectcode sc ON left(sitecode,7) = sc.sectcode</code></li>
+                    <li>Note: Some sitecodes use '-' separator (190208-003), others use directional suffixes (191102W010)</li>
+                </ul>
+            </li>
+            <li><strong><code>mattype_list_targetdose</code></strong> - Material effectiveness duration
+                <ul>
+                    <li>Contains <code>effect_days</code> - how long a treatment remains effective</li>
+                    <li>Joined with treatment records to calculate treatment end dates</li>
+                    <li>Default: 14 days if <code>effect_days</code> is NULL</li>
+                </ul>
+            </li>
+            <li><strong><code>employee_list</code></strong> - FOS information
+                <ul>
+                    <li>Filter: <code>emp_type = 'FieldSuper'</code> AND <code>active = true</code></li>
+                    <li>Used to map FOS areas from gis_sectcode to actual employee numbers</li>
+                </ul>
+            </li>
+        </ul>
+
+        <div class="callout callout-critical">
+            <h3>Critical Data Integrity Issue: Site Enddate Filtering</h3>
+            <h4>The Problem</h4>
+            <p><strong>Treatment tables do NOT have enddate columns.</strong> Sites that have been closed can still have treatment records in the inspection tables.</p>
+            
+            <h4>The Solution</h4>
+            <p><strong>ALWAYS join with <code>loc_breeding_sites</code> and filter by enddate:</strong></p>
+            <pre><code>LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)</code></pre>
+            
+            <h4>Why This Matters</h4>
+            <ul>
+                <li>Without this filter, treatments on closed sites appear in results</li>
+                <li>This causes "ghost sites" to inflate counts</li>
+                <li>Current Progress tab filters during <code>load_raw_data()</code></li>
+                <li>Historical and Site Statistics tabs must handle this in their queries</li>
+            </ul>
+        </div>
+
+        <h2>Tab 1: Current Progress</h2>
+        
+        <h3>Purpose</h3>
+        <p>Show drone sites grouped by facility/FOS/section with treatment status breakdown (total sites, active treatments, expiring treatments).</p>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li><strong>Display Metric selector</strong> - Number of Sites or Total Acres</li>
+            <li><strong>Expiring Days slider</strong> - Define the expiration warning window (1-30 days)</li>
+            <li><strong>Zone filter</strong> - P1, P2, or both (separate or combined)</li>
+            <li><strong>Facility filter</strong> - Multi-select specific facilities</li>
+            <li><strong>FOS filter</strong> - Multi-select specific Field Operations Supervisors</li>
+            <li><strong>Prehatch filter</strong> - Show only prehatch sites</li>
+            <li><strong>Group By selector</strong> - Facility, FOS, or Section (current tab only)</li>
+        </ul>
+
+        <h3>Treatment Status Logic</h3>
+        <ul>
+            <li><strong>Active Treatment</strong>: <code>treatment_end_date >= current_date</code>
+                <ul>
+                    <li><code>treatment_end_date = inspdate + effect_days</code></li>
+                    <li>Materials have varying effectiveness periods</li>
+                </ul>
+            </li>
+            <li><strong>Expiring Treatment</strong>: Active AND ending within specified days window
+                <ul>
+                    <li>User can adjust "Days Until Expiration" slider</li>
+                    <li>Shows treatments requiring attention soon</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h3>Visualization</h3>
+        <ul>
+            <li><strong>Layered bar chart</strong> with three bars per group:
+                <ul>
+                    <li>Gray faded bar: Total sites (background)</li>
+                    <li>Solid color bar: Sites with active treatments</li>
+                    <li>Orange bar: Sites with expiring treatments (overlay)</li>
+                </ul>
+            </li>
+            <li>Colors mapped by group type:
+                <ul>
+                    <li><strong>Facility</strong>: Distinct facility colors from db_helpers</li>
+                    <li><strong>FOS</strong>: Facility-based colors mapped through foreman lookup</li>
+                    <li><strong>Section</strong>: Inherits facility colors based on section location</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h2>Tab 2: Historical Trends</h2>
+        
+        <h3>Purpose</h3>
+        <p>Analyze multi-year trends in drone treatment activity across facilities, FOS, or combined.</p>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li><strong>Display Metric selector</strong> - Number of Sites, Number of Treatments, or Number of Acres</li>
+            <li><strong>Year Range selectors</strong> - Start Year and End Year (2010-2025)</li>
+            <li><strong>Show Percentages checkbox</strong> - Toggle between raw counts and percentage distribution</li>
+            <li><strong>Zone filter</strong> - P1, P2, or both (shared with Current Progress)</li>
+            <li><strong>Facility/FOS filters</strong> - Shared with Current Progress</li>
+            <li><strong>Group By selector</strong> - Facility or FOS (section not available for historical)</li>
+        </ul>
+
+        <h3>Metrics Explained</h3>
+        <ul>
+            <li><strong>Sites</strong>: <code>COUNT(DISTINCT sitecode)</code> per group per year - unique sites treated</li>
+            <li><strong>Treatments</strong>: <code>COUNT(*)</code> all treatments per group per year - total applications</li>
+            <li><strong>Acres</strong>: <code>SUM(acres)</code> total acres treated per group per year</li>
+        </ul>
+
+        <div class="callout callout-info">
+            <h4>Percentage Mode</h4>
+            <p>Calculates each group's contribution to the year total:</p>
+            <ul>
+                <li>Formula: <code>(group_count / year_total) * 100</code></li>
+                <li>Y-axis: 0-100%</li>
+                <li>Useful for seeing relative distribution shifts over time</li>
+            </ul>
+        </div>
+
+        <h2>Tab 3: Site Statistics</h2>
+        
+        <h3>Purpose</h3>
+        <p>Analyze site-level treatment statistics and identify largest/smallest drone sites.</p>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li><strong>Show selector</strong> - Average, Largest, or Smallest site sizes</li>
+            <li><strong>Year Range selectors</strong> - Start Year and End Year (2010-2025)</li>
+            <li><strong>Site Rankings tables</strong> - Top 10 largest and smallest individual treatments</li>
+        </ul>
+
+        <h3>Statistics Calculated</h3>
+        <ul>
+            <li><code>avg_site_acres</code>: Mean of all treatment acres in group</li>
+            <li><code>min_site_acres</code>: Smallest single treatment in group</li>
+            <li><code>max_site_acres</code>: Largest single treatment in group</li>
+            <li><code>n_treatments</code>: Total treatment count</li>
+        </ul>
+
+        <h2>Code Organization</h2>
+
+        <h3>File Structure</h3>
+        <pre><code>drone/
+├── app.R                           # Main app - UI orchestration and server logic
+├── ui_helper.R                     # UI definition (drone_ui function)
+├── data_functions.R                # All database queries and data processing
+├── display_functions.R             # Visualization helpers and color mapping
+├── historical_functions.R          # Historical trends data and plotting
+├── NOTES.md                        # Documentation (markdown)
+└── NOTES.html                      # Documentation (this file)</code></pre>
+
+        <h3>Design Principles</h3>
+        <ol>
+            <li><strong>Separation of Concerns</strong>: UI, data, and display logic are separate</li>
+            <li><strong>Refresh Button Pattern</strong>: No data loads until user clicks "Refresh Data"</li>
+            <li><strong>Input Isolation</strong>: All inputs captured via <code>refresh_inputs()</code> when button clicked</li>
+            <li><strong>Reusable Functions</strong>: Color mapping, zone grouping, and filtering are modular</li>
+            <li><strong>Consistent Patterns</strong>: All tabs follow same filter/process/display flow</li>
+        </ol>
+
+        <div class="callout callout-success">
+            <h3>Refresh Button Pattern - Critical for Performance</h3>
+            <p><strong>Why It's Critical:</strong> Without this pattern, changing ANY filter would immediately trigger database queries.</p>
+            
+            <h4>How It Works:</h4>
+            <ol>
+                <li><strong>On app load</strong>: Only UI options (facility names, FOS names) are loaded</li>
+                <li><strong>User adjusts filters</strong>: No database queries run - just UI state changes</li>
+                <li><strong>User clicks "Refresh Data"</strong>: 
+                    <ul>
+                        <li><code>refresh_inputs()</code> captures ALL current input values using <code>isolate()</code></li>
+                        <li><code>raw_data()</code> eventReactive executes, using captured inputs</li>
+                        <li><code>sitecode_data()</code> eventReactive executes, using captured inputs</li>
+                        <li>All data processing happens with frozen input values</li>
+                    </ul>
+                </li>
+                <li><strong>User changes filters again</strong>: Charts stay the same (using frozen data)</li>
+                <li><strong>User clicks "Refresh Data" again</strong>: New query with new input values</li>
+            </ol>
+
+            <h4>Key Implementation:</h4>
+            <pre><code># Capture inputs when refresh clicked
+refresh_inputs <- eventReactive(input$refresh, {
+  list(
+    zone_filter = isolate(input$zone_filter),
+    facility_filter = isolate(input$facility_filter),
+    # ... all other inputs
+  )
+})
+
+# Load data ONLY when refresh clicked
+raw_data <- eventReactive(input$refresh, {
+  inputs <- refresh_inputs()
+  # Use inputs$zone_filter, NOT input$zone_filter
+})</code></pre>
+        </div>
+
+        <h2>Common Data Patterns</h2>
+
+        <h3>Zone Mapping</h3>
+        <ul>
+            <li><strong>P1</strong> = Zone '1' (Primary zone)</li>
+            <li><strong>P2</strong> = Zone '2' (Secondary zone)</li>
+        </ul>
+
+        <h3>Sitecode Patterns</h3>
+        <ul>
+            <li><strong>Standard format</strong>: <code>190208-003</code> (facility + '-' + number)</li>
+            <li><strong>Directional format</strong>: <code>191102W010</code> (facility + direction + number)</li>
+            <li>Join pattern must handle both cases</li>
+        </ul>
+
+        <h2>Key Takeaways</h2>
+        
+        <ol>
+            <li><strong>Refresh Button Pattern</strong>: Essential for performance - NO data queries until refresh clicked</li>
+            <li><strong>Zone and Foreman Must Be Joined</strong>: Treatment tables don't have these columns, must join from loc_breeding_sites and gis_sectcode</li>
+            <li><strong>Site Enddate Filtering</strong>: Always filter <code>enddate IS NULL</code> to exclude closed sites</li>
+            <li><strong>FOS = Jurisdictional Assignment</strong>: Use site foreman (from gis_sectcode), not treatment foreman</li>
+            <li><strong>Sitecode Formats Vary</strong>: Join logic must handle both '-' and directional suffixes</li>
+            <li><strong>Treatment Status</strong>: Calculate from inspdate + effect_days, compare to current_date</li>
+            <li><strong>Zone Separation</strong>: When both P1 and P2 selected, show separately with alpha transparency</li>
+            <li><strong>COUNT DISTINCT</strong>: Always use <code>COUNT(DISTINCT sitecode)</code> for unique site counts</li>
+            <li><strong>Input Isolation</strong>: Use <code>refresh_inputs()</code> captured values, NOT live <code>input$*</code> values</li>
+            <li><strong>Color Consistency</strong>: Use db_helpers for facility and FOS color mapping across all visualizations</li>
+        </ol>
+
+        <div class="callout callout-success">
+            <p><strong>Last Updated:</strong> November 10, 2025</p>
+            <p><strong>App Version:</strong> Refactored with modular file structure and refresh button pattern</p>
+        </div>
+    </div>
+</body>
+</html>

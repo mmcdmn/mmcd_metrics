@@ -359,8 +359,9 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
   
   # Create stacked bar chart
   p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
-                                     fill = date_numeric, 
+                                     fill = epi_week_numeric, 
                                      text = paste("Location:", location, "<br>",
+                                                 "Epi Week:", epi_week_numeric, "<br>",
                                                  "Date:", format(inspdate, "%m/%d/%y"), "<br>",
                                                  "Species Found:<br>",
                                                  gsub("<br>", "<br>", species_summary)))) +
@@ -379,7 +380,7 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
       legend.text = element_text(size = 10)
     ) +
     guides(fill = guide_colorbar(
-      title = "Sample Date\n(Newer → Lighter)",
+      title = "Epi Week\n(Earlier → Darker)",
       title.position = "top",
       title.hjust = 0.5,
       barwidth = 1,

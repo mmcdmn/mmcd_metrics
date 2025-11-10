@@ -108,6 +108,14 @@ ui <- fluidPage(
       
       hr(),
       
+      # Refresh Data Button
+      actionButton("refresh", "Refresh Data", 
+                   class = "btn-primary btn-lg", 
+                   style = "width: 100%; margin-bottom: 15px;",
+                   icon = icon("refresh")),
+      
+      hr(),
+      
       # Display and visualization options
       h4("Display Options"),
       # Graph type selector
@@ -174,6 +182,27 @@ server <- function(input, output, session) {
   updating_date_range <- reactiveVal(FALSE)
   updating_year_range <- reactiveVal(FALSE)
   
+  # =============================================================================
+  # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
+  # =============================================================================
+  refresh_inputs <- eventReactive(input$refresh, {
+    # Capture all filter inputs when refresh button is clicked
+    list(
+      group_by = isolate(input$group_by),
+      date_range = isolate(input$date_range),
+      zone_filter = isolate(input$zone_filter),
+      facility_filter = isolate(input$facility_filter),
+      foreman_filter = isolate(input$foreman_filter),
+      species_filter = isolate(input$species_filter),
+      graph_type = isolate(input$graph_type),
+      top_locations_mode = isolate(input$top_locations_mode),
+      basemap = isolate(input$basemap),
+      marker_size = isolate(input$marker_size),
+      year_range = isolate(input$year_range),
+      main_tabset = isolate(input$main_tabset)
+    )
+  })
+  
   # Date shortcut handlers - behavior depends on active tab
   observeEvent(input$this_year, {
     handle_date_shortcut("year", session, input, updating_date_range, updating_year_range)
@@ -209,48 +238,44 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "facility_filter", choices = facility_choices)
   })
   
-  # Fetch SUCO data - all data (current + archive)
+  # Fetch SUCO data - all data (current + archive) - ONLY when refresh clicked
   suco_data <- reactive({
-    get_suco_data("all", input$date_range)
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    get_suco_data("all", inputs$date_range)
   })
   
-  # Fetch SUCO data - current only (more efficient for Current Data tab)
+  # Fetch SUCO data - current only (more efficient for Current Data tab) - ONLY when refresh clicked
   suco_data_current <- reactive({
-    # Simple checks only
-    req(input$date_range, input$main_tabset)
-    
-    # Only run when actually on Current Data tab
-    if (input$main_tabset != "Current Data") {
-      return(data.frame())
-    }
-    
-    tryCatch({
-      get_suco_data("current", input$date_range)
-    }, error = function(e) {
-      cat("Error in suco_data_current:", e$message, "\n")
-      return(data.frame())
-    })
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    get_suco_data("current", inputs$date_range)
   })
   
-  # Helper function to create trend plots - eliminates code duplication
-  # Update species filter choices based on available data (use new function)
+  # Helper function to update species filter choices - based on refresh only
   observe({
-    # Get species choices using the new function
-    spp_choices <- get_available_species(input$date_range)
+    req(input$refresh)  # Only update after refresh
+    inputs <- refresh_inputs()
+    
+    # Get species choices using the helper function
+    spp_choices <- get_available_species(inputs$date_range)
     spp_choices <- c("All", spp_choices)
     
     # Update select input
     updateSelectInput(session, "species_filter", choices = spp_choices)
   })
   
-  # Update foreman filter choices based on available data (multi-select aware)
+  # Update foreman filter choices based on available data (multi-select aware) - based on refresh only
   observe({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- suco_data()
     foremen_lookup <- get_foremen_lookup()
     
     # Filter by facility if not 'All' and not empty
-    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
-      data <- data %>% filter(facility %in% input$facility_filter)
+    if (!is.null(inputs$facility_filter) && !("All" %in% inputs$facility_filter)) {
+      data <- data %>% filter(facility %in% inputs$facility_filter)
     }
     
     # Get unique foremen numbers from data
@@ -277,66 +302,88 @@ server <- function(input, output, session) {
     updateSelectInput(session, "foreman_filter", choices = foremen_choices)
   })
 
-  # Filter data based on user selections
+  # Filter data based on user selections - ONLY after refresh
   filtered_data <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- suco_data()
     # Convert zone selection to the format expected by filter_suco_data
-    zones <- convert_zone_selection(input$zone_filter)
-    filter_suco_data(data, input$facility_filter, input$foreman_filter, zones, input$date_range, input$species_filter)
+    zones <- convert_zone_selection(inputs$zone_filter)
+    filter_suco_data(data, inputs$facility_filter, inputs$foreman_filter, zones, inputs$date_range, inputs$species_filter)
   })
   
-  # Filter current data based on user selections
+  # Filter current data based on user selections - ONLY after refresh
   filtered_data_current <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- suco_data_current()
     # Convert zone selection to the format expected by filter_suco_data
-    zones <- convert_zone_selection(input$zone_filter)
-    filter_suco_data(data, input$facility_filter, input$foreman_filter, zones, input$date_range, input$species_filter)
+    zones <- convert_zone_selection(inputs$zone_filter)
+    filter_suco_data(data, inputs$facility_filter, inputs$foreman_filter, zones, inputs$date_range, inputs$species_filter)
   })
   
-  # Process spatial data for mapping
+  # Process spatial data for mapping - ONLY after refresh
   spatial_data <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- filtered_data()
-    create_spatial_data(data, input$species_filter)
+    create_spatial_data(data, inputs$species_filter)
   })
   
-  # Process spatial data for mapping (current data only)
+  # Process spatial data for mapping (current data only) - ONLY after refresh
   spatial_data_current <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- filtered_data_current()
-    create_spatial_data(data, input$species_filter)
+    create_spatial_data(data, inputs$species_filter)
   })
   
-  # Aggregate data by selected time interval and grouping
+  # Aggregate data by selected time interval and grouping - ONLY after refresh
   aggregated_data <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- filtered_data()
-    zones <- convert_zone_selection(input$zone_filter)
-    aggregate_suco_data(data, input$group_by, zones)
+    zones <- convert_zone_selection(inputs$zone_filter)
+    aggregate_suco_data(data, inputs$group_by, zones)
   })
   
-  # Aggregate current data by selected time interval and grouping
+  # Aggregate current data by selected time interval and grouping - ONLY after refresh
   aggregated_data_current <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- filtered_data_current()
-    zones <- convert_zone_selection(input$zone_filter)
-    aggregate_suco_data(data, input$group_by, zones)
+    zones <- convert_zone_selection(inputs$zone_filter)
+    aggregate_suco_data(data, inputs$group_by, zones)
   })
   
   # Generate trend plot
   output$trend_plot <- renderPlot({
+    req(input$refresh)  # Only render after refresh button clicked
     create_trend_plot(aggregated_data, aggregated_data_current, input, "all")
   })
   
   # Generate current trend plot (for current data tab)
   output$current_trend_plot <- renderPlot({
+    req(input$refresh)  # Only render after refresh button clicked
     create_trend_plot(aggregated_data, aggregated_data_current, input, "current")
   })
   
   # Generate map
   output$map <- renderLeaflet({
+    req(input$refresh)  # Only render after refresh button clicked
     create_suco_map(spatial_data(), input, "all")
   })
 
 
   # Generate summary table
   output$summary_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
     data <- filtered_data()
     summary_data <- create_summary_stats(data, input$group_by, "all")
     return(summary_data)
@@ -351,6 +398,7 @@ server <- function(input, output, session) {
   
   # Generate detailed samples table
   output$detailed_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
     data <- filtered_data()
     detailed_data <- create_detailed_samples_table(data, input$species_filter)
     return(detailed_data)
@@ -366,6 +414,7 @@ server <- function(input, output, session) {
   
   # Generate location plot (top locations with most SUCOs)
   output$location_plotly <- plotly::renderPlotly({
+    req(input$refresh)  # Only render after refresh button clicked
     data <- filtered_data()
     top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
     create_location_plotly(top_locations, "all", input$top_locations_mode)
@@ -373,6 +422,7 @@ server <- function(input, output, session) {
   
   # React to plotly click and update map and tab
   observe({
+    req(input$refresh)  # Only react after refresh button clicked
     click <- plotly::event_data("plotly_click", source = "location_plotly")
     if (!is.null(click)) {
       idx <- click$pointNumber + 1  # R is 1-based
@@ -405,6 +455,7 @@ server <- function(input, output, session) {
   
   # Generate current map (uses same logic as main map but with current data)
   output$current_map <- renderLeaflet({
+    req(input$refresh)  # Only render after refresh button clicked
     # Use spatial_data_current() instead of spatial_data()
     data <- spatial_data_current()
     
@@ -684,6 +735,7 @@ server <- function(input, output, session) {
   
   # Generate current summary table
   output$current_summary_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
     data <- filtered_data_current()
     summary_data <- create_summary_stats(data, input$group_by, "current")
     return(summary_data)
@@ -698,6 +750,7 @@ server <- function(input, output, session) {
   
   # Generate current detailed samples table
   output$current_detailed_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
     data <- filtered_data_current()
     detailed_data <- create_detailed_samples_table(data, input$species_filter)
     return(detailed_data)
@@ -713,6 +766,7 @@ server <- function(input, output, session) {
   
   # Generate current location plot
   output$current_location_plotly <- plotly::renderPlotly({
+    req(input$refresh)  # Only render after refresh button clicked
     data <- filtered_data_current()
     top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
     create_location_plotly(top_locations, "current", input$top_locations_mode)
@@ -720,6 +774,7 @@ server <- function(input, output, session) {
   
   # Handle current location plot clicks
   observe({
+    req(input$refresh)  # Only react after refresh button clicked
     click <- plotly::event_data("plotly_click", source = "current_location_plotly")
     if (!is.null(click)) {
       idx <- click$pointNumber + 1

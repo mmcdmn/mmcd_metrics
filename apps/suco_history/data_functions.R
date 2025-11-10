@@ -714,7 +714,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
         mutate(
           sample_id = paste0("Sample_", row_number()),
           date_label = format(inspdate, "%m/%d"),
-          date_numeric = as.numeric(inspdate)  # For continuous color scale
+          epi_week_numeric = epiweek(inspdate)  # For color scale - use epi week
         )
       
       # Get top locations by total species count
@@ -728,7 +728,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
       # Return sample-level data for top locations
       top_locations <- sample_data %>%
         filter(location %in% top_location_names) %>%
-        select(location, species_count, sample_id, date_label, date_numeric, inspdate, species_summary) %>%
+        select(location, species_count, sample_id, date_label, epi_week_numeric, inspdate, species_summary) %>%
         arrange(desc(species_count))
         
     } else {
@@ -737,7 +737,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
         mutate(
           sample_id = paste0("Sample_", row_number()),
           date_label = format(inspdate, "%m/%d"),
-          date_numeric = as.numeric(inspdate)  # For continuous color scale
+          epi_week_numeric = epiweek(inspdate)  # For color scale - use epi week
         )
       
       # Get top locations by total species count
@@ -751,7 +751,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
       # Return sample-level data for top locations
       top_locations <- sample_data %>%
         filter(location %in% top_location_names) %>%
-        select(location, species_count = total_species_count, sample_id, date_label, date_numeric, inspdate, species_summary) %>%
+        select(location, species_count = total_species_count, sample_id, date_label, epi_week_numeric, inspdate, species_summary) %>%
         arrange(desc(species_count))
     }
   } else {
@@ -760,7 +760,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
       mutate(
         sample_id = paste0("Sample_", row_number()),
         date_label = format(inspdate, "%m/%d"),
-        date_numeric = as.numeric(inspdate),  # For continuous color scale
+        epi_week_numeric = epiweek(inspdate),  # For color scale - use epi week
         visit_count = 1  # Each sample represents one visit
       )
     
@@ -775,7 +775,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
     # Return sample-level data for top locations
     top_locations <- sample_data %>%
       filter(location %in% top_location_names) %>%
-      select(location, visits = visit_count, sample_id, date_label, date_numeric, inspdate, species_summary) %>%
+      select(location, visits = visit_count, sample_id, date_label, epi_week_numeric, inspdate, species_summary) %>%
       arrange(location, inspdate)
   }
   

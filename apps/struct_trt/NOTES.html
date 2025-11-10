@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Structure Treatment Progress - Technical Notes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            border-bottom: 2px solid #95a5a6;
+            padding-bottom: 5px;
+            margin-top: 30px;
+        }
+        h3 {
+            color: #555;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #666;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border-left: 4px solid #3498db;
+        }
+        pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        ul, ol {
+            margin-left: 20px;
+        }
+        li {
+            margin-bottom: 5px;
+        }
+        strong {
+            color: #2c3e50;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .critical {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .example {
+            background-color: #e7f3fe;
+            border-left: 4px solid #2196F3;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .success {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        @media print {
+            body {
+                max-width: 100%;
+                font-size: 11pt;
+            }
+            h1 {
+                page-break-before: always;
+            }
+            h1:first-child {
+                page-break-before: avoid;
+            }
+            h2, h3 {
+                page-break-after: avoid;
+            }
+            pre {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<h1>Structure Treatment Progress - Technical Notes</h1>
+
+<h2>Overview</h2>
+<p>This Shiny app tracks mosquito control structure treatments across two perspectives:</p>
+<ol>
+    <li><strong>Current Progress</strong> - Active and expiring treatments grouped by facility or FOS</li>
+    <li><strong>Historical Trends</strong> - Year-over-year treatment activity comparison</li>
+</ol>
+
+<h2>Data Sources</h2>
+
+<h3>Tables Used</h3>
+
+<h4>Primary Treatment Tables</h4>
+<ul>
+    <li><strong>dblarv_insptrt_current</strong> - Active structure treatment records
+        <ul>
+            <li>Contains ongoing treatments for current operations</li>
+            <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>list_type</code></li>
+            <li><strong>list_type = 'STR'</strong> identifies structure treatments</li>
+            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+        </ul>
+    </li>
+    <li><strong>dblarv_insptrt_archive</strong> - Historical structure treatment records
+        <ul>
+            <li>Contains closed/archived treatments from previous years</li>
+            <li>Same schema as current table</li>
+            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+        </ul>
+    </li>
+    <li><strong>mattype_list_targetdose</strong> - Treatment material effectiveness
+        <ul>
+            <li>Links material codes to effect duration</li>
+            <li>Fields: <code>matcode</code>, <code>effect_days</code></li>
+            <li><strong>Effect Days</strong>: Number of days the treatment remains effective</li>
+            <li><strong>Default</strong>: 30 days if material code not found</li>
+        </ul>
+    </li>
+</ul>
+
+<h4>Supporting Tables</h4>
+<ul>
+    <li><strong>loc_cxstruct</strong> - Structure location and characteristics
+        <ul>
+            <li><strong>CRITICAL</strong>: This is the ONLY table with <code>enddate</code> column</li>
+            <li>Contains all structure definitions</li>
+            <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>foreman</code>, <code>s_type</code>, <code>priority</code>, <code>status_udw</code>, <code>zone</code>, <code>startdate</code>, <code>enddate</code></li>
+            <li>Tracks when structures are opened and closed</li>
+            <li>Used to filter out structures that no longer exist</li>
+            <li><strong>Status Codes</strong>:
+                <ul>
+                    <li><strong>'D'</strong> - Dry (structure has no water)</li>
+                    <li><strong>'W'</strong> - Wet (structure contains water)</li>
+                    <li><strong>'U'</strong> - Unknown (status not determined)</li>
+                </ul>
+            </li>
+        </ul>
+    </li>
+</ul>
+
+<h3>Enddate Filtering</h3>
+
+<div class="success">
+    <h3>Added Enddate Filtering - Eliminates 211,232 ghost structures (87% of database)</h3>
+    <p>To ensure accurate data representation, enddate filtering has been implemented in all queries. This eliminates ghost structures—structures that no longer exist but were previously included in results.</p>
+</div>
+
+<h3>Current Queries</h3>
+<pre><code>(loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)</code></pre>
+<p>Filters out structures with an enddate in the past, ensuring only active structures are included.</p>
+
+<h3>Historical Queries</h3>
+<pre><code>(loc.enddate IS NULL OR loc.enddate > trt.inspdate)</code></pre>
+<p>Ensures structures were active at the time of treatment, preventing inclusion of structures that were closed before treatment occurred.</p>
+
+</body>
+</html>

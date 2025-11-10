@@ -72,22 +72,8 @@ ui <- fluidPage(
       selectInput("structure_type_filter", "Structure Type:",
                   choices = get_structure_type_choices(include_all = TRUE),
                   selected = "all"),
-      
-      selectInput("priority_filter", "Priority:",
-                  choices = c("All" = "all", "BLUE", "GREEN", "RED", "YELLOW"),
-                  selected = "all"),
-      
-      helpText("This visualization shows structures with layered bars:",
-               tags$br(),
-               tags$ul(
-                 tags$li(tags$span(style = "color:gray", "Faded color: Total structures (background)")),
-                 tags$li(tags$span(style = paste0("color:", get_status_colors()["active"]), "Solid color: Structures with active treatments")),
-                 tags$li(tags$span(style = paste0("color:", get_status_colors()["planned"]), "Orange: Structures with treatments expiring within the selected days"))
-               )),
-      
-      helpText(tags$b("Date Simulation:"),
-               tags$br(),
-               "Use 'Pretend Today is' to see what treatments would be active/expiring on any specific date."),
+      # we removed priority filter for now because data is incomplete
+      # not all facilities have priorities for the structures
       
       helpText(tags$b("Structure Status:"),
                tags$br(),
@@ -95,7 +81,12 @@ ui <- fluidPage(
                  tags$li(tags$b("D:"), "Dry - Structure is dry"),
                  tags$li(tags$b("W:"), "Wet - Structure has water"),
                  tags$li(tags$b("U:"), "Unknown - Status not determined")
-               ))
+               )),
+      
+      actionButton("refresh", "Refresh Data", 
+                   icon = icon("refresh"),
+                   class = "btn-primary btn-lg",
+                   style = "width: 100%; margin-top: 20px;")
     ),
     
     mainPanel(
@@ -125,97 +116,134 @@ ui <- fluidPage(
 
 server <- function(input, output) {
   
-  # Parse zone filter input
-  parsed_zone_filter <- reactive({
-    if (input$zone_filter == "combined") {
-      return(c("1", "2"))  # Include both zones but will be combined
-    } else if (input$zone_filter == "1,2") {
-      return(c("1", "2"))  # Include both zones separately
+  # =============================================================================
+  # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
+  # =============================================================================
+  
+  refresh_inputs <- eventReactive(input$refresh, {
+    zone_value <- isolate(input$zone_filter)
+    
+    # Parse zone filter
+    parsed_zones <- if (zone_value == "combined") {
+      c("1", "2")  # Include both zones but will be combined
+    } else if (zone_value == "1,2") {
+      c("1", "2")  # Include both zones separately
     } else {
-      return(input$zone_filter)  # Single zone
+      zone_value  # Single zone
     }
+    
+    list(
+      zone_filter_raw = zone_value,
+      zone_filter = parsed_zones,
+      combine_zones = (zone_value == "combined"),
+      expiring_days = isolate(input$expiring_days),
+      custom_today = isolate(input$custom_today),
+      status_types = isolate(input$status_types),
+      facility_filter = isolate(input$facility_filter),
+      group_by = isolate(input$group_by),
+      structure_type_filter = isolate(input$structure_type_filter),
+      priority_filter = "all",  # Default value since priority filter was removed from UI
+      start_year = isolate(input$start_year),
+      end_year = isolate(input$end_year)
+    )
   })
   
-  # Flag for whether to combine zones
-  combine_zones <- reactive({
-    input$zone_filter == "combined"
-  })
-  
-  current_data <- reactive({
+  # Load current data - ONLY when refresh button clicked
+  current_data <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
+    
     get_current_structure_data(
-      input$custom_today,
-      input$expiring_days,
-      input$facility_filter,
-      input$structure_type_filter,
-      input$priority_filter,
-      input$status_types,
-      parsed_zone_filter()
+      inputs$custom_today,
+      inputs$expiring_days,
+      inputs$facility_filter,
+      inputs$structure_type_filter,
+      inputs$priority_filter,
+      inputs$status_types,
+      inputs$zone_filter
     )
   })
   
-  all_structures <- reactive({
+  # Load all structures - ONLY when refresh button clicked
+  all_structures <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
+    
     get_all_structures(
-      input$facility_filter,
-      input$structure_type_filter,
-      input$priority_filter,
-      input$status_types,
-      parsed_zone_filter()
+      inputs$facility_filter,
+      inputs$structure_type_filter,
+      inputs$priority_filter,
+      inputs$status_types,
+      inputs$zone_filter
     )
   })
   
-  historical_data <- reactive({
+  # Load historical data - ONLY when refresh button clicked
+  historical_data <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
+    
     get_historical_structure_data(
-      input$start_year,
-      input$end_year,
-      input$facility_filter,
-      input$structure_type_filter,
-      input$priority_filter,
-      input$status_types,
-      parsed_zone_filter()
+      inputs$start_year,
+      inputs$end_year,
+      inputs$facility_filter,
+      inputs$structure_type_filter,
+      inputs$priority_filter,
+      inputs$status_types,
+      inputs$zone_filter
     )
   })
   
+  # Aggregate current data
   aggregated_current <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     structures <- all_structures()
     treatments <- current_data()$treatments
     
     aggregate_structure_data(
       structures,
       treatments,
-      input$group_by,
-      parsed_zone_filter(),
-      combine_zones()
+      inputs$group_by,
+      inputs$zone_filter,
+      inputs$combine_zones
     )
   })
   
+  # Render current progress chart
   output$structureGraph <- renderPlot({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
+    
     data <- aggregated_current()
     
     create_current_progress_chart(
       data,
-      input$group_by,
-      input$facility_filter,
-      input$status_types,
-      parsed_zone_filter(),
-      combine_zones()
+      inputs$group_by,
+      inputs$facility_filter,
+      inputs$status_types,
+      inputs$zone_filter,
+      inputs$combine_zones
     )
   })
   
+  # Render historical trends chart
   output$historicalGraph <- renderPlot({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
+    
     hist_data <- historical_data()
     
     create_historical_trends_chart(
       hist_data$treatments,
       hist_data$total_structures,
-      input$start_year,
-      input$end_year,
-      input$group_by,
-      input$facility_filter,
-      input$structure_type_filter,
-      input$priority_filter,
-      input$status_types,
-      parsed_zone_filter(),
-      combine_zones()
+      inputs$start_year,
+      inputs$end_year,
+      inputs$group_by,
+      inputs$facility_filter,
+      inputs$structure_type_filter,
+      inputs$priority_filter,
+      inputs$status_types,
+      inputs$zone_filter,
+      inputs$combine_zones
     )
   })
 }

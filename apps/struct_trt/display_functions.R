@@ -125,7 +125,7 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
       geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +
       # Finally overlay expiring bars
       geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
-      scale_fill_manual(values = custom_colors, guide = "none")
+      scale_fill_manual(values = custom_colors)  # Removed guide = "none" to show legend
   } else {
     # Default colors when no custom scheme available
     p <- ggplot(data, aes(x = display_name)) +
@@ -137,18 +137,18 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
       geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"])
   }
   
-  # Add text labels
+  # Add text labels with larger size
   p <- p +
     # Label total structures
     geom_text(aes(x = display_name, y = y_total, label = y_total), 
-              vjust = -0.5, size = 3, fontface = "bold") +
+              vjust = -0.5, size = 6, fontface = "bold") +
     # Label active structures (only when different from expiring)
     geom_text(data = subset(data, show_active_label), 
               aes(x = display_name, y = y_active, label = y_active), 
-              vjust = -0.5, size = 3, fontface = "bold", color = "white") +
+              vjust = -0.5, size = 6, fontface = "bold", color = "white") +
     # Label expiring structures
     geom_text(aes(x = display_name, y = y_expiring, label = y_expiring), 
-              vjust = -0.5, size = 3, fontface = "bold", color = "white") +
+              vjust = -0.5, size = 6, fontface = "bold", color = "white") +
     coord_flip() +
     labs(
       title = sprintf("Structures with Active and Expiring Treatments (%s, Status: %s, %s)",
@@ -159,18 +159,27 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
         group_by == "mmcd_all" ~ "MMCD",
         TRUE ~ "Group"
       ),
-      y = "Number of Structures"
+      y = "Number of Structures",
+      fill = case_when(
+        group_by == "facility" ~ "Facility",
+        group_by == "foreman" ~ "FOS",
+        group_by == "mmcd_all" ~ "MMCD",
+        TRUE ~ "Group"
+      )
     ) +
     scale_y_continuous(limits = c(0, y_max)) +
     theme_minimal() +
     theme(
       plot.title = element_text(face = "bold", size = 16),
-      axis.title = element_text(face = "bold", size = 14),
-      axis.title.y = element_text(face = "bold", size = 16),  # Make y-axis title larger and bold
-      axis.text = element_text(size = 12, face = "bold"),     # Make all axis text bold
-      axis.text.y = element_text(size = 14, face = "bold"),   # Make y-axis text larger and bold
+      axis.title = element_text(face = "bold", size = 18),     # Increased from 14 to 18
+      axis.title.x = element_text(face = "bold", size = 20),   # X-axis title even larger
+      axis.text = element_text(size = 16, face = "bold"),      # Increased from 12 to 16
+      axis.text.x = element_text(size = 18, face = "bold"),    # X-axis numbers larger (from 12 to 18)
       panel.grid.minor = element_blank(),
-      plot.margin = margin(20, 20, 20, 20)  # Add some margin for better spacing
+      plot.margin = margin(20, 20, 20, 20),  # Add some margin for better spacing
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold", size = 14),
+      legend.text = element_text(size = 12)
     )
   
   return(p)
@@ -535,12 +544,17 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     ) +
     theme_minimal() +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 12, face = "bold"),
-      axis.text.y = element_text(size = 12, face = "bold"),
-      axis.title = element_text(size = 14, face = "bold"),
-      plot.title = element_text(size = 16, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 16, face = "bold"),
+      axis.text.y = element_text(size = 16, face = "bold"),
+      axis.title = element_text(size = 18, face = "bold"),
+      axis.title.x = element_text(size = 20, face = "bold"),
+      axis.title.y = element_text(size = 20, face = "bold"),
+      plot.title = element_text(size = 20, face = "bold"),
+      plot.subtitle = element_text(size = 14, face = "italic"),
       panel.grid.minor = element_blank(),
-      legend.position = "bottom"
+      legend.position = "bottom",
+      legend.title = element_text(size = 16, face = "bold"),
+      legend.text = element_text(size = 16)
     )
   
   # Apply custom colors if available

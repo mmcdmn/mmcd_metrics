@@ -79,20 +79,33 @@ ui <- dashboardPage(
 
 server <- function(input, output, session) {
   
-  # Parse zone filter input
-  parsed_zone_filter <- reactive({
-    if (input$zone_filter == "combined") {
-      return(c("1", "2"))  # Include both zones but will be combined
-    } else if (input$zone_filter == "1,2") {
-      return(c("1", "2"))  # Include both zones separately
-    } else {
-      return(input$zone_filter)  # Single zone
-    }
-  })
+  # =============================================================================
+  # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
+  # =============================================================================
   
-  # Flag for whether to combine zones
-  combine_zones <- reactive({
-    input$zone_filter == "combined"
+  refresh_inputs <- eventReactive(input$refresh, {
+    zone_value <- isolate(input$zone_filter)
+    
+    # Parse zone filter
+    parsed_zones <- if (zone_value == "combined") {
+      c("1", "2")  # Include both zones but will be combined
+    } else if (zone_value == "1,2") {
+      c("1", "2")  # Include both zones separately
+    } else {
+      zone_value  # Single zone
+    }
+    
+    list(
+      zone_filter_raw = zone_value,
+      zone_filter = parsed_zones,
+      combine_zones = (zone_value == "combined"),
+      facility_filter = isolate(input$facility_filter),
+      foreman_filter = isolate(input$foreman_filter),
+      group_by = isolate(input$group_by),
+      custom_today = isolate(input$custom_today),
+      expiring_days = isolate(input$expiring_days),
+      show_expiring_only = isolate(input$show_expiring_only)
+    )
   })
   
   # Initialize facility choices from db_helpers
@@ -112,31 +125,35 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
 
-  # Fetch ground prehatch data
-  ground_data <- reactive({
-    req(parsed_zone_filter(), input$group_by)  # Ensure required inputs are available
+  # Fetch ground prehatch data - ONLY when refresh button clicked
+  ground_data <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(input$custom_today)) input$custom_today else Sys.Date()
+    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    get_ground_prehatch_data(parsed_zone_filter(), simulation_date)
+    get_ground_prehatch_data(inputs$zone_filter, simulation_date)
   })
   
-  # Fetch site details data
-  site_details <- reactive({
-    # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(input$custom_today)) input$custom_today else Sys.Date()
+  # Fetch site details data - ONLY when refresh button clicked
+  site_details <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
     
-    get_site_details_data(input$expiring_days, simulation_date)
+    # Use custom date if provided, otherwise use current date
+    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    
+    get_site_details_data(inputs$expiring_days, simulation_date)
   })
 
   # Update foreman filter based on facility selection
   observe({
+    req(input$refresh)  # Only update after refresh
+    inputs <- refresh_inputs()
     data <- ground_data()
     
     # Filter by facility if not 'all'
-    if (!is.null(input$facility_filter) && !("all" %in% input$facility_filter)) {
-      data <- data %>% filter(facility %in% input$facility_filter)
+    if (!is.null(inputs$facility_filter) && !("all" %in% inputs$facility_filter)) {
+      data <- data %>% filter(facility %in% inputs$facility_filter)
     }
     
     # Get foremen lookup to map empnum to names
@@ -150,44 +167,54 @@ server <- function(input, output, session) {
   
   # Filter data based on user selections
   filtered_data <- reactive({
-    req(parsed_zone_filter(), input$group_by, input$facility_filter)
-    # Don't require foreman_filter since it starts as NULL
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
     
     data <- ground_data()
     
-    filter_ground_data(data, parsed_zone_filter(), input$facility_filter, input$foreman_filter)
+    filter_ground_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
   })
   
   # Aggregate data based on grouping level  
   aggregated_data <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     data <- filtered_data()
     site_data <- site_details()
     
     aggregate_data_by_group(
       data, 
-      input$group_by, 
-      parsed_zone_filter(), 
-      input$show_expiring_only, 
+      inputs$group_by, 
+      inputs$zone_filter, 
+      inputs$show_expiring_only, 
       site_data,
-      combine_zones()
+      inputs$combine_zones
     )
   })
   
   # Details data for the table
   details_data <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
+    
     site_data <- site_details()
     
-    filter_ground_data(site_data, parsed_zone_filter(), input$facility_filter, input$foreman_filter)
+    filter_ground_data(site_data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
   })
   
   # Create value boxes
   value_boxes <- reactive({
+    req(input$refresh)  # Require refresh button click
+    
     data <- aggregated_data()
     create_value_boxes(data)
   })
   
   # Render value boxes using colors from db_helpers
   output$total_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
@@ -199,6 +226,8 @@ server <- function(input, output, session) {
   })
   
   output$prehatch_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
@@ -210,6 +239,8 @@ server <- function(input, output, session) {
   })
   
   output$treated_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
@@ -221,6 +252,8 @@ server <- function(input, output, session) {
   })
   
   output$needs_treatment <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
@@ -232,6 +265,8 @@ server <- function(input, output, session) {
   })
   
   output$treated_pct <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
@@ -243,6 +278,8 @@ server <- function(input, output, session) {
   })
   
   output$expiring_pct <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
@@ -255,12 +292,17 @@ server <- function(input, output, session) {
   
   # Render progress chart
   output$progress_chart <- renderPlotly({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
+    
     data <- aggregated_data()
-    create_progress_chart(data, input$group_by, input$show_expiring_only, input$expiring_days)
+    create_progress_chart(data, inputs$group_by, inputs$show_expiring_only, inputs$expiring_days)
   })
   
   # Render details table
   output$details_table <- DT::renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
+    
     data <- details_data()
     foremen_lookup <- get_foremen_lookup()
     create_details_table(data, foremen_lookup)
@@ -272,6 +314,8 @@ server <- function(input, output, session) {
       paste("ground_prehatch_details_", Sys.Date(), ".csv", sep = "")
     },
     content = function(file) {
+      req(input$refresh)  # Only allow download after refresh
+      
       data <- details_data()
       foremen_lookup <- get_foremen_lookup()
       download_data <- prepare_download_data(data, foremen_lookup)

@@ -44,7 +44,7 @@ SELECT facility, zone, fosarea, sectcode, foreman,
 FROM (  
   SELECT facility, zone, fosarea, sectcode, foreman, sitecode,
          CASE
-           WHEN age > COALESCE(effect_days::integer, 150)::double precision THEN 'expired'::text
+           WHEN age > COALESCE(effect_days::integer, 30)::double precision THEN 'expired'::text
            WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
            WHEN age<= effect_days::integer::double precision THEN 'treated'::text
            ELSE 'unknown'::text
@@ -70,6 +70,15 @@ ORDER BY sectcode", current_year, format(simulation_date, "%Y-%m-%d"), current_y
     
     result <- dbGetQuery(con, query)
     dbDisconnect(con)
+    
+    # Convert integer64 columns to numeric to avoid overflow warnings
+    int64_cols <- c("tot_ground", "not_prehatch_sites", "prehatch_sites_cnt", "drone_sites_cnt",
+                    "ph_treated_cnt", "ph_expiring_cnt", "ph_expired_cnt", "ph_notactivetrt_cnt")
+    for (col in int64_cols) {
+      if (col %in% names(result)) {
+        result[[col]] <- as.numeric(result[[col]])
+      }
+    }
     
     # Map facility names for display
     result <- map_facility_names(result)
@@ -108,7 +117,7 @@ FROM activesites_g a
 LEFT JOIN (
   SELECT sitecode, sectcode, facility, fosarea, zone, foreman,
          CASE
-           WHEN age > COALESCE(effect_days::integer, 150)::double precision THEN 'expired'::text
+           WHEN age > COALESCE(effect_days::integer, 30)::double precision THEN 'expired'::text
            WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
            WHEN age<= effect_days::integer::double precision THEN 'treated'::text
            ELSE 'unknown'::text
@@ -132,6 +141,14 @@ ORDER BY a.facility, a.sectcode, a.sitecode", current_year, format(simulation_da
     
     result <- dbGetQuery(con, query)
     dbDisconnect(con)
+    
+    # Convert integer64 columns to numeric to avoid overflow warnings
+    numeric_cols <- c("age", "effect_days", "acres")
+    for (col in numeric_cols) {
+      if (col %in% names(result)) {
+        result[[col]] <- as.numeric(result[[col]])
+      }
+    }
     
     # Map facility names for display
     result <- map_facility_names(result)

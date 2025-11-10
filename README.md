@@ -6,7 +6,6 @@
 
 A comprehensive analytics platform for the Metropolitan Mosquito Control District, providing interactive dashboards for mosquito surveillance, treatment analysis, and operational metrics.
 
-> **📋 Recent Updates**: The platform has been restructured to provide comprehensive dashboards with combined functionality. Apps now feature tabbed interfaces that integrate related functionality (e.g., drone treatment progress + history, cattail inspection + planning) for a streamlined user experience.
 
 ## Table of Contents
 
@@ -14,11 +13,19 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
 - [Centralized Helpers Module](#centralized-helpers-module-shareddb_helpersr)
 - [Applications](#applications)
   - [Mosquito Monitoring](#mosquito-monitoring)
-  - [SUCO History](#suco-history)
-  - [Drone Treatment](#drone-treatment)
-  - [Structural Treatment](#structural-treatment)
-  - [Cattail Management](#cattail-management)
+  - [SUCO History](#suco-history) - [Notes](apps/suco_history/NOTES.md)
+  - [Drone Treatment](#drone-treatment) -[Notes](apps/drone/NOTES.md)
+  - [Structural Treatment](#structural-treatment) - [Notes](apps/struct_trt/NOTES.md)
+  - [Cattail Management](#cattail-management) - [Notes](apps/cattail/NOTES.md)
+  - [Ground Prehatch Progress](#ground-prehatch-progress) - [Notes](apps/ground_prehatch_progress/NOTES.md)
+  - [Red Air Pipeline](#red-air-pipeline)
+  - [Mosquito Surveillance Map](#mosquito-surveillance-map)
+  - [Test Application](#test-application)
   - [Control Efficacy](#control-efficacy)
+  - [Treatment Analysis](#treatment-analysis)
+  - [Trap Surveillance Test](#trap-surveillance-test)
+  - [Air Sites Simple](#air-sites-simple)
+  - [Red Air Legacy](#red-air-legacy)
 - [Installation & Deployment](#installation--deployment)
   - [Prerequisites - System Dependencies](#prerequisites---system-dependencies)
   - [R Package Installation](#r-package-installation)
@@ -46,41 +53,68 @@ mmcd_metrics/
 │       └── Common utility functions used across all applications
 ├── apps/
 │   ├── index.html                # Main landing page
+│   ├── about/                    # About page
+│   │   └── index.html
 │   ├── mosquito-monitoring/      # CO2 trap surveillance data
 │   │   └── app.R
 │   ├── suco_history/             # SUCO surveillance analysis (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing and database queries
 │   │   ├── display_functions.R   # Visualization and chart generation
-│   │   └── ui_helpers.R          # UI component functions
+│   │   ├── ui_helpers.R          # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── drone/                    # Comprehensive drone treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── historical_functions.R  # Historical data analysis functions
-│   │   └── site_average_functions.R # Site-level average calculations
+│   │   ├── display_functions.R   # Visualization functions
+│   │   └── ui_helper.R           # UI component functions
 │   ├── struct_trt/               # Structure treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
-│   │   └── display_functions.R   # Visualization functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── ground_prehatch_progress/ # Ground prehatch treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
 │   │   ├── display_functions.R   # Visualization functions
-│   │   └── ui_helpers.R          # UI component functions
+│   │   ├── ui_helpers.R          # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── cattail/                  # Comprehensive cattail management (modular structure)
 │   │   ├── app.R                 # Main application logic
-│   │   └── planned_treatment_functions.R # Treatment planning functions
-│   ├── red_air/                  # Air site status and rainfall analysis (modular structure)
+│   │   ├── planned_treatment_functions.R # Treatment planning functions
+│   │   ├── progress_functions.R  # Progress tracking functions
+│   │   ├── historical_functions.R # Historical data functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
+│   ├── red_air_legacy/           # Legacy air treatment pipeline
 │   │   ├── app.R                 # Main application logic
 │   │   ├── air_status_functions.R # Air site status processing
-│   │   └── flow_testing_functions.R # Flow testing and validation
+│   │   ├── legacy_air_status_functions.R # Legacy status functions
+│   │   ├── optimized_air_status_functions.R # Optimized functions
+│   │   └── test_14_day_persistence.R # Testing functions
+│   ├── air_sites_simple/         # Air sites simple (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── air_status_functions_enhanced.R # Enhanced status functions
+│   │   ├── air_status_functions.R # Air site status processing
+│   │   └── ui_helper.R           # UI component functions
 │   ├── mosquito_surveillance_map/ # Mosquito surveillance mapping
-│   │   └── app.R
-│   ├── test-app/                 # Test application 
-│   │   └── app.R
+│   │   ├── app.R                 # Main application logic
+│   │   └── shp/                  # Shapefile data (geographic boundaries)
 │   ├── control_efficacy/         # Air treatment checkback efficacy
-│   │   └── app.R
-│   └── treatment-analysis/       # Treatment analysis dashboard
-│       └── app.R
+│   │   └── app.R                 # Main application logic
+│   ├── treatment-analysis/       # Treatment analysis dashboard
+│   │   └── app.R                 # Main application logic
+│   ├── trap_survillance_test/    # Trap surveillance test (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   └── test-sql.R            # SQL testing utilities
+│   └── test-app/                 # Test application 
+│       └── app.R                 # Main application logic
 ```
 
 
@@ -101,6 +135,7 @@ mmcd_metrics/
 ### SUCO History
 - **Path**: `/suco_history/`
 - **Purpose**: Surveillance Count (SUCO) historical analysis dashboard
+- **Documentation**: [Technical Notes](apps/suco_history/NOTES.md)
 - **Modular Structure**:
   - **`app.R`**: Main UI and server logic with tabbed interface
   - **`data_functions.R`**: Database queries, species mapping, spatial data processing, and top locations analysis
@@ -117,6 +152,7 @@ mmcd_metrics/
 
 ### Drone Treatment
 - **Path**: `/drone/`
+- **Documentation**: [Technical Notes](apps/drone/NOTES.md)
 - **Purpose**: Comprehensive drone treatment tracking with real-time progress and historical analysis
 - **Modular Structure**:
   - **`app.R`**: Main application logic with multi-tab interface
@@ -137,6 +173,7 @@ mmcd_metrics/
 ### Structural Treatment
 - **Path**: `/struct_trt/`
 - **Purpose**: Comprehensive structural treatment tracking with current progress and historical analysis
+- **Documentation**: [Technical Notes](apps/struct_trt/NOTES.md)
 - **Modular Structure**:
   - **`app.R`**: Main application logic with dual-tab interface
   - **`data_functions.R`**: Database queries, treatment calculations, and data processing
@@ -153,6 +190,7 @@ mmcd_metrics/
 ### Cattail 
 - **Path**: `/cattail/`
 - **Purpose**: Comprehensive cattail  dashboard with inspection tracking and treatment planning
+- **Documentation**: [Technical Notes](apps/cattail/NOTES.md)
 - **Features**:
   - **Inspection Progress Tab**: Track completed cattail inspections versus annual goals
   - **Treatment Planning Tab**: Planning and tracking dashboard for cattail treatments
@@ -166,6 +204,7 @@ mmcd_metrics/
 ### Ground Prehatch Progress
 - **Path**: `/ground_prehatch_progress/`
 - **Purpose**: Track and analyze ground prehatch treatment progress and performance
+- **Documentation**: [Technical Notes](apps/ground_prehatch_progress/NOTES.md)
 - **Modular Structure**:
   - **`app.R`**: Main application logic with clean tabbed interface
   - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
@@ -312,23 +351,6 @@ sudo systemctl start shiny-server
 sudo systemctl enable shiny-server
 ```
 
-### Quick Local Testing
-```bash
-# Clone the repository
-git clone https://github.com/ablepacifist/mmcd_metrics_1.git
-cd mmcd_metrics_1
-
-# Set workspace variable
-export MMCD_WORKSPACE=$(pwd)
-
-# Start the main dashboard (in one terminal)
-cd apps
-python3 -m http.server 8080
-
-# Test individual applications (in another terminal)
-cd $MMCD_WORKSPACE/apps/mosquito-monitoring
-R -e "shiny::runApp(host='127.0.0.1', port=3838)"
-```
 
 Access the applications:
 - Main Dashboard: `http://localhost:3838/`

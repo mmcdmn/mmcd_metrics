@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ground Prehatch Treatment Progress - Technical Notes</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #7f8c8d;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+        }
+        .callout {
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid;
+            border-radius: 4px;
+        }
+        .callout-critical {
+            background-color: #fee;
+            border-color: #e74c3c;
+        }
+        .callout-note {
+            background-color: #fef9e7;
+            border-color: #f39c12;
+        }
+        .callout-success {
+            background-color: #eafaf1;
+            border-color: #27ae60;
+        }
+        .callout-info {
+            background-color: #ebf5fb;
+            border-color: #3498db;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        @media print {
+            body {
+                background-color: white;
+            }
+            .container {
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ground Prehatch Treatment Progress - Technical Notes</h1>
+
+        <h2>Overview</h2>
+        <p>This Shiny dashboard tracks ground prehatch treatment progress across two main views:</p>
+        <ol>
+            <li><strong>Progress Overview</strong> - Summary statistics and progress charts showing treatment status by facility, FOS, or section</li>
+            <li><strong>Detailed View</strong> - Site-level details table with treatment history and status</li>
+        </ol>
+        <p>The app focuses on prehatch sites (sites requiring pre-hatch mosquito control treatments) and tracks their treatment status over time.</p>
+
+        <h2>Data Sources</h2>
+
+        <h3>Tables Used</h3>
+
+        <h4>Primary Tables</h4>
+        <ul>
+            <li><strong><code>loc_breeding_sites</code></strong> - Site information and lifecycle tracking
+                <ul>
+                    <li>Contains site characteristics: <code>acres</code>, <code>prehatch</code>, <code>drone</code>, <code>air_gnd</code>, <code>priority</code></li>
+                    <li>Tracks site lifecycle: <code>enddate</code> (when site was closed/inactivated)</li>
+                    <li><strong>CRITICAL</strong>: Sites with <code>enddate</code> before current season are filtered out</li>
+                    <li>Filter: <code>air_gnd = 'G'</code> (ground sites only)</li>
+                    <li>Join pattern: <code>LEFT JOIN gis_sectcode ON left(sitecode,7) = sectcode</code></li>
+                </ul>
+            </li>
+            <li><strong><code>dblarv_insptrt_current</code></strong> - Current larval treatment records
+                <ul>
+                    <li>Contains treatment records: <code>inspdate</code>, <code>matcode</code>, <code>insptime</code></li>
+                    <li>Used to calculate treatment age and status</li>
+                    <li>Filter: <code>inspdate > CURRENT_YEAR-01-01 AND inspdate <= simulation_date</code></li>
+                    <li>Join pattern: Uses sitecode to match with loc_breeding_sites</li>
+                </ul>
+            </li>
+            <li><strong><code>gis_sectcode</code></strong> - Section/zone information
+                <ul>
+                    <li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
+                    <li>Provides FOS (Field Operations Supervisor) area assignments (<code>fosarea</code>)</li>
+                    <li>Join pattern: <code>left(sitecode,7) = sectcode</code></li>
+                </ul>
+            </li>
+            <li><strong><code>mattype_list_targetdose</code></strong> - Material effectiveness information
+                <ul>
+                    <li>Contains <code>effect_days</code> - how long a treatment remains effective</li>
+                    <li>Contains <code>days_retrt_early</code> - early retreatment threshold for expiring status</li>
+                    <li>Filter: <code>prehatch = TRUE</code> (only prehatch materials)</li>
+                    <li>Used to calculate treatment status (treated, expiring, expired)</li>
+                </ul>
+            </li>
+            <li><strong><code>employee_list</code></strong> - FOS information
+                <ul>
+                    <li>Used to get active Field Operations Supervisors</li>
+                    <li>Filter: <code>emp_type = 'FieldSuper'</code> AND <code>active = true</code></li>
+                </ul>
+            </li>
+        </ul>
+
+        <h3>Treatment Status Logic</h3>
+        <p>Treatment status is calculated based on the age of the most recent treatment:</p>
+        <ul>
+            <li><strong>Treated</strong>: <code>age <= effect_days</code> - Treatment is still effective</li>
+            <li><strong>Expiring</strong>: <code>age > days_retrt_early</code> - Treatment approaching expiration (early retreatment threshold)</li>
+            <li><strong>Expired</strong>: <code>age > effect_days</code> - Treatment has expired, site needs retreatment</li>
+            <li><strong>No Treatment</strong>: Site has no treatment records or doesn't match criteria</li>
+        </ul>
+        <p>Age calculation: <code>CURRENT_DATE (or simulation_date) - inspdate</code></p>
+        <p>Default effectiveness: 30 days if <code>effect_days</code> is NULL</p>
+
+        <div class="callout callout-critical">
+            <h3>Critical Data Integrity Issue: Site Enddate Filtering</h3>
+            <h4>The Problem</h4>
+            <p>The <code>enddate</code> column in <code>loc_breeding_sites</code> tracks when a site is closed/inactivated. Sites that have been closed can still have historical treatment records.</p>
+            
+            <h4>The Solution</h4>
+            <p><strong>ALWAYS filter by enddate in the SQL query:</strong></p>
+            <pre><code>WHERE (b.enddate IS NULL OR b.enddate > 'CURRENT_YEAR-05-01')</code></pre>
+            
+            <h4>Why This Matters</h4>
+            <ul>
+                <li>Without this filter, closed sites appear in results</li>
+                <li>This causes "ghost sites" to inflate counts</li>
+                <li>Treatment statistics become inaccurate</li>
+                <li>Both <code>get_ground_prehatch_data()</code> and <code>get_site_details_data()</code> apply this filter</li>
+            </ul>
+        </div>
+
+        <h2>Tab 1: Progress Overview</h2>
+        
+        <h3>Purpose</h3>
+        <p>Show aggregated treatment progress statistics with visual charts and summary metrics.</p>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li><strong>6 Value Boxes</strong> showing key metrics:
+                <ul>
+                    <li>Total Ground Sites</li>
+                    <li>Prehatch Sites</li>
+                    <li>Treated Sites</li>
+                    <li>Needs Treatment</li>
+                    <li>Treated % (percentage of prehatch sites with active treatments)</li>
+                    <li>Expiring % (percentage of prehatch sites with expiring treatments)</li>
+                </ul>
+            </li>
+            <li><strong>Stacked Bar Chart</strong> showing treatment status breakdown by selected grouping:
+                <ul>
+                    <li>Treated (Green) - Sites with active treatments</li>
+                    <li>Expiring (Orange) - Sites with treatments about to expire</li>
+                    <li>Expired (Gray) - Sites with expired treatments</li>
+                    <li>Needs Treatment (Red) - Sites requiring treatment</li>
+                </ul>
+            </li>
+            <li><strong>Grouping Options</strong>:
+                <ul>
+                    <li>All MMCD - District-wide view</li>
+                    <li>Facility - Group by facility</li>
+                    <li>FOS - Group by Field Operations Supervisor</li>
+                    <li>Section - Group by section code</li>
+                </ul>
+            </li>
+            <li><strong>Zone Options</strong>:
+                <ul>
+                    <li>P1 Only - Show only Priority 1 zone</li>
+                    <li>P2 Only - Show only Priority 2 zone</li>
+                    <li>P1 and P2 Separate - Show both zones with separate bars</li>
+                    <li>Combined P1+P2 - Show both zones combined into single bars</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h3>Data Flow</h3>
+        <ol>
+            <li><strong>Data Loading</strong>: <code>get_ground_prehatch_data()</code> fetches aggregated section-level data</li>
+            <li><strong>Filtering</strong>: <code>filter_ground_data()</code> applies facility, FOS, and zone filters</li>
+            <li><strong>Aggregation</strong>: <code>aggregate_data_by_group()</code> rolls up data by selected grouping level</li>
+            <li><strong>Visualization</strong>: <code>create_progress_chart()</code> generates stacked bar chart</li>
+            <li><strong>Value Boxes</strong>: <code>create_value_boxes()</code> calculates summary statistics</li>
+        </ol>
+
+        <h3>Visualization Details</h3>
+        <p>The chart uses color-coded stacking:</p>
+        <ul>
+            <li><strong>Active</strong> (Green): Sites with current effective treatments</li>
+            <li><strong>Planned/Expiring</strong> (Orange): Sites with treatments expiring soon</li>
+            <li><strong>Unknown/Expired</strong> (Gray): Sites with expired treatments</li>
+            <li><strong>Needs Treatment</strong> (Red): Sites requiring immediate attention</li>
+        </ul>
+        <p>Chart is interactive (Plotly) with hover tooltips showing exact counts.</p>
+
+        <h2>Tab 2: Detailed View</h2>
+        
+        <h3>Purpose</h3>
+        <p>Provide site-level detail table with treatment history and downloadable CSV export.</p>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li><strong>Detailed Table</strong> showing individual site information:
+                <ul>
+                    <li>Facility, Priority Zone, Section, Sitecode</li>
+                    <li>FOS assignment</li>
+                    <li>Acres, Priority level</li>
+                    <li>Treatment Type (PREHATCH, BRIQUET)</li>
+                    <li>Status (treated, expiring, expired, or blank)</li>
+                    <li>Last Treatment date</li>
+                    <li>Days Since Last Treatment</li>
+                    <li>Material used</li>
+                    <li>Effect Days (treatment effectiveness duration)</li>
+                </ul>
+            </li>
+            <li><strong>CSV Download</strong> button for exporting filtered data</li>
+            <li><strong>Pagination & Search</strong> via DataTables interface</li>
+        </ul>
+
+        <h3>Data Flow</h3>
+        <ol>
+            <li><strong>Data Loading</strong>: <code>get_site_details_data()</code> fetches site-level treatment records</li>
+            <li><strong>Filtering</strong>: <code>filter_ground_data()</code> applies facility, FOS, and zone filters</li>
+            <li><strong>Display</strong>: <code>create_details_table()</code> formats data for DataTables</li>
+            <li><strong>Download</strong>: <code>prepare_download_data()</code> prepares CSV export</li>
+        </ol>
+
+        <h2>Code Organization</h2>
+
+        <h3>File Structure</h3>
+        <pre><code>ground_prehatch_progress/
+├── app.R                           # Main app - UI orchestration and server logic
+├── ui_helpers.R                    # UI components (filter panel, value boxes, etc.)
+├── data_functions.R                # Database queries and data processing
+├── display_functions.R             # Charts, tables, and visualization functions
+├── NOTES.md                        # Documentation (markdown)
+└── NOTES.html                      # Documentation (this file)</code></pre>
+
+        <h3>Design Principles</h3>
+        <ol>
+            <li><strong>Separation of Concerns</strong>: UI, data, and display logic are separate</li>
+            <li><strong>Refresh Button Pattern</strong>: No data loads until user clicks "Refresh Data"</li>
+            <li><strong>Input Isolation</strong>: All inputs captured via <code>refresh_inputs()</code> when button clicked</li>
+            <li><strong>Reusable Functions</strong>: UI components, data processing, and visualization are modular</li>
+            <li><strong>Consistent Patterns</strong>: All outputs follow same filter/process/display flow</li>
+        </ol>
+
+        <div class="callout callout-success">
+            <h3>Refresh Button Pattern - Critical for Performance</h3>
+            <p><strong>Why It's Critical:</strong> Without this pattern, changing ANY filter would immediately trigger database queries.</p>
+            
+            <h4>How It Works:</h4>
+            <ol>
+                <li><strong>On app load</strong>: Only UI options (facility names, FOS names) are loaded</li>
+                <li><strong>User adjusts filters</strong>: No database queries run - just UI state changes</li>
+                <li><strong>User clicks "Refresh Data"</strong>: 
+                    <ul>
+                        <li><code>refresh_inputs()</code> captures ALL current input values using <code>isolate()</code></li>
+                        <li><code>ground_data()</code> eventReactive executes, using captured inputs</li>
+                        <li><code>site_details()</code> eventReactive executes, using captured inputs</li>
+                        <li>All data processing happens with frozen input values</li>
+                    </ul>
+                </li>
+                <li><strong>User changes filters again</strong>: Charts stay the same (using frozen data)</li>
+                <li><strong>User clicks "Refresh Data" again</strong>: New query with new input values</li>
+            </ol>
+
+            <h4>Key Implementation:</h4>
+            <pre><code># Capture inputs when refresh clicked
+refresh_inputs <- eventReactive(input$refresh, {
+  zone_value <- isolate(input$zone_filter)
+  
+  # Parse zone filter
+  parsed_zones <- if (zone_value == "combined") {
+    c("1", "2")  # Include both zones but will be combined
+  } else if (zone_value == "1,2") {
+    c("1", "2")  # Include both zones separately
+  } else {
+    zone_value  # Single zone
+  }
+  
+  list(
+    zone_filter_raw = zone_value,
+    zone_filter = parsed_zones,
+    combine_zones = (zone_value == "combined"),
+    facility_filter = isolate(input$facility_filter),
+    # ... all other inputs
+  )
+})
+
+# Load data ONLY when refresh clicked
+ground_data <- eventReactive(input$refresh, {
+  inputs <- refresh_inputs()
+  # Use inputs$zone_filter, NOT input$zone_filter
+  get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+})</code></pre>
+            <p><strong>CRITICAL:</strong> Zone parsing happens inside <code>refresh_inputs()</code> to avoid circular dependencies. The parsed zone values and combine_zones flag are stored directly in the inputs list.</p>
+        </div>
+
+        <h2>Common Data Patterns</h2>
+
+        <h3>Zone Mapping</h3>
+        <ul>
+            <li><strong>P1</strong> = Zone '1' (Primary zone)</li>
+            <li><strong>P2</strong> = Zone '2' (Secondary zone)</li>
+        </ul>
+
+        <h3>FOS Assignment Pattern</h3>
+        <p>FOS (Field Operations Supervisor) assignment comes from:</p>
+        <ol>
+            <li><code>gis_sectcode.fosarea</code> - Links section to FOS area</li>
+            <li><code>employee_list</code> - Maps FOS area to actual employee</li>
+            <li>Display uses <code>shortname</code> from employee_list</li>
+        </ol>
+
+        <h3>Treatment Status Hierarchy</h3>
+        <ol>
+            <li><strong>Most Recent Treatment</strong> is selected using <code>DISTINCT ON (sitecode)</code> with <code>ORDER BY inspdate DESC, insptime DESC</code></li>
+            <li><strong>Age Calculation</strong> uses date_part to get days since treatment</li>
+            <li><strong>Status Classification</strong> uses CASE statement with effect_days and days_retrt_early thresholds</li>
+        </ol>
+
+        <h2>Special Features</h2>
+
+        <h3>"Pretend Today Is" Date Simulation</h3>
+        <p>Allows users to simulate what the treatment status would look like on any given date:</p>
+        <ul>
+            <li>Changes the reference date for age calculations</li>
+            <li>Useful for historical analysis or planning</li>
+            <li>Default: Current system date</li>
+        </ul>
+
+        <h3>"Days Until Expiring" Slider</h3>
+        <p>Controls the threshold for "expiring" status (default: 14 days):</p>
+        <ul>
+            <li>Adjusts when treatments are flagged as approaching expiration</li>
+            <li>Range: 1-60 days</li>
+            <li>Useful for adjusting planning windows</li>
+        </ul>
+
+        <h3>"Show Expiring Only" Filter</h3>
+        <p>When checked:</p>
+        <ul>
+            <li>Filters to only show sites/sections with expiring treatments</li>
+            <li>Zeros out all other treatment status counts</li>
+            <li>Useful for focusing on sites requiring immediate attention</li>
+        </ul>
+
+        <h3>Zone Display Options</h3>
+        <p>Four different ways to view zone data:</p>
+        <ol>
+            <li><strong>P1 Only</strong>: Filter to Priority 1 zone only</li>
+            <li><strong>P2 Only</strong>: Filter to Priority 2 zone only</li>
+            <li><strong>P1 and P2 Separate</strong>: Show both zones with separate bars/rows</li>
+            <li><strong>Combined P1+P2</strong>: Show both zones aggregated together</li>
+        </ol>
+
+        <h2>Key Takeaways</h2>
+        
+        <ol>
+            <li><strong>Refresh Button Pattern</strong>: Essential for performance - NO data queries until refresh clicked</li>
+            <li><strong>Zone Parsing in refresh_inputs()</strong>: Prevents circular dependencies by parsing zone values during input capture</li>
+            <li><strong>Integer64 Conversion</strong>: Always convert COUNT() results to numeric to avoid overflow warnings</li>
+            <li><strong>Site Enddate Filtering</strong>: Always filter <code>enddate IS NULL OR enddate > season_start</code> to exclude closed sites</li>
+            <li><strong>FOS = Jurisdictional Assignment</strong>: Use fosarea from gis_sectcode, mapped through employee_list</li>
+            <li><strong>Treatment Status Hierarchy</strong>: Most recent treatment wins, status based on age vs effect_days</li>
+            <li><strong>Date Simulation</strong>: Allows historical analysis by changing reference date for age calculations</li>
+            <li><strong>Zone Display Options</strong>: Four modes (P1, P2, Separate, Combined) controlled by combine_zones flag</li>
+            <li><strong>SQL Query Structure</strong>: Two main queries - aggregated section data and detailed site data</li>
+            <li><strong>Value Box Calculations</strong>: Aggregate at top level for district-wide statistics</li>
+        </ol>
+
+        <div class="callout callout-success">
+            <p><strong>Last Updated:</strong> November 10, 2025</p>
+            <p><strong>App Version:</strong> Refactored with modular file structure and refresh button pattern</p>
+        </div>
+    </div>
+</body>
+</html>

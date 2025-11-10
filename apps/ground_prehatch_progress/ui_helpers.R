@@ -58,6 +58,14 @@ create_filter_panel <- function() {
         div(style = "margin-top: 25px;",
           checkboxInput("show_expiring_only", "Show Expiring Only", value = FALSE)
         )
+      ),
+      column(3,
+        div(style = "margin-top: 25px;",
+          actionButton("refresh", "Refresh Data", 
+                      icon = icon("refresh"),
+                      class = "btn-primary btn-lg",
+                      style = "width: 100%;")
+        )
       )
     )
   )

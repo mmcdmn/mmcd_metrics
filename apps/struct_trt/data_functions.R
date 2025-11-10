@@ -7,7 +7,7 @@ get_facility_condition <- function(facility_filter) {
     return("") # No filtering
   } else {
     facility_list <- paste0("'", paste(facility_filter, collapse = "','"), "'")
-    return(sprintf("AND trt.facility IN (%s)", facility_list))
+    return(sprintf("AND gis.facility IN (%s)", facility_list))
   }
 }
 
@@ -53,10 +53,10 @@ get_status_condition <- function(status_types) {
 get_facility_condition_total <- function(facility_filter, structure_type_filter, priority_filter, status_types) {
   conditions <- character(0)
   
-  # Facility condition
+  # Facility condition - use gis.facility for consistency with fosarea
   if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
     facility_list <- paste0("'", paste(facility_filter, collapse = "','"), "'")
-    conditions <- c(conditions, sprintf("AND facility IN (%s)", facility_list))
+    conditions <- c(conditions, sprintf("AND gis.facility IN (%s)", facility_list))
   }
   
   # Structure type condition
@@ -64,25 +64,25 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
     # Handle case-insensitive matching and combinations like CV/PR
     if (toupper(structure_type_filter) == "CV") {
       # Match CV, cv, and CV/PR, cv/pr combinations (case-insensitive)
-      conditions <- c(conditions, "AND (UPPER(s_type) = 'CV' OR UPPER(s_type) LIKE 'CV/%' OR UPPER(s_type) LIKE '%/CV')")
+      conditions <- c(conditions, "AND (UPPER(loc.s_type) = 'CV' OR UPPER(loc.s_type) LIKE 'CV/%' OR UPPER(loc.s_type) LIKE '%/CV')")
     } else if (toupper(structure_type_filter) == "PR") {
       # Match PR and PR combinations like CV/PR (case-insensitive)
-      conditions <- c(conditions, "AND (UPPER(s_type) = 'PR' OR UPPER(s_type) LIKE 'PR/%' OR UPPER(s_type) LIKE '%/PR')")
+      conditions <- c(conditions, "AND (UPPER(loc.s_type) = 'PR' OR UPPER(loc.s_type) LIKE 'PR/%' OR UPPER(loc.s_type) LIKE '%/PR')")
     } else {
       # For other types, use case-insensitive exact match
-      conditions <- c(conditions, sprintf("AND UPPER(s_type) = UPPER('%s')", structure_type_filter))
+      conditions <- c(conditions, sprintf("AND UPPER(loc.s_type) = UPPER('%s')", structure_type_filter))
     }
   }
   
   # Priority condition
   if (priority_filter != "all") {
-    conditions <- c(conditions, sprintf("AND priority = '%s'", priority_filter))
+    conditions <- c(conditions, sprintf("AND loc.priority = '%s'", priority_filter))
   }
   
   # Status condition
   if (!is.null(status_types) && length(status_types) > 0) {
     status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-    conditions <- c(conditions, sprintf("AND status_udw IN (%s)", status_list))
+    conditions <- c(conditions, sprintf("AND loc.status_udw IN (%s)", status_list))
   }
   
   return(paste(conditions, collapse = " "))
@@ -94,23 +94,25 @@ get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days 
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Query for current structure treatments
+    # Query for current structure treatments using gis_sectcode for zone, fosarea, and facility
     query <- sprintf(
       "
 SELECT 
   trt.sitecode,
   trt.inspdate,
-  trt.facility,
-  loc.foreman,
+  gis.facility,
+  gis.fosarea as foreman,
   COALESCE(mat.effect_days, 30) AS effect_days,
   loc.s_type,
   loc.priority,
   loc.status_udw as status,
-  loc.zone
+  gis.zone
 FROM public.dblarv_insptrt_current trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode  
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE trt.list_type = 'STR'
+  AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 %s
 %s
@@ -127,10 +129,11 @@ WHERE trt.list_type = 'STR'
     # Get total structures count
     query_total <- sprintf(
       "
-SELECT COUNT(DISTINCT sitecode)::bigint AS total_structures
-FROM loc_cxstruct
+SELECT COUNT(DISTINCT loc.sitecode)::bigint AS total_structures
+FROM loc_cxstruct loc
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE 1=1
-AND (enddate IS NULL OR enddate > CURRENT_DATE)
+AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
@@ -173,14 +176,14 @@ get_historical_structure_data <- function(start_year = 2023, end_year = 2025, fa
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Construct zone filter condition for location table
+    # Construct zone filter condition using gis_sectcode
     zone_condition <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       zone_list <- paste0("'", paste(zone_filter, collapse = "','"), "'")
-      zone_condition <- sprintf("AND loc.zone IN (%s)", zone_list)
+      zone_condition <- sprintf("AND gis.zone IN (%s)", zone_list)
     }
     
-    # Fetch archive data
+    # Fetch archive data using gis_sectcode for zone, fosarea, and facility
     query_archive <- sprintf(
       "
 SELECT
@@ -189,15 +192,17 @@ trt.inspdate,
 COALESCE(mat.effect_days, 30) AS effect_days,
 loc.s_type,
 loc.priority,
-loc.facility,
-loc.foreman,
-loc.zone
+gis.facility,
+gis.fosarea as foreman,
+gis.zone
 FROM public.dblarv_insptrt_archive trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE trt.inspdate >= date '%d-01-01'
 AND trt.inspdate < date '%d-01-01'
 AND trt.list_type = 'STR'
+AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
 %s
 %s
 %s
@@ -215,7 +220,7 @@ AND trt.list_type = 'STR'
     
     archive_data <- dbGetQuery(con, query_archive)
     
-    # Fetch current data with structure info
+    # Fetch current data with structure info using gis_sectcode
     query_current <- sprintf(
       "
 SELECT
@@ -224,15 +229,17 @@ trt.inspdate,
 COALESCE(mat.effect_days, 30) AS effect_days,
 loc.s_type,
 loc.priority,
-loc.facility,
-loc.foreman,
-loc.zone
+gis.facility,
+gis.fosarea as foreman,
+gis.zone
 FROM public.dblarv_insptrt_current trt
 LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE trt.inspdate >= date '%d-01-01'
 AND trt.inspdate < date '%d-01-01'
 AND trt.list_type = 'STR'
+AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
 %s
 %s
 %s
@@ -253,10 +260,11 @@ AND trt.list_type = 'STR'
     # Get total structures (active structures only)
     query_total_structures <- sprintf(
       "
-SELECT COUNT(DISTINCT sitecode) AS total_structures
-FROM loc_cxstruct
+SELECT COUNT(DISTINCT loc.sitecode) AS total_structures
+FROM loc_cxstruct loc
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE 1=1
-AND (enddate IS NULL OR enddate > CURRENT_DATE)
+AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
@@ -288,18 +296,19 @@ get_all_structures <- function(facility_filter = "all", structure_type_filter = 
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get all active structures with zone info
+    # Get all active structures with zone, fosarea, and facility from gis_sectcode
     query <- sprintf(
       "
 SELECT 
   loc.sitecode,
-  loc.facility,
+  gis.facility,
   loc.s_type,
   loc.priority,
   loc.status_udw as status,
-  loc.zone,
-  loc.foreman
+  gis.zone,
+  gis.fosarea as foreman
 FROM public.loc_cxstruct loc
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",

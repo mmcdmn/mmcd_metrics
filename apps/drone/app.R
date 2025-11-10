@@ -300,12 +300,10 @@ ui <- fluidPage(
                          selected = c("1", "2")),
       
       selectizeInput("facility_filter", "Facility:",
-                    choices = get_facility_choices(),
-                    selected = "all", multiple = TRUE),
+                    choices = NULL, multiple = TRUE),
       
       selectizeInput("foreman_filter", "FOS:",
-                    choices = get_foreman_choices(),
-                    selected = "all", multiple = TRUE),
+                    choices = NULL, multiple = TRUE),
       
       # Group by controls (dynamic based on tab)
       conditionalPanel(
@@ -323,7 +321,11 @@ ui <- fluidPage(
                      choices = c("Facility" = "facility",
                                  "FOS" = "foreman"),
                      selected = "facility")
-      )
+      ),
+      
+      # Refresh button
+      hr(),
+      actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;")
     ),
     
     # Main panel with tabs
@@ -356,6 +358,17 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
+  # Initialize UI options (facility and FOS choices) on app startup
+  observe({
+    # Load facility choices from db_helpers
+    facility_choices <- get_facility_choices()
+    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    
+    # Load foreman/FOS choices from db_helpers
+    foreman_choices <- get_foreman_choices()
+    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
+  })
+  
   # Update group by options when switching to historical tabs
   observeEvent(input$tabs, {
     if (input$tabs %in% c("historical", "site_stats")) {
@@ -377,8 +390,8 @@ server <- function(input, output, session) {
   # DATA LOADING AND PROCESSING
   # =============================================================================
   
-  # Raw data reactive - loads base data from database
-  raw_data <- reactive({
+  # Raw data reactive - loads base data from database ONLY when refresh button is clicked
+  raw_data <- eventReactive(input$refresh, {
     drone_types <- c("Y", "M", "C")  # Default drone types
     load_raw_data(drone_types)
   })
@@ -651,6 +664,7 @@ server <- function(input, output, session) {
   
   # Current progress plot
   output$currentPlot <- renderPlot({
+    req(input$refresh)  # Only render after refresh button is clicked
     result <- processed_data()
     data <- result$data
     sectcode_facility_mapping <- result$sectcode_facility_mapping
@@ -781,6 +795,7 @@ server <- function(input, output, session) {
   
   # Historical plot output - uses external function
   output$historicalPlot <- renderPlot({
+    req(input$refresh)  # Only render after refresh button is clicked
     p <- create_historical_plot(
       zone_filter = input$zone_filter,
       group_by = input$group_by,
@@ -867,8 +882,8 @@ server <- function(input, output, session) {
     return(site_stats)
   })
   
-  # Individual sitecode data for tables and stats
-  sitecode_data <- reactive({
+  # Individual sitecode data for tables and stats - ONLY loads when refresh button is clicked
+  sitecode_data <- eventReactive(input$refresh, {
     # Get input values with defaults
     start_year <- if(is.null(input$site_start_year)) 2018 else as.integer(input$site_start_year)
     end_year <- if(is.null(input$site_end_year)) 2025 else as.integer(input$site_end_year)
@@ -1081,6 +1096,7 @@ server <- function(input, output, session) {
   
   # Site statistics plot
   output$siteStatsPlot <- renderPlot({
+    req(input$refresh)  # Only render after refresh button is clicked
     data <- site_stats_data()
     
     if (nrow(data) == 0) {
@@ -1148,6 +1164,7 @@ server <- function(input, output, session) {
   
   # Largest sites table (individual treatments)
   output$largestSitesTable <- renderTable({
+    req(input$refresh)  # Only render after refresh button is clicked
     data <- sitecode_data()
     
     if (nrow(data) == 0) {
@@ -1174,6 +1191,7 @@ server <- function(input, output, session) {
   
   # Smallest sites table (individual treatments)
   output$smallestSitesTable <- renderTable({
+    req(input$refresh)  # Only render after refresh button is clicked
     data <- sitecode_data()
     
     if (nrow(data) == 0) {

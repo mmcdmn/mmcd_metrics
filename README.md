@@ -312,23 +312,6 @@ sudo systemctl start shiny-server
 sudo systemctl enable shiny-server
 ```
 
-### Quick Local Testing
-```bash
-# Clone the repository
-git clone https://github.com/ablepacifist/mmcd_metrics_1.git
-cd mmcd_metrics_1
-
-# Set workspace variable
-export MMCD_WORKSPACE=$(pwd)
-
-# Start the main dashboard (in one terminal)
-cd apps
-python3 -m http.server 8080
-
-# Test individual applications (in another terminal)
-cd $MMCD_WORKSPACE/apps/mosquito-monitoring
-R -e "shiny::runApp(host='127.0.0.1', port=3838)"
-```
 
 Access the applications:
 - Main Dashboard: `http://localhost:3838/`

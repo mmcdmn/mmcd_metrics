@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<qgis projectname="Simple Heat Map" version="3.34.4-Prizren">
+  <homePath path=""/>
+  <title>Simple Heat Map - {{ANALYSIS_DATE}}</title>
+  
+  <properties>
+    <WMSServiceTitle type="QString">Simple Vector Index Heat Map</WMSServiceTitle>
+    <WMSServiceAbstract type="QString">{{SPECIES_LABEL}}</WMSServiceAbstract>
+    <WMSExtent type="QgsRectangle">
+      <xmin>-97.5</xmin>
+      <ymin>43.0</ymin>
+      <xmax>-89.5</xmax>
+      <ymax>49.5</ymax>
+    </WMSExtent>
+  </properties>
+
+  <projectlayers>
+    <maplayer>
+      <id>sections_heatmap</id>
+      <datasource>{{GPKG_PATH}}|layername=sections_heatmap</datasource>
+      <layername>Sections Heat Map</layername>
+      <srs>
+        <spatialrefsys>
+          <wkt>GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Horizontal component of 3D system."],AREA["World."],BBOX[-90,-180,90,180]],ID["EPSG",4326]]</wkt>
+          <proj4>+proj=longlat +datum=WGS84 +no_defs</proj4>
+          <srsid>3452</srsid>
+          <srid>4326</srid>
+          <authid>EPSG:4326</authid>
+          <description>WGS 84</description>
+        </spatialrefsys>
+      </srs>
+      <provider encoding="UTF-8">ogr</provider>
+      <renderer-v2 type="graduatedSymbol" attr="vector_index" graduatedMethod="GraduatedColor" symbollevels="0" enableorderby="0" forceraster="0">
+        <ranges>
+          <range label="None (0)" lower="0.000000000000000" upper="0.000000000000000" symbol="0" render="true"/>
+          <range label="Low (0-0.5)" lower="0.000000000000000" upper="0.500000000000000" symbol="1" render="true"/>
+          <range label="Medium (0.5-1.0)" lower="0.500000000000000" upper="1.000000000000000" symbol="2" render="true"/>
+          <range label="High (>1.0)" lower="1.000000000000000" upper="10.000000000000000" symbol="3" render="true"/>
+        </ranges>
+        <symbols>
+          <symbol type="marker" name="0" alpha="0.8" clip_to_extent="1" force_rhr="0">
+            <layer enabled="1" class="SimpleMarker" locked="0" pass="0">
+              <Option type="Map">
+                <Option type="QString" value="0" name="angle"/>
+                <Option type="QString" value="169,169,169,204" name="color"/>
+                <Option type="QString" value="circle" name="name"/>
+                <Option type="QString" value="0,0" name="offset"/>
+                <Option type="QString" value="35,35,35,255" name="outline_color"/>
+                <Option type="QString" value="solid" name="outline_style"/>
+                <Option type="QString" value="0.4" name="outline_width"/>
+                <Option type="QString" value="12" name="size"/>
+              </Option>
+            </layer>
+          </symbol>
+          <symbol type="marker" name="1" alpha="0.8" clip_to_extent="1" force_rhr="0">
+            <layer enabled="1" class="SimpleMarker" locked="0" pass="0">
+              <Option type="Map">
+                <Option type="QString" value="255,255,0,204" name="color"/>
+                <Option type="QString" value="circle" name="name"/>
+                <Option type="QString" value="12" name="size"/>
+              </Option>
+            </layer>
+          </symbol>
+          <symbol type="marker" name="2" alpha="0.8" clip_to_extent="1" force_rhr="0">
+            <layer enabled="1" class="SimpleMarker" locked="0" pass="0">
+              <Option type="Map">
+                <Option type="QString" value="255,165,0,204" name="color"/>
+                <Option type="QString" value="circle" name="name"/>
+                <Option type="QString" value="12" name="size"/>
+              </Option>
+            </layer>
+          </symbol>
+          <symbol type="marker" name="3" alpha="0.8" clip_to_extent="1" force_rhr="0">
+            <layer enabled="1" class="SimpleMarker" locked="0" pass="0">
+              <Option type="Map">
+                <Option type="QString" value="255,0,0,204" name="color"/>
+                <Option type="QString" value="circle" name="name"/>
+                <Option type="QString" value="12" name="size"/>
+              </Option>
+            </layer>
+          </symbol>
+        </symbols>
+      </renderer-v2>
+      <blendMode>0</blendMode>
+    </maplayer>
+  </projectlayers>
+
+  <layertree>
+    <layer-tree-group>
+      <customproperties/>
+      <layer-tree-layer expanded="1" checked="Qt::Checked" id="sections_heatmap" name="Sections Heat Map">
+        <customproperties/>
+      </layer-tree-layer>
+    </layer-tree-group>
+  </layertree>
+
+  <projectCrs>
+    <spatialrefsys>
+      <wkt>GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Horizontal component of 3D system."],AREA["World."],BBOX[-90,-180,90,180]],ID["EPSG",4326]]</wkt>
+      <proj4>+proj=longlat +datum=WGS84 +no_defs</proj4>
+      <srsid>3452</srsid>
+      <srid>4326</srid>
+      <authid>EPSG:4326</authid>
+      <description>WGS 84</description>
+    </spatialrefsys>
+  </projectCrs>
+
+</qgis>

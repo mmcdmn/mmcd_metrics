@@ -614,9 +614,8 @@ docker logs -f mmcd_metrics
 ```
 
 **Development Access Points:**
-- 🌐 **Shiny Dashboard**: `http://localhost:3838`
-- 🗺️ **QGIS Server**: `http://localhost:8080/qgis/`
-- 📍 **QGIS Demo App**: `http://localhost:3838/qgis_demo/`
+-  **Shiny Dashboard**: `http://localhost:3838`
+-  **QGIS Server**: `http://localhost:8080/qgis/`
 
 **Quick Development Commands:**
 

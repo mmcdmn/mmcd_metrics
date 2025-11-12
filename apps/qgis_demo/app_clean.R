@@ -70,10 +70,10 @@ ui <- dashboardPage(
             
             selectInput("species", 
                        label = "Target Species", 
-                       choices = list("Aedes triseriatus" = "24",
-                                    "Aedes japonicus" = "52", 
-                                    "Aedes albopictus" = "51"),
-                       selected = "24"),
+                       choices = list("Aedes triseriatus" = "AETR",
+                                    "Aedes japonicus" = "AEJA", 
+                                    "Aedes albopictus" = "AEAL"),
+                       selected = "AETR"),
             
             dateInput("analysis_date",
                      label = "Analysis Date",
@@ -121,7 +121,7 @@ ui <- dashboardPage(
               div(
                 class = "map-panel",
                 div(class = "map-title", "🗺️ QGIS Server Professional Cartography"),
-                imageOutput("qgis_map", width = "100%", height = "600px")
+                leafletOutput("qgis_map", height = "100%")
               )
             )
           )
@@ -137,8 +137,7 @@ server <- function(input, output, session) {
   # Reactive values to store map data
   map_data <- reactiveValues(
     sections = NULL,
-    traps = NULL,
-    qgis_project_name = NULL
+    traps = NULL
   )
   
   # Generate maps when button is clicked
@@ -177,14 +176,12 @@ server <- function(input, output, session) {
       
       tryCatch({
         qgis_project <- generate_advanced_qgis_project(
-          sections_data = map_data$sections,
-          traps_data = map_data$traps,
-          analysis_date = as.character(input$analysis_date),
-          species_label = "Target Species"
+          sections = map_data$sections,
+          traps = map_data$traps,
+          species_code = input$species
         )
         
-        debug_write(paste("QGIS project created:", qgis_project))
-        map_data$qgis_project_name <- qgis_project
+        cat("DEBUG: QGIS project created:", qgis_project, "\n")
         
       }, error = function(e) {
         debug_write(paste("ERROR in QGIS project generation:", e$message))
@@ -198,59 +195,39 @@ server <- function(input, output, session) {
     })
   })
   
-  # QGIS Server direct image map
-  output$qgis_map <- renderImage({
+  # QGIS Server WMS map
+  output$qgis_map <- renderLeaflet({
     
-    if (!is.null(map_data$sections) && !is.null(map_data$qgis_project_name)) {
+    if (!is.null(map_data$sections)) {
       
-      debug_write("QGIS map: generating direct image from QGIS Server")
-      debug_write(paste("Project name:", map_data$qgis_project_name))
+      cat("DEBUG: QGIS map has data, creating WMS layer\n")
       
-      # Generate direct map image URL from QGIS Server (internal container access)
-      map_url <- paste0(
-        "http://localhost/qgis/?",
-        "SERVICE=WMS&",
-        "VERSION=1.3.0&",
-        "REQUEST=GetMap&",
-        "MAP=/qgis/projects/", map_data$qgis_project_name, ".qgs&",
-        "LAYERS=", URLencode("Simple Heat Map - 2025-11-11"), "&",
-        "STYLES=&",
-        "FORMAT=image/png&",
-        "BGCOLOR=0xFFFFFF&",
-        "TRANSPARENT=TRUE&",
-        "SRS=EPSG:4326&",
-        "BBOX=-94.5,44.0,-92.5,45.5&",
-        "WIDTH=800&",
-        "HEIGHT=600"
-      )
+      # Use WMS from QGIS Server
+      wms_url <- "http://localhost/qgis/"
+      project_name <- paste0("advanced_", input$species, "_", format(input$analysis_date, "%Y%m%d"))
       
-      debug_write(paste("Map URL:", map_url))
-      
-      # Download image and serve through Shiny
-      temp_file <- tempfile(fileext = ".png")
-      tryCatch({
-        download.file(map_url, temp_file, mode = "wb", quiet = TRUE)
-        debug_write(paste("Image downloaded to:", temp_file))
-        
-        list(
-          src = temp_file,
-          contentType = "image/png",
-          width = 800,
-          height = 600,
-          alt = "QGIS Professional Cartography"
+      leaflet() %>%
+        addTiles() %>%
+        setView(lng = -93.5, lat = 45.0, zoom = 8) %>%
+        addWMSTiles(
+          baseUrl = wms_url,
+          layers = c("sections_heatmap", "traps", "background"),
+          options = WMSTileOptions(
+            format = "image/png",
+            transparent = TRUE,
+            version = "1.3.0",
+            project = project_name
+          )
         )
-      }, error = function(e) {
-        debug_write(paste("Error downloading image:", e$message))
-        # Return placeholder image path
-        list(src = "", contentType = "image/png", width = 800, height = 600)
-      })
       
     } else {
-      debug_write("No data or project available, showing placeholder")
-      # Return empty for placeholder
-      list(src = "", contentType = "image/png", width = 800, height = 600)
+      cat("DEBUG: No data available, showing default map\n")
+      leaflet() %>%
+        addTiles() %>%
+        setView(lng = -93.25, lat = 44.98, zoom = 12) %>%
+        addMarkers(lng = -93.25, lat = 44.98, popup = "Click 'Generate QGIS Cartography' to see professional mapping")
     }
-  }, deleteFile = TRUE)
+  })
   
   # Value boxes
   output$qgis_features <- renderValueBox({

@@ -69,6 +69,10 @@ COPY startup.sh /startup.sh
 RUN chmod +x /startup.sh && chown -R shiny:shiny /srv/shiny-server && \
     chown -R shiny:shiny /qgis/projects
 
+# Create symlink so QGIS Server can access shared resources (including GPKG files)
+RUN ln -s /srv/shiny-server/shared /qgis/shared && \
+    chmod -R 755 /srv/shiny-server/shared/gpkg
+
 # Expose ports: 3838 for Shiny (direct), 80 for Apache (QGIS + Shiny proxy)
 EXPOSE 3838 80
 

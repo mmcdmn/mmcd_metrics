@@ -36,8 +36,8 @@ load_env_vars <- function() {
   }
   
   # Environment variables might already be set (Docker)
-  required_vars <- c("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", 
-                     "POSTGRES_USER", "POSTGRES_PASSWORD")
+  required_vars <- c("DB_HOST", "DB_PORT", "DB_NAME", 
+                     "DB_USER", "DB_PASSWORD")
   
   if (!env_loaded && !all(sapply(required_vars, function(var) Sys.getenv(var) != ""))) {
     warning("Could not load environment variables from .env file and required variables are not set")
@@ -45,30 +45,6 @@ load_env_vars <- function() {
   }
   
   return(TRUE)
-}
-
-# Centralized database connection function
-get_db_connection <- function() {
-  # Load environment variables
-  if (!load_env_vars()) {
-    warning("Failed to load environment variables")
-    return(NULL)
-  }
-  
-  tryCatch({
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      host = Sys.getenv("POSTGRES_HOST"),
-      port = as.numeric(Sys.getenv("POSTGRES_PORT")),
-      dbname = Sys.getenv("POSTGRES_DB"),
-      user = Sys.getenv("POSTGRES_USER"),
-      password = Sys.getenv("POSTGRES_PASSWORD")
-    )
-    return(con)
-  }, error = function(e) {
-    warning(paste("Database connection failed:", e$message))
-    return(NULL)
-  })
 }
 
 # Database connection function

@@ -17,7 +17,6 @@ source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
-source("site_average_functions.R")
 
 # Load environment variables
 load_env_vars()

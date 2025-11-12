@@ -62,6 +62,7 @@ COPY apps /srv/shiny-server/apps
 COPY shared /srv/shiny-server/shared
 COPY index.html /srv/shiny-server/
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+COPY .env /srv/shiny-server/.env
 COPY startup.sh /startup.sh
 
 # Make startup script executable and set ownership

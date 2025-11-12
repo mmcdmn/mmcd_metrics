@@ -49,8 +49,8 @@ RUN echo '<VirtualHost *:80>' > /etc/apache2/sites-available/qgis.conf && \
     a2ensite qgis && \
     a2dissite 000-default
 
-# Create QGIS project directory
-RUN mkdir -p /qgis/projects && chmod 755 /qgis/projects
+# Create QGIS project directory and set permissions for shiny user
+RUN mkdir -p /qgis/projects && chmod 777 /qgis/projects
 
 # Set QGIS Server environment variables
 ENV QGIS_SERVER_LOG_LEVEL=0 \
@@ -66,7 +66,8 @@ COPY .env /srv/shiny-server/.env
 COPY startup.sh /startup.sh
 
 # Make startup script executable and set ownership
-RUN chmod +x /startup.sh && chown -R shiny:shiny /srv/shiny-server
+RUN chmod +x /startup.sh && chown -R shiny:shiny /srv/shiny-server && \
+    chown -R shiny:shiny /qgis/projects
 
 # Expose ports: 3838 for Shiny (direct), 80 for Apache (QGIS + Shiny proxy)
 EXPOSE 3838 80

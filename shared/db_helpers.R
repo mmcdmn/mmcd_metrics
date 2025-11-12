@@ -1128,3 +1128,243 @@ add_zone_alpha_to_plot <- function(plot, alpha_values, representative_color = NU
   
   return(plot)
 }
+
+# =============================================================================
+# QGIS SERVER INTEGRATION FUNCTIONS
+# =============================================================================
+
+#' Generate WMS GetCapabilities URL for QGIS Server
+#' 
+#' Creates a WMS GetCapabilities request URL for discovering available layers
+#' 
+#' @param project_name Name of the QGIS project file (without .qgs extension)
+#' @param base_url Base URL for QGIS Server (default: /qgis/)
+#' @return Complete WMS GetCapabilities URL
+#' @export
+generate_wms_capabilities_url <- function(project_name, base_url = "/qgis/") {
+  params <- list(
+    SERVICE = "WMS",
+    VERSION = "1.3.0",
+    REQUEST = "GetCapabilities",
+    MAP = paste0("/qgis/projects/", project_name, ".qgs")
+  )
+  
+  query_string <- paste(
+    names(params), 
+    sapply(params, utils::URLencode, reserved = TRUE), 
+    sep = "=", 
+    collapse = "&"
+  )
+  
+  return(paste0(base_url, "?", query_string))
+}
+
+#' Generate WMS GetMap URL for QGIS Server
+#' 
+#' Creates a WMS GetMap URL for displaying QGIS maps
+#' 
+#' @param project_name Name of the QGIS project file (without .qgs extension)
+#' @param layers Comma-separated list of layer names to display
+#' @param bbox Bounding box as c(xmin, ymin, xmax, ymax)
+#' @param width Image width in pixels (default: 800)
+#' @param height Image height in pixels (default: 600)
+#' @param crs Coordinate reference system (default: EPSG:4326)
+#' @param base_url Base URL for QGIS Server (default: /qgis/)
+#' @return Complete WMS GetMap URL
+#' @export
+generate_wms_getmap_url <- function(project_name, layers, bbox = NULL, 
+                                   width = 800, height = 600, 
+                                   crs = "EPSG:4326", base_url = "/qgis/") {
+  # Default bbox for Minnesota if not specified
+  if (is.null(bbox)) {
+    bbox <- c(-97.5, 43.0, -89.5, 49.5)
+  }
+  
+  bbox_str <- paste(bbox, collapse = ",")
+  
+  params <- list(
+    SERVICE = "WMS",
+    VERSION = "1.3.0",
+    REQUEST = "GetMap",
+    MAP = paste0("/qgis/projects/", project_name, ".qgs"),
+    LAYERS = layers,
+    STYLES = "",
+    FORMAT = "image/png",
+    TRANSPARENT = "TRUE",
+    CRS = crs,
+    BBOX = bbox_str,
+    WIDTH = width,
+    HEIGHT = height
+  )
+  
+  query_string <- paste(
+    names(params), 
+    sapply(params, utils::URLencode, reserved = TRUE), 
+    sep = "=", 
+    collapse = "&"
+  )
+  
+  return(paste0(base_url, "?", query_string))
+}
+
+#' Build PostGIS connection URI for QGIS
+#' 
+#' Creates a PostGIS connection string for use in QGIS project files
+#' 
+#' @param table_name PostGIS table name
+#' @param geometry_column Name of geometry column (default: geom)
+#' @param schema Schema name (default: public)
+#' @param sql_filter Optional SQL WHERE clause for filtering
+#' @param key_column Primary key column name (default: gid)
+#' @param srid Spatial reference ID (default: 4326)
+#' @param geometry_type Geometry type (e.g., Point, MultiPolygon, LineString)
+#' @return PostGIS connection URI string
+#' @export
+build_postgis_uri <- function(table_name, geometry_column = "geom", 
+                             schema = "public", sql_filter = NULL,
+                             key_column = "gid", srid = 4326,
+                             geometry_type = "MultiPolygon") {
+  
+  load_env_vars()
+  db_host <- Sys.getenv("DB_HOST")
+  db_port <- Sys.getenv("DB_PORT", "5432")
+  db_user <- Sys.getenv("DB_USER")
+  db_password <- Sys.getenv("DB_PASSWORD")
+  db_name <- Sys.getenv("DB_NAME")
+  
+  # Build SQL filter clause
+  sql_clause <- ifelse(is.null(sql_filter) || sql_filter == "", "", sql_filter)
+  
+  # Build PostGIS URI
+  uri <- sprintf(
+    "dbname='%s' host=%s port=%s user='%s' password='%s' sslmode=disable key='%s' srid=%d type=%s table=\"%s\".\"%s\" (%s) sql=%s",
+    db_name, db_host, db_port, db_user, db_password,
+    key_column, srid, geometry_type, schema, table_name, geometry_column, sql_clause
+  )
+  
+  return(uri)
+}
+
+#' Create a basic QGIS project XML file
+#' 
+#' Generates a .qgs project file with PostGIS layer connection
+#' 
+#' @param project_path Full path where to save the .qgs file
+#' @param layer_name Name for the layer in QGIS
+#' @param table_name PostGIS table name
+#' @param geometry_column Name of geometry column (default: geom)
+#' @param schema Schema name (default: public)
+#' @param sql_filter Optional SQL WHERE clause for filtering
+#' @param extent Bounding box as c(xmin, ymin, xmax, ymax) or NULL for default
+#' @return TRUE if successful, FALSE otherwise
+#' @export
+create_qgis_project_file <- function(project_path, layer_name, table_name, 
+                                    geometry_column = "geom", schema = "public",
+                                    sql_filter = NULL, extent = NULL) {
+  
+  # Default extent for Minnesota
+  if (is.null(extent)) {
+    extent <- c(-97.5, 43.0, -89.5, 49.5)
+  }
+  
+  # Build PostGIS URI
+  postgis_uri <- build_postgis_uri(
+    table_name = table_name,
+    geometry_column = geometry_column,
+    schema = schema,
+    sql_filter = sql_filter
+  )
+  
+  # Generate unique layer ID
+  layer_id <- paste0("layer_", gsub("[^a-zA-Z0-9]", "_", layer_name))
+  
+  # Basic QGIS project XML template
+  qgs_xml <- sprintf('<?xml version="1.0" encoding="UTF-8"?>
+<qgis projectname="%s" version="3.28.0-Firenze">
+  <properties>
+    <WMSServiceTitle type="QString">%s</WMSServiceTitle>
+    <WMSServiceAbstract type="QString">QGIS Server WMS for %s</WMSServiceAbstract>
+    <WMSExtent type="QgsRectangle">
+      <xmin>%f</xmin>
+      <ymin>%f</ymin>
+      <xmax>%f</xmax>
+      <ymax>%f</ymax>
+    </WMSExtent>
+    <WMSOnlineResource type="QString"></WMSOnlineResource>
+    <WMSContactPerson type="QString">MMCD</WMSContactPerson>
+    <WMSContactOrganization type="QString">Metropolitan Mosquito Control District</WMSContactOrganization>
+  </properties>
+  <projectlayers>
+    <maplayer>
+      <id>%s</id>
+      <datasource>%s</datasource>
+      <layername>%s</layername>
+      <title>%s</title>
+      <abstract>Layer showing %s data from PostGIS</abstract>
+      <provider encoding="UTF-8">postgres</provider>
+      <srs>
+        <spatialrefsys>
+          <proj4>+proj=longlat +datum=WGS84 +no_defs</proj4>
+          <srsid>3452</srsid>
+          <srid>4326</srid>
+          <authid>EPSG:4326</authid>
+          <description>WGS 84</description>
+        </spatialrefsys>
+      </srs>
+    </maplayer>
+  </projectlayers>
+  <mapcanvas>
+    <units>degrees</units>
+    <extent>
+      <xmin>%f</xmin>
+      <ymin>%f</ymin>
+      <xmax>%f</xmax>
+      <ymax>%f</ymax>
+    </extent>
+  </mapcanvas>
+</qgis>', 
+    layer_name, layer_name, layer_name,
+    extent[1], extent[2], extent[3], extent[4],
+    layer_id, postgis_uri, layer_name, layer_name, layer_name,
+    extent[1], extent[2], extent[3], extent[4]
+  )
+  
+  # Write to file
+  tryCatch({
+    # Ensure directory exists
+    dir.create(dirname(project_path), recursive = TRUE, showWarnings = FALSE)
+    writeLines(qgs_xml, project_path)
+    return(TRUE)
+  }, error = function(e) {
+    warning(paste("Failed to create QGIS project:", e$message))
+    return(FALSE)
+  })
+}
+
+#' Get Minnesota extent for maps
+#' 
+#' Returns standard bounding box coordinates for Minnesota
+#' 
+#' @param buffer Optional buffer to add around extent (in degrees)
+#' @return Vector of c(xmin, ymin, xmax, ymax)
+#' @export
+get_minnesota_extent <- function(buffer = 0) {
+  extent <- c(-97.5, 43.0, -89.5, 49.5)
+  if (buffer > 0) {
+    extent <- extent + c(-buffer, -buffer, buffer, buffer)
+  }
+  return(extent)
+}
+
+#' Validate QGIS project file exists
+#' 
+#' Checks if a QGIS project file exists at the specified path
+#' 
+#' @param project_name Name of project (without .qgs extension)
+#' @param project_dir Directory where projects are stored (default: /qgis/projects)
+#' @return TRUE if file exists, FALSE otherwise
+#' @export
+validate_qgis_project <- function(project_name, project_dir = "/qgis/projects") {
+  project_path <- file.path(project_dir, paste0(project_name, ".qgs"))
+  return(file.exists(project_path))
+}

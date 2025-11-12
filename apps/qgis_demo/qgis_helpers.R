@@ -55,19 +55,19 @@ generate_wms_url <- function(project_name, layers, bbox = NULL,
   return(paste0(base_url, "?", query_string))
 }
 
-#' Generate QGIS Project for Heat Map Visualization
+#' Generate Dynamic QGIS Project with Advanced Heat Map Styling
 #' 
-#' Creates a QGIS project file (.qgs) with heat map styling for trap surveillance data
-#' The project includes both GPKG reference layers and dynamically generated data
+#' Creates a QGIS project file (.qgs) with professional heat map rendering
+#' Uses graduated symbols and heatmap interpolation based on vector index
 #' 
 #' @param sections_data Data frame with section vector index results
 #' @param traps_data Data frame with trap location and count data
 #' @param analysis_date Date string for the analysis
 #' @param species_label Label describing which species are included
 #' @return Project name (without .qgs extension) or NULL if failed
-generate_qgis_heatmap_project <- function(sections_data, traps_data, 
-                                          analysis_date = as.character(Sys.Date()),
-                                          species_label = "All Species") {
+generate_advanced_qgis_project <- function(sections_data, traps_data, 
+                                           analysis_date = as.character(Sys.Date()),
+                                           species_label = "All Species") {
   
   tryCatch({
     # Generate unique project name
@@ -178,10 +178,15 @@ generate_advanced_qgis_project <- function(sections_data, traps_data,
              driver = "GPKG", delete_dsn = TRUE, quiet = TRUE)
     
     # Read working template that actually functions
-    template_path <- file.path("/srv/shiny-server/apps/qgis_demo", "simple_template.xml")
+    template_path <- "simple_template.xml"
     if (!file.exists(template_path)) {
-      message("Simple template not found, using fallback")
-      return(generate_qgis_heatmap_project(sections_data, traps_data, analysis_date, species_label))
+      message("Simple template not found at: ", template_path)
+      # Try absolute path
+      template_path <- "/srv/shiny-server/apps/qgis_demo/simple_template.xml"
+      if (!file.exists(template_path)) {
+        message("Template not found at absolute path either")
+        return(NULL)
+      }
     }
     
     qgs_xml <- readLines(template_path, warn = FALSE)

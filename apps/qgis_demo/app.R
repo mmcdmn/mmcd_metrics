@@ -207,13 +207,15 @@ server <- function(input, output, session) {
       debug_write(paste("Project name:", map_data$qgis_project_name))
       
       # Generate direct map image URL from QGIS Server (internal container access)
+      layer_name <- paste0("Simple Heat Map - ", as.character(input$analysis_date))
+      
       map_url <- paste0(
         "http://localhost/qgis/?",
         "SERVICE=WMS&",
         "VERSION=1.3.0&",
         "REQUEST=GetMap&",
         "MAP=/qgis/projects/", map_data$qgis_project_name, ".qgs&",
-        "LAYERS=", URLencode("Simple Heat Map - 2025-11-11"), "&",
+        "LAYERS=", URLencode(layer_name), "&",
         "STYLES=&",
         "FORMAT=image/png&",
         "BGCOLOR=0xFFFFFF&",

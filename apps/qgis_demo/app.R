@@ -82,11 +82,11 @@ generate_wms_url <- function(project_name, layers, bbox = NULL,
 #' @param project_path Full path where to save the .qgs file
 #' @param layer_name Name for the layer in QGIS
 #' @param table_name PostGIS table name
-#' @param geometry_column Name of geometry column (default: geom)
+#' @param geometry_column Name of geometry column (default: the_geom)
 #' @param sql_filter Optional SQL WHERE clause for filtering
 #' @return TRUE if successful, FALSE otherwise
 create_qgis_project <- function(project_path, layer_name, table_name, 
-                                geometry_column = "geom", sql_filter = NULL) {
+                                geometry_column = "the_geom", sql_filter = NULL) {
   
   # Get database connection parameters
   load_env_vars()
@@ -99,7 +99,7 @@ create_qgis_project <- function(project_path, layer_name, table_name,
   # Build PostGIS connection string
   # Note: Password in connection string is OK for internal QGIS project files
   postgis_uri <- sprintf(
-    "dbname='%s' host=%s port=%s user='%s' password='%s' sslmode=disable key='gid' srid=4326 type=MultiPolygon table=\"public\".\"%s\" (%s) sql=%s",
+    "dbname='%s' host=%s port=%s user='%s' password='%s' sslmode=disable key='gid' srid=4326 type=MultiPolygon checkPrimaryKeyUnicity='0' table=\"public\".\"%s\" (%s) sql=%s",
     db_name, db_host, db_port, db_user, db_password, 
     table_name, geometry_column, 
     ifelse(is.null(sql_filter), "", sql_filter)
@@ -337,7 +337,7 @@ server <- function(input, output, session) {
   # Reactive values for map state
   map_state <- reactiveValues(
     last_refresh = NULL,
-    current_project = "default",
+    current_project = NULL,
     wms_url = NULL
   )
   
@@ -354,15 +354,15 @@ server <- function(input, output, session) {
     query <- "SELECT 
                 abbrv as facility,
                 city as city,
-                ST_X(ST_Centroid(geom)) as lon,
-                ST_Y(ST_Centroid(geom)) as lat,
-                ST_AsText(geom) as geometry
+                ST_X(ST_Transform(ST_Centroid(the_geom), 4326)) as lon,
+                ST_Y(ST_Transform(ST_Centroid(the_geom), 4326)) as lat,
+                ST_AsText(the_geom) as geometry
               FROM public.gis_facility
               WHERE 1=1"
     
     # Apply facility filter
     if (!is.null(input$facility_filter) && input$facility_filter != "all") {
-      query <- paste0(query, sprintf(" AND abbrv = '%s'", input$facility_filter))
+      query <- paste0(query, sprintf(" AND abbrv = '%s'", as.character(input$facility_filter)))
     }
     
     query <- paste0(query, " ORDER BY abbrv")
@@ -380,80 +380,103 @@ server <- function(input, output, session) {
   
   # Generate QGIS project when refresh is clicked
   observeEvent(input$refresh_map, {
-    # Build SQL filter based on current selections
-    sql_filter <- "1=1"
-    
-    if (!is.null(input$facility_filter) && input$facility_filter != "all") {
-      sql_filter <- sprintf("abbrv = '%s'", input$facility_filter)
-    }
-    
-    # Generate project name based on filters (to cache different filter combinations)
-    project_name <- paste0("facilities_", 
-                          ifelse(input$facility_filter == "all", "all", input$facility_filter),
-                          "_", format(Sys.time(), "%Y%m%d_%H%M%S"))
-    
-    project_path <- file.path("/qgis/projects", paste0(project_name, ".qgs"))
-    
-    # Create QGIS project
-    success <- create_qgis_project(
-      project_path = project_path,
-      layer_name = "Facilities",
-      table_name = "gis_facility",
-      geometry_column = "geom",
-      sql_filter = sql_filter
-    )
-    
-    if (success) {
-      map_state$current_project <- project_name
-      map_state$last_refresh <- Sys.time()
+    tryCatch({
+      # Build SQL filter based on current selections
+      sql_filter <- "1=1"
       
-      # Generate WMS URL for this project
-      map_state$wms_url <- generate_wms_url(
-        project_name = project_name,
-        layers = "Facilities",
-        bbox = c(-97.5, 43.0, -89.5, 49.5),
-        width = 1200,
-        height = 800
+      if (!is.null(input$facility_filter) && input$facility_filter != "all") {
+        sql_filter <- sprintf("abbrv = '%s'", as.character(input$facility_filter))
+      }
+      
+      # Generate project name based on filters (to cache different filter combinations)
+      facility_part <- if (is.null(input$facility_filter) || input$facility_filter == "all") {
+        "all"
+      } else {
+        as.character(input$facility_filter)
+      }
+      
+      project_name <- paste0("facilities_", 
+                            facility_part,
+                            "_", as.character(format(Sys.time(), "%Y%m%d_%H%M%S")))
+      
+      project_path <- file.path("/qgis/projects", paste0(project_name, ".qgs"))
+      
+      # Create QGIS project
+      success <- create_qgis_project(
+        project_path = project_path,
+        layer_name = "Facilities",
+        table_name = "gis_facility",
+        geometry_column = "the_geom",
+        sql_filter = sql_filter
       )
       
-      showNotification("Map refreshed successfully!", type = "message")
-    } else {
-      showNotification("Failed to create QGIS project", type = "error")
-    }
+      if (success) {
+        map_state$current_project <- project_name
+        map_state$last_refresh <- Sys.time()
+        
+        # Generate WMS URL for this project
+        map_state$wms_url <- generate_wms_url(
+          project_name = project_name,
+          layers = "Facilities",
+          bbox = c(-97.5, 43.0, -89.5, 49.5),
+          width = 1200,
+          height = 800
+        )
+        
+        showNotification("Map refreshed successfully!", type = "message", duration = 3)
+      } else {
+        showNotification("Failed to create QGIS project", type = "error", duration = 5)
+      }
+    }, error = function(e) {
+      showNotification(paste("Error:", e$message), type = "error", duration = 10)
+    })
   })
   
   # Render Leaflet map with WMS overlay
   output$qgis_leaflet_map <- renderLeaflet({
+    # Trigger re-render when refresh is clicked
+    map_state$last_refresh
+    
     # Start with a base leaflet map
     map <- leaflet() %>%
       addTiles() %>%
       setView(lng = -93.5, lat = 46.0, zoom = 7)
     
-    # Add WMS layer if available
-    if (!is.null(map_state$wms_url)) {
-      # For WMS in Leaflet, we use addWMSTiles
-      map <- map %>%
-        addWMSTiles(
-          baseUrl = "http://localhost:8080/qgis/",
-          layers = "Facilities",
-          options = WMSTileOptions(
-            format = "image/png",
-            transparent = TRUE,
-            version = "1.3.0",
-            crs = "EPSG:4326"
-          ),
-          attribution = "QGIS Server | MMCD"
-        )
+    # Add WMS layer from QGIS Server if project exists
+    if (!is.null(map_state$current_project) && nchar(map_state$current_project) > 0) {
+      project_file <- paste0("/qgis/projects/", map_state$current_project, ".qgs")
+      
+      tryCatch({
+        map <- map %>%
+          addWMSTiles(
+            baseUrl = "http://localhost:8080/qgis/",
+            layers = "Facilities",
+            options = WMSTileOptions(
+              format = "image/png",
+              transparent = TRUE,
+              version = "1.3.0",
+              crs = "EPSG:4326",
+              map = project_file
+            ),
+            attribution = "QGIS Server | MMCD"
+          )
+      }, error = function(e) {
+        message("WMS layer error: ", e$message)
+      })
     }
     
-    # Add markers from filtered data
+    # Add markers from filtered data for reference
     data <- filtered_data()
     if (nrow(data) > 0) {
       map <- map %>%
-        addMarkers(
+        addCircleMarkers(
           lng = data$lon,
           lat = data$lat,
-          popup = paste0("<b>", data$facility, "</b><br>", data$city)
+          radius = 5,
+          color = "red",
+          fillColor = "red",
+          fillOpacity = 0.6,
+          popup = paste0("<b>", as.character(data$facility), "</b><br>", as.character(data$city))
         )
     }
     
@@ -502,8 +525,8 @@ server <- function(input, output, session) {
   
   output$date_range_display <- renderValueBox({
     valueBox(
-      paste(format(input$date_range[1], "%m/%d/%y"), "-", 
-            format(input$date_range[2], "%m/%d/%y")),
+      paste(as.character(format(input$date_range[1], "%m/%d/%y")), "-", 
+            as.character(format(input$date_range[2], "%m/%d/%y"))),
       "Date Range",
       icon = icon("calendar"),
       color = "green"
@@ -515,7 +538,7 @@ server <- function(input, output, session) {
     display_time <- if (is.null(last_refresh)) {
       "Not yet refreshed"
     } else {
-      format(last_refresh, "%H:%M:%S")
+      as.character(format(last_refresh, "%H:%M:%S"))
     }
     
     valueBox(

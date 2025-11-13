@@ -345,3 +345,240 @@ output$plot <- renderPlot({
 8. **COUNT DISTINCT**: Always use `COUNT(DISTINCT sitecode)` for unique site counts
 9. **Input Isolation**: Use `refresh_inputs()` captured values, NOT live `input$*` values
 10. **Color Consistency**: Use db_helpers for facility and FOS color mapping across all visualizations
+
+---
+
+## SQL Queries Reference
+
+This section documents all SQL queries used in the drone app for reference and troubleshooting.
+
+### 1. Current Drone Sites Query
+**Function**: `load_raw_data()` in `data_functions.R`  
+**Purpose**: Load active drone sites with zone and FOS information
+
+```sql
+SELECT b.sitecode, b.facility, b.acres, b.prehatch, b.drone, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+         ELSE NULL
+       END as foreman, 
+       sc.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE (b.drone IN ('Y','M','C') OR b.air_gnd = 'D')
+AND b.enddate IS NULL
+```
+
+**Key Points**:
+- Filters for active drone sites only (`enddate IS NULL`)
+- Joins with gis_sectcode to get zone and FOS area
+- Joins with employee_list to get active field supervisors
+- Handles multiple sitecode formats with `left(sitecode,7)`
+
+### 2. Current Treatments Query
+**Function**: `load_raw_data()` in `data_functions.R`  
+**Purpose**: Load current drone treatments with effectiveness duration
+
+```sql
+SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
+```
+
+**Key Points**:
+- Filters drone treatments: `airgrnd_plan = 'D'` OR `action = 'D'`
+- Joins with mattype_list_targetdose for treatment duration
+- Uses actual recorded treated acres from treatment records
+
+### 3. Individual Treatment Records Query (Site Statistics)
+**Function**: `get_sitecode_data()` in `data_functions.R`  
+**Purpose**: Get individual treatment records for site statistics analysis
+
+```sql
+WITH treatment_data AS (
+    SELECT 
+        t.facility, 
+        t.sitecode, 
+        t.inspdate, 
+        t.matcode, 
+        t.amts as amount_used,
+        t.acres as recorded_acres,
+        t.foreman as treatment_foreman,
+        EXTRACT(YEAR FROM t.inspdate) as year
+    FROM public.dblarv_insptrt_current t
+    WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
+        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.matcode IS NOT NULL
+        AND t.acres IS NOT NULL
+        AND t.acres > 0
+    
+    UNION ALL
+    
+    SELECT 
+        t.facility, 
+        t.sitecode, 
+        t.inspdate, 
+        t.matcode, 
+        t.amts as amount_used,
+        t.acres as recorded_acres,
+        t.foreman as treatment_foreman,
+        EXTRACT(YEAR FROM t.inspdate) as year
+    FROM public.dblarv_insptrt_archive t
+    WHERE t.action = 'D'
+        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.matcode IS NOT NULL
+        AND t.acres IS NOT NULL
+        AND t.acres > 0
+),
+-- Get deduplicated location data for prehatch info and zone
+location_data AS (
+    SELECT DISTINCT ON (b.sitecode, b.facility)
+        b.sitecode, 
+        b.facility, 
+        b.prehatch,
+        CASE 
+          WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+          ELSE NULL
+        END as foreman,
+        sc.zone
+    FROM public.loc_breeding_sites b
+    LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+    LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+      AND e.emp_type = 'FieldSuper' 
+      AND e.active = true
+    ORDER BY b.sitecode, b.facility
+)
+-- Return individual treatment records, not aggregated
+SELECT DISTINCT
+    t.sitecode,
+    t.facility,
+    t.recorded_acres as acres,
+    t.inspdate,
+    t.year,
+    t.matcode,
+    l.zone,
+    l.foreman,
+    l.prehatch,
+    -- Add a unique treatment ID for identification
+    ROW_NUMBER() OVER (ORDER BY t.sitecode, t.inspdate) as treatment_id
+FROM treatment_data t
+LEFT JOIN location_data l ON t.sitecode = l.sitecode AND t.facility = l.facility
+ORDER BY t.sitecode, t.inspdate DESC
+```
+
+**Key Points**:
+- Combines current and archive tables with UNION ALL
+- Uses CTEs for better organization and performance
+- Filters out zero-acre treatments
+- Joins with location data for zone and FOS information
+- Returns individual treatment records, not aggregated
+
+### 4. Historical Archive Data Query
+**Function**: `get_historical_raw_data()` in `historical_functions.R`  
+**Purpose**: Load historical treatment data from archive
+
+```sql
+SELECT facility, sitecode, inspdate, action, matcode, amts as amount, acres as treated_acres
+FROM public.dblarv_insptrt_archive
+WHERE action = 'D'
+AND EXTRACT(YEAR FROM inspdate) BETWEEN [start_year] AND [end_year]
+```
+
+### 5. Historical Current Data Query
+**Function**: `get_historical_raw_data()` in `historical_functions.R`  
+**Purpose**: Load recent treatment data from current table
+
+```sql
+SELECT facility, sitecode, inspdate, action, airgrnd_plan, matcode, amts as amount, acres as treated_acres
+FROM public.dblarv_insptrt_current
+WHERE (airgrnd_plan = 'D' OR action = 'D')
+AND EXTRACT(YEAR FROM inspdate) BETWEEN [start_year] AND [end_year]
+```
+
+### 6. Site Information for Historical Data
+**Function**: `get_historical_raw_data()` in `historical_functions.R`  
+**Purpose**: Get site characteristics for historical treatments
+
+```sql
+SELECT b.sitecode, b.acres, b.facility, b.prehatch, b.drone, b.air_gnd,
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+         ELSE NULL
+       END as foreman, 
+       sc.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE b.sitecode IN ([sitecode_list])
+AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
+```
+
+**Key Points**:
+- Filters for active sites (`enddate IS NULL` or future enddate)
+- Same join pattern as current sites query
+- Uses IN clause with dynamic sitecode list
+
+### 7. Facility Lookup Query
+**Function**: `get_facility_lookup()` in `shared/db_helpers.R`  
+**Purpose**: Map facility abbreviations to full names
+
+```sql
+SELECT DISTINCT 
+  abbrv as short_name,
+  city as full_name
+FROM public.gis_facility
+WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
+ORDER BY abbrv
+```
+
+**Key Points**:
+- Excludes special facility codes
+- Maps abbreviations like "PNA" to full city names
+- Used for display name mapping throughout the app
+
+### 8. Simple Site Existence Check
+**Function**: `get_historical_raw_data()` in `historical_functions.R`  
+**Purpose**: Verify loc_breeding_sites table connectivity
+
+```sql
+SELECT b.sitecode, b.facility 
+FROM public.loc_breeding_sites b
+WHERE b.sitecode IN ([sitecode_list])
+LIMIT 10
+```
+
+## SQL Query Patterns
+
+### Common Join Pattern
+Most queries use this pattern to connect treatment records with site information:
+
+```sql
+FROM treatment_table t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+```
+
+### Drone Treatment Filters
+Consistent pattern across all queries:
+- **Current table**: `(airgrnd_plan = 'D' OR action = 'D')`
+- **Archive table**: `action = 'D'`
+- **Site designation**: `(drone IN ('Y','M','C') OR air_gnd = 'D')`
+
+### Site Status Filtering
+Always filter active sites: `enddate IS NULL` or `enddate > CURRENT_DATE`
+
+### Year Filtering
+Standard pattern: `EXTRACT(YEAR FROM inspdate) BETWEEN [start] AND [end]`
+
+---

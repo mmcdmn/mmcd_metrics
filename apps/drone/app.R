@@ -17,7 +17,6 @@ source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
-source("site_average_functions.R")
 
 # Load environment variables
 load_env_vars()
@@ -226,7 +225,7 @@ server <- function(input, output, session) {
     }
     
     # Create plot
-    if (!is.null(custom_colors) && inputs$group_by != "mmcd_all") {
+    if (!is.null(custom_colors) && length(custom_colors) > 0 && inputs$group_by != "mmcd_all") {
       p <- ggplot(data, aes(x = .data[[x_var]], fill = !!sym(fill_var))) +
         geom_bar(aes(y = y_total), stat = "identity", alpha = 0.3) +
         geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +

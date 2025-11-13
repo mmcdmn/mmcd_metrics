@@ -402,8 +402,254 @@ raw_data <- eventReactive(input$refresh, {
             <li><strong>Color Consistency</strong>: Use db_helpers for facility and FOS color mapping across all visualizations</li>
         </ol>
 
+        <hr>
+
+        <h2>SQL Queries Reference</h2>
+        
+        <p>This section documents all SQL queries used in the drone app for reference and troubleshooting.</p>
+
+        <h3>1. Current Drone Sites Query</h3>
+        <p><strong>Function</strong>: <code>load_raw_data()</code> in <code>data_functions.R</code><br>
+        <strong>Purpose</strong>: Load active drone sites with zone and FOS information</p>
+
+        <pre><code>SELECT b.sitecode, b.facility, b.acres, b.prehatch, b.drone, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+         ELSE NULL
+       END as foreman, 
+       sc.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE (b.drone IN ('Y','M','C') OR b.air_gnd = 'D')
+AND b.enddate IS NULL</code></pre>
+
+        <p><strong>Key Points</strong>:</p>
+        <ul>
+            <li>Filters for active drone sites only (<code>enddate IS NULL</code>)</li>
+            <li>Joins with gis_sectcode to get zone and FOS area</li>
+            <li>Joins with employee_list to get active field supervisors</li>
+            <li>Handles multiple sitecode formats with <code>left(sitecode,7)</code></li>
+        </ul>
+
+        <h3>2. Current Treatments Query</h3>
+        <p><strong>Function</strong>: <code>load_raw_data()</code> in <code>data_functions.R</code><br>
+        <strong>Purpose</strong>: Load current drone treatments with effectiveness duration</p>
+
+        <pre><code>SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')</code></pre>
+
+        <p><strong>Key Points</strong>:</p>
+        <ul>
+            <li>Filters drone treatments: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code></li>
+            <li>Joins with mattype_list_targetdose for treatment duration</li>
+            <li>Uses actual recorded treated acres from treatment records</li>
+        </ul>
+
+        <h3>3. Individual Treatment Records Query (Site Statistics)</h3>
+        <p><strong>Function</strong>: <code>get_sitecode_data()</code> in <code>data_functions.R</code><br>
+        <strong>Purpose</strong>: Get individual treatment records for site statistics analysis</p>
+
+        <pre><code>WITH treatment_data AS (
+    SELECT 
+        t.facility, t.sitecode, t.inspdate, t.matcode, 
+        t.amts as amount_used, t.acres as recorded_acres,
+        t.foreman as treatment_foreman,
+        EXTRACT(YEAR FROM t.inspdate) as year
+    FROM public.dblarv_insptrt_current t
+    WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
+        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.matcode IS NOT NULL AND t.acres IS NOT NULL AND t.acres > 0
+    
+    UNION ALL
+    
+    SELECT 
+        t.facility, t.sitecode, t.inspdate, t.matcode,
+        t.amts as amount_used, t.acres as recorded_acres,
+        t.foreman as treatment_foreman,
+        EXTRACT(YEAR FROM t.inspdate) as year
+    FROM public.dblarv_insptrt_archive t
+    WHERE t.action = 'D'
+        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.matcode IS NOT NULL AND t.acres IS NOT NULL AND t.acres > 0
+),
+location_data AS (
+    SELECT DISTINCT ON (b.sitecode, b.facility)
+        b.sitecode, b.facility, b.prehatch,
+        CASE 
+          WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+          ELSE NULL
+        END as foreman, sc.zone
+    FROM public.loc_breeding_sites b
+    LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+    LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+      AND e.emp_type = 'FieldSuper' AND e.active = true
+    ORDER BY b.sitecode, b.facility
+)
+SELECT DISTINCT
+    t.sitecode, t.facility, t.recorded_acres as acres,
+    t.inspdate, t.year, t.matcode, l.zone, l.foreman, l.prehatch,
+    ROW_NUMBER() OVER (ORDER BY t.sitecode, t.inspdate) as treatment_id
+FROM treatment_data t
+LEFT JOIN location_data l ON t.sitecode = l.sitecode AND t.facility = l.facility
+ORDER BY t.sitecode, t.inspdate DESC</code></pre>
+
+        <p><strong>Key Points</strong>:</p>
+        <ul>
+            <li>Combines current and archive tables with UNION ALL</li>
+            <li>Uses CTEs for better organization and performance</li>
+            <li>Filters out zero-acre treatments</li>
+            <li>Joins with location data for zone and FOS information</li>
+            <li>Returns individual treatment records, not aggregated</li>
+        </ul>
+
+        <h3>4. Facility Lookup Query</h3>
+        <p><strong>Function</strong>: <code>get_facility_lookup()</code> in <code>shared/db_helpers.R</code><br>
+        <strong>Purpose</strong>: Map facility abbreviations to full names</p>
+
+        <pre><code>SELECT DISTINCT 
+  abbrv as short_name,
+  city as full_name
+FROM public.gis_facility
+WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
+ORDER BY abbrv</code></pre>
+
+        <p><strong>Key Points</strong>:</p>
+        <ul>
+            <li>Excludes special facility codes</li>
+            <li>Maps abbreviations like "PNA" to full city names</li>
+            <li>Used for display name mapping throughout the app</li>
+        </ul>
+
+        <h3>Common SQL Patterns</h3>
+        
+        <h4>Standard Join Pattern</h4>
+        <p>Most queries use this pattern to connect treatment records with site information:</p>
+        <pre><code>FROM treatment_table t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' AND e.active = true</code></pre>
+
+        <h4>Drone Treatment Filters</h4>
+        <ul>
+            <li><strong>Current table</strong>: <code>(airgrnd_plan = 'D' OR action = 'D')</code></li>
+            <li><strong>Archive table</strong>: <code>action = 'D'</code></li>
+            <li><strong>Site designation</strong>: <code>(drone IN ('Y','M','C') OR air_gnd = 'D')</code></li>
+        </ul>
+
+        <h4>Site Status Filtering</h4>
+        <p>Always filter active sites: <code>enddate IS NULL</code> or <code>enddate > CURRENT_DATE</code></p>
+
+        <h4>Year Filtering</h4>
+        <p>Standard pattern: <code>EXTRACT(YEAR FROM inspdate) BETWEEN [start] AND [end]</code></p>
+
+        </ol>
+
+        <h2>SQL Queries Reference</h2>
+        <div class="callout callout-info">
+            <p><strong>Note:</strong> This section documents all SQL queries used in the drone app for reference and troubleshooting.</p>
+        </div>
+
+        <h3>1. Current Drone Sites Query</h3>
+        <p><strong>Function:</strong> <code>load_raw_data()</code> in <code>data_functions.R</code><br>
+        <strong>Purpose:</strong> Load active drone sites with zone and FOS information</p>
+        <pre><code>SELECT b.sitecode, b.facility, b.acres, b.prehatch, b.drone, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+         ELSE NULL
+       END as foreman, 
+       sc.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE (b.drone IN ('Y','M','C') OR b.air_gnd = 'D')
+AND b.enddate IS NULL</code></pre>
+
+        <h3>2. Current Treatments Query</h3>
+        <p><strong>Function:</strong> <code>load_raw_data()</code> in <code>data_functions.R</code><br>
+        <strong>Purpose:</strong> Load current drone treatments with effectiveness duration</p>
+        <pre><code>SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')</code></pre>
+
+        <h3>3. Individual Treatment Records Query</h3>
+        <p><strong>Function:</strong> <code>get_sitecode_data()</code> in <code>data_functions.R</code><br>
+        <strong>Purpose:</strong> Get individual treatment records for site statistics analysis</p>
+        <pre><code>WITH treatment_data AS (
+    SELECT t.facility, t.sitecode, t.inspdate, t.matcode, 
+           t.amts as amount_used, t.acres as recorded_acres,
+           t.foreman as treatment_foreman,
+           EXTRACT(YEAR FROM t.inspdate) as year
+    FROM public.dblarv_insptrt_current t
+    WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
+        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.matcode IS NOT NULL AND t.acres IS NOT NULL AND t.acres > 0
+    UNION ALL
+    SELECT t.facility, t.sitecode, t.inspdate, t.matcode, 
+           t.amts as amount_used, t.acres as recorded_acres,
+           t.foreman as treatment_foreman,
+           EXTRACT(YEAR FROM t.inspdate) as year
+    FROM public.dblarv_insptrt_archive t
+    WHERE t.action = 'D'
+        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.matcode IS NOT NULL AND t.acres IS NOT NULL AND t.acres > 0
+),
+location_data AS (
+    SELECT DISTINCT ON (b.sitecode, b.facility)
+        b.sitecode, b.facility, b.prehatch,
+        CASE WHEN e.emp_num IS NOT NULL AND e.active = true 
+             THEN sc.fosarea ELSE NULL END as foreman,
+        sc.zone
+    FROM public.loc_breeding_sites b
+    LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+    LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+      AND e.emp_type = 'FieldSuper' AND e.active = true
+    ORDER BY b.sitecode, b.facility
+)
+SELECT DISTINCT t.sitecode, t.facility, t.recorded_acres as acres,
+       t.inspdate, t.year, t.matcode, l.zone, l.foreman, l.prehatch,
+       ROW_NUMBER() OVER (ORDER BY t.sitecode, t.inspdate) as treatment_id
+FROM treatment_data t
+LEFT JOIN location_data l ON t.sitecode = l.sitecode AND t.facility = l.facility
+ORDER BY t.sitecode, t.inspdate DESC</code></pre>
+
+        <h3>4. Facility Lookup Query</h3>
+        <p><strong>Function:</strong> <code>get_facility_lookup()</code> in <code>shared/db_helpers.R</code><br>
+        <strong>Purpose:</strong> Map facility abbreviations to full names</p>
+        <pre><code>SELECT DISTINCT 
+  abbrv as short_name,
+  city as full_name
+FROM public.gis_facility
+WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
+ORDER BY abbrv</code></pre>
+
+        <h3>SQL Query Patterns</h3>
+        <h4>Common Join Pattern</h4>
+        <pre><code>FROM treatment_table t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' AND e.active = true</code></pre>
+
+        <h4>Drone Treatment Filters</h4>
+        <ul>
+            <li><strong>Current table:</strong> <code>(airgrnd_plan = 'D' OR action = 'D')</code></li>
+            <li><strong>Archive table:</strong> <code>action = 'D'</code></li>
+            <li><strong>Site designation:</strong> <code>(drone IN ('Y','M','C') OR air_gnd = 'D')</code></li>
+        </ul>
+
         <div class="callout callout-success">
-            <p><strong>Last Updated:</strong> November 10, 2025</p>
+            <p><strong>Last Updated:</strong> November 13, 2025</p>
             <p><strong>App Version:</strong> Refactored with modular file structure and refresh button pattern</p>
         </div>
     </div>

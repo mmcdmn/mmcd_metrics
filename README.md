@@ -173,7 +173,7 @@ mmcd_metrics/
   - Logarithmic scale options for data visualization
 
 #### SUCO History
-- **Path**: `/suco_history/` | [📄 Technical Notes](apps/suco_history/NOTES.md)
+- **Path**: `/suco_history/` | [Technical Notes](apps/suco_history/NOTES.md)
 - **Purpose**: Surveillance Count (SUCO) historical analysis dashboard
 - **Modular Structure**: `app.R` (main logic) | `data_functions.R` (queries) | `display_functions.R` (visualizations) | `ui_helpers.R` (UI components)
 - **Key Features**:

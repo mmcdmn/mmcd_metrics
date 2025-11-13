@@ -836,7 +836,8 @@ get_shiny_colors <- function() {
     "planned" = "orange",      # #FFA500 → orange
     "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)
     "needs_treatment" = "red", # #FF0000 → red
-    "unknown" = "gray"         # #A9A9A9 → gray
+    "unknown" = "gray",         # #A9A9A9 → gray
+    "somthing_else" = "aqua"   # #00FFFF → aqua
   ))
 }
 

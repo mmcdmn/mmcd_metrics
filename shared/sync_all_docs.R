@@ -58,11 +58,6 @@ convert_md_to_html <- function(md_path, html_path, app_name) {
   writeLines(html_content, html_path)
   
   return(TRUE)
-  
-  # Write the final HTML file
-  writeLines(html_content, html_path)
-  
-  return(TRUE)
 }
 
 # Simple markdown to HTML converter (no pandoc dependency)

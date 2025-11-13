@@ -39,6 +39,9 @@ Rscript sync_all_docs.R
 #Run on windows
 & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --status
 & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --Force
+
+# out with the old, in with the new
+cd "c:\Users\datatech\Documents\mmcd_metrics\shared"; Remove-Item "c:\Users\datatech\Documents\mmcd_metrics\apps\cattail\NOTES.html" -Force; & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --force
 ```
 
 ### Current Apps with Documentation

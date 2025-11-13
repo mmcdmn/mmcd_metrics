@@ -217,6 +217,18 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; 'CURRENT_YEAR-05-01')
 <li>Both <code>get<em>ground</em>prehatch<em>data()</code> and <code>get</em>site<em>details</em>data()</code> apply this filter</li>
 </ul>
 
+<h3>Treatment Status Categories</h3>
+
+<p>The app tracks three mutually exclusive treatment statuses for prehatch sites:</p>
+
+<ul>
+<li><strong>Treated</strong>: Sites with active treatments (<code>age &lt;= effect_days</code>)</li>
+<li><strong>Expiring</strong>: Sites with treatments approaching expiration (<code>age &gt; days<em>retrt</em>early</code>)</li>
+<li><strong>Expired</strong>: Sites with treatments that have expired (<code>age &gt; effect_days</code>)</li>
+</ul>
+
+<p>Note: The previous "Needs Treatment" category was removed as it incorrectly included expired sites and created confusing overlaps.</p>
+
 <h2>Tab 1: Progress Overview</h2>
 
 <h3>Purpose</h3>
@@ -231,7 +243,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; 'CURRENT_YEAR-05-01')
 <li>Total Ground Sites</li>
 <li>Prehatch Sites</li>
 <li>Treated Sites</li>
-<li>Needs Treatment</li>
+<li>Expired Sites</li>
 <li>Treated % (percentage of prehatch sites with active treatments)</li>
 <li>Expiring % (percentage of prehatch sites with expiring treatments)</li>
 </ul>
@@ -243,7 +255,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; 'CURRENT_YEAR-05-01')
 <li>Treated (Green) - Sites with active treatments</li>
 <li>Expiring (Orange) - Sites with treatments about to expire</li>
 <li>Expired (Gray) - Sites with expired treatments</li>
-<li>Needs Treatment (Red) - Sites requiring treatment</li>
 </ul>
 </ul>
 
@@ -253,7 +264,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; 'CURRENT_YEAR-05-01')
 <li>All MMCD - District-wide view</li>
 <li>Facility - Group by facility</li>
 <li>FOS - Group by Field Operations Supervisor</li>
-<li>Section - Group by section code</li>
+<li>Section - Group by section code (sections belong to one zone only)</li>
 </ul>
 </ul>
 
@@ -284,7 +295,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; 'CURRENT_YEAR-05-01')
 <li><strong>Active</strong> (Green): Sites with current effective treatments</li>
 <li><strong>Planned/Expiring</strong> (Orange): Sites with treatments expiring soon</li>
 <li><strong>Unknown/Expired</strong> (Gray): Sites with expired treatments</li>
-<li><strong>Needs Treatment</strong> (Red): Sites requiring immediate attention</li>
 </ul>
 
 <p>Chart is interactive (Plotly) with hover tooltips showing exact counts.</p>
@@ -562,18 +572,19 @@ ground_data &lt;- eventReactive(input$refresh, {
 <li><strong>FOS = Jurisdictional Assignment</strong>: Use fosarea from gis<em>sectcode, mapped through employee</em>list</li>
 <li><strong>Treatment Status Hierarchy</strong>: Most recent treatment wins, status based on age vs effect_days</li>
 <li><strong>Date Simulation</strong>: Allows historical analysis by changing reference date for age calculations</li>
-<li><strong>Zone Display Options</strong>: Four modes (P1, P2, Separate, Combined) controlled by combine_zones flag</li>
+<li><strong>Zone Display Logic</strong>: Sections never show zones separately since each section belongs to exactly one zone</li>
+<li><strong>Treatment Categories</strong>: Three mutually exclusive statuses - Treated, Expiring, Expired (Needs Treatment removed for accuracy)</li>
 <li><strong>SQL Query Structure</strong>: Two main queries - aggregated section data and detailed site data</li>
 <li><strong>Value Box Calculations</strong>: Aggregate at top level for district-wide statistics</li>
 </ul>
 
 <h2>Last Updated</h2>
 
-<p>November 10, 2025</p>
+<p>November 13, 2025</p>
 
 <h2>App Version</h2>
 
-<p>Refactored with modular file structure and refresh button pattern</p>
+<p>Refactored with modular file structure, refresh button pattern, and corrected treatment status categories</p>
     </div>
 </body>
 </html>

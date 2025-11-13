@@ -555,37 +555,41 @@ ORDER BY a.facility, a.airgrnd_plan, a.sitecode
 
 <h3>Progress vs Goal Queries</h3>
 
-<h4>Get Actual Inspections by Year and Zone</h4>
 <pre><code class="sql">
--- Query dblarv_insptrt_archive for historical data
-SELECT a.facility, g.zone, COUNT(*) AS inspections
-FROM public.dblarv_insptrt_archive a
-LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
-WHERE a.action = '9'
-  AND EXTRACT(YEAR FROM a.inspdate) = 2025
-  AND a.inspdate &lt;= '2025-11-13'
-  AND (a.reinspect IS NULL OR a.reinspect = 'f')
-GROUP BY a.facility, g.zone
-
-UNION ALL
-
--- Query dblarv_insptrt_current for current data
-SELECT a.facility, g.zone, COUNT(*) AS inspections
-FROM public.dblarv_insptrt_current a
-LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
-WHERE a.action = '9'
-  AND EXTRACT(YEAR FROM a.inspdate) = 2025
-  AND a.inspdate &lt;= '2025-11-13'
-  AND (a.reinspect IS NULL OR a.reinspect = 'f')
-GROUP BY a.facility, g.zone
+WITH all_inspections AS (
+  -- Get all cattail inspections for the selected year up to custom date
+  SELECT 
+    a.facility,
+    a.sitecode,
+    a.inspdate,
+    g.zone,
+    ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn
+  FROM (
+    -- Archive table
+    SELECT facility, sitecode, inspdate 
+    FROM public.dblarv_insptrt_archive
+    WHERE action = '9'
+      AND EXTRACT(YEAR FROM inspdate) = [year]
+      AND inspdate &lt;= '[custom_date]'
+    
+    UNION ALL
+    
+    -- Current table
+    SELECT facility, sitecode, inspdate 
+    FROM public.dblarv_insptrt_current
+    WHERE action = '9'
+      AND EXTRACT(YEAR FROM inspdate) = [year]
+      AND inspdate &lt;= '[custom_date]'
+  ) a
+  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 7) = g.sectcode
+)
+SELECT 
+  facility,
+  zone,
+  COUNT(DISTINCT sitecode) AS inspections
+FROM all_inspections
+WHERE rn = 1
+GROUP BY facility, zone
 </code></pre>
 
 <h4>Get Goals from Base Table</h4>

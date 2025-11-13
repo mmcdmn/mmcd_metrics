@@ -79,6 +79,16 @@ This ensures only active sites are included in the analysis. Using May 1st as th
 - Treatment statistics become inaccurate
 - Both `get_ground_prehatch_data()` and `get_site_details_data()` apply this filter
 
+### Treatment Status Categories
+
+The app tracks three mutually exclusive treatment statuses for prehatch sites:
+
+- **Treated**: Sites with active treatments (`age <= effect_days`)
+- **Expiring**: Sites with treatments approaching expiration (`age > days_retrt_early`)
+- **Expired**: Sites with treatments that have expired (`age > effect_days`)
+
+Note: The previous "Needs Treatment" category was removed as it incorrectly included expired sites and created confusing overlaps.
+
 ## Tab 1: Progress Overview
 
 ### Purpose
@@ -91,7 +101,7 @@ Show aggregated treatment progress statistics with visual charts and summary met
   - Total Ground Sites
   - Prehatch Sites
   - Treated Sites
-  - Needs Treatment
+  - Expired Sites
   - Treated % (percentage of prehatch sites with active treatments)
   - Expiring % (percentage of prehatch sites with expiring treatments)
 
@@ -99,13 +109,12 @@ Show aggregated treatment progress statistics with visual charts and summary met
   - Treated (Green) - Sites with active treatments
   - Expiring (Orange) - Sites with treatments about to expire
   - Expired (Gray) - Sites with expired treatments
-  - Needs Treatment (Red) - Sites requiring treatment
 
 - **Grouping Options**:
   - All MMCD - District-wide view
   - Facility - Group by facility
   - FOS - Group by Field Operations Supervisor
-  - Section - Group by section code
+  - Section - Group by section code (sections belong to one zone only)
 
 - **Zone Options**:
   - P1 Only - Show only Priority 1 zone
@@ -127,7 +136,6 @@ The chart uses color-coded stacking:
 - **Active** (Green): Sites with current effective treatments
 - **Planned/Expiring** (Orange): Sites with treatments expiring soon
 - **Unknown/Expired** (Gray): Sites with expired treatments
-- **Needs Treatment** (Red): Sites requiring immediate attention
 
 Chart is interactive (Plotly) with hover tooltips showing exact counts.
 
@@ -345,14 +353,15 @@ Four different ways to view zone data:
 5. **FOS = Jurisdictional Assignment**: Use fosarea from gis_sectcode, mapped through employee_list
 6. **Treatment Status Hierarchy**: Most recent treatment wins, status based on age vs effect_days
 7. **Date Simulation**: Allows historical analysis by changing reference date for age calculations
-8. **Zone Display Options**: Four modes (P1, P2, Separate, Combined) controlled by combine_zones flag
-9. **SQL Query Structure**: Two main queries - aggregated section data and detailed site data
-10. **Value Box Calculations**: Aggregate at top level for district-wide statistics
+8. **Zone Display Logic**: Sections never show zones separately since each section belongs to exactly one zone
+9. **Treatment Categories**: Three mutually exclusive statuses - Treated, Expiring, Expired (Needs Treatment removed for accuracy)
+10. **SQL Query Structure**: Two main queries - aggregated section data and detailed site data
+11. **Value Box Calculations**: Aggregate at top level for district-wide statistics
 
 ## Last Updated
 
-November 10, 2025
+November 13, 2025
 
 ## App Version
 
-Refactored with modular file structure and refresh button pattern
+Refactored with modular file structure, refresh button pattern, and corrected treatment status categories

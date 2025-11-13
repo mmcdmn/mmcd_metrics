@@ -5,53 +5,43 @@ get_progress_data <- function(year, goal_column, custom_today) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
-  # Get actual inspections from archive (filter by year, date, reinspect, and join for zone)
-  # Note: archive table doesn't have enddate column - it's historical closed data
-  query_archive <- sprintf(
+  # Get distinct sites with most recent inspection from archive and current tables
+  query_combined <- sprintf(
     paste(
-      "SELECT a.facility, g.zone, COUNT(*) AS inspections",
-      "FROM public.dblarv_insptrt_archive a",
-      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode",
-      "WHERE a.action = '9'",
-      "  AND EXTRACT(YEAR FROM a.inspdate) = %d",
-      "  AND a.inspdate <= '%s'",
-      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')",
-      "GROUP BY a.facility, g.zone",
+      "WITH all_inspections AS (",
+      "  SELECT a.facility, a.sitecode, a.inspdate,",
+      "         g.zone,",
+      "         ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn",
+      "  FROM (",
+      "    SELECT facility, sitecode, inspdate FROM public.dblarv_insptrt_archive",
+      "    WHERE action = '9'",
+      "      AND EXTRACT(YEAR FROM inspdate) = %d",
+      "      AND inspdate <= '%s'",
+      "    UNION ALL",
+      "    SELECT facility, sitecode, inspdate FROM public.dblarv_insptrt_current",
+      "    WHERE action = '9'",
+      "      AND EXTRACT(YEAR FROM inspdate) = %d",
+      "      AND inspdate <= '%s'",
+      "  ) a",
+      "  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 7) = g.sectcode",
+      ")",
+      "SELECT facility, zone, COUNT(DISTINCT sitecode) AS inspections",
+      "FROM all_inspections",
+      "WHERE rn = 1",
+      "GROUP BY facility, zone",
       sep = "\n"
     ),
     as.numeric(year),
+    as.character(custom_today),
+    as.numeric(year),
     as.character(custom_today)
   )
-  archive <- dbGetQuery(con, query_archive)
   
-  # Get actual inspections from current (filter by year, date, reinspect, and join for zone)
-  query_current <- sprintf(
-    paste(
-      "SELECT a.facility, g.zone, COUNT(*) AS inspections",
-      "FROM public.dblarv_insptrt_current a",
-      "LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode",
-      "  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode",
-      "WHERE a.action = '9'",
-      "  AND EXTRACT(YEAR FROM a.inspdate) = %d",
-      "  AND a.inspdate <= '%s'",
-      "  AND (a.reinspect IS NULL OR a.reinspect = 'f')",
-      "GROUP BY a.facility, g.zone",
-      sep = "\n"
-    ),
-    as.numeric(year),
-    as.character(custom_today)
-  )
-  current <- dbGetQuery(con, query_current)
+  # Get the combined result
+  combined_result <- dbGetQuery(con, query_combined)
   
   # Combine actuals
-  actuals <- bind_rows(archive, current) %>%
+  actuals <- combined_result %>%
     mutate(facility = trimws(facility), zone = as.character(zone)) %>%
     group_by(facility, zone) %>%
     summarize(inspections = sum(as.numeric(inspections), na.rm = TRUE), .groups = "drop")

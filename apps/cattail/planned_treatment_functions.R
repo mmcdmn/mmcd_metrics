@@ -41,14 +41,14 @@ get_site_details_data <- function(facility_filter, plan_types_filter) {
   
   # Build facility filter clause
   facility_clause <- if (facility_filter != "all") {
-    sprintf("AND facility = '%s'", facility_filter)
+    sprintf("AND a.facility = '%s'", facility_filter)
   } else {
     ""
   }
   
   # Build plan types filter clause
   plan_types_quoted <- paste0("'", plan_types_filter, "'", collapse = ", ")
-  plan_types_clause <- sprintf("AND airgrnd_plan IN (%s)", plan_types_quoted)
+  plan_types_clause <- sprintf("AND a.airgrnd_plan IN (%s)", plan_types_quoted)
   
   # Query to fetch site details - using only real columns
   query <- sprintf("

@@ -55,8 +55,13 @@ create_filter_panel <- function() {
                    min = 1, max = 60, value = 14, step = 1)
       ),
       column(3,
-        div(style = "margin-top: 25px;",
-          checkboxInput("show_expiring_only", "Show Expiring Only", value = FALSE)
+        div(style = "margin-top: 5px;",
+          radioButtons("expiring_filter", "Site Filter:",
+                      choices = c("All Sites" = "all",
+                                 "Expiring Only" = "expiring", 
+                                 "Expiring + Expired" = "expiring_expired"),
+                      selected = "all",
+                      inline = FALSE)
         )
       ),
       column(3,
@@ -77,7 +82,7 @@ create_overview_value_boxes <- function() {
     valueBoxOutput("total_sites", width = 2),
     valueBoxOutput("prehatch_sites", width = 2),
     valueBoxOutput("treated_sites", width = 2),
-    valueBoxOutput("needs_treatment", width = 2),
+    valueBoxOutput("expired_sites", width = 2),
     valueBoxOutput("treated_pct", width = 2),
     valueBoxOutput("expiring_pct", width = 2)
   )
@@ -97,12 +102,22 @@ create_section_info_panel <- function() {
 
 # Create the progress chart box
 create_progress_chart_box <- function() {
+  # Dynamically set chart height based on number of y-axis categories
+  n_bars <- isolate({
+    # Try to get the number of bars from the aggregated data if available
+    if (exists("aggregated_data", envir = .GlobalEnv)) {
+      nrow(get("aggregated_data", envir = .GlobalEnv))
+    } else {
+      10 # fallback default
+    }
+  })
+  chart_height <- max(100, min(66000, n_bars * 50)) # 50px per bar, clamp between 400 and 66000px
   box(
     title = "Ground Prehatch Treatment Progress",
     status = "primary",
     solidHeader = TRUE,
     width = 12,
-    plotlyOutput("progress_chart", height = "600px")
+    plotlyOutput("progress_chart", height = paste0(chart_height, "px"))
   )
 }
 

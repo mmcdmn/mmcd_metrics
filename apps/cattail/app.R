@@ -40,8 +40,8 @@ ui <- fluidPage(
             "goal_column",
             "Goal Type:",
             choices = c(
-              "Primary Goal (p1_totsitecount)" = "p1_totsitecount",
-              "Secondary Goal (p2_totsitecount)" = "p2_totsitecount"
+              "P1 Goal (set in current year)" = "p1_totsitecount",
+              "P2 Goal (set in current year)" = "p2_totsitecount"
             ),
             selected = "p1_totsitecount"
           ),
@@ -216,6 +216,7 @@ server <- function(input, output) {
         Facility = facility,
         `Last Inspection` = last_inspection,
         Wet = wet,
+        `Num Dip` = numdip,
         Acres = acres,
         `Acres Plan` = acres_plan
       )

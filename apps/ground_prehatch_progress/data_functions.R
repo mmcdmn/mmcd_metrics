@@ -25,8 +25,7 @@ SELECT sitecnts.facility, sitecnts.zone, sitecnts.fosarea, sitecnts.sectcode, si
        tot_ground, not_prehatch_sites, prehatch_sites_cnt, drone_sites_cnt,
        COALESCE(ph_treated_cnt, 0) AS ph_treated_cnt,
        COALESCE(ph_expiring_cnt, 0) AS ph_expiring_cnt,
-       COALESCE(ph_expired_cnt, 0) AS ph_expired_cnt,
-       prehatch_sites_cnt-(COALESCE(ph_treated_cnt,0)+COALESCE(ph_expiring_cnt, 0)) AS ph_notactivetrt_cnt
+       COALESCE(ph_expired_cnt, 0) AS ph_expired_cnt
 FROM
 (SELECT facility, zone, fosarea, sectcode, foreman,
         COUNT(CASE WHEN (air_gnd='G') THEN 1 END) AS tot_ground,
@@ -73,7 +72,7 @@ ORDER BY sectcode", current_year, format(simulation_date, "%Y-%m-%d"), current_y
     
     # Convert integer64 columns to numeric to avoid overflow warnings
     int64_cols <- c("tot_ground", "not_prehatch_sites", "prehatch_sites_cnt", "drone_sites_cnt",
-                    "ph_treated_cnt", "ph_expiring_cnt", "ph_expired_cnt", "ph_notactivetrt_cnt")
+                    "ph_treated_cnt", "ph_expiring_cnt", "ph_expired_cnt")
     for (col in int64_cols) {
       if (col %in% names(result)) {
         result[[col]] <- as.numeric(result[[col]])
@@ -193,31 +192,51 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
 }
 
 # Function to aggregate data based on grouping level
-aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_expiring_only = FALSE, site_details = NULL, combine_zones = FALSE) {
+aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring_filter = "all", site_details = NULL, combine_zones = FALSE) {
   if (nrow(data) == 0) return(data)
   
   # Map facility names for display
   data <- map_facility_names(data)
   
-  # If "Show Only Expiring Sites" is checked, filter to only expiring sites before aggregation
-  if (show_expiring_only && !is.null(site_details)) {
-    expiring_sites <- site_details %>% filter(prehatch_status == "expiring")
-    
-    if (nrow(expiring_sites) > 0) {
-      # Filter data to only sections that have expiring sites
-      expiring_sections <- unique(expiring_sites$sectcode)
-      data <- data %>% filter(sectcode %in% expiring_sections)
+  # Apply expiring filter based on selection
+  if (expiring_filter != "all" && !is.null(site_details)) {
+    if (expiring_filter == "expiring") {
+      # Show only expiring sites
+      expiring_sites <- site_details %>% filter(prehatch_status == "expiring")
       
-      # Zero out all counts except expiring
-      data <- data %>%
-        mutate(
-          ph_treated_cnt = 0,
-          ph_expired_cnt = 0,
-          ph_notactivetrt_cnt = 0
-        )
-    } else {
-      # No expiring sites, return empty data
-      return(data.frame())
+      if (nrow(expiring_sites) > 0) {
+        # Filter data to only sections that have expiring sites
+        expiring_sections <- unique(expiring_sites$sectcode)
+        data <- data %>% filter(sectcode %in% expiring_sections)
+        
+        # Zero out all counts except expiring
+        data <- data %>%
+          mutate(
+            ph_treated_cnt = 0,
+            ph_expired_cnt = 0
+          )
+      } else {
+        # No expiring sites, return empty data
+        return(data.frame())
+      }
+    } else if (expiring_filter == "expiring_expired") {
+      # Show expiring AND expired sites
+      expiring_expired_sites <- site_details %>% filter(prehatch_status %in% c("expiring", "expired"))
+      
+      if (nrow(expiring_expired_sites) > 0) {
+        # Filter data to only sections that have expiring or expired sites
+        expiring_expired_sections <- unique(expiring_expired_sites$sectcode)
+        data <- data %>% filter(sectcode %in% expiring_expired_sections)
+        
+        # Zero out all counts except expiring and expired
+        data <- data %>%
+          mutate(
+            ph_treated_cnt = 0
+          )
+      } else {
+        # No expiring or expired sites, return empty data
+        return(data.frame())
+      }
     }
   }
   
@@ -239,7 +258,6 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -257,7 +275,6 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -266,45 +283,24 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
         )
     }
   } else if (group_by == "sectcode") {
-    if (show_zones_separately) {
-      # Group by section and zone
-      result <- data %>%
-        group_by(sectcode, zone) %>%
-        summarise(
-          tot_ground = sum(tot_ground, na.rm = TRUE),
-          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
-          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
-          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
-          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
-          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
-          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          display_name = paste0(sectcode, " (P", zone, ")"),
-          group_name = sectcode
-        )
-    } else {
-      # Group by section only
-      result <- data %>%
-        group_by(sectcode) %>%
-        summarise(
-          tot_ground = sum(tot_ground, na.rm = TRUE),
-          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
-          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
-          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
-          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
-          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
-          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          display_name = sectcode,
-          group_name = sectcode
-        )
-    }
+    # Group by section only - sections cannot be shown separately by zone
+    # since each section inherently belongs to exactly one zone
+    result <- data %>%
+      group_by(sectcode) %>%
+      summarise(
+        tot_ground = sum(tot_ground, na.rm = TRUE),
+        not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+        prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+        drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+        ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+        ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+        ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        display_name = sectcode,
+        group_name = sectcode
+      )
   } else if (group_by == "facility") {
     if (show_zones_separately) {
       # Group by facility and zone
@@ -318,7 +314,6 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -338,7 +333,6 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -363,7 +357,6 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -387,7 +380,6 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, show_exp
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
-          ph_notactivetrt_cnt = sum(ph_notactivetrt_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(

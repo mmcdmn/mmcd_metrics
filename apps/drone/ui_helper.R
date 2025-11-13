@@ -56,6 +56,11 @@ drone_ui <- function() {
         ),
         
         # Shared controls
+        dateInput("analysis_date", "Analysis Date (Pretend Today Is):",
+                 value = Sys.Date(), 
+                 max = Sys.Date(),
+                 format = "yyyy-mm-dd"),
+        
         checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = FALSE),
         
         checkboxGroupInput("zone_filter", "Select Zones:",

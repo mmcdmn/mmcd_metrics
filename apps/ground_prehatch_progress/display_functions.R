@@ -2,7 +2,7 @@
 # Functions for creating charts, tables, and value boxes
 
 # Function to create progress chart
-create_progress_chart <- function(data, group_by, show_expiring_only = FALSE, expiring_days = 14) {
+create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14) {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -14,35 +14,37 @@ create_progress_chart <- function(data, group_by, show_expiring_only = FALSE, ex
   
   # Prepare data for stacked bar chart
   chart_data <- data %>%
-    select(display_name, ph_treated_cnt, ph_expiring_cnt, ph_expired_cnt, ph_notactivetrt_cnt) %>%
+    select(display_name, ph_treated_cnt, ph_expiring_cnt, ph_expired_cnt) %>%
     tidyr::pivot_longer(cols = -display_name, names_to = "status", values_to = "count") %>%
     mutate(
       status_label = case_when(
         status == "ph_treated_cnt" ~ "Treated",
         status == "ph_expiring_cnt" ~ "Expiring",
-        status == "ph_expired_cnt" ~ "Expired",
-        status == "ph_notactivetrt_cnt" ~ "Needs Treatment"
+        status == "ph_expired_cnt" ~ "Expired"
       ),
       color = case_when(
         status == "ph_treated_cnt" ~ unname(status_colors["active"]),
         status == "ph_expiring_cnt" ~ unname(status_colors["planned"]),
-        status == "ph_expired_cnt" ~ unname(status_colors["unknown"]),
-        status == "ph_notactivetrt_cnt" ~ unname(status_colors["needs_treatment"])
+        status == "ph_expired_cnt" ~ unname(status_colors["unknown"])
       )
     )
 
-  # If showing expiring only, filter chart data to only show expiring status
-  if (show_expiring_only) {
+  # Filter chart data based on expiring filter selection
+  if (expiring_filter == "expiring") {
     chart_data <- chart_data %>% filter(status == "ph_expiring_cnt")
+  } else if (expiring_filter == "expiring_expired") {
+    chart_data <- chart_data %>% filter(status %in% c("ph_expiring_cnt", "ph_expired_cnt"))
   }
 
   # Create title based on filters
-  chart_title <- if (show_expiring_only) {
+  chart_title <- if (expiring_filter == "expiring") {
     paste("Ground Prehatch Expiring Sites (Within", expiring_days, "Days)")
+  } else if (expiring_filter == "expiring_expired") {
+    paste("Ground Prehatch Expiring + Expired Sites (Expiring Within", expiring_days, "Days)")
   } else {
     "Ground Prehatch Treatment Progress"
   }
-  
+
   p <- ggplot(chart_data, aes(x = reorder(display_name, count), y = count, fill = status_label)) +
     geom_bar(stat = "identity", position = "stack") +
     scale_fill_manual(values = setNames(chart_data$color, chart_data$status_label)) +
@@ -76,7 +78,7 @@ create_value_boxes <- function(data) {
   total_ground <- sum(data$tot_ground, na.rm = TRUE)
   total_prehatch <- sum(data$prehatch_sites_cnt, na.rm = TRUE)
   total_treated <- sum(data$ph_treated_cnt, na.rm = TRUE)
-  total_needs_treatment <- sum(data$ph_notactivetrt_cnt, na.rm = TRUE)
+  total_expired <- sum(data$ph_expired_cnt, na.rm = TRUE)
   total_expiring <- sum(data$ph_expiring_cnt, na.rm = TRUE)
   
   # Calculate percentages
@@ -87,7 +89,7 @@ create_value_boxes <- function(data) {
     total_ground = total_ground,
     total_prehatch = total_prehatch,
     total_treated = total_treated,
-    total_needs_treatment = total_needs_treatment,
+    total_expired = total_expired,
     treated_pct = treated_pct,
     expiring_pct = expiring_pct
   ))

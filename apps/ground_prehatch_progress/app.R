@@ -104,7 +104,7 @@ server <- function(input, output, session) {
       group_by = isolate(input$group_by),
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
-      show_expiring_only = isolate(input$show_expiring_only)
+      expiring_filter = isolate(input$expiring_filter)
     )
   })
   
@@ -187,7 +187,7 @@ server <- function(input, output, session) {
       data, 
       inputs$group_by, 
       inputs$zone_filter, 
-      inputs$show_expiring_only, 
+      inputs$expiring_filter, 
       site_data,
       inputs$combine_zones
     )
@@ -200,7 +200,17 @@ server <- function(input, output, session) {
     
     site_data <- site_details()
     
-    filter_ground_data(site_data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    # Apply geographic filters
+    filtered_data <- filter_ground_data(site_data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    
+    # Apply expiring filter to site details
+    if (inputs$expiring_filter == "expiring") {
+      filtered_data <- filtered_data %>% filter(prehatch_status == "expiring")
+    } else if (inputs$expiring_filter == "expiring_expired") {
+      filtered_data <- filtered_data %>% filter(prehatch_status %in% c("expiring", "expired"))
+    }
+    
+    return(filtered_data)
   })
   
   # Create value boxes
@@ -251,16 +261,16 @@ server <- function(input, output, session) {
     )
   })
   
-  output$needs_treatment <- renderValueBox({
+  output$expired_sites <- renderValueBox({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
-      value = data$total_needs_treatment,
-      subtitle = "Needs Treatment",
-      icon = icon("exclamation-triangle"),
-      color = shiny_colors["needs_treatment"]
+      value = data$total_expired,
+      subtitle = "Expired Sites",
+      icon = icon("clock"),
+      color = shiny_colors["somthing_else"]
     )
   })
   
@@ -296,7 +306,7 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     data <- aggregated_data()
-    create_progress_chart(data, inputs$group_by, inputs$show_expiring_only, inputs$expiring_days)
+    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days)
   })
   
   # Render details table

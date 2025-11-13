@@ -1,16 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trap Surveillance Vector Index - Technical Notes</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             line-height: 1.6;
-            max-width: 900px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
-            color: #333;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         h1 {
             color: #2c3e50;
@@ -19,74 +26,90 @@
         }
         h2 {
             color: #34495e;
-            border-bottom: 2px solid #95a5a6;
-            padding-bottom: 5px;
             margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
         }
         h3 {
-            color: #555;
+            color: #7f8c8d;
             margin-top: 20px;
         }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
         code {
-            background-color: #f4f4f4;
+            background-color: #f8f9fa;
             padding: 2px 6px;
             border-radius: 3px;
             font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
         }
         pre {
-            background-color: #f4f4f4;
-            padding: 15px;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
             border-radius: 5px;
             overflow-x: auto;
-            border-left: 4px solid #3498db;
+            margin: 15px 0;
+            border: 1px solid #34495e;
         }
         pre code {
             background-color: transparent;
+            color: #ecf0f1;
             padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
         }
         ul, ol {
-            margin-left: 20px;
+            margin: 10px 0;
+            padding-left: 30px;
         }
         li {
-            margin-bottom: 5px;
+            margin: 5px 0;
         }
-        strong {
-            color: #2c3e50;
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
         }
-        .note {
-            background-color: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 10px;
-            margin: 15px 0;
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
         }
-        .example {
-            background-color: #e7f3fe;
-            border-left: 4px solid #2196F3;
-            padding: 10px;
-            margin: 15px 0;
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
         }
-        @media print {
-            body {
-                max-width: 100%;
-                font-size: 11pt;
-            }
-            h1 {
-                page-break-before: always;
-            }
-            h1:first-child {
-                page-break-before: avoid;
-            }
-            h2, h3 {
-                page-break-after: avoid;
-            }
-            pre {
-                page-break-inside: avoid;
-            }
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
+        }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
-
+    <div class="container">
 <h1>Trap Surveillance Vector Index - Technical Notes</h1>
 
 <h2>Overview</h2>
@@ -96,274 +119,307 @@
 
 <h3>Tables Used</h3>
 <ul>
-    <li><strong><code>dbadult_insp_current</code></strong> - Current adult mosquito trap inspection records
-        <ul>
-            <li>Contains trap locations (x, y coordinates), inspection dates, facility, survey type</li>
-            <li>Multiple inspections per trap location over time</li>
-        </ul>
-    </li>
-    <li><strong><code>dbadult_species_current</code></strong> - Species counts for each trap inspection
-        <ul>
-            <li>Links to inspections via <code>ainspecnum</code></li>
-            <li>Contains species code (<code>spp</code>) and count (<code>cnt</code>)</li>
-        </ul>
-    </li>
-    <li><strong><code>lookup_specieslist</code></strong> - Species lookup table
-        <ul>
-            <li>Maps species codes to genus/species names</li>
-        </ul>
-    </li>
-    <li><strong><code>gis_sectcode</code></strong> - Section geometry polygons
-        <ul>
-            <li>Stored in EPSG:26915 (UTM Zone 15N)</li>
-            <li>Converted to EPSG:4326 (WGS84 lat/lon) for display</li>
-        </ul>
-    </li>
+<li><strong><code>dbadult<em>insp</em>current</code></strong> - Current adult mosquito trap inspection records</li>
+<ul>
+<li>Contains trap locations (x, y coordinates), inspection dates, facility, survey type</li>
+<li>Multiple inspections per trap location over time</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>dbadult<em>species</em>current</code></strong> - Species counts for each trap inspection</li>
+<ul>
+<li>Links to inspections via <code>ainspecnum</code></li>
+<li>Contains species code (<code>spp</code>) and count (<code>cnt</code>)</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>lookup_specieslist</code></strong> - Species lookup table</li>
+<ul>
+<li>Maps species codes to genus/species names</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>gis_sectcode</code></strong> - Section geometry polygons</li>
+<ul>
+<li>Stored in EPSG:26915 (UTM Zone 15N)</li>
+<li>Converted to EPSG:4326 (WGS84 lat/lon) for display</li>
+</ul>
 </ul>
 
 <h2>Trap Types (Survey Types)</h2>
 <p>The app filters for specific trap types using the <code>survtype</code> column:</p>
 <ul>
-    <li><strong>4</strong> - Elevated CO2</li>
-    <li><strong>5</strong> - Gravid Trap</li>
-    <li><strong>6</strong> - CO2 Overnight</li>
+<li><strong>4</strong> - Elevated CO2</li>
+<li><strong>5</strong> - Gravid Trap  </li>
+<li><strong>6</strong> - CO2 Overnight</li>
 </ul>
-<div class="note">
-    <strong>Note:</strong> <code>survtype</code> is stored as <code>character varying</code> in the database, not integer.
-</div>
+
+<p>Note: <code>survtype</code> is stored as <code>character varying</code> in the database, not integer.</p>
 
 <h2>SQL Query Logic</h2>
 
 <h3>Step 1: Rank Trap Inspections</h3>
-<pre><code>WITH ranked_traps AS (
+<pre><code class="sql">
+WITH ranked_traps AS (
   SELECT t.ainspecnum, t.facility, t.x, t.y, t.survtype, t.inspdate,
-         ROW_NUMBER() OVER (PARTITION BY t.x, t.y, t.facility 
-                            ORDER BY t.inspdate DESC) as rn
+         ROW_NUMBER() OVER (PARTITION BY t.x, t.y, t.facility ORDER BY t.inspdate DESC) as rn
   FROM public.dbadult_insp_current t
-  WHERE t.inspdate::date <= [analysis_date]
+  WHERE t.inspdate::date &lt;= [analysis_date]
     AND t.x IS NOT NULL AND t.y IS NOT NULL
     AND t.survtype IN ('4','5','6')
     [AND t.facility IN (...)]  -- optional facility filter
-)</code></pre>
-<p><strong>Purpose:</strong> Since traps are inspected multiple times per year, we use <code>ROW_NUMBER()</code> partitioned by location (<code>x, y, facility</code>) and ordered by <code>inspdate DESC</code> to identify the most recent inspection at each unique trap location.</p>
+)
+</code></pre>
+<p><strong>Purpose</strong>: Since traps are inspected multiple times per year, we use <code>ROW_NUMBER()</code> partitioned by location (<code>x, y, facility</code>) and ordered by <code>inspdate DESC</code> to identify the most recent inspection at each unique trap location.</p>
 
 <h3>Step 2: Get Latest Traps Only</h3>
-<pre><code>latest_traps AS (
+<pre><code class="sql">
+latest_traps AS (
   SELECT ainspecnum, facility, x, y, survtype, inspdate
   FROM ranked_traps
   WHERE rn = 1
-)</code></pre>
-<p><strong>Purpose:</strong> Filter to only the most recent inspection per location (<code>rn = 1</code>).</p>
+)
+</code></pre>
+<p><strong>Purpose</strong>: Filter to only the most recent inspection per location (<code>rn = 1</code>).</p>
 
 <h3>Step 3: Join Species Counts</h3>
-<pre><code>SELECT lt.ainspecnum, lt.facility, lt.x as lon, lt.y as lat, 
-       lt.survtype, lt.inspdate::date as inspdate,
+<pre><code class="sql">
+SELECT lt.ainspecnum, lt.facility, lt.x as lon, lt.y as lat, lt.survtype, lt.inspdate::date as inspdate,
        COALESCE(SUM(s.cnt), 0) as species_count
 FROM latest_traps lt
-LEFT JOIN public.dbadult_species_current s 
-    ON lt.ainspecnum = s.ainspecnum
-    [AND s.spp IN (...)]  -- optional species filter
-GROUP BY lt.ainspecnum, lt.facility, lt.x, lt.y, lt.survtype, lt.inspdate</code></pre>
-<p><strong>Purpose:</strong></p>
+LEFT JOIN public.dbadult_species_current s ON lt.ainspecnum = s.ainspecnum
+  [AND s.spp IN (...)]  -- optional species filter
+GROUP BY lt.ainspecnum, lt.facility, lt.x, lt.y, lt.survtype, lt.inspdate
+</code></pre>
+<p><strong>Purpose</strong>: </p>
 <ul>
-    <li>Join species counts to each trap</li>
-    <li>If species filter is active, only count selected species</li>
-    <li><code>COALESCE(SUM(s.cnt), 0)</code> ensures traps with no species get count = 0</li>
-    <li>GROUP BY required because LEFT JOIN can return multiple rows per trap (one per species)</li>
+<li>Join species counts to each trap</li>
+<li>If species filter is active, only count selected species</li>
+<li><code>COALESCE(SUM(s.cnt), 0)</code> ensures traps with no species get count = 0</li>
+<li>GROUP BY required because LEFT JOIN can return multiple rows per trap (one per species)</li>
 </ul>
-<p><strong>Result:</strong> One row per unique trap location with:</p>
+
+<p><strong>Result</strong>: One row per unique trap location with:</p>
 <ul>
-    <li>Most recent inspection date</li>
-    <li>Species count (filtered by selected species if applicable)</li>
-    <li>No duplicate locations</li>
+<li>Most recent inspection date</li>
+<li>Species count (filtered by selected species if applicable)</li>
+<li>No duplicate locations</li>
 </ul>
 
 <h2>Vector Index Calculation</h2>
 
 <h3>Algorithm: k-Nearest Neighbors with Inverse Distance Weighting</h3>
-<p>For each section, we:</p>
-<ol>
-    <li><strong>Find k nearest traps</strong> - Default k=4 (user adjustable 1-10)
-        <ul>
-            <li>Calculate distance from section centroid to all trap locations</li>
-            <li>Sort by distance and take top k traps</li>
-        </ul>
-    </li>
-    <li><strong>Calculate inverse distance weights</strong>
-        <pre><code>weights = 1 / distance</code></pre>
-        <ul>
-            <li>Closer traps have higher weights</li>
-            <li>If distance = 0 (trap exactly on section centroid), set to 1e-6 to avoid division by zero</li>
-        </ul>
-    </li>
-    <li><strong>Compute weighted average</strong>
-        <pre><code>vector_index = sum(weights * species_counts) / sum(weights)</code></pre>
-        <ul>
-            <li>Multiply each trap's species count by its weight</li>
-            <li>Divide by sum of weights to normalize</li>
-        </ul>
-    </li>
-</ol>
 
-<div class="example">
-    <h3>Example Calculation</h3>
-    <p>Section with k=4 nearest traps:</p>
-    <ul>
-        <li>Trap 1: 24km away, 106 mosquitoes → weight = 1/24057 = 0.000042</li>
-        <li>Trap 2: 24km away, 76 mosquitoes → weight = 0.000042</li>
-        <li>Trap 3: 24km away, 1 mosquito → weight = 0.000042</li>
-        <li>Trap 4: 24km away, 90 mosquitoes → weight = 0.000042</li>
-    </ul>
-    <pre><code>vector_index = (0.000042 × 106 + 0.000042 × 76 + 0.000042 × 1 + 0.000042 × 90) / (0.000042 × 4)
+<p>For each section, we:</p>
+
+<ol>
+<li><strong>Find k nearest traps</strong> - Default k=4 (user adjustable 1-10)</li>
+<ul>
+<li>Calculate distance from section centroid to all trap locations</li>
+<li>Sort by distance and take top k traps</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Calculate inverse distance weights</strong></li>
+</ul>
+<p>   ```r</p>
+<p>   weights = 1 / distance</p>
+<p>   ```</p>
+<ul>
+<li>Closer traps have higher weights</li>
+<li>If distance = 0 (trap exactly on section centroid), set to 1e-6 to avoid division by zero</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Compute weighted average</strong></li>
+</ul>
+<p>   ```r</p>
+<p>   vector<em>index = sum(weights * species</em>counts) / sum(weights)</p>
+<p>   ```</p>
+<ul>
+<li>Multiply each trap's species count by its weight</li>
+<li>Divide by sum of weights to normalize</li>
+</ul>
+</ul>
+
+<h3>Example Calculation</h3>
+<p>Section with k=4 nearest traps:</p>
+<ul>
+<li>Trap 1: 24km away, 106 mosquitoes → weight = 1/24057 = 0.000042</li>
+<li>Trap 2: 24km away, 76 mosquitoes → weight = 0.000042</li>
+<li>Trap 3: 24km away, 1 mosquito → weight = 0.000042</li>
+<li>Trap 4: 24km away, 90 mosquitoes → weight = 0.000042</li>
+</ul>
+
+<pre><code class="">
+vector_index = (0.000042 * 106 + 0.000042 * 76 + 0.000042 * 1 + 0.000042 * 90) / (0.000042 * 4)
              = 0.011466 / 0.000168
-             = 68.25</code></pre>
-</div>
+             = 68.25
+</code></pre>
 
 <h2>Metrics Explained</h2>
 
 <h3>Vector Index</h3>
-<p><strong>Definition:</strong> A distance-weighted estimate of mosquito abundance for each section based on nearby trap counts.</p>
-<p><strong>Interpretation:</strong></p>
+<p><strong>Definition</strong>: A distance-weighted estimate of mosquito abundance for each section based on nearby trap counts.</p>
+
+<p><strong>Interpretation</strong>:</p>
 <ul>
-    <li>Higher values = More mosquitoes in nearby traps (weighted by proximity)</li>
-    <li>Lower values = Fewer mosquitoes or far from active traps</li>
-    <li>Value of 0 = No mosquitoes in k nearest traps</li>
+<li>Higher values = More mosquitoes in nearby traps (weighted by proximity)</li>
+<li>Lower values = Fewer mosquitoes or far from active traps</li>
+<li>Value of 0 = No mosquitoes in k nearest traps</li>
 </ul>
-<p><strong>Use Case:</strong> Provides a spatial interpolation of mosquito activity across sections, even those without traps, based on nearby trap surveillance data.</p>
+
+<p><strong>Use Case</strong>: Provides a spatial interpolation of mosquito activity across sections, even those without traps, based on nearby trap surveillance data.</p>
 
 <h3>Nearest Trap Total</h3>
-<p><strong>Definition:</strong> Simple sum of species counts from the k nearest traps (unweighted).</p>
-<pre><code>nearest_trap_count = sum(species_counts from k nearest traps)</code></pre>
-<p><strong>Purpose:</strong></p>
-<ul>
-    <li>Provides context for the vector index</li>
-    <li>Shows the raw total count contributing to the calculation</li>
-    <li>Helps identify if high vector index is due to a few high-count traps or many moderate-count traps</li>
-</ul>
-<div class="example">
-    <p><strong>Example:</strong> If k=4 and nearest trap counts are [106, 76, 1, 90], then <code>nearest_trap_total = 273</code></p>
-</div>
+<p><strong>Definition</strong>: Simple sum of species counts from the k nearest traps (unweighted).</p>
 
-<h3>Last Inspection Date</h3>
-<p><strong>Definition:</strong> The most recent inspection date among the k nearest traps used in the calculation.</p>
-<p><strong>Purpose:</strong> Helps users understand data recency for each section's vector index calculation.</p>
+<pre><code class="r">
+nearest_trap_count = sum(species_counts from k nearest traps)
+</code></pre>
+
+<p><strong>Purpose</strong>: </p>
+<ul>
+<li>Provides context for the vector index</li>
+<li>Shows the raw total count contributing to the calculation</li>
+<li>Helps identify if high vector index is due to a few high-count traps or many moderate-count traps</li>
+</ul>
+
+<p><strong>Example</strong>: If k=4 and nearest trap counts are [106, 76, 1, 90], then <code>nearest<em>trap</em>total = 273</code></p>
 
 <h2>Spatial Operations</h2>
 
 <h3>Coordinate Systems</h3>
 <ol>
-    <li><strong>Database Storage:</strong>
-        <ul>
-            <li>Traps: EPSG:4326 (WGS84 lat/lon) stored as x, y</li>
-            <li>Sections: EPSG:26915 (UTM Zone 15N) in <code>the_geom</code></li>
-        </ul>
-    </li>
-    <li><strong>Distance Calculation:</strong>
-        <ul>
-            <li>Transform both to EPSG:3857 (Web Mercator Auxiliary Sphere)</li>
-            <li>Units in meters for accurate distance calculations</li>
-            <li>Use <code>st_distance()</code> from sf package</li>
-        </ul>
-    </li>
-    <li><strong>Display:</strong>
-        <ul>
-            <li>Convert back to EPSG:4326 for Leaflet map display</li>
-        </ul>
-    </li>
-</ol>
+<li><strong>Database Storage</strong>: </li>
+<ul>
+<li>Traps: EPSG:4326 (WGS84 lat/lon) stored as x, y</li>
+<li>Sections: EPSG:26915 (UTM Zone 15N) in <code>the_geom</code></li>
+</ul>
+</ul>
 
-<div class="note">
-    <strong>Why Transform for Distance?</strong><br>
-    Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. Transforming to a projected coordinate system (EPSG:3857) with meter units provides accurate distances.
-</div>
+<ol>
+<li><strong>Distance Calculation</strong>: </li>
+<ul>
+<li>Transform both to EPSG:3857 (Web Mercator Auxiliary Sphere)</li>
+<li>Units in meters for accurate distance calculations</li>
+<li>Use <code>st_distance()</code> from sf package</li>
+</ul>
+</ul>
 
-<h2>Data Type Issues & Solutions</h2>
+<ol>
+<li><strong>Display</strong>: </li>
+<ul>
+<li>Convert back to EPSG:4326 for Leaflet map display</li>
+</ul>
+</ul>
+
+<h3>Why Transform for Distance?</h3>
+<p>Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. Transforming to a projected coordinate system (EPSG:3857) with meter units provides accurate distances.</p>
+
+<h2>Data Type Issues &amp; Solutions</h2>
 
 <h3>Integer64 Problem</h3>
 <p>PostgreSQL's <code>SUM()</code> on integer columns returns <code>integer64</code> type in R. When multiplying very small decimals (weights like 0.000042) by integer64 values, precision loss can occur.</p>
-<p><strong>Solution:</strong> Convert to numeric before calculation</p>
-<pre><code>counts <- as.numeric(traps_m$species_count[k_idx])</code></pre>
+
+<p><strong>Solution</strong>: Convert to numeric before calculation</p>
+<pre><code class="r">
+counts &lt;- as.numeric(traps_m$species_count[k_idx])
+</code></pre>
 
 <h3>Species Code Handling</h3>
 <p>Species codes (<code>sppcode</code>) are numeric but stored as integers in the database. When building SQL IN clauses, they must NOT be quoted:</p>
-<pre><code>-- Correct
+<pre><code class="sql">
+-- Correct
 WHERE s.spp IN (1, 2, 3)
 
 -- Incorrect (causes type mismatch)
-WHERE s.spp IN ('1', '2', '3')</code></pre>
+WHERE s.spp IN ('1', '2', '3')
+</code></pre>
 
 <h2>Performance Optimizations</h2>
+
 <ol>
-    <li><strong>Single Query Strategy:</strong> Fetch all traps with species counts in one query rather than:
-        <ul>
-            <li>Query 1: Get traps</li>
-            <li>Query 2: Get species counts</li>
-            <li>R join operation</li>
-        </ul>
-    </li>
-    <li><strong>Filter Early:</strong> Apply facility and species filters in SQL before returning data to R</li>
-    <li><strong>R-side Spatial Operations:</strong>
-        <ul>
-            <li>After fetching data, all distance calculations happen in R using vectorized sf operations</li>
-            <li>Much faster than making 3000+ distance queries to PostgreSQL</li>
-        </ul>
-    </li>
-    <li><strong>Efficient Ranking:</strong> <code>ROW_NUMBER()</code> window function is more efficient than <code>DISTINCT ON</code> for getting latest records</li>
-</ol>
+<li><strong>Single Query Strategy</strong>: Fetch all traps with species counts in one query rather than:</li>
+<ul>
+<li>Query 1: Get traps</li>
+<li>Query 2: Get species counts</li>
+<li>R join operation</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Filter Early</strong>: Apply facility and species filters in SQL before returning data to R</li>
+</ul>
+
+<ol>
+<li><strong>R-side Spatial Operations</strong>: </li>
+<ul>
+<li>After fetching data, all distance calculations happen in R using vectorized sf operations</li>
+<li>Much faster than making 3000+ distance queries to PostgreSQL</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Efficient Ranking</strong>: <code>ROW_NUMBER()</code> window function is more efficient than <code>DISTINCT ON</code> for getting latest records</li>
+</ul>
 
 <h2>User Controls</h2>
+
 <ul>
-    <li><strong>Analysis Date:</strong> Only include traps inspected on or before this date</li>
-    <li><strong>Species Filter:</strong> Select specific species or "All Species" to include all</li>
-    <li><strong>Trap Types:</strong> Multi-select checkbox for survtypes 4, 5, 6</li>
-    <li><strong>k (Neighbors):</strong> Number of nearest traps to consider (1-10, default 4)</li>
-    <li><strong>Facility Filter:</strong> Filter traps by facility (E, N, Sj, Sr, Wm, Wp, or All)</li>
-    <li><strong>Refresh Data Button:</strong> Data loads only when clicked (prevents accidental heavy queries)</li>
+<li><strong>Analysis Date</strong>: Only include traps inspected on or before this date</li>
+<li><strong>Species Filter</strong>: Select specific species or "All Species" to include all</li>
+<li><strong>Trap Types</strong>: Multi-select checkbox for survtypes 4, 5, 6</li>
+<li><strong>k (Neighbors)</strong>: Number of nearest traps to consider (1-10, default 4)</li>
+<li><strong>Facility Filter</strong>: Filter traps by facility (E, N, Sj, Sr, Wm, Wp, or All)</li>
+<li><strong>Refresh Data Button</strong>: Data loads only when clicked (prevents accidental heavy queries)</li>
 </ul>
 
 <h2>Map Layers</h2>
 
 <h3>Sections Layer (Yellow-Orange-Red)</h3>
 <ul>
-    <li>Circle size based on <code>log1p(vector_index) * 4</code> - larger for higher indices</li>
-    <li>Color intensity from yellow (low) to red (high) based on vector index value</li>
-    <li>Popup shows: Section code, Vector Index, Nearest Trap Total, Last Inspection Date</li>
+<li>Circle size based on <code>log1p(vector_index) * 4</code> - larger for higher indices</li>
+<li>Color intensity from yellow (low) to red (high) based on vector index value</li>
+<li>Popup shows: Section code, Vector Index, Nearest Trap Total</li>
 </ul>
 
 <h3>Traps Layer (Blue)</h3>
 <ul>
-    <li>Small blue circles (radius = 3)</li>
-    <li>Popup shows: Trap ID, Facility, Trap Type, Inspection Date, Species Count</li>
-    <li>Species count reflects current filter (e.g., if filtering for Culex pipiens, only shows that species count)</li>
+<li>Small blue circles (radius = 3)</li>
+<li>Popup shows: Trap ID, Facility, Trap Type, Inspection Date, Species Count</li>
+<li>Species count reflects current filter (e.g., if filtering for Culex pipiens, only shows that species count)</li>
 </ul>
 
 <h3>Layer Control</h3>
 <p>Toggle sections and traps on/off independently</p>
 
 <h2>Testing</h2>
+
 <p>Run <code>test-sql.R</code> to validate:</p>
 <ul>
-    <li>SQL query returns expected number of rows</li>
-    <li>Check for duplicate locations</li>
-    <li>Verify distance calculations work correctly</li>
-    <li>Review species count distribution</li>
+<li>SQL query returns expected number of rows</li>
+<li>Check for duplicate locations</li>
+<li>Verify distance calculations work correctly</li>
+<li>Review species count distribution</li>
 </ul>
 
 <h2>Future Enhancements</h2>
+
 <p>Potential improvements:</p>
 <ul>
-    <li>Add date range filter (instead of single date)</li>
-    <li>Export results to CSV</li>
-    <li>Cache species counts for faster reload</li>
-    <li>Display section polygons instead of centroids</li>
-    <li>Add time-series animation showing vector index over time</li>
-    <li>Include trap density as additional metric</li>
+<li>Add date range filter (instead of single date)</li>
+<li>Export results to CSV</li>
+<li>Cache species counts for faster reload</li>
+<li>Display section polygons instead of centroids</li>
+<li>Add time-series animation showing vector index over time</li>
+<li>Include trap density as additional metric</li>
 </ul>
-
-<hr>
-<p style="text-align: center; color: #777; margin-top: 40px;">
-    <small>Generated: November 7, 2025 | MMCD Trap Surveillance System</small>
-</p>
-
+    </div>
 </body>
 </html>

@@ -303,6 +303,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.facility,
         a.inspdate,
         a.wet,
+        a.numdip,
         a.acres,
         a.acres_plan,
         ROW_NUMBER() OVER (PARTITION BY a.sitecode, a.facility ORDER BY a.inspdate DESC) as rn
@@ -321,6 +322,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.facility,
         a.inspdate,
         a.wet,
+        a.numdip,
         a.acres,
         a.acres_plan,
         ROW_NUMBER() OVER (PARTITION BY a.sitecode, a.facility ORDER BY a.inspdate DESC) as rn
@@ -337,6 +339,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
       facility,
       inspdate as last_inspection,
       wet,
+      numdip,
       acres,
       acres_plan
     FROM ranked_inspections
@@ -358,6 +361,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.facility,
         a.inspdate,
         a.wet,
+        a.numdip,
         a.acres,
         a.acres_plan,
         g.zone,
@@ -383,6 +387,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         a.facility,
         a.inspdate,
         a.wet,
+        a.numdip,
         a.acres,
         a.acres_plan,
         g.zone,
@@ -406,6 +411,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
       facility,
       inspdate as last_inspection,
       wet,
+      numdip,
       acres,
       acres_plan
     FROM ranked_inspections

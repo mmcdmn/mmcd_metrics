@@ -6,12 +6,18 @@
     <title>Structure Treatment Progress - Technical Notes</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             line-height: 1.6;
-            max-width: 900px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
-            color: #333;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         h1 {
             color: #2c3e50;
@@ -20,115 +26,98 @@
         }
         h2 {
             color: #34495e;
-            border-bottom: 2px solid #95a5a6;
-            padding-bottom: 5px;
             margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
         }
         h3 {
-            color: #555;
+            color: #7f8c8d;
             margin-top: 20px;
         }
         h4 {
-            color: #666;
+            color: #95a5a6;
             margin-top: 15px;
         }
         code {
-            background-color: #f4f4f4;
+            background-color: #f8f9fa;
             padding: 2px 6px;
             border-radius: 3px;
             font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
         }
         pre {
-            background-color: #f4f4f4;
-            padding: 15px;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
             border-radius: 5px;
             overflow-x: auto;
-            border-left: 4px solid #3498db;
+            margin: 15px 0;
+            border: 1px solid #34495e;
         }
         pre code {
             background-color: transparent;
+            color: #ecf0f1;
             padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
         }
         ul, ol {
-            margin-left: 20px;
+            margin: 10px 0;
+            padding-left: 30px;
         }
         li {
-            margin-bottom: 5px;
+            margin: 5px 0;
         }
-        strong {
-            color: #2c3e50;
-        }
-        .note {
-            background-color: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 10px;
-            margin: 15px 0;
-        }
-        .critical {
-            background-color: #f8d7da;
-            border-left: 4px solid #dc3545;
-            padding: 10px;
-            margin: 15px 0;
-        }
-        .example {
-            background-color: #e7f3fe;
-            border-left: 4px solid #2196F3;
-            padding: 10px;
-            margin: 15px 0;
-        }
-        .success {
-            background-color: #d4edda;
-            border-left: 4px solid #28a745;
-            padding: 10px;
-            margin: 15px 0;
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
         }
         table {
-            border-collapse: collapse;
             width: 100%;
-            margin: 15px 0;
+            border-collapse: collapse;
+            margin: 20px 0;
         }
         th, td {
             border: 1px solid #ddd;
-            padding: 8px;
+            padding: 12px;
             text-align: left;
         }
         th {
-            background-color: #3498db;
-            color: white;
+            background-color: #f5f5f5;
+            font-weight: bold;
         }
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
         }
-        @media print {
-            body {
-                max-width: 100%;
-                font-size: 11pt;
-            }
-            h1 {
-                page-break-before: always;
-            }
-            h1:first-child {
-                page-break-before: avoid;
-            }
-            h2, h3 {
-                page-break-after: avoid;
-            }
-            pre {
-                page-break-inside: avoid;
-            }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
-
+    <div class="container">
 <h1>Structure Treatment Progress - Technical Notes</h1>
 
 <h2>Overview</h2>
 <p>This Shiny app tracks mosquito control structure treatments across two perspectives:</p>
 <ol>
-    <li><strong>Current Progress</strong> - Active and expiring treatments grouped by facility or FOS</li>
-    <li><strong>Historical Trends</strong> - Year-over-year treatment activity comparison</li>
-</ol>
+<li><strong>Current Progress</strong> - Active and expiring treatments grouped by facility or FOS</li>
+<li><strong>Historical Trends</strong> - Year-over-year treatment activity comparison</li>
+</ul>
 
 <h2>Data Sources</h2>
 
@@ -136,65 +125,340 @@
 
 <h4>Primary Treatment Tables</h4>
 <ul>
-    <li><strong>dblarv_insptrt_current</strong> - Active structure treatment records
-        <ul>
-            <li>Contains ongoing treatments for current operations</li>
-            <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>list_type</code></li>
-            <li><strong>list_type = 'STR'</strong> identifies structure treatments</li>
-            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
-        </ul>
-    </li>
-    <li><strong>dblarv_insptrt_archive</strong> - Historical structure treatment records
-        <ul>
-            <li>Contains closed/archived treatments from previous years</li>
-            <li>Same schema as current table</li>
-            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
-        </ul>
-    </li>
-    <li><strong>mattype_list_targetdose</strong> - Treatment material effectiveness
-        <ul>
-            <li>Links material codes to effect duration</li>
-            <li>Fields: <code>matcode</code>, <code>effect_days</code></li>
-            <li><strong>Effect Days</strong>: Number of days the treatment remains effective</li>
-            <li><strong>Default</strong>: 30 days if material code not found</li>
-        </ul>
-    </li>
+<li><strong><code>dblarv<em>insptrt</em>current</code></strong> - Active structure treatment records</li>
+<ul>
+<li>Contains ongoing treatments for current operations</li>
+<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>list_type</code></li>
+<li><strong>list_type = 'STR'</strong> identifies structure treatments</li>
+<li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>dblarv<em>insptrt</em>archive</code></strong> - Historical structure treatment records</li>
+<ul>
+<li>Contains closed/archived treatments from previous years</li>
+<li>Same schema as current table</li>
+<li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>mattype<em>list</em>targetdose</code></strong> - Treatment material effectiveness</li>
+<ul>
+<li>Links material codes to effect duration</li>
+<li>Fields: <code>matcode</code>, <code>effect_days</code></li>
+<li><strong>Effect Days</strong>: Number of days the treatment remains effective</li>
+<li><strong>Default</strong>: 30 days if material code not found</li>
+</ul>
 </ul>
 
 <h4>Supporting Tables</h4>
 <ul>
-    <li><strong>loc_cxstruct</strong> - Structure location and characteristics
-        <ul>
-            <li><strong>CRITICAL</strong>: This is the ONLY table with <code>enddate</code> column</li>
-            <li>Contains all structure definitions</li>
-            <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>foreman</code>, <code>s_type</code>, <code>priority</code>, <code>status_udw</code>, <code>zone</code>, <code>startdate</code>, <code>enddate</code></li>
-            <li>Tracks when structures are opened and closed</li>
-            <li>Used to filter out structures that no longer exist</li>
-            <li><strong>Status Codes</strong>:
-                <ul>
-                    <li><strong>'D'</strong> - Dry (structure has no water)</li>
-                    <li><strong>'W'</strong> - Wet (structure contains water)</li>
-                    <li><strong>'U'</strong> - Unknown (status not determined)</li>
-                </ul>
-            </li>
-        </ul>
-    </li>
+<li><strong><code>loc_cxstruct</code></strong> - Structure location and characteristics</li>
+<ul>
+<li><strong>CRITICAL</strong>: This is the ONLY table with <code>enddate</code> column</li>
+<li>Contains all structure definitions</li>
+<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>foreman</code>, <code>s<em>type</code>, <code>priority</code>, <code>status</em>udw</code>, <code>zone</code>, <code>startdate</code>, <code>enddate</code></li>
+<li>Tracks when structures are opened and closed</li>
+<li>Used to filter out structures that no longer exist</li>
+<li><strong>Status Codes</strong>:</li>
+<ul>
+<li><strong>'D'</strong> - Dry (structure has no water)</li>
+<li><strong>'W'</strong> - Wet (structure contains water)</li>
+<li><strong>'U'</strong> - Unknown (status not determined)</li>
+</ul>
+</ul>
+</ul>
+
+<h3>Zone Filtering</h3>
+<ul>
+<li><strong>P1 Only</strong> (<code>zone = '1'</code>) - Primary zone structures only</li>
+<li><strong>P2 Only</strong> (<code>zone = '2'</code>) - Secondary zone structures only</li>
+<li><strong>P1 and P2 Separate</strong> (<code>zone = '1,2'</code>) - Both zones shown separately in chart</li>
+<li><strong>Combined P1+P2</strong> (<code>zone = 'combined'</code>) - Both zones aggregated together</li>
+</ul>
+
+<h3>Query Pattern for Proper Enddate Filtering</h3>
+
+<p><strong>CRITICAL</strong>: Use <code>gis_sectcode</code> table for zone, foreman (fosarea), AND facility data to ensure 100% data coverage and consistency.</p>
+
+<pre><code class="sql">
+-- OPTIMAL PATTERN: Join with gis_sectcode for zone, fosarea, and facility
+SELECT 
+  trt.sitecode,
+  trt.inspdate,
+  gis.facility,
+  gis.fosarea as foreman,
+  COALESCE(mat.effect_days, 30) AS effect_days,
+  loc.s_type,
+  loc.priority,
+  loc.status_udw as status,
+  gis.zone
+FROM public.dblarv_insptrt_current trt
+LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode  
+LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+WHERE trt.list_type = 'STR'
+  AND (loc.enddate IS NULL OR loc.enddate &gt; CURRENT_DATE)
+  [... additional filters ...]
+
+-- WRONG: Using loc.zone, loc.foreman, or trt.facility causes data inconsistencies
+SELECT trt.sitecode, loc.zone, loc.foreman, trt.facility, ...
+FROM public.dblarv_insptrt_current trt
+LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+-- This query has poor zone/foreman coverage AND facility mismatches!
+</code></pre>
+
+<p><strong>Why gis_sectcode for ALL three fields?</strong></p>
+<ul>
+<li><strong>Zone Coverage</strong>: <code>gis.zone</code> provides 100% coverage (vs ~78% from <code>loc.zone</code>)</li>
+<li><strong>Foreman Field</strong>: <code>gis.fosarea</code> is the proper foreman identifier (more reliable than <code>loc.foreman</code>)</li>
+<li><strong>Facility Consistency</strong>: <code>gis.facility</code> matches with fosarea, preventing "strange people" showing up for a facility</li>
+<ul>
+<li>Using <code>trt.facility</code> or <code>loc.facility</code> can result in mismatched facility/foreman combinations</li>
+<li>All three fields (zone, fosarea, facility) come from the same authoritative source</li>
+</ul>
+<li><strong>Sectcode Join</strong>: <code>loc.sectcode</code> in <code>loc_cxstruct</code> matches <code>gis.sectcode</code> exactly</li>
+<li><strong>Tested Results</strong>: 3,395 treatments in last 90 days all have zone data when using <code>gis_sectcode</code></li>
+</ul>
+
+<h2>Tab 1: Current Progress</h2>
+
+<h3>Purpose</h3>
+<p>Monitor structures with active treatments and those expiring soon, grouped by facility or Field Operations Supervisor (FOS).</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Days Until Expiration slider</strong> (1-30 days) - Define "expiring soon" threshold</li>
+<li><strong>Pretend Today Is date picker</strong> - Analyze data as of a specific date (useful for historical analysis)</li>
+<li><strong>Structure Status checkboxes</strong> - Filter by Dry/Wet/Unknown status</li>
+<li><strong>Facility filter</strong> - Multi-select facilities (defaults to "all")</li>
+<li><strong>Group By selector</strong> - View by Facility, FOS, or All MMCD combined</li>
+<li><strong>Zone Display</strong> - P1 only, P2 only, separate, or combined</li>
+</ul>
+
+<h3>Treatment Categories</h3>
+<ol>
+<li><strong>Active</strong> - Treatments still effective (expiration date &gt; custom_today)</li>
+<li><strong>Expiring</strong> - Treatments expiring within X days (custom<em>today &lt; expiration ≤ custom</em>today + X)</li>
+<li><strong>Overdue</strong> - Structures without active treatments (need treatment)</li>
+</ul>
+
+<h3>Calculation Logic</h3>
+
+<h4>Step 1: Get All Qualifying Structures with Treatments</h4>
+<p>Query structures that have treatments, using gis_sectcode for zone, foreman, and facility:</p>
+<pre><code class="sql">
+SELECT 
+  trt.sitecode,
+  trt.inspdate,
+  gis.facility,
+  gis.fosarea as foreman,
+  COALESCE(mat.effect_days, 30) AS effect_days,
+  loc.s_type,
+  loc.priority,
+  loc.status_udw as status,
+  gis.zone
+FROM public.dblarv_insptrt_current trt
+LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode  
+LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+WHERE trt.list_type = 'STR'
+  AND (loc.enddate IS NULL OR loc.enddate &gt; CURRENT_DATE)
+  [... additional filters ...]
+</code></pre>
+
+<h4>Step 2: Calculate Treatment Status in R</h4>
+<p>After loading data, determine if each treatment is active or expiring:</p>
+<pre><code class="r">
+current_data &lt;- current_data %&gt;%
+  mutate(
+    inspdate = as.Date(inspdate),
+    enddate = inspdate + effect_days,  # Treatment expiration date
+    days_since_treatment = as.numeric(custom_today - inspdate),
+    is_active = days_since_treatment &lt;= effect_days,
+    is_expiring = days_since_treatment &gt; (effect_days - expiring_days) &amp; 
+                   days_since_treatment &lt;= effect_days
+  )
+</code></pre>
+
+<p><strong>Status Logic</strong>:</p>
+<ul>
+<li><strong>Active</strong>: <code>days<em>since</em>treatment &lt;= effect_days</code></li>
+<li><strong>Expiring</strong>: <code>days<em>since</em>treatment</code> between <code>(effect<em>days - expiring</em>days)</code> and <code>effect_days</code></li>
+<li><strong>Overdue</strong>: All structures without active treatments (calculated by set difference)</li>
+</ul>
+
+<h4>Step 3: Get Total Active Structures</h4>
+<p>Separate query to count all active structures (baseline for overdue calculation):</p>
+<pre><code class="sql">
+SELECT COUNT(DISTINCT sitecode)::bigint AS total_structures
+FROM public.loc_cxstruct
+WHERE (enddate IS NULL OR enddate &gt; DATE '[custom_today]')
+  AND zone IN ([zone_filter])
+  [... additional filters ...]
+</code></pre>
+
+<h4>Step 4: Aggregate by Group</h4>
+<p>Combine structures and treatments, group by facility/FOS/MMCD:</p>
+<ul>
+<li><strong>total_structures</strong>: Count all active structures</li>
+<li><strong>active<em>structures</strong>: Count DISTINCT sitecodes with <code>is</em>active = TRUE</code></li>
+<li><strong>expiring<em>structures</strong>: Count DISTINCT sitecodes with <code>is</em>expiring = TRUE</code></li>
+<li><strong>overdue</strong>: <code>total_structures - (active + expiring)</code></li>
+</ul>
+
+
+<h2>Tab 2: Historical Trends</h2>
+
+<h3>Purpose</h3>
+<p>Compare treatment activity across multiple years to identify trends and patterns.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Start Year / End Year selectors</strong> - Define date range for comparison</li>
+<li><strong>Year-over-year line chart</strong> - Track treatment patterns by year</li>
+<li><strong>Same filters as Current Progress</strong> - Facility, structure type, zone, etc.</li>
+</ul>
+
+<h3>Data Query Pattern</h3>
+<p>Query both archive and current tables, ensuring structures were active when treated:</p>
+<pre><code class="sql">
+-- Archive data
+SELECT DISTINCT
+  trt.sitecode,
+  trt.inspdate,
+  COALESCE(mat.effect_days, 30) AS effect_days,
+  loc.s_type,
+  loc.facility,
+  loc.foreman,
+  loc.zone
+FROM public.loc_cxstruct loc
+LEFT JOIN public.dblarv_insptrt_archive trt 
+  ON loc.sitecode = trt.sitecode 
+  AND trt.list_type = 'STR'
+LEFT JOIN public.mattype_list_targetdose mat 
+  ON trt.matcode = mat.matcode
+WHERE trt.inspdate &gt;= DATE '[start_year]-01-01'
+  AND trt.inspdate &lt; DATE '[end_year+1]-01-01'
+  AND trt.sitecode IS NOT NULL
+  AND (loc.enddate IS NULL OR loc.enddate &gt; trt.inspdate)
+  AND loc.zone IN ([zone_filter])
+  [... additional filters ...]
+
+-- Current data (same pattern)
+-- Combined in R with bind_rows()
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
+<ul>
+<li>Join FROM <code>loc_cxstruct</code> to ensure structure was active at treatment time</li>
+<li>Filter: <code>enddate &gt; inspdate</code> ensures structure existed when treated</li>
+<li><code>DISTINCT</code> avoids counting duplicate treatments</li>
+<li>Queries both archive and current tables, combines results</li>
+</ul>
+
+
+<h3>Removed priority filtering</h3>
+<p>The app originally included a priority filter in the UI:</p>
+<pre><code class="r">
+# REMOVED CODE:
+selectInput("priority_filter", "Priority:",
+            choices = get_priority_choices(include_all = TRUE),
+            selected = "all")
+</code></pre>
+
+<h3>Why It Was Removed</h3>
+<p><strong>Data Incomplete</strong>: Not all facilities have priority values assigned to structures. Filtering by priority would exclude many structures with NULL priority, giving incomplete results.</p>
+
+<h3>Current Implementation</h3>
+<ul>
+<li>Priority filter <strong>removed from UI</strong></li>
+<li>Priority parameter <strong>hardcoded to "all"</strong> in <code>refresh_inputs()</code></li>
+<li>Data functions still accept priority parameter for future use</li>
+<li>All structures included regardless of priority value</li>
+</ul>
+
+<h3>Code Comment</h3>
+<pre><code class="r">
+# we removed priority filter for now because data is incomplete
+# not all facilities have priorities for the structures
+</code></pre>
+
+<h3>If Re-enabling Priority Filter</h3>
+<ol>
+<li>Verify data completeness across all facilities</li>
+<li>Add back UI control in sidebar</li>
+<li>Change <code>priority<em>filter = "all"</code> to <code>priority</em>filter = isolate(input$priority<em>filter)</code> in <code>refresh</em>inputs()</code></li>
+<li>Test with facilities that have NULL priorities</li>
 </ul>
 
 <h3>Enddate Filtering</h3>
 
-<div class="success">
-    <h3>Added Enddate Filtering - Eliminates 211,232 ghost structures (87% of database)</h3>
-    <p>To ensure accurate data representation, enddate filtering has been implemented in all queries. This eliminates ghost structures—structures that no longer exist but were previously included in results.</p>
-</div>
+<p><strong>Added Enddate Filtering - Eliminates 211,232 ghost structures (87% of database)</strong></p>
 
-<h3>Current Queries</h3>
-<pre><code>(loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)</code></pre>
-<p>Filters out structures with an enddate in the past, ensuring only active structures are included.</p>
+<p>To ensure accurate data representation, enddate filtering has been implemented in all queries. This eliminates ghost structures—structures that no longer exist but were previously included in results.</p>
 
-<h3>Historical Queries</h3>
-<pre><code>(loc.enddate IS NULL OR loc.enddate > trt.inspdate)</code></pre>
-<p>Ensures structures were active at the time of treatment, preventing inclusion of structures that were closed before treatment occurred.</p>
+<h4>Current Queries</h4>
+<pre><code class="sql">
+(loc.enddate IS NULL OR loc.enddate &gt; CURRENT_DATE)
+</code></pre>
+<ul>
+<li>Filters out structures with an enddate in the past, ensuring only active structures are included.</li>
+</ul>
 
+<h4>Historical Queries</h4>
+<pre><code class="sql">
+(loc.enddate IS NULL OR loc.enddate &gt; trt.inspdate)
+</code></pre>
+<ul>
+<li>Ensures structures were active at the time of treatment, preventing inclusion of structures that were closed before treatment occurred.</li>
+</ul>
+
+<h2>File Structure</h2>
+
+<h3>app.R (Main Application)</h3>
+<ul>
+<li>UI definition with sidebar filters and tabbed display</li>
+<li>Server function with refresh pattern implementation</li>
+<li>Input capture and data loading logic</li>
+<li>Output rendering for both charts</li>
+</ul>
+
+<h3>data_functions.R (Database Queries)</h3>
+<p><strong>Key functions:</strong></p>
+<ul>
+<li><code>get<em>current</em>structure_data()</code> - Active/expiring/overdue treatments</li>
+<li><code>get<em>all</em>structures()</code> - Complete structure list with filters</li>
+<li><code>get<em>historical</em>structure_data()</code> - Year-over-year treatment counts</li>
+<li><code>aggregate<em>structure</em>data()</code> - Group and summarize for charts</li>
+</ul>
+
+<p><strong>Helper functions for SQL conditions:</strong></p>
+<ul>
+<li><code>get<em>facility</em>condition()</code> - Facility filter SQL (uses <code>trt.facility</code>)</li>
+<li><code>get<em>structure</em>type<em>condition()</code> - Type filter with CV/PR handling (uses <code>loc.s</em>type</code>)</li>
+<li><code>get<em>priority</em>condition()</code> - Priority filter SQL (uses <code>loc.priority</code>)</li>
+<li><code>get<em>status</em>condition()</code> - Status filter SQL (uses <code>loc.status_udw</code>)</li>
+<li><code>get<em>facility</em>condition_total()</code> - Combined filters for total counts (no table prefix)</li>
+</ul>
+
+<h3>display_functions.R (Visualization)</h3>
+<ul>
+<li><code>create<em>current</em>progress_chart()</code> - Horizontal stacked bar chart</li>
+<ul>
+<li>Blue/Orange/Red color scheme</li>
+<li>Large readable fonts</li>
+<li>Legend with status categories</li>
+</ul>
+<li><code>create<em>historical</em>trends_chart()</code> - Line chart with trends</li>
+<ul>
+<li>Year-over-year comparison</li>
+<li>Smoothed trend line</li>
+<li>Large axis labels and titles</li>
+</ul>
+</ul>
+    </div>
 </body>
 </html>

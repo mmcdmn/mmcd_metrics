@@ -1,16 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cattail Inspection Progress - Technical Notes</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             line-height: 1.6;
-            max-width: 900px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
-            color: #333;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         h1 {
             color: #2c3e50;
@@ -19,116 +26,99 @@
         }
         h2 {
             color: #34495e;
-            border-bottom: 2px solid #95a5a6;
-            padding-bottom: 5px;
             margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
         }
         h3 {
-            color: #555;
+            color: #7f8c8d;
             margin-top: 20px;
         }
         h4 {
-            color: #666;
+            color: #95a5a6;
             margin-top: 15px;
         }
         code {
-            background-color: #f4f4f4;
+            background-color: #f8f9fa;
             padding: 2px 6px;
             border-radius: 3px;
             font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
         }
         pre {
-            background-color: #f4f4f4;
-            padding: 15px;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
             border-radius: 5px;
             overflow-x: auto;
-            border-left: 4px solid #3498db;
+            margin: 15px 0;
+            border: 1px solid #34495e;
         }
         pre code {
             background-color: transparent;
+            color: #ecf0f1;
             padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
         }
         ul, ol {
-            margin-left: 20px;
+            margin: 10px 0;
+            padding-left: 30px;
         }
         li {
-            margin-bottom: 5px;
+            margin: 5px 0;
         }
-        strong {
-            color: #2c3e50;
-        }
-        .note {
-            background-color: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 10px;
-            margin: 15px 0;
-        }
-        .critical {
-            background-color: #f8d7da;
-            border-left: 4px solid #dc3545;
-            padding: 10px;
-            margin: 15px 0;
-        }
-        .example {
-            background-color: #e7f3fe;
-            border-left: 4px solid #2196F3;
-            padding: 10px;
-            margin: 15px 0;
-        }
-        .success {
-            background-color: #d4edda;
-            border-left: 4px solid #28a745;
-            padding: 10px;
-            margin: 15px 0;
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
         }
         table {
-            border-collapse: collapse;
             width: 100%;
-            margin: 15px 0;
+            border-collapse: collapse;
+            margin: 20px 0;
         }
         th, td {
             border: 1px solid #ddd;
-            padding: 8px;
+            padding: 12px;
             text-align: left;
         }
         th {
-            background-color: #3498db;
-            color: white;
+            background-color: #f5f5f5;
+            font-weight: bold;
         }
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
         }
-        @media print {
-            body {
-                max-width: 100%;
-                font-size: 11pt;
-            }
-            h1 {
-                page-break-before: always;
-            }
-            h1:first-child {
-                page-break-before: avoid;
-            }
-            h2, h3 {
-                page-break-after: avoid;
-            }
-            pre {
-                page-break-inside: avoid;
-            }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
-
+    <div class="container">
 <h1>Cattail Inspection Progress - Technical Notes</h1>
 
 <h2>Overview</h2>
 <p>This Shiny app tracks cattail larval mosquito inspection progress across three perspectives:</p>
 <ol>
-    <li><strong>Progress vs Goal</strong> - Current year actual inspections compared to facility-specific goals</li>
-    <li><strong>Historical Comparison</strong> - Current year performance vs previous years' baseline</li>
-    <li><strong>Treatment Planning</strong> - Planned treatments by facility and plan type</li>
-</ol>
+<li><strong>Progress vs Goal</strong> - Current year actual inspections compared to facility-specific goals</li>
+<li><strong>Historical Comparison</strong> - Current year performance vs previous years' baseline</li>
+<li><strong>Treatment Planning</strong> - Planned treatments by facility and plan type</li>
+</ul>
 
 <h2>Data Sources</h2>
 
@@ -136,94 +126,100 @@
 
 <h4>Primary Inspection Tables</h4>
 <ul>
-    <li><strong><code>dblarv_insptrt_current</code></strong> - Active larval inspection records
-        <ul>
-            <li>Contains ongoing inspections for current operations</li>
-            <li>Fields: <code>sitecode</code>, <code>facility</code>, <code>action</code>, <code>inspdate</code>, <code>reinspect</code></li>
-            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
-        </ul>
-    </li>
-    <li><strong><code>dblarv_insptrt_archive</code></strong> - Historical larval inspection records
-        <ul>
-            <li>Contains closed/archived inspections from previous years</li>
-            <li>Same schema as current table</li>
-            <li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
-        </ul>
-    </li>
+<li><strong><code>dblarv<em>insptrt</em>current</code></strong> - Active larval inspection records</li>
+<ul>
+<li>Contains ongoing inspections for current operations</li>
+<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>action</code>, <code>inspdate</code>, <code>reinspect</code></li>
+<li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>dblarv<em>insptrt</em>archive</code></strong> - Historical larval inspection records</li>
+<ul>
+<li>Contains closed/archived inspections from previous years</li>
+<li>Same schema as current table</li>
+<li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
+</ul>
 </ul>
 
 <h4>Supporting Tables</h4>
 <ul>
-    <li><strong><code>loc_breeding_sites</code></strong> - Site lifecycle tracking
-        <ul>
-            <li><strong>CRITICAL</strong>: This is the ONLY table with <code>enddate</code> column</li>
-            <li>Tracks when sites are opened and closed</li>
-            <li><strong>CAN HAVE MULTIPLE ROWS PER SITECODE</strong> with different enddates</li>
-            <li>Used to filter out sites that no longer exist</li>
-        </ul>
-    </li>
-    <li><strong><code>gis_sectcode</code></strong> - Section/zone information
-        <ul>
-            <li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
-            <li>Join pattern:<br>
-                <pre><code>LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode</code></pre>
-            </li>
-            <li>Note: Some sitecodes use directional suffixes (N, S, E, W) instead of '-'</li>
-        </ul>
-    </li>
-    <li><strong><code>cattail_pctcomplete_base</code></strong> - Goal/target data
-        <ul>
-            <li>Contains facility-specific goals for P1 and P2 zones</li>
-            <li>Fields: <code>facility</code>, <code>p1_totsitecount</code>, <code>p2_totsitecount</code></li>
-            <li><strong>ONLY USED FOR PROGRESS VS GOAL TAB</strong> - not for historical comparison</li>
-        </ul>
-    </li>
+<li><strong><code>loc<em>breeding</em>sites</code></strong> - Site lifecycle tracking</li>
+<ul>
+<li><strong>CRITICAL</strong>: This is the ONLY table with <code>enddate</code> column</li>
+<li>Tracks when sites are opened and closed</li>
+<li><strong>CAN HAVE MULTIPLE ROWS PER SITECODE</strong> with different enddates</li>
+<li>Used to filter out sites that no longer exist</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>gis_sectcode</code></strong> - Section/zone information</li>
+<ul>
+<li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
+<li>Join pattern: </li>
+</ul>
+</ul>
+<p>    ```sql</p>
+<p>    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode</p>
+<p>      OR LEFT(a.sitecode, 6) || 'N' = g.sectcode</p>
+<p>      OR LEFT(a.sitecode, 6) || 'S' = g.sectcode</p>
+<p>      OR LEFT(a.sitecode, 6) || 'E' = g.sectcode</p>
+<p>      OR LEFT(a.sitecode, 6) || 'W' = g.sectcode</p>
+<p>    ```</p>
+<ul>
+<li>Note: Some sitecodes use directional suffixes (N, S, E, W) instead of '-'</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>cattail<em>pctcomplete</em>base</code></strong> - Goal/target data</li>
+<ul>
+<li>Contains facility-specific goals for P1 and P2 zones</li>
+<li>Fields: <code>facility</code>, <code>p1<em>totsitecount</code>, <code>p2</em>totsitecount</code></li>
+<li><strong>ONLY USED FOR PROGRESS VS GOAL TAB</strong> - not for historical comparison</li>
+</ul>
 </ul>
 
 <h3>Action Codes</h3>
 <ul>
-    <li><strong>Action '9'</strong> - Cattail inspections (this is the focus of the app)</li>
-    <li>Other actions are filtered out</li>
+<li><strong>Action '9'</strong> - Cattail inspections (this is the focus of the app)</li>
+<li>Other actions are filtered out</li>
 </ul>
 
 <h3>Reinspect Flag</h3>
 <ul>
-    <li><strong>reinspect IS NULL OR reinspect = 'f'</strong> - First inspection (counted)</li>
-    <li><strong>reinspect = 't'</strong> - Re-inspection (excluded to avoid double-counting)</li>
+<li><strong>reinspect IS NULL OR reinspect = 'f'</strong> - First inspection (counted)</li>
+<li><strong>reinspect = 't'</strong> - Re-inspection (excluded to avoid double-counting)</li>
 </ul>
 
 <h2>Critical Data Integrity Issue: Site Enddate Filtering</h2>
 
-<div class="critical">
-    <h3>The Problem</h3>
-    <p><strong>Inspection tables do NOT have enddate columns.</strong> Sites that have been closed (enddate in past) can still have records in inspection tables, which would incorrectly inflate counts.</p>
-</div>
+<h3>The Problem</h3>
+<p><strong>Inspection tables do NOT have enddate columns.</strong> Sites that have been closed (enddate in past) can still have records in inspection tables, which would incorrectly inflate counts.</p>
 
-<div class="success">
-    <h3>The Solution</h3>
-    <p><strong>ALWAYS join with <code>loc_breeding_sites</code> and filter by enddate:</strong></p>
-    <pre><code>LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)</code></pre>
-</div>
+<h3>The Solution</h3>
+<p><strong>ALWAYS join with <code>loc<em>breeding</em>sites</code> and filter by enddate:</strong></p>
+
+<pre><code class="sql">
+LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
+WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+</code></pre>
 
 <h3>Why This Matters</h3>
 <ul>
-    <li>Site <code>190208-003</code> had 11 rows in <code>loc_breeding_sites</code>, ALL with past enddates</li>
-    <li>Without the join, inspections from 2019-2023 appeared in results</li>
-    <li>This caused "ghost sites" to appear in historical data</li>
-    <li><strong>EVERY query that counts sites MUST include this filter</strong></li>
+<li>Site <code>190208-003</code> had 11 rows in <code>loc<em>breeding</em>sites</code>, ALL with past enddates</li>
+<li>Without the join, inspections from 2019-2023 appeared in results</li>
+<li>This caused "ghost sites" to appear in historical data</li>
+<li><strong>EVERY query that counts sites MUST include this filter</strong></li>
 </ul>
 
 <h3>Which Queries Need This Filter?</h3>
-<ul>
-    <li>✅ <strong>Historical Comparison queries</strong> - Archive AND Current tables (both historical and current year queries)</li>
-    <li>✅ <strong>Sites table queries</strong> - Any query showing site details</li>
-    <li>❌ <strong>Progress vs Goal queries</strong> - These are year-specific and don't need active site filtering (the goal is based on that year's operation)</li>
-</ul>
+<p>✅ <strong>Historical Comparison queries</strong> - Archive AND Current tables (both historical and current year queries)</p>
+<p>✅ <strong>Sites table queries</strong> - Any query showing site details</p>
+
+<p>❌ <strong>Progress vs Goal queries</strong> - These are year-specific and don't need active site filtering (the goal is based on that year's operation)</p>
 
 <h2>Tab 1: Progress vs Goal</h2>
 
@@ -232,41 +228,55 @@ WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)</code></pre>
 
 <h3>Key Features</h3>
 <ul>
-    <li><strong>Year selector</strong> - Choose year to analyze (defaults to current year)</li>
-    <li><strong>Goal Type selector</strong> - P1 (Primary Goal) or P2 (Secondary Goal)</li>
-    <li><strong>Custom Date slider</strong> - Analyze progress "as of" a specific date in the year</li>
+<li><strong>Year selector</strong> - Choose year to analyze (defaults to current year)</li>
+<li><strong>Goal Type selector</strong> - P1 (Primary Goal) or P2 (Secondary Goal)</li>
+<li><strong>Custom Date slider</strong> - Analyze progress "as of" a specific date in the year</li>
 </ul>
 
 <h3>Data Flow</h3>
 <ol>
-    <li>Query <code>dblarv_insptrt_archive</code> and <code>dblarv_insptrt_current</code> for:
-        <ul>
-            <li>Action = '9' (cattail)</li>
-            <li>Selected year</li>
-            <li>Inspections on or before custom date</li>
-            <li>Exclude reinspects</li>
-        </ul>
-    </li>
-    <li>Join with <code>gis_sectcode</code> to get zone information</li>
-    <li>Group by facility and zone, COUNT total inspections</li>
-    <li>Query <code>cattail_pctcomplete_base</code> for goals (p1_totsitecount or p2_totsitecount)</li>
-    <li>Filter to selected zone only (zone '1' for P1, zone '2' for P2)</li>
-    <li>Create side-by-side bar chart:
-        <ul>
-            <li>Green bars: Actual inspections</li>
-            <li>Gray bars: Goal</li>
-        </ul>
-    </li>
-</ol>
+<li>Query <code>dblarv<em>insptrt</em>archive</code> and <code>dblarv<em>insptrt</em>current</code> for:</li>
+<ul>
+<li>Action = '9' (cattail)</li>
+<li>Selected year</li>
+<li>Inspections on or before custom date</li>
+<li>Exclude reinspects</li>
+</ul>
+</ul>
+
+<ol>
+<li>Join with <code>gis_sectcode</code> to get zone information</li>
+</ul>
+
+<ol>
+<li>Group by facility and zone, COUNT total inspections</li>
+</ul>
+
+<ol>
+<li>Query <code>cattail<em>pctcomplete</em>base</code> for goals (p1<em>totsitecount or p2</em>totsitecount)</li>
+</ul>
+
+<ol>
+<li>Filter to selected zone only (zone '1' for P1, zone '2' for P2)</li>
+</ul>
+
+<ol>
+<li>Create side-by-side bar chart:</li>
+<ul>
+<li>Green bars: Actual inspections</li>
+<li>Gray bars: Goal</li>
+</ul>
+</ul>
 
 <h3>SQL Query Pattern</h3>
-<pre><code>-- Get actuals from archive
+<pre><code class="sql">
+-- Get actuals from archive
 SELECT a.facility, g.zone, COUNT(*) AS inspections
 FROM public.dblarv_insptrt_archive a
 LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, ...) = LEFT(g.sectcode, ...)
 WHERE a.action = '9'
   AND EXTRACT(YEAR FROM a.inspdate) = [year]
-  AND a.inspdate <= '[custom_date]'
+  AND a.inspdate &lt;= '[custom_date]'
   AND (a.reinspect IS NULL OR a.reinspect = 'f')
 GROUP BY a.facility, g.zone
 
@@ -275,11 +285,10 @@ UNION with same query on dblarv_insptrt_current
 
 -- Get goals
 SELECT facility, p1_totsitecount, p2_totsitecount 
-FROM public.cattail_pctcomplete_base</code></pre>
+FROM public.cattail_pctcomplete_base
+</code></pre>
 
-<div class="note">
-    <strong>NOTE</strong>: No <code>loc_breeding_sites</code> join needed here because we're measuring year-specific operational progress, not active site status.
-</div>
+<p><strong>NOTE</strong>: No <code>loc<em>breeding</em>sites</code> join needed here because we're measuring year-specific operational progress, not active site status.</p>
 
 <h2>Tab 2: Historical Comparison</h2>
 
@@ -288,83 +297,161 @@ FROM public.cattail_pctcomplete_base</code></pre>
 
 <h3>Key Features</h3>
 <ul>
-    <li><strong>Zone selector</strong> - P1 (Zone 1) or P2 (Zone 2)
-        <ul>
-            <li><strong>IMPORTANT</strong>: This is NOT "goal type" - it's just zone filtering</li>
-            <li>The goal table is NOT used in this tab at all</li>
-        </ul>
-    </li>
-    <li><strong>Previous X years slider</strong> - Number of historical years to compare (1-10, default 3)</li>
-    <li><strong>Facility filter</strong> - Multi-select to focus on specific facilities or all</li>
-    <li><strong>Sites table view toggle</strong>:
-        <ul>
-            <li>"All sites in last X years" - Show all sites inspected historically</li>
-            <li>"Sites NOT checked this year" - Show sites needing attention</li>
-        </ul>
-    </li>
+<li><strong>Zone selector</strong> - P1 (Zone 1) or P2 (Zone 2)</li>
+<ul>
+<li><strong>IMPORTANT</strong>: This is NOT "goal type" - it's just zone filtering</li>
+<li>The goal table is NOT used in this tab at all</li>
+</ul>
+<li><strong>Previous X years slider</strong> - Number of historical years to compare (1-10, default 3)</li>
+<li><strong>Facility filter</strong> - Multi-select to focus on specific facilities or all</li>
+<li><strong>Sites table view toggle</strong>:</li>
+<ul>
+<li>"All sites in last X years" - Show all sites inspected historically</li>
+<li>"Sites NOT checked this year" - Show sites needing attention</li>
+</ul>
 </ul>
 
 <h3>Historical Baseline Calculation</h3>
-<p><strong>Historical Baseline</strong> = ALL unique sites inspected in years [current_year - X] through [current_year - 1]</p>
+<p><strong>Historical Baseline</strong> = ALL unique sites inspected in years [current<em>year - X] through [current</em>year - 1]</p>
 
-<div class="example">
-    <strong>Example</strong> (current year = 2025, X = 3):
-    <ul>
-        <li>Historical range: 2022, 2023, 2024 (excludes 2025)</li>
-        <li>Query finds ALL unique sites inspected across those 3 years COMBINED</li>
-        <li>This is a <strong>TOTAL COMBINED COUNT</strong>, not an average</li>
-        <li>If a site was inspected in 2022, 2023, and 2024, it's counted once</li>
-        <li>If a site was only inspected in 2023, it's counted once</li>
-    </ul>
-    <p><strong>Current Year</strong> = Unique sites inspected in 2025</p>
-    <p><strong>Important</strong>: This shows TOTAL unique sites over X years, NOT the average per year.</p>
-</div>
-
-<h3>Graph Query</h3>
-<p><strong>Historical Baseline Query:</strong></p>
-<pre><code>WHERE EXTRACT(YEAR FROM a.inspdate) >= [current_year - X]
-  AND EXTRACT(YEAR FROM a.inspdate) <= [current_year - 1]
-  AND g.zone = '[selected_zone]'
-  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)  -- Critical!</code></pre>
-
-<p><strong>Current Year Query:</strong></p>
-<pre><code>WHERE EXTRACT(YEAR FROM a.inspdate) = [current_year]
-  AND g.zone = '[selected_zone]'
-  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)  -- Critical!</code></pre>
-
+<p>Example (current year = 2025, X = 3):</p>
 <ul>
-    <li>Combines archive + current tables with UNION ALL</li>
-    <li>Joins with <code>gis_sectcode</code> for zone filtering</li>
-    <li><strong>Joins with <code>loc_breeding_sites</code> to exclude ended sites</strong></li>
-    <li>Groups by facility</li>
-    <li>Uses <code>COUNT(DISTINCT sitecode)</code> to avoid duplicates</li>
+<li>Historical range: 2022, 2023, 2024 (excludes 2025)</li>
+<li>Query finds ALL unique sites inspected across those 3 years COMBINED</li>
+<li>This is a <strong>TOTAL COMBINED COUNT</strong>, not an average</li>
+<li>If a site was inspected in 2022, 2023, and 2024, it's counted once</li>
+<li>If a site was only inspected in 2023, it's counted once</li>
 </ul>
 
-<h3>Chart Display</h3>
-<p>Side-by-side bars for clear comparison:</p>
-<ul>
-    <li>Gray bars: Historical Baseline</li>
-    <li>Green bars: Current Year</li>
-    <li>Legend at top shows which is which</li>
+<p><strong>Current Year</strong> = Unique sites inspected in 2025</p>
+
+<p><strong>Important</strong>: This shows TOTAL unique sites over X years, NOT the average per year.</p>
+
+<h3>Data Flow</h3>
+
+<h4>Graph Query</h4>
+<ol>
+<li>Query for <strong>Historical Baseline</strong>:</li>
 </ul>
+<p>   ```sql</p>
+<p>   WHERE EXTRACT(YEAR FROM a.inspdate) &gt;= [current_year - X]</p>
+<p>     AND EXTRACT(YEAR FROM a.inspdate) &lt;= [current_year - 1]</p>
+<p>     AND g.zone = '[selected_zone]'</p>
+<p>     AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Critical!</p>
+<p>   ```</p>
+<ul>
+<li>Combines archive + current tables with UNION ALL</li>
+<li>Joins with <code>gis_sectcode</code> for zone filtering</li>
+<li><strong>Joins with <code>loc<em>breeding</em>sites</code> to exclude ended sites</strong></li>
+<li>Groups by facility</li>
+<li>Uses <code>COUNT(DISTINCT sitecode)</code> to avoid duplicates</li>
+</ul>
+</ul>
+
+<ol>
+<li>Query for <strong>Current Year</strong>:</li>
+</ul>
+<p>   ```sql</p>
+<p>   WHERE EXTRACT(YEAR FROM a.inspdate) = [current_year]</p>
+<p>     AND g.zone = '[selected_zone]'</p>
+<p>     AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Critical!</p>
+<p>   ```</p>
+<ul>
+<li>Same structure as historical query</li>
+<li>Only difference: single year filter</li>
+</ul>
+</ul>
+
+<ol>
+<li>Combine results with type labels:</li>
+<ul>
+<li>Historical results get <code>type = "Historical Baseline"</code></li>
+<li>Current results get <code>type = "Current Year"</code></li>
+</ul>
+</ul>
+
+<ol>
+<li>Plot as side-by-side bars:</li>
+<ul>
+<li>Gray bars: Historical Baseline</li>
+<li>Green bars: Current Year</li>
+<li>Legend at top shows which is which</li>
+</ul>
+</ul>
+
+<h4>Sites Table Query</h4>
+
+<p><strong>Two modes based on <code>sites<em>view</em>type</code>:</strong></p>
+
+<h5>Mode 1: "All sites in last X years"</h5>
+<p>Shows every unique site inspected in the historical range, with details about when it was last inspected.</p>
+
+<pre><code class="sql">
+WITH historical_sites AS (
+  -- Get all sites from historical range (archive + current)
+  SELECT DISTINCT sitecode, facility
+  WHERE inspdate between [start_year] and [end_year]
+    AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+),
+current_year_sites AS (
+  -- Get sites inspected this year
+  SELECT DISTINCT sitecode
+  WHERE EXTRACT(YEAR FROM inspdate) = [current_year]
+)
+SELECT h.sitecode, h.facility,
+       MAX(a.inspdate) as last_inspdate,
+       CASE WHEN c.sitecode IS NOT NULL THEN 'Yes' ELSE 'No' END as checked_this_year
+FROM historical_sites h
+LEFT JOIN inspections a ON h.sitecode = a.sitecode
+LEFT JOIN current_year_sites c ON h.sitecode = c.sitecode
+GROUP BY h.sitecode, h.facility, c.sitecode
+</code></pre>
+
+<h5>Mode 2: "Sites NOT checked this year"</h5>
+<p>Shows only sites that were inspected historically but have NOT been inspected in the current year.</p>
+
+<pre><code class="sql">
+WITH historical_sites AS (
+  -- Sites from historical range only
+),
+current_year_sites AS (
+  -- Sites inspected this year
+)
+SELECT h.sitecode, h.facility, MAX(a.inspdate) as last_inspdate
+FROM historical_sites h
+LEFT JOIN current_year_sites c ON h.sitecode = c.sitecode
+WHERE c.sitecode IS NULL  -- Not in current year
+</code></pre>
+
+<p><strong>Key Insight</strong>: Mode 2 is a filtered subset of Mode 1, showing only sites that need attention.</p>
 
 <h3>Why COUNT(DISTINCT sitecode)?</h3>
 <p>A site can be inspected multiple times in a year (e.g., monthly checks). Using <code>COUNT(DISTINCT sitecode)</code> ensures:</p>
 <ul>
-    <li>Site with 1 inspection = counted once</li>
-    <li>Site with 5 inspections = counted once</li>
-    <li>This gives unique site count, not total inspection count</li>
+<li>Site with 1 inspection = counted once</li>
+<li>Site with 5 inspections = counted once</li>
+<li>This gives unique site count, not total inspection count</li>
 </ul>
 
-<div class="example">
-    <strong>Example for Sr facility in 2025:</strong>
-    <ul>
-        <li>Total inspections: 1,822</li>
-        <li>Unique sites: 1,662</li>
-        <li>Difference: 160 sites had multiple inspections</li>
-    </ul>
-</div>
+<p>Example for Sr facility in 2025:</p>
+<ul>
+<li>Total inspections: 1,822</li>
+<li>Unique sites: 1,662</li>
+<li>Difference: 160 sites had multiple inspections</li>
+</ul>
 
+<h3>Zone vs Goal Confusion</h3>
+<p><strong>IMPORTANT</strong>: The Historical Comparison tab selector was incorrectly labeled "Goal Type" initially, but it should be "Zone":</p>
+<ul>
+<li><strong>Progress vs Goal tab</strong>: Uses goal table, compares to targets</li>
+<li><strong>Historical Comparison tab</strong>: Does NOT use goal table, just filters by zone for geographic grouping</li>
+</ul>
+
+<p>Zones are simply geographic areas:</p>
+<ul>
+<li><strong>Zone 1 (P1)</strong> = Primary area operations</li>
+<li><strong>Zone 2 (P2)</strong> = Secondary area operations</li>
+</ul>
 
 <h2>Tab 3: Treatment Planning</h2>
 
@@ -373,115 +460,249 @@ FROM public.cattail_pctcomplete_base</code></pre>
 
 <h3>Key Features</h3>
 <ul>
-    <li><strong>View by</strong>: Acres or Number of Sites</li>
-    <li><strong>Facility filter</strong>: Select specific facility or all</li>
-    <li><strong>Plan type checkboxes</strong>: A, D, G, N, U (different treatment plan categories)</li>
+<li><strong>View by</strong>: Acres or Number of Sites</li>
+<li><strong>Facility filter</strong>: Select specific facility or all</li>
+<li><strong>Plan type checkboxes</strong>: A, D, G, N, U (different treatment plan categories)</li>
 </ul>
 
-<div class="note">
-    <strong>NOTE</strong>: This tab's queries and logic are in <code>planned_treatment_functions.R</code>
-</div>
+<h3>Data Flow</h3>
+<p>Queries planned treatment data and displays:</p>
+<ul>
+<li>Bar chart showing planned acres/sites by facility</li>
+<li>Table showing site-level details with plan types</li>
+</ul>
+
+<p><strong>NOTE</strong>: This tab's queries and logic are in <code>planned<em>treatment</em>functions.R</code></p>
 
 <h2>Code Organization</h2>
 
 <h3>File Structure</h3>
-<pre><code>cattail/
+<pre><code class="">
+cattail/
 ├── app.R                          # Main UI and server logic (NO SQL!)
 ├── progress_functions.R           # Progress vs Goal tab functions
 ├── historical_functions.R         # Historical Comparison tab functions
 ├── planned_treatment_functions.R  # Treatment Planning tab functions
 ├── test_sr_counts.R              # Test script for Sr facility counts
 ├── test_sr_zone_comparison.R     # Test script for zone-specific counts
-└── NOTES.md                       # Documentation (markdown)
-└── NOTES.html                     # Documentation (this file)</code></pre>
+└── NOTES.md                       # This file
+</code></pre>
 
 <h3>Design Principles</h3>
 <ol>
-    <li><strong>Separation of Concerns</strong>: UI/server in app.R, ALL SQL in function files</li>
-    <li><strong>No SQL in app.R</strong>: Every query is wrapped in a function</li>
-    <li><strong>Consistent Patterns</strong>: All tabs follow same structure:
-        <ul>
-            <li>eventReactive for data loading on refresh button</li>
-            <li>Function calls with input parameters</li>
-            <li>Render functions for plots and tables</li>
-        </ul>
-    </li>
-</ol>
+<li><strong>Separation of Concerns</strong>: UI/server in app.R, ALL SQL in function files</li>
+<li><strong>No SQL in app.R</strong>: Every query is wrapped in a function</li>
+<li><strong>Consistent Patterns</strong>: All tabs follow same structure:</li>
+<ul>
+<li>eventReactive for data loading on refresh button</li>
+<li>Function calls with input parameters</li>
+<li>Render functions for plots and tables</li>
+</ul>
+</ul>
 
 <h3>Function Files</h3>
 
-<h4>progress_functions.R</h4>
+<h4><code>progress_functions.R</code></h4>
 <ul>
-    <li><code>get_progress_data(year, goal_column, custom_today)</code> - Query actuals and goals</li>
-    <li><code>create_progress_plot(data)</code> - Render progress bar chart</li>
+<li><code>get<em>progress</em>data(year, goal<em>column, custom</em>today)</code> - Query actuals and goals</li>
+<li><code>create<em>progress</em>plot(data)</code> - Render progress bar chart</li>
 </ul>
 
-<h4>historical_functions.R</h4>
+<h4><code>historical_functions.R</code></h4>
 <ul>
-    <li><code>get_historical_progress_data(hist_years, hist_zone, hist_facility_filter)</code> - Query historical + current year data</li>
-    <li><code>create_historical_progress_plot(data, hist_years)</code> - Render side-by-side comparison chart</li>
-    <li><code>get_sites_table_data(hist_years, hist_zone, hist_facility_filter, sites_view_type)</code> - Query site details</li>
+<li><code>get<em>historical</em>progress<em>data(hist</em>years, hist<em>zone, hist</em>facility_filter)</code> - Query historical + current year data</li>
+<li><code>create<em>historical</em>progress<em>plot(data, hist</em>years)</code> - Render side-by-side comparison chart</li>
+<li><code>get<em>sites</em>table<em>data(hist</em>years, hist<em>zone, hist</em>facility<em>filter, sites</em>view_type)</code> - Query site details</li>
 </ul>
 
-<h4>planned_treatment_functions.R</h4>
+<h4><code>planned<em>treatment</em>functions.R</code></h4>
 <ul>
-    <li>Functions for treatment planning tab</li>
+<li>Functions for treatment planning tab (not detailed here)</li>
 </ul>
 
-<h3>Shared Utilities (shared/db_helpers.R)</h3>
+<h3>Shared Utilities (<code>shared/db_helpers.R</code>)</h3>
 <ul>
-    <li><code>get_db_connection()</code> - Database connection helper</li>
-    <li><code>get_facility_choices()</code> - Facility dropdown options</li>
-    <li><code>get_facility_base_colors()</code> - Color mapping for facilities</li>
-    <li><code>get_status_colors()</code> - Color mapping for status types (active, planned, etc.)</li>
-    <li><code>map_facility_names()</code> - Convert facility codes to display names</li>
+<li><code>get<em>db</em>connection()</code> - Database connection helper</li>
+<li><code>get<em>facility</em>choices()</code> - Facility dropdown options</li>
+<li><code>get<em>facility</em>base_colors()</code> - Color mapping for facilities</li>
+<li><code>get<em>status</em>colors()</code> - Color mapping for status types (active, planned, etc.)</li>
+<li><code>map<em>facility</em>names()</code> - Convert facility codes to display names</li>
 </ul>
 
 <h2>Common Data Patterns</h2>
 
 <h3>Facility Codes</h3>
-<p>Display names are mapped via <code>map_facility_names()</code> from db_helpers.</p>
+<ul>
+<li><strong>E</strong> - Eden Prairie</li>
+<li><strong>N</strong> - North Metro</li>
+<li><strong>Sj</strong> - St. Paul  </li>
+<li><strong>Sr</strong> - South Metro</li>
+<li><strong>Wm</strong> - Maple Grove</li>
+<li><strong>Wp</strong> - Plymouth</li>
+</ul>
+
+<p>Display names are mapped via <code>map<em>facility</em>names()</code> from db_helpers.</p>
 
 <h3>Zone Mapping</h3>
 <p>Zones are extracted from site codes via <code>gis_sectcode</code> join:</p>
-<pre><code>LEFT JOIN public.gis_sectcode g 
+<pre><code class="sql">
+LEFT JOIN public.gis_sectcode g 
   ON LEFT(a.sitecode, 6) || '-' = g.sectcode
   OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
   OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
   OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode</code></pre>
+  OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+</code></pre>
+
 <p>This matches the first 6 characters of the sitecode and tries multiple suffix patterns ('-', 'N', 'S', 'E', 'W') to find the corresponding sectcode and get the zone.</p>
 
+<h3>Date Handling</h3>
+<ul>
+<li>Dates stored as PostgreSQL <code>date</code> or <code>timestamp</code></li>
+<li>Converted to R <code>Date</code> objects</li>
+<li>UI date inputs use <code>dateInput()</code> widget</li>
+<li>SQL date filtering: <code>EXTRACT(YEAR FROM inspdate) = 2025</code></li>
+</ul>
+
+<h2>Performance Considerations</h2>
+
+<h3>Query Optimization</h3>
+<ol>
+<li><strong>Filter early</strong>: Apply action, year, reinspect filters in WHERE clause before joins</li>
+<li><strong>UNION ALL vs UNION</strong>: Use UNION ALL (keeps duplicates) then COUNT DISTINCT instead of UNION (removes duplicates during merge)</li>
+<li><strong>Index-friendly</strong>: Year extraction and zone filtering are indexed in database</li>
+</ul>
+
+<h3>R-Side Processing</h3>
+<ol>
+<li><strong>Numeric conversion</strong>: Convert integer64 to numeric immediately after query</li>
+<li><strong>Group operations</strong>: Use dplyr for efficient grouping and summarization</li>
+<li><strong>Reactive data</strong>: Use <code>eventReactive</code> to load data only on button click, preventing accidental heavy queries</li>
+</ul>
+
+<h2>Testing &amp; Validation</h2>
+
+<h3>Test Scripts</h3>
+
+<h4><code>test<em>sr</em>counts.R</code></h4>
+<p>Tests Sr facility inspection counts for 2024 vs 2025:</p>
+<ul>
+<li>Verifies COUNT(DISTINCT sitecode) logic</li>
+<li>Checks for duplicate inspections</li>
+<li>Shows zone distribution</li>
+<li>Confirms enddate filtering works</li>
+</ul>
+
+<h4><code>test<em>sr</em>zone_comparison.R</code></h4>
+<p>Tests zone-specific counts to match app output:</p>
+<ul>
+<li>Runs same query as app with zone filtering</li>
+<li>Compares P1 vs P2 results</li>
+<li>Validates that test matches actual app behavior</li>
+</ul>
+
 <h3>Known Test Results (as of Nov 2025)</h3>
-<table>
-    <tr>
-        <th>Facility</th>
-        <th>Zone</th>
-        <th>2024</th>
-        <th>2025</th>
-        <th>Change</th>
-    </tr>
-    <tr>
-        <td>Sr</td>
-        <td>P1 (Zone 1)</td>
-        <td>858</td>
-        <td>1,207</td>
-        <td>+40%</td>
-    </tr>
-    <tr>
-        <td>Sr</td>
-        <td>P2 (Zone 2)</td>
-        <td>122</td>
-        <td>170</td>
-        <td>+39%</td>
-    </tr>
-</table>
+<p><strong>Sr Facility - Zone 1 (P1):</strong></p>
+<ul>
+<li>2024: 858 unique sites</li>
+<li>2025: 1,207 unique sites (+40% increase)</li>
+</ul>
 
+<p><strong>Sr Facility - Zone 2 (P2):</strong></p>
+<ul>
+<li>2024: 122 unique sites</li>
+<li>2025: 170 unique sites (+39% increase)</li>
+</ul>
 
-<hr>
-<p style="text-align: center; color: #999; margin-top: 40px;">
-    <em>Last updated: November 2025</em>
-</p>
+<h3>Validation Checklist</h3>
+<p>✅ No duplicate site codes in results (use COUNT DISTINCT)</p>
+<p>✅ Sites with past enddates are excluded (loc<em>breeding</em>sites join)</p>
+<p>✅ Reinspects are excluded (reinspect = 'f' or NULL)</p>
+<p>✅ Only action '9' included</p>
+<p>✅ Zone filtering matches user selection</p>
+<p>✅ Historical range excludes current year</p>
 
+<h2>Common Issues &amp; Solutions</h2>
+
+<h3>Issue 1: Sites with Past Enddates Appearing</h3>
+<p><strong>Symptom</strong>: Sites that no longer exist show up in results</p>
+<p><strong>Cause</strong>: Missing <code>loc<em>breeding</em>sites</code> join with enddate filter</p>
+<p><strong>Solution</strong>: Always join and filter:</p>
+<pre><code class="sql">
+LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
+WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+</code></pre>
+
+<h3>Issue 2: Duplicate Site Counts</h3>
+<p><strong>Symptom</strong>: Count is higher than expected</p>
+<p><strong>Cause</strong>: Using <code>COUNT(*)</code> instead of <code>COUNT(DISTINCT sitecode)</code></p>
+<p><strong>Solution</strong>: Always use <code>COUNT(DISTINCT sitecode)</code> when counting unique sites</p>
+
+<h3>Issue 3: Integer64 Precision Loss</h3>
+<p><strong>Symptom</strong>: Calculations produce unexpected results</p>
+<p><strong>Cause</strong>: PostgreSQL returns integer64 for COUNT/SUM</p>
+<p><strong>Solution</strong>: Convert to numeric immediately:</p>
+<pre><code class="r">
+result$count &lt;- as.numeric(result$count)
+</code></pre>
+
+<h3>Issue 4: Wrong Tab Using Goal Table</h3>
+<p><strong>Symptom</strong>: Historical comparison showing goal-related data</p>
+<p><strong>Cause</strong>: Confusion between "goal type" and "zone"</p>
+<p><strong>Solution</strong>: </p>
+<ul>
+<li>Progress vs Goal tab: Uses <code>cattail<em>pctcomplete</em>base</code> table</li>
+<li>Historical Comparison tab: Does NOT use goal table, only zone filtering</li>
+</ul>
+
+<h3>Issue 5: Overlapping Bars in Chart</h3>
+<p><strong>Symptom</strong>: Can't see both historical and current bars when current is higher</p>
+<p><strong>Cause</strong>: Overlaid bar design covers smaller bar</p>
+<p><strong>Solution</strong>: Use side-by-side (position_dodge) bars instead of overlaid</p>
+
+<h2>Future Enhancements</h2>
+
+<p>Potential improvements:</p>
+<ul>
+<li>Add year-over-year trend analysis</li>
+<li>Export tables to Excel</li>
+<li>Show percentage progress toward goal</li>
+<li>Add time-series animation</li>
+<li>Include weather/climate data correlation</li>
+<li>Highlight facilities behind schedule</li>
+<li>Add email alerts for low progress</li>
+<li>Show site-level inspection history timeline</li>
+</ul>
+
+<h2>Database Connection</h2>
+
+<h3>Connection Details</h3>
+<ul>
+<li>Host: rds-readonly.mmcd.org</li>
+<li>Port: 5432</li>
+<li>Database: mmcd_data</li>
+<li>User: readonly</li>
+<li>Connection managed via <code>get<em>db</em>connection()</code> from shared/db_helpers.R</li>
+</ul>
+
+<h3>Best Practices</h3>
+<ul>
+<li>Always disconnect after query: <code>dbDisconnect(con)</code></li>
+<li>Use parameterized queries with sprintf for safe SQL generation</li>
+<li>Return empty data.frame() if connection fails</li>
+<li>Check for NULL connection before querying</li>
+</ul>
+
+<h2>Key Takeaways</h2>
+
+<ol>
+<li><strong>Site enddate filtering is CRITICAL</strong> - Must join <code>loc<em>breeding</em>sites</code> on historical queries</li>
+<li><strong>COUNT DISTINCT for unique sites</strong> - Sites can have multiple inspections</li>
+<li><strong>Historical baseline is TOTAL COMBINED count</strong> - NOT an average, ALL unique sites across X years</li>
+<li><strong>Zone ≠ Goal</strong> - Historical tab uses zones for geographic filtering, not goal targets</li>
+<li><strong>Separate SQL from UI</strong> - All queries in function files, never in app.R</li>
+<li><strong>Test your queries</strong> - Use test scripts to validate counts match expected results</li>
+</ul>
+    </div>
 </body>
 </html>

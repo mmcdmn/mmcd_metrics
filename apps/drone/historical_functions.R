@@ -6,7 +6,7 @@ get_shared_historical_data <- function(hist_start_year, hist_end_year, drone_typ
 }
 
 # Historical data function
-get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types) {
+get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types, analysis_date = Sys.Date()) {
   con <- get_db_connection()
   if (is.null(con)) {
     return(NULL)
@@ -18,7 +18,8 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types)
     FROM public.dblarv_insptrt_archive
     WHERE action = 'D'
     AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
-  ", as.integer(hist_start_year), as.integer(hist_end_year))
+    AND inspdate <= '%s'
+  ", as.integer(hist_start_year), as.integer(hist_end_year), as.character(analysis_date))
   
   archive_data <- dbGetQuery(con, archive_query)
   
@@ -28,7 +29,8 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types)
     FROM public.dblarv_insptrt_current
     WHERE (airgrnd_plan = 'D' OR action = 'D')
     AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
-  ", as.integer(hist_start_year), as.integer(hist_end_year))
+    AND inspdate <= '%s'
+  ", as.integer(hist_start_year), as.integer(hist_end_year), as.character(analysis_date))
   
   current_data <- dbGetQuery(con, current_query)
   
@@ -86,9 +88,9 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types)
 }
 
 # Process historical data based on user selections
-get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric) {
+get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, analysis_date = Sys.Date()) {
   # Get raw data
-  data_list <- get_historical_raw_data(hist_start_year, hist_end_year, drone_types)
+  data_list <- get_historical_raw_data(hist_start_year, hist_end_year, drone_types, analysis_date)
   if (is.null(data_list)) {
     return(data.frame())
   }
@@ -327,8 +329,8 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
 }
 
 # Historical plot output - EXACT copy from backup
-create_historical_plot <- function(zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, hist_show_percentages, hist_start_year, hist_end_year, drone_types) {
-  data <- get_historical_processed_data(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric)
+create_historical_plot <- function(zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, hist_show_percentages, hist_start_year, hist_end_year, drone_types, analysis_date = Sys.Date()) {
+  data <- get_historical_processed_data(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, analysis_date)
   if (nrow(data) == 0) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
     text(1, 1, "No data available for the selected criteria", cex = 1.5)

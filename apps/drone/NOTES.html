@@ -580,7 +580,15 @@ AND b.enddate IS NULL</code></pre>
         <pre><code>SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days
 FROM public.dblarv_insptrt_current t
 LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')</code></pre>
+WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
+AND t.inspdate <= '[analysis_date]'</code></pre>
+        <p><strong>Key Points:</strong></p>
+        <ul>
+            <li>Filters drone treatments: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code></li>
+            <li>Joins with mattype_list_targetdose for treatment duration</li>
+            <li>Uses actual recorded treated acres from treatment records</li>
+            <li><strong>NEW:</strong> Filters by analysis date to exclude future treatments</li>
+        </ul>
 
         <h3>3. Individual Treatment Records Query</h3>
         <p><strong>Function:</strong> <code>get_sitecode_data()</code> in <code>data_functions.R</code><br>
@@ -593,6 +601,7 @@ WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')</code></pre>
     FROM public.dblarv_insptrt_current t
     WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
         AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.inspdate <= '[analysis_date]'
         AND t.matcode IS NOT NULL AND t.acres IS NOT NULL AND t.acres > 0
     UNION ALL
     SELECT t.facility, t.sitecode, t.inspdate, t.matcode, 
@@ -602,6 +611,7 @@ WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')</code></pre>
     FROM public.dblarv_insptrt_archive t
     WHERE t.action = 'D'
         AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.inspdate <= '[analysis_date]'
         AND t.matcode IS NOT NULL AND t.acres IS NOT NULL AND t.acres > 0
 ),
 location_data AS (
@@ -633,6 +643,24 @@ FROM public.gis_facility
 WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
 ORDER BY abbrv</code></pre>
 
+        <h3>4. Historical Archive Data Query (UPDATED)</h3>
+        <p><strong>Function:</strong> <code>get_historical_raw_data()</code> in <code>historical_functions.R</code><br>
+        <strong>Purpose:</strong> Load historical treatment data from archive</p>
+        <pre><code>SELECT facility, sitecode, inspdate, action, matcode, amts as amount, acres as treated_acres
+FROM public.dblarv_insptrt_archive
+WHERE action = 'D'
+AND EXTRACT(YEAR FROM inspdate) BETWEEN [start_year] AND [end_year]
+AND inspdate <= '[analysis_date]'</code></pre>
+
+        <h3>5. Historical Current Data Query (UPDATED)</h3>
+        <p><strong>Function:</strong> <code>get_historical_raw_data()</code> in <code>historical_functions.R</code><br>
+        <strong>Purpose:</strong> Load recent treatment data from current table</p>
+        <pre><code>SELECT facility, sitecode, inspdate, action, airgrnd_plan, matcode, amts as amount, acres as treated_acres
+FROM public.dblarv_insptrt_current
+WHERE (airgrnd_plan = 'D' OR action = 'D')
+AND EXTRACT(YEAR FROM inspdate) BETWEEN [start_year] AND [end_year]
+AND inspdate <= '[analysis_date]'</code></pre>
+
         <h3>SQL Query Patterns</h3>
         <h4>Common Join Pattern</h4>
         <pre><code>FROM treatment_table t
@@ -648,9 +676,21 @@ LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num
             <li><strong>Site designation:</strong> <code>(drone IN ('Y','M','C') OR air_gnd = 'D')</code></li>
         </ul>
 
+        <h4>Analysis Date Filtering (NEW)</h4>
+        <div class="callout callout-info">
+            <p><strong>Feature:</strong> All queries now include an analysis date filter for "time travel" analysis</p>
+        </div>
+        <ul>
+            <li><strong>Implementation:</strong> <code>AND inspdate <= '[analysis_date]'</code> added to all treatment queries</li>
+            <li><strong>Purpose:</strong> Analyze data as if "today" were a different date</li>
+            <li><strong>Usage:</strong> Set the "Analysis Date (Pretend Today Is)" field in the UI</li>
+            <li><strong>Benefits:</strong> Historical analysis, trend comparison, data validation, reporting cutoffs</li>
+        </ul>
+
+
         <div class="callout callout-success">
             <p><strong>Last Updated:</strong> November 13, 2025</p>
-            <p><strong>App Version:</strong> Refactored with modular file structure and refresh button pattern</p>
+            <p><strong>App Version:</strong> Added analysis date filtering and fixed FOS display names</p>
         </div>
     </div>
 </body>

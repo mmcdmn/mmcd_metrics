@@ -210,10 +210,12 @@ Analyze site-level treatment statistics and identify largest/smallest drone site
 
 ### Visualization
 - **Horizontal bar chart** (coord_flip)
-- **X-axis**: Facility or FOS name
+- **X-axis**: Facility or FOS name 
 - **Y-axis**: Acres (average, min, or max based on selection)
 - Bars sorted by value (largest at top)
 - Colors match Current Progress tab
+
+
 
 ### Site Rankings Tables
 - **Largest Sites Table**: Top 10 treatments by acres
@@ -413,6 +415,7 @@ WITH treatment_data AS (
     FROM public.dblarv_insptrt_current t
     WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
         AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.inspdate <= '[analysis_date]'
         AND t.matcode IS NOT NULL
         AND t.acres IS NOT NULL
         AND t.acres > 0
@@ -431,6 +434,7 @@ WITH treatment_data AS (
     FROM public.dblarv_insptrt_archive t
     WHERE t.action = 'D'
         AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
+        AND t.inspdate <= '[analysis_date]'
         AND t.matcode IS NOT NULL
         AND t.acres IS NOT NULL
         AND t.acres > 0
@@ -475,6 +479,7 @@ ORDER BY t.sitecode, t.inspdate DESC
 - Combines current and archive tables with UNION ALL
 - Uses CTEs for better organization and performance
 - Filters out zero-acre treatments
+- **Analysis date filter**: Excludes treatments recorded after the specified analysis date
 - Joins with location data for zone and FOS information
 - Returns individual treatment records, not aggregated
 
@@ -487,7 +492,13 @@ SELECT facility, sitecode, inspdate, action, matcode, amts as amount, acres as t
 FROM public.dblarv_insptrt_archive
 WHERE action = 'D'
 AND EXTRACT(YEAR FROM inspdate) BETWEEN [start_year] AND [end_year]
+AND inspdate <= '[analysis_date]'
 ```
+
+**Key Points**:
+- Filters drone treatments from archive table
+- Year range filtering for historical analysis
+- **Analysis date filter**: Only includes treatments up to the specified analysis date
 
 ### 5. Historical Current Data Query
 **Function**: `get_historical_raw_data()` in `historical_functions.R`  
@@ -498,7 +509,13 @@ SELECT facility, sitecode, inspdate, action, airgrnd_plan, matcode, amts as amou
 FROM public.dblarv_insptrt_current
 WHERE (airgrnd_plan = 'D' OR action = 'D')
 AND EXTRACT(YEAR FROM inspdate) BETWEEN [start_year] AND [end_year]
+AND inspdate <= '[analysis_date]'
 ```
+
+**Key Points**:
+- Filters drone treatments from current table
+- Includes both planned (`airgrnd_plan = 'D'`) and actual (`action = 'D'`) drone treatments
+- **Analysis date filter**: Excludes treatments recorded after the analysis date
 
 ### 6. Site Information for Historical Data
 **Function**: `get_historical_raw_data()` in `historical_functions.R`  
@@ -518,13 +535,14 @@ LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num
   AND e.emp_type = 'FieldSuper' 
   AND e.active = true
 WHERE b.sitecode IN ([sitecode_list])
-AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
+AND (b.enddate IS NULL OR b.enddate > '[analysis_date]')
 ```
 
 **Key Points**:
-- Filters for active sites (`enddate IS NULL` or future enddate)
+- Filters for active sites (`enddate IS NULL` or enddate after analysis date)
 - Same join pattern as current sites query
 - Uses IN clause with dynamic sitecode list
+- **Analysis date aware**: Uses analysis date instead of CURRENT_DATE for enddate comparison
 
 ### 7. Facility Lookup Query
 **Function**: `get_facility_lookup()` in `shared/db_helpers.R`  
@@ -576,9 +594,26 @@ Consistent pattern across all queries:
 - **Site designation**: `(drone IN ('Y','M','C') OR air_gnd = 'D')`
 
 ### Site Status Filtering
-Always filter active sites: `enddate IS NULL` or `enddate > CURRENT_DATE`
+Always filter active sites: `enddate IS NULL` or `enddate > '[analysis_date]'`
+
+### Analysis Date Filtering
+All treatment queries include: `AND inspdate <= '[analysis_date]'`
 
 ### Year Filtering
 Standard pattern: `EXTRACT(YEAR FROM inspdate) BETWEEN [start] AND [end]`
+
+### Analysis Date Filtering 
+All queries now include an analysis date filter that allows "time travel" analysis:
+- **Purpose**: Analyze data as if "today" were a different date
+- **Implementation**: `AND inspdate <= '[analysis_date]'` added to all treatment queries
+- **Usage**: Set the "Analysis Date (Pretend Today Is)" field in the UI
+- **Default**: Current date (Sys.Date())
+- **Effect**: Excludes all treatments recorded after the specified analysis date
+
+This feature allows:
+1. **Historical analysis**: See what the data looked like on a specific past date
+2. **Trend comparison**: Compare current status to previous points in time
+3. **Data validation**: Verify data accuracy by excluding future-dated entries
+4. **Reporting**: Generate reports as of a specific cutoff date
 
 ---

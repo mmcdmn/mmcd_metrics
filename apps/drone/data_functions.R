@@ -2,8 +2,9 @@
 
 #' Load raw data from database
 #' @param drone_types Vector of drone type selections
+#' @param analysis_date Date to use as "current date" for analysis (defaults to today)
 #' @return List with drone_sites and drone_treatments data frames
-load_raw_data <- function(drone_types = c("Y", "M", "C")) {
+load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Date()) {
   con <- get_db_connection()
   if (is.null(con)) return(list(drone_sites = data.frame(), drone_treatments = data.frame()))
   
@@ -58,7 +59,7 @@ load_raw_data <- function(drone_types = c("Y", "M", "C")) {
     )
   
   # Calculate treatment status (active)
-  current_date <- Sys.Date()
+  current_date <- as.Date(analysis_date)
   drone_treatments <- drone_treatments %>%
     mutate(
       inspdate = as.Date(inspdate),
@@ -123,8 +124,9 @@ apply_data_filters <- function(data, facility_filter = NULL,
 #' @param facility_filter Vector of selected facilities
 #' @param foreman_filter Vector of selected foremen
 #' @param prehatch_only Boolean for prehatch filter
+#' @param analysis_date Date to use as cutoff - no data after this date (defaults to today)
 #' @return Data frame with individual treatment records
-get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter, foreman_filter, prehatch_only) {
+get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter, foreman_filter, prehatch_only, analysis_date = Sys.Date()) {
   # Get database connection and calculate directly in SQL to avoid duplication
   con <- get_db_connection()
   if (is.null(con)) {
@@ -146,6 +148,7 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
       FROM public.dblarv_insptrt_current t
       WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
           AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
+          AND t.inspdate <= '%s'
           AND t.matcode IS NOT NULL
           AND t.acres IS NOT NULL
           AND t.acres > 0
@@ -164,6 +167,7 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
       FROM public.dblarv_insptrt_archive t
       WHERE t.action = 'D'
           AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
+          AND t.inspdate <= '%s'
           AND t.matcode IS NOT NULL
           AND t.acres IS NOT NULL
           AND t.acres > 0
@@ -202,7 +206,7 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
   FROM treatment_data t
   LEFT JOIN location_data l ON t.sitecode = l.sitecode AND t.facility = l.facility
   ORDER BY t.sitecode, t.inspdate DESC
-  ", start_year, end_year, start_year, end_year)
+  ", start_year, end_year, as.character(analysis_date), start_year, end_year, as.character(analysis_date))
   
   result <- dbGetQuery(con, query)
   dbDisconnect(con)

@@ -103,8 +103,9 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
 #' @param zone_filter Vector of selected zones
 #' @param expiring_days Number of days for expiring window
 #' @param group_by Grouping column name
+#' @param analysis_date Date to use as "current date" for analysis (defaults to today)
 #' @return List with processed data and sectcode_facility_mapping
-process_current_data <- function(drone_sites, drone_treatments, zone_filter, expiring_days, group_by) {
+process_current_data <- function(drone_sites, drone_treatments, zone_filter, expiring_days, group_by, analysis_date = Sys.Date()) {
   # Apply zone filter if selected (zone column exists after database joins)
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
     drone_sites <- drone_sites %>% filter(zone %in% zone_filter)
@@ -117,7 +118,7 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, exp
   }
   
   # Calculate expiring window
-  current_date <- Sys.Date()
+  current_date <- as.Date(analysis_date)
   expiring_start_date <- current_date
   expiring_end_date <- current_date + expiring_days
   
@@ -222,10 +223,23 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, exp
           facility_zone_key = facility_zone_key
         )
     } else if (group_col == "foreman") {
+      # Map foreman numbers to names in zone-separated display
+      foremen_lookup <- get_foremen_lookup()
+      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+      
       combined_data <- combined_data %>%
         mutate(
-          foreman = gsub(" \\(P[12]\\)", "", combined_group)
-        )
+          foreman_num = gsub(" \\(P[12]\\)", "", combined_group),
+          zone_part = gsub(".*\\((P[12])\\)", "\\1", combined_group),
+          foreman_name = ifelse(
+            foreman_num %in% names(foreman_map),
+            foreman_map[foreman_num],
+            paste("FOS", foreman_num)
+          ),
+          display_name = paste0(foreman_name, " (", zone_part, ")"),
+          foreman = foreman_num
+        ) %>%
+        select(-foreman_num, -zone_part, -foreman_name)
     }
   } else {
     if (group_col == "facility") {

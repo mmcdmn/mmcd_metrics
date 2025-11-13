@@ -68,6 +68,7 @@ server <- function(input, output, session) {
   # Capture all input values when refresh button is clicked
   refresh_inputs <- eventReactive(input$refresh, {
     list(
+      analysis_date = isolate(input$analysis_date),
       zone_filter = isolate(input$zone_filter),
       facility_filter = isolate(input$facility_filter),
       foreman_filter = isolate(input$foreman_filter),
@@ -92,7 +93,7 @@ server <- function(input, output, session) {
     drone_types <- c("Y", "M", "C")  # Default drone types
     
     # Load raw data
-    data <- load_raw_data(drone_types)
+    data <- load_raw_data(drone_types, analysis_date = inputs$analysis_date)
     
     # Apply filters immediately using captured input values
     filtered <- apply_data_filters(
@@ -108,7 +109,8 @@ server <- function(input, output, session) {
       drone_treatments = filtered$drone_treatments,
       zone_filter = inputs$zone_filter,
       expiring_days = inputs$expiring_days,
-      group_by = inputs$group_by
+      group_by = inputs$group_by,
+      analysis_date = inputs$analysis_date
     )
     
     # Return everything needed
@@ -277,7 +279,8 @@ server <- function(input, output, session) {
       hist_end_year = inputs$hist_end_year,
       drone_types = c("Y", "M", "C"),
       facility_filter = inputs$facility_filter,
-      foreman_filter = inputs$foreman_filter
+      foreman_filter = inputs$foreman_filter,
+      analysis_date = inputs$analysis_date
     ) +
       theme(
         axis.text.x = element_text(size = 14, face = "bold")
@@ -305,7 +308,8 @@ server <- function(input, output, session) {
       zone_filter = inputs$zone_filter,
       facility_filter = inputs$facility_filter,
       foreman_filter = inputs$foreman_filter,
-      prehatch_only = inputs$prehatch_only
+      prehatch_only = inputs$prehatch_only,
+      analysis_date = inputs$analysis_date
     )
     
     # Get aggregated stats data immediately

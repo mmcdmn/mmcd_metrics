@@ -38,6 +38,7 @@ Rscript sync_all_docs.R
 
 #Run on windows
 & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --status
+& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --Force
 ```
 
 ### Current Apps with Documentation

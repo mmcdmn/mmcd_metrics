@@ -350,6 +350,146 @@ output$plot <- renderPlot({
 
 ---
 
+## Data Collection and Aggregation Logic
+
+### Overview of Data Processing Pipeline
+The drone app follows a consistent pattern for data collection and aggregation across all three tabs. Data processing is done **outside of SQL** - SQL queries return raw records which are then aggregated using R/dplyr operations.
+
+### Core Aggregation Methods
+
+#### Total Sites vs Total Acres Calculation
+**IMPORTANT**: Both total sites and total acres calculations are performed **outside of SQL** using R aggregation functions.
+
+**Total Sites Calculation:**
+```r
+# Count UNIQUE sites (not treatments)
+total_sites <- drone_sites %>%
+  group_by(!!sym(group_col)) %>%
+  summarize(total_sites = n(), .groups = "drop")  # n() counts rows = sites
+
+# For zone separation
+total_sites <- drone_sites %>%
+  group_by(combined_group, zone) %>%
+  summarize(total_sites = n(), .groups = "drop")
+```
+
+**Total Acres Calculation:**
+```r
+# Sum acres from SITE records (loc_breeding_sites.acres)
+total_acres <- drone_sites %>%
+  group_by(!!sym(group_col)) %>%
+  summarize(total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+```
+
+**Treatment Sites vs Treatment Acres:**
+```r
+# Count unique SITES with active treatments (not treatment instances)
+active_sites <- drone_treatments %>%
+  filter(is_active) %>%
+  group_by(!!sym(group_col)) %>%
+  summarize(active_sites = n_distinct(sitecode), .groups = "drop")
+
+# Sum TREATED acres from treatment records (treated_acres)
+active_acres <- drone_treatments %>%
+  filter(is_active) %>%
+  group_by(!!sym(group_col)) %>%
+  summarize(active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+```
+
+#### Historical Metrics Aggregation
+**All historical aggregations are done in R after SQL returns raw records:**
+
+**Sites Metric:**
+```r
+# Count unique sites treated per group per year
+if (hist_display_metric == "sites") {
+  results <- all_data %>%
+    group_by(!!group_var, year) %>%
+    summarize(count = n_distinct(sitecode), .groups = "drop")
+}
+```
+
+**Treatments Metric:**
+```r
+# Count total treatment instances per group per year
+if (hist_display_metric == "treatments") {
+  results <- all_data %>%
+    group_by(!!group_var, year) %>%
+    summarize(count = n(), .groups = "drop")  # n() counts all treatment records
+}
+```
+
+**Acres Metric:**
+```r
+# Sum treated acres from treatment records per group per year
+if (hist_display_metric == "acres") {
+  results <- all_data %>%
+    group_by(!!group_var, year) %>%
+    summarize(count = sum(treated_acres, na.rm = TRUE), .groups = "drop")
+}
+```
+
+#### Site Statistics Aggregation
+**Site statistics are calculated from individual treatment records:**
+
+```r
+# Calculate statistics from individual treatment records
+site_stats <- sitecode_data_raw %>%
+  group_by(!!sym(group_col)) %>%
+  summarize(
+    avg_site_acres = mean(acres, na.rm = TRUE),      # Average of all treatment acres
+    min_site_acres = min(acres, na.rm = TRUE),       # Smallest single treatment
+    max_site_acres = max(acres, na.rm = TRUE),       # Largest single treatment
+    n = n_distinct(sitecode),                        # Count unique sites
+    n_treatments = n(),                              # Count total treatments
+    .groups = "drop"
+  )
+```
+
+### Key Aggregation Principles
+
+1. **DISTINCT Counting**: Always use `n_distinct(sitecode)` when counting sites to avoid double-counting
+2. **Treatment vs Site Acres**: 
+   - **Site acres**: From `loc_breeding_sites.acres` (site capacity)
+   - **Treatment acres**: From `dblarv_insptrt_*.acres` (actual treated area)
+3. **R-based Aggregation**: All calculations use R/dplyr `group_by()` and `summarize()`
+4. **Zone Separation**: When zones are separated, aggregation includes both `group` and `zone` columns
+5. **Missing Values**: Use `na.rm = TRUE` in all sum/mean calculations
+
+### Data Sources vs Aggregation Separation
+
+**SQL Queries**: Return raw, individual records
+- `load_raw_data()`: Returns individual site records and treatment records
+- `get_sitecode_data()`: Returns individual treatment instances
+- `get_historical_raw_data()`: Returns individual historical treatments
+
+**R Aggregation**: Processes raw records into summaries
+- `process_current_data()`: Aggregates sites and treatments by group
+- `get_site_stats_data()`: Calculates statistics from treatment records
+- Historical functions: Aggregate treatments by group and year
+
+### Treatment Status Logic (R-based)
+**Active Treatment Calculation:**
+```r
+drone_treatments <- drone_treatments %>%
+  mutate(
+    inspdate = as.Date(inspdate),
+    effect_days = ifelse(is.na(effect_days), 14, effect_days),  # Default 14 days
+    treatment_end_date = inspdate + effect_days,
+    is_active = treatment_end_date >= current_date
+  )
+```
+
+**Expiring Treatment Calculation:**
+```r
+drone_treatments <- drone_treatments %>%
+  mutate(
+    is_expiring = is_active & 
+                  treatment_end_date >= expiring_start_date & 
+                  treatment_end_date <= expiring_end_date
+  )
+```
+
 ## SQL Queries Reference
 
 This section documents all SQL queries used in the drone app for reference and troubleshooting.

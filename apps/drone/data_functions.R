@@ -31,11 +31,13 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   
   drone_sites <- dbGetQuery(con, drone_sites_query)
   
-  # Query to get treatment information with recorded treated acres
+  # Query to get treatment information with recorded treated acres and zone mapping
   treatments_query <- "
-  SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days
+  SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
+         sc.zone
   FROM public.dblarv_insptrt_current t
   LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+  LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
   WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
   "
   
@@ -44,17 +46,18 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   dbDisconnect(con)
   
   # Process the data
-  # Identify drone sites with treatments
+  # Identify drone sites with treatments  
   drone_treatments <- treatments %>%
     inner_join(drone_sites, by = c("sitecode", "facility"), suffix = c("_trt", "_site")) %>%
     mutate(
       # Use recorded treated acres from treatment records
       acres = treated_acres,
-      # Use site foreman (jurisdictional assignment). Ignore treatment foreman
+      # Use site foreman (jurisdictional assignment). Ignore treatment foreman  
       foreman = foreman_site,
       prehatch = prehatch,
       drone = drone,
-      zone = zone,
+      # Use zone from treatment record (should match site zone)
+      zone = zone_trt,
       sectcode = sectcode
     )
   
@@ -217,12 +220,8 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
   
   # Apply filters
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    # Include NULL zones if both zones are selected (which is the default)
-    if (length(zone_filter) >= 2) {
-      # If both zones selected, don't filter by zone (show all including NULL)
-    } else {
-      result <- result %>% filter(zone %in% zone_filter)
-    }
+    # Always filter by the specified zones
+    result <- result %>% filter(zone %in% zone_filter)
   }
   
   if (!is.null(facility_filter) && length(facility_filter) > 0 && 
@@ -249,17 +248,30 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
 #' Get site statistics data aggregated from treatment records
 #' @param sitecode_data_raw Raw sitecode data from get_sitecode_data
 #' @param zone_filter Vector of selected zones
+#' @param combine_zones Boolean whether to combine P1+P2
 #' @param group_by Grouping column name
 #' @return Aggregated site statistics data frame
-get_site_stats_data <- function(sitecode_data_raw, zone_filter, group_by) {
+get_site_stats_data <- function(sitecode_data_raw, zone_filter, combine_zones = FALSE, group_by) {
   if (nrow(sitecode_data_raw) == 0) {
     return(data.frame())
   }
   
   # Apply zone separation if needed
-  show_zones_separately <- length(zone_filter) > 1
+  show_zones_separately <- !combine_zones && length(zone_filter) > 1
   
-  if (show_zones_separately) {
+  # Handle MMCD grouping and zone separation
+  if (group_by == "mmcd_all") {
+    if (show_zones_separately) {
+      # Create zone-separated MMCD groups like "All MMCD (P1)", "All MMCD (P2)"
+      sitecode_data_raw$mmcd_all <- "All MMCD"
+      sitecode_data_raw <- create_zone_groups(sitecode_data_raw, "mmcd_all")
+      group_col <- "combined_group"
+    } else {
+      # Single MMCD group
+      sitecode_data_raw$mmcd_all <- "All MMCD"
+      group_col <- "mmcd_all"
+    }
+  } else if (show_zones_separately) {
     sitecode_data_raw <- create_zone_groups(sitecode_data_raw, group_by)
     group_col <- "combined_group"
   } else {
@@ -267,18 +279,38 @@ get_site_stats_data <- function(sitecode_data_raw, zone_filter, group_by) {
   }
   
   # Calculate statistics by group from individual treatment records
-  site_stats <- sitecode_data_raw %>%
-    group_by(!!sym(group_col)) %>%
-    summarize(
-      avg_site_acres = mean(acres, na.rm = TRUE),
-      min_site_acres = min(acres, na.rm = TRUE),
-      max_site_acres = max(acres, na.rm = TRUE),
-      n_treatments = n(),
-      .groups = "drop"
-    )
+  if (show_zones_separately) {
+    # When separating zones, group by both combined_group AND zone
+    site_stats <- sitecode_data_raw %>%
+      group_by(!!sym(group_col), zone) %>%
+      summarize(
+        avg_site_acres = mean(acres, na.rm = TRUE),
+        min_site_acres = min(acres, na.rm = TRUE),
+        max_site_acres = max(acres, na.rm = TRUE),
+        n = n_distinct(sitecode),  # Count unique sites, not treatments
+        n_treatments = n(),
+        .groups = "drop"
+      )
+  } else {
+    # Standard grouping without zone separation
+    site_stats <- sitecode_data_raw %>%
+      group_by(!!sym(group_col)) %>%
+      summarize(
+        avg_site_acres = mean(acres, na.rm = TRUE),
+        min_site_acres = min(acres, na.rm = TRUE),
+        max_site_acres = max(acres, na.rm = TRUE),
+        n = n_distinct(sitecode),  # Count unique sites, not treatments
+        n_treatments = n(),
+        .groups = "drop"
+      )
+  }
   
   # Add display names based on grouping
-  if (group_by == "facility" && !show_zones_separately) {
+  if (group_by == "mmcd_all") {
+    # For MMCD grouping, just use "All MMCD"
+    site_stats <- site_stats %>%
+      mutate(display_name = "All MMCD")
+  } else if (group_by == "facility" && !show_zones_separately) {
     facilities <- get_facility_lookup()
     facility_map <- setNames(facilities$full_name, facilities$short_name)
     site_stats <- site_stats %>%

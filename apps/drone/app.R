@@ -47,15 +47,17 @@ server <- function(input, output, session) {
   # Update group by options when switching to historical tabs
   observeEvent(input$tabs, {
     if (input$tabs %in% c("historical", "site_stats")) {
-      if (input$group_by == "sectcode") {
+      if (input$group_by %in% c("sectcode", "mmcd_all")) {
         updateRadioButtons(session, "group_by",
                           choices = c("Facility" = "facility", 
-                                     "FOS" = "foreman"),
+                                     "FOS" = "foreman",
+                                     "All MMCD" = "mmcd_all"),
                           selected = "facility")
       } else {
         updateRadioButtons(session, "group_by",
                           choices = c("Facility" = "facility", 
-                                     "FOS" = "foreman"),
+                                     "FOS" = "foreman",
+                                     "All MMCD" = "mmcd_all"),
                           selected = input$group_by)
       }
     }
@@ -67,9 +69,21 @@ server <- function(input, output, session) {
   
   # Capture all input values when refresh button is clicked
   refresh_inputs <- eventReactive(input$refresh, {
+    # Convert zone_option to zone_filter
+    zone_filter <- switch(isolate(input$zone_option),
+                          "p1_only" = "1",
+                          "p2_only" = "2", 
+                          "p1_p2_separate" = c("1", "2"),
+                          "p1_p2_combined" = c("1", "2"))
+    
+    # Determine if we're combining P1 and P2
+    combine_zones <- isolate(input$zone_option) == "p1_p2_combined"
+    
     list(
       analysis_date = isolate(input$analysis_date),
-      zone_filter = isolate(input$zone_filter),
+      zone_filter = zone_filter,
+      combine_zones = combine_zones,
+      zone_option = isolate(input$zone_option),
       facility_filter = isolate(input$facility_filter),
       foreman_filter = isolate(input$foreman_filter),
       prehatch_only = isolate(input$prehatch_only),
@@ -108,6 +122,7 @@ server <- function(input, output, session) {
       drone_sites = filtered$drone_sites,
       drone_treatments = filtered$drone_treatments,
       zone_filter = inputs$zone_filter,
+      combine_zones = inputs$combine_zones,
       expiring_days = inputs$expiring_days,
       group_by = inputs$group_by,
       analysis_date = inputs$analysis_date
@@ -145,10 +160,14 @@ server <- function(input, output, session) {
     }
     
     # Determine variables and colors
-    show_zones_separately <- length(inputs$zone_filter) > 1
+    show_zones_separately <- inputs$zone_option == "p1_p2_separate"
+    combine_zones <- inputs$combine_zones
     
     # Set x-axis and fill variables
-    if (show_zones_separately) {
+    if (inputs$group_by == "mmcd_all") {
+      x_var <- "display_name"
+      fill_var <- "display_name"
+    } else if (show_zones_separately) {
       x_var <- "display_name"
       if (inputs$group_by == "facility") {
         fill_var <- "facility_zone_key"
@@ -170,34 +189,61 @@ server <- function(input, output, session) {
       sectcode_facility_mapping = sectcode_facility_mapping
     )
     
-    # Handle zone-separated color mapping for current progress
+    # For zone-separated display, use modified colors to differentiate P1 vs P2
+    # but keep the base colors recognizable
     if (show_zones_separately && !is.null(custom_colors)) {
+      # Create zone-aware colors by adjusting brightness for P1 vs P2
       if (inputs$group_by == "facility") {
-        # Use facility_zone_key for color mapping
-        facility_result <- get_facility_base_colors(
-          alpha_zones = inputs$zone_filter,
-          combined_groups = unique(data$combined_group)
-        )
-        custom_colors <- facility_result$colors
-        alpha_values <- facility_result$alpha_values
+        # Get base facility colors
+        base_facility_colors <- get_facility_base_colors()
         
-        # Create the plot with alpha mapping
-        p_base <- ggplot(data, aes(x = .data[[x_var]], fill = .data[[fill_var]], alpha = zone_factor))
+        # Create colors for P1 (normal) and P2 (darker)
+        zone_colors <- character()
+        for (group_name in unique(data$combined_group)) {
+          facility_code <- gsub(" \\(P[12]\\)", "", group_name)
+          zone <- gsub(".*\\((P[12])\\)", "\\1", group_name)
+          
+          if (facility_code %in% names(base_facility_colors)) {
+            base_color <- base_facility_colors[facility_code]
+            # P1 = normal color, P2 = darker version (multiply RGB by 0.7)
+            if (zone == "P1") {
+              zone_colors[group_name] <- base_color
+            } else {
+              # Make P2 darker
+              rgb_vals <- col2rgb(base_color)
+              darker_color <- rgb(rgb_vals[1,1] * 0.7, rgb_vals[2,1] * 0.7, rgb_vals[3,1] * 0.7, maxColorValue = 255)
+              zone_colors[group_name] <- darker_color
+            }
+          }
+        }
+        custom_colors <- zone_colors
       } else if (inputs$group_by == "foreman") {
-        # Use foreman colors with zone awareness
-        foreman_result <- get_foreman_colors(
-          alpha_zones = inputs$zone_filter,
-          combined_groups = unique(data$combined_group)
-        )
-        custom_colors <- foreman_result$colors
-        alpha_values <- foreman_result$alpha_values
+        # Similar logic for foreman colors
+        base_foreman_colors <- get_foreman_colors()
+        foremen_lookup <- get_foremen_lookup()
         
-        p_base <- ggplot(data, aes(x = .data[[x_var]], fill = .data[[fill_var]], alpha = zone_factor))
-      } else {
-        p_base <- ggplot(data, aes(x = .data[[x_var]], fill = .data[[fill_var]]))
+        zone_colors <- character()
+        for (group_name in unique(data$combined_group)) {
+          foreman_part <- gsub(" \\(P[12]\\)", "", group_name)
+          zone <- gsub(".*\\((P[12])\\)", "\\1", group_name)
+          
+          # Find foreman shortname from lookup
+          if (foreman_part %in% foremen_lookup$shortname) {
+            if (foreman_part %in% names(base_foreman_colors)) {
+              base_color <- base_foreman_colors[foreman_part]
+              # P1 = normal color, P2 = darker version
+              if (zone == "P1") {
+                zone_colors[group_name] <- base_color
+              } else {
+                rgb_vals <- col2rgb(base_color)
+                darker_color <- rgb(rgb_vals[1,1] * 0.7, rgb_vals[2,1] * 0.7, rgb_vals[3,1] * 0.7, maxColorValue = 255)
+                zone_colors[group_name] <- darker_color
+              }
+            }
+          }
+        }
+        custom_colors <- zone_colors
       }
-    } else {
-      p_base <- ggplot(data, aes(x = .data[[x_var]], fill = .data[[fill_var]]))
     }
     
     # Get status colors
@@ -205,13 +251,18 @@ server <- function(input, output, session) {
     
     # Add labels and formatting (BEFORE creating plot)
     metric_label <- ifelse(inputs$current_display_metric == "sites", "Number of Sites", "Total Acres")
-    zone_text <- if (length(inputs$zone_filter) == 2) "" else ifelse("1" %in% inputs$zone_filter, " (P1 Only)", " (P2 Only)")
+    zone_text <- switch(inputs$zone_option,
+                        "p1_only" = " (P1 Only)",
+                        "p2_only" = " (P2 Only)",
+                        "p1_p2_separate" = "",
+                        "p1_p2_combined" = " (P1+P2 Combined)")
     prehatch_text <- ifelse(inputs$prehatch_only, " - Prehatch Only", "")
     
     group_label <- case_when(
       inputs$group_by == "facility" ~ "Facility",
       inputs$group_by == "foreman" ~ "FOS", 
       inputs$group_by == "sectcode" ~ "Section",
+      inputs$group_by == "mmcd_all" ~ "All MMCD",
       TRUE ~ "Group"
     )
     
@@ -234,6 +285,7 @@ server <- function(input, output, session) {
         geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
         scale_fill_manual(values = custom_colors, guide = "none")
     } else {
+      # For MMCD grouping or when no specific colors available, use status colors only
       p <- ggplot(data, aes(x = .data[[x_var]])) +
         geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
         geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
@@ -271,6 +323,8 @@ server <- function(input, output, session) {
     
     p <- create_historical_plot(
       zone_filter = inputs$zone_filter,
+      combine_zones = inputs$combine_zones,
+      zone_option = inputs$zone_option,
       group_by = inputs$group_by,
       hist_display_metric = inputs$hist_display_metric,
       prehatch_only = inputs$prehatch_only,
@@ -316,6 +370,7 @@ server <- function(input, output, session) {
     stats_data <- get_site_stats_data(
       sitecode_data_raw = sitecode_raw,
       zone_filter = inputs$zone_filter,
+      combine_zones = inputs$combine_zones,
       group_by = inputs$group_by
     )
     
@@ -368,15 +423,20 @@ server <- function(input, output, session) {
     }
     
     # Get colors
-    group_col <- if(length(inputs$zone_filter) > 1) "combined_group" else inputs$group_by
-    custom_colors <- get_visualization_colors(
-      group_by = inputs$group_by,
-      data = data,
-      show_zones_separately = length(inputs$zone_filter) > 1,
-      zone_filter = inputs$zone_filter,
-      for_historical = FALSE,
-      sectcode_facility_mapping = NULL
-    )
+    if (inputs$group_by == "mmcd_all") {
+      # No special colors for MMCD grouping
+      custom_colors <- NULL
+    } else {
+      group_col <- if(!inputs$combine_zones && length(inputs$zone_filter) > 1) "combined_group" else inputs$group_by
+      custom_colors <- get_visualization_colors(
+        group_by = inputs$group_by,
+        data = data,
+        show_zones_separately = !inputs$combine_zones && length(inputs$zone_filter) > 1,
+        zone_filter = inputs$zone_filter,
+        for_historical = FALSE,
+        sectcode_facility_mapping = NULL
+      )
+    }
     
     # Create plot
     p <- ggplot(data, aes(x = reorder(display_name, !!sym(y_var)), y = !!sym(y_var))) +
@@ -387,6 +447,7 @@ server <- function(input, output, session) {
         x = case_when(
           inputs$group_by == "facility" ~ "Facility",
           inputs$group_by == "foreman" ~ "FOS",
+          inputs$group_by == "mmcd_all" ~ "All MMCD",
           TRUE ~ "Group"
         ),
         y = y_label

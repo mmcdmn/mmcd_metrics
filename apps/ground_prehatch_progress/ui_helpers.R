@@ -39,7 +39,7 @@ create_filter_panel <- function() {
                                "Facility" = "facility", 
                                "FOS" = "foreman",
                                "Section" = "sectcode"),
-                    selected = "facility",
+                    selected = "mmcd_all",
                     inline = TRUE)
       )
     ),

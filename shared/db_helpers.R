@@ -1135,7 +1135,7 @@ add_zone_alpha_to_plot <- function(plot, alpha_values, representative_color = NU
   }
   
   # Choose representative fill for legend
-  rep_fill <- ifelse(is.null(representative_color), "#808080", representative_color)
+  rep_fill <- ifelse(is.null(representative_color), "#4169E1", representative_color)
   
   plot <- plot +
     ggplot2::scale_alpha_manual(

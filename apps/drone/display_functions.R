@@ -29,6 +29,11 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
                                      zone_filter = NULL, for_historical = FALSE,
                                      sectcode_facility_mapping = NULL) {
   
+  # For MMCD grouping, return no colors (will use default single color)
+  if (group_by == "mmcd_all") {
+    return(NULL)
+  }
+  
   if (group_by == "facility") {
     if (show_zones_separately && for_historical) {
       # For HISTORICAL: Use zone-aware facility colors with alpha differentiation
@@ -101,11 +106,12 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
 #' @param drone_sites Data frame of drone sites
 #' @param drone_treatments Data frame of drone treatments
 #' @param zone_filter Vector of selected zones
+#' @param combine_zones Boolean whether to combine P1+P2 into single group
 #' @param expiring_days Number of days for expiring window
 #' @param group_by Grouping column name
 #' @param analysis_date Date to use as "current date" for analysis (defaults to today)
 #' @return List with processed data and sectcode_facility_mapping
-process_current_data <- function(drone_sites, drone_treatments, zone_filter, expiring_days, group_by, analysis_date = Sys.Date()) {
+process_current_data <- function(drone_sites, drone_treatments, zone_filter, combine_zones = FALSE, expiring_days, group_by, analysis_date = Sys.Date()) {
   # Apply zone filter if selected (zone column exists after database joins)
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
     drone_sites <- drone_sites %>% filter(zone %in% zone_filter)
@@ -123,17 +129,38 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, exp
   expiring_end_date <- current_date + expiring_days
   
   # Update treatment status to include expiring
-  drone_treatments <- drone_treatments %>%
-    mutate(
-      treatment_start_date = as.Date(inspdate),
-      treatment_end_date = treatment_start_date + days(ifelse(is.na(effect_days), 14, effect_days)),
-      is_active = treatment_end_date >= current_date,
-      is_expiring = is_active & treatment_end_date >= expiring_start_date & treatment_end_date <= expiring_end_date
-    )
+  if (nrow(drone_treatments) > 0) {
+    drone_treatments <- drone_treatments %>%
+      mutate(
+        treatment_start_date = as.Date(inspdate),
+        treatment_end_date = treatment_start_date + ifelse(is.na(effect_days), 14, effect_days),
+        is_active = treatment_end_date >= current_date,
+        is_expiring = is_active & treatment_end_date >= expiring_start_date & treatment_end_date <= expiring_end_date
+      )
+  } else {
+    # Ensure empty treatments have the required columns for consistency
+    drone_treatments$treatment_start_date <- as.Date(character(0))
+    drone_treatments$treatment_end_date <- as.Date(character(0))
+    drone_treatments$is_active <- logical(0)
+    drone_treatments$is_expiring <- logical(0)
+  }
   
   # Determine grouping and zone separation
   group_col <- group_by
-  show_zones_separately <- length(zone_filter) > 1
+  show_zones_separately <- !combine_zones && length(zone_filter) > 1
+  
+  # Handle MMCD grouping - aggregate everything into a single "All MMCD" group
+  if (group_col == "mmcd_all") {
+    # For MMCD grouping, combine all data regardless of facility/foreman/sectcode
+    # but preserve zone information for proper aggregation
+    if (nrow(drone_sites) > 0) {
+      drone_sites$mmcd_all <- "All MMCD"
+    }
+    if (nrow(drone_treatments) > 0) {
+      drone_treatments$mmcd_all <- "All MMCD"
+    }
+    group_col <- "mmcd_all"
+  }
   
   # Create sectcode-to-facility mapping for color mapping (if needed)
   sectcode_facility_mapping <- NULL
@@ -152,47 +179,89 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, exp
   
   # Create zone-separated groups if needed
   if (show_zones_separately) {
-    drone_sites <- create_zone_groups(drone_sites, group_col)
-    drone_treatments <- create_zone_groups(drone_treatments, group_col)
+    if (nrow(drone_sites) > 0) {
+      drone_sites <- create_zone_groups(drone_sites, group_col)
+    }
+    if (nrow(drone_treatments) > 0) {
+      drone_treatments <- create_zone_groups(drone_treatments, group_col)
+    }
+    # Update group_col to use combined_group for aggregation
+    group_col <- "combined_group"
   }
   
+  # Helper function to safely aggregate treatments
+  safe_aggregate_treatments <- function(treatments, group_cols, filter_col = NULL) {
+    if (nrow(treatments) == 0) {
+      # Create empty result with proper column structure
+      result_cols <- c(group_cols, "active_sites", "active_acres")
+      if (!is.null(filter_col)) {
+        # For expiring treatments, use expiring column names
+        result_cols <- c(group_cols, "expiring_sites", "expiring_acres")
+      }
+      empty_result <- setNames(data.frame(matrix(nrow = 0, ncol = length(result_cols))), result_cols)
+      # Set proper column types
+      for (col in group_cols) {
+        empty_result[[col]] <- character(0)
+      }
+      if (!is.null(filter_col)) {
+        empty_result$expiring_sites <- numeric(0)
+        empty_result$expiring_acres <- numeric(0)
+      } else {
+        empty_result$active_sites <- numeric(0)
+        empty_result$active_acres <- numeric(0)
+      }
+      return(empty_result)
+    }
+    
+    # Normal aggregation
+    if (!is.null(filter_col)) {
+      treatments <- treatments %>% filter(!!sym(filter_col))
+      treatments %>%
+        group_by(across(all_of(group_cols))) %>%
+        summarize(expiring_sites = n_distinct(sitecode), expiring_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+    } else {
+      treatments %>%
+        filter(is_active) %>%
+        group_by(across(all_of(group_cols))) %>%
+        summarize(active_sites = n_distinct(sitecode), active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+    }
+  }
+
   # Aggregate data by grouping
   if (show_zones_separately) {
+    # P1 and P2 separate bars
     total_sites <- drone_sites %>%
       group_by(combined_group, zone) %>%
       summarize(total_sites = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     
-    active_treatments <- drone_treatments %>%
-      filter(is_active) %>%
-      group_by(combined_group, zone) %>%
-      summarize(active_sites = n_distinct(sitecode), active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+    active_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"))
+    expiring_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"), "is_expiring")
+  } else if (combine_zones && group_col != "mmcd_all") {
+    # P1+P2 combined but not MMCD - combine by group but not by zone
+    total_sites <- drone_sites %>%
+      group_by(!!sym(group_col)) %>%
+      summarize(total_sites = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     
-    expiring_treatments <- drone_treatments %>%
-      filter(is_expiring) %>%
-      group_by(combined_group, zone) %>%
-      summarize(expiring_sites = n_distinct(sitecode), expiring_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+    active_treatments <- safe_aggregate_treatments(drone_treatments, group_col)
+    expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
   } else {
+    # Single zone or MMCD all grouping
     total_sites <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
       summarize(total_sites = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     
-    active_treatments <- drone_treatments %>%
-      filter(is_active) %>%
-      group_by(!!sym(group_col)) %>%
-      summarize(active_sites = n_distinct(sitecode), active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
-    
-    expiring_treatments <- drone_treatments %>%
-      filter(is_expiring) %>%
-      group_by(!!sym(group_col)) %>%
-      summarize(expiring_sites = n_distinct(sitecode), expiring_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+    active_treatments <- safe_aggregate_treatments(drone_treatments, group_col)
+    expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
   }
   
   # Combine all data
   if (show_zones_separately) {
+    # P1 and P2 separate
     combined_data <- total_sites %>%
       left_join(active_treatments, by = c("combined_group", "zone")) %>%
       left_join(expiring_treatments, by = c("combined_group", "zone"))
   } else {
+    # P1+P2 combined OR single zone OR MMCD grouping
     combined_data <- total_sites %>%
       left_join(active_treatments, by = group_col) %>%
       left_join(expiring_treatments, by = group_col)
@@ -209,20 +278,27 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, exp
     )
   
   # Add display names and color mapping keys
-  if (show_zones_separately) {
+  if (group_by == "mmcd_all" && !show_zones_separately) {
+    # For MMCD grouping without zone separation, just use "All MMCD" as display name
+    combined_data <- combined_data %>%
+      mutate(display_name = "All MMCD")
+  } else if (show_zones_separately) {
     combined_data <- combined_data %>%
       mutate(
         display_name = combined_group,
         zone_factor = as.character(zone)
       )
     
-    if (group_col == "facility") {
+    if (group_by == "mmcd_all") {
+      # For MMCD zone separation, the combined_group already has the right format
+      # No additional processing needed, display_name is already set to combined_group
+    } else if (group_by == "facility") {
       combined_data <- combined_data %>%
         mutate(
           facility = gsub(" \\(P[12]\\)", "", combined_group),
-          facility_zone_key = facility_zone_key
+          facility_zone_key = combined_group  # Use combined_group as the zone key
         )
-    } else if (group_col == "foreman") {
+    } else if (group_by == "foreman") {
       # Map foreman numbers to names in zone-separated display
       foremen_lookup <- get_foremen_lookup()
       foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)

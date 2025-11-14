@@ -63,9 +63,12 @@ drone_ui <- function() {
         
         checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = FALSE),
         
-        checkboxGroupInput("zone_filter", "Select Zones:",
-                           choices = c("P1" = "1", "P2" = "2"),
-                           selected = c("1", "2")),
+        radioButtons("zone_option", "Zone Display:",
+                     choices = c("P1 Only" = "p1_only",
+                                 "P2 Only" = "p2_only", 
+                                 "P1 and P2 Separate" = "p1_p2_separate",
+                                 "P1+P2 Combined" = "p1_p2_combined"),
+                     selected = "p1_p2_separate"),
         
         selectizeInput("facility_filter", "Facility:",
                       choices = NULL, multiple = TRUE),
@@ -79,7 +82,8 @@ drone_ui <- function() {
           radioButtons("group_by", "Group By:",
                        choices = c("Facility" = "facility",
                                    "FOS" = "foreman",
-                                   "Section" = "sectcode"),
+                                   "Section" = "sectcode",
+                                   "All MMCD" = "mmcd_all"),
                        selected = "facility")
         ),
         
@@ -87,7 +91,8 @@ drone_ui <- function() {
           condition = "input.tabs == 'historical' || input.tabs == 'site_stats'",
           radioButtons("group_by", "Group By:",
                        choices = c("Facility" = "facility",
-                                   "FOS" = "foreman"),
+                                   "FOS" = "foreman",
+                                   "All MMCD" = "mmcd_all"),
                        selected = "facility")
         ),
         

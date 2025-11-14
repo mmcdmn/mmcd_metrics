@@ -182,7 +182,7 @@ server <- function(input, output, session) {
     
     data <- filtered_data()
     site_data <- site_details()
-    
+  
     aggregate_data_by_group(
       data, 
       inputs$group_by, 

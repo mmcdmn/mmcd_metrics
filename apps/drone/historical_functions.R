@@ -88,7 +88,7 @@ get_historical_raw_data <- function(hist_start_year, hist_end_year, drone_types,
 }
 
 # Process historical data based on user selections
-get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, analysis_date = Sys.Date()) {
+get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, combine_zones = FALSE, analysis_date = Sys.Date()) {
   # Get raw data
   data_list <- get_historical_raw_data(hist_start_year, hist_end_year, drone_types, analysis_date)
   if (is.null(data_list)) {
@@ -174,11 +174,24 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   }
   
   # Process based on count type and grouping selection
-  show_zones_separately <- length(zone_filter) > 1
+  show_zones_separately <- !combine_zones && length(zone_filter) > 1
   
-  # Add combined group column for zone differentiation when both zones selected
+  # Handle MMCD grouping
+  if (group_by == "mmcd_all") {
+    # For MMCD grouping, create single group for all data
+    all_data$mmcd_all <- "All MMCD"
+    group_col <- "mmcd_all"
+  }
+  
+  # Add combined group column for zone differentiation when zones shown separately
   if (show_zones_separately) {
-    all_data$combined_group <- paste0(all_data[[group_col]], " (P", all_data$zone, ")")
+    if (group_by == "mmcd_all") {
+      # For MMCD + zone separation, create combined_group from mmcd_all column
+      all_data$combined_group <- paste0(all_data[["mmcd_all"]], " (P", all_data$zone, ")")
+    } else {
+      # For other groupings + zone separation
+      all_data$combined_group <- paste0(all_data[[group_col]], " (P", all_data$zone, ")")
+    }
     group_var <- sym("combined_group")
   } else {
     group_var <- sym(group_col)
@@ -329,8 +342,8 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
 }
 
 # Historical plot output - EXACT copy from backup
-create_historical_plot <- function(zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, hist_show_percentages, hist_start_year, hist_end_year, drone_types, analysis_date = Sys.Date()) {
-  data <- get_historical_processed_data(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, analysis_date)
+create_historical_plot <- function(zone_filter, combine_zones = FALSE, zone_option = "p1_p2_separate", facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, hist_show_percentages, hist_start_year, hist_end_year, drone_types, analysis_date = Sys.Date()) {
+  data <- get_historical_processed_data(hist_start_year, hist_end_year, drone_types, zone_filter, facility_filter, foreman_filter, prehatch_only, group_by, hist_display_metric, combine_zones, analysis_date)
   if (nrow(data) == 0) {
     plot(1, type = "n", axes = FALSE, xlab = "", ylab = "")
     text(1, 1, "No data available for the selected criteria", cex = 1.5)
@@ -338,17 +351,42 @@ create_historical_plot <- function(zone_filter, facility_filter, foreman_filter,
   }
   
   # Determine if we're showing zones separately
-  show_zones_separately <- length(zone_filter) > 1
+  show_zones_separately <- zone_option == "p1_p2_separate"
   
   # Create filter text for title
   prehatch_filter_text <- ifelse(prehatch_only, " (Prehatch Sites Only)", "")
-  zone_filter_text <- ifelse(length(zone_filter) == 2, "", 
-                             ifelse(length(zone_filter) == 1, 
-                                    ifelse("1" %in% zone_filter, " (P1 Only)", " (P2 Only)"), 
-                                    " (No Zones)"))
+  zone_filter_text <- switch(zone_option,
+                              "p1_only" = " (P1 Only)",
+                              "p2_only" = " (P2 Only)",
+                              "p1_p2_separate" = "",
+                              "p1_p2_combined" = " (P1+P2 Combined)")
   
   # Get colors from shared helper functions using the zone-aware pattern
-  if (show_zones_separately && group_by == "facility") {
+  if (group_by == "mmcd_all") {
+    if (show_zones_separately) {
+      # Use zone-aware colors for MMCD + zone separation
+      facility_result <- get_facility_base_colors(
+        alpha_zones = zone_filter,
+        combined_groups = unique(data$combined_group)
+      )
+      # For MMCD, use the first facility color as base but apply to all MMCD groups
+      base_color <- if (length(facility_result$colors) > 0) {
+        facility_result$colors[1]
+      } else {
+        "#2E86AB"  # Fallback blue
+      }
+      # Create MMCD zone colors using the base color
+      custom_colors <- setNames(
+        rep(base_color, length(unique(data$combined_group))),
+        unique(data$combined_group)
+      )
+      alpha_values <- facility_result$alpha_values
+    } else {
+      # Single zone MMCD grouping
+      custom_colors <- c("All MMCD" = "#2E86AB")  # Blue color for MMCD
+      alpha_values <- NULL
+    }
+  } else if (show_zones_separately && group_by == "facility") {
     # Use zone-aware facility colors for proper P1/P2 differentiation
     facility_result <- get_facility_base_colors(
       alpha_zones = zone_filter,

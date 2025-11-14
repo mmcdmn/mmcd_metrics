@@ -26,6 +26,7 @@ server <- function(input, output, session) {
       fosarea_filter = if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea,
       zone_filter = if (length(input$zone) == 0 || "all" %in% input$zone) NULL else input$zone,
       priority_filter = if (length(input$priority) == 0 || "all" %in% input$priority) NULL else input$priority,
+      drone_filter = input$drone_filter,
       years_gap = input$years_gap,
       ref_date = Sys.Date()
     )
@@ -48,7 +49,7 @@ server <- function(input, output, session) {
       }
     }
   })
-  
+
   # Data table output - only shows after refresh
   output$gaps_table <- DT::renderDataTable({
     if (input$refresh == 0) {

@@ -126,9 +126,10 @@
 <li><strong><code>loc<em>breeding</em>sites</code></strong> - Master site registry</li>
 <ul>
 <li>Contains all mosquito breeding sites in the system</li>
-<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>air_gnd</code>, <code>priority</code>, <code>enddate</code></li>
-<li>Filter: <code>(enddate IS NULL OR enddate &gt; CURRENT_DATE - INTERVAL '2 years')</code> for active sites</li>
+<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>air_gnd</code>, <code>priority</code>, <code>enddate</code>, <code>drone</code></li>
+<li><strong>CRITICAL FILTER</strong>: <code>enddate IS NULL</code> for active sites only</li>
 <li><strong>NOTE</strong>: This is the authoritative source for active/inactive sites</li>
+<li><strong>Drone Field</strong>: <code>drone = 'Y'</code> identifies drone-designated sites</li>
 </ul>
 </ul>
 
@@ -196,13 +197,26 @@
 <li><strong>NULL</strong>: Sites without assigned priority</li>
 </ul>
 
+<h3>Drone Site Classification</h3>
+<ul>
+<li><strong>Drone Sites</strong>: Identified by <code>drone = 'Y'</code> in <code>loc<em>breeding</em>sites</code> table</li>
+<li><strong>Non-Drone Sites</strong>: Sites where <code>drone IS NULL OR drone != 'Y'</code></li>
+<li><strong>Filter Options</strong>:</li>
+<ul>
+<li>🏠 <strong>All Sites</strong>: No drone filtering (default)</li>
+<li>🚁 <strong>Drone Sites Only</strong>: Show only <code>drone = 'Y'</code> sites</li>
+<li>🚶 <strong>Non-Drone Sites Only</strong>: Show only non-drone sites</li>
+<li>🔧 <strong>Include Drone Sites</strong>: Show all sites with drone highlighting</li>
+</ul>
+</ul>
+
 <h2>Gap Detection Logic</h2>
 
 <h3>Core Algorithm</h3>
 <p>The app identifies sites with inspection gaps using a multi-step process:</p>
 
 <ol>
-<li><strong>Active Site Identification</strong>: Query <code>loc<em>breeding</em>sites</code> for sites not closed within 2 years</li>
+<li><strong>Active Site Identification</strong>: Query <code>loc<em>breeding</em>sites</code> for active sites only (<code>enddate IS NULL</code>)</li>
 <li><strong>Inspection History</strong>: Query both current and archive inspection tables for all inspection records</li>
 <li><strong>Most Recent Inspection</strong>: Use <code>ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate DESC NULLS LAST)</code> to find latest inspection per site</li>
 <li><strong>Gap Classification</strong>: Compare most recent inspection date to gap threshold</li>
@@ -272,6 +286,18 @@
 <li><strong>Database</strong>: Maps directly to priority field values</li>
 </ul>
 
+<h4>Drone Site Filter</h4>
+<ul>
+<li><strong>Radio Buttons</strong>: Single selection for drone site filtering</li>
+<li><strong>Options</strong>:</li>
+<ul>
+<li>"Drone Sites Only" - Filter to <code>drone = 'Y'</code> sites only</li>
+<li>"Non-Drone Sites Only" - Filter to exclude drone sites</li>
+<li>"Include Drone Sites" - Show all sites with drone highlighting</li>
+</ul>
+<li><strong>Database Filter</strong>: Applied to <code>b.drone</code> field in main query</li>
+</ul>
+
 <h4>Gap Threshold</h4>
 <ul>
 <li><strong>Numeric Input</strong>: Years since last inspection (1-10 years)</li>
@@ -296,7 +322,7 @@ WITH filtered_sites AS (
     b.priority
   FROM loc_breeding_sites b
   INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE - INTERVAL '2 years')
+  WHERE b.enddate IS NULL
   AND b.air_gnd = '[air_gnd_filter]'
   [additional_filters]
 )
@@ -568,7 +594,7 @@ ORDER BY facility, shortname
 <pre><code class="sql">
 SELECT COUNT(*) as total_sites
 FROM loc_breeding_sites 
-WHERE (enddate IS NULL OR enddate &gt; CURRENT_DATE - INTERVAL '2 years')
+WHERE enddate IS NULL
 </code></pre>
 
 <p><strong>Usage</strong>: Troubleshooting when no results found</p>
@@ -579,7 +605,7 @@ WHERE (enddate IS NULL OR enddate &gt; CURRENT_DATE - INTERVAL '2 years')
 <pre><code class="sql">
 SELECT air_gnd, COUNT(*) as count
 FROM loc_breeding_sites 
-WHERE (enddate IS NULL OR enddate &gt; CURRENT_DATE - INTERVAL '2 years')
+WHERE enddate IS NULL
 GROUP BY air_gnd
 ORDER BY air_gnd
 </code></pre>
@@ -598,7 +624,7 @@ ORDER BY air_gnd
 SELECT sc.zone, COUNT(*) as count
 FROM loc_breeding_sites b
 INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE - INTERVAL '2 years')
+WHERE b.enddate IS NULL
 AND b.air_gnd = 'A'
 GROUP BY sc.zone
 ORDER BY sc.zone
@@ -661,10 +687,32 @@ FROM (
 
 <h3>Data Quality Considerations</h3>
 <ul>
-<li><strong>Active Sites</strong>: Must filter by enddate IS NULL for current operations</li>
+<li><strong>Active Sites Only</strong>: CRITICAL - Must filter by <code>enddate IS NULL</code> for current operations</li>
+<li><strong>Drone Site Identification</strong>: Use <code>drone = 'Y'</code> exclusively - no other values indicate drone sites</li>
 <li><strong>Valid Inspections</strong>: Action codes must be validated and numdip required for dip counts</li>
 <li><strong>Complete History</strong>: Archive and current tables must both be queried for full inspection history</li>
 <li><strong>Sitecode Consistency</strong>: Join pattern handles multiple sitecode formats consistently</li>
+</ul>
+
+<hr>
+
+<h2>Key Implementation Points</h2>
+
+<h3>Critical Requirements</h3>
+<ol>
+<li><strong>Active Sites Only</strong>: Must filter <code>enddate IS NULL</code> </li>
+<li><strong>FOS Area Mapping</strong>: Always map foreman shortnames to emp_num for database filtering </li>
+<li><strong>Drone Site Logic</strong>: Use <code>drone = 'Y'</code> exclusively - no other values indicate drone sites</li>
+<li><strong>Refresh Button Pattern</strong>: Essential for performance - NO data queries until refresh clicked</li>
+<li><strong>Zone Fields Are Character</strong>: Zone '1' and '2' are stored as character, not numeric</li>
+</ul>
+
+<h3>Performance Considerations</h3>
+<ul>
+<li><strong>CTE Query Structure</strong>: Three-step CTE approach provides optimal performance (~2.7 seconds)</li>
+<li><strong>Early Filtering</strong>: Apply site filters before joining inspection data</li>
+<li><strong>UNION ALL Required</strong>: Must combine current and archive inspection tables for complete history</li>
+<li><strong>Window Functions</strong>: <code>ROW_NUMBER()</code> efficiently finds most recent inspection per site</li>
 </ul>
     </div>
 </body>

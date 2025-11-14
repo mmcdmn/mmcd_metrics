@@ -109,6 +109,16 @@ create_main_ui <- function() {
               selected = "all", multiple = TRUE)
           )
         ),
+        fluidRow(
+          column(4,
+            radioButtons("drone_filter", "Drone Sites:", 
+              choices = c(" Drone Sites Only" = "drone_only", 
+                         " Non-Drone Sites Only" = "no_drone",
+                         " Include Drone Sites" = "include_drone"), 
+              selected = "include_drone")
+          ),
+          column(8, "")
+        ),
         hr(),
         fluidRow(
           column(3,

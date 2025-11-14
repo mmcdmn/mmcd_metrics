@@ -18,6 +18,11 @@ format_inspection_gaps <- function(data) {
       `Zone` = zone,
       `Air/Ground` = air_gnd,
       `Priority` = priority,
+      `Drone Site` = case_when(
+        is.na(drone) | drone != 'Y' ~ "No",
+        drone == 'Y' ~ "Yes",
+        TRUE ~ "No"
+      ),
       `Last Inspection` = case_when(
         last_inspection_date == as.Date('1900-01-01') ~ "Never",
         is.na(last_inspection_date) ~ "Never",
@@ -34,7 +39,7 @@ format_inspection_gaps <- function(data) {
       `Status` = inspection_status
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Last Inspection`, `Num Dips`, `Days Since`, `Status`)
+           `Drone Site`, `Last Inspection`, `Num Dips`, `Days Since`, `Status`)
 }
 
 # Render the inspection gap table
@@ -53,7 +58,7 @@ render_gap_table <- function(data) {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(8, 'desc'))  # Sort by Days Since descending
+      order = list(list(9, 'desc'))  # Sort by Days Since descending (column moved)
     ),
     filter = 'top',
     class = 'compact stripe hover'
@@ -63,6 +68,13 @@ render_gap_table <- function(data) {
     backgroundColor = DT::styleEqual(
       c('Never Inspected', 'Inspection Gap'),
       c('#ffebee', '#fff3e0')
+    )
+  ) %>%
+  DT::formatStyle(
+    'Drone Site',
+    backgroundColor = DT::styleEqual(
+      'Yes',
+      '#e8f5e8'  # Light green for drone sites
     )
   )
 }

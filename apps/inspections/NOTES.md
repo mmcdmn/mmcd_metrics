@@ -12,9 +12,10 @@ This Shiny app identifies mosquito breeding sites with inspection coverage gaps 
 #### Primary Site Table
 - **`loc_breeding_sites`** - Master site registry
   - Contains all mosquito breeding sites in the system
-  - Fields: `sitecode`, `facility`, `air_gnd`, `priority`, `enddate`
-  - Filter: `(enddate IS NULL OR enddate > CURRENT_DATE - INTERVAL '2 years')` for active sites
+  - Fields: `sitecode`, `facility`, `air_gnd`, `priority`, `enddate`, `drone`
+  - **CRITICAL FILTER**: `enddate IS NULL` for active sites only
   - **NOTE**: This is the authoritative source for active/inactive sites
+  - **Drone Field**: `drone = 'Y'` identifies drone-designated sites
 
 #### Inspection Tables (Current & Archive)
 - **`dblarv_insptrt_current`** - Active larval inspection/treatment records
@@ -58,12 +59,21 @@ This Shiny app identifies mosquito breeding sites with inspection coverage gaps 
 - **BLUE**: Routine monitoring sites
 - **NULL**: Sites without assigned priority
 
+### Drone Site Classification
+- **Drone Sites**: Identified by `drone = 'Y'` in `loc_breeding_sites` table
+- **Non-Drone Sites**: Sites where `drone IS NULL OR drone != 'Y'`
+- **Filter Options**:
+  - 🏠 **All Sites**: No drone filtering (default)
+  - 🚁 **Drone Sites Only**: Show only `drone = 'Y'` sites
+  - 🚶 **Non-Drone Sites Only**: Show only non-drone sites
+  - 🔧 **Include Drone Sites**: Show all sites with drone highlighting
+
 ## Gap Detection Logic
 
 ### Core Algorithm
 The app identifies sites with inspection gaps using a multi-step process:
 
-1. **Active Site Identification**: Query `loc_breeding_sites` for sites not closed within 2 years
+1. **Active Site Identification**: Query `loc_breeding_sites` for active sites only (`enddate IS NULL`)
 2. **Inspection History**: Query both current and archive inspection tables for all inspection records
 3. **Most Recent Inspection**: Use `ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate DESC NULLS LAST)` to find latest inspection per site
 4. **Gap Classification**: Compare most recent inspection date to gap threshold
@@ -116,6 +126,14 @@ The app identifies sites with inspection gaps using a multi-step process:
 - **Display**: Color-coded priority levels
 - **Database**: Maps directly to priority field values
 
+#### Drone Site Filter
+- **Radio Buttons**: Single selection for drone site filtering
+- **Options**:
+  -  "Drone Sites Only" - Filter to `drone = 'Y'` sites only
+  -  "Non-Drone Sites Only" - Filter to exclude drone sites
+  -  "Include Drone Sites" - Show all sites with drone highlighting
+- **Database Filter**: Applied to `b.drone` field in main query
+
 #### Gap Threshold
 - **Numeric Input**: Years since last inspection (1-10 years)
 - **Default**: 3 years
@@ -138,7 +156,7 @@ WITH filtered_sites AS (
     b.priority
   FROM loc_breeding_sites b
   INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE - INTERVAL '2 years')
+  WHERE b.enddate IS NULL
   AND b.air_gnd = '[air_gnd_filter]'
   [additional_filters]
 )
@@ -390,7 +408,7 @@ ORDER BY facility, shortname
 ```sql
 SELECT COUNT(*) as total_sites
 FROM loc_breeding_sites 
-WHERE (enddate IS NULL OR enddate > CURRENT_DATE - INTERVAL '2 years')
+WHERE enddate IS NULL
 ```
 
 **Usage**: Troubleshooting when no results found
@@ -401,7 +419,7 @@ WHERE (enddate IS NULL OR enddate > CURRENT_DATE - INTERVAL '2 years')
 ```sql
 SELECT air_gnd, COUNT(*) as count
 FROM loc_breeding_sites 
-WHERE (enddate IS NULL OR enddate > CURRENT_DATE - INTERVAL '2 years')
+WHERE enddate IS NULL
 GROUP BY air_gnd
 ORDER BY air_gnd
 ```
@@ -418,7 +436,7 @@ ORDER BY air_gnd
 SELECT sc.zone, COUNT(*) as count
 FROM loc_breeding_sites b
 INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE - INTERVAL '2 years')
+WHERE b.enddate IS NULL
 AND b.air_gnd = 'A'
 GROUP BY sc.zone
 ORDER BY sc.zone
@@ -472,7 +490,25 @@ FROM (
 - **action** (in inspection tables): '1','2','4' for valid inspections
 
 ### Data Quality Considerations
-- **Active Sites**: Must filter by enddate IS NULL for current operations
+- **Active Sites Only**: CRITICAL - Must filter by `enddate IS NULL` for current operations
+- **Drone Site Identification**: Use `drone = 'Y'` exclusively - no other values indicate drone sites
 - **Valid Inspections**: Action codes must be validated and numdip required for dip counts
 - **Complete History**: Archive and current tables must both be queried for full inspection history
 - **Sitecode Consistency**: Join pattern handles multiple sitecode formats consistently
+
+---
+
+## Key Implementation Points
+
+### Critical Requirements
+1. **Active Sites Only**: Must filter `enddate IS NULL` 
+2. **FOS Area Mapping**: Always map foreman shortnames to emp_num for database filtering 
+3. **Drone Site Logic**: Use `drone = 'Y'` exclusively - no other values indicate drone sites
+4. **Refresh Button Pattern**: Essential for performance - NO data queries until refresh clicked
+5. **Zone Fields Are Character**: Zone '1' and '2' are stored as character, not numeric
+
+### Performance Considerations
+- **CTE Query Structure**: Three-step CTE approach provides optimal performance (~2.7 seconds)
+- **Early Filtering**: Apply site filters before joining inspection data
+- **UNION ALL Required**: Must combine current and archive inspection tables for complete history
+- **Window Functions**: `ROW_NUMBER()` efficiently finds most recent inspection per site

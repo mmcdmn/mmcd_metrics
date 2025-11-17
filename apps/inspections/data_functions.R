@@ -19,7 +19,7 @@ get_site_choices <- function() {
 }
 
 # Get inspection records - OPTIMIZED VERSION
-get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter, zone_filter, priority_filter, years_gap, ref_date = Sys.Date()) {
+get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter, zone_filter, priority_filter, drone_filter, years_gap, ref_date = Sys.Date()) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -61,6 +61,18 @@ get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter,
       site_filters <- c(site_filters, paste0("b.priority IN (", priorities_str, ")"))
     }
     
+    # Add drone filtering
+    if (!is.null(drone_filter) && drone_filter != "all") {
+      if (drone_filter == "drone_only") {
+        site_filters <- c(site_filters, "b.drone = 'Y'")
+      } else if (drone_filter == "no_drone") {
+        site_filters <- c(site_filters, "(b.drone IS NULL OR b.drone != 'Y')")
+      } else if (drone_filter == "include_drone") {
+        # Include all sites but prioritize/highlight drone sites
+        # No additional filter needed - all sites included
+      }
+    }
+    
     # Combine filters
     where_clause <- if (length(site_filters) > 0) {
       paste0(" AND ", paste(site_filters, collapse = " AND "))
@@ -79,10 +91,11 @@ get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter,
         sc.fosarea,
         sc.zone,
         b.air_gnd,
-        b.priority
+        b.priority,
+        b.drone
       FROM loc_breeding_sites b
       INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-      WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE - INTERVAL '2 years')
+      WHERE b.enddate IS NULL
       AND b.air_gnd = '%s'
       %s
     ),
@@ -95,6 +108,7 @@ get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter,
         fs.zone,
         fs.air_gnd,
         fs.priority,
+        fs.drone,
         i.inspdate,
         i.action,
         i.numdip,
@@ -120,6 +134,7 @@ get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter,
       zone,
       air_gnd,
       priority,
+      drone,
       COALESCE(inspdate, '1900-01-01'::date) as last_inspection_date,
       numdip as last_numdip,
       CASE 

@@ -7,6 +7,29 @@
 A comprehensive analytics platform for the Metropolitan Mosquito Control District, providing interactive dashboards for mosquito surveillance, treatment analysis, and operational metrics.
 
 
+## Important Bug Fixes
+
+### **Zone Assignment Fix (November 2025)**
+**CRITICAL FIX**: Corrected ambiguous JOIN logic in `apps/drone/data_functions.R` that was causing incorrect zone assignments.
+
+**Problem**: Sites were showing wrong zones due to broad pattern matching in SQL JOINs. For example:
+- Site `191819-045` was incorrectly showing zone 2 instead of zone 1
+- Root cause: JOIN matched both `191819-` (zone 1) and `191819E` (zone 2) sectcodes
+
+**Solution**: Changed from broad OR-based pattern matching to precise sectcode matching:
+```sql
+-- OLD (incorrect - would match multiple sectcodes)
+LEFT JOIN public.gis_sectcode g ON LEFT(sitecode, 6) || '-' = g.sectcode
+  OR LEFT(sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(sitecode, 6) || 'W' = g.sectcode
+
+-- NEW (correct - exact match only)  
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
+```
+
+
+
 ## Table of Contents
 
 - [Architecture](#architecture)

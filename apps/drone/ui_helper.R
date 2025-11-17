@@ -15,7 +15,7 @@ drone_ui <- function() {
           condition = "input.tabs == 'current'",
           radioButtons("current_display_metric", "Display Metric:",
                        choices = c("Number of Sites" = "sites",
-                                   "Total Acres" = "acres"),
+                                   "Treated Acres" = "treated_acres"),
                        selected = "sites"),
           
           sliderInput("expiring_days", "Days Until Expiration:",
@@ -25,18 +25,37 @@ drone_ui <- function() {
         # Historical Trends tab controls
         conditionalPanel(
           condition = "input.tabs == 'historical'",
+          radioButtons("hist_time_period", "Time Period:",
+                       choices = c("Yearly" = "yearly",
+                                   "Weekly" = "weekly"),
+                       selected = "yearly"),
+          selectInput("hist_chart_type", "Chart Type:",
+                      choices = c("Stacked Bar" = "stacked_bar",
+                                  "Grouped Bar" = "grouped_bar", 
+                                  "Line Chart" = "line",
+                                  "Area Chart" = "area",
+                                  "Step Chart" = "step"),
+                      selected = "stacked_bar"),
           radioButtons("hist_display_metric", "Display Metric:",
                        choices = c("Number of Sites" = "sites",
                                    "Number of Treatments" = "treatments",
                                    "Number of Acres" = "acres"),
                        selected = "sites"),
-          selectInput("hist_start_year", "Start Year:",
-                     choices = seq(2010, 2025),
-                     selected = 2018),
-          selectInput("hist_end_year", "End Year:",
-                     choices = seq(2010, 2025),
-                     selected = 2025),
-          checkboxInput("hist_show_percentages", "Show Percentages", value = FALSE)
+          sliderInput("hist_year_range", "Year Range:",
+                      min = 2010, max = 2025, value = c(2018, 2025), step = 1)
+        ),
+        
+        # Map tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'map'",
+          selectInput("map_basemap", "Base Map:",
+                      choices = c("Streets" = "carto",
+                                  "Satellite" = "satellite", 
+                                  "Terrain" = "terrain",
+                                  "OpenStreetMap" = "osm"),
+                      selected = "carto"),
+          sliderInput("expiring_days", "Days Until Expiration:",
+                      min = 1, max = 30, value = 7, step = 1)
         ),
         
         # Site Statistics tab controls
@@ -47,12 +66,8 @@ drone_ui <- function() {
                                 "Largest" = "largest", 
                                 "Smallest" = "smallest"),
                       selected = "average"),
-          selectInput("site_start_year", "Start Year:",
-                     choices = seq(2010, 2025),
-                     selected = 2018),
-          selectInput("site_end_year", "End Year:",
-                     choices = seq(2010, 2025),
-                     selected = 2025)
+          sliderInput("site_year_range", "Year Range:",
+                      min = 2010, max = 2025, value = c(2018, 2025), step = 1)
         ),
         
         # Shared controls
@@ -63,9 +78,12 @@ drone_ui <- function() {
         
         checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = FALSE),
         
-        checkboxGroupInput("zone_filter", "Select Zones:",
-                           choices = c("P1" = "1", "P2" = "2"),
-                           selected = c("1", "2")),
+        selectInput("zone_option", "Zone Display:",
+                    choices = c("P1 Only" = "p1_only",
+                                "P2 Only" = "p2_only", 
+                                "P1 and P2 Separate" = "p1_p2_separate",
+                                "P1+P2 Combined" = "p1_p2_combined"),
+                    selected = "p1_p2_combined"),
         
         selectizeInput("facility_filter", "Facility:",
                       choices = NULL, multiple = TRUE),
@@ -76,19 +94,21 @@ drone_ui <- function() {
         # Group by controls (dynamic based on tab)
         conditionalPanel(
           condition = "input.tabs == 'current'",
-          radioButtons("group_by", "Group By:",
-                       choices = c("Facility" = "facility",
-                                   "FOS" = "foreman",
-                                   "Section" = "sectcode"),
-                       selected = "facility")
+          selectInput("group_by", "Group By:",
+                      choices = c("Facility" = "facility",
+                                  "FOS" = "foreman",
+                                  "Section" = "sectcode",
+                                  "All MMCD" = "mmcd_all"),
+                      selected = "facility")
         ),
         
         conditionalPanel(
           condition = "input.tabs == 'historical' || input.tabs == 'site_stats'",
-          radioButtons("group_by", "Group By:",
-                       choices = c("Facility" = "facility",
-                                   "FOS" = "foreman"),
-                       selected = "facility")
+          selectInput("group_by", "Group By:",
+                      choices = c("Facility" = "facility",
+                                  "FOS" = "foreman",
+                                  "All MMCD" = "mmcd_all"),
+                      selected = "facility")
         ),
         
         # Refresh button
@@ -100,8 +120,30 @@ drone_ui <- function() {
       mainPanel(
         tabsetPanel(
           id = "tabs",
-          tabPanel("Current Progress", value = "current", plotOutput("currentPlot")),
-          tabPanel("Historical Trends", value = "historical", plotOutput("historicalPlot")),
+          tabPanel("Current Progress", value = "current", 
+                   br(),
+                   textOutput("currentDescription"),
+                   br(),
+                   plotOutput("currentPlot", height = "auto"),
+                   br(),
+                   h4("Sitecode Details"),
+                   DT::dataTableOutput("currentDataTable")
+          ),
+          tabPanel("Map", value = "map",
+                   br(),
+                   textOutput("mapDescription"),
+                   br(),
+                   leafletOutput("droneMap", height = "600px"),
+                   br(),
+                   h4("Site Details"),
+                   DT::dataTableOutput("mapDataTable")
+          ),
+          tabPanel("Historical Trends", value = "historical", 
+                   plotOutput("historicalPlot", height = "auto"),
+                   br(),
+                   h4("Historical Data"),
+                   DT::dataTableOutput("historicalDataTable")
+          ),
           tabPanel("Site Statistics", value = "site_stats",
                    # Plot and table layout
                    fluidRow(

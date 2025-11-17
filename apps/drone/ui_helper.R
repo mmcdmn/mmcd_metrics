@@ -45,6 +45,19 @@ drone_ui <- function() {
                       min = 2010, max = 2025, value = c(2018, 2025), step = 1)
         ),
         
+        # Map tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'map'",
+          selectInput("map_basemap", "Base Map:",
+                      choices = c("Streets" = "carto",
+                                  "Satellite" = "satellite", 
+                                  "Terrain" = "terrain",
+                                  "OpenStreetMap" = "osm"),
+                      selected = "carto"),
+          sliderInput("expiring_days", "Days Until Expiration:",
+                      min = 1, max = 30, value = 7, step = 1)
+        ),
+        
         # Site Statistics tab controls
         conditionalPanel(
           condition = "input.tabs == 'site_stats'",
@@ -115,6 +128,15 @@ drone_ui <- function() {
                    br(),
                    h4("Sitecode Details"),
                    DT::dataTableOutput("currentDataTable")
+          ),
+          tabPanel("Map", value = "map",
+                   br(),
+                   textOutput("mapDescription"),
+                   br(),
+                   leafletOutput("droneMap", height = "600px"),
+                   br(),
+                   h4("Site Details"),
+                   DT::dataTableOutput("mapDataTable")
           ),
           tabPanel("Historical Trends", value = "historical", 
                    plotOutput("historicalPlot", height = "auto"),

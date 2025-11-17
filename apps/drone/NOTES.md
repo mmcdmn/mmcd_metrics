@@ -1,10 +1,11 @@
 # Drone Sites Treatment Tracking - Technical Notes
 
 ## Overview
-This Shiny app tracks drone-treated mosquito breeding sites across three perspectives:
+This Shiny app tracks drone-treated mosquito breeding sites across four perspectives:
 1. **Current Progress** - Sites with active/expiring treatments, aggregated by facility, FOS, or section
-2. **Historical Trends** - Multi-year trends in drone treatments (sites, treatments, or acres)
-3. **Site Statistics** - Site-level statistics showing average, largest, and smallest treated sites
+2. **Map** - Interactive map showing drone sites with color-coded treatment status markers
+3. **Historical Trends** - Multi-year trends in drone treatments (sites, treatments, or acres)
+4. **Site Statistics** - Site-level statistics showing average, largest, and smallest treated sites
 
 ## Data Sources
 
@@ -32,9 +33,11 @@ This Shiny app tracks drone-treated mosquito breeding sites across three perspec
     - `prehatch` (boolean: site treats pre-hatch mosquitoes)
     - `drone` (values: 'Y', 'M', 'C' for drone-capable sites)
     - `air_gnd` (alternate drone designation, value: 'D')
+    - `geom` (PostGIS geometry data for mapping, UTM projection)
   - **Critical Join Logic**: **MUST filter `enddate IS NULL`** or risk including closed sites
   - **Data Quality**: Multiple rows per sitecode possible with different enddates
-  - **Usage**: Source of truth for site characteristics and active status
+  - **Usage**: Source of truth for site characteristics, active status, and spatial coordinates
+  - **Spatial Data**: Geometry stored in UTM projection, requires `ST_Transform(geom, 4326)` for web mapping
   
 - **`public.gis_sectcode`** - Geographic section mapping and zone assignments
   - **Key Columns**:
@@ -204,6 +207,53 @@ Analyze site-level treatment statistics and identify largest/smallest drone site
 - Columns: Sitecode, Treated Acres, Facility, Material, Year
 - Shows individual treatment instances, not aggregated
 
+## Tab 4: Map
+
+### Purpose
+Provide interactive map visualization of drone sites with color-coded treatment status markers.
+
+### Key Features
+- **Interactive Leaflet Map** with OpenStreetMap tiles
+- **Color-coded markers** by treatment status:
+  - **Blue**: Active treatments
+  - **Orange**: Expiring treatments (within specified days)
+  - **Red**: Expired treatments
+  - **Gray**: No treatment recorded
+- **Site popups** with detailed information:
+  - Sitecode, facility, zone, site acres
+  - Treatment status and last treatment details
+  - Last material used and treated acres
+- **Map legend** showing treatment status color scheme
+- **Data table** below map with site details and filtering
+- **Shared filters** with other tabs (zone, facility, FOS, prehatch, expiring days)
+
+### Data Flow
+1. Load spatial data via `load_spatial_data()`:
+   - Uses `load_raw_data()` with `include_geometry = TRUE`
+   - Extracts coordinates using `ST_Transform(ST_Centroid(geom), 4326)`
+   - Applies same filters as Current Progress tab
+   - Calculates treatment status for each site
+
+2. Process spatial data:
+   - Join sites with latest treatment information
+   - Calculate treatment status based on end date vs current date
+   - Filter sites to only those with valid coordinates
+   - Convert to sf object for leaflet mapping
+
+### Visualization
+- **Base map**: OpenStreetMap tiles via leaflet providers
+- **Markers**: CircleMarkers with 8px radius, black borders
+- **Colors**: Based on treatment status using predefined palette
+- **Popups**: HTML-formatted with site and treatment details
+- **Legend**: Bottom-right position showing status colors
+- **Bounds**: Automatic map fitting to data extent
+
+### Coordinate Transformation
+- **Source**: PostGIS geometry in UTM projection (EPSG:26915)
+- **Target**: WGS84 decimal degrees (EPSG:4326) for web mapping
+- **SQL Transform**: `ST_X(ST_Transform(ST_Centroid(geom), 4326))` for longitude
+- **Coordinate Range**: Minnesota extent (~-93.8 to -92.8 lng, 44.6 to 45.4 lat)
+
 ## Code Organization
 
 ### File Structure
@@ -223,13 +273,19 @@ drone/
 - `raw_data()` - Loads and processes data ONLY when refresh button clicked
 - `processed_data()` - Accesses current progress processed data from raw_data result
 - `sitecode_data()` - Loads site statistics data when refresh clicked
-- `server()` - Main server function with output renderers for all three tabs
+- `map_spatial_data()` - Loads spatial data with geometry for map visualization when refresh clicked
+- `server()` - Main server function with output renderers for all four tabs
+- Map section outputs:
+  - `output$mapDescription` - Dynamic description text for map tab
+  - `output$droneMap` - Leaflet map with color-coded markers
+  - `output$mapDataTable` - Data table showing site details with treatment status
 
 #### data_functions.R
-- `load_raw_data()` - Queries drone sites and treatments from database with analysis date support
+- `load_raw_data()` - Queries drone sites and treatments from database with analysis date and geometry support
 - `apply_data_filters()` - Applies facility, FOS, and prehatch filters to processed data
 - `get_sitecode_data()` - Individual treatment records for site statistics with zone/FOS data
 - `get_site_stats_data()` - Aggregates treatment data by group for site statistics
+- `load_spatial_data()` - Loads spatial data with coordinates and treatment status for mapping
 
 #### display_functions.R
 - `create_zone_groups()` - Creates combined group labels for zone separation
@@ -250,7 +306,7 @@ drone/
 ## Data Collection and Aggregation Logic
 
 ### Overview of Data Processing Pipeline
-The drone app follows a consistent pattern for data collection and aggregation across all three tabs. Data processing is done **outside of SQL** - SQL queries return raw records which are then aggregated using R/dplyr operations.
+The drone app follows a consistent pattern for data collection and aggregation across all four tabs. Data processing is done **outside of SQL** - SQL queries return raw records which are then aggregated using R/dplyr operations.
 
 ### Core Aggregation Methods
 
@@ -414,75 +470,52 @@ This section documents all SQL queries used in the drone app for reference and t
 
 ### 1. Current Drone Sites Query
 **Function**: `load_raw_data()` in `data_functions.R`  
-**Purpose**: Load active drone sites with zone and FOS information from authoritative gis_sectcode source
+**Purpose**: Load active drone sites with zone and FOS information
 
 ```sql
-SELECT 
-    sc.sectcode || '-' || '001' as sitecode,  -- Generate sitecode from sectcode
-    sc.facility,
-    sc.acres,
-    sc.prehatch,
-    sc.drone_type,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as foreman,
-    sc.zone,
-    sc.sectcode
-FROM public.gis_sectcode sc
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
-WHERE sc.drone_type IN ('Y', 'M', 'C')
-    AND sc.active = true
-    AND (sc.enddate IS NULL OR sc.enddate > CURRENT_DATE)
+SELECT b.sitecode, g.facility, b.acres, b.prehatch, b.drone, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
+         ELSE NULL
+       END as foreman, 
+       g.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
+  AND b.enddate IS NULL
 ```
 
 **Key Points**:
-- Uses `gis_sectcode` as the authoritative source for site data
-- Filters for active drone sites (`active = true`, `enddate IS NULL`)
-- Gets zone, FOS area, prehatch, and acres directly from gis_sectcode
+- Uses `loc_breeding_sites` as primary source, joined with `gis_sectcode` for zone/FOS data
+- **PRECISE SECTCODE MATCHING**: `g.sectcode = left(b.sitecode,7)` ensures exact match
+- Filters for active drone sites (`enddate IS NULL`)
+- Gets zone, FOS area from gis_sectcode via exact sectcode matching
 - Joins with employee_list to validate active field supervisors
-- Generates sitecode from sectcode for compatibility
+- **Fixed**: Previous broad OR logic incorrectly matched multiple sectcodes (e.g., 191819- AND 191819E)
 
 ### 2. Current Treatments Query
 **Function**: `load_raw_data()` in `data_functions.R`  
 **Purpose**: Load current drone treatments with zone/FOS data and effectiveness duration
 
 ```sql
-SELECT 
-    t.sitecode, 
-    t.facility, 
-    t.inspdate, 
-    t.matcode, 
-    t.acres as treated_acres, 
-    t.foreman as treatment_foreman,
-    m.effect_days,
-    sc.zone,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as site_foreman,
-    sc.prehatch,
-    sc.acres as site_acres
+SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
+       g.facility, g.zone, g.fosarea
 FROM public.dblarv_insptrt_current t
-LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
 LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-    AND sc.drone_type IN ('Y', 'M', 'C')
-    AND (sc.enddate IS NULL OR sc.enddate > CURRENT_DATE)
 ```
 
 **Key Points**:
 - Filters drone treatments: `airgrnd_plan = 'D'` OR `action = 'D'`
-- Joins with gis_sectcode to get zone, FOS, prehatch data (authoritative source)
-- Joins with employee_list to validate active field supervisors
+- **PRECISE SECTCODE MATCHING**: `g.sectcode = left(t.sitecode,7)` ensures exact match
 - Joins with mattype_list_targetdose for treatment duration
-- Filters for active drone sites using gis_sectcode.enddate
-- Distinguishes between treatment_foreman (who applied) and site_foreman (jurisdictional)
+- Gets facility, zone, and fosarea from gis_sectcode via exact sectcode matching
+- **Fixed**: Prevents ambiguous zone assignments when multiple sectcodes exist (e.g., 191819- vs 191819E)
 
 ### 3. Individual Treatment Records Query (Site Statistics)
 **Function**: `get_sitecode_data()` in `data_functions.R`  
@@ -584,23 +617,13 @@ SELECT
     t.matcode, 
     t.amts as amount, 
     t.acres as treated_acres,
-    sc.zone,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as foreman,
-    sc.prehatch,
-    sc.acres as site_acres
+    g.zone,
+    g.fosarea as foreman
 FROM public.dblarv_insptrt_archive t
-LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
 WHERE t.action = 'D'
-    AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-    AND t.inspdate <= ?
-    AND sc.drone_type IN ('Y', 'M', 'C')
-    AND (sc.enddate IS NULL OR sc.enddate > ?)
+  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
+  AND t.inspdate <= ?
 
 UNION ALL
 
@@ -613,51 +636,71 @@ SELECT
     t.matcode, 
     t.amts as amount, 
     t.acres as treated_acres,
-    sc.zone,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as foreman,
-    sc.prehatch,
-    sc.acres as site_acres
+    g.zone,
+    g.fosarea as foreman
 FROM public.dblarv_insptrt_current t
-LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-    AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-    AND t.inspdate <= ?
-    AND sc.drone_type IN ('Y', 'M', 'C')
-    AND (sc.enddate IS NULL OR sc.enddate > ?)
+  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
+  AND t.inspdate <= ?
 ```
 
 **Key Points**:
 - Combines archive and current treatment tables with UNION ALL
-- Uses gis_sectcode as authoritative source for zone, FOS, and site data
-- Filters drone treatments by action/airgrnd_plan and drone_type
+- **PRECISE SECTCODE MATCHING**: Uses exact sectcode matching in both queries
+- Filters drone treatments by action/airgrnd_plan
 - Includes year range and analysis date filtering
-- Joins with employee_list for active field supervisor validation
-- Filters for active sites using gis_sectcode.enddate
-- Returns both treatment data and site characteristics in single query
+- Returns treatment data with accurate zone/FOS information
+- **Fixed**: Ensures consistent zone assignments across historical data
 
-### 5. Facility Lookup Query
-**Function**: `get_facility_lookup()` in `shared/db_helpers.R`  
-**Purpose**: Map facility abbreviations to full names for display
+### 5. Spatial Data Query (Map Functionality)
+**Function**: `load_raw_data()` with `include_geometry = TRUE` in `data_functions.R`  
+**Purpose**: Load drone sites with spatial coordinates for interactive mapping
 
 ```sql
-SELECT DISTINCT 
-    abbrv as short_name,
-    city as full_name
-FROM public.gis_facility
-WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
-ORDER BY abbrv
+SELECT 
+    b.sitecode, 
+    g.facility, 
+    b.acres, 
+    b.prehatch, 
+    b.drone, 
+    CASE 
+        WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
+        ELSE NULL
+    END as foreman, 
+    g.zone,
+    left(b.sitecode,7) as sectcode,
+    ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, 
+    ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+    AND e.emp_type = 'FieldSuper' 
+    AND e.active = true
+WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
+    AND b.enddate IS NULL
+    AND b.geom IS NOT NULL
 ```
 
 **Key Points**:
-- Maps facility codes (e.g., 'E', 'N', 'Sj') to full names (e.g., 'Eastern Hennepin')
-- Excludes special facility codes from UI dropdowns
-- Used throughout app for display name mapping
-- Provides consistent facility naming across all tabs
+- **PRECISE SECTCODE MATCHING**: `g.sectcode = left(b.sitecode,7)` ensures exact match
+- Transforms geometry from UTM (EPSG:26915) to WGS84 (EPSG:4326) for leaflet compatibility
+- Extracts centroid coordinates as lng/lat for marker placement  
+- Filters for active drone sites with valid geometry data
+- Zone data crucial for color-coding map markers by treatment status
+- **Fixed**: Prevents incorrect zone assignment that would affect marker colors (e.g., 191819-045 correctly shows zone 1, not zone 2)
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+    AND e.emp_type = 'FieldSuper' 
+    AND e.active = true
+WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
+    AND b.enddate IS NULL 
+    AND b.geom IS NOT NULL
+```
 
-### 6. FOS Employee Lookup Query
+**Key Points**:
+- **Geometry Transform**: `ST_Transform(ST_Centroid(b.geom), 4326)` converts UTM to WGS84 decimal degrees
+- **Coordinate Extraction**: `ST_X()` and `ST_Y()` extract longitude and latitude values
+- **Geometry Filter**: `b.geom IS NOT NULL` ensures only sites with valid coordinates
+- **Web Mapping Ready**: Coordinates returned in standard web mercator projection (EPSG:4326)
+- **Centroid Calculation**: Uses centroid of polygon geometry for point markers
+- **Minnesota Extent**: Typical coordinates range -93.8 to -92.8 longitude, 44.6 to 45.4 latitude

@@ -113,9 +113,10 @@
 <h1>Drone Sites Treatment Tracking - Technical Notes</h1>
 
 <h2>Overview</h2>
-<p>This Shiny app tracks drone-treated mosquito breeding sites across three perspectives:</p>
+<p>This Shiny app tracks drone-treated mosquito breeding sites across four perspectives:</p>
 <ol>
 <li><strong>Current Progress</strong> - Sites with active/expiring treatments, aggregated by facility, FOS, or section</li>
+<li><strong>Map</strong> - Interactive map showing drone sites with color-coded treatment status markers</li>
 <li><strong>Historical Trends</strong> - Multi-year trends in drone treatments (sites, treatments, or acres)</li>
 <li><strong>Site Statistics</strong> - Site-level statistics showing average, largest, and smallest treated sites</li>
 </ul>
@@ -157,10 +158,12 @@
 <li><code>prehatch</code> (boolean: site treats pre-hatch mosquitoes)</li>
 <li><code>drone</code> (values: 'Y', 'M', 'C' for drone-capable sites)</li>
 <li><code>air_gnd</code> (alternate drone designation, value: 'D')</li>
+<li><code>geom</code> (PostGIS geometry data for mapping, UTM projection)</li>
 </ul>
 <li><strong>Critical Join Logic</strong>: <strong>MUST filter <code>enddate IS NULL</code></strong> or risk including closed sites</li>
 <li><strong>Data Quality</strong>: Multiple rows per sitecode possible with different enddates</li>
-<li><strong>Usage</strong>: Source of truth for site characteristics and active status</li>
+<li><strong>Usage</strong>: Source of truth for site characteristics, active status, and spatial coordinates</li>
+<li><strong>Spatial Data</strong>: Geometry stored in UTM projection, requires <code>ST_Transform(geom, 4326)</code> for web mapping</li>
 </ul>
 </ul>
 
@@ -392,6 +395,71 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
 <li>Shows individual treatment instances, not aggregated</li>
 </ul>
 
+<h2>Tab 4: Map</h2>
+
+<h3>Purpose</h3>
+<p>Provide interactive map visualization of drone sites with color-coded treatment status markers.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Interactive Leaflet Map</strong> with OpenStreetMap tiles</li>
+<li><strong>Color-coded markers</strong> by treatment status:</li>
+<ul>
+<li><strong>Blue</strong>: Active treatments</li>
+<li><strong>Orange</strong>: Expiring treatments (within specified days)</li>
+<li><strong>Red</strong>: Expired treatments</li>
+<li><strong>Gray</strong>: No treatment recorded</li>
+</ul>
+<li><strong>Site popups</strong> with detailed information:</li>
+<ul>
+<li>Sitecode, facility, zone, site acres</li>
+<li>Treatment status and last treatment details</li>
+<li>Last material used and treated acres</li>
+</ul>
+<li><strong>Map legend</strong> showing treatment status color scheme</li>
+<li><strong>Data table</strong> below map with site details and filtering</li>
+<li><strong>Shared filters</strong> with other tabs (zone, facility, FOS, prehatch, expiring days)</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li>Load spatial data via <code>load<em>spatial</em>data()</code>:</li>
+<ul>
+<li>Uses <code>load<em>raw</em>data()</code> with <code>include_geometry = TRUE</code></li>
+<li>Extracts coordinates using <code>ST<em>Transform(ST</em>Centroid(geom), 4326)</code></li>
+<li>Applies same filters as Current Progress tab</li>
+<li>Calculates treatment status for each site</li>
+</ul>
+</ul>
+
+<ol>
+<li>Process spatial data:</li>
+<ul>
+<li>Join sites with latest treatment information</li>
+<li>Calculate treatment status based on end date vs current date</li>
+<li>Filter sites to only those with valid coordinates</li>
+<li>Convert to sf object for leaflet mapping</li>
+</ul>
+</ul>
+
+<h3>Visualization</h3>
+<ul>
+<li><strong>Base map</strong>: OpenStreetMap tiles via leaflet providers</li>
+<li><strong>Markers</strong>: CircleMarkers with 8px radius, black borders</li>
+<li><strong>Colors</strong>: Based on treatment status using predefined palette</li>
+<li><strong>Popups</strong>: HTML-formatted with site and treatment details</li>
+<li><strong>Legend</strong>: Bottom-right position showing status colors</li>
+<li><strong>Bounds</strong>: Automatic map fitting to data extent</li>
+</ul>
+
+<h3>Coordinate Transformation</h3>
+<ul>
+<li><strong>Source</strong>: PostGIS geometry in UTM projection (EPSG:26915)</li>
+<li><strong>Target</strong>: WGS84 decimal degrees (EPSG:4326) for web mapping</li>
+<li><strong>SQL Transform</strong>: <code>ST<em>X(ST</em>Transform(ST_Centroid(geom), 4326))</code> for longitude</li>
+<li><strong>Coordinate Range</strong>: Minnesota extent (~-93.8 to -92.8 lng, 44.6 to 45.4 lat)</li>
+</ul>
+
 <h2>Code Organization</h2>
 
 <h3>File Structure</h3>
@@ -412,15 +480,23 @@ drone/
 <li><code>raw_data()</code> - Loads and processes data ONLY when refresh button clicked</li>
 <li><code>processed<em>data()</code> - Accesses current progress processed data from raw</em>data result</li>
 <li><code>sitecode_data()</code> - Loads site statistics data when refresh clicked</li>
-<li><code>server()</code> - Main server function with output renderers for all three tabs</li>
+<li><code>map<em>spatial</em>data()</code> - Loads spatial data with geometry for map visualization when refresh clicked</li>
+<li><code>server()</code> - Main server function with output renderers for all four tabs</li>
+<li>Map section outputs:</li>
+<ul>
+<li><code>output$mapDescription</code> - Dynamic description text for map tab</li>
+<li><code>output$droneMap</code> - Leaflet map with color-coded markers</li>
+<li><code>output$mapDataTable</code> - Data table showing site details with treatment status</li>
+</ul>
 </ul>
 
 <h4>data_functions.R</h4>
 <ul>
-<li><code>load<em>raw</em>data()</code> - Queries drone sites and treatments from database with analysis date support</li>
+<li><code>load<em>raw</em>data()</code> - Queries drone sites and treatments from database with analysis date and geometry support</li>
 <li><code>apply<em>data</em>filters()</code> - Applies facility, FOS, and prehatch filters to processed data</li>
 <li><code>get<em>sitecode</em>data()</code> - Individual treatment records for site statistics with zone/FOS data</li>
 <li><code>get<em>site</em>stats_data()</code> - Aggregates treatment data by group for site statistics</li>
+<li><code>load<em>spatial</em>data()</code> - Loads spatial data with coordinates and treatment status for mapping</li>
 </ul>
 
 <h4>display_functions.R</h4>
@@ -448,7 +524,7 @@ drone/
 <h2>Data Collection and Aggregation Logic</h2>
 
 <h3>Overview of Data Processing Pipeline</h3>
-<p>The drone app follows a consistent pattern for data collection and aggregation across all three tabs. Data processing is done <strong>outside of SQL</strong> - SQL queries return raw records which are then aggregated using R/dplyr operations.</p>
+<p>The drone app follows a consistent pattern for data collection and aggregation across all four tabs. Data processing is done <strong>outside of SQL</strong> - SQL queries return raw records which are then aggregated using R/dplyr operations.</p>
 
 <h3>Core Aggregation Methods</h3>
 
@@ -620,37 +696,36 @@ drone_treatments &lt;- drone_treatments %&gt;%
 
 <h3>1. Current Drone Sites Query</h3>
 <p><strong>Function</strong>: <code>load<em>raw</em>data()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load active drone sites with zone and FOS information from authoritative gis_sectcode source</p>
+<p><strong>Purpose</strong>: Load active drone sites with zone and FOS information</p>
 
 <pre><code class="sql">
-SELECT 
-    sc.sectcode || '-' || '001' as sitecode,  -- Generate sitecode from sectcode
-    sc.facility,
-    sc.acres,
-    sc.prehatch,
-    sc.drone_type,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as foreman,
-    sc.zone,
-    sc.sectcode
-FROM public.gis_sectcode sc
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
-WHERE sc.drone_type IN ('Y', 'M', 'C')
-    AND sc.active = true
-    AND (sc.enddate IS NULL OR sc.enddate &gt; CURRENT_DATE)
+SELECT b.sitecode, g.facility, b.acres, b.prehatch, b.drone, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
+         ELSE NULL
+       END as foreman, 
+       g.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
+  AND b.enddate IS NULL
 </code></pre>
 
 <p><strong>Key Points</strong>:</p>
 <ul>
-<li>Uses <code>gis_sectcode</code> as the authoritative source for site data</li>
-<li>Filters for active drone sites (<code>active = true</code>, <code>enddate IS NULL</code>)</li>
-<li>Gets zone, FOS area, prehatch, and acres directly from gis_sectcode</li>
+<li>Uses <code>loc<em>breeding</em>sites</code> as primary source, joined with <code>gis_sectcode</code> for zone/FOS data</li>
+<li>Filters for active drone sites (<code>enddate IS NULL</code>)</li>
+<li>Gets zone, FOS area from gis_sectcode via sitecode pattern matching</li>
 <li>Joins with employee_list to validate active field supervisors</li>
-<li>Generates sitecode from sectcode for compatibility</li>
+<li>Uses LEFT() function for sitecode pattern matching to handle various formats</li>
 </ul>
 
 <h3>2. Current Treatments Query</h3>
@@ -658,40 +733,25 @@ WHERE sc.drone_type IN ('Y', 'M', 'C')
 <p><strong>Purpose</strong>: Load current drone treatments with zone/FOS data and effectiveness duration</p>
 
 <pre><code class="sql">
-SELECT 
-    t.sitecode, 
-    t.facility, 
-    t.inspdate, 
-    t.matcode, 
-    t.acres as treated_acres, 
-    t.foreman as treatment_foreman,
-    m.effect_days,
-    sc.zone,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as site_foreman,
-    sc.prehatch,
-    sc.acres as site_acres
+SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
+       g.facility, g.zone, g.fosarea
 FROM public.dblarv_insptrt_current t
-LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
 LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-    AND sc.drone_type IN ('Y', 'M', 'C')
-    AND (sc.enddate IS NULL OR sc.enddate &gt; CURRENT_DATE)
 </code></pre>
 
 <p><strong>Key Points</strong>:</p>
 <ul>
 <li>Filters drone treatments: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code></li>
-<li>Joins with gis_sectcode to get zone, FOS, prehatch data (authoritative source)</li>
-<li>Joins with employee_list to validate active field supervisors</li>
+<li>Joins with gis_sectcode using sitecode pattern matching for zone/facility data</li>
 <li>Joins with mattype<em>list</em>targetdose for treatment duration</li>
-<li>Filters for active drone sites using gis_sectcode.enddate</li>
-<li>Distinguishes between treatment<em>foreman (who applied) and site</em>foreman (jurisdictional)</li>
+<li>Gets facility, zone, and fosarea from gis_sectcode</li>
+<li>Note: No direct filtering by enddate - active site filtering happens in R processing</li>
 </ul>
 
 <h3>3. Individual Treatment Records Query (Site Statistics)</h3>
@@ -796,23 +856,17 @@ SELECT
     t.matcode, 
     t.amts as amount, 
     t.acres as treated_acres,
-    sc.zone,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as foreman,
-    sc.prehatch,
-    sc.acres as site_acres
+    g.zone,
+    g.fosarea as foreman
 FROM public.dblarv_insptrt_archive t
-LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
+LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
 WHERE t.action = 'D'
-    AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-    AND t.inspdate &lt;= ?
-    AND sc.drone_type IN ('Y', 'M', 'C')
-    AND (sc.enddate IS NULL OR sc.enddate &gt; ?)
+  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
+  AND t.inspdate &lt;= ?
 
 UNION ALL
 
@@ -825,34 +879,27 @@ SELECT
     t.matcode, 
     t.amts as amount, 
     t.acres as treated_acres,
-    sc.zone,
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-        ELSE NULL
-    END as foreman,
-    sc.prehatch,
-    sc.acres as site_acres
+    g.zone,
+    g.fosarea as foreman
 FROM public.dblarv_insptrt_current t
-LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
+LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-    AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-    AND t.inspdate &lt;= ?
-    AND sc.drone_type IN ('Y', 'M', 'C')
-    AND (sc.enddate IS NULL OR sc.enddate &gt; ?)
+  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
+  AND t.inspdate &lt;= ?
 </code></pre>
 
 <p><strong>Key Points</strong>:</p>
 <ul>
 <li>Combines archive and current treatment tables with UNION ALL</li>
-<li>Uses gis_sectcode as authoritative source for zone, FOS, and site data</li>
-<li>Filters drone treatments by action/airgrnd<em>plan and drone</em>type</li>
+<li>Uses gis_sectcode for zone and FOS assignments</li>
+<li>Filters drone treatments by action/airgrnd_plan</li>
 <li>Includes year range and analysis date filtering</li>
-<li>Joins with employee_list for active field supervisor validation</li>
-<li>Filters for active sites using gis_sectcode.enddate</li>
-<li>Returns both treatment data and site characteristics in single query</li>
+<li>Returns treatment data with basic zone/FOS information</li>
+<li>Simplified compared to other queries - focuses on core treatment metrics</li>
 </ul>
 
 <h3>5. Facility Lookup Query</h3>
@@ -876,7 +923,50 @@ ORDER BY abbrv
 <li>Provides consistent facility naming across all tabs</li>
 </ul>
 
-<h3>6. FOS Employee Lookup Query</h3>
+<h3>6. Spatial Data Query (Map Functionality)</h3>
+<p><strong>Function</strong>: <code>load<em>raw</em>data()</code> with <code>include<em>geometry = TRUE</code> in <code>data</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load drone sites with spatial coordinates for interactive mapping</p>
+
+<pre><code class="sql">
+SELECT 
+    b.sitecode, 
+    g.facility, 
+    b.acres, 
+    b.prehatch, 
+    b.drone, 
+    CASE 
+        WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
+        ELSE NULL
+    END as foreman, 
+    g.zone,
+    left(b.sitecode,7) as sectcode,
+    ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, 
+    ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+    AND e.emp_type = 'FieldSuper' 
+    AND e.active = true
+WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
+    AND b.enddate IS NULL 
+    AND b.geom IS NOT NULL
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
+<ul>
+<li><strong>Geometry Transform</strong>: <code>ST<em>Transform(ST</em>Centroid(b.geom), 4326)</code> converts UTM to WGS84 decimal degrees</li>
+<li><strong>Coordinate Extraction</strong>: <code>ST<em>X()</code> and <code>ST</em>Y()</code> extract longitude and latitude values</li>
+<li><strong>Geometry Filter</strong>: <code>b.geom IS NOT NULL</code> ensures only sites with valid coordinates</li>
+<li><strong>Web Mapping Ready</strong>: Coordinates returned in standard web mercator projection (EPSG:4326)</li>
+<li><strong>Centroid Calculation</strong>: Uses centroid of polygon geometry for point markers</li>
+<li><strong>Minnesota Extent</strong>: Typical coordinates range -93.8 to -92.8 longitude, 44.6 to 45.4 latitude</li>
+</ul>
+
+<h3>7. FOS Employee Lookup Query</h3>
     </div>
 </body>
 </html>

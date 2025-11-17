@@ -6,9 +6,11 @@
 #' @param include_archive Boolean to include archive treatments (for historical analysis)
 #' @param start_year Optional start year filter for treatments (for historical analysis)
 #' @param end_year Optional end year filter for treatments (for historical analysis)
+#' @param include_geometry Boolean to include spatial geometry data for mapping
 #' @return List with drone_sites and drone_treatments data frames
 load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Date(), 
-                         include_archive = FALSE, start_year = NULL, end_year = NULL) {
+                         include_archive = FALSE, start_year = NULL, end_year = NULL,
+                         include_geometry = FALSE) {
   con <- get_db_connection()
   if (is.null(con)) return(list(drone_sites = data.frame(), drone_treatments = data.frame()))
   
@@ -16,6 +18,19 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   drone_types_str <- paste0("'", paste(drone_types, collapse = "','"), "'")
   
   # Query to get drone sites from loc_breeding_sites with facility/zone from gis_sectcode
+  # Optionally include geometry for mapping
+  geom_select <- if (include_geometry) {
+    ", ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat"
+  } else {
+    ""
+  }
+  
+  geom_where <- if (include_geometry) {
+    "AND b.geom IS NOT NULL"
+  } else {
+    ""
+  }
+  
   drone_sites_query <- sprintf("
   SELECT b.sitecode, g.facility, b.acres, b.prehatch, b.drone, 
          CASE 
@@ -23,33 +38,25 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
            ELSE NULL
          END as foreman, 
          g.zone,
-         left(b.sitecode,7) as sectcode
+         left(b.sitecode,7) as sectcode%s
   FROM public.loc_breeding_sites b
-  LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
   LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
     AND e.emp_type = 'FieldSuper' 
     AND e.active = true
   WHERE (b.drone IN (%s) OR b.air_gnd = 'D')
-  AND b.enddate IS NULL
-  ", drone_types_str)
+  AND b.enddate IS NULL %s
+  ", geom_select, drone_types_str, geom_where)
   
   drone_sites <- dbGetQuery(con, drone_sites_query)
   
   # Query to get treatment information with facility and zone from gis_sectcode
-  treatments_query <- "
+  treatments_query = "
   SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
          g.facility, g.zone, g.fosarea
   FROM public.dblarv_insptrt_current t
   LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-  LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
   WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
   "
   
@@ -68,11 +75,7 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
            NULL::character as foreman, NULL::integer as effect_days,
            g.zone, g.fosarea
     FROM public.dblarv_insptrt_archive t
-    LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
-      OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
-      OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
-      OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
-      OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
     WHERE t.action = 'D'
     "
     
@@ -394,4 +397,92 @@ get_site_stats_data <- function(sitecode_data_raw, zone_filter, combine_zones = 
   }
   
   return(site_stats)
+}
+
+#' Load spatial data for map visualization
+#' @param analysis_date Date to use as "current date" for analysis
+#' @param zone_filter Zone filter (1, 2, or c("1", "2"))
+#' @param facility_filter Facility filter (can be "all" or specific facilities)
+#' @param foreman_filter Foreman filter (can be "all" or specific foreman IDs)
+#' @param prehatch_only Logical, whether to filter to prehatch sites only
+#' @param expiring_days Number of days for expiring treatments
+#' @return sf data frame with geometry and treatment status
+load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "2"), 
+                             facility_filter = "all", foreman_filter = "all", 
+                             prehatch_only = FALSE, expiring_days = 14) {
+  
+  # Load raw data with geometry
+  raw_data <- load_raw_data(
+    drone_types = c("Y", "M", "C"),
+    analysis_date = analysis_date,
+    include_geometry = TRUE
+  )
+  
+  if (nrow(raw_data$drone_sites) == 0) {
+    return(NULL)
+  }
+  
+  # Apply filters
+  filtered_data <- apply_data_filters(
+    data = raw_data,
+    facility_filter = facility_filter,
+    foreman_filter = foreman_filter,
+    prehatch_only = prehatch_only
+  )
+  
+  # Filter by zones
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    filtered_data$drone_sites <- filtered_data$drone_sites %>% 
+      filter(zone %in% zone_filter)
+    filtered_data$drone_treatments <- filtered_data$drone_treatments %>% 
+      filter(zone %in% zone_filter)
+  }
+  
+  # Get current date for status calculations
+  current_date <- as.Date(analysis_date)
+  expiring_start_date <- current_date
+  expiring_end_date <- current_date + expiring_days
+  
+  # Get latest treatment for each site
+  latest_treatments <- filtered_data$drone_treatments %>%
+    group_by(sitecode) %>%
+    arrange(desc(inspdate)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    select(sitecode, inspdate, matcode, treated_acres, treatment_end_date) %>%
+    mutate(
+      treatment_status = case_when(
+        treatment_end_date < current_date ~ "Expired",
+        treatment_end_date >= expiring_start_date & treatment_end_date <= expiring_end_date ~ "Expiring",
+        treatment_end_date > expiring_end_date ~ "Active",
+        TRUE ~ "No Treatment"
+      ),
+      days_to_expiry = case_when(
+        is.na(treatment_end_date) ~ 999,
+        treatment_end_date < current_date ~ as.numeric(current_date - treatment_end_date),
+        TRUE ~ as.numeric(treatment_end_date - current_date)
+      )
+    )
+  
+  # Join sites with treatment status
+  spatial_data <- filtered_data$drone_sites %>%
+    left_join(latest_treatments, by = "sitecode") %>%
+    mutate(
+      treatment_status = if_else(is.na(treatment_status), "No Treatment", treatment_status),
+      last_treatment_date = if_else(is.na(inspdate), as.Date(NA), as.Date(inspdate)),
+      last_material = if_else(is.na(matcode), as.character(NA), matcode),
+      treated_acres = if_else(is.na(treated_acres), 0, treated_acres)
+    ) %>%
+    filter(!is.na(lng), !is.na(lat))  # Only keep sites with coordinates
+  
+  if (nrow(spatial_data) == 0) {
+    return(NULL)
+  }
+  
+  # Convert to sf object
+  spatial_sf <- st_as_sf(spatial_data, 
+                        coords = c("lng", "lat"), 
+                        crs = 4326)
+  
+  return(spatial_sf)
 }

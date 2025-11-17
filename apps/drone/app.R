@@ -8,6 +8,9 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(lubridate)
   library(DT)
+  library(leaflet)
+  library(sf)
+  library(RColorBrewer)
 })
 
 # Source shared helper functions
@@ -384,7 +387,7 @@ server <- function(input, output, session) {
     sitecode_table <- all_sites %>%
       left_join(latest_treatments, by = "sitecode") %>%
       mutate(
-        status = ifelse(is.na(status), "No Treatment", status),
+        status = ifelse(is.na(status), "No Drone Treatment", status),
         last_treatment = ifelse(is.na(inspdate), "Never", as.character(as.Date(inspdate)))
       ) %>%
       # Count treatments per site
@@ -745,6 +748,182 @@ server <- function(input, output, session) {
       select(sitecode, acres, facility_display, zone_display, matcode, year) %>%
       rename("Sitecode" = sitecode, "Treated Acres" = acres, "Facility" = facility_display, "Zone" = zone_display, "Material" = matcode, "Year" = year)
   }, striped = TRUE, spacing = "xs")
+  
+  # =============================================================================
+  # MAP SECTION
+  # =============================================================================
+  
+  # Map spatial data - loads when refresh button is clicked
+  map_spatial_data <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
+    
+    load_spatial_data(
+      analysis_date = inputs$analysis_date,
+      zone_filter = inputs$zone_filter,
+      facility_filter = inputs$facility_filter,
+      foreman_filter = inputs$foreman_filter,
+      prehatch_only = inputs$prehatch_only,
+      expiring_days = inputs$expiring_days
+    )
+  })
+  
+  # Map description
+  output$mapDescription <- renderText({
+    req(input$refresh)
+    inputs <- refresh_inputs()
+    
+    # Filter information
+    filter_parts <- c()
+    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+      filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
+    }
+    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+      filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
+    }
+    if (inputs$prehatch_only) {
+      filter_parts <- c(filter_parts, "prehatch sites only")
+    }
+    
+    filter_text <- if (length(filter_parts) > 0) {
+      paste0(" (filtered by ", paste(filter_parts, collapse = "; "), ")")
+    } else {
+      ""
+    }
+    
+    zone_text <- switch(inputs$zone_option,
+                        "p1_only" = " in P1 zones",
+                        "p2_only" = " in P2 zones", 
+                        "p1_p2_separate" = " in P1 and P2 zones",
+                        "p1_p2_combined" = " in P1 and P2 zones")
+    
+    paste0("Interactive map showing drone sites", zone_text, 
+           ". Markers are colored by treatment status: Active (blue), Expiring within ", 
+           inputs$expiring_days, " days (orange), Expired (red), No Treatment (gray)", 
+           filter_text, ".")
+  })
+  
+  # Leaflet map output
+  output$droneMap <- renderLeaflet({
+    req(input$refresh)
+    spatial_data <- map_spatial_data()
+    
+    if (is.null(spatial_data) || nrow(spatial_data) == 0) {
+      # Return empty map
+      return(leaflet() %>%
+        addTiles() %>%
+        setView(lng = -93.2, lat = 44.9, zoom = 8))
+    }
+    
+    # Define colors for treatment status
+    status_colors <- c(
+      "Active" = "#1f77b4",      # Blue
+      "Expiring" = "#ff7f0e",    # Orange  
+      "Expired" = "#d62728",     # Red
+      "No Treatment" = "#7f7f7f" # Gray
+    )
+    
+    # Create color palette function
+    pal <- colorFactor(
+      palette = status_colors,
+      domain = spatial_data$treatment_status
+    )
+    
+    # Get coordinates for map bounds
+    coords <- st_coordinates(spatial_data)
+    
+    # Create popup content
+    spatial_data$popup_text <- sprintf(
+      "<strong>%s</strong><br/>
+      Facility: %s<br/>
+      Zone: P%s<br/>
+      Acres: %.1f<br/>
+      Status: %s<br/>
+      %s",
+      spatial_data$sitecode,
+      spatial_data$facility,
+      spatial_data$zone,
+      spatial_data$acres,
+      spatial_data$treatment_status,
+      ifelse(is.na(spatial_data$last_treatment_date), 
+             "No Drone treatment recorded",
+             sprintf("Last treated: %s<br/>Material: %s<br/>Treated acres: %.1f", 
+                    spatial_data$last_treatment_date, 
+                    spatial_data$last_material,
+                    spatial_data$treated_acres))
+    )
+    
+    # Create map
+    leaflet(spatial_data) %>%
+      addProviderTiles("OpenStreetMap") %>%
+      addCircleMarkers(
+        radius = 8,
+        color = "#000000",
+        weight = 1,
+        opacity = 0.8,
+        fillColor = ~pal(treatment_status),
+        fillOpacity = 0.8,
+        popup = ~popup_text
+      ) %>%
+      addLegend(
+        position = "bottomright",
+        pal = pal,
+        values = ~treatment_status,
+        title = "Treatment Status",
+        opacity = 0.8
+      ) %>%
+      fitBounds(
+        lng1 = min(coords[,1]) - 0.01, lat1 = min(coords[,2]) - 0.01,
+        lng2 = max(coords[,1]) + 0.01, lat2 = max(coords[,2]) + 0.01
+      )
+  })
+  
+  # Map data table
+  output$mapDataTable <- DT::renderDataTable({
+    req(input$refresh)
+    spatial_data <- map_spatial_data()
+    
+    if (is.null(spatial_data) || nrow(spatial_data) == 0) {
+      return(DT::datatable(
+        data.frame("No data available" = character(0)),
+        options = list(pageLength = 15, scrollX = TRUE),
+        rownames = FALSE
+      ))
+    }
+    
+    # Create clean table without geometry
+    table_data <- spatial_data %>%
+      st_drop_geometry() %>%
+      arrange(desc(acres)) %>%
+      select(sitecode, facility, zone, acres, treatment_status, last_treatment_date, last_material, treated_acres) %>%
+      rename(
+        "Sitecode" = sitecode,
+        "Facility" = facility,
+        "Zone" = zone,
+        "Site Acres" = acres,
+        "Status" = treatment_status,
+        "Last Treatment" = last_treatment_date,
+        "Material" = last_material,
+        "Treated Acres" = treated_acres
+      ) %>%
+      mutate(
+        Zone = paste0("P", Zone),
+        `Last Treatment` = ifelse(is.na(`Last Treatment`), "Never", as.character(`Last Treatment`)),
+        Material = ifelse(is.na(Material), "None", Material),
+        `Treated Acres` = ifelse(is.na(`Treated Acres`), 0, `Treated Acres`)
+      )
+    
+    DT::datatable(
+      table_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        columnDefs = list(
+          list(className = 'dt-center', targets = 1:7)
+        )
+      ),
+      rownames = FALSE
+    )
+  })
 }
 
 # =============================================================================

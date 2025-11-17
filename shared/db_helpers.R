@@ -820,7 +820,7 @@ get_status_colors <- function() {
     # Core status colors - no duplicates or aliases
     "active" = "#187018",      # forest green for active/in-progress/treatment
     "completed" = "#4169E1",   # Royal blue for completed
-    "planned" = "#FFA500",     # Orange for planned/pending
+    "planned" = "#fdb73e",     # Orange for planned/pending
     "needs_action" = "#FF4500", # Red-orange for needs inspection
     "needs_treatment" = "#FF0000", # Pure red for needs treatment
     "unknown" = "#A9A9A9"      # Dark gray for unknown status

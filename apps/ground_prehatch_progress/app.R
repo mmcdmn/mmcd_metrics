@@ -18,18 +18,43 @@ source("../../shared/db_helpers.R")
 source("data_functions.R")
 source("display_functions.R")
 source("ui_helpers.R")
+source("historical_functions_simple.R")
 
 ui <- dashboardPage(
   dashboardHeader(title = "Ground Prehatch Treatment Progress"),
   
   dashboardSidebar(
-    sidebarMenu(
+    sidebarMenu(id = "sidebar_menu",
       menuItem("Progress Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table"))
+      menuItem("Detailed View", tabName = "details", icon = icon("table")),
+      menuItem("Map", tabName = "map", icon = icon("map")),
+      menuItem("Historical Analysis", tabName = "historical", icon = icon("chart-line"))
     )
   ),
   
   dashboardBody(
+    # Add JavaScript to track selected tab
+    tags$script(HTML("
+    $(document).ready(function() {
+      // Track selected tab
+      Shiny.setInputValue('tabselected', 'overview');
+      
+      $('a[data-toggle=\"tab\"]').on('shown.bs.tab', function (e) {
+        var target = $(e.target).attr('href');
+        var tabName = target.split('-')[1];
+        Shiny.setInputValue('tabselected', tabName);
+      });
+      
+      // Handle sidebar menu clicks
+      $('.sidebar-menu a').click(function() {
+        var tabName = $(this).attr('data-value') || $(this).closest('li').attr('data-value');
+        if (tabName) {
+          Shiny.setInputValue('tabselected', tabName);
+        }
+      });
+    });
+    ")),
+    
     # Filter panel - always visible
     create_filter_panel(),
     
@@ -72,12 +97,43 @@ ui <- dashboardPage(
         
         # Details table
         create_details_table_box()
+      ),
+      
+      # Map tab
+      tabItem(tabName = "map",
+        br(),
+        
+        # Map view
+        create_map_box(),
+        
+        # Map details table
+        create_map_details_table_box()
+      ),
+      
+      # Historical Analysis tab
+      tabItem(tabName = "historical",
+        br(),
+        
+        # Historical chart
+        create_historical_chart_box(),
+        
+        # Historical details table
+        create_historical_details_table_box()
       )
     )
   )
 )
 
 server <- function(input, output, session) {
+  
+  # Initialize map immediately on app start
+  output$ground_map <- renderLeaflet({
+    leaflet() %>%
+      addTiles() %>%
+      setView(lng = -93.5, lat = 44.95, zoom = 10) %>%
+      addPopups(lng = -93.5, lat = 44.95, 
+               popup = "Welcome! Click 'Refresh Data' to load ground prehatch sites")
+  })
   
   # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
@@ -330,6 +386,233 @@ server <- function(input, output, session) {
       foremen_lookup <- get_foremen_lookup()
       download_data <- prepare_download_data(data, foremen_lookup)
       write.csv(download_data, file, row.names = FALSE)
+    }
+  )
+  
+  # =============================================================================
+  # HISTORICAL ANALYSIS SERVER LOGIC
+  # =============================================================================
+  
+  # Historical refresh inputs
+  historical_refresh_inputs <- eventReactive(input$hist_refresh, {
+    zone_value <- isolate(input$zone_filter)
+    
+    # Parse zone filter 
+    parsed_zones <- if (zone_value == "combined") {
+      c("1", "2")  # Include both zones but will be combined
+    } else if (zone_value == "1,2") {
+      c("1", "2")  # Include both zones separately
+    } else {
+      zone_value  # Single zone
+    }
+    
+    # Get year range from slider
+    year_range <- isolate(input$hist_year_range)
+    start_year <- year_range[1]
+    end_year <- year_range[2]
+    
+    list(
+      zone_filter_raw = zone_value,
+      zone_filter = parsed_zones,
+      combine_zones = (zone_value == "combined"),
+      facility_filter = isolate(input$facility_filter),
+      foreman_filter = isolate(input$foreman_filter),
+      group_by = isolate(input$group_by),
+      time_period = isolate(input$hist_time_period),
+      display_metric = isolate(input$hist_display_metric),
+      chart_type = isolate(input$hist_chart_type),
+      start_year = start_year,
+      end_year = end_year
+    )
+  }, ignoreNULL = FALSE)
+  
+  # Historical data reactive
+  historical_data <- reactive({
+    req(input$hist_refresh)  # Only load after refresh button clicked
+    inputs <- historical_refresh_inputs()
+    
+    get_ground_historical_data(
+      time_period = inputs$time_period,
+      display_metric = inputs$display_metric,
+      zone_filter = inputs$zone_filter,
+      start_year = inputs$start_year,
+      end_year = inputs$end_year
+    )
+  })
+  
+  # Historical aggregated data
+  historical_aggregated_data <- reactive({
+    req(input$hist_refresh)
+    inputs <- historical_refresh_inputs()
+    data <- historical_data()
+    
+    # Filter data based on inputs
+    filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    
+    # Aggregate by group
+    aggregate_historical_data_by_group(
+      filtered_data, 
+      inputs$group_by,
+      inputs$time_period,
+      inputs$display_metric,
+      inputs$combine_zones
+    )
+  })
+  
+  # Render historical chart
+  output$historical_chart <- renderPlotly({
+    req(input$hist_refresh)  # Only render after refresh button clicked
+    inputs <- historical_refresh_inputs()
+    data <- historical_aggregated_data()
+    
+    create_historical_chart(data, inputs$time_period, inputs$display_metric, inputs$group_by, inputs$chart_type)
+  })
+  
+  # Render historical details table
+  output$historical_details_table <- DT::renderDataTable({
+    req(input$hist_refresh)  # Only render after refresh button clicked
+    
+    data <- historical_data()
+    create_historical_details_table(data)
+  })
+  
+  # Download handler for historical data
+  output$download_historical_data <- downloadHandler(
+    filename = function() {
+      paste("ground_prehatch_historical_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      req(input$hist_refresh)  # Only allow download after refresh
+      
+      data <- historical_data()
+      write.csv(data, file, row.names = FALSE)
+    }
+  )
+  
+  # =============================================================================
+  # MAP SECTION 
+  # =============================================================================
+  
+  # Map spatial data - loads when refresh button is clicked
+  map_spatial_data <- eventReactive(input$refresh, {
+    tryCatch({
+      inputs <- refresh_inputs()
+      
+      load_spatial_data(
+        analysis_date = inputs$custom_today,
+        zone_filter = inputs$zone_filter,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        expiring_days = inputs$expiring_days
+      )
+    }, error = function(e) {
+      # Return NULL on error
+      message("Error loading spatial data: ", e$message)
+      NULL
+    })
+  })
+  
+  # Map description
+  output$mapDescription <- renderText({
+    req(input$refresh)
+    inputs <- refresh_inputs()
+    
+    # Filter information
+    filter_parts <- c()
+    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+      filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
+    }
+    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+      filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
+    }
+    
+    filter_text <- if (length(filter_parts) > 0) {
+      paste0(" (filtered by ", paste(filter_parts, collapse = "; "), ")")
+    } else {
+      ""
+    }
+    
+    zone_text <- switch(inputs$zone_filter_raw,
+                        "1" = " in P1 zones",
+                        "2" = " in P2 zones", 
+                        "1,2" = " in P1 and P2 zones",
+                        "combined" = " in P1 and P2 zones")
+    
+    paste0("Interactive map showing ground prehatch sites", zone_text, 
+           ". Markers are colored by treatment status: Active (green), Expiring within ", 
+           inputs$expiring_days, " days (orange), Expired (red), No Treatment (gray)", 
+           filter_text, ". Use the Site Filter to show specific treatment status groups.")
+  })
+  
+  # Leaflet map output
+  output$ground_map <- renderLeaflet({
+    # Always render at least a basic map, even without refresh
+    tryCatch({
+      if (is.null(input$refresh) || input$refresh == 0) {
+        # Show basic map before any refresh
+        return(leaflet() %>%
+               addTiles() %>%
+               setView(lng = -93.5, lat = 44.95, zoom = 10) %>%
+               addPopups(lng = -93.5, lat = 44.95, 
+                        popup = "Click 'Refresh Data' to load ground prehatch sites"))
+      }
+      
+      # Get spatial data after refresh
+      spatial_data <- map_spatial_data()
+      
+      # Get current inputs for site filtering
+      inputs <- if(input$refresh > 0) refresh_inputs() else list(expiring_filter = "all")
+      
+      # Get basemap preference
+      basemap <- if(is.null(input$map_basemap)) "carto" else input$map_basemap
+      
+      # Create map
+      if (is.null(spatial_data) || nrow(spatial_data) == 0) {
+        # Return empty map with message
+        leaflet() %>%
+          addTiles() %>%
+          setView(lng = -93.5, lat = 44.95, zoom = 10) %>%
+          addPopups(lng = -93.5, lat = 44.95, 
+                   popup = "No ground prehatch sites found with current filters")
+      } else {
+        # Create map with data and site filtering
+        create_ground_map(spatial_data, basemap, inputs$expiring_filter)
+      }
+    }, error = function(e) {
+      # Fallback map if anything fails
+      leaflet() %>%
+        addTiles() %>%
+        setView(lng = -93.5, lat = 44.95, zoom = 10) %>%
+        addPopups(lng = -93.5, lat = 44.95, 
+                 popup = paste("Map loading issue. Please try refreshing data. Error:", e$message))
+    })
+  })
+  
+  # Map data table
+  output$map_details_table <- DT::renderDataTable({
+    req(input$refresh)
+    spatial_data <- map_spatial_data()
+    
+    create_map_details_table(spatial_data)
+  })
+  
+  # Download handler for map data
+  output$download_map_data <- downloadHandler(
+    filename = function() {
+      paste("ground_prehatch_map_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      req(input$refresh)
+      
+      spatial_data <- map_spatial_data()
+      if (!is.null(spatial_data)) {
+        # Remove geometry column for CSV export
+        export_data <- spatial_data %>% sf::st_drop_geometry()
+        write.csv(export_data, file, row.names = FALSE)
+      } else {
+        # Create empty CSV if no data
+        write.csv(data.frame(Message = "No map data available"), file, row.names = FALSE)
+      }
     }
   )
 }

@@ -44,32 +44,104 @@ create_filter_panel <- function() {
       )
     ),
     
-    fluidRow(
-      column(3,
-        dateInput("custom_today", "Pretend Today is:",
-                 value = Sys.Date(), 
-                 format = "yyyy-mm-dd")
-      ),
-      column(3,
-        sliderInput("expiring_days", "Days Until Expiring:",
-                   min = 1, max = 60, value = 14, step = 1)
-      ),
-      column(3,
-        div(style = "margin-top: 5px;",
-          radioButtons("expiring_filter", "Site Filter:",
-                      choices = c("All Sites" = "all",
-                                 "Expiring Only" = "expiring", 
-                                 "Expiring + Expired" = "expiring_expired"),
-                      selected = "all",
-                      inline = FALSE)
+    # Current analysis controls (hidden on historical tab)
+    conditionalPanel(
+      condition = "input.sidebar_menu != 'historical'",
+      fluidRow(
+        column(3,
+          dateInput("custom_today", "Pretend Today is:",
+                   value = Sys.Date(), 
+                   format = "yyyy-mm-dd")
+        ),
+        column(3,
+          sliderInput("expiring_days", "Days Until Expiring:",
+                     min = 1, max = 60, value = 14, step = 1)
+        ),
+        column(3,
+          div(style = "margin-top: 5px;",
+            radioButtons("expiring_filter", "Site Filter:",
+                        choices = c("All Sites" = "all",
+                                   "Expiring Only" = "expiring", 
+                                   "Expiring + Expired" = "expiring_expired"),
+                        selected = "all",
+                        inline = FALSE)
+          )
+        ),
+        column(3,
+          div(style = "margin-top: 25px;",
+            actionButton("refresh", "Refresh Data", 
+                        icon = icon("refresh"),
+                        class = "btn-primary btn-lg",
+                        style = "width: 100%;")
+          )
+        )
+      )
+    ),
+    
+    # Historical analysis controls (shown only on historical tab)
+    conditionalPanel(
+      condition = "input.sidebar_menu == 'historical'",
+      fluidRow(
+        column(3,
+          radioButtons("hist_time_period", "Time Period:",
+                      choices = c("Yearly" = "yearly", 
+                                  "Weekly" = "weekly"),
+                      selected = "yearly",
+                      inline = TRUE)
+        ),
+        column(3,
+          selectInput("hist_chart_type", "Chart Type:",
+                      choices = c("Stacked Bar" = "stacked_bar",
+                                  "Grouped Bar" = "grouped_bar", 
+                                  "Line Chart" = "line",
+                                  "Area Chart" = "area",
+                                  "Step Chart" = "step"),
+                      selected = "stacked_bar")
+        ),
+        column(3,
+          radioButtons("hist_display_metric", "Display Metric:",
+                      choices = c("Treatments" = "treatments",
+                                 "Sites Treated" = "sites",
+                                 "Acres Treated" = "acres"),
+                      selected = "treatments",
+                      inline = TRUE)
+        ),
+        column(3,
+          sliderInput("hist_year_range", "Year Range:",
+                      min = as.numeric(format(Sys.Date(), "%Y")) - 20, 
+                      max = as.numeric(format(Sys.Date(), "%Y")), 
+                      value = c(as.numeric(format(Sys.Date(), "%Y")) - 4, as.numeric(format(Sys.Date(), "%Y"))), 
+                      step = 1)
         )
       ),
-      column(3,
-        div(style = "margin-top: 25px;",
-          actionButton("refresh", "Refresh Data", 
-                      icon = icon("refresh"),
-                      class = "btn-primary btn-lg",
-                      style = "width: 100%;")
+      fluidRow(
+        column(12,
+          div(style = "margin-top: 15px;",
+            actionButton("hist_refresh", "Refresh Historical Data", 
+                        icon = icon("refresh"),
+                        class = "btn-primary btn-lg",
+                        style = "width: 220px;")
+          )
+        )
+      )
+    ),
+    
+    # Map controls (shown only on map tab)
+    conditionalPanel(
+      condition = "input.sidebar_menu == 'map'",
+      fluidRow(
+        column(6,
+          selectInput("map_basemap", "Base Map:",
+                      choices = c("Streets" = "carto",
+                                  "Satellite" = "satellite", 
+                                  "Terrain" = "terrain",
+                                  "OpenStreetMap" = "osm"),
+                      selected = "carto")
+        ),
+        column(6,
+          div(style = "margin-top: 5px;",
+            p("Map uses the same filters and analysis date as other tabs.")
+          )
         )
       )
     )
@@ -112,29 +184,47 @@ create_progress_chart_box <- function() {
     }
   })
   chart_height <- max(100, min(66000, n_bars * 50)) # 50px per bar, clamp between 400 and 66000px
-  box(
-    title = "Ground Prehatch Treatment Progress",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
-    plotlyOutput("progress_chart", height = paste0(chart_height, "px"))
+  tagList(
+    create_important_note(),
+    box(
+      title = "Ground Prehatch Treatment Progress",
+      status = "primary",
+      solidHeader = TRUE,
+      width = 12,
+      plotlyOutput("progress_chart", height = paste0(chart_height, "px"))
+    )
   )
 }
 
 # Create the details table box
 create_details_table_box <- function() {
-  box(
-    title = "Site Details",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
-    div(
-      style = "margin-bottom: 15px;",
-      downloadButton("download_details_data", "Download CSV", class = "btn-primary btn-sm"),
-      tags$span(style = "margin-left: 15px; color: #666;", 
-                "Download filtered data as CSV file")
-    ),
-    DT::dataTableOutput("details_table")
+  tagList(
+    create_important_note(),
+    box(
+      title = "Site Details",
+      status = "primary",
+      solidHeader = TRUE,
+      width = 12,
+      div(
+        style = "margin-bottom: 15px;",
+        downloadButton("download_details_data", "Download CSV", class = "btn-primary btn-sm"),
+        tags$span(style = "margin-left: 15px; color: #666;", 
+                  "Download filtered data as CSV file")
+      ),
+      DT::dataTableOutput("details_table")
+    )
+  )
+}
+
+# Create universal important note about expired sites
+create_important_note <- function() {
+  div(
+    style = "margin-bottom: 15px; padding: 12px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; color: #856404;",
+    HTML("<strong><i class='fa fa-info-circle'></i> Important Note:</strong> Some prehatch sites may be expired for good operational reasons. For example:<br>
+         • Sites that dry up later in summer and become unsuitable for treatment<br>
+         • Sites that have been consistently dry for months and are intentionally skipped<br>
+         • Sites with environmental or access restrictions that prevent routine treatment<br>
+         Expired status does not necessarily indicate a problem - it may reflect sound operational decisions.")
   )
 }
 
@@ -146,10 +236,174 @@ create_help_text <- function() {
     tags$ul(
       tags$li(tags$strong("Overview Tab:"), "View summary statistics and progress charts"),
       tags$li(tags$strong("Detailed View Tab:"), "Examine individual site details and download data"),
+      tags$li(tags$strong("Historical Tab:"), "Analyze treatment trends over time"),
       tags$li(tags$strong("Zone Options:"), "Choose how to display P1/P2 zones - separate or combined"),
       tags$li(tags$strong("Grouping:"), "Group data by All MMCD, Facility, FOS, or Section"),
       tags$li(tags$strong("Date Simulation:"), "Use 'Pretend Today is' to see status on any date")
     )
+  )
+}
+
+# Create the historical filter panel
+create_historical_filter_panel <- function() {
+  box(
+    title = "Historical Analysis Filters",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    
+    fluidRow(
+      column(3,
+        selectizeInput("hist_facility_filter", "Facility:",
+                      choices = c("All" = "all"),
+                      selected = "all", 
+                      multiple = TRUE,
+                      options = list(placeholder = "Select facilities..."))
+      ),
+      column(3,
+        selectizeInput("hist_foreman_filter", "FOS:",
+                      choices = c("All" = "all"),
+                      selected = "all",
+                      multiple = TRUE,
+                      options = list(placeholder = "Select FOS..."))
+      ),
+      column(3,
+        radioButtons("hist_zone_filter", "Zone Display:",
+                     choices = c("P1 Only" = "1", 
+                                "P2 Only" = "2", 
+                                "P1 and P2 Separate" = "1,2", 
+                                "Combined P1+P2" = "combined"),
+                     selected = "1,2",
+                     inline = TRUE)
+      ),
+      column(3,
+        radioButtons("hist_group_by", "Group by:",
+                    choices = c("All MMCD" = "mmcd_all",
+                               "Facility" = "facility", 
+                               "FOS" = "foreman",
+                               "Section" = "sectcode"),
+                    selected = "mmcd_all",
+                    inline = TRUE)
+      )
+    ),
+    
+    fluidRow(
+      column(3,
+        radioButtons("hist_time_period", "Time Period:",
+                    choices = c("Weekly" = "weekly", "Yearly" = "yearly"),
+                    selected = "weekly",
+                    inline = TRUE)
+      ),
+      column(3,
+        radioButtons("hist_display_metric", "Display Metric:",
+                    choices = c("Treatments" = "treatments",
+                               "Sites Treated" = "sites",
+                               "Acres Treated" = "acres"),
+                    selected = "treatments",
+                    inline = TRUE)
+      ),
+      column(3,
+        conditionalPanel(
+          condition = "input.hist_time_period == 'weekly'",
+          numericInput("hist_year", "Year:", 
+                      value = as.numeric(format(Sys.Date(), "%Y")), 
+                      min = as.numeric(format(Sys.Date(), "%Y")) - 20, 
+                      max = as.numeric(format(Sys.Date(), "%Y")) + 1, 
+                      step = 1)
+        ),
+        conditionalPanel(
+          condition = "input.hist_time_period == 'yearly'",
+          div(
+            style = "margin-top: 25px;",
+            numericInput("hist_start_year", "Start Year:", 
+                        value = as.numeric(format(Sys.Date(), "%Y")) - 4, 
+                        min = as.numeric(format(Sys.Date(), "%Y")) - 20, 
+                        max = as.numeric(format(Sys.Date(), "%Y")), 
+                        step = 1),
+            numericInput("hist_end_year", "End Year:", 
+                        value = as.numeric(format(Sys.Date(), "%Y")), 
+                        min = as.numeric(format(Sys.Date(), "%Y")) - 20, 
+                        max = as.numeric(format(Sys.Date(), "%Y")), 
+                        step = 1)
+          )
+        )
+      ),
+      column(3,
+        div(style = "margin-top: 25px;",
+          actionButton("hist_refresh", "Refresh Historical Data", 
+                      icon = icon("refresh"),
+                      class = "btn-primary btn-lg",
+                      style = "width: 100%;")
+        )
+      )
+    )
+  )
+}
+
+# Create the historical chart box
+create_historical_chart_box <- function() {
+  tagList(
+    create_important_note(),
+    box(
+      title = "Historical Ground Prehatch Trends",
+      status = "primary",
+      solidHeader = TRUE,
+      width = 12,
+      plotlyOutput("historical_chart", height = "500px")
+    )
+  )
+}
+
+# Create the historical details table box
+create_historical_details_table_box <- function() {
+  box(
+    title = "Historical Data Details",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    div(
+      style = "margin-bottom: 15px;",
+      downloadButton("download_historical_data", "Download Historical CSV", class = "btn-primary btn-sm"),
+      tags$span(style = "margin-left: 15px; color: #666;", 
+                "Download historical data as CSV file")
+    ),
+    DT::dataTableOutput("historical_details_table")
+  )
+}
+
+# Create the map view box
+create_map_box <- function() {
+  tagList(
+    create_important_note(),
+    box(
+      title = "Ground Prehatch Site Map",
+      status = "primary",
+      solidHeader = TRUE,
+      width = 12,
+      # Add map description
+      div(
+        style = "margin-bottom: 10px; padding: 8px; background-color: #f8f9fa; border-radius: 4px;",
+        textOutput("mapDescription")
+      ),
+      leafletOutput("ground_map", height = "600px")
+    )
+  )
+}
+
+# Create the map details table box
+create_map_details_table_box <- function() {
+  box(
+    title = "Map Site Details",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    div(
+      style = "margin-bottom: 15px;",
+      downloadButton("download_map_data", "Download Map CSV", class = "btn-primary btn-sm"),
+      tags$span(style = "margin-left: 15px; color: #666;", 
+                "Download map data as CSV file")
+    ),
+    DT::dataTableOutput("map_details_table")
   )
 }
 

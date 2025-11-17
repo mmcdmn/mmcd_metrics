@@ -30,8 +30,8 @@ get_air_sites_data_enhanced <- function(analysis_date, facility_filter = NULL, p
       zone_condition <- sprintf("AND g.zone IN (%s)", zone_list)
     }
 
-    # Build BIT effect days override condition
-    # If override is provided, use it for Bti_gran (BIT), otherwise use database value
+    # Build BTI effect days override condition
+    # If override is provided, use it for Bti_gran (BTI), otherwise use database value
     bit_override_sql <- ""
     if (!is.null(bit_effect_days_override) && !is.na(bit_effect_days_override) && bit_effect_days_override > 0) {
       bit_override_sql <- sprintf("

@@ -113,478 +113,895 @@
 <h1>Ground Prehatch Treatment Progress - Technical Notes</h1>
 
 <h2>Overview</h2>
-
-<p>This Shiny dashboard tracks ground prehatch treatment progress across two main views:</p>
-
+<p>This Shiny app tracks ground prehatch mosquito breeding sites across four perspectives:</p>
 <ol>
-<li><strong>Progress Overview</strong> - Summary statistics and progress charts showing treatment status by facility, FOS, or section</li>
-<li><strong>Detailed View</strong> - Site-level details table with treatment history and status</li>
+<li><strong>Progress Overview</strong> - Sites with active/expiring treatments, aggregated by facility, FOS, or section</li>
+<li><strong>Detailed View</strong> - Individual site details with treatment status and download capabilities</li>
+<li><strong>Map</strong> - Interactive map showing prehatch sites with color-coded treatment status markers</li>
+<li><strong>Historical Analysis</strong> - Multi-year trends in prehatch treatments (sites, treatments, or acres)</li>
 </ul>
-
-<p>The app focuses on prehatch sites (sites requiring pre-hatch mosquito control treatments) and tracks their treatment status over time.</p>
 
 <h2>Data Sources</h2>
 
-<h3>Tables Used</h3>
+<h3>Core Database Tables and Columns</h3>
 
-<h4>Primary Tables</h4>
-
+<h4>Primary Treatment Tables</h4>
 <ul>
-<li><strong><code>loc<em>breeding</em>sites</code></strong> - Site information and lifecycle tracking</li>
+<li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval treatment records</li>
 <ul>
-<li>Contains site characteristics: <code>acres</code>, <code>prehatch</code>, <code>drone</code>, <code>air_gnd</code>, <code>priority</code></li>
-<li>Tracks site lifecycle: <code>enddate</code> (when site was closed/inactivated)</li>
-<li><strong>CRITICAL</strong>: Sites with <code>enddate</code> before current season are filtered out</li>
-<li>Filter: <code>air_gnd = 'G'</code> (ground sites only)</li>
-<li>Join pattern: <code>LEFT JOIN gis_sectcode ON left(sitecode,7) = sectcode</code></li>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code>, <code>amts</code></li>
+<li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = true</code></li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Contains ongoing treatments, some may be planned vs executed</li>
 </ul>
 </ul>
 
 <ul>
-<li><strong><code>dblarv<em>insptrt</em>current</code></strong> - Current larval treatment records</li>
+<li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval treatment records  </li>
 <ul>
-<li>Contains treatment records: <code>inspdate</code>, <code>matcode</code>, <code>insptime</code></li>
-<li>Used to calculate treatment age and status</li>
-<li>Filter: <code>inspdate &gt; CURRENT<em>YEAR-01-01 AND inspdate &lt;= simulation</em>date</code></li>
-<li>Join pattern: Uses sitecode to match with loc<em>breeding</em>sites</li>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>amts</code></li>
+<li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = true</code></li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code>, <code>airgrnd_plan</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Historical closed treatments, generally more reliable than current</li>
 </ul>
 </ul>
 
+<h4>Essential Supporting Tables</h4>
 <ul>
-<li><strong><code>gis_sectcode</code></strong> - Section/zone information</li>
+<li><strong><code>public.loc<em>breeding</em>sites</code></strong> - Site master data</li>
 <ul>
-<li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
-<li>Provides FOS (Field Operations Supervisor) area assignments (<code>fosarea</code>)</li>
-<li>Join pattern: <code>left(sitecode,7) = sectcode</code></li>
+<li><strong>Key Columns</strong>: </li>
+<ul>
+<li><code>sitecode</code>, <code>facility</code> (composite key)</li>
+<li><code>acres</code> (site capacity, not treated acres)</li>
+<li><code>enddate</code> (<strong>CRITICAL</strong>: NULL = active site, NOT NULL = closed site)</li>
+<li><code>prehatch</code> (boolean: <strong>TRUE = prehatch site</strong>, FALSE = standard site)</li>
+<li><code>drone</code> (values: 'Y', 'M', 'C' for drone-capable sites)</li>
+<li><code>air_gnd</code> (alternate treatment designation)</li>
+<li><code>geom</code> (PostGIS geometry data for mapping, UTM projection)</li>
+</ul>
+<li><strong>Critical Join Logic</strong>: <strong>MUST filter <code>enddate IS NULL</code></strong> or risk including closed sites</li>
+<li><strong>Prehatch Logic</strong>: <strong>MUST filter <code>prehatch = true</code></strong> for prehatch-only analysis</li>
+<li><strong>Data Quality</strong>: Multiple rows per sitecode possible with different enddates</li>
+<li><strong>Usage</strong>: Source of truth for site characteristics, active status, and spatial coordinates</li>
+<li><strong>Spatial Data</strong>: Geometry stored in UTM projection, requires <code>ST_Transform(geom, 4326)</code> for web mapping</li>
 </ul>
 </ul>
-
-<ul>
-<li><strong><code>mattype<em>list</em>targetdose</code></strong> - Material effectiveness information</li>
-<ul>
-<li>Contains <code>effect_days</code> - how long a treatment remains effective</li>
-<li>Contains <code>days<em>retrt</em>early</code> - early retreatment threshold for expiring status</li>
-<li>Filter: <code>prehatch = TRUE</code> (only prehatch materials)</li>
-<li>Used to calculate treatment status (treated, expiring, expired)</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>employee_list</code></strong> - FOS information</li>
-<ul>
-<li>Used to get active Field Operations Supervisors</li>
-<li>Filter: <code>emp_type = 'FieldSuper'</code> AND <code>active = true</code></li>
-</ul>
-</ul>
-
-<h3>Treatment Status Logic</h3>
-
-<p>Treatment status is calculated based on the age of the most recent treatment:</p>
 
 <ul>
-<li><strong>Treated</strong>: <code>age &lt;= effect_days</code> - Treatment is still effective</li>
-<li><strong>Expiring</strong>: <code>age &gt; days<em>retrt</em>early</code> - Treatment approaching expiration (early retreatment threshold)</li>
-<li><strong>Expired</strong>: <code>age &gt; effect_days</code> - Treatment has expired, site needs retreatment</li>
-<li><strong>No Treatment</strong>: Site has no treatment records or doesn't match criteria</li>
+<li><strong><code>public.gis_sectcode</code></strong> - Geographic section mapping and zone assignments</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sectcode</code> (7-character section identifier, e.g. '191031N')</li>
+<li><code>zone</code> (values: '1' = P1, '2' = P2)</li>
+<li><code>fosarea</code> (FOS employee number assignment)</li>
+</ul>
+<li><strong>Join Pattern</strong>: <code>LEFT JOIN public.gis_sectcode sc ON left(sitecode,7) = sc.sectcode</code></li>
+<li><strong>Sitecode Formats Handled</strong>:</li>
+<ul>
+<li>Standard: <code>190208-003</code> → sectcode <code>1902080</code></li>
+<li>Directional: <code>191102W010</code> → sectcode <code>1911020</code> </li>
+</ul>
+<li><strong>Data Quality</strong>: Authoritative source for zone and FOS assignments</li>
+</ul>
 </ul>
 
-<p>Age calculation: <code>CURRENT<em>DATE (or simulation</em>date) - inspdate</code></p>
+<ul>
+<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material effectiveness and dosage data</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>matcode</code> (material identifier, joins to treatment tables)</li>
+<li><code>effect_days</code> (treatment effectiveness duration in days)</li>
+</ul>
+<li><strong>Default Logic</strong>: When <code>effect_days IS NULL</code>, assume 14 days</li>
+<li><strong>Usage</strong>: Calculate treatment end dates: <code>inspdate + effect_days</code></li>
+</ul>
+</ul>
 
-<p>Default effectiveness: 30 days if <code>effect_days</code> is NULL</p>
+<h3>Data Collection Strategy</h3>
 
-<h2>Critical Data Integrity Issue: Site Enddate Filtering</h2>
+<h4>Key Join Patterns Used Throughout Application</h4>
 
-<h3>The Problem</h3>
-
-<p>The <code>enddate</code> column in <code>loc<em>breeding</em>sites</code> tracks when a site is closed/inactivated. Sites that have been closed can still have historical treatment records.</p>
-
-<h3>The Solution</h3>
-
-<p><strong>ALWAYS filter by enddate in the SQL query:</strong></p>
-
+<p><strong>Standard Treatment-to-Prehatch-Site Join Pattern:</strong></p>
 <pre><code class="sql">
-WHERE (b.enddate IS NULL OR b.enddate &gt; 'CURRENT_YEAR-05-01')
+-- Connect treatment records with prehatch site information
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' AND e.active = true
+LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
+  AND b.prehatch = true                                  -- Prehatch sites only
 </code></pre>
 
-<p>This ensures only active sites are included in the analysis. Using May 1st as the cutoff allows for sites that closed during the season to still show historical data.</p>
+<p><strong>Note</strong>: See "SQL Queries Reference" section below for complete, up-to-date query implementations.</p>
 
-<h3>Why This Matters</h3>
+<h4>Critical Data Integration Notes</h4>
 
+<p><strong>Sitecode Format Handling:</strong></p>
 <ul>
-<li>Without this filter, closed sites appear in results</li>
-<li>This causes "ghost sites" to inflate counts</li>
-<li>Treatment statistics become inaccurate</li>
-<li>Both <code>get<em>ground</em>prehatch<em>data()</code> and <code>get</em>site<em>details</em>data()</code> apply this filter</li>
+<li><strong>Standard Format</strong>: <code>190208-003</code> (7-digit section + dash + site num)</li>
+<li><strong>Directional Format</strong>: <code>191102W010</code> (6-digit + direction + site num)</li>
+<li><strong>Join Logic</strong>: <code>left(sitecode,7)</code> extracts section code for both formats</li>
+<li><strong>Example</strong>: Both <code>190208-003</code> and <code>191102W010</code> → sectcodes <code>1902080</code> and <code>1911020</code></li>
 </ul>
 
-<h3>Treatment Status Categories</h3>
-
-<p>The app tracks three mutually exclusive treatment statuses for prehatch sites:</p>
-
+<p><strong>Treatment vs Site Acres:</strong></p>
 <ul>
-<li><strong>Treated</strong>: Sites with active treatments (<code>age &lt;= effect_days</code>)</li>
-<li><strong>Expiring</strong>: Sites with treatments approaching expiration (<code>age &gt; days<em>retrt</em>early</code>)</li>
-<li><strong>Expired</strong>: Sites with treatments that have expired (<code>age &gt; effect_days</code>)</li>
+<li><strong>Site Acres</strong>: <code>loc<em>breeding</em>sites.acres</code> = site capacity/potential treatment area</li>
+<li><strong>Treated Acres</strong>: <code>dblarv<em>insptrt</em>*.acres</code> = actual area treated in specific application</li>
+<li><strong>Usage</strong>: Site acres for capacity analysis, treated acres for actual treatment metrics</li>
 </ul>
 
-<p>Note: The previous "Needs Treatment" category was removed as it incorrectly included expired sites and created confusing overlaps.</p>
+<p><strong>Foreman Assignment Logic:</strong></p>
+<ul>
+<li><strong>Site Foreman</strong>: <code>gis_sectcode.fosarea</code> → jurisdictional responsibility</li>
+<li><strong>Treatment Foreman</strong>: <code>dblarv<em>insptrt</em>*.foreman</code> → who performed the treatment  </li>
+<li><strong>App Standard</strong>: Uses site foreman (jurisdictional) for filtering and grouping</li>
+</ul>
+
+<p><strong>Zone Assignment:</strong></p>
+<ul>
+<li><strong>P1 Sites</strong>: <code>gis_sectcode.zone = '1'</code> (Primary zone)</li>
+<li><strong>P2 Sites</strong>: <code>gis_sectcode.zone = '2'</code> (Secondary zone)</li>
+<li><strong>Missing Zones</strong>: Some sites may not have zone assignments in gis_sectcode</li>
+</ul>
+
+<p><strong>Treatment Effectiveness Calculation:</strong></p>
+<ul>
+<li><strong>Formula</strong>: <code>treatment<em>end</em>date = inspdate + COALESCE(effect_days, 14)</code></li>
+<li><strong>Active Status</strong>: <code>treatment<em>end</em>date &gt;= analysis_date</code></li>
+<li><strong>Expiring Status</strong>: <code>treatment<em>end</em>date BETWEEN analysis<em>date AND (analysis</em>date + expiring_days)</code></li>
+<li><strong>Expired Status</strong>: <code>treatment<em>end</em>date &lt; analysis_date</code></li>
+<li><strong>Material Lookup</strong>: Join <code>mattype<em>list</em>targetdose</code> for specific <code>effect_days</code></li>
+</ul>
+
+<p><strong>Prehatch Site Identification:</strong></p>
+<ul>
+<li><strong>Primary Filter</strong>: <code>loc<em>breeding</em>sites.prehatch = true</code></li>
+<li><strong>Definition</strong>: Sites designated for pre-hatch larval mosquito treatment</li>
+<li><strong>Treatment Timing</strong>: Typically treated earlier in season before mosquito emergence</li>
+<li><strong>Operational Context</strong>: May expire intentionally due to seasonal factors (drying, weather)</li>
+</ul>
 
 <h2>Tab 1: Progress Overview</h2>
 
 <h3>Purpose</h3>
-
-<p>Show aggregated treatment progress statistics with visual charts and summary metrics.</p>
+<p>Display current status of prehatch sites with active, expiring, and expired treatment categories.</p>
 
 <h3>Key Features</h3>
-
 <ul>
-<li><strong>6 Value Boxes</strong> showing key metrics:</li>
-<ul>
-<li>Total Ground Sites</li>
-<li>Prehatch Sites</li>
-<li>Treated Sites</li>
-<li>Expired Sites</li>
-<li>Treated % (percentage of prehatch sites with active treatments)</li>
-<li>Expiring % (percentage of prehatch sites with expiring treatments)</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong>Stacked Bar Chart</strong> showing treatment status breakdown by selected grouping:</li>
-<ul>
-<li>Treated (Green) - Sites with active treatments</li>
-<li>Expiring (Orange) - Sites with treatments about to expire</li>
-<li>Expired (Gray) - Sites with expired treatments</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong>Grouping Options</strong>:</li>
-<ul>
-<li>All MMCD - District-wide view</li>
-<li>Facility - Group by facility</li>
-<li>FOS - Group by Field Operations Supervisor</li>
-<li>Section - Group by section code (sections belong to one zone only)</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong>Zone Options</strong>:</li>
-<ul>
-<li>P1 Only - Show only Priority 1 zone</li>
-<li>P2 Only - Show only Priority 2 zone</li>
-<li>P1 and P2 Separate - Show both zones with separate bars</li>
-<li>Combined P1+P2 - Show both zones combined into single bars</li>
-</ul>
+<li><strong>Value boxes</strong> showing summary statistics (total sites, prehatch sites, treated sites, expired sites, percentages)</li>
+<li><strong>Layered bar chart</strong> showing treatment progress by group (facility, FOS, or section)</li>
+<li><strong>Site Filter</strong> - All Sites, Expiring Only, or Expiring + Expired</li>
+<li><strong>Expiring Days slider</strong> - Configurable threshold for expiring treatments (1-60 days)</li>
+<li><strong>Date simulation</strong> - "Pretend Today is" date picker for status analysis</li>
+<li><strong>Zone filters</strong> - P1 Only, P2 Only, P1 and P2 Separate, Combined P1+P2</li>
+<li><strong>Group By selector</strong> - All MMCD, Facility, FOS, or Section</li>
 </ul>
 
 <h3>Data Flow</h3>
+<ol>
+<li>Query prehatch sites via <code>get<em>ground</em>prehatch_data()</code>:</li>
+<ul>
+<li>Filter for active prehatch sites (<code>prehatch = true</code>, <code>enddate IS NULL</code>)</li>
+<li>Join with zone and FOS assignments</li>
+<li>Return one record per site with characteristics</li>
+</ul>
+</ul>
 
 <ol>
-<li><strong>Data Loading</strong>: <code>get<em>ground</em>prehatch_data()</code> fetches aggregated section-level data</li>
-<li><strong>Filtering</strong>: <code>filter<em>ground</em>data()</code> applies facility, FOS, and zone filters</li>
-<li><strong>Aggregation</strong>: <code>aggregate<em>data</em>by_group()</code> rolls up data by selected grouping level</li>
-<li><strong>Visualization</strong>: <code>create<em>progress</em>chart()</code> generates stacked bar chart</li>
-<li><strong>Value Boxes</strong>: <code>create<em>value</em>boxes()</code> calculates summary statistics</li>
-</ul>
-
-<h3>Visualization Details</h3>
-
-<p>The chart uses color-coded stacking:</p>
+<li>Query current treatments via <code>get<em>ground</em>prehatch_data()</code>:</li>
 <ul>
-<li><strong>Active</strong> (Green): Sites with current effective treatments</li>
-<li><strong>Planned/Expiring</strong> (Orange): Sites with treatments expiring soon</li>
-<li><strong>Unknown/Expired</strong> (Gray): Sites with expired treatments</li>
+<li>Get latest treatment per prehatch site</li>
+<li>Calculate treatment status based on end date vs analysis date</li>
+<li>Join with effectiveness data for duration calculation</li>
+</ul>
 </ul>
 
-<p>Chart is interactive (Plotly) with hover tooltips showing exact counts.</p>
+<ol>
+<li>Aggregate via <code>aggregate<em>ground</em>prehatch_data()</code>:</li>
+<ul>
+<li>Group by selected dimension (facility, FOS, section, or all MMCD)</li>
+<li>Calculate counts:</li>
+<ul>
+<li><code>tot_ground</code>: Total ground sites (context)</li>
+<li><code>prehatch<em>sites</em>cnt</code>: Total prehatch sites in group</li>
+<li><code>ph<em>treated</em>cnt</code>: Sites with active treatments</li>
+<li><code>ph<em>expiring</em>cnt</code>: Sites with expiring treatments (within X days)</li>
+<li><code>ph<em>expired</em>cnt</code>: Sites with expired treatments</li>
+</ul>
+</ul>
+</ul>
+
+<h3>Visualization</h3>
+<ul>
+<li><strong>Layered bar chart</strong> with three layers per group (same as drone app):</li>
+<ul>
+<li>Gray background bar: Total prehatch sites (background)</li>
+<li>Group color bar: Sites with active treatments (facility/foreman colors)</li>
+<li>Orange overlay bar: Sites with expiring treatments (status orange)</li>
+</ul>
+<li>Colors mapped by group type:</li>
+<ul>
+<li><strong>Facility</strong>: Distinct facility colors from db_helpers</li>
+<li><strong>FOS</strong>: Facility-based colors mapped through foreman lookup</li>
+<li><strong>Section</strong>: Inherits facility colors based on section location</li>
+<li><strong>MMCD All</strong>: Uses status colors (green for active, orange for expiring)</li>
+</ul>
+</ul>
+
+<h3>Zone Handling</h3>
+<ul>
+<li><strong>Both zones selected</strong>: Shows groups separately (e.g., "Anoka (P1)", "Anoka (P2)")</li>
+<li><strong>Single zone</strong>: Shows groups without zone suffix</li>
+<li><strong>Zone differentiation</strong>: Uses alpha transparency (P1 solid, P2 faded) when both zones shown</li>
+</ul>
 
 <h2>Tab 2: Detailed View</h2>
 
 <h3>Purpose</h3>
-
-<p>Provide site-level detail table with treatment history and downloadable CSV export.</p>
+<p>Provide detailed site-by-site view of prehatch treatment status with filtering and download capabilities.</p>
 
 <h3>Key Features</h3>
-
 <ul>
-<li><strong>Detailed Table</strong> showing individual site information:</li>
+<li><strong>Detailed data table</strong> showing individual site information:</li>
 <ul>
 <li>Facility, Priority Zone, Section, Sitecode</li>
-<li>FOS assignment</li>
-<li>Acres, Priority level</li>
-<li>Treatment Type (PREHATCH, BRIQUET)</li>
-<li>Status (treated, expiring, expired, or blank)</li>
-<li>Last Treatment date</li>
-<li>Days Since Last Treatment</li>
-<li>Material used</li>
-<li>Effect Days (treatment effectiveness duration)</li>
+<li>FOS assignment, Acres, Priority</li>
+<li>Treatment Type, Status, Last Treatment Date</li>
+<li>Days Since Last Treatment, Material, Effect Days</li>
 </ul>
-</ul>
-
-<ul>
-<li><strong>CSV Download</strong> button for exporting filtered data</li>
-</ul>
-
-<ul>
-<li><strong>Pagination &amp; Search</strong> via DataTables interface</li>
+<li><strong>Download CSV</strong> functionality for filtered data</li>
+<li><strong>Same filters</strong> as Progress Overview tab</li>
+<li><strong>Sortable columns</strong> and searchable interface</li>
+<li><strong>Pagination</strong> for large datasets</li>
 </ul>
 
 <h3>Data Flow</h3>
+<ol>
+<li>Use same data source as Progress Overview (<code>get<em>site</em>details_data()</code>)</li>
+<li>Return individual site records (not aggregated)</li>
+<li>Map foreman employee numbers to names via <code>get<em>foremen</em>lookup()</code></li>
+<li>Format dates and numeric values for display</li>
+<li>Apply same filtering logic as overview tab</li>
+</ul>
+
+<h3>Data Table Features</h3>
+<ul>
+<li><strong>Responsive design</strong> with horizontal scrolling for small screens</li>
+<li><strong>Center-aligned</strong> numeric and status columns</li>
+<li><strong>Date formatting</strong> (MM/DD/YY format)</li>
+<li><strong>Decimal precision</strong> (2 places for acres, 1 place for age)</li>
+<li><strong>Foreman mapping</strong> from employee numbers to readable names</li>
+</ul>
+
+<h2>Tab 3: Map</h2>
+
+<h3>Purpose</h3>
+<p>Provide interactive map visualization of prehatch sites with color-coded treatment status markers.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Interactive Leaflet Map</strong> with multiple basemap options:</li>
+<ul>
+<li>Streets (CartoDB Positron) - Default</li>
+<li>Satellite (Esri World Imagery)</li>
+<li>Terrain (Esri World Topo)</li>
+<li>OpenStreetMap</li>
+</ul>
+<li><strong>Color-coded markers</strong> by treatment status:</li>
+<ul>
+<li><strong>Green</strong>: Active treatments (#187018)</li>
+<li><strong>Orange</strong>: Expiring treatments (#FF4500)</li>
+<li><strong>Red</strong>: Expired treatments (#FF0000)</li>
+<li><strong>Gray</strong>: No treatment recorded (#A9A9A9)</li>
+</ul>
+<li><strong>Site popups</strong> with detailed information:</li>
+<ul>
+<li>Sitecode, facility, zone, site acres</li>
+<li>Treatment status and last treatment details</li>
+<li>Last material used and treated acres</li>
+</ul>
+<li><strong>Map legend</strong> showing treatment status color scheme</li>
+<li><strong>Data table</strong> below map with site details and filtering</li>
+<li><strong>Shared filters</strong> with other tabs (zone, facility, FOS, expiring days)</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li>Load spatial data via <code>load<em>spatial</em>data()</code>:</li>
+<ul>
+<li>Uses <code>load<em>raw</em>data()</code> with <code>include_geometry = TRUE</code></li>
+<li>Extracts coordinates using <code>ST<em>Transform(ST</em>Centroid(geom), 4326)</code></li>
+<li>Applies same filters as Progress Overview tab</li>
+<li>Calculates treatment status for each site</li>
+</ul>
+</ul>
 
 <ol>
-<li><strong>Data Loading</strong>: <code>get<em>site</em>details_data()</code> fetches site-level treatment records</li>
-<li><strong>Filtering</strong>: <code>filter<em>ground</em>data()</code> applies facility, FOS, and zone filters</li>
-<li><strong>Display</strong>: <code>create<em>details</em>table()</code> formats data for DataTables</li>
-<li><strong>Download</strong>: <code>prepare<em>download</em>data()</code> prepares CSV export</li>
+<li>Process spatial data:</li>
+<ul>
+<li>Join prehatch sites with latest treatment information</li>
+<li>Calculate treatment status based on end date vs current date</li>
+<li>Filter sites to only those with valid coordinates</li>
+<li>Convert to sf object for leaflet mapping</li>
+</ul>
+</ul>
+
+<h3>Visualization</h3>
+<ul>
+<li><strong>Base map</strong>: Multiple provider tiles via leaflet providers</li>
+<li><strong>Markers</strong>: CircleMarkers with 6px radius, black borders</li>
+<li><strong>Colors</strong>: Based on treatment status using status color scheme</li>
+<li><strong>Popups</strong>: HTML-formatted with site and treatment details</li>
+<li><strong>Legend</strong>: Bottom-right position showing status colors</li>
+<li><strong>Bounds</strong>: Automatic map fitting to data extent</li>
+</ul>
+
+<h3>Coordinate Transformation</h3>
+<ul>
+<li><strong>Source</strong>: PostGIS geometry in UTM projection (EPSG:26915)</li>
+<li><strong>Target</strong>: WGS84 decimal degrees (EPSG:4326) for web mapping</li>
+<li><strong>SQL Transform</strong>: <code>ST<em>X(ST</em>Transform(ST_Centroid(geom), 4326))</code> for longitude</li>
+<li><strong>Coordinate Range</strong>: Minnesota extent (~-93.8 to -92.8 lng, 44.6 to 45.4 lat)</li>
+</ul>
+
+<h2>Tab 4: Historical Analysis</h2>
+
+<h3>Purpose</h3>
+<p>Analyze multi-year trends in prehatch treatment activity across facilities, FOS, or combined.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Display Metric selector</strong> - Number of Sites, Number of Treatments, or Number of Acres</li>
+<li><strong>Time Period selector</strong> - Weekly or Yearly aggregation</li>
+<li><strong>Year Range controls</strong> - Start Year and End Year (configurable 20-year range)</li>
+<li><strong>Chart Type selector</strong> - Stacked Bar, Grouped Bar, Line Chart, Area Chart, Step Chart</li>
+<li><strong>Zone filter</strong> - P1, P2, or both (shared with other tabs)</li>
+<li><strong>Facility/FOS filters</strong> - Shared with other tabs</li>
+<li><strong>Group By selector</strong> - All MMCD, Facility, FOS, or Section</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li>Query historical data via <code>get<em>historical</em>prehatch_data()</code>:</li>
+<ul>
+<li>Combine archive and current treatment tables</li>
+<li>Filter for prehatch sites via JOIN with <code>loc<em>breeding</em>sites</code></li>
+<li>Join with zone and FOS assignments</li>
+<li>Filter by year range and analysis date</li>
+</ul>
+</ul>
+
+<ol>
+<li>Process time periods:</li>
+<ul>
+<li><strong>Weekly</strong>: Create week numbers (<code>YYYY-W##</code> format)</li>
+<li><strong>Yearly</strong>: Use year values directly</li>
+<li>Sort by time period for proper chart ordering</li>
+</ul>
+</ul>
+
+<ol>
+<li>Aggregate via <code>aggregate<em>historical</em>data()</code>:</li>
+<ul>
+<li>Group by selected dimension and time period</li>
+<li>Calculate metrics:</li>
+<ul>
+<li><strong>Sites</strong>: <code>n_distinct(sitecode)</code> - Count unique sites treated</li>
+<li><strong>Treatments</strong>: <code>n()</code> - Count total treatment instances</li>
+<li><strong>Acres</strong>: <code>sum(treated_acres)</code> - Sum actual treated acres</li>
+</ul>
+</ul>
+</ul>
+
+<h3>Visualization</h3>
+<ul>
+<li><strong>Multiple chart types</strong> with consistent color schemes:</li>
+<ul>
+<li><strong>Stacked Bar</strong>: Shows total volume with group contributions</li>
+<li><strong>Grouped Bar</strong>: Side-by-side comparison between groups</li>
+<li><strong>Line Chart</strong>: Trend analysis over time</li>
+<li><strong>Area Chart</strong>: Filled area showing volume trends</li>
+<li><strong>Step Chart</strong>: Step-wise changes in treatment levels</li>
+</ul>
+<li><strong>Colors</strong>: Same facility/foreman color mapping as Progress Overview</li>
+<li><strong>Zone Support</strong>: Alpha transparency for P1/P2 differentiation when both selected</li>
+</ul>
+
+<h3>Chart Type Options</h3>
+
+<p><strong>Stacked Bar Chart (Default)</strong>:</p>
+<ul>
+<li><strong>Best for</strong>: Showing total volume and individual contributions</li>
+<li><strong>Usage</strong>: Cumulative view of all groups combined</li>
+<li><strong>Visual</strong>: Traditional stacked bars, groups stack vertically</li>
+</ul>
+
+<p><strong>Grouped Bar Chart</strong>:</p>
+<ul>
+<li><strong>Best for</strong>: Direct comparison between groups</li>
+<li><strong>Usage</strong>: Side-by-side comparison of facilities/FOS performance</li>
+<li><strong>Visual</strong>: Bars grouped side-by-side for each time period</li>
+</ul>
+
+<p><strong>Line Chart</strong>:</p>
+<ul>
+<li><strong>Best for</strong>: Trend analysis and pattern identification</li>
+<li><strong>Usage</strong>: Tracking changes over time for each group</li>
+<li><strong>Visual</strong>: Connected lines with data points for each group</li>
+</ul>
+
+<p><strong>Area Chart</strong>:</p>
+<ul>
+<li><strong>Best for</strong>: Visual emphasis of volume and trends</li>
+<li><strong>Usage</strong>: Highlighting magnitude of treatment activity</li>
+<li><strong>Visual</strong>: Filled areas under trend lines</li>
+</ul>
+
+<p><strong>Step Chart</strong>:</p>
+<ul>
+<li><strong>Best for</strong>: Discrete changes and threshold analysis</li>
+<li><strong>Usage</strong>: Showing step-wise changes in treatment levels</li>
+<li><strong>Visual</strong>: Step-wise lines connecting data points</li>
+</ul>
+
+<h3>Time Period Options</h3>
+<p><strong>Yearly View (Default)</strong>:</p>
+<ul>
+<li>Shows one data point per year in the selected range</li>
+<li>Useful for long-term trend analysis</li>
+<li>Better for multi-year comparisons</li>
+<li>Less cluttered display</li>
+</ul>
+
+<p><strong>Weekly View</strong>:</p>
+<ul>
+<li>Shows one data point per week in the selected range</li>
+<li>Provides detailed seasonal and short-term patterns</li>
+<li>Useful for identifying weekly treatment patterns</li>
+<li>More detailed but potentially dense for large date ranges</li>
+<li>Week format: "YYYY-W##" (e.g., "2024-W15" for week 15 of 2024)</li>
 </ul>
 
 <h2>Code Organization</h2>
 
 <h3>File Structure</h3>
-
 <pre><code class="">
 ground_prehatch_progress/
 ├── app.R                           # Main app - UI orchestration and server logic
-├── ui_helpers.R                    # UI components (filter panel, value boxes, etc.)
-├── data_functions.R                # Database queries and data processing
-├── display_functions.R             # Charts, tables, and visualization functions
-├── NOTES.md                        # Documentation (this file)
-└── NOTES.html                      # Documentation (HTML version)
+├── ui_helpers.R                    # UI component functions
+├── data_functions.R                # All database queries and data processing
+├── display_functions.R             # Visualization helpers and color mapping
+├── historical_functions_simple.R   # Historical trends data and plotting
+└── NOTES.md                        # This file
 </code></pre>
 
-<h3>Design Principles</h3>
+<h3>Key Functions by File</h3>
 
-<ol>
-<li><strong>Separation of Concerns</strong>: UI, data, and display logic are separate</li>
-<li><strong>Refresh Button Pattern</strong>: No data loads until user clicks "Refresh Data"</li>
-<li><strong>Input Isolation</strong>: All inputs captured via <code>refresh_inputs()</code> when button clicked</li>
-<li><strong>Reusable Functions</strong>: UI components, data processing, and visualization are modular</li>
-<li><strong>Consistent Patterns</strong>: All outputs follow same filter/process/display flow</li>
-</ul>
-
-<h2>Refresh Button Pattern - Critical for Performance</h2>
-
-<h3>Why It's Critical</h3>
-
-<p>Without this pattern, changing ANY filter would immediately trigger database queries, which:</p>
+<h4>app.R</h4>
 <ul>
-<li>Slows down the app when adjusting multiple filters</li>
-<li>Creates unnecessary database load</li>
-<li>Provides poor user experience</li>
+<li><code>refresh_inputs()</code> - Captures all UI inputs when refresh clicked (prevents reactive reruns)</li>
+<li><code>ground_data()</code> - Loads prehatch sites when refresh button clicked</li>
+<li><code>site_details()</code> - Loads detailed site data when refresh button clicked</li>
+<li><code>aggregated_data()</code> - Aggregates data by group for progress charts</li>
+<li><code>map<em>spatial</em>data()</code> - Loads spatial data with geometry for map visualization</li>
+<li><code>server()</code> - Main server function with output renderers for all four tabs</li>
 </ul>
 
-<h3>How It Works</h3>
-
-<ol>
-<li><strong>On app load</strong>: Only UI options (facility names, FOS names) are loaded</li>
-<li><strong>User adjusts filters</strong>: No database queries run - just UI state changes</li>
-<li><strong>User clicks "Refresh Data"</strong>: </li>
+<h4>data_functions.R</h4>
 <ul>
-<li><code>refresh_inputs()</code> captures ALL current input values using <code>isolate()</code></li>
-<li><code>ground_data()</code> eventReactive executes, using captured inputs</li>
-<li><code>site_details()</code> eventReactive executes, using captured inputs</li>
-<li>All data processing happens with frozen input values</li>
-<li><strong>User changes filters again</strong>: Charts stay the same (using frozen data)</li>
-<li><strong>User clicks "Refresh Data" again</strong>: New query with new input values</li>
-</ul>
+<li><code>get<em>ground</em>prehatch_data()</code> - Queries prehatch sites with zone/FOS data and analysis date support</li>
+<li><code>load<em>raw</em>data()</code> - Unified data loading with geometry support for mapping</li>
+<li><code>load<em>spatial</em>data()</code> - Loads spatial data with coordinates and treatment status</li>
+<li><code>aggregate<em>ground</em>prehatch_data()</code> - Aggregates prehatch data by group with zone handling</li>
 </ul>
 
-<h3>Key Implementation</h3>
+<h4>display_functions.R</h4>
+<ul>
+<li><code>create<em>progress</em>chart()</code> - Generates layered bar chart matching drone app style</li>
+<li><code>create<em>historical</em>chart()</code> - Generates historical trends with multiple chart types</li>
+<li><code>create<em>ground</em>map()</code> - Creates leaflet map with color-coded treatment status markers</li>
+<li><code>create<em>details</em>table()</code> - Formats detailed site data for display</li>
+<li><code>create<em>value</em>boxes()</code> - Calculates summary statistics for value boxes</li>
+</ul>
 
+<h4>historical<em>functions</em>simple.R</h4>
+<ul>
+<li><code>get<em>historical</em>prehatch_data()</code> - Queries combined archive and current historical data</li>
+<li><code>aggregate<em>historical</em>data()</code> - Processes and aggregates historical data by group and time</li>
+<li><code>create<em>historical</em>details_table()</code> - Formats historical data for download/display</li>
+</ul>
+
+<h4>ui_helpers.R</h4>
+<ul>
+<li><code>create<em>filter</em>panel()</code> - Main filter controls with conditional logic</li>
+<li><code>create<em>progress</em>chart_box()</code> - Progress overview chart container with important note</li>
+<li><code>create<em>details</em>table_box()</code> - Detailed view table container with download</li>
+<li><code>create<em>map</em>box()</code> - Map container with basemap controls and important note</li>
+<li><code>create<em>historical</em>chart_box()</code> - Historical analysis chart container with important note</li>
+<li><code>create<em>important</em>note()</code> - Universal important note about expired prehatch sites</li>
+</ul>
+
+<h2>Data Collection and Aggregation Logic</h2>
+
+<h3>Overview of Data Processing Pipeline</h3>
+<p>The ground prehatch progress app follows the same pattern as the drone app for data collection and aggregation. Data processing is done <strong>outside of SQL</strong> - SQL queries return raw records which are then aggregated using R/dplyr operations.</p>
+
+<h3>Core Aggregation Methods</h3>
+
+<h4>Total Sites vs Total Acres Calculation</h4>
+<p><strong>IMPORTANT</strong>: Both total sites and total acres calculations are performed <strong>outside of SQL</strong> using R aggregation functions.</p>
+
+<p><strong>Prehatch Sites Calculation:</strong></p>
 <pre><code class="r">
-# Capture inputs when refresh clicked
-refresh_inputs &lt;- eventReactive(input$refresh, {
-  zone_value &lt;- isolate(input$zone_filter)
-  
-  # Parse zone filter
-  parsed_zones &lt;- if (zone_value == "combined") {
-    c("1", "2")  # Include both zones but will be combined
-  } else if (zone_value == "1,2") {
-    c("1", "2")  # Include both zones separately
-  } else {
-    zone_value  # Single zone
-  }
-  
-  list(
-    zone_filter_raw = zone_value,
-    zone_filter = parsed_zones,
-    combine_zones = (zone_value == "combined"),
-    facility_filter = isolate(input$facility_filter),
-    foreman_filter = isolate(input$foreman_filter),
-    # ... all other inputs
-  )
-})
+# Count UNIQUE prehatch sites (not treatments)
+prehatch_sites &lt;- ground_sites %&gt;%
+  filter(prehatch == TRUE) %&gt;%
+  group_by(!!sym(group_col)) %&gt;%
+  summarize(prehatch_sites_cnt = n(), .groups = "drop")  # n() counts rows = sites
 
-# Load data ONLY when refresh clicked
-ground_data &lt;- eventReactive(input$refresh, {
-  inputs &lt;- refresh_inputs()
-  # Use inputs$zone_filter, NOT input$zone_filter
-  get_ground_prehatch_data(inputs$zone_filter, simulation_date)
-})
+# For zone separation
+prehatch_sites &lt;- ground_sites %&gt;%
+  filter(prehatch == TRUE) %&gt;%
+  group_by(combined_group, zone) %&gt;%
+  summarize(prehatch_sites_cnt = n(), .groups = "drop")
 </code></pre>
 
-<p><strong>CRITICAL</strong>: Zone parsing happens inside <code>refresh<em>inputs()</code> to avoid circular dependencies. The parsed zone values and combine</em>zones flag are stored directly in the inputs list.</p>
+<p><strong>Site Acres Calculation:</strong></p>
+<pre><code class="r">
+# Sum acres from SITE records (loc_breeding_sites.acres)
+prehatch_acres &lt;- ground_sites %&gt;%
+  filter(prehatch == TRUE) %&gt;%
+  group_by(!!sym(group_col)) %&gt;%
+  summarize(total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+</code></pre>
 
-<h2>Common Data Patterns</h2>
+<p><strong>Treated Sites vs Treated Acres:</strong></p>
+<pre><code class="r">
+# Count unique SITES with active treatments (not treatment instances)
+treated_sites &lt;- prehatch_treatments %&gt;%
+  filter(is_active) %&gt;%
+  group_by(!!sym(group_col)) %&gt;%
+  summarize(ph_treated_cnt = n_distinct(sitecode), .groups = "drop")
 
+# Sum TREATED acres from treatment records (treated_acres)
+treated_acres &lt;- prehatch_treatments %&gt;%
+  filter(is_active) %&gt;%
+  group_by(!!sym(group_col)) %&gt;%
+  summarize(treated_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+</code></pre>
 
-<h3>Zone Mapping</h3>
+<h4>Historical Metrics Aggregation</h4>
+<p><strong>All historical aggregations are done in R after SQL returns raw records:</strong></p>
 
+<p><strong>Time Period Creation</strong></p>
+<pre><code class="r">
+# Weekly aggregation
+if (hist_time_period == "weekly") {
+  all_data &lt;- all_data %&gt;%
+    mutate(
+      year = year(inspdate),
+      week = week(inspdate),
+      time_period = paste0(year, "-W", sprintf("%02d", week)),
+      time_sort = year * 100 + week
+    )
+} else {
+  # Yearly aggregation (default)
+  all_data &lt;- all_data %&gt;%
+    mutate(
+      time_period = as.character(year),
+      time_sort = year
+    )
+}
+</code></pre>
+
+<p><strong>Sites Metric:</strong></p>
+<pre><code class="r">
+# Count unique prehatch sites treated per group per time period
+if (hist_display_metric == "sites") {
+  results &lt;- all_data %&gt;%
+    group_by(!!group_var, !!time_var, time_sort) %&gt;%
+    summarize(count = n_distinct(sitecode), .groups = "drop")
+}
+</code></pre>
+
+<p><strong>Treatments Metric:</strong></p>
+<pre><code class="r">
+# Count total prehatch treatment instances per group per time period
+if (hist_display_metric == "treatments") {
+  results &lt;- all_data %&gt;%
+    group_by(!!group_var, !!time_var, time_sort) %&gt;%
+    summarize(count = n(), .groups = "drop")  # n() counts all treatment records
+}
+</code></pre>
+
+<p><strong>Acres Metric:</strong></p>
+<pre><code class="r">
+# Sum treated acres from prehatch treatment records per group per time period
+if (hist_display_metric == "acres") {
+  results &lt;- all_data %&gt;%
+    group_by(!!group_var, !!time_var, time_sort) %&gt;%
+    summarize(count = sum(treated_acres, na.rm = TRUE), .groups = "drop")
+}
+</code></pre>
+<h3>Data Sources vs Aggregation Separation</h3>
+
+<p><strong>SQL Queries</strong>: Return raw, individual records</p>
 <ul>
-<li><strong>P1</strong> = Zone '1' (Primary zone)</li>
-<li><strong>P2</strong> = Zone '2' (Secondary zone)</li>
+<li><code>get<em>ground</em>prehatch_data()</code>: Returns individual prehatch site records and treatment records</li>
+<li><code>get<em>historical</em>prehatch_data()</code>: Returns individual historical treatments for prehatch sites</li>
+<li><code>load<em>spatial</em>data()</code>: Returns prehatch sites with coordinates</li>
 </ul>
 
-<h3>FOS Assignment Pattern</h3>
-
-<p>FOS (Field Operations Supervisor) assignment comes from:</p>
-<ol>
-<li><code>gis_sectcode.fosarea</code> - Links section to FOS area</li>
-<li><code>employee_list</code> - Maps FOS area to actual employee</li>
-<li>Display uses <code>shortname</code> from employee_list</li>
-</ul>
-
-<h3>Sitecode Format</h3>
-
-<p>Standard format: First 7 characters = section code</p>
+<p><strong>R Aggregation</strong>: Processes raw records into summaries</p>
 <ul>
-<li>Example: <code>190208-003</code> → section <code>190208-</code></li>
-<li>Used for joining with <code>gis_sectcode</code></li>
+<li><code>aggregate<em>ground</em>prehatch_data()</code>: Aggregates sites and treatments by group</li>
+<li><code>aggregate<em>historical</em>data()</code>: Aggregates historical treatments by group and time period</li>
+<li>Value box calculations: Summarize overall statistics</li>
 </ul>
 
-<h3>Treatment Status Hierarchy</h3>
+<h3>Treatment Status Logic (R-based)</h3>
+<p><strong>Active Treatment Calculation:</strong></p>
+<pre><code class="r">
+prehatch_treatments &lt;- prehatch_treatments %&gt;%
+  mutate(
+    inspdate = as.Date(inspdate),
+    effect_days = ifelse(is.na(effect_days), 14, effect_days),  # Default 14 days
+    treatment_end_date = inspdate + effect_days,
+    is_active = treatment_end_date &gt;= analysis_date
+  )
+</code></pre>
 
-<ol>
-<li><strong>Most Recent Treatment</strong> is selected using <code>DISTINCT ON (sitecode)</code> with <code>ORDER BY inspdate DESC, insptime DESC</code></li>
-<li><strong>Age Calculation</strong> uses date_part to get days since treatment</li>
-<li><strong>Status Classification</strong> uses CASE statement with effect<em>days and days</em>retrt_early thresholds</li>
-</ul>
+<p><strong>Expiring Treatment Calculation:</strong></p>
+<pre><code class="r">
+prehatch_treatments &lt;- prehatch_treatments %&gt;%
+  mutate(
+    expiring_start_date = analysis_date,
+    expiring_end_date = analysis_date + expiring_days,
+    is_expiring = is_active &amp; 
+                  treatment_end_date &gt;= expiring_start_date &amp; 
+                  treatment_end_date &lt;= expiring_end_date
+  )
+</code></pre>
 
-<h2>Special Features</h2>
+<p><strong>Expired Treatment Calculation:</strong></p>
+<pre><code class="r">
+prehatch_treatments &lt;- prehatch_treatments %&gt;%
+  mutate(
+    is_expired = treatment_end_date &lt; analysis_date
+  )
+</code></pre>
 
-<h3>"Pretend Today Is" Date Simulation</h3>
+<h2>SQL Queries Reference</h2>
 
-<p>Allows users to simulate what the treatment status would look like on any given date:</p>
+<p>This section documents all SQL queries used in the ground prehatch progress app for reference and troubleshooting.</p>
+
+<h3>1. Current Prehatch Sites Query</h3>
+<p><strong>Function</strong>: <code>get<em>ground</em>prehatch<em>data()</code> in <code>data</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load active prehatch sites with zone and FOS information</p>
+
+<pre><code class="sql">
+SELECT b.sitecode, g.facility, b.acres, b.prehatch, 
+       CASE 
+         WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
+         ELSE NULL
+       END as foreman, 
+       g.zone,
+       left(b.sitecode,7) as sectcode
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+  AND e.emp_type = 'FieldSuper' 
+  AND e.active = true
+WHERE b.prehatch = true
+  AND b.enddate IS NULL
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
 <ul>
-<li>Changes the reference date for age calculations</li>
-<li>Useful for historical analysis or planning</li>
-<li>Default: Current system date</li>
+<li><strong>Prehatch Filter</strong>: <code>b.prehatch = true</code> ensures only prehatch sites</li>
+<li>Uses <code>loc<em>breeding</em>sites</code> as primary source, joined with <code>gis_sectcode</code> for zone/FOS data</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(b.sitecode,7)</code> ensures exact match</li>
+<li>Filters for active sites (<code>enddate IS NULL</code>)</li>
+<li>Gets zone, FOS area from gis_sectcode via exact sectcode matching</li>
+<li>Joins with employee_list to validate active field supervisors</li>
 </ul>
 
-<h3>"Days Until Expiring" Slider</h3>
+<h3>2. Current Prehatch Treatments Query</h3>
+<p><strong>Function</strong>: <code>get<em>ground</em>prehatch<em>data()</code> in <code>data</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load current treatments for prehatch sites with zone/FOS data and effectiveness duration</p>
 
-<p>Controls the threshold for "expiring" status (default: 14 days):</p>
+<pre><code class="sql">
+SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, 
+       t.foreman, m.effect_days, g.facility, g.zone, g.fosarea,
+       b.prehatch
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
+WHERE b.prehatch = true
+  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
 <ul>
-<li>Adjusts when treatments are flagged as approaching expiration</li>
-<li>Range: 1-60 days</li>
-<li>Useful for adjusting planning windows</li>
+<li><strong>Prehatch Sites Only</strong>: Joins with <code>loc<em>breeding</em>sites</code> and filters <code>b.prehatch = true</code></li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(t.sitecode,7)</code> ensures exact match</li>
+<li>Joins with mattype<em>list</em>targetdose for treatment duration</li>
+<li>Gets facility, zone, and fosarea from gis_sectcode via exact sectcode matching</li>
+<li>Filters for active sites to avoid treatments on closed prehatch sites</li>
 </ul>
 
-<h3>"Show Expiring Only" Filter</h3>
+<h3>3. Historical Prehatch Treatment Data Query</h3>
+<p><strong>Function</strong>: <code>get<em>historical</em>prehatch<em>data()</code> in <code>historical</em>functions_simple.R</code>  </p>
+<p><strong>Purpose</strong>: Load historical treatment data for prehatch sites from both archive and current</p>
 
-<p>When checked:</p>
+<pre><code class="sql">
+-- Historical prehatch treatments from archive
+SELECT 
+    t.facility, 
+    t.sitecode, 
+    t.inspdate, 
+    t.action, 
+    t.matcode, 
+    t.amts as amount, 
+    t.acres as treated_acres,
+    g.zone,
+    g.fosarea as foreman
+FROM public.dblarv_insptrt_archive t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
+WHERE b.prehatch = true
+  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
+  AND t.inspdate &lt;= ?
+
+UNION ALL
+
+-- Recent prehatch treatments from current
+SELECT 
+    t.facility, 
+    t.sitecode, 
+    t.inspdate, 
+    t.action, 
+    t.matcode, 
+    t.amts as amount, 
+    t.acres as treated_acres,
+    g.zone,
+    g.fosarea as foreman
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
+WHERE b.prehatch = true
+  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
+  AND t.inspdate &lt;= ?
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
 <ul>
-<li>Filters to only show sites/sections with expiring treatments</li>
-<li>Zeros out all other treatment status counts</li>
-<li>Useful for focusing on sites requiring immediate attention</li>
+<li><strong>Prehatch Sites Only</strong>: Both queries join with <code>loc<em>breeding</em>sites</code> and filter <code>b.prehatch = true</code></li>
+<li>Combines archive and current treatment tables with UNION ALL</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: Uses exact sectcode matching in both queries</li>
+<li>Includes year range and analysis date filtering</li>
+<li>Returns treatment data with accurate zone/FOS information for prehatch sites only</li>
 </ul>
 
-<h3>Zone Display Options</h3>
+<h3>4. Spatial Prehatch Data Query (Map Functionality)</h3>
+<p><strong>Function</strong>: <code>load<em>spatial</em>data()</code> in <code>data_functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load prehatch sites with spatial coordinates for interactive mapping</p>
 
-<p>Four different ways to view zone data:</p>
-<ol>
-<li><strong>P1 Only</strong>: Filter to Priority 1 zone only</li>
-<li><strong>P2 Only</strong>: Filter to Priority 2 zone only</li>
-<li><strong>P1 and P2 Separate</strong>: Show both zones with separate bars/rows</li>
-<li><strong>Combined P1+P2</strong>: Show both zones aggregated together</li>
-</ul>
+<pre><code class="sql">
+SELECT 
+    b.sitecode, 
+    g.facility, 
+    b.acres, 
+    b.prehatch, 
+    CASE 
+        WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
+        ELSE NULL
+    END as foreman, 
+    g.zone,
+    left(b.sitecode,7) as sectcode,
+    ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, 
+    ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
+LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
+    AND e.emp_type = 'FieldSuper' 
+    AND e.active = true
+WHERE b.prehatch = true
+    AND b.enddate IS NULL
+    AND b.geom IS NOT NULL
+</code></pre>
 
-<h2>Testing &amp; Validation</h2>
-
-<h3>Test Scenarios</h3>
-
-<ol>
-<li><strong>Refresh Button Test</strong>:</li>
+<p><strong>Key Points</strong>:</p>
 <ul>
-<li>Change filters without clicking refresh → No data should load</li>
-<li>Click refresh → Data loads with selected filters</li>
-<li>Change filters again → Data stays the same until refresh</li>
-</ul>
+<li><strong>Prehatch Sites Only</strong>: <code>b.prehatch = true</code> filters for prehatch sites</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(b.sitecode,7)</code> ensures exact match</li>
+<li><strong>Geometry Transform</strong>: <code>ST<em>Transform(ST</em>Centroid(b.geom), 4326)</code> converts UTM to WGS84 decimal degrees</li>
+<li><strong>Coordinate Extraction</strong>: <code>ST<em>X()</code> and <code>ST</em>Y()</code> extract longitude and latitude values</li>
+<li><strong>Geometry Filter</strong>: <code>b.geom IS NOT NULL</code> ensures only sites with valid coordinates</li>
+<li><strong>Web Mapping Ready</strong>: Coordinates returned in standard web mercator projection (EPSG:4326)</li>
 </ul>
 
-<ol>
-<li><strong>Zone Filtering Test</strong>:</li>
+<h3>5. Site Details Query</h3>
+<p><strong>Function</strong>: <code>get<em>site</em>details<em>data()</code> in <code>data</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load detailed information for individual prehatch sites with latest treatment data</p>
+
+<pre><code class="sql">
+WITH latest_treatments AS (
+    SELECT DISTINCT ON (sitecode, facility)
+        sitecode, 
+        facility, 
+        inspdate, 
+        matcode,
+        foreman as treatment_foreman,
+        acres as treated_acres,
+        effect_days
+    FROM (
+        SELECT t.sitecode, t.facility, t.inspdate, t.matcode, 
+               t.foreman, t.acres, m.effect_days
+        FROM public.dblarv_insptrt_current t
+        LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+        
+        UNION ALL
+        
+        SELECT t.sitecode, t.facility, t.inspdate, t.matcode, 
+               t.foreman, t.acres, m.effect_days
+        FROM public.dblarv_insptrt_archive t
+        LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
+    ) all_treatments
+    ORDER BY sitecode, facility, inspdate DESC
+),
+prehatch_sites AS (
+    SELECT 
+        b.sitecode, 
+        b.facility, 
+        b.acres, 
+        b.prehatch,
+        b.priority,
+        g.zone,
+        g.fosarea as site_foreman,
+        left(b.sitecode,7) as sectcode
+    FROM public.loc_breeding_sites b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
+    WHERE b.prehatch = true
+      AND b.enddate IS NULL
+)
+SELECT 
+    s.sitecode,
+    s.facility,
+    s.acres,
+    s.priority,
+    s.zone,
+    s.sectcode,
+    s.site_foreman as fosarea,
+    COALESCE(t.inspdate, '1900-01-01'::date) as inspdate,
+    COALESCE(t.matcode, 'None') as matcode,
+    COALESCE(t.effect_days, 14) as effect_days,
+    CASE 
+        WHEN t.inspdate IS NOT NULL THEN 
+            EXTRACT(DAYS FROM AGE(CURRENT_DATE, t.inspdate))
+        ELSE NULL
+    END as age
+FROM prehatch_sites s
+LEFT JOIN latest_treatments t ON s.sitecode = t.sitecode AND s.facility = t.facility
+ORDER BY s.facility, s.sectcode, s.sitecode
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
 <ul>
-<li>P1 Only: Should show only zone '1' data</li>
-<li>P2 Only: Should show only zone '2' data</li>
-<li>Separate: Should show separate entries for P1 and P2</li>
-<li>Combined: Should show single entries with both zones aggregated</li>
+<li><strong>CTE for Latest Treatments</strong>: Uses window function to get most recent treatment per site</li>
+<li><strong>Prehatch Sites Only</strong>: Filters <code>b.prehatch = true</code> in the prehatch_sites CTE</li>
+<li><strong>Combined Data Sources</strong>: UNION ALL of current and archive treatment tables</li>
+<li><strong>Age Calculation</strong>: Computes days since last treatment using PostgreSQL AGE function</li>
+<li><strong>Default Values</strong>: Uses COALESCE for missing treatment data</li>
+<li><strong>Ordered Results</strong>: Sorts by facility, section, and sitecode for consistent display</li>
 </ul>
-</ul>
-
-<ol>
-<li><strong>Grouping Test</strong>:</li>
-<ul>
-<li>All MMCD: Single bar/entry for entire district</li>
-<li>Facility: One bar per facility</li>
-<li>FOS: One bar per Field Operations Supervisor</li>
-<li>Section: One bar per section code</li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>Treatment Status Test</strong>:</li>
-<ul>
-<li>Recent treatments should show as "Treated"</li>
-<li>Old treatments should show as "Expired"</li>
-<li>Treatments approaching expiration should show as "Expiring"</li>
-<li>Sites with no treatments should show as "Needs Treatment"</li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>Date Simulation Test</strong>:</li>
-<ul>
-<li>Set "Pretend Today Is" to past date</li>
-<li>Verify treatment statuses change accordingly</li>
-<li>Sites treated after simulation date should not appear</li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>CSV Download Test</strong>:</li>
-<ul>
-<li>Apply filters and refresh</li>
-<li>Click download button</li>
-<li>Verify CSV contains correct filtered data</li>
-</ul>
-</ul>
-
-
-<h2>Key Takeaways</h2>
-
-<ol>
-<li><strong>Refresh Button Pattern</strong>: Essential for performance - NO data queries until refresh clicked</li>
-<li><strong>Zone Parsing in refresh_inputs()</strong>: Prevents circular dependencies by parsing zone values during input capture</li>
-<li><strong>Integer64 Conversion</strong>: Always convert COUNT() results to numeric to avoid overflow warnings</li>
-<li><strong>Site Enddate Filtering</strong>: Always filter <code>enddate IS NULL OR enddate &gt; season_start</code> to exclude closed sites</li>
-<li><strong>FOS = Jurisdictional Assignment</strong>: Use fosarea from gis<em>sectcode, mapped through employee</em>list</li>
-<li><strong>Treatment Status Hierarchy</strong>: Most recent treatment wins, status based on age vs effect_days</li>
-<li><strong>Date Simulation</strong>: Allows historical analysis by changing reference date for age calculations</li>
-<li><strong>Zone Display Logic</strong>: Sections never show zones separately since each section belongs to exactly one zone</li>
-<li><strong>Treatment Categories</strong>: Three mutually exclusive statuses - Treated, Expiring, Expired (Needs Treatment removed for accuracy)</li>
-<li><strong>SQL Query Structure</strong>: Two main queries - aggregated section data and detailed site data</li>
-<li><strong>Value Box Calculations</strong>: Aggregate at top level for district-wide statistics</li>
-</ul>
-
-<h2>Last Updated</h2>
-
-<p>November 13, 2025</p>
-
-<h2>App Version</h2>
-
-<p>Refactored with modular file structure, refresh button pattern, and corrected treatment status categories</p>
     </div>
 </body>
 </html>

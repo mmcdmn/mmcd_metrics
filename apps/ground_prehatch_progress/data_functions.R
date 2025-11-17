@@ -1,6 +1,119 @@
 # Ground Prehatch Progress - Data Functions
 # Functions for fetching and processing ground prehatch data
 
+# Unified function to load raw ground prehatch data (similar to drone app)
+load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
+                         start_year = NULL, end_year = NULL, include_geometry = FALSE) {
+  con <- get_db_connection()
+  if (is.null(con)) return(list(ground_sites = data.frame(), ground_treatments = data.frame()))
+  
+  tryCatch({
+    analysis_year <- format(analysis_date, "%Y")
+    
+    # Load ground sites using the exact pattern from working app
+    geom_select <- if (include_geometry) {
+      ", ST_AsText(ST_Transform(b.geom, 4326)) as geometry"
+    } else {
+      ""
+    }
+    
+    sites_query <- sprintf("
+    SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+           b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+           sc.fosarea as foreman%s
+    FROM loc_breeding_sites b
+    LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+    WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
+      AND b.air_gnd='G'
+      AND b.prehatch IN ('PREHATCH','BRIQUET')
+    ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
+    ", geom_select, analysis_year)
+    
+    ground_sites <- dbGetQuery(con, sites_query)
+    
+    # Load treatments based on include_archive flag
+    if (include_archive && !is.null(start_year) && !is.null(end_year)) {
+      # Historical mode: use the working query pattern but with archive
+      treatments_query <- sprintf("
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
+             'current' as data_source
+      FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+      JOIN (
+        SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+               b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+               sc.fosarea as foreman
+        FROM loc_breeding_sites b
+        LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+        WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+          AND b.air_gnd='G'
+          AND b.prehatch IN ('PREHATCH','BRIQUET')
+      ) a ON c.sitecode = a.sitecode
+      JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+      
+      UNION ALL
+      
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
+             'archive' as data_source
+      FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+      JOIN (
+        SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+               b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+               sc.fosarea as foreman
+        FROM loc_breeding_sites b
+        LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+        WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+          AND b.air_gnd='G'
+          AND b.prehatch IN ('PREHATCH','BRIQUET')
+      ) a ON c.sitecode = a.sitecode
+      JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+      
+      ORDER BY inspdate DESC, sitecode
+      ", start_year, end_year, start_year, start_year, end_year, start_year)
+    } else {
+      # Current mode: use exact working pattern with current year from analysis_date
+      analysis_year <- format(analysis_date, "%Y")
+      treatments_query <- sprintf("
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
+             'current' as data_source
+      FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
+      JOIN (
+        SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+               b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+               sc.fosarea as foreman
+        FROM loc_breeding_sites b
+        LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+        WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
+          AND b.air_gnd='G'
+          AND b.prehatch IN ('PREHATCH','BRIQUET')
+      ) a ON c.sitecode = a.sitecode
+      JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+      ORDER BY c.inspdate DESC, c.sitecode
+      ", analysis_year, format(analysis_date, "%Y-%m-%d"), analysis_year)
+    }
+    
+    ground_treatments <- dbGetQuery(con, treatments_query)
+    
+    dbDisconnect(con)
+    
+    # Convert data types
+    if (nrow(ground_sites) > 0) {
+      ground_sites <- map_facility_names(ground_sites)
+    }
+    
+    # No need to convert dates - they're already Date objects from PostgreSQL
+    
+    return(list(
+      ground_sites = ground_sites,
+      ground_treatments = ground_treatments
+    ))
+    
+  }, error = function(e) {
+    warning(paste("Error loading raw data:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(list(ground_sites = data.frame(), ground_treatments = data.frame()))
+  })
+}
+
 # Function to get ground prehatch data from database
 get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date()) {
   con <- get_db_connection()
@@ -426,4 +539,105 @@ get_foreman_choices <- function(data, foremen_lookup) {
   }
   
   return(foreman_choices)
+}
+
+# Load spatial data for map (similar to drone app)
+load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "2"), 
+                             facility_filter = "all", foreman_filter = "all", 
+                             expiring_days = 14) {
+  
+  # Load raw data with geometry
+  raw_data <- load_raw_data(
+    analysis_date = analysis_date,
+    include_archive = FALSE,
+    include_geometry = TRUE
+  )
+  
+  if (nrow(raw_data$ground_sites) == 0) {
+    return(NULL)
+  }
+  
+  # Apply zone filter
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    raw_data$ground_sites <- raw_data$ground_sites %>% 
+      filter(zone %in% zone_filter)
+  }
+  
+  # Apply facility filter
+  if (!is.null(facility_filter) && !"all" %in% facility_filter) {
+    raw_data$ground_sites <- raw_data$ground_sites %>% 
+      filter(facility %in% facility_filter)
+  }
+  
+  # Apply foreman filter (using fosarea)
+  if (!is.null(foreman_filter) && !"all" %in% foreman_filter) {
+    raw_data$ground_sites <- raw_data$ground_sites %>% 
+      filter(fosarea %in% foreman_filter)
+  }
+  
+  # Get current date for status calculations
+  current_date <- as.Date(analysis_date)
+  
+  # Get latest treatment for each site
+  if (!is.null(raw_data$ground_treatments) && nrow(raw_data$ground_treatments) > 0) {
+    latest_treatments <- raw_data$ground_treatments %>%
+      group_by(sitecode) %>%
+      arrange(desc(inspdate)) %>%
+      slice(1) %>%
+      ungroup() %>%
+      select(sitecode, inspdate, matcode) %>%
+      mutate(
+        days_since_treatment = as.numeric(current_date - inspdate),
+        treatment_status = case_when(
+          is.na(inspdate) ~ "No Treatment",
+          days_since_treatment <= expiring_days ~ "Active",
+          days_since_treatment <= expiring_days + 14 ~ "Expiring",
+          TRUE ~ "Expired"
+        )
+      )
+  } else {
+    # Create empty treatment data
+    latest_treatments <- data.frame(
+      sitecode = character(0),
+      inspdate = as.Date(character(0)),
+      matcode = character(0),
+      days_since_treatment = numeric(0),
+      treatment_status = character(0)
+    )
+  }
+  
+  # Convert sites to sf object
+  sites_sf <- tryCatch({
+    if ("geometry" %in% names(raw_data$ground_sites) && !all(is.na(raw_data$ground_sites$geometry))) {
+      # Convert to sf using WKT
+      sf_result <- sf::st_as_sf(raw_data$ground_sites, wkt = "geometry", crs = 4326)
+      
+      # Convert polygons to centroids for point markers
+      if (any(sf::st_geometry_type(sf_result) %in% c("POLYGON", "MULTIPOLYGON"))) {
+        sf_result <- sf::st_centroid(sf_result)
+      }
+      
+      sf_result
+    } else {
+      NULL
+    }
+  }, error = function(e) {
+    NULL
+  })
+  
+  if (is.null(sites_sf)) {
+    return(NULL)
+  }
+  
+  # Join sites with treatment status
+  spatial_data <- sites_sf %>%
+    left_join(latest_treatments, by = "sitecode") %>%
+    mutate(
+      treatment_status = ifelse(is.na(treatment_status), "No Treatment", treatment_status),
+      last_treatment_date = inspdate,
+      last_material = matcode
+    ) %>%
+    arrange(facility, zone, sitecode)
+  
+  return(spatial_data)
 }

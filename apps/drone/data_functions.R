@@ -3,26 +3,34 @@
 #' Load raw data from database
 #' @param drone_types Vector of drone type selections
 #' @param analysis_date Date to use as "current date" for analysis (defaults to today)
+#' @param include_archive Boolean to include archive treatments (for historical analysis)
+#' @param start_year Optional start year filter for treatments (for historical analysis)
+#' @param end_year Optional end year filter for treatments (for historical analysis)
 #' @return List with drone_sites and drone_treatments data frames
-load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Date()) {
+load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Date(), 
+                         include_archive = FALSE, start_year = NULL, end_year = NULL) {
   con <- get_db_connection()
   if (is.null(con)) return(list(drone_sites = data.frame(), drone_treatments = data.frame()))
   
   # Build the drone designation filter based on user selection
   drone_types_str <- paste0("'", paste(drone_types, collapse = "','"), "'")
   
-  # Query to get drone sites from loc_breeding_sites
+  # Query to get drone sites from loc_breeding_sites with facility/zone from gis_sectcode
   drone_sites_query <- sprintf("
-  SELECT b.sitecode, b.facility, b.acres, b.prehatch, b.drone, 
+  SELECT b.sitecode, g.facility, b.acres, b.prehatch, b.drone, 
          CASE 
-           WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
+           WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
            ELSE NULL
          END as foreman, 
-         sc.zone,
+         g.zone,
          left(b.sitecode,7) as sectcode
   FROM public.loc_breeding_sites b
-  LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-  LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
+  LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
+    OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
     AND e.emp_type = 'FieldSuper' 
     AND e.active = true
   WHERE (b.drone IN (%s) OR b.air_gnd = 'D')
@@ -31,24 +39,61 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   
   drone_sites <- dbGetQuery(con, drone_sites_query)
   
-  # Query to get treatment information with recorded treated acres and zone mapping
+  # Query to get treatment information with facility and zone from gis_sectcode
   treatments_query <- "
-  SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
-         sc.zone
+  SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
+         g.facility, g.zone, g.fosarea
   FROM public.dblarv_insptrt_current t
   LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-  LEFT JOIN public.gis_sectcode sc ON left(t.sitecode,7) = sc.sectcode
+  LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
+    OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
+    OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
+    OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
+    OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
   WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
   "
   
+  # Add year filtering for historical analysis
+  if (!is.null(start_year) && !is.null(end_year)) {
+    treatments_query <- paste0(treatments_query, sprintf(
+      " AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year, end_year))
+  }
+  
   treatments <- dbGetQuery(con, treatments_query)
+  
+  # Get archive treatments if requested (for historical analysis)
+  if (include_archive) {
+    archive_query <- "
+    SELECT t.sitecode, g.facility, t.inspdate, t.matcode, t.acres as treated_acres, 
+           NULL::character as foreman, NULL::integer as effect_days,
+           g.zone, g.fosarea
+    FROM public.dblarv_insptrt_archive t
+    LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
+      OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
+      OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
+      OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
+      OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
+    WHERE t.action = 'D'
+    "
+    
+    # Add same year filtering for archive
+    if (!is.null(start_year) && !is.null(end_year)) {
+      archive_query <- paste0(archive_query, sprintf(
+        " AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year, end_year))
+    }
+    
+    archive_treatments <- dbGetQuery(con, archive_query)
+    
+    # Combine current and archive treatments
+    treatments <- bind_rows(treatments, archive_treatments)
+  }
   
   dbDisconnect(con)
   
   # Process the data
   # Identify drone sites with treatments  
   drone_treatments <- treatments %>%
-    inner_join(drone_sites, by = c("sitecode", "facility"), suffix = c("_trt", "_site")) %>%
+    inner_join(drone_sites, by = c("sitecode", "facility"), suffix = c("_trt", "_site"), relationship = "many-to-many") %>%
     mutate(
       # Use recorded treated acres from treatment records
       acres = treated_acres,

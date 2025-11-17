@@ -133,7 +133,8 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     drone_treatments <- drone_treatments %>%
       mutate(
         treatment_start_date = as.Date(inspdate),
-        treatment_end_date = treatment_start_date + ifelse(is.na(effect_days), 14, effect_days),
+        # Use same calculation as load_raw_data for consistency
+        treatment_end_date = treatment_start_date + ifelse(is.na(effect_days), 0, effect_days),
         is_active = treatment_end_date >= current_date,
         is_expiring = is_active & treatment_end_date >= expiring_start_date & treatment_end_date <= expiring_end_date
       )
@@ -232,7 +233,12 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     # P1 and P2 separate bars
     total_sites <- drone_sites %>%
       group_by(combined_group, zone) %>%
-      summarize(total_sites = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+      summarize(total_sites = n(), .groups = "drop")
+    
+    # Calculate actual treated acres from treatments
+    treated_acres_summary <- drone_treatments %>%
+      group_by(combined_group, zone) %>%
+      summarize(total_treated_acres = sum(treated_acres, na.rm = TRUE), .groups = "drop")
     
     active_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"))
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"), "is_expiring")
@@ -240,7 +246,12 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     # P1+P2 combined but not MMCD - combine by group but not by zone
     total_sites <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
-      summarize(total_sites = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+      summarize(total_sites = n(), .groups = "drop")
+    
+    # Calculate actual treated acres from treatments  
+    treated_acres_summary <- drone_treatments %>%
+      group_by(!!sym(group_col)) %>%
+      summarize(total_treated_acres = sum(treated_acres, na.rm = TRUE), .groups = "drop")
     
     active_treatments <- safe_aggregate_treatments(drone_treatments, group_col)
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
@@ -248,7 +259,12 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     # Single zone or MMCD all grouping
     total_sites <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
-      summarize(total_sites = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+      summarize(total_sites = n(), .groups = "drop")
+    
+    # Calculate actual treated acres from treatments
+    treated_acres_summary <- drone_treatments %>%
+      group_by(!!sym(group_col)) %>%
+      summarize(total_treated_acres = sum(treated_acres, na.rm = TRUE), .groups = "drop")
     
     active_treatments <- safe_aggregate_treatments(drone_treatments, group_col)
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
@@ -258,11 +274,13 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
   if (show_zones_separately) {
     # P1 and P2 separate
     combined_data <- total_sites %>%
+      left_join(treated_acres_summary, by = c("combined_group", "zone")) %>%
       left_join(active_treatments, by = c("combined_group", "zone")) %>%
       left_join(expiring_treatments, by = c("combined_group", "zone"))
   } else {
     # P1+P2 combined OR single zone OR MMCD grouping
     combined_data <- total_sites %>%
+      left_join(treated_acres_summary, by = group_col) %>%
       left_join(active_treatments, by = group_col) %>%
       left_join(expiring_treatments, by = group_col)
   }
@@ -274,7 +292,7 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
       active_acres = ifelse(is.na(active_acres), 0, round(active_acres, 2)),
       expiring_sites = ifelse(is.na(expiring_sites), 0, expiring_sites),
       expiring_acres = ifelse(is.na(expiring_acres), 0, round(expiring_acres, 2)),
-      total_acres = round(total_acres, 2)
+      total_treated_acres = ifelse(is.na(total_treated_acres), 0, round(total_treated_acres, 2))
     )
   
   # Add display names and color mapping keys
@@ -361,4 +379,235 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     data = combined_data,
     sectcode_facility_mapping = sectcode_facility_mapping
   ))
+}
+
+# =============================================================================
+# HISTORICAL VISUALIZATION FUNCTIONS
+# =============================================================================
+
+#' Create historical trend plot using consolidated data functions
+create_historical_plot <- function(zone_filter, combine_zones, zone_option, group_by, 
+                                   hist_time_period, hist_chart_type, hist_display_metric,
+                                   prehatch_only, hist_start_year, hist_end_year,
+                                   drone_types, facility_filter, foreman_filter, analysis_date) {
+  
+  # Load required libraries
+  library(ggplot2)
+  library(stringr)
+  
+  # Get historical data using new simplified function
+  historical_data <- create_historical_data(
+    start_year = hist_start_year,
+    end_year = hist_end_year,
+    hist_time_period = hist_time_period,
+    hist_display_metric = hist_display_metric,
+    hist_group_by = group_by,
+    hist_zone_display = if(!combine_zones && length(zone_filter) > 1) "show-both" else "combined",
+    facility_filter = facility_filter,
+    zone_filter = zone_filter,
+    foreman_filter = foreman_filter,
+    prehatch_only = prehatch_only
+  )
+  
+  if (is.null(historical_data) || nrow(historical_data) == 0) {
+    return(ggplot() + 
+           geom_text(aes(x = 0.5, y = 0.5, label = "No data available for selected criteria"), 
+                     size = 6, hjust = 0.5) +
+           theme_void())
+  }
+  
+  # Create descriptive title based on time period and metric
+  chart_title <- if (hist_time_period == "weekly" && hist_display_metric != "treatments") {
+    paste("Historical", stringr::str_to_title(hist_display_metric), "with Active Treatment by Week")
+  } else {
+    paste("Historical", stringr::str_to_title(hist_display_metric), "by", stringr::str_to_title(group_by))
+  }
+  
+  # Get colors based on grouping type (same logic as current progress)
+  show_zones_separately <- !combine_zones && length(zone_filter) > 1
+  
+  # Create a mapping from display names back to facility codes for color mapping
+  if (group_by == "facility") {
+    facilities <- get_facility_lookup()
+    facility_map <- setNames(facilities$short_name, facilities$full_name)
+    
+    if (show_zones_separately) {
+      # For zone-separated facilities, extract facility name and get color
+      # Create a temporary data frame with the structure expected by get_visualization_colors
+      temp_data <- data.frame(
+        facility = gsub(" \\(P[12]\\)", "", historical_data$group_label),
+        zone = as.numeric(gsub(".*\\(P([12])\\)", "\\1", historical_data$group_label)),
+        combined_group = historical_data$group_label,
+        stringsAsFactors = FALSE
+      )
+      colors <- get_visualization_colors(
+        group_by = "facility", 
+        data = temp_data, 
+        show_zones_separately = TRUE,
+        zone_filter = zone_filter,
+        for_historical = TRUE
+      )
+    } else {
+      # For combined facilities, get standard facility colors
+      colors <- get_facility_base_colors()
+      # Map display names to colors
+      color_mapping <- character(0)
+      for (display_name in unique(historical_data$group_label)) {
+        if (display_name %in% names(facility_map)) {
+          facility_code <- facility_map[display_name]
+          if (facility_code %in% names(colors)) {
+            color_mapping[display_name] <- colors[facility_code]
+          }
+        }
+      }
+      colors <- color_mapping
+    }
+  } else if (group_by == "foreman") {
+    if (show_zones_separately) {
+      # For zone-separated foremen, create proper data structure
+      foremen_lookup <- get_foremen_lookup()
+      foreman_reverse_map <- setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      
+      temp_data <- data.frame(
+        foreman = as.numeric(foreman_reverse_map[gsub(" \\(P[12]\\)", "", historical_data$group_label)]),
+        zone = as.numeric(gsub(".*\\(P([12])\\)", "\\1", historical_data$group_label)),
+        combined_group = historical_data$group_label,
+        stringsAsFactors = FALSE
+      )
+      colors <- get_visualization_colors(
+        group_by = "foreman", 
+        data = temp_data, 
+        show_zones_separately = TRUE,
+        zone_filter = zone_filter,
+        for_historical = TRUE
+      )
+    } else {
+      # For combined foremen, map shortnames to facility colors
+      foremen_lookup <- get_foremen_lookup()
+      foreman_colors <- get_foreman_colors()
+      
+      color_mapping <- character(0)
+      for (display_name in unique(historical_data$group_label)) {
+        if (display_name %in% names(foreman_colors)) {
+          color_mapping[display_name] <- foreman_colors[display_name]
+        }
+      }
+      colors <- color_mapping
+    }
+  } else {
+    # For MMCD or other groupings, use NULL (default colors)
+    colors <- NULL
+  }
+  
+  # Create the plot based on chart type
+  if (hist_chart_type == "bar" || hist_chart_type == "stacked_bar" || hist_chart_type == "grouped_bar") {
+    p <- ggplot(historical_data, aes(x = as.factor(time_period), y = value, fill = group_label)) +
+      geom_col(position = if(hist_chart_type == "grouped_bar") "dodge" else "stack", alpha = 0.8) +
+      labs(
+        title = chart_title,
+        x = "Time Period",
+        y = paste(stringr::str_to_title(hist_display_metric)),
+        fill = stringr::str_to_title(group_by)
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 13),
+        legend.title = element_text(face = "bold", size = 12),
+        legend.text = element_text(size = 11),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      )
+    
+    # Apply custom colors if available
+    if (!is.null(colors) && length(colors) > 0) {
+      p <- p + scale_fill_manual(values = colors, na.value = "grey50")
+    }
+    
+  } else if (hist_chart_type == "area") {
+    p <- ggplot(historical_data, aes(x = as.numeric(as.factor(time_period)), y = value, fill = group_label)) +
+      geom_area(alpha = 0.7, position = "stack") +
+      scale_x_continuous(breaks = seq_along(unique(historical_data$time_period)), 
+                        labels = unique(historical_data$time_period)) +
+      labs(
+        title = chart_title,
+        x = "Time Period",
+        y = paste(stringr::str_to_title(hist_display_metric)),
+        fill = stringr::str_to_title(group_by)
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 13),
+        legend.title = element_text(face = "bold", size = 12),
+        legend.text = element_text(size = 11),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      )
+    
+    # Apply custom colors if available
+    if (!is.null(colors) && length(colors) > 0) {
+      p <- p + scale_fill_manual(values = colors, na.value = "grey50")
+    }
+    
+  } else if (hist_chart_type == "step") {
+    p <- ggplot(historical_data, aes(x = as.numeric(as.factor(time_period)), y = value, color = group_label, group = group_label)) +
+      geom_step(linewidth = 1.2) +
+      geom_point(size = 3) +
+      scale_x_continuous(breaks = seq_along(unique(historical_data$time_period)), 
+                        labels = unique(historical_data$time_period)) +
+      labs(
+        title = chart_title,
+        x = "Time Period",
+        y = paste(stringr::str_to_title(hist_display_metric)),
+        color = stringr::str_to_title(group_by)
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 13),
+        legend.title = element_text(face = "bold", size = 12),
+        legend.text = element_text(size = 11),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      )
+    
+    # Apply custom colors if available
+    if (!is.null(colors) && length(colors) > 0) {
+      p <- p + scale_color_manual(values = colors, na.value = "grey50")
+    }
+    
+  } else { # line chart
+    p <- ggplot(historical_data, aes(x = as.numeric(as.factor(time_period)), y = value, color = group_label, group = group_label)) +
+      geom_line(linewidth = 1.2) +
+      geom_point(size = 3) +
+      scale_x_continuous(breaks = seq_along(unique(historical_data$time_period)), 
+                        labels = unique(historical_data$time_period)) +
+      labs(
+        title = chart_title,
+        x = "Time Period", 
+        y = paste(stringr::str_to_title(hist_display_metric)),
+        color = stringr::str_to_title(group_by)
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18),
+        axis.title = element_text(face = "bold", size = 14),
+        axis.text = element_text(size = 13),
+        legend.title = element_text(face = "bold", size = 12),
+        legend.text = element_text(size = 11),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      )
+    
+    # Apply custom colors if available
+    if (!is.null(colors) && length(colors) > 0) {
+      p <- p + scale_color_manual(values = colors, na.value = "grey50")
+    }
+  }
+  
+  return(p)
 }

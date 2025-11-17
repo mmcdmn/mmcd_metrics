@@ -707,11 +707,7 @@ SELECT b.sitecode, g.facility, b.acres, b.prehatch, b.drone,
        g.zone,
        left(b.sitecode,7) as sectcode
 FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
 LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
   AND e.emp_type = 'FieldSuper' 
   AND e.active = true
@@ -722,10 +718,11 @@ WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
 <p><strong>Key Points</strong>:</p>
 <ul>
 <li>Uses <code>loc<em>breeding</em>sites</code> as primary source, joined with <code>gis_sectcode</code> for zone/FOS data</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(b.sitecode,7)</code> ensures exact match</li>
 <li>Filters for active drone sites (<code>enddate IS NULL</code>)</li>
-<li>Gets zone, FOS area from gis_sectcode via sitecode pattern matching</li>
+<li>Gets zone, FOS area from gis_sectcode via exact sectcode matching</li>
 <li>Joins with employee_list to validate active field supervisors</li>
-<li>Uses LEFT() function for sitecode pattern matching to handle various formats</li>
+<li><strong>Fixed</strong>: Previous broad OR logic incorrectly matched multiple sectcodes (e.g., 191819- AND 191819E)</li>
 </ul>
 
 <h3>2. Current Treatments Query</h3>
@@ -737,21 +734,17 @@ SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m
        g.facility, g.zone, g.fosarea
 FROM public.dblarv_insptrt_current t
 LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
 </code></pre>
 
 <p><strong>Key Points</strong>:</p>
 <ul>
 <li>Filters drone treatments: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code></li>
-<li>Joins with gis_sectcode using sitecode pattern matching for zone/facility data</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(t.sitecode,7)</code> ensures exact match</li>
 <li>Joins with mattype<em>list</em>targetdose for treatment duration</li>
-<li>Gets facility, zone, and fosarea from gis_sectcode</li>
-<li>Note: No direct filtering by enddate - active site filtering happens in R processing</li>
+<li>Gets facility, zone, and fosarea from gis_sectcode via exact sectcode matching</li>
+<li><strong>Fixed</strong>: Prevents ambiguous zone assignments when multiple sectcodes exist (e.g., 191819- vs 191819E)</li>
 </ul>
 
 <h3>3. Individual Treatment Records Query (Site Statistics)</h3>
@@ -859,11 +852,7 @@ SELECT
     g.zone,
     g.fosarea as foreman
 FROM public.dblarv_insptrt_archive t
-LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
 WHERE t.action = 'D'
   AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
   AND t.inspdate &lt;= ?
@@ -882,11 +871,7 @@ SELECT
     g.zone,
     g.fosarea as foreman
 FROM public.dblarv_insptrt_current t
-LEFT JOIN public.gis_sectcode g ON LEFT(t.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(t.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
   AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
   AND t.inspdate &lt;= ?
@@ -895,35 +880,14 @@ WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
 <p><strong>Key Points</strong>:</p>
 <ul>
 <li>Combines archive and current treatment tables with UNION ALL</li>
-<li>Uses gis_sectcode for zone and FOS assignments</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: Uses exact sectcode matching in both queries</li>
 <li>Filters drone treatments by action/airgrnd_plan</li>
 <li>Includes year range and analysis date filtering</li>
-<li>Returns treatment data with basic zone/FOS information</li>
-<li>Simplified compared to other queries - focuses on core treatment metrics</li>
+<li>Returns treatment data with accurate zone/FOS information</li>
+<li><strong>Fixed</strong>: Ensures consistent zone assignments across historical data</li>
 </ul>
 
-<h3>5. Facility Lookup Query</h3>
-<p><strong>Function</strong>: <code>get<em>facility</em>lookup()</code> in <code>shared/db_helpers.R</code>  </p>
-<p><strong>Purpose</strong>: Map facility abbreviations to full names for display</p>
-
-<pre><code class="sql">
-SELECT DISTINCT 
-    abbrv as short_name,
-    city as full_name
-FROM public.gis_facility
-WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
-ORDER BY abbrv
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>Maps facility codes (e.g., 'E', 'N', 'Sj') to full names (e.g., 'Eastern Hennepin')</li>
-<li>Excludes special facility codes from UI dropdowns</li>
-<li>Used throughout app for display name mapping</li>
-<li>Provides consistent facility naming across all tabs</li>
-</ul>
-
-<h3>6. Spatial Data Query (Map Functionality)</h3>
+<h3>5. Spatial Data Query (Map Functionality)</h3>
 <p><strong>Function</strong>: <code>load<em>raw</em>data()</code> with <code>include<em>geometry = TRUE</code> in <code>data</em>functions.R</code>  </p>
 <p><strong>Purpose</strong>: Load drone sites with spatial coordinates for interactive mapping</p>
 
@@ -943,30 +907,39 @@ SELECT
     ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, 
     ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat
 FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(b.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
 LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
     AND e.emp_type = 'FieldSuper' 
     AND e.active = true
 WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
-    AND b.enddate IS NULL 
+    AND b.enddate IS NULL
     AND b.geom IS NOT NULL
 </code></pre>
 
 <p><strong>Key Points</strong>:</p>
 <ul>
-<li><strong>Geometry Transform</strong>: <code>ST<em>Transform(ST</em>Centroid(b.geom), 4326)</code> converts UTM to WGS84 decimal degrees</li>
-<li><strong>Coordinate Extraction</strong>: <code>ST<em>X()</code> and <code>ST</em>Y()</code> extract longitude and latitude values</li>
-<li><strong>Geometry Filter</strong>: <code>b.geom IS NOT NULL</code> ensures only sites with valid coordinates</li>
-<li><strong>Web Mapping Ready</strong>: Coordinates returned in standard web mercator projection (EPSG:4326)</li>
-<li><strong>Centroid Calculation</strong>: Uses centroid of polygon geometry for point markers</li>
-<li><strong>Minnesota Extent</strong>: Typical coordinates range -93.8 to -92.8 longitude, 44.6 to 45.4 latitude</li>
+<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(b.sitecode,7)</code> ensures exact match</li>
+<li>Transforms geometry from UTM (EPSG:26915) to WGS84 (EPSG:4326) for leaflet compatibility</li>
+<li>Extracts centroid coordinates as lng/lat for marker placement  </li>
+<li>Filters for active drone sites with valid geometry data</li>
+<li>Zone data crucial for color-coding map markers by treatment status</li>
+<li><strong>Fixed</strong>: Prevents incorrect zone assignment that would affect marker colors (e.g., 191819-045 correctly shows zone 1, not zone 2)</li>
 </ul>
+<p>LEFT JOIN public.employee<em>list e ON g.fosarea = e.emp</em>num </p>
+<p>    AND e.emp_type = 'FieldSuper' </p>
+<p>    AND e.active = true</p>
+<p>WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')</p>
+<p>    AND b.enddate IS NULL </p>
+<p>    AND b.geom IS NOT NULL</p>
+<pre><code class="">
 
-<h3>7. FOS Employee Lookup Query</h3>
+**Key Points**:
+- **Geometry Transform**: `ST_Transform(ST_Centroid(b.geom), 4326)` converts UTM to WGS84 decimal degrees
+- **Coordinate Extraction**: `ST_X()` and `ST_Y()` extract longitude and latitude values
+- **Geometry Filter**: `b.geom IS NOT NULL` ensures only sites with valid coordinates
+- **Web Mapping Ready**: Coordinates returned in standard web mercator projection (EPSG:4326)
+- **Centroid Calculation**: Uses centroid of polygon geometry for point markers
+- **Minnesota Extent**: Typical coordinates range -93.8 to -92.8 longitude, 44.6 to 45.4 latitude
     </div>
 </body>
 </html>

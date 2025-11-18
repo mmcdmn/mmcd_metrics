@@ -5,10 +5,11 @@
 suppressPackageStartupMessages({
   library(dplyr)
   library(lubridate)
+  library(DBI)
 })
 
 # Get air sites data with filtering and status logic
-get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL) {
+get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL, include_archive = FALSE, start_year = NULL, end_year = NULL) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -53,6 +54,16 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
     }
 
     # Enhanced query with inspection, treatment, and lab sample data
+    # Determine table names based on archive flag
+    inspection_table <- if (include_archive) "dblarv_insptrt_archive" else "dblarv_insptrt_current"
+    sample_table <- if (include_archive) "dblarv_sample_archive" else "dblarv_sample_current"
+    
+    # Add year filtering for historical analysis
+    year_condition <- ""
+    if (include_archive && !is.null(start_year) && !is.null(end_year)) {
+      year_condition <- sprintf("AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d", start_year, end_year)
+    }
+    
     query <- sprintf("
       WITH ActiveAirSites AS (
         SELECT 
@@ -82,10 +93,11 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
           i.numdip,
           i.sampnum_yr,
           ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) as rn
-        FROM dblarv_insptrt_current i
+        FROM %s i
         WHERE i.inspdate <= '%s'::date
           AND i.action IN ('2', '4')  -- Inspection actions only
           AND i.sitecode IN (SELECT sitecode FROM ActiveAirSites)
+          %s
       ),
       
       -- Get most recent treatments (actions 3, A, D)
@@ -96,28 +108,32 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
           t.matcode,
           t.mattype,
           ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC) as rn
-        FROM dblarv_insptrt_current t
+        FROM %s t
         WHERE t.inspdate <= '%s'::date
           AND t.action IN ('3', 'A', 'D')  -- Treatment actions only
           AND t.matcode IS NOT NULL
           AND t.matcode != ''
           AND t.sitecode IN (SELECT sitecode FROM ActiveAirSites)
+          %s
       ),
       
-      -- Get lab sample data for red/blue bug determination
+      -- Get lab sample data for red/blue bug determination (AIR samples only)
       LabSampleData AS (
         SELECT 
           ls.sampnum_yr,
           ls.redblue,
           ls.lab_id_timestamp,
+          ls.missing,
           -- Count red bugs for this sample
           CASE 
             WHEN ls.redblue = 'R' THEN 1
             ELSE 0
           END as has_red_bugs
-        FROM dblarv_sample_current ls
+        FROM %s ls
         WHERE ls.sampnum_yr IS NOT NULL
           AND ls.lab_id_timestamp IS NOT NULL
+          AND ls.missing = FALSE
+          AND ls.form_type = 'AIR'
       ),
       
       -- Get treatment material details and effect days
@@ -147,7 +163,8 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
           ri.sampnum_yr,
           ls.redblue,
           ls.has_red_bugs,
-          ls.lab_id_timestamp
+          ls.lab_id_timestamp,
+          ls.missing
         FROM RecentInspections ri
         LEFT JOIN LabSampleData ls ON ri.sampnum_yr = ls.sampnum_yr
         WHERE ri.rn = 1
@@ -175,7 +192,9 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
       LEFT JOIN InspectionInfo i ON a.sitecode = i.sitecode
       ORDER BY a.sitecode
     ", analysis_date, facility_condition, priority_condition, zone_condition, 
-       analysis_date, analysis_date, bti_effect_days_sql, bti_effect_days_sql)
+       inspection_table, analysis_date, year_condition,
+       inspection_table, analysis_date, year_condition,
+       sample_table, bti_effect_days_sql, bti_effect_days_sql)
     
     result <- dbGetQuery(con, query)
     
@@ -204,7 +223,6 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
   for (i in seq_len(nrow(data))) {
     site <- data[i, , drop = FALSE]
     
-    # Safer date handling to avoid vector length issues
     last_treatment_date <- NULL
     if (!is.null(site$last_treatment_date) && length(site$last_treatment_date) > 0) {
       if (!is.na(site$last_treatment_date[1])) {
@@ -294,7 +312,7 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
           if (has_sample) {
             # Sample was sent to lab
             if (!is.null(lab_id_timestamp)) {
-              # Lab results are available - check for red bugs
+              # Lab results are available, check for red bugs
               has_red_bugs <- FALSE
               if (!is.null(site$has_red_bugs) && length(site$has_red_bugs) > 0) {
                 if (!is.na(site$has_red_bugs[1])) {
@@ -362,38 +380,8 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
   return(data)
 }
 
-# Get available treatment materials
-get_treatment_materials <- function(include_all = TRUE) {
-  con <- get_db_connection()
-  if (is.null(con)) return(character(0))
-  
-  tryCatch({
-    query <- "
-      SELECT DISTINCT mattype 
-      FROM mattype_list 
-      WHERE mattype IS NOT NULL AND mattype != ''
-      ORDER BY mattype
-    "
-    result <- dbGetQuery(con, query)
-    materials <- result$mattype
-    
-    # Add "All" option at the beginning if requested
-    if (include_all) {
-      materials <- c("All", materials)
-    }
-    
-    return(materials)
-  }, error = function(e) {
-    cat("Error getting treatment materials:", e$message, "\n")
-    if (include_all) {
-      return("All")
-    } else {
-      return(character(0))
-    }
-  }, finally = {
-    if (!is.null(con)) dbDisconnect(con)
-  })
-}
+# Material filter function is now provided by db_helpers.R
+# Use get_material_choices() instead of get_treatment_materials()
 
 create_treatment_efficiency_metrics <- function(data) {
   if (nrow(data) == 0) {
@@ -439,7 +427,7 @@ create_treatment_efficiency_metrics <- function(data) {
 }
 
 
-# Analyze lab processing metrics for inspected sites
+# Analyze lab processing metrics for inspected sites (AIR samples only)
 analyze_lab_processing_metrics <- function(site_data) {
   if (nrow(site_data) == 0) {
     return(list(
@@ -452,7 +440,7 @@ analyze_lab_processing_metrics <- function(site_data) {
     ))
   }
   
-  # Find all sites that have been inspected and have samples (including both completed and pending)
+  # Find all sites that have been inspected and have AIR samples (including both completed and pending)
   all_inspected_with_samples <- site_data[
     !is.na(site_data$sampnum_yr) & 
     site_data$sampnum_yr != "" & 

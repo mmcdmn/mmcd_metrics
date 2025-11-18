@@ -25,6 +25,7 @@ if (file.exists("../../shared/db_helpers.R")) {
 # Source app-specific functions
 source("data_functions.R")
 source("display_functions.R")
+source("historical_functions.R")
 
 # Functions are now loaded from data_functions.R and display_functions.R
 

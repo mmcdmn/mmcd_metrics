@@ -273,7 +273,7 @@ ui <- dashboardPage(
             tags$div(
               tags$h5("Treatment Process Metrics:"),
               tags$ul(
-                tags$li(tags$strong("Treatment Efficiency:"), " Active Treatments ÷ (Needs Treatment + Active Treatment) × 100%"),
+                tags$li(tags$strong("Treatment completion:"), " Active Treatments ÷ (Needs Treatment + Active Treatment) × 100%"),
                 tags$li(tags$strong("Inspection Coverage:"), " (Inspected + Needs Treatment + Active Treatment) ÷ Total Sites × 100%")
               ),
               tags$h5("Lab Processing Metrics:"),
@@ -306,7 +306,7 @@ ui <- dashboardPage(
       # Historical Analysis Tab
       tabItem(tabName = "historical",
         fluidRow(
-          box(title = "Historical Controls", status = "primary", solidHeader = TRUE, width = 12,
+          box(title = "Historical Inspection Analysis", status = "primary", solidHeader = TRUE, width = 12,
             fluidRow(
               column(3,
                 selectizeInput("hist_facility_filter", "Facilities:",
@@ -338,50 +338,21 @@ ui <- dashboardPage(
               )
             ),
             fluidRow(
-              column(3,
-                radioButtons("hist_time_period", "Time Period:",
-                  choices = c("Yearly" = "yearly", 
-                              "Weekly" = "weekly"),
-                  selected = "yearly",
-                  inline = TRUE
-                )
-              ),
-              column(3,
-                radioButtons("hist_group_by", "Group by:",
-                  choices = c("All MMCD" = "mmcd_all",
-                             "Facility" = "facility", 
-                             "Priority" = "priority",
-                             "Zone" = "zone"),
-                  selected = "mmcd_all",
-                  inline = TRUE
-                )
-              ),
-              column(3,
-                conditionalPanel(
-                  condition = "input.hist_time_period == 'weekly'",
-                  numericInput("hist_year", "Year:", 
+              column(6,
+                div(
+                  numericInput("hist_start_year", "Start Year:", 
+                              value = as.numeric(format(Sys.Date(), "%Y")) - 4, 
+                              min = as.numeric(format(Sys.Date(), "%Y")) - 10, 
+                              max = as.numeric(format(Sys.Date(), "%Y")), 
+                              step = 1),
+                  numericInput("hist_end_year", "End Year:", 
                               value = as.numeric(format(Sys.Date(), "%Y")), 
                               min = as.numeric(format(Sys.Date(), "%Y")) - 10, 
                               max = as.numeric(format(Sys.Date(), "%Y")), 
                               step = 1)
-                ),
-                conditionalPanel(
-                  condition = "input.hist_time_period == 'yearly'",
-                  div(
-                    numericInput("hist_start_year", "Start Year:", 
-                                value = as.numeric(format(Sys.Date(), "%Y")) - 4, 
-                                min = as.numeric(format(Sys.Date(), "%Y")) - 10, 
-                                max = as.numeric(format(Sys.Date(), "%Y")), 
-                                step = 1),
-                    numericInput("hist_end_year", "End Year:", 
-                                value = as.numeric(format(Sys.Date(), "%Y")), 
-                                min = as.numeric(format(Sys.Date(), "%Y")) - 10, 
-                                max = as.numeric(format(Sys.Date(), "%Y")), 
-                                step = 1)
-                  )
                 )
               ),
-              column(3,
+              column(6,
                 div(style = "margin-top: 25px;",
                   actionButton("refresh_historical_data", "Refresh Historical Data", class = "btn-primary btn-lg", 
                              style = "width: 100%;")
@@ -393,7 +364,7 @@ ui <- dashboardPage(
                 div(style = "padding-top: 10px; text-align: center;",
                   tags$small(
                     tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
-                    " Red Bug Ratio = Times site had larvae >= threshold ÷ Total inspections for site"
+                    " This table shows inspection history for each air site over the selected year range. Red Bug Ratio = (Red Bug Inspections ÷ Total Inspections) × 100%"
                   )
                 )
               )
@@ -402,24 +373,15 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
+          valueBoxOutput("hist_total_sites", width = 3),
           valueBoxOutput("hist_total_inspections", width = 3),
-          valueBoxOutput("hist_red_bug_inspections", width = 3),
-          valueBoxOutput("hist_avg_red_bug_ratio", width = 3),
-          valueBoxOutput("hist_sites_with_data", width = 3)
+          valueBoxOutput("hist_total_red_bug_inspections", width = 3),
+          valueBoxOutput("hist_overall_red_bug_ratio", width = 3)
         ),
         
         fluidRow(
-          box(title = "Historical Red Bug Ratio Trends", status = "primary", solidHeader = TRUE, width = 8,
-            plotlyOutput("historical_chart", height = "500px")
-          ),
-          box(title = "Red Bug Summary", status = "info", solidHeader = TRUE, width = 4,
-            plotlyOutput("hist_summary_chart", height = "500px")
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Historical Data Details", status = "success", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("historical_details_table")
+          box(title = "Site Inspection History", status = "success", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("historical_inspection_table")
           )
         )
       )
@@ -793,12 +755,12 @@ server <- function(input, output, session) {
   
   output$treatment_efficiency <- renderValueBox({
     data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox("0%", "Treatment Efficiency", icon = icon("percent"), color = "blue"))
+    if (input$refresh_process_data == 0) return(valueBox("0%", "Treatment coverage", icon = icon("percent"), color = "blue"))
     
     metrics <- create_treatment_efficiency_metrics(data)
     valueBox(
       value = metrics$treatment_efficiency,
-      subtitle = "Treatment Efficiency",
+      subtitle = "Treatment coverage",
       icon = icon("percent"),
       color = "blue"
     )
@@ -985,12 +947,10 @@ server <- function(input, output, session) {
   
   # Reactive data for historical analysis
   historical_data <- eventReactive(input$refresh_historical_data, {
-    get_historical_processed_data(
-      hist_start_year = if (input$hist_time_period == "yearly") input$hist_start_year else input$hist_year,
-      hist_end_year = if (input$hist_time_period == "yearly") input$hist_end_year else input$hist_year,
-      hist_year = if (input$hist_time_period == "weekly") input$hist_year else NULL,
-      time_period = input$hist_time_period,
-      group_by = input$hist_group_by,
+    cat("Historical refresh button clicked - Event triggered\n")
+    get_historical_inspection_summary(
+      start_year = input$hist_start_year,
+      end_year = input$hist_end_year,
       facility_filter = input$hist_facility_filter,
       priority_filter = input$hist_priority_filter,
       zone_filter = input$hist_zone_filter,
@@ -999,111 +959,103 @@ server <- function(input, output, session) {
   })
   
   # Historical value boxes
-  output$hist_total_inspections <- renderValueBox({
+  output$hist_total_sites <- renderValueBox({
     data <- historical_data()
-    if (input$refresh_historical_data == 0) return(valueBox(0, "Total Inspections", icon = icon("search"), color = "blue"))
+    if (input$refresh_historical_data == 0) return(valueBox(0, "Total Sites", icon = icon("map-marker"), color = "blue"))
     
-    metrics <- create_historical_summary_metrics(data)
     valueBox(
-      value = metrics$total_inspections,
-      subtitle = "Total Inspections",
-      icon = icon("search"),
+      value = nrow(data),
+      subtitle = "Total Sites",
+      icon = icon("map-marker"),
       color = "blue"
     )
   })
   
-  output$hist_red_bug_inspections <- renderValueBox({
+  output$hist_total_inspections <- renderValueBox({
+    data <- historical_data()
+    if (input$refresh_historical_data == 0) return(valueBox(0, "Total Inspections", icon = icon("search"), color = "green"))
+    
+    total_inspections <- sum(data$total_inspections, na.rm = TRUE)
+    valueBox(
+      value = format(total_inspections, big.mark = ","),
+      subtitle = "Total Inspections",
+      icon = icon("search"),
+      color = "green"
+    )
+  })
+  
+  output$hist_total_red_bug_inspections <- renderValueBox({
     data <- historical_data()
     if (input$refresh_historical_data == 0) return(valueBox(0, "Red Bug Inspections", icon = icon("bug"), color = "red"))
     
-    metrics <- create_historical_summary_metrics(data)
+    red_bug_inspections <- sum(data$red_bug_inspections, na.rm = TRUE)
     valueBox(
-      value = metrics$red_bug_inspections,
-      subtitle = "Red Bug Inspections",
+      value = format(red_bug_inspections, big.mark = ","),
+      subtitle = "Inspections with Red Bugs",
       icon = icon("bug"),
       color = "red"
     )
   })
   
-  output$hist_avg_red_bug_ratio <- renderValueBox({
+  output$hist_overall_red_bug_ratio <- renderValueBox({
     data <- historical_data()
-    if (input$refresh_historical_data == 0) return(valueBox("0%", "Avg Red Bug Ratio", icon = icon("percent"), color = "yellow"))
+    if (input$refresh_historical_data == 0) return(valueBox("0%", "Overall Red Bug Ratio", icon = icon("percent"), color = "yellow"))
     
-    metrics <- create_historical_summary_metrics(data)
+    total_inspections <- sum(data$total_inspections, na.rm = TRUE)
+    total_red_bug <- sum(data$red_bug_inspections, na.rm = TRUE)
+    overall_ratio <- if (total_inspections > 0) round((total_red_bug / total_inspections) * 100, 1) else 0
+    
     valueBox(
-      value = metrics$avg_red_bug_ratio,
-      subtitle = "Avg Red Bug Ratio",
+      value = paste0(overall_ratio, "%"),
+      subtitle = "Overall Red Bug Ratio",
       icon = icon("percent"),
       color = "yellow"
     )
   })
   
-  output$hist_sites_with_data <- renderValueBox({
-    data <- historical_data()
-    if (input$refresh_historical_data == 0) return(valueBox(0, "Groups with Data", icon = icon("map-marker"), color = "green"))
-    
-    metrics <- create_historical_summary_metrics(data)
-    valueBox(
-      value = metrics$sites_with_data,
-      subtitle = "Groups with Data",
-      icon = icon("map-marker"),
-      color = "green"
-    )
-  })
-  
-  # Historical trend chart
-  output$historical_chart <- renderPlotly({
-    data <- historical_data()
-    if (input$refresh_historical_data == 0 || nrow(data) == 0) {
-      return(plot_ly() %>%
-        add_annotations(
-          text = "No data available - Click 'Refresh Historical Data'",
-          x = 0.5, y = 0.5,
-          xref = "paper", yref = "paper",
-          showarrow = FALSE
-        ))
-    }
-    
-    create_historical_red_bug_chart(data, input$hist_time_period, input$hist_group_by)
-  })
-  
-  # Historical summary chart
-  output$hist_summary_chart <- renderPlotly({
-    data <- historical_data()
-    if (input$refresh_historical_data == 0 || nrow(data) == 0) {
-      return(plot_ly() %>%
-        add_annotations(
-          text = "No data available",
-          x = 0.5, y = 0.5,
-          xref = "paper", yref = "paper",
-          showarrow = FALSE
-        ))
-    }
-    
-    create_historical_summary_chart(data)
-  })
-  
-  # Historical details table
-  output$historical_details_table <- DT::renderDataTable({
+  # Historical inspection table
+  output$historical_inspection_table <- DT::renderDataTable({
     data <- historical_data()
     if (input$refresh_historical_data == 0 || nrow(data) == 0) {
       return(DT::datatable(data.frame(), options = list(pageLength = 15)))
     }
     
-    table_data <- create_historical_details_table(data)
+    # Format the table for display
+    display_data <- data
+    colnames(display_data) <- c(
+      "Site Code", "Facility", "Priority", "Zone", "Acres", 
+      "Total Inspections", "Red Bug Inspections", "Red Bug Ratio (%)", "Years Active"
+    )
     
     DT::datatable(
-      table_data,
+      display_data,
       options = list(
         pageLength = 15,
         scrollX = TRUE,
         columnDefs = list(
-          list(className = 'dt-center', targets = '_all')
-        )
+          list(className = 'dt-center', targets = c(1, 2, 3, 5, 6, 7)),
+          list(className = 'dt-right', targets = 4)
+        ),
+        order = list(list(7, 'desc'))  # Sort by Red Bug Ratio descending
       ),
       rownames = FALSE,
       filter = 'top'
-    )
+    ) %>%
+      DT::formatRound('Acres', 1) %>%
+      DT::formatStyle(
+        "Red Bug Ratio (%)",
+        backgroundColor = DT::styleInterval(
+          cuts = c(10, 25, 50),
+          values = c("#d4edda", "#fff3cd", "#ffeeba", "#f8d7da")
+        )
+      ) %>%
+      DT::formatStyle(
+        "Total Inspections",
+        backgroundColor = DT::styleInterval(
+          cuts = c(5, 20, 50),
+          values = c("#f8f9fa", "#e2e3e5", "#d1ecf1", "#b8daff")
+        )
+      )
   })
 }
 

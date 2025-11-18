@@ -28,63 +28,261 @@ get_historical_air_sites_data <- function(analysis_date = Sys.Date(), start_year
 }
 
 # Main historical data processing function - this is what the app calls
-get_historical_processed_data <- function(hist_start_year = NULL, hist_end_year = NULL, hist_year = NULL,
-                                         time_period = "yearly", group_by = "facility", 
-                                         facility_filter = NULL, priority_filter = NULL, zone_filter = NULL,
-                                         larvae_threshold = 2) {
+# Get simplified historical air sites inspection summary
+get_historical_inspection_summary <- function(start_year = NULL, end_year = NULL, 
+                                            facility_filter = NULL, priority_filter = NULL, 
+                                            zone_filter = NULL, larvae_threshold = 2) {
   
   # Determine year range
-  start_yr <- if (!is.null(hist_year)) hist_year else hist_start_year
-  end_yr <- if (!is.null(hist_year)) hist_year else hist_end_year
+  if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y")) - 4
+  if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
   
-  # Get historical data
-  data <- get_historical_air_sites_data(
-    analysis_date = Sys.Date(),
-    start_year = start_yr,
-    end_year = end_yr,
+  # Debug logging
+  cat("Historical inspection summary - Start Year:", start_year, "End Year:", end_year, "\n")
+  cat("Filters - Facility:", facility_filter, "Priority:", priority_filter, "Zone:", zone_filter, "\n")
+  
+  # Get all air sites data for the period
+  data <- get_air_sites_data(
+    analysis_date = paste0(end_year, "-12-31"),  # Use end of year range
     facility_filter = facility_filter,
     priority_filter = priority_filter,
     zone_filter = zone_filter,
-    larvae_threshold = larvae_threshold
+    larvae_threshold = larvae_threshold,
+    include_archive = TRUE,
+    start_year = start_year,
+    end_year = end_year
   )
   
+  cat("Raw historical data returned:", nrow(data), "rows\n")
+  
   if (nrow(data) == 0) {
+    return(data.frame(
+      sitecode = character(0),
+      facility = character(0),
+      priority = character(0),
+      zone = character(0),
+      acres = numeric(0),
+      total_inspections = integer(0),
+      red_bug_inspections = integer(0),
+      red_bug_ratio = numeric(0),
+      years_active = character(0)
+    ))
+  }
+  
+  # Get inspection details from archive for this period
+  con <- get_db_connection()
+  if (is.null(con)) {
+    cat("Could not connect to database for detailed inspection counts\n")
     return(data.frame())
   }
   
-  # Add time period grouping
-  if (time_period == "weekly") {
-    data$time_period <- paste0(lubridate::year(as.Date(data$last_inspection_date)), 
-                               "-W", lubridate::week(as.Date(data$last_inspection_date)))
-  } else if (time_period == "monthly") {
-    data$time_period <- format(as.Date(data$last_inspection_date), "%Y-%m")
-  } else {
-    data$time_period <- lubridate::year(as.Date(data$last_inspection_date))
-  }
-  
-  # Add grouping variable
-  if (group_by == "facility") {
-    data$group_var <- data$facility
-  } else if (group_by == "priority") {
-    data$group_var <- data$priority
-  } else if (group_by == "zone") {
-    data$group_var <- data$zone
-  } else {
-    data$group_var <- "All"
-  }
-  
-  # Calculate red bug inspection ratios and other metrics
-  data <- data %>%
-    mutate(
-      has_inspection = !is.na(last_inspection_date),
-      has_sample = !is.na(sampnum_yr) & sampnum_yr != "",
-      has_lab_result = !is.na(lab_id_timestamp),
-      is_red_bug_site = has_red_bugs == 1 & has_lab_result,
-      inspection_year = lubridate::year(as.Date(last_inspection_date)),
-      treatment_year = lubridate::year(as.Date(last_treatment_date))
-    )
-  
-  return(data)
+  tryCatch({
+    # Build filter conditions for SQL
+    facility_condition <- ""
+    if (!is.null(facility_filter) && length(facility_filter) > 0) {
+      facility_list <- paste0("'", paste(facility_filter, collapse = "', '"), "'")
+      # Filter on gis_sectcode facility, with fallback to site facility
+      facility_condition <- sprintf("AND (g.facility IN (%s) OR (g.facility IS NULL AND b.facility IN (%s)))", facility_list, facility_list)
+    }
+    
+    priority_condition <- ""
+    if (!is.null(priority_filter) && length(priority_filter) > 0) {
+      priority_list <- paste0("'", paste(priority_filter, collapse = "', '"), "'")
+      priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
+    }
+    
+    zone_condition <- ""
+    if (!is.null(zone_filter) && zone_filter != "All") {
+      if (zone_filter == "P1 + P2 Combined") {
+        zone_condition <- "AND g.zone IN ('1', '2')"
+      } else if (zone_filter == "P3 + P4 Combined") {
+        zone_condition <- "AND g.zone IN ('3', '4')"
+      } else {
+        # Extract just the number for single zones (P1 -> 1, P2 -> 2, etc.)
+        zone_num <- gsub("P", "", zone_filter)
+        zone_condition <- sprintf("AND g.zone = '%s'", zone_num)
+      }
+    }
+    
+    # Get detailed inspection data - corrected red bug ratio calculation
+    # Total inspections = ALL inspections (including those with numdip=0 or no samples)
+    # Red bug inspections = Only those with samples showing redblue='R'
+    # Inspections above threshold = Those with numdip >= threshold
+    # Handle multiple site records by matching inspection date with site active period
+    # Include BOTH archive AND current tables for complete historical data
+    inspection_query <- sprintf("
+      WITH combined_inspections AS (
+        -- Archive inspection data
+        SELECT 
+          sitecode,
+          inspdate,
+          sampnum_yr,
+          numdip,
+          action,
+          'archive' as source_table
+        FROM dblarv_insptrt_archive
+        WHERE action IN ('2', '4')
+          AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
+        
+        UNION ALL
+        
+        -- Current inspection data
+        SELECT 
+          sitecode,
+          inspdate,
+          sampnum_yr,
+          numdip,
+          action,
+          'current' as source_table
+        FROM dblarv_insptrt_current
+        WHERE action IN ('2', '4')
+          AND EXTRACT(YEAR FROM inspdate) BETWEEN %d AND %d
+      ),
+      all_inspections AS (
+        SELECT 
+          b.sitecode,
+          COALESCE(g.facility, b.facility) as facility,  -- Use gis_sectcode facility first, fallback to site facility
+          b.priority,
+          g.zone,
+          b.acres,
+          i.inspdate,
+          i.sampnum_yr,
+          i.numdip,
+          i.source_table,
+          ROW_NUMBER() OVER (PARTITION BY i.sitecode, i.inspdate ORDER BY 
+            CASE WHEN b.enddate IS NULL THEN 1 ELSE 0 END DESC,
+            b.enddate DESC
+          ) as rn
+        FROM loc_breeding_sites b
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
+        INNER JOIN combined_inspections i ON b.sitecode = i.sitecode
+        WHERE (b.enddate IS NULL OR b.enddate >= i.inspdate)
+          AND b.air_gnd = 'A'
+          AND b.geom IS NOT NULL
+          %s
+          %s
+          %s
+      ),
+      filtered_inspections AS (
+        SELECT * FROM all_inspections WHERE rn = 1
+      ),
+      combined_samples AS (
+        -- Archive sample data
+        SELECT 
+          sampnum_yr,
+          redblue,
+          missing,
+          form_type,
+          'archive' as source_table
+        FROM dblarv_sample_archive
+        WHERE form_type = 'AIR'
+          AND (missing = FALSE OR missing IS NULL)
+        
+        UNION ALL
+        
+        -- Current sample data  
+        SELECT 
+          sampnum_yr,
+          redblue,
+          missing,
+          form_type,
+          'current' as source_table
+        FROM dblarv_sample_current
+        WHERE form_type = 'AIR'
+          AND (missing = FALSE OR missing IS NULL)
+      ),
+      red_bug_samples AS (
+        SELECT 
+          fi.sitecode,
+          COUNT(CASE WHEN cs.redblue = 'R' THEN 1 END) as red_bug_count,
+          COUNT(CASE WHEN cs.redblue IS NOT NULL THEN 1 END) as total_samples
+        FROM filtered_inspections fi
+        LEFT JOIN combined_samples cs ON fi.sampnum_yr = cs.sampnum_yr
+        GROUP BY fi.sitecode
+      )
+      SELECT 
+        fi.sitecode,
+        fi.facility,
+        fi.priority,
+        fi.zone,
+        fi.acres,
+        COUNT(*)::INTEGER as total_inspections,
+        SUM(CASE WHEN fi.numdip >= %d THEN 1 ELSE 0 END)::INTEGER as inspections_above_threshold,
+        COALESCE(rbs.red_bug_count, 0)::INTEGER as red_bug_inspections,
+        COALESCE(rbs.total_samples, 0)::INTEGER as samples_with_results,
+        COUNT(CASE WHEN fi.source_table = 'archive' THEN 1 END)::INTEGER as archive_inspections,
+        COUNT(CASE WHEN fi.source_table = 'current' THEN 1 END)::INTEGER as current_inspections,
+        ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fi.inspdate) ORDER BY EXTRACT(YEAR FROM fi.inspdate)) as years_with_inspections
+      FROM filtered_inspections fi
+      LEFT JOIN red_bug_samples rbs ON fi.sitecode = rbs.sitecode
+      GROUP BY fi.sitecode, fi.facility, fi.priority, fi.zone, fi.acres, rbs.red_bug_count, rbs.total_samples
+      ORDER BY fi.sitecode
+    ", start_year, end_year, start_year, end_year, 
+       facility_condition, priority_condition, zone_condition, larvae_threshold)
+    
+    cat("Executing inspection summary query...\n")
+    cat("Hope this will give the correct results.\n")
+    result <- dbGetQuery(con, inspection_query)
+    
+    # Debug: Check data types and sample values
+    if (nrow(result) > 0) {
+      cat("Data types in result:\n")
+      print(sapply(result, class))
+      cat("\nSample of sites with potential red bugs:\n")
+      red_candidates <- result[result$red_bug_inspections > 0, ]
+      if (nrow(red_candidates) > 0) {
+        print(red_candidates[1:min(3, nrow(red_candidates)), c("sitecode", "total_inspections", "red_bug_inspections", "archive_inspections", "current_inspections")])
+      }
+      
+      # Show summary of archive vs current data
+      cat("\nData source summary:\n")
+      cat("Total archive inspections:", sum(result$archive_inspections), "\n")
+      cat("Total current inspections:", sum(result$current_inspections), "\n")
+      cat("Total combined inspections:", sum(result$total_inspections), "\n")
+    }
+    
+    cat("Inspection summary query returned:", nrow(result), "rows\n")
+    
+    if (nrow(result) > 0) {
+      # Ensure numeric types and calculate red bug ratio
+      result$total_inspections <- as.numeric(result$total_inspections)
+      result$red_bug_inspections <- as.numeric(result$red_bug_inspections)
+      result$samples_with_results <- as.numeric(result$samples_with_results)
+      result$archive_inspections <- as.numeric(result$archive_inspections)
+      result$current_inspections <- as.numeric(result$current_inspections)
+      
+      # Calculate red bug ratio
+      result$red_bug_ratio <- ifelse(result$total_inspections > 0,
+                                    round((result$red_bug_inspections / result$total_inspections) * 100, 1),
+                                    0)
+      
+      # Format years as readable string
+      result$years_active <- sapply(result$years_with_inspections, function(x) {
+        if (is.null(x) || length(x) == 0) return("None")
+        years <- sort(as.numeric(unlist(strsplit(gsub("[{}]", "", x), ","))))
+        if (length(years) <= 3) {
+          return(paste(years, collapse = ", "))
+        } else {
+          return(paste(min(years), "-", max(years), "(", length(years), "years)"))
+        }
+      })
+      
+      # Clean up zone display
+      result$zone <- ifelse(is.na(result$zone), "Unknown", paste0("P", result$zone))
+      
+      # Select final columns
+      result <- result[, c("sitecode", "facility", "priority", "zone", "acres", 
+                          "total_inspections", "red_bug_inspections", "red_bug_ratio", "years_active")]
+    }
+    
+    return(result)
+    
+  }, error = function(e) {
+    cat("Error in historical inspection summary:", e$message, "\n")
+    return(data.frame())
+  }, finally = {
+    dbDisconnect(con)
+  })
 }
 
 # Create historical summary metrics for value boxes
@@ -140,7 +338,7 @@ create_historical_summary_chart <- function(data, time_period = "monthly") {
   
   # Group data by time period and calculate red bug detection rates
   chart_data <- data %>%
-    group_by(time_period_label) %>%
+    group_by(time_period) %>%
     summarise(
       inspections = sum(has_inspection, na.rm = TRUE),
       samples = sum(has_sample, na.rm = TRUE),
@@ -152,7 +350,7 @@ create_historical_summary_chart <- function(data, time_period = "monthly") {
       .groups = 'drop'
     ) %>%
     filter(inspections > 0) %>%  # Only include periods with actual data
-    arrange(time_period_label)
+    arrange(time_period)
   
   if (nrow(chart_data) == 0) {
     return(plot_ly() %>%
@@ -169,7 +367,7 @@ create_historical_summary_chart <- function(data, time_period = "monthly") {
     
     # Add bar chart for number of inspections
     add_bars(
-      x = ~time_period_label,
+      x = ~time_period,
       y = ~inspections,
       name = "Total Inspections",
       marker = list(color = "#3498db"),
@@ -184,7 +382,7 @@ create_historical_summary_chart <- function(data, time_period = "monthly") {
     
     # Add line chart for red bug detection rate
     add_lines(
-      x = ~time_period_label,
+      x = ~time_period,
       y = ~detection_rate,
       yaxis = "y2",
       name = "Red Bug Detection Rate (%)",
@@ -379,4 +577,42 @@ create_year_comparison_chart <- function(data, comparison_metric = "treatment_ra
   }
   
   return(p)
+}
+
+# Create historical red bug chart - wrapper function for backward compatibility
+create_historical_red_bug_chart <- function(data, time_period = "monthly", group_by = "facility") {
+  return(create_historical_summary_chart(data, time_period))
+}
+
+# Create historical details table
+create_historical_details_table <- function(data) {
+  if (nrow(data) == 0) {
+    return(data.frame(
+      sitecode = character(0),
+      facility = character(0),
+      priority = character(0),
+      zone = character(0),
+      last_inspection = character(0),
+      last_treatment = character(0),
+      has_samples = character(0),
+      red_bugs = character(0)
+    ))
+  }
+  
+  # Create summary table
+  table_data <- data %>%
+    mutate(
+      last_inspection = if_else(!is.na(last_inspection_date), 
+                               format(as.Date(last_inspection_date), "%Y-%m-%d"), 
+                               "None"),
+      last_treatment = if_else(!is.na(last_treatment_date), 
+                              format(as.Date(last_treatment_date), "%Y-%m-%d"), 
+                              "None"),
+      has_samples = if_else(has_sample, "Yes", "No"),
+      red_bugs = if_else(is_red_bug_site, "Yes", if_else(has_lab_result, "No", "No Sample"))
+    ) %>%
+    select(sitecode, facility, priority, zone, last_inspection, last_treatment, has_samples, red_bugs) %>%
+    arrange(sitecode)
+  
+  return(table_data)
 }

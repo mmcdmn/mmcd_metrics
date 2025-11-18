@@ -9,7 +9,7 @@ suppressPackageStartupMessages({
 })
 
 # Get air sites data with filtering and status logic
-get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL, include_archive = FALSE, start_year = NULL, end_year = NULL) {
+get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL, include_archive = FALSE, start_year = NULL, end_year = NULL) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -48,9 +48,9 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
 
     # Build BTI effect days override condition
     bti_effect_days_sql <- if (!is.null(bti_effect_days_override) && !is.na(bti_effect_days_override) && bti_effect_days_override > 0) {
-      sprintf("CASE WHEN rt.mattype = 'Bti_gran' THEN %d WHEN mt.effect_days IS NOT NULL THEN mt.effect_days ELSE NULL END", bti_effect_days_override)
+      sprintf("CASE WHEN rt.mattype = 'Bti_gran' THEN %d WHEN mt.effect_days IS NOT NULL THEN mt.effect_days ELSE 14 END", bti_effect_days_override)
     } else {
-      "CASE WHEN mt.effect_days IS NOT NULL THEN mt.effect_days ELSE NULL END"
+      "COALESCE(mt.effect_days, 14)"
     }
 
     # Enhanced query with inspection, treatment, and lab sample data
@@ -58,10 +58,18 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
     inspection_table <- if (include_archive) "dblarv_insptrt_archive" else "dblarv_insptrt_current"
     sample_table <- if (include_archive) "dblarv_sample_archive" else "dblarv_sample_current"
     
+    # Debug logging for archive queries
+    if (include_archive) {
+      cat("Using archive tables - Inspection:", inspection_table, "Sample:", sample_table, "\n")
+      cat("Year range:", start_year, "to", end_year, "\n")
+    }
+    
     # Add year filtering for historical analysis
-    year_condition <- ""
+    year_condition_inspection <- ""
+    year_condition_treatment <- ""
     if (include_archive && !is.null(start_year) && !is.null(end_year)) {
-      year_condition <- sprintf("AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d", start_year, end_year)
+      year_condition_inspection <- sprintf("AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d", start_year, end_year)
+      year_condition_treatment <- sprintf("AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year, end_year)
     }
     
     query <- sprintf("
@@ -75,8 +83,7 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
           ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
           ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
         FROM loc_breeding_sites b
-        LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
-          OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
         WHERE (b.enddate IS NULL OR b.enddate > '%s')
           AND b.air_gnd = 'A'
           AND b.geom IS NOT NULL
@@ -122,7 +129,6 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
         SELECT 
           ls.sampnum_yr,
           ls.redblue,
-          ls.lab_id_timestamp,
           ls.missing,
           -- Count red bugs for this sample
           CASE 
@@ -131,7 +137,6 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
           END as has_red_bugs
         FROM %s ls
         WHERE ls.sampnum_yr IS NOT NULL
-          AND ls.lab_id_timestamp IS NOT NULL
           AND ls.missing = FALSE
           AND ls.form_type = 'AIR'
       ),
@@ -150,11 +155,11 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
             ELSE NULL
           END as treatment_expiry
         FROM RecentTreatments rt
-        LEFT JOIN mattype_list mt ON rt.mattype = mt.mattype
+        LEFT JOIN mattype_list_targetdose mt ON rt.matcode = mt.matcode
         WHERE rt.rn = 1
       ),
       
-      -- Get inspection details with lab information
+      -- Get inspection data
       InspectionInfo AS (
         SELECT 
           ri.sitecode,
@@ -163,7 +168,6 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
           ri.sampnum_yr,
           ls.redblue,
           ls.has_red_bugs,
-          ls.lab_id_timestamp,
           ls.missing
         FROM RecentInspections ri
         LEFT JOIN LabSampleData ls ON ri.sampnum_yr = ls.sampnum_yr
@@ -186,17 +190,26 @@ get_air_sites_data <- function(analysis_date, facility_filter = NULL, priority_f
         i.sampnum_yr,
         i.redblue,
         i.has_red_bugs,
-        i.lab_id_timestamp
+        i.missing
       FROM ActiveAirSites a
       LEFT JOIN TreatmentInfo t ON a.sitecode = t.sitecode
       LEFT JOIN InspectionInfo i ON a.sitecode = i.sitecode
       ORDER BY a.sitecode
-    ", analysis_date, facility_condition, priority_condition, zone_condition, 
-       inspection_table, analysis_date, year_condition,
-       inspection_table, analysis_date, year_condition,
+    ", analysis_date, facility_condition, priority_condition, zone_condition,
+       inspection_table, analysis_date, year_condition_inspection,
+       inspection_table, analysis_date, year_condition_treatment,
        sample_table, bti_effect_days_sql, bti_effect_days_sql)
     
     result <- dbGetQuery(con, query)
+    
+    # Debug logging for archive queries
+    if (include_archive) {
+      cat("Archive query returned", nrow(result), "rows\n")
+      if (nrow(result) > 0) {
+        cat("Date range in results:", min(result$last_inspection_date, na.rm = TRUE), "to", 
+            max(result$last_inspection_date, na.rm = TRUE), "\n")
+      }
+    }
     
     # Apply enhanced status logic in R
     if (nrow(result) > 0) {
@@ -256,17 +269,6 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
       }
     }
     
-    lab_id_timestamp <- NULL
-    if (!is.null(site$lab_id_timestamp) && length(site$lab_id_timestamp) > 0) {
-      if (!is.na(site$lab_id_timestamp[1])) {
-        tryCatch({
-          lab_id_timestamp <- as.POSIXct(site$lab_id_timestamp[1])
-        }, error = function(e) {
-          lab_id_timestamp <<- NULL
-        })
-      }
-    }
-    
     # Check if treatment is currently active
     treatment_active <- FALSE
     if (!is.null(treatment_expiry) && length(treatment_expiry) > 0) {
@@ -285,6 +287,29 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
     
     # Check inspection status if we have inspection data
     if (!is.null(last_inspection_date)) {
+      # Check if there was a treatment after the last inspection
+      treatment_after_inspection <- FALSE
+      last_treatment_date <- NULL
+      if (!is.null(site$last_treatment_date) && length(site$last_treatment_date) > 0) {
+        if (!is.na(site$last_treatment_date[1])) {
+          tryCatch({
+            last_treatment_date <- as.Date(site$last_treatment_date[1])
+            if (!is.null(last_treatment_date) && !is.null(last_inspection_date)) {
+              treatment_after_inspection <- last_treatment_date > last_inspection_date
+            }
+          }, error = function(e) {
+            last_treatment_date <<- NULL
+          })
+        }
+      }
+      
+      # If treatment occurred after inspection and has now expired, 
+      # ignore the old inspection data and default to Unknown
+      if (treatment_after_inspection && !treatment_active) {
+        data$site_status[i] <- "Unknown"
+        next
+      }
+      
       larvae_count <- 0
       if (!is.null(site$last_larvae_count) && length(site$last_larvae_count) > 0) {
         if (!is.na(site$last_larvae_count[1])) {
@@ -310,8 +335,19 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
           }
           
           if (has_sample) {
-            # Sample was sent to lab
-            if (!is.null(lab_id_timestamp)) {
+            # Sample was sent to lab - check if missing = FALSE (results available)
+            has_lab_results <- FALSE
+            if (!is.null(site$missing) && length(site$missing) > 0) {
+              if (!is.na(site$missing[1])) {
+                tryCatch({
+                  has_lab_results <- !site$missing[1]  # missing = FALSE means results available
+                }, error = function(e) {
+                  has_lab_results <<- FALSE
+                })
+              }
+            }
+            
+            if (has_lab_results) {
               # Lab results are available, check for red bugs
               has_red_bugs <- FALSE
               if (!is.null(site$has_red_bugs) && length(site$has_red_bugs) > 0) {
@@ -333,7 +369,7 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
                 data$site_status[i] <- "Inspected"
               }
             } else {
-              # Sample sent but no lab results yet - in lab
+              # Sample sent but no lab results yet (missing = TRUE) - in lab
               data$site_status[i] <- "In Lab"
             }
           } else {
@@ -367,7 +403,7 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
     is.na(data$sampnum_yr), 
     "No Sample",
     ifelse(
-      is.na(data$lab_id_timestamp),
+      is.na(data$missing) | data$missing == TRUE,
       "In Lab",
       ifelse(
         !is.na(data$has_red_bugs) & data$has_red_bugs == 1,
@@ -460,8 +496,11 @@ analyze_lab_processing_metrics <- function(site_data) {
     ))
   }
   
-  # Find completed samples (have lab timestamps)
-  completed_samples <- all_inspected_with_samples[!is.na(all_inspected_with_samples$lab_id_timestamp), ]
+  # Find completed samples (missing = FALSE means results available)
+  completed_samples <- all_inspected_with_samples[
+    !is.na(all_inspected_with_samples$missing) & 
+    all_inspected_with_samples$missing == FALSE, 
+  ]
   total_completed_samples <- nrow(completed_samples)
   
   # Lab completion rate: completed / all samples

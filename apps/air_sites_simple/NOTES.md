@@ -72,7 +72,6 @@ This Shiny app tracks air-treated mosquito breeding sites across three perspecti
 - **`public.dblarv_sample_archive`** - Historical lab sample analysis results
   - **Key Columns**: Same as current table
   - **Usage**: Combined with current table for complete historical red bug analysis
-  - **Data Quality**: Historical lab results, generally complete and reliable
 
 ### Data Collection Strategy
 
@@ -124,13 +123,6 @@ WHERE (b.enddate IS NULL OR b.enddate >= i.inspdate)  -- Active sites during ins
 - **Treated Acres**: `dblarv_insptrt_*.acres` = actual area treated in specific application
 - **Usage**: Site acres for capacity analysis, treated acres for actual treatment metrics
 
-**Zone Assignment:**
-- **P1 Sites**: `gis_sectcode.zone = '1'` (Primary zone)
-- **P2 Sites**: `gis_sectcode.zone = '2'` (Secondary zone)
-- **P3 Sites**: `gis_sectcode.zone = '3'` (Tertiary zone)
-- **P4 Sites**: `gis_sectcode.zone = '4'` (Quaternary zone)
-- **Missing Zones**: Some sites may not have zone assignments in gis_sectcode
-
 **Red Bug Detection Logic:**
 - **Detection**: `s.redblue = 'R'` indicates red bugs found in sample
 - **Blue Bugs**: `s.redblue = 'B'` indicates blue bugs found (not red)
@@ -141,16 +133,6 @@ WHERE (b.enddate IS NULL OR b.enddate >= i.inspdate)  -- Active sites during ins
 ### Purpose
 Display current status of air sites with inspection, treatment, and lab analysis data including red bug detection rates.
 
-### Key Features
-- **Value boxes** showing summary statistics:
-  - Total air sites, sites with recent inspections
-  - Sites needing treatment, sites with active treatments
-  - Red bug detection rate, sites above larval threshold
-- **Status Summary Chart** showing site distribution by status categories
-- **Detailed Status Table** with individual site information and download capability
-- **Configurable filters** - facility, priority, zone, larval threshold, analysis date
-- **BTI override** - Configurable BTI granule effectiveness days
-
 ### Site Status Definitions
 Air sites are classified into mutually exclusive status categories based on recent inspection and treatment data:
 
@@ -158,35 +140,30 @@ Air sites are classified into mutually exclusive status categories based on rece
 - **Definition**: Site has treatment that is still effective as of analysis date
 - **Logic**: `treatment_end_date >= analysis_date`
 - **Calculation**: `treatment_end_date = last_treatment_date + effect_days`
-- **Color**: Green (#2E8B57)
 - **Priority**: Highest - Site is adequately treated
 
 #### **Needs Treatment**
 - **Definition**: Site has recent inspection showing larvae above threshold, no active treatment
 - **Logic**: `last_inspection_numdip >= larvae_threshold AND (no treatment OR treatment expired)`
 - **Threshold**: Configurable larvae threshold (default: 2 dips)
-- **Color**: Red (#DC143C)
 - **Priority**: High - Site requires immediate treatment attention
 
 #### **Recently Inspected**
 - **Definition**: Site has recent inspection below threshold, no active treatment needed
 - **Logic**: `last_inspection_numdip < larvae_threshold AND no active treatment`
 - **Threshold**: Below configurable larvae threshold
-- **Color**: Blue (#4682B4)
 - **Priority**: Medium - Site is monitored but doesn't need treatment
 
 #### **In Lab**
 - **Definition**: Site has recent inspection with sample sent to lab, awaiting results
 - **Logic**: `has_recent_inspection AND has_sampnum_yr AND no lab results yet`
 - **Sample Status**: Sample sent but `redblue` result not available
-- **Color**: Orange (#FF8C00)
 - **Priority**: Medium - Awaiting lab analysis for treatment decision
 
 #### **No Recent Data**
 - **Definition**: Site has no recent inspection or treatment data
 - **Logic**: `no recent inspection AND no active treatment`
 - **Timeframe**: Beyond analysis date window for recent activity
-- **Color**: Gray (#808080)
 - **Priority**: Low - Site status unknown, may need inspection
 
 ### Red Bug Metrics
@@ -222,12 +199,6 @@ Provide interactive map visualization of air sites with color-coded status marke
   - Satellite (Esri World Imagery)  
   - Terrain (Esri World Topo)
   - OpenStreetMap
-- **Color-coded markers** by site status:
-  - **Green**: Active Treatment (#2E8B57)
-  - **Red**: Needs Treatment (#DC143C)
-  - **Blue**: Recently Inspected (#4682B4)
-  - **Orange**: In Lab (#FF8C00)
-  - **Gray**: No Recent Data (#808080)
 - **Site popups** with detailed information:
   - Sitecode, facility, zone, priority, site acres
   - Treatment status and last inspection/treatment details

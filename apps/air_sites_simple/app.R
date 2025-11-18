@@ -23,12 +23,10 @@ if (file.exists("../../shared/db_helpers.R")) {
 }
 
 # Source app-specific functions
-# Using working version while debugging enhanced version
-source("air_status_functions_working.R")
-source("historical_functions.R")
+source("data_functions.R")
+source("display_functions.R")
 
-# Alias for compatibility
-get_air_sites_data <- get_air_sites_data_working
+# Functions are now loaded from data_functions.R and display_functions.R
 
 # Define UI
 ui <- dashboardPage(
@@ -451,11 +449,11 @@ server <- function(input, output, session) {
   zone_display <- setNames(zone_choices, zone_choices)
   
   # Load treatment material choices (static, load once)
-  material_choices <- get_treatment_materials(include_all = TRUE)
+  material_choices <- get_material_choices(include_all = TRUE)
   if (length(material_choices) == 0) {
-    material_choices <- c("All")
+    material_choices <- c("All Materials" = "all")
   }
-  material_display <- setNames(material_choices, material_choices)
+  material_display <- material_choices
   
   # Update all filter inputs ONCE on startup
   observe({
@@ -485,10 +483,10 @@ server <- function(input, output, session) {
     # Update material filters
     updateSelectizeInput(session, "material_filter", 
                         choices = material_display,
-                        selected = "All")
+                        selected = "all")
     updateSelectizeInput(session, "process_material_filter", 
                         choices = material_display,
-                        selected = "All")
+                        selected = "all")
   })
   
 ##============Synchronization Logic============
@@ -573,7 +571,7 @@ server <- function(input, output, session) {
   # ============ AIR SITE STATUS TAB LOGIC ============
   # Reactive data - only loads when refresh button is clicked
   air_sites_data <- eventReactive(input$refresh_data, {
-    get_air_sites_data_working(
+    get_air_sites_data(
       analysis_date = input$analysis_date,
       facility_filter = input$facility_filter,
       priority_filter = input$priority_filter,
@@ -596,7 +594,7 @@ server <- function(input, output, session) {
     }
     
     # Apply material filter for active treatments
-    if (!is.null(input$material_filter) && length(input$material_filter) > 0 && !"All" %in% input$material_filter) {
+    if (!is.null(input$material_filter) && length(input$material_filter) > 0 && !"all" %in% input$material_filter) {
       # Filter active treatments by material, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
                                (!is.na(data$last_treatment_material) & 
@@ -684,7 +682,7 @@ server <- function(input, output, session) {
         setView(lng = -93.2, lat = 44.9, zoom = 10))
     }
     
-    create_site_map_working(data)
+    create_site_map(data)
   })
   
   # Status Chart
@@ -735,34 +733,15 @@ server <- function(input, output, session) {
       return(DT::datatable(data.frame(), options = list(pageLength = 15)))
     }
     
-    # Use enhanced create_site_details_panel function
-    table_data <- create_site_details_panel(data)
-    
-    DT::datatable(
-      table_data,
-      options = list(
-        pageLength = 15,
-        scrollX = TRUE,
-        columnDefs = list(
-          list(className = 'dt-center', targets = c(1, 2, 3, 5, 6))
-        )
-      ),
-      rownames = FALSE
-    ) %>%
-      DT::formatStyle(
-        "Status",  # Updated to match new column name
-        backgroundColor = DT::styleEqual(
-          c("Active Treatment", "Needs Treatment", "Inspected", "In Lab", "Unknown"),
-          c("#d4edda", "#f8d7da", "#d1ecf1", "#fff3cd", "#f8f9fa")
-        )
-      )
+    # Use create_site_details_panel function (returns formatted datatable)
+    create_site_details_panel(data)
   })
   
   # ============ TREATMENT PROCESS TAB LOGIC ============
   
   # Reactive data for process tab
   process_data <- eventReactive(input$refresh_process_data, {
-    data <- get_air_sites_data_working(
+    data <- get_air_sites_data(
       analysis_date = input$process_analysis_date,
       facility_filter = input$process_facility_filter,
       priority_filter = NULL,  # Include all priorities for process tracking
@@ -772,7 +751,7 @@ server <- function(input, output, session) {
     )
     
     # Apply material filter for active treatments
-    if (!is.null(input$process_material_filter) && length(input$process_material_filter) > 0 && !"All" %in% input$process_material_filter) {
+    if (!is.null(input$process_material_filter) && length(input$process_material_filter) > 0 && !"all" %in% input$process_material_filter) {
       # Filter active treatments by material, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
                                (!is.na(data$last_treatment_material) & 

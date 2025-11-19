@@ -1,7 +1,7 @@
 # Ground Prehatch Progress - Data Functions
 # Functions for fetching and processing ground prehatch data
 
-# Unified function to load raw ground prehatch data (similar to drone app)
+# Unified function to load raw ground prehatch data 
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
                          start_year = NULL, end_year = NULL, include_geometry = FALSE) {
   con <- get_db_connection()

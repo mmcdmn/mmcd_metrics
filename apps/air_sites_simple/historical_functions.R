@@ -4,6 +4,7 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(dplyr)
+  library(tidyr)
   library(lubridate)
   library(ggplot2)
   library(plotly)
@@ -615,4 +616,347 @@ create_historical_details_table <- function(data) {
     arrange(sitecode)
   
   return(table_data)
+}
+
+# Get historical treatment volume data (acres treated and inspections per week/year)
+get_historical_treatment_volumes <- function(start_year = NULL, end_year = NULL, 
+                                           facility_filter = NULL, zone_filter = NULL) {
+  
+  # Determine year range
+  if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y")) - 4
+  if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
+  
+  # Debug logging
+  cat("Getting historical treatment volumes - Start Year:", start_year, "End Year:", end_year, "\n")
+  
+  con <- get_db_connection()
+  if (is.null(con)) {
+    cat("Could not connect to database for treatment volume data\n")
+    return(data.frame())
+  }
+  
+  tryCatch({
+    # Build filter conditions
+    facility_condition <- ""
+    if (!is.null(facility_filter) && length(facility_filter) > 0) {
+      facility_list <- paste0("'", paste(facility_filter, collapse = "', '"), "'")
+      facility_condition <- sprintf("AND (g.facility IN (%s) OR (g.facility IS NULL AND b.facility IN (%s)))", facility_list, facility_list)
+    }
+    
+    zone_condition <- ""
+    if (!is.null(zone_filter) && zone_filter != "All") {
+      if (zone_filter == "P1 + P2 Combined") {
+        zone_condition <- "AND g.zone IN ('1', '2')"
+      } else if (zone_filter == "P3 + P4 Combined") {
+        zone_condition <- "AND g.zone IN ('3', '4')"
+      } else {
+        zone_num <- gsub("P", "", zone_filter)
+        zone_condition <- sprintf("AND g.zone = '%s'", zone_num)
+      }
+    }
+    
+    # Get treatment and inspection data with acres
+    volume_query <- sprintf("
+      WITH combined_operations AS (
+        -- Archive treatment data (actions 3, A, D)
+        SELECT 
+          t.inspdate,
+          t.sitecode,
+          t.action,
+          t.acres,
+          'treatment' as operation_type,
+          'archive' as source_table,
+          COALESCE(g.facility, b.facility) as facility,
+          g.zone
+        FROM dblarv_insptrt_archive t
+        LEFT JOIN loc_breeding_sites b ON t.sitecode = b.sitecode
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(t.sitecode, 7)
+        WHERE t.action IN ('3', 'A', 'D')
+          AND t.acres > 0
+          AND b.air_gnd = 'A'
+          AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
+          %s
+          %s
+        
+        UNION ALL
+        
+        -- Current treatment data (actions 3, A, D)
+        SELECT 
+          t.inspdate,
+          t.sitecode,
+          t.action,
+          t.acres,
+          'treatment' as operation_type,
+          'current' as source_table,
+          COALESCE(g.facility, b.facility) as facility,
+          g.zone
+        FROM dblarv_insptrt_current t
+        LEFT JOIN loc_breeding_sites b ON t.sitecode = b.sitecode
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(t.sitecode, 7)
+        WHERE t.action IN ('3', 'A', 'D')
+          AND t.acres > 0
+          AND b.air_gnd = 'A'
+          AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
+          %s
+          %s
+        
+        UNION ALL
+        
+        -- Archive inspection data (actions 2, 4)
+        SELECT 
+          i.inspdate,
+          i.sitecode,
+          i.action,
+          b.acres,  -- Site acres for inspections
+          'inspection' as operation_type,
+          'archive' as source_table,
+          COALESCE(g.facility, b.facility) as facility,
+          g.zone
+        FROM dblarv_insptrt_archive i
+        LEFT JOIN loc_breeding_sites b ON i.sitecode = b.sitecode
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(i.sitecode, 7)
+        WHERE i.action IN ('2', '4')
+          AND b.acres > 0
+          AND b.air_gnd = 'A'
+          AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d
+          %s
+          %s
+        
+        UNION ALL
+        
+        -- Current inspection data (actions 2, 4)  
+        SELECT 
+          i.inspdate,
+          i.sitecode,
+          i.action,
+          b.acres,  -- Site acres for inspections
+          'inspection' as operation_type,
+          'current' as source_table,
+          COALESCE(g.facility, b.facility) as facility,
+          g.zone
+        FROM dblarv_insptrt_current i
+        LEFT JOIN loc_breeding_sites b ON i.sitecode = b.sitecode
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(i.sitecode, 7)
+        WHERE i.action IN ('2', '4')
+          AND b.acres > 0
+          AND b.air_gnd = 'A'
+          AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d
+          %s
+          %s
+      )
+      SELECT 
+        inspdate,
+        operation_type,
+        facility,
+        zone,
+        COUNT(*) as total_operations,
+        SUM(acres) as total_acres,
+        EXTRACT(YEAR FROM inspdate) as year,
+        EXTRACT(WEEK FROM inspdate) as week_of_year,
+        DATE_TRUNC('week', inspdate)::date as week_start_date,
+        source_table
+      FROM combined_operations
+      GROUP BY inspdate, operation_type, facility, zone, 
+               EXTRACT(YEAR FROM inspdate), EXTRACT(WEEK FROM inspdate), 
+               DATE_TRUNC('week', inspdate)::date, source_table
+      ORDER BY inspdate, operation_type, facility
+    ", start_year, end_year, facility_condition, zone_condition,
+       start_year, end_year, facility_condition, zone_condition,
+       start_year, end_year, facility_condition, zone_condition,
+       start_year, end_year, facility_condition, zone_condition)
+    
+    cat("Executing treatment volume query...\n")
+    result <- dbGetQuery(con, volume_query)
+    
+    cat("Treatment volume query returned:", nrow(result), "rows\n")
+    
+    if (nrow(result) > 0) {
+      # Clean up zone display
+      result$zone <- ifelse(is.na(result$zone), "Unknown", paste0("P", result$zone))
+      
+      # Show summary
+      cat("Data summary:\n")
+      cat("Treatment operations:", sum(result$total_operations[result$operation_type == 'treatment']), "\n")
+      cat("Inspection operations:", sum(result$total_operations[result$operation_type == 'inspection']), "\n")
+      cat("Total treatment acres:", round(sum(result$total_acres[result$operation_type == 'treatment']), 1), "\n")
+      cat("Total inspection acres:", round(sum(result$total_acres[result$operation_type == 'inspection']), 1), "\n")
+    }
+    
+    return(result)
+    
+  }, error = function(e) {
+    cat("Error in treatment volume query:", e$message, "\n")
+    return(data.frame())
+  }, finally = {
+    dbDisconnect(con)
+  })
+}
+
+# Create weekly treatment volume summary
+create_weekly_treatment_summary <- function(volume_data) {
+  if (nrow(volume_data) == 0) {
+    return(data.frame(
+      week_start_date = as.Date(character(0)),
+      year = integer(0),
+      week_of_year = integer(0),
+      treatment_operations = integer(0),
+      treatment_acres = numeric(0),
+      inspection_operations = integer(0),
+      inspection_acres = numeric(0)
+    ))
+  }
+  
+  # Aggregate by week
+  weekly_summary <- volume_data %>%
+    group_by(week_start_date, year, week_of_year) %>%
+    summarise(
+      treatment_operations = sum(total_operations[operation_type == 'treatment'], na.rm = TRUE),
+      treatment_acres = sum(total_acres[operation_type == 'treatment'], na.rm = TRUE),
+      inspection_operations = sum(total_operations[operation_type == 'inspection'], na.rm = TRUE),
+      inspection_acres = sum(total_acres[operation_type == 'inspection'], na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    arrange(week_start_date)
+  
+  return(weekly_summary)
+}
+
+# Create yearly treatment volume summary
+create_yearly_treatment_summary <- function(volume_data) {
+  if (nrow(volume_data) == 0) {
+    return(data.frame(
+      year = integer(0),
+      treatment_operations = integer(0),
+      treatment_acres = numeric(0),
+      inspection_operations = integer(0),
+      inspection_acres = numeric(0)
+    ))
+  }
+  
+  # Aggregate by year
+  yearly_summary <- volume_data %>%
+    group_by(year) %>%
+    summarise(
+      treatment_operations = sum(total_operations[operation_type == 'treatment'], na.rm = TRUE),
+      treatment_acres = sum(total_acres[operation_type == 'treatment'], na.rm = TRUE),
+      inspection_operations = sum(total_operations[operation_type == 'inspection'], na.rm = TRUE),
+      inspection_acres = sum(total_acres[operation_type == 'inspection'], na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    arrange(year)
+  
+  return(yearly_summary)
+}
+
+# Create treatment volume chart
+create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
+  if (nrow(volume_data) == 0) {
+    return(plot_ly() %>%
+      add_annotations(
+        text = "No treatment volume data available",
+        x = 0.5, y = 0.5,
+        xref = "paper", yref = "paper",
+        showarrow = FALSE
+      ))
+  }
+  
+  if (time_period == "weekly") {
+    chart_data <- create_weekly_treatment_summary(volume_data)
+    x_var <- ~week_start_date
+    x_title <- "Week"
+  } else {
+    chart_data <- create_yearly_treatment_summary(volume_data)
+    x_var <- ~year
+    x_title <- "Year"
+  }
+  
+  if (nrow(chart_data) == 0) {
+    return(plot_ly() %>%
+      add_annotations(
+        text = "No data available for selected time period",
+        x = 0.5, y = 0.5,
+        xref = "paper", yref = "paper",
+        showarrow = FALSE
+      ))
+  }
+  
+  # Create dual-axis chart: bars for operations, line for acres
+  p <- plot_ly(chart_data) %>%
+    
+    # Add bar chart for treatment operations
+    add_bars(
+      x = x_var,
+      y = ~treatment_operations,
+      name = "Treatments",
+      marker = list(color = "#2ecc71"),
+      hovertemplate = paste0(
+        "<b>%{x}</b><br>",
+        "Treatments: %{y}<br>",
+        "Treatment Acres: ", round(chart_data$treatment_acres, 1), "<br>",
+        "<extra></extra>"
+      )
+    ) %>%
+    
+    # Add bar chart for inspection operations
+    add_bars(
+      x = x_var,
+      y = ~inspection_operations,
+      name = "Inspections",
+      marker = list(color = "#3498db"),
+      hovertemplate = paste0(
+        "<b>%{x}</b><br>",
+        "Inspections: %{y}<br>",
+        "Inspection Acres: ", round(chart_data$inspection_acres, 1), "<br>",
+        "<extra></extra>"
+      )
+    ) %>%
+    
+    # Add line chart for treatment acres
+    add_lines(
+      x = x_var,
+      y = ~treatment_acres,
+      yaxis = "y2",
+      name = "Treatment Acres",
+      line = list(color = "#e74c3c", width = 3),
+      marker = list(color = "#e74c3c", size = 6),
+      hovertemplate = paste0(
+        "<b>%{x}</b><br>",
+        "Treatment Acres: %{y}<br>",
+        "<extra></extra>"
+      )
+    ) %>%
+    
+    # Configure layout with dual y-axes
+    layout(
+      title = list(
+        text = paste0("Treatments and Inspections (", stringr::str_to_title(time_period), ")"),
+        font = list(size = 16, color = "#2c3e50")
+      ),
+      xaxis = list(
+        title = list(text = x_title, font = list(size = 12)),
+        tickangle = if(time_period == "weekly" && nrow(chart_data) > 8) -45 else 0
+      ),
+      yaxis = list(
+        title = list(text = "Number of Operations", font = list(size = 12)),
+        side = "left",
+        color = "#3498db"
+      ),
+      yaxis2 = list(
+        title = list(text = "Acres Treated", font = list(size = 12)),
+        side = "right",
+        overlaying = "y",
+        color = "#e74c3c"
+      ),
+      hovermode = "x unified",
+      legend = list(
+        x = 0.02, y = 0.98,
+        bgcolor = "rgba(255,255,255,0.8)",
+        bordercolor = "rgba(0,0,0,0.2)",
+        borderwidth = 1
+      ),
+      margin = list(t = 60, r = 80, b = 60, l = 60),
+      barmode = 'group'
+    )
+  
+  return(p)
 }

@@ -1,5 +1,5 @@
 # Simple Air Sites Status App
-# Only tracks Active Treatment vs Unknown status based on material effect days
+# Tracks Active Treatment vs Unknown status based on material effect days and Lab results
 # No rainfall data involved
 
 # Load required libraries
@@ -10,6 +10,7 @@ suppressPackageStartupMessages({
   library(leaflet)
   library(dplyr)
   library(plotly)
+  library(tidyr)
 })
 
 # Source shared database helpers
@@ -364,7 +365,7 @@ ui <- dashboardPage(
                 div(style = "padding-top: 10px; text-align: center;",
                   tags$small(
                     tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
-                    " This table shows inspection history for each air site over the selected year range. Red Bug Ratio = (Red Bug Inspections ÷ Total Inspections) × 100%"
+                    " This analysis shows inspection history and treatment volumes for each air site over the selected year range."
                   )
                 )
               )
@@ -380,8 +381,42 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          box(title = "Site Inspection History", status = "success", solidHeader = TRUE, width = 12,
+          valueBoxOutput("hist_total_treatments", width = 3),
+          valueBoxOutput("hist_total_treatment_acres", width = 3),
+          valueBoxOutput("hist_total_inspection_acres", width = 3),
+          valueBoxOutput("hist_avg_acres_per_treatment", width = 3)
+        ),
+        
+        fluidRow(
+          box(title = "Treatment Volume Trends", status = "primary", solidHeader = TRUE, width = 8,
+            fluidRow(
+              column(12,
+                radioButtons("volume_time_period", "Time Period:",
+                  choices = c("Weekly" = "weekly", "Yearly" = "yearly"),
+                  selected = "yearly",
+                  inline = TRUE
+                )
+              )
+            ),
+            plotlyOutput("treatment_volume_chart", height = "400px")
+          ),
+          box(title = "Red Bug Detection Over Time", status = "info", solidHeader = TRUE, width = 4,
+            plotlyOutput("red_bug_trend_chart", height = "400px")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Site Inspection History", status = "success", solidHeader = TRUE, width = 6,
+            div(style = "text-align: center; padding-bottom: 10px;",
+              tags$small("Red Bug Ratio = (Red Bug Inspections ÷ Total Inspections) × 100%")
+            ),
             DT::dataTableOutput("historical_inspection_table")
+          ),
+          box(title = "Treatment Volume Summary", status = "warning", solidHeader = TRUE, width = 6,
+            div(style = "text-align: center; padding-bottom: 10px;",
+              tags$small("Weekly and yearly treatment volumes with acres treated")
+            ),
+            DT::dataTableOutput("treatment_volume_table")
           )
         )
       )
@@ -958,6 +993,17 @@ server <- function(input, output, session) {
     )
   })
   
+  # Reactive data for treatment volume analysis
+  treatment_volume_data <- eventReactive(input$refresh_historical_data, {
+    cat("Getting treatment volume data...\n")
+    get_historical_treatment_volumes(
+      start_year = input$hist_start_year,
+      end_year = input$hist_end_year,
+      facility_filter = input$hist_facility_filter,
+      zone_filter = input$hist_zone_filter
+    )
+  })
+  
   # Historical value boxes
   output$hist_total_sites <- renderValueBox({
     data <- historical_data()
@@ -999,7 +1045,7 @@ server <- function(input, output, session) {
   
   output$hist_overall_red_bug_ratio <- renderValueBox({
     data <- historical_data()
-    if (input$refresh_historical_data == 0) return(valueBox("0%", "Overall Red Bug Ratio", icon = icon("percent"), color = "yellow"))
+    if (input$refresh_historical_data == 0) return(valueBox("0%", "Percent of Inspections with Red Bugs", icon = icon("percent"), color = "yellow"))
     
     total_inspections <- sum(data$total_inspections, na.rm = TRUE)
     total_red_bug <- sum(data$red_bug_inspections, na.rm = TRUE)
@@ -1007,9 +1053,66 @@ server <- function(input, output, session) {
     
     valueBox(
       value = paste0(overall_ratio, "%"),
-      subtitle = "Overall Red Bug Ratio",
+      subtitle = "Percent of Inspections with Red Bugs",
       icon = icon("percent"),
       color = "yellow"
+    )
+  })
+  
+  # Treatment volume value boxes
+  output$hist_total_treatments <- renderValueBox({
+    data <- treatment_volume_data()
+    if (input$refresh_historical_data == 0) return(valueBox(0, "Total Treatments", icon = icon("spray-can"), color = "green"))
+    
+    treatments <- sum(data$total_operations[data$operation_type == 'treatment'], na.rm = TRUE)
+    valueBox(
+      value = format(treatments, big.mark = ","),
+      subtitle = "Total Treatments",
+      icon = icon("spray-can"),
+      color = "green"
+    )
+  })
+  
+  output$hist_total_treatment_acres <- renderValueBox({
+    data <- treatment_volume_data()
+    if (input$refresh_historical_data == 0) return(valueBox("0", "Treatment Acres", icon = icon("area-chart"), color = "orange"))
+    
+    acres <- sum(data$total_acres[data$operation_type == 'treatment'], na.rm = TRUE)
+    valueBox(
+      value = format(round(acres, 1), big.mark = ","),
+      subtitle = "Treatment Acres",
+      icon = icon("area-chart"),
+      color = "orange"
+    )
+  })
+  
+  output$hist_total_inspection_acres <- renderValueBox({
+    data <- treatment_volume_data()
+    if (input$refresh_historical_data == 0) return(valueBox("0", "Inspection Acres", icon = icon("search"), color = "blue"))
+    
+    acres <- sum(data$total_acres[data$operation_type == 'inspection'], na.rm = TRUE)
+    valueBox(
+      value = format(round(acres, 1), big.mark = ","),
+      subtitle = "Inspection Acres",
+      icon = icon("search"),
+      color = "blue"
+    )
+  })
+  
+  output$hist_avg_acres_per_treatment <- renderValueBox({
+    data <- treatment_volume_data()
+    if (input$refresh_historical_data == 0) return(valueBox("0", "Avg Acres/Treatment", icon = icon("calculator"), color = "purple"))
+    
+    treatment_data <- data[data$operation_type == 'treatment', ]
+    total_treatments <- sum(treatment_data$total_operations, na.rm = TRUE)
+    total_acres <- sum(treatment_data$total_acres, na.rm = TRUE)
+    avg_acres <- if (total_treatments > 0) round(total_acres / total_treatments, 2) else 0
+    
+    valueBox(
+      value = avg_acres,
+      subtitle = "Avg Acres/Treatment",
+      icon = icon("calculator"),
+      color = "purple"
     )
   })
   
@@ -1054,6 +1157,133 @@ server <- function(input, output, session) {
         backgroundColor = DT::styleInterval(
           cuts = c(5, 20, 50),
           values = c("#f8f9fa", "#e2e3e5", "#d1ecf1", "#b8daff")
+        )
+      )
+  })
+  
+  # Treatment volume chart
+  output$treatment_volume_chart <- renderPlotly({
+    data <- treatment_volume_data()
+    if (input$refresh_historical_data == 0 || nrow(data) == 0) {
+      return(plot_ly() %>%
+        add_annotations(
+          text = "No data available - Click 'Refresh Historical Data'",
+          x = 0.5, y = 0.5,
+          xref = "paper", yref = "paper",
+          showarrow = FALSE
+        ))
+    }
+    
+    create_treatment_volume_chart(data, input$volume_time_period)
+  })
+  
+  # Red bug trend chart
+  output$red_bug_trend_chart <- renderPlotly({
+    data <- historical_data()
+    if (input$refresh_historical_data == 0 || nrow(data) == 0) {
+      return(plot_ly() %>%
+        add_annotations(
+          text = "No historical data",
+          x = 0.5, y = 0.5,
+          xref = "paper", yref = "paper",
+          showarrow = FALSE
+        ))
+    }
+    
+    # Create simple red bug ratio trend by facility
+    trend_data <- data %>%
+      mutate(
+        # Extract primary year from years_active string
+        primary_year = sapply(years_active, function(x) {
+          if (grepl("-", x)) {
+            # Range format, take start year
+            as.numeric(sub("-.*", "", x))
+          } else if (grepl(",", x)) {
+            # List format, take first year
+            as.numeric(sub(",.*", "", x))
+          } else {
+            # Single year or other format
+            as.numeric(gsub("[^0-9]", "", x))
+          }
+        })
+      ) %>%
+      filter(!is.na(primary_year) & primary_year >= input$hist_start_year) %>%
+      group_by(facility, primary_year) %>%
+      summarise(
+        sites = n(),
+        avg_red_bug_ratio = round(mean(red_bug_ratio, na.rm = TRUE), 1),
+        .groups = 'drop'
+      ) %>%
+      filter(sites >= 3)  # Only show facilities with at least 3 sites
+    
+    if (nrow(trend_data) == 0) {
+      return(plot_ly() %>%
+        add_annotations(
+          text = "Insufficient data for trends",
+          x = 0.5, y = 0.5,
+          xref = "paper", yref = "paper",
+          showarrow = FALSE
+        ))
+    }
+    
+    plot_ly(trend_data, x = ~primary_year, y = ~avg_red_bug_ratio, color = ~facility,
+            type = 'scatter', mode = 'lines+markers') %>%
+      layout(
+        title = "Red Bug Detection Trends",
+        xaxis = list(title = "Year"),
+        yaxis = list(title = "Avg Red Bug Ratio (%)"),
+        hovermode = 'x unified'
+      )
+  })
+  
+  # Treatment volume table
+  output$treatment_volume_table <- DT::renderDataTable({
+    data <- treatment_volume_data()
+    if (input$refresh_historical_data == 0 || nrow(data) == 0) {
+      return(DT::datatable(data.frame(), options = list(pageLength = 15)))
+    }
+    
+    # Create summary by year and facility
+    summary_data <- data %>%
+      group_by(facility, year, operation_type) %>%
+      summarise(
+        operations = sum(total_operations, na.rm = TRUE),
+        acres = round(sum(total_acres, na.rm = TRUE), 1),
+        .groups = 'drop'
+      ) %>%
+      pivot_wider(
+        names_from = operation_type,
+        values_from = c(operations, acres),
+        values_fill = 0
+      ) %>%
+      select(
+        Facility = facility,
+        Year = year,
+        Treatments = operations_treatment,
+        `Treatment Acres` = acres_treatment,
+        Inspections = operations_inspection,
+        `Inspection Acres` = acres_inspection
+      ) %>%
+      arrange(desc(Year), Facility)
+    
+    DT::datatable(
+      summary_data,
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        columnDefs = list(
+          list(className = 'dt-center', targets = c(0, 1, 2, 4)),
+          list(className = 'dt-right', targets = c(3, 5))
+        )
+      ),
+      rownames = FALSE,
+      filter = 'top'
+    ) %>%
+      DT::formatStyle(
+        "Treatment Acres",
+        backgroundColor = DT::styleInterval(
+          cuts = c(50, 200, 500),
+          values = c("#f8f9fa", "#d1ecf1", "#b8daff", "#7fb3d3")
         )
       )
   })

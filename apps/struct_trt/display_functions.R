@@ -186,7 +186,7 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
 }
 
 # Function to create historical trends chart
-create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE) {
+create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE, display_metric = "proportion", chart_type = "line") {
   if (nrow(treatments_data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No historical data available"), size = 6) +
@@ -268,7 +268,7 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   }
 
   # Calculate unique sites with active treatments for each date and group
-  treatment_trends <- map_dfr(groups_to_process, function(current_group) {
+  treatment_trends_list <- lapply(groups_to_process, function(current_group) {
     # Filter data for current group
     group_treatments <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
       # Regular mmcd_all case
@@ -293,7 +293,7 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     }
     
     # Calculate unique active sites for each date
-    unique_active_sites_per_date <- map_dfr(date_range, function(current_date) {
+    unique_active_sites_list <- lapply(date_range, function(current_date) {
       active_sites <- group_treatments %>%
         filter(
           inspdate <= current_date & 
@@ -310,7 +310,10 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
       )
     })
     
-    # Calculate proportions
+    # Combine list into data frame
+    unique_active_sites_per_date <- do.call(rbind, unique_active_sites_list)
+    
+    # Calculate proportions and raw numbers
     unique_active_sites_per_date %>%
       mutate(
         total_structures_dynamic = group_total_structures,
@@ -318,9 +321,13 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
           total_structures_dynamic > 0, 
           active_unique_sites / total_structures_dynamic, 
           0
-        )
+        ),
+        raw_active_sites = active_unique_sites  # Keep raw numbers for new option
       )
   })
+  
+  # Combine all groups into one data frame
+  treatment_trends <- do.call(rbind, treatment_trends_list)
 
   # Ensure we have data before proceeding
   if (nrow(treatment_trends) == 0) {
@@ -330,12 +337,13 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
            theme_void())
   }
 
-  # Calculate seasonal average curve per group (average proportion for each calendar day across all years)
+  # Calculate seasonal average curve per group (average for each calendar day across all years)
   seasonal_curve <- treatment_trends %>%
     mutate(day_of_year = format(date, "%m-%d")) %>%
     group_by(day_of_year, group_name) %>%
     summarize(
-      seasonal_avg = mean(proportion_active_treatment, na.rm = TRUE),
+      seasonal_avg_proportion = mean(proportion_active_treatment, na.rm = TRUE),
+      seasonal_avg_raw = mean(raw_active_sites, na.rm = TRUE),
       .groups = "drop"
     )
   
@@ -509,36 +517,152 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     custom_colors <- zone_result$colors
   }
 
-  # Create the plot
-  p <- ggplot(treatment_trends, aes(x = date, y = proportion_active_treatment)) +
-    geom_line(aes(color = display_name), linewidth = 1.2) +
-    # Add seasonal average line for each group (not just MMCD)
-    {if ("seasonal_avg" %in% names(treatment_trends)) {
-      geom_line(aes(y = seasonal_avg, color = display_name), linetype = "dashed", linewidth = 1.0, alpha = 0.7)
-    }} +
+  # Create the plot with appropriate metric and chart type
+  # Determine which metric to use
+  y_metric <- if (display_metric == "proportion") "proportion_active_treatment" else "raw_active_sites"
+  seasonal_metric <- if (display_metric == "proportion") "seasonal_avg_proportion" else "seasonal_avg_raw"
+  
+  # Set up plot aesthetics
+  p <- ggplot(treatment_trends, aes(x = date, y = !!sym(y_metric)))
+  
+  # Add geometry based on chart type
+  if (chart_type == "line") {
+    p <- p + 
+      geom_line(aes(color = display_name), linewidth = 1.2) +
+      # Add seasonal average line
+      {if (seasonal_metric %in% names(treatment_trends)) {
+        geom_line(aes(y = !!sym(seasonal_metric), color = display_name), linetype = "dashed", linewidth = 1.0, alpha = 0.7)
+      }}
+  } else if (chart_type == "area") {
+    # For area charts with proportion mode, recalculate percentages based on total
+    if (display_metric == "proportion") {
+      # Recalculate proportions for stacked area charts
+      treatment_trends <- treatment_trends %>%
+        group_by(date) %>%
+        mutate(
+          total_for_date = sum(!!sym(y_metric), na.rm = TRUE),
+          !!sym(y_metric) := ifelse(total_for_date > 0, !!sym(y_metric) / total_for_date, 0)
+        ) %>%
+        ungroup()
+      
+      p <- ggplot(treatment_trends, aes(x = date, y = !!sym(y_metric))) + 
+        geom_area(aes(fill = display_name), alpha = 0.6, position = "stack") +
+        geom_line(aes(color = display_name), linewidth = 1, position = "stack")
+    } else {
+      p <- p + 
+        geom_area(aes(fill = display_name), alpha = 0.6, position = "identity") +
+        geom_line(aes(color = display_name), linewidth = 1)
+    }
+  } else if (chart_type == "step") {
+    p <- p + 
+      geom_step(aes(color = display_name), linewidth = 1.2, direction = "hv") +
+      # Add seasonal average step line
+      {if (seasonal_metric %in% names(treatment_trends)) {
+        geom_step(aes(y = !!sym(seasonal_metric), color = display_name), linetype = "dashed", linewidth = 1.0, alpha = 0.7, direction = "hv")
+      }}
+  } else if (chart_type == "stacked_bar") {
+    # For stacked bars, we need to aggregate by month to make it readable
+    monthly_data <- treatment_trends %>%
+      mutate(month_date = floor_date(date, "month")) %>%
+      group_by(month_date, display_name) %>%
+      summarise(
+        monthly_avg = mean(!!sym(y_metric), na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # For proportion mode in stacked charts, recalculate percentages based on total
+    if (display_metric == "proportion") {
+      monthly_data <- monthly_data %>%
+        group_by(month_date) %>%
+        mutate(
+          total_for_month = sum(monthly_avg, na.rm = TRUE),
+          monthly_avg = ifelse(total_for_month > 0, monthly_avg / total_for_month, 0)
+        ) %>%
+        ungroup()
+    }
+    
+    p <- ggplot(monthly_data, aes(x = month_date, y = monthly_avg, fill = display_name)) +
+      geom_col(position = "stack", alpha = 0.8)
+  } else if (chart_type == "grouped_bar") {
+    # For grouped bars, we need to aggregate by month to make it readable
+    monthly_data <- treatment_trends %>%
+      mutate(month_date = floor_date(date, "month")) %>%
+      group_by(month_date, display_name) %>%
+      summarise(
+        monthly_avg = mean(!!sym(y_metric), na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    p <- ggplot(monthly_data, aes(x = month_date, y = monthly_avg, fill = display_name)) +
+      geom_col(position = "dodge", alpha = 0.8)
+  }
+  
+  # Set y-axis labels based on metric type
+  y_labels <- if (display_metric == "proportion") {
+    scales::percent_format(accuracy = 0.01)
+  } else {
+    scales::comma_format()
+  }
+  
+  y_breaks <- if (display_metric == "proportion") {
+    seq(0, 1, by = 0.1)
+  } else {
+    scales::pretty_breaks(n = 10)
+  }
+  
+  # Set y-axis title
+  y_title <- if (display_metric == "proportion") {
+    "Proportion of Struct with Active Treatment"
+  } else {
+    "Number of Struct with Active Treatment"
+  }
+  
+  # Set chart title
+  metric_title <- if (display_metric == "proportion") {
+    "Proportion of Structures with Active Treatment"
+  } else {
+    "Number of Structures with Active Treatment"
+  }
+  
+  chart_subtitle <- if (chart_type %in% c("line", "step")) {
+    "Solid: actual | Dashed: seasonal average"
+  } else if (chart_type %in% c("stacked_bar", "grouped_bar")) {
+    "Monthly averages for better readability"
+  } else {
+    "Daily data points"
+  }
+  
+  # Apply labels and theme
+  p <- p +
     labs(
       title = sprintf(
-        "Proportion of Structures with Active Treatment %s (%d to %d)%s",
+        "%s %s (%d to %d)%s",
+        metric_title,
         group_title,
         as.numeric(start_year),
         as.numeric(end_year),
         filter_text
       ),
-      subtitle = "Solid: actual | Dashed: seasonal average",
+      subtitle = chart_subtitle,
       x = "Date",
-      y = "Proportion of Struct with Active Treatment",
+      y = y_title,
       color = case_when(
+        group_col == "facility" ~ "Facility",
+        group_col == "foreman" ~ "FOS",
+        TRUE ~ "Group"
+      ),
+      fill = case_when(
         group_col == "facility" ~ "Facility",
         group_col == "foreman" ~ "FOS",
         TRUE ~ "Group"
       )
     ) +
     scale_y_continuous(
-      labels = scales::percent_format(accuracy = 0.01),
-      breaks = seq(0, 1, by = 0.1)
+      labels = y_labels,
+      breaks = y_breaks
     ) +
     scale_x_date(
-      date_breaks = "6 months",
+      date_breaks = if (chart_type %in% c("stacked_bar", "grouped_bar")) "3 months" else "6 months",
       date_labels = "%b %Y",
       expand = expansion(mult = c(0.02, 0.02))
     ) +

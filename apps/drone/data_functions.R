@@ -194,7 +194,6 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
           t.matcode, 
           t.amts as amount_used,
           t.acres as recorded_acres,
-          t.foreman as treatment_foreman,
           EXTRACT(YEAR FROM t.inspdate) as year
       FROM public.dblarv_insptrt_current t
       WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
@@ -213,7 +212,6 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
           t.matcode, 
           t.amts as amount_used,
           t.acres as recorded_acres,
-          t.foreman as treatment_foreman,
           EXTRACT(YEAR FROM t.inspdate) as year
       FROM public.dblarv_insptrt_archive t
       WHERE t.action = 'D'

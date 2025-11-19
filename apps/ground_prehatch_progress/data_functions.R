@@ -1,6 +1,9 @@
 # Ground Prehatch Progress - Data Functions
 # Functions for fetching and processing ground prehatch data
 
+# Source shared helpers
+source("../../shared/db_helpers.R")
+
 # Unified function to load raw ground prehatch data 
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
                          start_year = NULL, end_year = NULL, include_geometry = FALSE) {
@@ -36,7 +39,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       # Historical mode: use the working query pattern but with archive
       treatments_query <- sprintf("
       SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, 'current' as data_source
+             c.acres as treated_acres, p.effect_days, 'current' as data_source
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -53,7 +56,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       UNION ALL
       
       SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, 'archive' as data_source
+             c.acres as treated_acres, p.effect_days, 'archive' as data_source
       FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -74,7 +77,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       analysis_year <- format(analysis_date, "%Y")
       treatments_query <- sprintf("
       SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, 'current' as data_source
+             c.acres as treated_acres, p.effect_days, 'current' as data_source
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,

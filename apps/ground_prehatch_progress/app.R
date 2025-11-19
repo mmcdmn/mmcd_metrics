@@ -471,9 +471,13 @@ server <- function(input, output, session) {
   # Render historical details table
   output$historical_details_table <- DT::renderDataTable({
     req(input$hist_refresh)  # Only render after refresh button clicked
-    
+    inputs <- historical_refresh_inputs()
     data <- historical_data()
-    create_historical_details_table(data)
+    
+    # Filter data based on inputs (same as the chart uses)
+    filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    
+    create_historical_details_table(filtered_data)
   })
   
   # Download handler for historical data
@@ -483,9 +487,13 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(input$hist_refresh)  # Only allow download after refresh
-      
+      inputs <- historical_refresh_inputs()
       data <- historical_data()
-      write.csv(data, file, row.names = FALSE)
+      
+      # Filter data based on inputs (same as the chart and table use)
+      filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+      
+      write.csv(filtered_data, file, row.names = FALSE)
     }
   )
   

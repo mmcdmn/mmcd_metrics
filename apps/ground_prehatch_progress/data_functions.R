@@ -546,8 +546,7 @@ get_foreman_choices <- function(data, foremen_lookup) {
 
 # Load spatial data for map (similar to drone app)
 load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "2"), 
-                             facility_filter = "all", foreman_filter = "all", 
-                             expiring_days = 14) {
+                             facility_filter = "all", foreman_filter = "all") {
   
   # Load raw data with geometry
   raw_data <- load_raw_data(
@@ -581,20 +580,21 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
   # Get current date for status calculations
   current_date <- as.Date(analysis_date)
   
-  # Get latest treatment for each site
+  # Get latest treatment for each site with proper effect_days from database
   if (!is.null(raw_data$ground_treatments) && nrow(raw_data$ground_treatments) > 0) {
     latest_treatments <- raw_data$ground_treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate)) %>%
       slice(1) %>%
       ungroup() %>%
-      select(sitecode, inspdate, matcode) %>%
+      select(sitecode, inspdate, matcode, effect_days) %>%
       mutate(
         days_since_treatment = as.numeric(current_date - inspdate),
+        # Use database effect_days for each treatment, not hardcoded expiring_days
         treatment_status = case_when(
           is.na(inspdate) ~ "No Treatment",
-          days_since_treatment <= expiring_days ~ "Active",
-          days_since_treatment <= expiring_days + 14 ~ "Expiring",
+          days_since_treatment <= effect_days ~ "Active",
+          days_since_treatment <= effect_days + 14 ~ "Expiring", 
           TRUE ~ "Expired"
         )
       )

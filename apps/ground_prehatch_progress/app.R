@@ -510,8 +510,7 @@ server <- function(input, output, session) {
         analysis_date = inputs$custom_today,
         zone_filter = inputs$zone_filter,
         facility_filter = inputs$facility_filter,
-        foreman_filter = inputs$foreman_filter,
-        expiring_days = inputs$expiring_days
+        foreman_filter = inputs$foreman_filter
       )
     }, error = function(e) {
       # Return NULL on error
@@ -547,8 +546,8 @@ server <- function(input, output, session) {
                         "combined" = " in P1 and P2 zones")
     
     paste0("Interactive map showing ground prehatch sites", zone_text, 
-           ". Markers are colored by treatment status: Active (green), Expiring within ", 
-           inputs$expiring_days, " days (orange), Expired (red), No Treatment (gray)", 
+           ". Markers are colored by treatment status based on material-specific effect days from database: ", 
+           "Active (green), Expiring (orange), Expired (red), No Treatment (gray)", 
            filter_text, ". Use the Site Filter to show specific treatment status groups.")
   })
   

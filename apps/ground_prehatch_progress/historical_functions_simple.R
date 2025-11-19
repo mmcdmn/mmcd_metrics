@@ -38,8 +38,8 @@ get_ground_historical_data <- function(time_period = "weekly", display_metric = 
   # Add zone/facility/fosarea info to treatments by joining with sites
   ground_treatments <- ground_treatments %>%
     left_join(ground_sites %>% select(sitecode, facility, zone, fosarea), by = "sitecode", relationship = "many-to-many") %>%
-    filter(!is.na(facility)) %>%  # Remove treatments without matching site data
-    mutate(effect_days = ifelse(is.na(effect_days), 30, effect_days))  # Default 30 days for prehatch treatments if missing
+    filter(!is.na(facility))  # Remove treatments without matching site data
+    # Note: effect_days comes from database via mattype_list_targetdose join - do NOT override
   
   # Apply zone filter
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
@@ -64,7 +64,7 @@ get_ground_historical_data <- function(time_period = "weekly", display_metric = 
       # Find sites/acres with active treatment on that Friday
       active_treatments <- ground_treatments %>%
         mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days)
+          treatment_end = as.Date(inspdate) + effect_days  # Use database effect_days directly
         ) %>%
         filter(
           as.Date(inspdate) <= week_friday,

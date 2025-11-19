@@ -468,7 +468,7 @@ analyze_lab_processing_metrics <- function(site_data) {
   if (nrow(site_data) == 0) {
     return(list(
       total_inspected_with_samples = 0,
-      lab_completion_rate = "100%",
+      sites_in_lab = 0,
       red_bugs_found = 0,
       samples_above_threshold = 0,
       samples_below_threshold = 0,
@@ -488,7 +488,7 @@ analyze_lab_processing_metrics <- function(site_data) {
   if (total_all_samples == 0) {
     return(list(
       total_inspected_with_samples = 0,
-      lab_completion_rate = "100%",
+      sites_in_lab = 0,
       red_bugs_found = 0,
       samples_above_threshold = 0,
       samples_below_threshold = 0,
@@ -503,18 +503,14 @@ analyze_lab_processing_metrics <- function(site_data) {
   ]
   total_completed_samples <- nrow(completed_samples)
   
-  # Lab completion rate: completed / all samples
-  lab_completion_rate <- if (total_all_samples > 0) {
-    round((total_completed_samples / total_all_samples) * 100, 1)
-  } else {
-    100
-  }
-  
+  # Sites in lab: samples without completed timestamps (missing == TRUE)
+  sites_in_lab <- total_all_samples - total_completed_samples
+
   # For other metrics, only use completed samples (those with timestamps)
   if (total_completed_samples == 0) {
     return(list(
       total_inspected_with_samples = total_all_samples,
-      lab_completion_rate = paste0(lab_completion_rate, "%"),
+      sites_in_lab = sites_in_lab,
       red_bugs_found = 0,
       samples_above_threshold = 0,
       samples_below_threshold = 0,
@@ -543,7 +539,7 @@ analyze_lab_processing_metrics <- function(site_data) {
   
   return(list(
     total_inspected_with_samples = total_completed_samples,  # Only completed samples with timestamps
-    lab_completion_rate = paste0(lab_completion_rate, "%"),
+    sites_in_lab = sites_in_lab,
     red_bugs_found = red_bugs_found,
     samples_above_threshold = samples_above_threshold,
     samples_below_threshold = samples_below_threshold,

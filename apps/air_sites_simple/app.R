@@ -281,7 +281,6 @@ ui <- dashboardPage(
               tags$ul(
                 tags$li(tags$strong("Total Inspected Samples:"), " Number of inspected sites with completed lab results (timestamp data)"),
                 tags$li(tags$strong("Red Bug Detection Rate:"), " (Red Bugs Found ÷ Total Samples) × 100% - Percentage needing treatment"),
-                tags$li(tags$strong("Lab Completion Rate:"), " (Completed Samples ÷ All Samples) × 100% - Shows <100% when sites are in lab")
               ),
               tags$p(tags$strong("Note:"), " Total samples = only completed lab samples with timestamps from current analysis date. Pending samples without timestamps are excluded.")
             )
@@ -435,7 +434,7 @@ server <- function(input, output, session) {
   if (nrow(facility_lookup) > 0) {
     facility_choices <- setNames(facility_lookup$short_name, facility_lookup$full_name)
   } else {
-    facility_choices <- c("MMCD" = "MMCD", "SMCD" = "SMCD", "RMCD" = "RMCD")
+    facility_choices <- c("Failed to load facilities", "error")
   }
   
   # Load priority choices (static, load once)
@@ -611,7 +610,7 @@ server <- function(input, output, session) {
       value = nrow(data),
       subtitle = "Total Air Sites",
       icon = icon("helicopter"),
-      color = "blue"
+      color = "teal"
     )
   })
   
@@ -632,8 +631,8 @@ server <- function(input, output, session) {
     valueBox(
       value = count,
       subtitle = "Inspected (Under Threshold)",
-      icon = icon("check-circle"),
-      color = "green"
+      icon = icon("magnifying-glass"),
+      color = "blue"
     )
   })
   
@@ -643,8 +642,8 @@ server <- function(input, output, session) {
     valueBox(
       value = count,
       subtitle = "In Lab",
-      icon = icon("flask"),
-      color = "blue"
+      icon = icon("microscope"),
+      color = "purple"
     )
   })
 
@@ -830,7 +829,7 @@ server <- function(input, output, session) {
   
   output$red_bug_detection_rate <- renderValueBox({
     data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox("0%", "Red Bug Detection", icon = icon("bug"), color = "red"))
+    if (input$refresh_process_data == 0) return(valueBox("0%", "Inspections Containing Red Bugs", icon = icon("bug"), color = "red"))
     
     lab_metrics <- analyze_lab_processing_metrics(data)
     valueBox(
@@ -841,18 +840,6 @@ server <- function(input, output, session) {
     )
   })
   
-  output$lab_completion_rate <- renderValueBox({
-    data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox("100%", "Lab Completion", icon = icon("flask"), color = "teal"))
-    
-    lab_metrics <- analyze_lab_processing_metrics(data)
-    valueBox(
-      value = lab_metrics$lab_completion_rate,
-      subtitle = "Lab Completion",
-      icon = icon("flask"),
-      color = "teal"
-    )
-  })
   
   # Treatment flow chart
   output$treatment_flow_chart <- renderPlotly({
@@ -980,10 +967,10 @@ server <- function(input, output, session) {
     updateNumericInput(session, "larvae_threshold", value = input$hist_larvae_threshold)
   })
   
-  # Reactive data for historical analysis
-  historical_data <- eventReactive(input$refresh_historical_data, {
-    cat("Historical refresh button clicked - Event triggered\n")
-    get_historical_inspection_summary(
+  # Reactive data for historical analysis - OPTIMIZED: Single comprehensive query
+  comprehensive_historical_data <- eventReactive(input$refresh_historical_data, {
+    cat("Historical refresh button clicked - Getting comprehensive data\n")
+    get_comprehensive_historical_data(
       start_year = input$hist_start_year,
       end_year = input$hist_end_year,
       facility_filter = input$hist_facility_filter,
@@ -993,15 +980,16 @@ server <- function(input, output, session) {
     )
   })
   
-  # Reactive data for treatment volume analysis
-  treatment_volume_data <- eventReactive(input$refresh_historical_data, {
-    cat("Getting treatment volume data...\n")
-    get_historical_treatment_volumes(
-      start_year = input$hist_start_year,
-      end_year = input$hist_end_year,
-      facility_filter = input$hist_facility_filter,
-      zone_filter = input$hist_zone_filter
-    )
+  # Extract inspection summary from comprehensive data
+  historical_data <- reactive({
+    comprehensive_data <- comprehensive_historical_data()
+    return(comprehensive_data$inspection_summary)
+  })
+  
+  # Extract treatment volume data from comprehensive data
+  treatment_volume_data <- reactive({
+    comprehensive_data <- comprehensive_historical_data()
+    return(comprehensive_data$treatment_volumes)
   })
   
   # Historical value boxes
@@ -1245,7 +1233,7 @@ server <- function(input, output, session) {
     
     # Create summary by year and facility
     summary_data <- data %>%
-      group_by(facility, year, operation_type) %>%
+      group_by(facility, priority, year, operation_type) %>%
       summarise(
         operations = sum(total_operations, na.rm = TRUE),
         acres = round(sum(total_acres, na.rm = TRUE), 1),
@@ -1258,13 +1246,14 @@ server <- function(input, output, session) {
       ) %>%
       select(
         Facility = facility,
+        Priority = priority,
         Year = year,
         Treatments = operations_treatment,
         `Treatment Acres` = acres_treatment,
         Inspections = operations_inspection,
         `Inspection Acres` = acres_inspection
       ) %>%
-      arrange(desc(Year), Facility)
+      arrange(desc(Year), Facility, Priority)
     
     DT::datatable(
       summary_data,
@@ -1272,8 +1261,8 @@ server <- function(input, output, session) {
         pageLength = 15,
         scrollX = TRUE,
         columnDefs = list(
-          list(className = 'dt-center', targets = c(0, 1, 2, 4)),
-          list(className = 'dt-right', targets = c(3, 5))
+          list(className = 'dt-center', targets = c(0, 1, 2, 3, 5)),
+          list(className = 'dt-right', targets = c(4, 6))
         )
       ),
       rownames = FALSE,

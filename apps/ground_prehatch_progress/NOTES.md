@@ -527,214 +527,219 @@ prehatch_treatments <- prehatch_treatments %>%
 
 This section documents all SQL queries used in the ground prehatch progress app for reference and troubleshooting.
 
-### 1. Current Prehatch Sites Query
-**Function**: `get_ground_prehatch_data()` in `data_functions.R`  
-**Purpose**: Load active prehatch sites with zone and FOS information
+### 1. Ground Prehatch Sites Query  
+**Function**: `load_raw_data()` in `data_functions.R`  
+**Purpose**: Load ground prehatch sites with zone and FOS information
 
 ```sql
-SELECT b.sitecode, g.facility, b.acres, b.prehatch, 
-       CASE 
-         WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
-         ELSE NULL
-       END as foreman, 
-       g.zone,
-       left(b.sitecode,7) as sectcode
-FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
-LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
-  AND e.emp_type = 'FieldSuper' 
-  AND e.active = true
-WHERE b.prehatch = true
-  AND b.enddate IS NULL
+SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+       b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+       sc.fosarea as foreman
+FROM loc_breeding_sites b
+LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+WHERE (b.enddate IS NULL OR b.enddate>'2024-05-01')
+  AND b.air_gnd='G'
+  AND b.prehatch IN ('PREHATCH','BRIQUET')
+ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
 ```
 
 **Key Points**:
-- **Prehatch Filter**: `b.prehatch = true` ensures only prehatch sites
-- Uses `loc_breeding_sites` as primary source, joined with `gis_sectcode` for zone/FOS data
-- **PRECISE SECTCODE MATCHING**: `g.sectcode = left(b.sitecode,7)` ensures exact match
-- Filters for active sites (`enddate IS NULL`)
-- Gets zone, FOS area from gis_sectcode via exact sectcode matching
-- Joins with employee_list to validate active field supervisors
+- **Ground Sites Only**: `b.air_gnd='G'` filters for ground treatment sites
+- **Prehatch Filter**: `b.prehatch IN ('PREHATCH','BRIQUET')` ensures only prehatch sites
+- **Active Sites**: `(b.enddate IS NULL OR b.enddate>'YYYY-05-01')` ensures sites were active during season
+- **Sectcode Join**: `left(b.sitecode,7)=sc.sectcode` connects sites to zone/facility data
 
-### 2. Current Prehatch Treatments Query
-**Function**: `get_ground_prehatch_data()` in `data_functions.R`  
-**Purpose**: Load current treatments for prehatch sites with zone/FOS data and effectiveness duration
+### 2. Ground Prehatch Treatments Query (Current Mode)
+**Function**: `load_raw_data()` in `data_functions.R`  
+**Purpose**: Load current treatments for ground prehatch sites
 
 ```sql
-SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, 
-       t.foreman, m.effect_days, g.facility, g.zone, g.fosarea,
-       b.prehatch
-FROM public.dblarv_insptrt_current t
-LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
-LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
-WHERE b.prehatch = true
-  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
+       'current' as data_source
+FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'2024-01-01' AND inspdate <= '2024-11-19') c
+JOIN (
+  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+         sc.fosarea as foreman
+  FROM loc_breeding_sites b
+  LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+  WHERE (b.enddate IS NULL OR b.enddate>'2024-05-01')
+    AND b.air_gnd='G'
+    AND b.prehatch IN ('PREHATCH','BRIQUET')
+) a ON c.sitecode = a.sitecode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+ORDER BY c.inspdate DESC, c.sitecode
 ```
 
 **Key Points**:
-- **Prehatch Sites Only**: Joins with `loc_breeding_sites` and filters `b.prehatch = true`
-- **PRECISE SECTCODE MATCHING**: `g.sectcode = left(t.sitecode,7)` ensures exact match
-- Joins with mattype_list_targetdose for treatment duration
-- Gets facility, zone, and fosarea from gis_sectcode via exact sectcode matching
-- Filters for active sites to avoid treatments on closed prehatch sites
+- **INNER JOINS**: Uses INNER JOINs to ensure only treatments on valid ground prehatch sites
+- **Material Filter**: `WHERE prehatch IS TRUE` in mattype_list_targetdose ensures prehatch materials only
+- **Ground Sites Only**: Subquery filters for `air_gnd='G'` and prehatch types
+- **Date Range**: Filters treatments within analysis year range
 
-### 3. Historical Prehatch Treatment Data Query
-**Function**: `get_historical_prehatch_data()` in `historical_functions_simple.R`  
-**Purpose**: Load historical treatment data for prehatch sites from both archive and current
+### 3. Ground Prehatch Treatments Query (Historical Mode)
+**Function**: `load_raw_data()` in `data_functions.R`  
+**Purpose**: Load historical treatments combining archive and current data
 
 ```sql
--- Historical prehatch treatments from archive
-SELECT 
-    t.facility, 
-    t.sitecode, 
-    t.inspdate, 
-    t.action, 
-    t.matcode, 
-    t.amts as amount, 
-    t.acres as treated_acres,
-    g.zone,
-    g.fosarea as foreman
-FROM public.dblarv_insptrt_archive t
-LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
-WHERE b.prehatch = true
-  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-  AND t.inspdate <= ?
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
+       'current' as data_source
+FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='2022-01-01' AND inspdate <= '2024-12-31') c
+JOIN (
+  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+         sc.fosarea as foreman
+  FROM loc_breeding_sites b
+  LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+  WHERE (b.enddate IS NULL OR b.enddate>'2022-05-01')
+    AND b.air_gnd='G'
+    AND b.prehatch IN ('PREHATCH','BRIQUET')
+) a ON c.sitecode = a.sitecode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
 
 UNION ALL
 
--- Recent prehatch treatments from current
-SELECT 
-    t.facility, 
-    t.sitecode, 
-    t.inspdate, 
-    t.action, 
-    t.matcode, 
-    t.amts as amount, 
-    t.acres as treated_acres,
-    g.zone,
-    g.fosarea as foreman
-FROM public.dblarv_insptrt_current t
-LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
-WHERE b.prehatch = true
-  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-  AND t.inspdate <= ?
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
+       'archive' as data_source
+FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='2022-01-01' AND inspdate <= '2024-12-31') c
+JOIN (
+  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+         sc.fosarea as foreman
+  FROM loc_breeding_sites b
+  LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+  WHERE (b.enddate IS NULL OR b.enddate>'2022-05-01')
+    AND b.air_gnd='G'
+    AND b.prehatch IN ('PREHATCH','BRIQUET')
+) a ON c.sitecode = a.sitecode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+
+ORDER BY inspdate DESC, sitecode
 ```
 
 **Key Points**:
-- **Prehatch Sites Only**: Both queries join with `loc_breeding_sites` and filter `b.prehatch = true`
-- Combines archive and current treatment tables with UNION ALL
-- **PRECISE SECTCODE MATCHING**: Uses exact sectcode matching in both queries
-- Includes year range and analysis date filtering
-- Returns treatment data with accurate zone/FOS information for prehatch sites only
+- **UNION ALL**: Combines current and archive treatment tables
+- **Consistent Filtering**: Both queries use identical filtering logic for ground prehatch sites
+- **Material Validation**: Both join with mattype_list_targetdose to ensure prehatch materials
+- **Date Range**: Uses start_year and end_year parameters for historical analysis
 
-### 4. Spatial Prehatch Data Query (Map Functionality)
-**Function**: `load_spatial_data()` in `data_functions.R`  
-**Purpose**: Load prehatch sites with spatial coordinates for interactive mapping
-
-```sql
-SELECT 
-    b.sitecode, 
-    g.facility, 
-    b.acres, 
-    b.prehatch, 
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
-        ELSE NULL
-    END as foreman, 
-    g.zone,
-    left(b.sitecode,7) as sectcode,
-    ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, 
-    ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat
-FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
-LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
-WHERE b.prehatch = true
-    AND b.enddate IS NULL
-    AND b.geom IS NOT NULL
-```
-
-**Key Points**:
-- **Prehatch Sites Only**: `b.prehatch = true` filters for prehatch sites
-- **PRECISE SECTCODE MATCHING**: `g.sectcode = left(b.sitecode,7)` ensures exact match
-- **Geometry Transform**: `ST_Transform(ST_Centroid(b.geom), 4326)` converts UTM to WGS84 decimal degrees
-- **Coordinate Extraction**: `ST_X()` and `ST_Y()` extract longitude and latitude values
-- **Geometry Filter**: `b.geom IS NOT NULL` ensures only sites with valid coordinates
-- **Web Mapping Ready**: Coordinates returned in standard web mercator projection (EPSG:4326)
-
-### 5. Site Details Query
-**Function**: `get_site_details_data()` in `data_functions.R`  
-**Purpose**: Load detailed information for individual prehatch sites with latest treatment data
+### 4. Ground Prehatch Progress Summary Query
+**Function**: `get_ground_prehatch_data()` in `data_functions.R`  
+**Purpose**: Generate comprehensive prehatch progress summary with treatment status
 
 ```sql
-WITH latest_treatments AS (
-    SELECT DISTINCT ON (sitecode, facility)
-        sitecode, 
-        facility, 
-        inspdate, 
-        matcode,
-        foreman as treatment_foreman,
-        acres as treated_acres,
-        effect_days
-    FROM (
-        SELECT t.sitecode, t.facility, t.inspdate, t.matcode, 
-               t.foreman, t.acres, m.effect_days
-        FROM public.dblarv_insptrt_current t
-        LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-        
-        UNION ALL
-        
-        SELECT t.sitecode, t.facility, t.inspdate, t.matcode, 
-               t.foreman, t.acres, m.effect_days
-        FROM public.dblarv_insptrt_archive t
-        LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-    ) all_treatments
-    ORDER BY sitecode, facility, inspdate DESC
-),
-prehatch_sites AS (
-    SELECT 
-        b.sitecode, 
-        b.facility, 
-        b.acres, 
-        b.prehatch,
-        b.priority,
-        g.zone,
-        g.fosarea as site_foreman,
-        left(b.sitecode,7) as sectcode
-    FROM public.loc_breeding_sites b
-    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
-    WHERE b.prehatch = true
-      AND b.enddate IS NULL
+WITH ActiveSites_g AS (
+  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+         sc.fosarea as foreman
+  FROM loc_breeding_sites b
+  LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+  WHERE (b.enddate IS NULL OR b.enddate>'2024-05-01')
+    AND b.air_gnd='G'
+  ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
 )
-SELECT 
-    s.sitecode,
-    s.facility,
-    s.acres,
-    s.priority,
-    s.zone,
-    s.sectcode,
-    s.site_foreman as fosarea,
-    COALESCE(t.inspdate, '1900-01-01'::date) as inspdate,
-    COALESCE(t.matcode, 'None') as matcode,
-    COALESCE(t.effect_days, 14) as effect_days,
-    CASE 
-        WHEN t.inspdate IS NOT NULL THEN 
-            EXTRACT(DAYS FROM AGE(CURRENT_DATE, t.inspdate))
-        ELSE NULL
-    END as age
-FROM prehatch_sites s
-LEFT JOIN latest_treatments t ON s.sitecode = t.sitecode AND s.facility = t.facility
-ORDER BY s.facility, s.sectcode, s.sitecode
+SELECT sitecnts.facility, sitecnts.zone, sitecnts.fosarea, sitecnts.sectcode, sitecnts.foreman,
+       tot_ground, not_prehatch_sites, prehatch_sites_cnt, drone_sites_cnt,
+       COALESCE(ph_treated_cnt, 0) AS ph_treated_cnt,
+       COALESCE(ph_expiring_cnt, 0) AS ph_expiring_cnt,
+       COALESCE(ph_expired_cnt, 0) AS ph_expired_cnt
+FROM
+(SELECT facility, zone, fosarea, sectcode, foreman,
+        COUNT(CASE WHEN (air_gnd='G') THEN 1 END) AS tot_ground,
+        COUNT(CASE WHEN (air_gnd='G' AND prehatch IS NULL) THEN 1 END) AS not_prehatch_sites,
+        COUNT(CASE WHEN (air_gnd='G' AND prehatch IN ('PREHATCH','BRIQUET')) THEN 1 END) AS prehatch_sites_cnt,
+        COUNT(CASE WHEN (air_gnd='G' AND drone IN ('Y','M','C')) THEN 1 END) AS drone_sites_cnt
+ FROM ActiveSites_g a
+ GROUP BY facility, zone, fosarea, sectcode, foreman
+ ORDER BY facility, zone, fosarea, sectcode, foreman) sitecnts
+LEFT JOIN(
+SELECT facility, zone, fosarea, sectcode, foreman,
+       COUNT(CASE WHEN (prehatch_status='treated') THEN 1 END) AS ph_treated_cnt,
+       COUNT(CASE WHEN (prehatch_status='expiring') THEN 1 END) AS ph_expiring_cnt,
+       COUNT(CASE WHEN (prehatch_status='expired') THEN 1 END) AS ph_expired_cnt
+FROM (  
+  SELECT facility, zone, fosarea, sectcode, foreman, sitecode,
+         CASE
+           WHEN age > COALESCE(effect_days::integer, 30)::double precision THEN 'expired'::text
+           WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
+           WHEN age<= effect_days::integer::double precision THEN 'treated'::text
+           ELSE 'unknown'::text
+         END AS prehatch_status,
+         inspdate, matcode, age, effect_days, days_retrt_early
+  FROM (  
+    SELECT DISTINCT ON (a.sitecode)
+           a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman,
+           c.pkey_pg AS insptrt_id,
+           date_part('days'::text, '2024-11-19'::timestamp - c.inspdate::timestamp with time zone) AS age,
+           c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
+    FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'2024-01-01' AND inspdate <= '2024-11-19') c
+    JOIN activesites_g a ON c.sitecode = a.sitecode
+    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+    ORDER BY a.sitecode, c.inspdate DESC, c.insptime DESC
+  ) s_grd
+  ORDER BY sitecode
+) list
+GROUP BY facility, zone, fosarea, sectcode, foreman
+ORDER BY facility, zone, fosarea, sectcode, foreman
+) trtcnts ON trtcnts.sectcode = sitecnts.sectcode AND COALESCE(trtcnts.foreman, '') = COALESCE(sitecnts.foreman, '')
+ORDER BY sectcode
 ```
 
 **Key Points**:
-- **CTE for Latest Treatments**: Uses window function to get most recent treatment per site
-- **Prehatch Sites Only**: Filters `b.prehatch = true` in the prehatch_sites CTE
-- **Combined Data Sources**: UNION ALL of current and archive treatment tables
-- **Age Calculation**: Computes days since last treatment using PostgreSQL AGE function
-- **Default Values**: Uses COALESCE for missing treatment data
-- **Ordered Results**: Sorts by facility, section, and sitecode for consistent display
+- **CTE Structure**: Uses ActiveSites_g CTE to establish ground sites baseline
+- **Site Counts**: Aggregates ground sites by type (all ground, prehatch, drone-capable)
+- **Treatment Status**: Calculates treatment age and classifies as treated/expiring/expired
+- **Material Effectiveness**: Joins with mattype_list_targetdose for effect_days and early retreat thresholds
+- **Age Calculation**: Uses `date_part('days', analysis_date - inspdate)` for treatment age
+- **Status Logic**: Compares age against effect_days and days_retrt_early for status classification
+
+### 5. Site Details Query  
+**Function**: `get_site_details_data()` in `data_functions.R`  
+**Purpose**: Load detailed site information with latest treatment status
+
+```sql
+WITH ActiveSites_g AS (
+  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+         sc.fosarea as foreman
+  FROM loc_breeding_sites b
+  LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+  WHERE (b.enddate IS NULL OR b.enddate>'2024-05-01')
+    AND b.air_gnd='G'
+  ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
+)
+SELECT a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman, a.acres, a.priority, a.prehatch,
+       s.prehatch_status, s.inspdate, s.matcode, s.age, s.effect_days
+FROM activesites_g a 
+LEFT JOIN (
+  SELECT sitecode, sectcode, facility, fosarea, zone, foreman,
+         CASE
+           WHEN age > COALESCE(effect_days::integer, 30)::double precision THEN 'expired'::text
+           WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
+           WHEN age<= effect_days::integer::double precision THEN 'treated'::text
+           ELSE 'unknown'::text
+         END AS prehatch_status,
+         inspdate, matcode, age, effect_days, days_retrt_early
+  FROM (  
+    SELECT DISTINCT ON (a.sitecode)
+           a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman,
+           c.pkey_pg AS insptrt_id,
+           date_part('days'::text, '2024-11-19'::timestamp - c.inspdate::timestamp with time zone) AS age,
+           c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
+    FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'2024-01-01' AND inspdate <= '2024-11-19') c
+    JOIN activesites_g a ON c.sitecode = a.sitecode
+    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+    ORDER BY a.sitecode, c.inspdate DESC, c.insptime DESC
+  ) s_grd
+  ORDER BY sitecode
+) s USING (sitecode, sectcode, facility, fosarea, zone, foreman)
+WHERE a.prehatch IN ('PREHATCH','BRIQUET')
+ORDER BY a.facility, a.sectcode, a.sitecode
+```
+
+**Key Points**:  
+- **Individual Site Records**: Returns one row per prehatch site (not aggregated)
+- **Latest Treatment**: DISTINCT ON sitecode with ORDER BY inspdate DESC gets most recent treatment
+- **Treatment Status**: Same classification logic as summary query (treated/expiring/expired)
+- **Prehatch Filter**: Final WHERE clause restricts to prehatch sites only
+- **Complete Information**: Includes site characteristics, treatment details, and calculated age

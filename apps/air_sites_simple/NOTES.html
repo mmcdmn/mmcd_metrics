@@ -222,7 +222,6 @@
 <ul>
 <li><strong>Key Columns</strong>: Same as current table</li>
 <li><strong>Usage</strong>: Combined with current table for complete historical red bug analysis</li>
-<li><strong>Data Quality</strong>: Historical lab results, generally complete and reliable</li>
 </ul>
 </ul>
 
@@ -286,15 +285,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li><strong>Usage</strong>: Site acres for capacity analysis, treated acres for actual treatment metrics</li>
 </ul>
 
-<p><strong>Zone Assignment:</strong></p>
-<ul>
-<li><strong>P1 Sites</strong>: <code>gis_sectcode.zone = '1'</code> (Primary zone)</li>
-<li><strong>P2 Sites</strong>: <code>gis_sectcode.zone = '2'</code> (Secondary zone)</li>
-<li><strong>P3 Sites</strong>: <code>gis_sectcode.zone = '3'</code> (Tertiary zone)</li>
-<li><strong>P4 Sites</strong>: <code>gis_sectcode.zone = '4'</code> (Quaternary zone)</li>
-<li><strong>Missing Zones</strong>: Some sites may not have zone assignments in gis_sectcode</li>
-</ul>
-
 <p><strong>Red Bug Detection Logic:</strong></p>
 <ul>
 <li><strong>Detection</strong>: <code>s.redblue = 'R'</code> indicates red bugs found in sample</li>
@@ -307,20 +297,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <h3>Purpose</h3>
 <p>Display current status of air sites with inspection, treatment, and lab analysis data including red bug detection rates.</p>
 
-<h3>Key Features</h3>
-<ul>
-<li><strong>Value boxes</strong> showing summary statistics:</li>
-<ul>
-<li>Total air sites, sites with recent inspections</li>
-<li>Sites needing treatment, sites with active treatments</li>
-<li>Red bug detection rate, sites above larval threshold</li>
-</ul>
-<li><strong>Status Summary Chart</strong> showing site distribution by status categories</li>
-<li><strong>Detailed Status Table</strong> with individual site information and download capability</li>
-<li><strong>Configurable filters</strong> - facility, priority, zone, larval threshold, analysis date</li>
-<li><strong>BTI override</strong> - Configurable BTI granule effectiveness days</li>
-</ul>
-
 <h3>Site Status Definitions</h3>
 <p>Air sites are classified into mutually exclusive status categories based on recent inspection and treatment data:</p>
 
@@ -329,7 +305,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li><strong>Definition</strong>: Site has treatment that is still effective as of analysis date</li>
 <li><strong>Logic</strong>: <code>treatment<em>end</em>date &gt;= analysis_date</code></li>
 <li><strong>Calculation</strong>: <code>treatment<em>end</em>date = last<em>treatment</em>date + effect_days</code></li>
-<li><strong>Color</strong>: Green (#2E8B57)</li>
 <li><strong>Priority</strong>: Highest - Site is adequately treated</li>
 </ul>
 
@@ -338,7 +313,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li><strong>Definition</strong>: Site has recent inspection showing larvae above threshold, no active treatment</li>
 <li><strong>Logic</strong>: <code>last<em>inspection</em>numdip &gt;= larvae_threshold AND (no treatment OR treatment expired)</code></li>
 <li><strong>Threshold</strong>: Configurable larvae threshold (default: 2 dips)</li>
-<li><strong>Color</strong>: Red (#DC143C)</li>
 <li><strong>Priority</strong>: High - Site requires immediate treatment attention</li>
 </ul>
 
@@ -347,7 +321,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li><strong>Definition</strong>: Site has recent inspection below threshold, no active treatment needed</li>
 <li><strong>Logic</strong>: <code>last<em>inspection</em>numdip &lt; larvae_threshold AND no active treatment</code></li>
 <li><strong>Threshold</strong>: Below configurable larvae threshold</li>
-<li><strong>Color</strong>: Blue (#4682B4)</li>
 <li><strong>Priority</strong>: Medium - Site is monitored but doesn't need treatment</li>
 </ul>
 
@@ -356,7 +329,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li><strong>Definition</strong>: Site has recent inspection with sample sent to lab, awaiting results</li>
 <li><strong>Logic</strong>: <code>has<em>recent</em>inspection AND has<em>sampnum</em>yr AND no lab results yet</code></li>
 <li><strong>Sample Status</strong>: Sample sent but <code>redblue</code> result not available</li>
-<li><strong>Color</strong>: Orange (#FF8C00)</li>
 <li><strong>Priority</strong>: Medium - Awaiting lab analysis for treatment decision</li>
 </ul>
 
@@ -365,7 +337,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li><strong>Definition</strong>: Site has no recent inspection or treatment data</li>
 <li><strong>Logic</strong>: <code>no recent inspection AND no active treatment</code></li>
 <li><strong>Timeframe</strong>: Beyond analysis date window for recent activity</li>
-<li><strong>Color</strong>: Gray (#808080)</li>
 <li><strong>Priority</strong>: Low - Site status unknown, may need inspection</li>
 </ul>
 
@@ -410,14 +381,6 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li>Satellite (Esri World Imagery)  </li>
 <li>Terrain (Esri World Topo)</li>
 <li>OpenStreetMap</li>
-</ul>
-<li><strong>Color-coded markers</strong> by site status:</li>
-<ul>
-<li><strong>Green</strong>: Active Treatment (#2E8B57)</li>
-<li><strong>Red</strong>: Needs Treatment (#DC143C)</li>
-<li><strong>Blue</strong>: Recently Inspected (#4682B4)</li>
-<li><strong>Orange</strong>: In Lab (#FF8C00)</li>
-<li><strong>Gray</strong>: No Recent Data (#808080)</li>
 </ul>
 <li><strong>Site popups</strong> with detailed information:</li>
 <ul>

@@ -52,10 +52,10 @@ This Shiny app tracks air-treated mosquito breeding sites across three perspecti
     - Directional: `191102W010` → sectcode `1911020` 
   - **Data Quality**: Authoritative source for zone, facility, and FOS assignments
   
-- **`public.mattype_list_targetdose`** - Material effectiveness and dosage data
+- **`public.mattype_list_targetdose`** - Material active and dosage data
   - **Key Columns**:
     - `matcode` (material identifier, joins to treatment tables)
-    - `effect_days` (treatment effectiveness duration in days)
+    - `effect_days` (treatment active duration in days)
   - **Default Logic**: When `effect_days IS NULL`, assume 14 days for air treatments
   - **Usage**: Calculate treatment end dates: `inspdate + effect_days`
 
@@ -183,7 +183,7 @@ Air site analysis includes specific metrics for red bug (Chironomus) detection:
 ### Data Flow
 1. **Load Air Sites**: Query active air sites with zone/facility information
 2. **Get Recent Inspections**: Latest inspection per site within analysis window
-3. **Get Active Treatments**: Current treatments with effectiveness calculations
+3. **Get Active Treatments**: Current treatments with active site calculations
 4. **Get Lab Results**: Link inspections to lab samples for red bug analysis
 5. **Calculate Status**: Apply status logic rules to categorize each site
 6. **Aggregate Metrics**: Summarize counts and percentages for value boxes and charts
@@ -203,7 +203,7 @@ Provide interactive map visualization of air sites with color-coded status marke
   - Sitecode, facility, zone, priority, site acres
   - Treatment status and last inspection/treatment details
   - Lab results including red bug detection
-  - Last material used and effectiveness days
+  - Last material used and active days
 - **Map legend** showing status color scheme
 - **Shared filters** with Current Status tab (zone, facility, priority, larval threshold)
 
@@ -223,7 +223,7 @@ Provide interactive map visualization of air sites with color-coded status marke
 ## Tab 3: Historical Analysis
 
 ### Purpose
-Analyze multi-year trends in air site inspection activity, red bug detection rates, and treatment effectiveness.
+Analyze multi-year trends in air site inspection activity, red bug detection rates, and treatment active or not.
 
 ### Key Features
 - **Historical Inspection Summary Table** showing:
@@ -360,7 +360,7 @@ WHERE ls.form_type = 'AIR'               -- Air samples only
   AND (ls.missing = FALSE OR ls.missing IS NULL)  -- Valid samples
 ```
 
-#### Treatment Effectiveness
+#### Active Treatment
 ```sql
 -- Active treatments with end dates
 SELECT t.sitecode, t.inspdate, t.matcode,
@@ -547,7 +547,7 @@ ORDER BY a.facility, a.sitecode
 - **Coordinate Transform**: `ST_Transform(ST_Centroid(b.geom), 4326)` for web mapping
 - **Latest Data Only**: `ROW_NUMBER()` window functions get most recent inspections/treatments
 - **Lab Integration**: Links inspections to samples via `sampnum_yr` for red bug analysis
-- **BTI Override**: Supports configurable BTI granule effectiveness days
+- **BTI Override**: Supports configurable BTI granule effect days (active)
 
 ### 2. Historical Air Sites Inspection Summary Query
 **Function**: `get_historical_inspection_summary()` in `historical_functions.R`  

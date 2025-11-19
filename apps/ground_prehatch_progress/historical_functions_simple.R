@@ -3,6 +3,7 @@
 
 library(dplyr)
 library(lubridate)
+library(purrr)
 source("data_functions.R")
 
 # Main function to get ground prehatch historical data
@@ -10,50 +11,155 @@ get_ground_historical_data <- function(time_period = "weekly", display_metric = 
                                      zone_filter = c("1", "2"), 
                                      start_year = NULL, end_year = NULL) {
   
-  # Determine year range - always use start_year and end_year
+  # Determine year range
   if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y")) - 4
   if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
   
   use_start_year <- start_year
   use_end_year <- end_year
   
-  # Use unified load_raw_data function
   tryCatch({
-    # Load raw data with archive
-    raw_data <- load_raw_data(
-      analysis_date = as.Date(paste0(use_start_year, "-01-01")),
-      include_archive = TRUE,
-      start_year = use_start_year,
-      end_year = use_end_year
-    )
-    
-    if (is.null(raw_data$ground_treatments) || nrow(raw_data$ground_treatments) == 0) {
-      return(data.frame())
+    if (time_period == "weekly") {
+      # For weekly analysis, get active treatment status for each week
+      return(get_weekly_active_treatment_data(use_start_year, use_end_year, zone_filter))
+    } else {
+      # For yearly analysis, get treatment application data 
+      return(get_yearly_treatment_data(use_start_year, use_end_year, zone_filter))
     }
+  }, error = function(e) {
+    warning(paste("Error in get_ground_historical_data:", e$message))
+    return(data.frame())
+  })
+}
+
+# Function for yearly treatment data 
+get_yearly_treatment_data <- function(start_year, end_year, zone_filter) {
+  # Load raw data with archive
+  raw_data <- load_raw_data(
+    analysis_date = as.Date(paste0(start_year, "-01-01")),
+    include_archive = TRUE,
+    start_year = start_year,
+    end_year = end_year
+  )
+  
+  if (is.null(raw_data$ground_treatments) || nrow(raw_data$ground_treatments) == 0) {
+    return(data.frame())
+  }
+  
+  # Merge treatments with site data
+  data <- raw_data$ground_treatments %>%
+    left_join(raw_data$ground_sites, by = "sitecode", relationship = "many-to-many") %>%
+    filter(!is.na(facility)) %>%
+    mutate(site_acres = acres)  # Create alias for consistency with weekly data
+  
+  # Filter by zones
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    data <- data %>% filter(zone %in% zone_filter)
+  }
+  
+  # Add time period column for yearly
+  data <- data %>%
+    mutate(time_period = year(inspdate))
+  
+  return(data)
+}
+
+# Function for weekly active treatment data
+get_weekly_active_treatment_data <- function(start_year, end_year, zone_filter) {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    # Get all treatments with effect_days 
+    treatments_query <- sprintf("
+    SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+           c.acres as treated_acres, p.effect_days, 'current' as data_source,
+           sc.facility, b.acres as site_acres, sc.zone, sc.fosarea, left(b.sitecode,7) as sectcode
+    FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+    JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
+    JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+    WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+      AND b.air_gnd='G'
+      AND b.prehatch IN ('PREHATCH','BRIQUET')
     
-    # Merge treatments with site data
-    data <- raw_data$ground_treatments %>%
-      left_join(raw_data$ground_sites, by = "sitecode") %>%
-      filter(!is.na(facility))
+    UNION ALL
+    
+    SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+           c.acres as treated_acres, p.effect_days, 'archive' as data_source,
+           sc.facility, b.acres as site_acres, sc.zone, sc.fosarea, left(b.sitecode,7) as sectcode
+    FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+    JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
+    JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+    WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+      AND b.air_gnd='G'
+      AND b.prehatch IN ('PREHATCH','BRIQUET')
+    
+    ORDER BY sitecode, inspdate DESC
+    ", start_year, end_year, start_year, start_year, end_year, start_year)
+    
+    all_treatments <- dbGetQuery(con, treatments_query)
+    dbDisconnect(con)
+    
+    if (nrow(all_treatments) == 0) return(data.frame())
+    
+    # Map facility names
+    all_treatments <- map_facility_names(all_treatments)
     
     # Filter by zones
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
-      data <- data %>% filter(zone %in% zone_filter)
+      all_treatments <- all_treatments %>% filter(zone %in% zone_filter)
     }
     
-    # Add time period column
-    if (time_period == "weekly") {
-      data <- data %>%
-        mutate(time_period = paste0(year(inspdate), "-W", sprintf("%02d", week(inspdate))))
-    } else {
-      data <- data %>%
-        mutate(time_period = year(inspdate))
+    # Convert dates and add effect_days default
+    all_treatments <- all_treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        effect_days = ifelse(is.na(effect_days), 30, effect_days)  # Default 30 days for prehatch
+      )
+    
+    # Generate all Fridays for the year range
+    start_date <- as.Date(paste0(start_year, "-01-01"))
+    end_date <- as.Date(paste0(end_year, "-12-31"))
+    
+    # Find first Friday of start_year
+    first_friday <- start_date
+    while (weekdays(first_friday) != "Friday") {
+      first_friday <- first_friday + 1
     }
     
-    return(data)
+    # Generate all Fridays
+    fridays <- seq(from = first_friday, to = end_date, by = 7)
+    fridays <- fridays[fridays <= end_date]
+    
+    # For each Friday, determine which sites have active treatment
+    weekly_data <- map_dfr(fridays, function(friday_date) {
+      # For each site, find the most recent treatment before or on this Friday
+      site_status <- all_treatments %>%
+        filter(inspdate <= friday_date) %>%
+        group_by(sitecode) %>%
+        arrange(desc(inspdate), desc(insptime)) %>%
+        slice(1) %>%
+        ungroup() %>%
+        mutate(
+          treatment_end_date = inspdate + effect_days,
+          is_active = treatment_end_date >= friday_date,
+          week_date = friday_date,
+          year = year(friday_date),
+          week = week(friday_date),
+          time_period = paste0(year, "-W", sprintf("%02d", week))
+        ) %>%
+        filter(is_active)  # Only include sites with active treatment
+      
+      return(site_status)
+    })
+    
+    return(weekly_data)
     
   }, error = function(e) {
-    warning(paste("Error in get_ground_historical_data:", e$message))
+    warning(paste("Error in get_weekly_active_treatment_data:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
     return(data.frame())
   })
 }
@@ -73,7 +179,7 @@ filter_historical_data <- function(data, zone_filter, facility_filter, foreman_f
     foremen_lookup <- get_foremen_lookup()
     if (nrow(foremen_lookup) > 0) {
       selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-      data <- data %>% filter(foreman %in% selected_emp_nums)
+      data <- data %>% filter(fosarea %in% selected_emp_nums)
     }
   }
   
@@ -86,13 +192,31 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
     return(data.frame())
   }
   
-  # Create metric calculation
-  if (display_metric == "treatments") {
-    metric_func <- function(x) length(x)
-  } else if (display_metric == "sites") {
-    metric_func <- function(x) length(unique(x))
-  } else { # acres
-    metric_func <- function(x) sum(as.numeric(x), na.rm = TRUE)
+  # Create metric calculation based on time period and metric type
+  if (time_period == "weekly") {
+    # For weekly analysis, data already contains only sites with active treatment
+    if (display_metric == "weekly_active_sites") {
+      # Count unique active sites per week
+      metric_calculation <- function(data) n_distinct(data$sitecode)
+    } else if (display_metric == "weekly_active_acres") {
+      # Sum site acres for unique active sites per week
+      metric_calculation <- function(data) sum(data$site_acres[!duplicated(data$sitecode)], na.rm = TRUE)
+    } else {
+      metric_calculation <- function(data) 0
+    }
+  } else {
+    # For yearly analysis, use existing logic
+    if (display_metric == "treatments") {
+      metric_calculation <- function(data) nrow(data)
+    } else if (display_metric == "sites") {
+      metric_calculation <- function(data) n_distinct(data$sitecode)
+    } else if (display_metric == "acres") {
+      metric_calculation <- function(data) sum(data$treated_acres, na.rm = TRUE)
+    } else if (display_metric == "site_acres") {
+      metric_calculation <- function(data) sum(data$site_acres[!duplicated(data$sitecode)], na.rm = TRUE)
+    } else {
+      metric_calculation <- function(data) 0
+    }
   }
   
   # Group the data based on group_by parameter
@@ -103,9 +227,15 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       aggregated <- data %>%
         group_by(time_period) %>%
         summarise(
-          count = if(display_metric == "treatments") n() 
-                  else if(display_metric == "sites") n_distinct(sitecode)
-                  else sum(acres, na.rm = TRUE), 
+          count = case_when(
+            display_metric == "treatments" ~ n(),
+            display_metric == "sites" ~ n_distinct(sitecode),
+            display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+            display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+            display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            TRUE ~ 0
+          ),
           .groups = "drop"
         ) %>%
         mutate(display_name = "MMCD Total")
@@ -114,9 +244,15 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       aggregated <- data %>%
         group_by(time_period, zone) %>%
         summarise(
-          count = if(display_metric == "treatments") n() 
-                  else if(display_metric == "sites") n_distinct(sitecode)
-                  else sum(acres, na.rm = TRUE), 
+          count = case_when(
+            display_metric == "treatments" ~ n(),
+            display_metric == "sites" ~ n_distinct(sitecode),
+            display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+            display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+            display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            TRUE ~ 0
+          ),
           .groups = "drop"
         ) %>%
         mutate(display_name = paste0("Zone P", zone))
@@ -126,9 +262,15 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       aggregated <- data %>%
         group_by(time_period, facility) %>%
         summarise(
-          count = if(display_metric == "treatments") n() 
-                  else if(display_metric == "sites") n_distinct(sitecode)
-                  else sum(acres, na.rm = TRUE), 
+          count = case_when(
+            display_metric == "treatments" ~ n(),
+            display_metric == "sites" ~ n_distinct(sitecode),
+            display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+            display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+            display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            TRUE ~ 0
+          ),
           .groups = "drop"
         ) %>%
         mutate(display_name = paste0(facility, " (Facility)"))
@@ -136,12 +278,18 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       aggregated <- data %>%
         group_by(time_period, facility, zone) %>%
         summarise(
-          count = if(display_metric == "treatments") n() 
-                  else if(display_metric == "sites") n_distinct(sitecode)
-                  else sum(acres, na.rm = TRUE), 
+          count = case_when(
+            display_metric == "treatments" ~ n(),
+            display_metric == "sites" ~ n_distinct(sitecode),
+            display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+            display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+            display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            TRUE ~ 0
+          ),
           .groups = "drop"
         ) %>%
-        mutate(display_name = paste0(facility, " P", zone))
+        mutate(display_name = paste0(facility, " P", zone, " (Facility)"))
     }
   } else if (group_by == "foreman") {
     # Map foreman numbers to names
@@ -152,30 +300,42 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       if (combine_zones) {
         aggregated <- data %>%
           mutate(foreman_name = ifelse(
-            foreman %in% names(foreman_map),
-            foreman_map[as.character(foreman)],
-            paste("FOS", foreman)
+            fosarea %in% names(foreman_map),
+            foreman_map[as.character(fosarea)],
+            paste("FOS", fosarea)
           )) %>%
           group_by(time_period, foreman_name) %>%
           summarise(
-            count = if(display_metric == "treatments") n() 
-                    else if(display_metric == "sites") n_distinct(sitecode)
-                    else sum(acres, na.rm = TRUE), 
+            count = case_when(
+              display_metric == "treatments" ~ n(),
+              display_metric == "sites" ~ n_distinct(sitecode),
+              display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+              display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+              display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              TRUE ~ 0
+            ),
             .groups = "drop"
           ) %>%
           mutate(display_name = paste0(foreman_name, " (FOS)"))
       } else {
         aggregated <- data %>%
           mutate(foreman_name = ifelse(
-            foreman %in% names(foreman_map),
-            foreman_map[as.character(foreman)],
-            paste("FOS", foreman)
+            fosarea %in% names(foreman_map),
+            foreman_map[as.character(fosarea)],
+            paste("FOS", fosarea)
           )) %>%
           group_by(time_period, foreman_name, zone) %>%
           summarise(
-            count = if(display_metric == "treatments") n() 
-                    else if(display_metric == "sites") n_distinct(sitecode)
-                    else sum(acres, na.rm = TRUE), 
+            count = case_when(
+              display_metric == "treatments" ~ n(),
+              display_metric == "sites" ~ n_distinct(sitecode),
+              display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+              display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+              display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              TRUE ~ 0
+            ),
             .groups = "drop"
           ) %>%
           mutate(display_name = paste0(foreman_name, " P", zone))
@@ -184,24 +344,36 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       # Fallback if no lookup available
       if (combine_zones) {
         aggregated <- data %>%
-          group_by(time_period, foreman) %>%
+          group_by(time_period, fosarea) %>%
           summarise(
-            count = if(display_metric == "treatments") n() 
-                    else if(display_metric == "sites") n_distinct(sitecode)
-                    else sum(acres, na.rm = TRUE), 
+            count = case_when(
+              display_metric == "treatments" ~ n(),
+              display_metric == "sites" ~ n_distinct(sitecode),
+              display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+              display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+              display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              TRUE ~ 0
+            ),
             .groups = "drop"
           ) %>%
-          mutate(display_name = paste0("FOS ", foreman))
+          mutate(display_name = paste0("FOS ", fosarea))
       } else {
         aggregated <- data %>%
-          group_by(time_period, foreman, zone) %>%
+          group_by(time_period, fosarea, zone) %>%
           summarise(
-            count = if(display_metric == "treatments") n() 
-                    else if(display_metric == "sites") n_distinct(sitecode)
-                    else sum(acres, na.rm = TRUE), 
+            count = case_when(
+              display_metric == "treatments" ~ n(),
+              display_metric == "sites" ~ n_distinct(sitecode),
+              display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+              display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+              display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+              TRUE ~ 0
+            ),
             .groups = "drop"
           ) %>%
-          mutate(display_name = paste0("FOS ", foreman, " P", zone))
+          mutate(display_name = paste0("FOS ", fosarea, " P", zone))
       }
     }
   } else if (group_by == "sectcode") {
@@ -209,9 +381,15 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       aggregated <- data %>%
         group_by(time_period, sectcode) %>%
         summarise(
-          count = if(display_metric == "treatments") n() 
-                  else if(display_metric == "sites") n_distinct(sitecode)
-                  else sum(acres, na.rm = TRUE), 
+          count = case_when(
+            display_metric == "treatments" ~ n(),
+            display_metric == "sites" ~ n_distinct(sitecode),
+            display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+            display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+            display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            TRUE ~ 0
+          ),
           .groups = "drop"
         ) %>%
         mutate(display_name = paste0(sectcode, " (Section)"))
@@ -219,12 +397,18 @@ aggregate_historical_data_by_group <- function(data, group_by, time_period, disp
       aggregated <- data %>%
         group_by(time_period, sectcode, zone) %>%
         summarise(
-          count = if(display_metric == "treatments") n() 
-                  else if(display_metric == "sites") n_distinct(sitecode)
-                  else sum(acres, na.rm = TRUE), 
+          count = case_when(
+            display_metric == "treatments" ~ n(),
+            display_metric == "sites" ~ n_distinct(sitecode),
+            display_metric == "acres" ~ sum(treated_acres, na.rm = TRUE),
+            display_metric == "site_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            display_metric == "weekly_active_sites" ~ n_distinct(sitecode),
+            display_metric == "weekly_active_acres" ~ sum(site_acres[!duplicated(sitecode)], na.rm = TRUE),
+            TRUE ~ 0
+          ),
           .groups = "drop"
         ) %>%
-        mutate(display_name = paste0(sectcode, " P", zone))
+        mutate(display_name = paste0(sectcode, " P", zone, " (Section)"))
     }
   } else {
     return(data.frame())
@@ -246,9 +430,9 @@ create_historical_details_table <- function(data) {
   table_data <- data %>%
     mutate(
       foreman_name = ifelse(
-        treatment_foreman %in% foremen_lookup$emp_num,
-        foremen_lookup$shortname[match(treatment_foreman, foremen_lookup$emp_num)],
-        paste("FOS", treatment_foreman)
+        fosarea %in% foremen_lookup$emp_num,
+        foremen_lookup$shortname[match(fosarea, foremen_lookup$emp_num)],
+        paste("FOS", fosarea)
       )
     ) %>%
     select(inspdate, sitecode, facility, foreman_name, sectcode, zone, matcode) %>%

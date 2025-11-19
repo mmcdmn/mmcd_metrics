@@ -743,3 +743,43 @@ ORDER BY a.facility, a.sectcode, a.sitecode
 - **Treatment Status**: Same classification logic as summary query (treated/expiring/expired)
 - **Prehatch Filter**: Final WHERE clause restricts to prehatch sites only
 - **Complete Information**: Includes site characteristics, treatment details, and calculated age
+
+### 6. Weekly Active Treatment Analysis Query
+**Function**: `get_weekly_active_treatment_data()` in `historical_functions_simple.R`  
+**Purpose**: Load historical treatments for weekly active coverage analysis
+
+```sql
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+       c.acres as treated_acres, p.effect_days, 'current' as data_source,
+       sc.facility, b.acres as site_acres, sc.zone, sc.fosarea, left(b.sitecode,7) as sectcode
+FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
+JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+  AND b.air_gnd='G'
+  AND b.prehatch IN ('PREHATCH','BRIQUET')
+
+UNION ALL
+
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+       c.acres as treated_acres, p.effect_days, 'archive' as data_source,
+       sc.facility, b.acres as site_acres, sc.zone, sc.fosarea, left(b.sitecode,7) as sectcode
+FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
+JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+  AND b.air_gnd='G'
+  AND b.prehatch IN ('PREHATCH','BRIQUET')
+
+ORDER BY sitecode, inspdate DESC
+```
+
+**Key Points**:
+- **Direct JOIN Structure**: Simplified joins without subqueries for better performance
+- **Site Data from gis_sectcode**: facility, zone, fosarea properly sourced from geographic table
+- **Treatment Effectiveness**: Includes effect_days for active coverage calculations
+- **Year-Based Filtering**: Uses parameterized date ranges for historical analysis
+- **Both Data Sources**: Combines current and archive treatments with UNION ALL
+- **Material Validation**: Ensures only prehatch-approved materials included

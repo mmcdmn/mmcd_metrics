@@ -35,8 +35,8 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     if (include_archive && !is.null(start_year) && !is.null(end_year)) {
       # Historical mode: use the working query pattern but with archive
       treatments_query <- sprintf("
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
-             'current' as data_source
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, 'current' as data_source
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -52,8 +52,8 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       
       UNION ALL
       
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
-             'archive' as data_source
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, 'archive' as data_source
       FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -73,8 +73,8 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       # Current mode: use exact working pattern with current year from analysis_date
       analysis_year <- format(analysis_date, "%Y")
       treatments_query <- sprintf("
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
-             'current' as data_source
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, 'current' as data_source
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,

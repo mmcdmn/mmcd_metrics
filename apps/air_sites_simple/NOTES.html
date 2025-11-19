@@ -189,12 +189,12 @@
 </ul>
 
 <ul>
-<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material effectiveness and dosage data</li>
+<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material Active and dosage data</li>
 <ul>
 <li><strong>Key Columns</strong>:</li>
 <ul>
 <li><code>matcode</code> (material identifier, joins to treatment tables)</li>
-<li><code>effect_days</code> (treatment effectiveness duration in days)</li>
+<li><code>effect_days</code> (treatment Active duration in days)</li>
 </ul>
 <li><strong>Default Logic</strong>: When <code>effect_days IS NULL</code>, assume 14 days for air treatments</li>
 <li><strong>Usage</strong>: Calculate treatment end dates: <code>inspdate + effect_days</code></li>

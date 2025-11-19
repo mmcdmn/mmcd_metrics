@@ -642,3 +642,80 @@ create_map_details_table <- function(spatial_data) {
     rownames = FALSE
   )
 }
+
+# Function to create historical chart
+create_historical_chart <- function(data, time_period, display_metric, group_by, chart_type) {
+  if (nrow(data) == 0) {
+    return(ggplot() + 
+           geom_text(aes(x = 1, y = 1, label = "No historical data available"), size = 6) +
+           theme_void())
+  }
+  
+  # Get status colors from db_helpers
+  status_colors <- get_status_colors()
+  
+  # Create base plot
+  p <- ggplot(data, aes(x = time_period, y = count, group = display_name, color = display_name, fill = display_name))
+  
+  # Add chart type specific geometry
+  if (chart_type == "line") {
+    p <- p + 
+      geom_line(size = 1.2) +
+      geom_point(size = 2.5)
+  } else if (chart_type == "area") {
+    p <- p + 
+      geom_area(alpha = 0.7) +
+      geom_line(size = 1)
+  } else if (chart_type == "step") {
+    p <- p + 
+      geom_step(size = 1.2, direction = "hv") +
+      geom_point(size = 2.5)
+  } else if (chart_type == "grouped_bar") {
+    p <- p + 
+      geom_col(position = "dodge", alpha = 0.8)
+  } else {
+    # Default: stacked bar
+    p <- p + 
+      geom_col(position = "stack", alpha = 0.8)
+  }
+  
+  # Set title based on metric and time period
+  metric_title <- switch(display_metric,
+    "treatments" = "Treatments",
+    "sites" = "Sites Treated", 
+    "acres" = "Acres Treated",
+    "site_acres" = "Site Acres (Unique Sites)",
+    "weekly_active_sites" = "Active Sites",
+    "weekly_active_acres" = "Active Site Acres",
+    "Weekly Active Sites"
+  )
+  
+  period_title <- if (time_period == "weekly") "Weekly" else "Yearly"
+  chart_title <- paste(period_title, metric_title, "by", str_to_title(gsub("_", " ", group_by)))
+  
+  # Apply theme and formatting
+  p <- p + 
+    labs(
+      title = chart_title,
+      x = if (time_period == "weekly") "Week" else "Year",
+      y = metric_title,
+      color = "Group",
+      fill = "Group"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.text.x = element_text(angle = if (time_period == "weekly") 45 else 0, hjust = 1),
+      legend.position = "bottom",
+      legend.title = element_text(size = 10),
+      legend.text = element_text(size = 9),
+      panel.grid.minor = element_blank()
+    )
+  
+  # Convert to plotly
+  ggplotly(p, tooltip = c("x", "y", "group")) %>%
+    layout(
+      title = list(text = chart_title, x = 0.5, font = list(size = 16)),
+      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.1)
+    )
+}

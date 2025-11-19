@@ -18,7 +18,7 @@ get_site_choices <- function() {
   )
 }
 
-# Get inspection records - OPTIMIZED VERSION
+# Get inspection records 
 get_inspection_gaps <- function(air_gnd_filter, facility_filter, fosarea_filter, zone_filter, priority_filter, drone_filter, years_gap, ref_date = Sys.Date()) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())

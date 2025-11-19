@@ -471,9 +471,13 @@ server <- function(input, output, session) {
   # Render historical details table
   output$historical_details_table <- DT::renderDataTable({
     req(input$hist_refresh)  # Only render after refresh button clicked
-    
+    inputs <- historical_refresh_inputs()
     data <- historical_data()
-    create_historical_details_table(data)
+    
+    # Filter data based on inputs (same as the chart uses)
+    filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    
+    create_historical_details_table(filtered_data)
   })
   
   # Download handler for historical data
@@ -483,9 +487,13 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(input$hist_refresh)  # Only allow download after refresh
-      
+      inputs <- historical_refresh_inputs()
       data <- historical_data()
-      write.csv(data, file, row.names = FALSE)
+      
+      # Filter data based on inputs (same as the chart and table use)
+      filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+      
+      write.csv(filtered_data, file, row.names = FALSE)
     }
   )
   
@@ -502,8 +510,7 @@ server <- function(input, output, session) {
         analysis_date = inputs$custom_today,
         zone_filter = inputs$zone_filter,
         facility_filter = inputs$facility_filter,
-        foreman_filter = inputs$foreman_filter,
-        expiring_days = inputs$expiring_days
+        foreman_filter = inputs$foreman_filter
       )
     }, error = function(e) {
       # Return NULL on error
@@ -539,8 +546,8 @@ server <- function(input, output, session) {
                         "combined" = " in P1 and P2 zones")
     
     paste0("Interactive map showing ground prehatch sites", zone_text, 
-           ". Markers are colored by treatment status: Active (green), Expiring within ", 
-           inputs$expiring_days, " days (orange), Expired (red), No Treatment (gray)", 
+           ". Markers are colored by treatment status based on material-specific effect days from database: ", 
+           "Active (green), Expiring (orange), Expired (red), No Treatment (gray)", 
            filter_text, ". Use the Site Filter to show specific treatment status groups.")
   })
   

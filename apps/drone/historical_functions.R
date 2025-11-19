@@ -51,8 +51,8 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   # Determine if zones should be shown separately
   show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
   
-  # Special logic for weekly active treatments
-  if (hist_time_period == "weekly" && hist_display_metric != "treatments") {
+  # Special logic for weekly active treatments (active sites and active acres)
+  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_sites", "active_acres")) {
     # Generate all weeks in the range
     all_weeks <- seq.Date(start_date, end_date, by = "week")
     week_data <- data.frame()
@@ -73,7 +73,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
       
       if (nrow(active_treatments) > 0) {
         # Join with sites for acres data if needed, but keep all necessary columns
-        if (hist_display_metric == "acres") {
+        if (hist_display_metric == "active_acres") {
           active_data <- active_treatments %>%
             inner_join(drone_sites %>% select(sitecode, facility, zone, foreman, acres), 
                       by = "sitecode", relationship = "many-to-many") %>%
@@ -220,10 +220,10 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   if (hist_display_metric == "treatments") {
     summary_data <- grouped_data %>%
       summarize(value = n(), .groups = "drop")
-  } else if (hist_display_metric == "sites") {
+  } else if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
     summary_data <- grouped_data %>%
       summarize(value = n_distinct(sitecode), .groups = "drop")
-  } else if (hist_display_metric == "acres") {
+  } else if (hist_display_metric == "acres" || hist_display_metric == "active_acres") {
     summary_data <- grouped_data %>%
       summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
   }
@@ -305,7 +305,7 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   }
   
   # Use SITES for acres calculations, treatments for counts/dates
-  if (hist_display_metric == "sites") {
+  if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
     data_source <- drone_sites
     metric_col <- "sitecode"
     use_distinct <- TRUE
@@ -313,7 +313,7 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
     data_source <- drone_treatments
     metric_col <- NULL
     use_distinct <- FALSE
-  } else { # acres
+  } else { # acres or active_acres
     # Sum site acres (using sites table - SAME as current progress!)
     data_source <- drone_sites
     metric_col <- "acres"
@@ -373,7 +373,7 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   }
   
   # Aggregate based on metric type
-  if (hist_display_metric == "sites") {
+  if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
     result <- data_source %>%
       group_by(!!group_var, time_period) %>%
       summarise(count = n_distinct(!!sym(metric_col)), .groups = 'drop')
@@ -381,7 +381,7 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
     result <- data_source %>%
       group_by(!!group_var, time_period) %>%
       summarise(count = n(), .groups = 'drop')
-  } else { # acres
+  } else { # acres or active_acres
     result <- data_source %>%
       group_by(!!group_var, time_period) %>%
       summarise(count = sum(!!sym(metric_col), na.rm = TRUE), .groups = 'drop')

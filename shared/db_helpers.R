@@ -335,6 +335,19 @@ get_foremen_lookup <- function() {
 }
 
 # Get species lookup table
+# Get available zones with P1/P2 options
+get_available_zones <- function(include_all = TRUE, include_combined = TRUE) {
+  # Return clean zone options as specified
+  result <- c(
+    "P1",
+    "P2", 
+    "P1 + P2 Combined",
+    "P1 and P2 Separate"
+  )
+  
+  return(result)
+}
+
 get_species_lookup <- function() {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
@@ -822,6 +835,7 @@ get_status_colors <- function() {
     "completed" = "#4169E1",   # Royal blue for completed
     "planned" = "#fdb73e",     # Orange for planned/pending
     "needs_action" = "#FF4500", # Red-orange for needs inspection
+    "in_lab" = "#5841c0",        # Purple for lab processing
     "needs_treatment" = "#FF0000", # Pure red for needs treatment
     "unknown" = "#A9A9A9"      # Dark gray for unknown status
   ))
@@ -848,6 +862,7 @@ get_status_color_map <- function() {
     "Unknown" = status_colors["unknown"],
     "Needs Inspection" = status_colors["planned"],      # Orange/yellow for needs inspection
     "Under Threshold" = status_colors["completed"],
+    "In Lab" = status_colors["in_lab"],                              
     "Needs Treatment" = status_colors["needs_treatment"],
     "Active Treatment" = status_colors["active"]
   ))
@@ -861,6 +876,7 @@ get_status_descriptions <- function() {
     "Unknown" = "Unknown status",
     "Needs Inspection" = "Requires inspection", 
     "Under Threshold" = "Below treatment threshold",
+    "In Lab" = "Awaiting species identification",
     "Needs Treatment" = "Requires treatment",
     "Active Treatment" = "Currently being treated",
     "Completed" = "Treatment completed",

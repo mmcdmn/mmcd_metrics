@@ -9,6 +9,7 @@ suppressPackageStartupMessages({
   library(rlang)
   library(purrr)  # For map_dfr function
   library(tibble) # For deframe function
+  library(scales) # For percentage and number formatting
 })
 
 # Source the shared database helper functions
@@ -105,6 +106,34 @@ ui <- fluidPage(
                           selectInput("end_year", "End Year:",
                                       choices = seq(2010, 2025),
                                       selected = 2025)
+                   ),
+                   column(3,
+                          radioButtons("hist_display_metric", "Display Metric:",
+                                      choices = c("Proportion (%)" = "proportion",
+                                                  "Raw Numbers" = "raw_numbers"),
+                                      selected = "proportion",
+                                      inline = TRUE)
+                   ),
+                   column(3,
+                          selectInput("hist_chart_type", "Chart Type:",
+                                      choices = c("Line Chart" = "line",
+                                                  "Area Chart" = "area",
+                                                  "Step Chart" = "step",
+                                                  "Stacked Bar" = "stacked_bar",
+                                                  "Grouped Bar" = "grouped_bar"),
+                                      selected = "line")
+                   )
+                 ),
+                 fluidRow(
+                   column(6,
+                          checkboxGroupInput("hist_average_lines", "Show Average Lines:",
+                                            choices = c("5-Year Average" = "avg_5yr",
+                                                        "10-Year Average" = "avg_10yr"),
+                                            selected = NULL,
+                                            inline = TRUE)
+                   ),
+                   column(6,
+                          helpText(tags$small("Note: Average lines use all available historical data (5 or 10 years) regardless of selected date range"))
                    )
                  ),
                  plotOutput("historicalGraph", height = "600px")
@@ -144,7 +173,10 @@ server <- function(input, output) {
       structure_type_filter = isolate(input$structure_type_filter),
       priority_filter = "all",  # Default value since priority filter was removed from UI
       start_year = isolate(input$start_year),
-      end_year = isolate(input$end_year)
+      end_year = isolate(input$end_year),
+      hist_display_metric = isolate(input$hist_display_metric),
+      hist_chart_type = isolate(input$hist_chart_type),
+      hist_average_lines = isolate(input$hist_average_lines)
     )
   })
   
@@ -243,7 +275,10 @@ server <- function(input, output) {
       inputs$priority_filter,
       inputs$status_types,
       inputs$zone_filter,
-      inputs$combine_zones
+      inputs$combine_zones,
+      inputs$hist_display_metric,
+      inputs$hist_chart_type,
+      inputs$hist_average_lines
     )
   })
 }

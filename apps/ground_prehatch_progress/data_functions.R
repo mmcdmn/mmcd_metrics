@@ -1,7 +1,10 @@
 # Ground Prehatch Progress - Data Functions
 # Functions for fetching and processing ground prehatch data
 
-# Unified function to load raw ground prehatch data (similar to drone app)
+# Source shared helpers
+source("../../shared/db_helpers.R")
+
+# Unified function to load raw ground prehatch data 
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
                          start_year = NULL, end_year = NULL, include_geometry = FALSE) {
   con <- get_db_connection()
@@ -35,8 +38,8 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     if (include_archive && !is.null(start_year) && !is.null(end_year)) {
       # Historical mode: use the working query pattern but with archive
       treatments_query <- sprintf("
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
-             'current' as data_source
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, p.effect_days, 'current' as data_source
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -52,8 +55,8 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       
       UNION ALL
       
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
-             'archive' as data_source
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, p.effect_days, 'archive' as data_source
       FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -73,8 +76,8 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       # Current mode: use exact working pattern with current year from analysis_date
       analysis_year <- format(analysis_date, "%Y")
       treatments_query <- sprintf("
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime, c.foreman as treatment_foreman,
-             'current' as data_source
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, p.effect_days, 'current' as data_source
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -543,8 +546,7 @@ get_foreman_choices <- function(data, foremen_lookup) {
 
 # Load spatial data for map (similar to drone app)
 load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "2"), 
-                             facility_filter = "all", foreman_filter = "all", 
-                             expiring_days = 14) {
+                             facility_filter = "all", foreman_filter = "all") {
   
   # Load raw data with geometry
   raw_data <- load_raw_data(
@@ -578,20 +580,21 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
   # Get current date for status calculations
   current_date <- as.Date(analysis_date)
   
-  # Get latest treatment for each site
+  # Get latest treatment for each site with proper effect_days from database
   if (!is.null(raw_data$ground_treatments) && nrow(raw_data$ground_treatments) > 0) {
     latest_treatments <- raw_data$ground_treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate)) %>%
       slice(1) %>%
       ungroup() %>%
-      select(sitecode, inspdate, matcode) %>%
+      select(sitecode, inspdate, matcode, effect_days) %>%
       mutate(
         days_since_treatment = as.numeric(current_date - inspdate),
+        # Use database effect_days for each treatment, not hardcoded expiring_days
         treatment_status = case_when(
           is.na(inspdate) ~ "No Treatment",
-          days_since_treatment <= expiring_days ~ "Active",
-          days_since_treatment <= expiring_days + 14 ~ "Expiring",
+          days_since_treatment <= effect_days ~ "Active",
+          days_since_treatment <= effect_days + 14 ~ "Expiring", 
           TRUE ~ "Expired"
         )
       )

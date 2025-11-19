@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Sites Analysis - Technical Notes</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #7f8c8d;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid #34495e;
+        }
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
+        }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+<h1>Air Sites Analysis - Technical Notes</h1>
+
+<h2>Overview</h2>
+<p>This Shiny app tracks air-treated mosquito breeding sites across three perspectives:</p>
+<ol>
+<li><strong>Current Status</strong> - Sites with active/expiring treatments, red bug detections, and priority status</li>
+<li><strong>Map</strong> - Interactive map showing air sites with color-coded status markers based on recent inspections and treatments</li>
+<li><strong>Historical Analysis</strong> - Multi-year inspection summary with red bug detection ratios and treatment metrics</li>
+</ul>
+
+<h2>Data Sources</h2>
+
+<h3>Core Database Tables and Columns</h3>
+
+<h4>Primary Inspection Tables</h4>
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval inspection and treatment records</li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>numdip</code>, <code>sampnum_yr</code></li>
+<li><strong>Air Inspection Filter</strong>: <code>action IN ('2', '4')</code> for actual inspections</li>
+<li><strong>Air Treatment Filter</strong>: <code>action IN ('3', 'A', 'D')</code> for treatments with air materials</li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>priority</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Contains ongoing inspections/treatments, some may be planned vs executed</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval inspection and treatment records  </li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>numdip</code>, <code>sampnum_yr</code></li>
+<li><strong>Air Inspection Filter</strong>: <code>action IN ('2', '4')</code> for actual inspections</li>
+<li><strong>Air Treatment Filter</strong>: <code>action IN ('3', 'A', 'D')</code> for treatments</li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>priority</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Historical closed inspections/treatments, generally more reliable than current</li>
+</ul>
+</ul>
+
+<h4>Essential Supporting Tables</h4>
+<ul>
+<li><strong><code>public.loc<em>breeding</em>sites</code></strong> - Site master data</li>
+<ul>
+<li><strong>Key Columns</strong>: </li>
+<ul>
+<li><code>sitecode</code>, <code>facility</code> (composite key)</li>
+<li><code>acres</code> (site capacity, not treated acres)</li>
+<li><code>enddate</code> (<strong>CRITICAL</strong>: NULL = active site, NOT NULL = closed site)</li>
+<li><code>air_gnd</code> (values: 'A' = air sites, 'G' = ground sites)</li>
+<li><code>priority</code> (site priority: RED, BLUE, YELLOW)</li>
+<li><code>geom</code> (PostGIS geometry data for mapping, UTM projection)</li>
+</ul>
+<li><strong>Critical Join Logic</strong>: <strong>MUST filter <code>enddate IS NULL</code> OR handle temporal matching</strong> for active periods</li>
+<li><strong>Air Site Filter</strong>: <strong>MUST filter <code>air_gnd = 'A'</code></strong> for air sites only</li>
+<li><strong>Data Quality</strong>: Multiple rows per sitecode possible with different enddates representing active periods</li>
+<li><strong>Usage</strong>: Source of truth for site characteristics, active status, and spatial coordinates</li>
+<li><strong>Spatial Data</strong>: Geometry stored in UTM projection, requires <code>ST_Transform(geom, 4326)</code> for web mapping</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.gis_sectcode</code></strong> - Geographic section mapping and zone assignments</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sectcode</code> (7-character section identifier, e.g. '191031N')</li>
+<li><code>facility</code> (<strong>PREFERRED</strong>: Use this over loc<em>breeding</em>sites.facility for consistency)</li>
+<li><code>zone</code> (values: '1' = P1, '2' = P2, '3' = P3, '4' = P4)</li>
+<li><code>fosarea</code> (FOS employee number assignment)</li>
+</ul>
+<li><strong>Join Pattern</strong>: <code>LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(sitecode, 7)</code></li>
+<li><strong>Sitecode Formats Handled</strong>:</li>
+<ul>
+<li>Standard: <code>190208-003</code> → sectcode <code>1902080</code></li>
+<li>Directional: <code>191102W010</code> → sectcode <code>1911020</code> </li>
+</ul>
+<li><strong>Data Quality</strong>: Authoritative source for zone, facility, and FOS assignments</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material Active and dosage data</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>matcode</code> (material identifier, joins to treatment tables)</li>
+<li><code>effect_days</code> (treatment Active duration in days)</li>
+</ul>
+<li><strong>Default Logic</strong>: When <code>effect_days IS NULL</code>, assume 14 days for air treatments</li>
+<li><strong>Usage</strong>: Calculate treatment end dates: <code>inspdate + effect_days</code></li>
+</ul>
+</ul>
+
+<h4>Lab Sample Tables</h4>
+<ul>
+<li><strong><code>public.dblarv<em>sample</em>current</code></strong> - Current lab sample analysis results</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sampnum_yr</code> (sample identifier, links to inspection records)</li>
+<li><code>redblue</code> (values: 'R' = red bugs detected, 'B' = blue bugs detected)</li>
+<li><code>form_type</code> (values: 'AIR' = air samples, 'LOW' = ground samples)</li>
+<li><code>missing</code> (boolean: FALSE = valid sample, TRUE = missing/invalid)</li>
+</ul>
+<li><strong>Air Sample Filter</strong>: <strong>MUST filter <code>form_type = 'AIR'</code></strong> for air site samples</li>
+<li><strong>Valid Sample Filter</strong>: <strong>MUST filter <code>missing = FALSE OR missing IS NULL</code></strong> for valid samples</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>sample</em>archive</code></strong> - Historical lab sample analysis results</li>
+<ul>
+<li><strong>Key Columns</strong>: Same as current table</li>
+<li><strong>Usage</strong>: Combined with current table for complete historical red bug analysis</li>
+</ul>
+</ul>
+
+<h3>Data Collection Strategy</h3>
+
+<h4>Key Join Patterns Used Throughout Application</h4>
+
+<p><strong>Standard Air Site Analysis Pattern:</strong></p>
+<pre><code class="sql">
+-- Connect inspections with air site information and lab results
+FROM public.dblarv_insptrt_current i
+LEFT JOIN public.loc_breeding_sites b ON i.sitecode = b.sitecode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(i.sitecode, 7)
+LEFT JOIN public.dblarv_sample_current s ON i.sampnum_yr = s.sampnum_yr 
+  AND s.form_type = 'AIR' 
+  AND (s.missing = FALSE OR s.missing IS NULL)
+LEFT JOIN public.mattype_list_targetdose m ON i.matcode = m.matcode
+WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during inspection
+  AND b.air_gnd = 'A'                                 -- Air sites only
+  AND b.geom IS NOT NULL                             -- Sites with valid coordinates
+  AND i.action IN ('2', '4')                         -- Inspection actions only
+</code></pre>
+
+<p><strong>Note</strong>: See "SQL Queries Reference" section below for complete, up-to-date query implementations.</p>
+
+<h4>Critical Data Integration Notes</h4>
+
+<p><strong>Sitecode Format Handling:</strong></p>
+<ul>
+<li><strong>Standard Format</strong>: <code>190208-003</code> (7-digit section + dash + site num)</li>
+<li><strong>Directional Format</strong>: <code>191102W010</code> (6-digit + direction + site num)</li>
+<li><strong>Join Logic</strong>: <code>LEFT(sitecode, 7)</code> extracts section code for both formats</li>
+<li><strong>Example</strong>: Both <code>190208-003</code> and <code>191102W010</code> → sectcodes <code>1902080</code> and <code>1911020</code></li>
+</ul>
+
+<p><strong>Site Record Temporal Matching:</strong></p>
+<ul>
+<li><strong>Challenge</strong>: Sites have multiple records with different <code>enddate</code> values representing active periods</li>
+<li><strong>Solution</strong>: Match inspection date with site active period: <code>(b.enddate IS NULL OR b.enddate &gt;= i.inspdate)</code></li>
+<li><strong>Deduplication</strong>: Use <code>ROW_NUMBER() OVER (PARTITION BY i.sitecode, i.inspdate ORDER BY...)</code> to select best match</li>
+</ul>
+
+<p><strong>Facility Data Source Priority:</strong></p>
+<ul>
+<li><strong>Preferred</strong>: <code>COALESCE(g.facility, b.facility)</code> - Use gis_sectcode.facility first</li>
+<li><strong>Fallback</strong>: loc<em>breeding</em>sites.facility when gis_sectcode data unavailable</li>
+<li><strong>Consistency</strong>: Ensures facility data matches other MMCD applications</li>
+</ul>
+
+<p><strong>Lab Sample Matching:</strong></p>
+<ul>
+<li><strong>Join Key</strong>: <code>i.sampnum<em>yr = s.sampnum</em>yr</code> links inspections to lab samples</li>
+<li><strong>Air Samples Only</strong>: Filter <code>s.form_type = 'AIR'</code> for air site samples</li>
+<li><strong>Valid Samples</strong>: Filter <code>(s.missing = FALSE OR s.missing IS NULL)</code> includes both explicit FALSE and NULL values</li>
+</ul>
+
+<p><strong>Treatment vs Site Acres:</strong></p>
+<ul>
+<li><strong>Site Acres</strong>: <code>loc<em>breeding</em>sites.acres</code> = site capacity/potential treatment area</li>
+<li><strong>Treated Acres</strong>: <code>dblarv<em>insptrt</em>*.acres</code> = actual area treated in specific application</li>
+<li><strong>Usage</strong>: Site acres for capacity analysis, treated acres for actual treatment metrics</li>
+</ul>
+
+<p><strong>Red Bug Detection Logic:</strong></p>
+<ul>
+<li><strong>Detection</strong>: <code>s.redblue = 'R'</code> indicates red bugs found in sample</li>
+<li><strong>Blue Bugs</strong>: <code>s.redblue = 'B'</code> indicates blue bugs found (not red)</li>
+<li><strong>No Detection</strong>: <code>s.redblue IS NULL</code> or no matching sample record</li>
+</ul>
+
+<h2>Tab 1: Current Status</h2>
+
+<h3>Purpose</h3>
+<p>Display current status of air sites with inspection, treatment, and lab analysis data including red bug detection rates.</p>
+
+<h3>Site Status Definitions</h3>
+<p>Air sites are classified into mutually exclusive status categories based on recent inspection and treatment data:</p>
+
+<h4><strong>Active Treatment</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Site has treatment that is still effective as of analysis date</li>
+<li><strong>Logic</strong>: <code>treatment<em>end</em>date &gt;= analysis_date</code></li>
+<li><strong>Calculation</strong>: <code>treatment<em>end</em>date = last<em>treatment</em>date + effect_days</code></li>
+<li><strong>Priority</strong>: Highest - Site is adequately treated</li>
+</ul>
+
+<h4><strong>Needs Treatment</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Site has recent inspection showing larvae above threshold, no active treatment</li>
+<li><strong>Logic</strong>: <code>last<em>inspection</em>numdip &gt;= larvae_threshold AND (no treatment OR treatment expired)</code></li>
+<li><strong>Threshold</strong>: Configurable larvae threshold (default: 2 dips)</li>
+<li><strong>Priority</strong>: High - Site requires immediate treatment attention</li>
+</ul>
+
+<h4><strong>Recently Inspected</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Site has recent inspection below threshold, no active treatment needed</li>
+<li><strong>Logic</strong>: <code>last<em>inspection</em>numdip &lt; larvae_threshold AND no active treatment</code></li>
+<li><strong>Threshold</strong>: Below configurable larvae threshold</li>
+<li><strong>Priority</strong>: Medium - Site is monitored but doesn't need treatment</li>
+</ul>
+
+<h4><strong>In Lab</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Site has recent inspection with sample sent to lab, awaiting results</li>
+<li><strong>Logic</strong>: <code>has<em>recent</em>inspection AND has<em>sampnum</em>yr AND no lab results yet</code></li>
+<li><strong>Sample Status</strong>: Sample sent but <code>redblue</code> result not available</li>
+<li><strong>Priority</strong>: Medium - Awaiting lab analysis for treatment decision</li>
+</ul>
+
+<h4><strong>No Recent Data</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Site has no recent inspection or treatment data</li>
+<li><strong>Logic</strong>: <code>no recent inspection AND no active treatment</code></li>
+<li><strong>Timeframe</strong>: Beyond analysis date window for recent activity</li>
+<li><strong>Priority</strong>: Low - Site status unknown, may need inspection</li>
+</ul>
+
+<h3>Red Bug Metrics</h3>
+<p>Air site analysis includes specific metrics for red bug (Chironomus) detection:</p>
+
+<h4><strong>Red Bug Detection Rate</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Percentage of lab samples showing red bugs</li>
+<li><strong>Calculation</strong>: <code>(sites<em>with</em>red<em>bugs / sites</em>with<em>lab</em>results) * 100</code></li>
+<li><strong>Lab Sample Required</strong>: Only counts sites with valid air lab samples</li>
+<li><strong>Detection Logic</strong>: <code>redblue = 'R'</code> in sample results</li>
+</ul>
+
+<h4><strong>Red Bug Sites Count</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Number of sites with confirmed red bug detections</li>
+<li><strong>Logic</strong>: Sites with <code>redblue = 'R'</code> in most recent lab sample</li>
+<li><strong>Timeframe</strong>: Based on analysis date and recent activity window</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li><strong>Load Air Sites</strong>: Query active air sites with zone/facility information</li>
+<li><strong>Get Recent Inspections</strong>: Latest inspection per site within analysis window</li>
+<li><strong>Get Active Treatments</strong>: Current treatments with effectiveness calculations</li>
+<li><strong>Get Lab Results</strong>: Link inspections to lab samples for red bug analysis</li>
+<li><strong>Calculate Status</strong>: Apply status logic rules to categorize each site</li>
+<li><strong>Aggregate Metrics</strong>: Summarize counts and percentages for value boxes and charts</li>
+</ul>
+
+<h2>Tab 2: Map</h2>
+
+<h3>Purpose</h3>
+<p>Provide interactive map visualization of air sites with color-coded status markers and detailed popup information.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Interactive Leaflet Map</strong> with multiple basemap options:</li>
+<ul>
+<li>Streets (CartoDB Positron) - Default</li>
+<li>Satellite (Esri World Imagery)  </li>
+<li>Terrain (Esri World Topo)</li>
+<li>OpenStreetMap</li>
+</ul>
+<li><strong>Site popups</strong> with detailed information:</li>
+<ul>
+<li>Sitecode, facility, zone, priority, site acres</li>
+<li>Treatment status and last inspection/treatment details</li>
+<li>Lab results including red bug detection</li>
+<li>Last material used and effectiveness days</li>
+</ul>
+<li><strong>Map legend</strong> showing status color scheme</li>
+<li><strong>Shared filters</strong> with Current Status tab (zone, facility, priority, larval threshold)</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li><strong>Load Spatial Data</strong>: Query air sites with coordinates via <code>ST<em>Transform(ST</em>Centroid(geom), 4326)</code></li>
+<li><strong>Calculate Status</strong>: Apply same status logic as Current Status tab</li>
+<li><strong>Filter Sites</strong>: Remove sites without valid coordinates (<code>geom IS NOT NULL</code>)</li>
+<li><strong>Create Markers</strong>: Generate color-coded circle markers for each site</li>
+<li><strong>Generate Popups</strong>: Format HTML popups with site and status details</li>
+</ul>
+
+<h3>Coordinate Transformation</h3>
+<ul>
+<li><strong>Source</strong>: PostGIS geometry in UTM projection (EPSG:26915)</li>
+<li><strong>Target</strong>: WGS84 decimal degrees (EPSG:4326) for web mapping</li>
+<li><strong>SQL Transform</strong>: <code>ST<em>X(ST</em>Transform(ST_Centroid(geom), 4326))</code> for longitude</li>
+<li><strong>Coordinate Range</strong>: Minnesota extent (~-93.8 to -92.8 lng, 44.6 to 45.4 lat)</li>
+</ul>
+
+<h2>Tab 3: Historical Analysis</h2>
+
+<h3>Purpose</h3>
+<p>Analyze multi-year trends in air site inspection activity, red bug detection rates, and treatment effectiveness.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Historical Inspection Summary Table</strong> showing:</li>
+<ul>
+<li>Site identification (sitecode, facility, priority, zone, acres)</li>
+<li>Inspection metrics (total inspections, inspections above threshold)</li>
+<li>Red bug metrics (red bug inspections, red bug detection ratio)</li>
+<li>Data source breakdown (archive vs current inspections)</li>
+<li>Active years (years with inspection activity)</li>
+</ul>
+<li><strong>Configurable year range</strong> - Start Year and End Year selectors</li>
+<li><strong>Same filters</strong> as other tabs (facility, priority, zone, larval threshold)</li>
+<li><strong>Download capability</strong> for complete historical dataset</li>
+<li><strong>Data source transparency</strong> - Shows archive vs current data breakdown</li>
+</ul>
+
+<h3>Historical Metrics Definitions</h3>
+
+<h4><strong>Total Inspections</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Count of ALL inspection visits to site (actions '2' and '4')</li>
+<li><strong>Includes</strong>: Inspections with <code>numdip = 0</code> (no larvae found)</li>
+<li><strong>Includes</strong>: Inspections without lab samples</li>
+<li><strong>Calculation</strong>: <code>COUNT(*)</code> from combined inspection tables</li>
+<li><strong>Purpose</strong>: Denominator for all percentage calculations</li>
+</ul>
+
+<h4><strong>Red Bug Inspections</strong>  </h4>
+<ul>
+<li><strong>Definition</strong>: Count of inspections where lab analysis detected red bugs</li>
+<li><strong>Logic</strong>: Inspections with <code>sampnum_yr</code> linking to samples with <code>redblue = 'R'</code></li>
+<li><strong>Requires</strong>: Valid lab sample with air form type</li>
+<li><strong>Calculation</strong>: <code>COUNT(CASE WHEN redblue = 'R' THEN 1 END)</code></li>
+<li><strong>Purpose</strong>: Numerator for red bug detection rate</li>
+</ul>
+
+<h4><strong>Red Bug Ratio</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Percentage of inspections resulting in red bug detection</li>
+<li><strong>Formula</strong>: <code>(red<em>bug</em>inspections / total_inspections) * 100</code></li>
+<li><strong>Interpretation</strong>: Higher ratios indicate consistent red bug presence</li>
+<li><strong>Range</strong>: 0% (no detections) to 100% (all inspections found red bugs)</li>
+<li><strong>Usage</strong>: Compare sites and facilities for red bug prevalence</li>
+</ul>
+
+<h4><strong>Inspections Above Threshold</strong></h4>
+<ul>
+<li><strong>Definition</strong>: Count of inspections with larvae count &gt;= threshold</li>
+<li><strong>Logic</strong>: <code>numdip &gt;= larvae_threshold</code> (default threshold: 2)</li>
+<li><strong>Purpose</strong>: Indicates treatment need frequency</li>
+<li><strong>Calculation</strong>: <code>COUNT(CASE WHEN numdip &gt;= threshold THEN 1 END)</code></li>
+</ul>
+
+<h4><strong>Archive vs Current Breakdown</strong></h4>
+<ul>
+<li><strong>Archive Inspections</strong>: Count from <code>dblarv<em>insptrt</em>archive</code> table</li>
+<li><strong>Current Inspections</strong>: Count from <code>dblarv<em>insptrt</em>current</code> table  </li>
+<li><strong>Purpose</strong>: Data source transparency and completeness verification</li>
+<li><strong>Expected Pattern</strong>: Archive data for historical years, current data for recent dates</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li><strong>Combine Data Sources</strong>: UNION ALL of archive and current inspection tables</li>
+<li><strong>Filter Air Sites</strong>: Join with <code>loc<em>breeding</em>sites</code> for <code>air_gnd = 'A'</code></li>
+<li><strong>Temporal Matching</strong>: Match inspection dates with site active periods</li>
+<li><strong>Lab Sample Linking</strong>: Join with combined sample tables via <code>sampnum_yr</code></li>
+<li><strong>Facility Integration</strong>: Use <code>gis_sectcode.facility</code> for consistency</li>
+<li><strong>Aggregate by Site</strong>: Group by sitecode and calculate metrics</li>
+<li><strong>Format Results</strong>: Convert arrays and format percentages for display</li>
+</ul>
+
+<h2>Code Organization</h2>
+
+<h3>File Structure</h3>
+<pre><code class="">
+air_sites_simple/
+├── app.R                    # Main app - UI orchestration and server logic  
+├── ui_helper.R              # UI component functions and input controls
+├── data_functions.R         # Current data queries and processing
+├── historical_functions.R   # Historical analysis queries and processing
+└── NOTES.md                # This file
+</code></pre>
+
+<h3>Key Functions by File</h3>
+
+<h4>app.R</h4>
+<ul>
+<li><code>server()</code> - Main server function with reactive data loading and output rendering</li>
+<li><strong>Current Status Tab</strong>: Value boxes, status chart, detailed table with download</li>
+<li><strong>Map Tab</strong>: Interactive leaflet map with color-coded status markers  </li>
+<li><strong>Historical Tab</strong>: Historical inspection summary table with download</li>
+</ul>
+
+<h4>data_functions.R</h4>
+<ul>
+<li><code>get<em>air</em>sites_data()</code> - Loads current air site data with status calculations</li>
+<li><code>get<em>db</em>connection()</code> - Database connection management (from shared/db_helpers.R)</li>
+<li><strong>Status Calculations</strong>: Determines site categories based on inspection/treatment data</li>
+<li><strong>Lab Integration</strong>: Links inspections to lab samples for red bug analysis</li>
+<li><strong>Spatial Support</strong>: Coordinate extraction for mapping functionality</li>
+</ul>
+
+<h4>historical_functions.R  </h4>
+<ul>
+<li><code>get<em>historical</em>inspection_summary()</code> - Loads combined historical inspection data</li>
+<li><strong>Multi-table Integration</strong>: UNION ALL of archive and current tables</li>
+<li><strong>Red Bug Analysis</strong>: Calculates detection ratios across multiple years</li>
+<li><strong>Temporal Filtering</strong>: Year range and date filtering for historical periods</li>
+<li><strong>Data Source Tracking</strong>: Tracks archive vs current data proportions</li>
+</ul>
+
+<h4>ui_helper.R</h4>
+<ul>
+<li><code>create<em>*</em>ui()</code> functions for major UI components</li>
+<li><strong>Filter Controls</strong>: Facility, priority, zone, threshold, date selectors</li>
+<li><strong>Layout Helpers</strong>: Consistent box styling and responsive design</li>
+<li><strong>Input Validation</strong>: Ensures valid ranges and selections</li>
+</ul>
+
+<h2>Data Collection and Processing Logic</h2>
+
+<h3>Current Status Analysis Pipeline</h3>
+
+<h4>Air Site Identification</h4>
+<pre><code class="sql">
+-- Base query for active air sites
+SELECT b.sitecode, b.facility, b.priority, b.acres, b.air_gnd,
+       g.zone, g.facility as gis_facility, g.fosarea
+FROM loc_breeding_sites b
+LEFT JOIN gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
+WHERE b.air_gnd = 'A'                    -- Air sites only
+  AND b.geom IS NOT NULL                 -- Sites with coordinates
+  AND (b.enddate IS NULL OR b.enddate &gt; analysis_date)  -- Active sites
+</code></pre>
+
+<h4>Recent Inspection Data</h4>
+<pre><code class="sql">
+-- Latest inspection per air site
+WITH recent_inspections AS (
+  SELECT i.sitecode, i.inspdate, i.numdip, i.sampnum_yr,
+         ROW_NUMBER() OVER (PARTITION BY i.sitecode 
+                           ORDER BY i.inspdate DESC) as rn
+  FROM dblarv_insptrt_current i
+  WHERE i.action IN ('2', '4')           -- Inspection actions
+    AND i.inspdate &lt;= analysis_date
+)
+SELECT * FROM recent_inspections WHERE rn = 1
+</code></pre>
+
+<h4>Red Bug Lab Analysis</h4>
+<pre><code class="sql">
+-- Link inspections to lab results
+SELECT ls.sampnum_yr, ls.redblue, ls.form_type, ls.missing
+FROM dblarv_sample_current ls
+WHERE ls.form_type = 'AIR'               -- Air samples only
+  AND (ls.missing = FALSE OR ls.missing IS NULL)  -- Valid samples
+</code></pre>
+
+<h4>Treatment Effectiveness</h4>
+<pre><code class="sql">
+-- Active treatments with end dates
+SELECT t.sitecode, t.inspdate, t.matcode,
+       t.inspdate + COALESCE(m.effect_days, 14) as treatment_end_date
+FROM dblarv_insptrt_current t
+LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE t.action IN ('3', 'A', 'D')       -- Treatment actions
+  AND t.inspdate + COALESCE(m.effect_days, 14) &gt;= analysis_date
+</code></pre>
+
+<h3>Historical Analysis Pipeline</h3>
+
+<h4>Combined Data Sources</h4>
+<p>The historical analysis combines archive and current tables to provide complete multi-year perspective:</p>
+
+<pre><code class="sql">
+-- Inspection data from both sources
+WITH combined_inspections AS (
+  -- Archive inspection data
+  SELECT sitecode, inspdate, sampnum_yr, numdip, action, 'archive' as source_table
+  FROM dblarv_insptrt_archive
+  WHERE action IN ('2', '4')
+    AND EXTRACT(YEAR FROM inspdate) BETWEEN start_year AND end_year
+  
+  UNION ALL
+  
+  -- Current inspection data  
+  SELECT sitecode, inspdate, sampnum_yr, numdip, action, 'current' as source_table
+  FROM dblarv_insptrt_current
+  WHERE action IN ('2', '4')
+    AND EXTRACT(YEAR FROM inspdate) BETWEEN start_year AND end_year
+)
+</code></pre>
+
+<h4>Sample Data Integration</h4>
+<pre><code class="sql">
+-- Combined sample results
+WITH combined_samples AS (
+  -- Archive sample data
+  SELECT sampnum_yr, redblue, missing, form_type, 'archive' as source_table
+  FROM dblarv_sample_archive
+  WHERE form_type = 'AIR'
+    AND (missing = FALSE OR missing IS NULL)
+  
+  UNION ALL
+  
+  -- Current sample data
+  SELECT sampnum_yr, redblue, missing, form_type, 'current' as source_table  
+  FROM dblarv_sample_current
+  WHERE form_type = 'AIR'
+    AND (missing = FALSE OR missing IS NULL)
+)
+</code></pre>
+
+<h4>Metric Calculations</h4>
+<p>All historical metrics are calculated <strong>after</strong> SQL returns raw records using R aggregation:</p>
+
+<p><strong>Total Inspections per Site:</strong></p>
+<pre><code class="r">
+result$total_inspections &lt;- combined_data %&gt;%
+  group_by(sitecode) %&gt;%
+  summarise(count = n(), .groups = 'drop')
+</code></pre>
+
+<p><strong>Red Bug Inspections per Site:</strong></p>
+<pre><code class="r">
+result$red_bug_inspections &lt;- combined_data %&gt;%
+  filter(redblue == 'R') %&gt;%
+  group_by(sitecode) %&gt;%
+  summarise(count = n(), .groups = 'drop')
+</code></pre>
+
+<p><strong>Red Bug Detection Rate:</strong></p>
+<pre><code class="r">
+result$red_bug_ratio &lt;- ifelse(result$total_inspections &gt; 0,
+  round((result$red_bug_inspections / result$total_inspections) * 100, 1),
+  0)
+</code></pre>
+
+<h2>SQL Queries Reference</h2>
+
+<p>This section documents all SQL queries used in the air sites analysis app for reference and troubleshooting.</p>
+
+<h3>1. Current Air Sites Query</h3>
+<p><strong>Function</strong>: <code>get<em>air</em>sites<em>data()</code> in <code>data</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load active air sites with comprehensive status analysis</p>
+
+<pre><code class="sql">
+WITH ActiveAirSites AS (
+  SELECT 
+    b.sitecode,
+    COALESCE(g.facility, b.facility) as facility,
+    b.acres,
+    b.priority,
+    g.zone,
+    ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
+    ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
+  FROM loc_breeding_sites b
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
+  WHERE (b.enddate IS NULL OR b.enddate &gt; analysis_date)
+    AND b.air_gnd = 'A'
+    AND b.geom IS NOT NULL
+),
+
+-- Get most recent inspections (actions 2, 4)
+RecentInspections AS (
+  SELECT 
+    i.sitecode,
+    i.inspdate as last_inspection_date,
+    i.numdip,
+    i.sampnum_yr,
+    ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) as rn
+  FROM dblarv_insptrt_current i
+  WHERE i.inspdate &lt;= analysis_date
+    AND i.action IN ('2', '4')
+    AND i.sitecode IN (SELECT sitecode FROM ActiveAirSites)
+),
+
+-- Get most recent treatments (actions 3, A, D)
+RecentTreatments AS (
+  SELECT 
+    t.sitecode,
+    t.inspdate as last_treatment_date,
+    t.matcode,
+    t.mattype,
+    ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC) as rn
+  FROM dblarv_insptrt_current t
+  WHERE t.inspdate &lt;= analysis_date
+    AND t.action IN ('3', 'A', 'D')
+    AND t.matcode IS NOT NULL
+    AND t.matcode != ''
+    AND t.sitecode IN (SELECT sitecode FROM ActiveAirSites)
+),
+
+-- Get lab sample data for red/blue bug determination (AIR samples only)
+LabSampleData AS (
+  SELECT 
+    ls.sampnum_yr,
+    ls.redblue,
+    ls.missing,
+    CASE 
+      WHEN ls.redblue = 'R' THEN 1
+      ELSE 0
+    END as has_red_bugs
+  FROM dblarv_sample_current ls
+  WHERE ls.sampnum_yr IS NOT NULL
+    AND (ls.missing = FALSE OR ls.missing IS NULL)
+    AND ls.form_type = 'AIR'
+)
+
+SELECT 
+  a.sitecode,
+  a.facility,
+  a.priority,
+  a.zone,
+  a.acres,
+  a.longitude,
+  a.latitude,
+  ri.last_inspection_date,
+  ri.numdip,
+  ri.sampnum_yr,
+  rt.last_treatment_date,
+  rt.matcode,
+  rt.mattype as last_treatment_material,
+  CASE WHEN rt.matcode = 'Bti_gran' THEN bti_effect_days 
+       WHEN m.effect_days IS NOT NULL THEN m.effect_days 
+       ELSE 14 END as effect_days,
+  lsd.redblue,
+  lsd.has_red_bugs,
+  CASE WHEN ri.sampnum_yr IS NOT NULL THEN 1 ELSE 0 END as has_sample,
+  CASE WHEN lsd.sampnum_yr IS NOT NULL THEN 1 ELSE 0 END as has_lab_result
+FROM ActiveAirSites a
+LEFT JOIN RecentInspections ri ON a.sitecode = ri.sitecode AND ri.rn = 1
+LEFT JOIN RecentTreatments rt ON a.sitecode = rt.sitecode AND rt.rn = 1
+LEFT JOIN LabSampleData lsd ON ri.sampnum_yr = lsd.sampnum_yr
+LEFT JOIN mattype_list_targetdose m ON rt.matcode = m.matcode
+ORDER BY a.facility, a.sitecode
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
+<ul>
+<li><strong>Air Sites Only</strong>: <code>b.air_gnd = 'A'</code> ensures only air treatment sites</li>
+<li><strong>Active Sites Only</strong>: <code>(b.enddate IS NULL OR b.enddate &gt; analysis_date)</code> excludes closed sites</li>
+<li><strong>Facility Priority</strong>: <code>COALESCE(g.facility, b.facility)</code> uses gis_sectcode facility first</li>
+<li><strong>Coordinate Transform</strong>: <code>ST<em>Transform(ST</em>Centroid(b.geom), 4326)</code> for web mapping</li>
+<li><strong>Latest Data Only</strong>: <code>ROW_NUMBER()</code> window functions get most recent inspections/treatments</li>
+<li><strong>Lab Integration</strong>: Links inspections to samples via <code>sampnum_yr</code> for red bug analysis</li>
+<li><strong>BTI Override</strong>: Supports configurable BTI granule effectiveness days</li>
+</ul>
+
+<h3>2. Historical Air Sites Inspection Summary Query</h3>
+<p><strong>Function</strong>: <code>get<em>historical</em>inspection<em>summary()</code> in <code>historical</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load comprehensive multi-year inspection analysis with red bug metrics</p>
+
+<pre><code class="sql">
+WITH combined_inspections AS (
+  -- Archive inspection data
+  SELECT 
+    sitecode, inspdate, sampnum_yr, numdip, action, 'archive' as source_table
+  FROM dblarv_insptrt_archive
+  WHERE action IN ('2', '4')
+    AND EXTRACT(YEAR FROM inspdate) BETWEEN start_year AND end_year
+  
+  UNION ALL
+  
+  -- Current inspection data
+  SELECT 
+    sitecode, inspdate, sampnum_yr, numdip, action, 'current' as source_table
+  FROM dblarv_insptrt_current
+  WHERE action IN ('2', '4')
+    AND EXTRACT(YEAR FROM inspdate) BETWEEN start_year AND end_year
+),
+
+all_inspections AS (
+  SELECT 
+    b.sitecode,
+    COALESCE(g.facility, b.facility) as facility,
+    b.priority,
+    g.zone,
+    b.acres,
+    i.inspdate,
+    i.sampnum_yr,
+    i.numdip,
+    i.source_table,
+    ROW_NUMBER() OVER (PARTITION BY i.sitecode, i.inspdate ORDER BY 
+      CASE WHEN b.enddate IS NULL THEN 1 ELSE 0 END DESC,
+      b.enddate DESC
+    ) as rn
+  FROM loc_breeding_sites b
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
+  INNER JOIN combined_inspections i ON b.sitecode = i.sitecode
+  WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)
+    AND b.air_gnd = 'A'
+    AND b.geom IS NOT NULL
+),
+
+filtered_inspections AS (
+  SELECT * FROM all_inspections WHERE rn = 1
+),
+
+combined_samples AS (
+  -- Archive sample data
+  SELECT 
+    sampnum_yr, redblue, missing, form_type, 'archive' as source_table
+  FROM dblarv_sample_archive
+  WHERE form_type = 'AIR'
+    AND (missing = FALSE OR missing IS NULL)
+  
+  UNION ALL
+  
+  -- Current sample data  
+  SELECT 
+    sampnum_yr, redblue, missing, form_type, 'current' as source_table
+  FROM dblarv_sample_current
+  WHERE form_type = 'AIR'
+    AND (missing = FALSE OR missing IS NULL)
+),
+
+red_bug_samples AS (
+  SELECT 
+    fi.sitecode,
+    COUNT(CASE WHEN cs.redblue = 'R' THEN 1 END) as red_bug_count,
+    COUNT(CASE WHEN cs.redblue IS NOT NULL THEN 1 END) as total_samples
+  FROM filtered_inspections fi
+  LEFT JOIN combined_samples cs ON fi.sampnum_yr = cs.sampnum_yr
+  GROUP BY fi.sitecode
+)
+
+SELECT 
+  fi.sitecode,
+  fi.facility,
+  fi.priority,
+  fi.zone,
+  fi.acres,
+  COUNT(*)::INTEGER as total_inspections,
+  SUM(CASE WHEN fi.numdip &gt;= larvae_threshold THEN 1 ELSE 0 END)::INTEGER as inspections_above_threshold,
+  COALESCE(rbs.red_bug_count, 0)::INTEGER as red_bug_inspections,
+  COALESCE(rbs.total_samples, 0)::INTEGER as samples_with_results,
+  COUNT(CASE WHEN fi.source_table = 'archive' THEN 1 END)::INTEGER as archive_inspections,
+  COUNT(CASE WHEN fi.source_table = 'current' THEN 1 END)::INTEGER as current_inspections,
+  ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM fi.inspdate) 
+           ORDER BY EXTRACT(YEAR FROM fi.inspdate)) as years_with_inspections
+FROM filtered_inspections fi
+LEFT JOIN red_bug_samples rbs ON fi.sitecode = rbs.sitecode
+GROUP BY fi.sitecode, fi.facility, fi.priority, fi.zone, fi.acres, 
+         rbs.red_bug_count, rbs.total_samples
+ORDER BY fi.sitecode
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
+<ul>
+<li><strong>Combined Data Sources</strong>: UNION ALL of archive and current tables for complete history</li>
+<li><strong>Air Sites Only</strong>: Filters <code>b.air_gnd = 'A'</code> for air treatment sites</li>
+<li><strong>Temporal Matching</strong>: <code>(b.enddate IS NULL OR b.enddate &gt;= i.inspdate)</code> matches site active periods</li>
+<li><strong>Facility Consistency</strong>: Uses <code>gis_sectcode.facility</code> for consistent facility data</li>
+<li><strong>Sample Integration</strong>: Combines archive and current sample tables via UNION ALL</li>
+<li><strong>Red Bug Analysis</strong>: Counts red bug detections via <code>redblue = 'R'</code> filtering</li>
+<li><strong>Data Source Tracking</strong>: Tracks archive vs current inspection counts for transparency</li>
+<li><strong>Metric Calculation</strong>: All key metrics calculated in single query for efficiency</li>
+</ul>
+
+<h3>3. Air Site Spatial Data Query (Map Functionality)</h3>
+<p><strong>Function</strong>: Used within <code>get<em>air</em>sites<em>data()</code> with <code>include</em>geometry = TRUE</code>  </p>
+<p><strong>Purpose</strong>: Load air sites with coordinates for interactive mapping</p>
+
+<pre><code class="sql">
+SELECT 
+  b.sitecode,
+  COALESCE(g.facility, b.facility) as facility,
+  b.priority,
+  b.acres,
+  g.zone,
+  ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng,
+  ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat,
+  -- Include inspection and treatment data for status calculation
+  ri.last_inspection_date,
+  ri.numdip,
+  ri.sampnum_yr,
+  rt.last_treatment_date,
+  rt.matcode,
+  lsd.redblue,
+  lsd.has_red_bugs
+FROM loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
+-- ... same joins as Current Air Sites Query for status data
+WHERE b.air_gnd = 'A'
+  AND (b.enddate IS NULL OR b.enddate &gt; analysis_date)
+  AND b.geom IS NOT NULL
+ORDER BY b.facility, b.sitecode
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
+<ul>
+<li><strong>Air Sites Only</strong>: <code>b.air_gnd = 'A'</code> filter for air treatment sites</li>
+<li><strong>Valid Coordinates</strong>: <code>b.geom IS NOT NULL</code> ensures mappable sites</li>
+<li><strong>Coordinate Transform</strong>: <code>ST<em>Transform(ST</em>Centroid(b.geom), 4326)</code> for web mapping standards</li>
+<li><strong>Status Data</strong>: Includes same inspection/treatment joins for status calculation</li>
+<li><strong>Web Mapping Ready</strong>: Returns longitude/latitude in WGS84 decimal degrees (EPSG:4326)</li>
+</ul>
+
+<p><strong>Coordinate Transformation Details</strong>:</p>
+<ul>
+<li><strong>Source Projection</strong>: UTM Zone 15N (EPSG:26915) - Minnesota standard</li>
+<li><strong>Target Projection</strong>: WGS84 (EPSG:4326) - Web mapping standard</li>
+<li><strong>Centroid Calculation</strong>: <code>ST_Centroid()</code> finds geometric center of site polygon</li>
+<li><strong>Expected Range</strong>: Minnesota bounds (~-94.6 to -89.5 lng, 43.5 to 49.4 lat)</li>
+</ul>
+    </div>
+</body>
+</html>

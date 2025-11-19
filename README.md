@@ -47,7 +47,7 @@ LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
   - [Control Efficacy](#control-efficacy)
   - [Treatment Analysis](#treatment-analysis)
   - [Trap Surveillance Test](#trap-surveillance-test)
-  - [Air Sites Simple](#air-sites-simple)
+  - [Air Sites Simple](#air-sites-simple) - [Notes](apps/air_sites_simple/NOTES.md)
   - [Red Air Legacy](#red-air-legacy)
 - [Installation & Deployment](#installation--deployment)
   - [Prerequisites - System Dependencies](#prerequisites---system-dependencies)
@@ -246,19 +246,19 @@ mmcd_metrics/
   - Consistent color schemes from centralized `db_helpers.R`
 
 ### Red Air Pipeline
-- **Path**: `/red_air/`
+- **Path**: `/air_sites_simple/`
 - **Purpose**: Monitor air site status, rainfall impact, and treatment pipeline
+- **Documentation**: [Technical Notes](apps/air_sites_simple/NOTES.md)
 - **Modular Structure**:
-  - **`app.R`**: Main application logic with interactive dashboard
-  - **`air_status_functions.R`**: Air site status processing and lifecycle management
-  - **`flow_testing_functions.R`**: Flow testing, validation tools, and pipeline analysis
+  - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
+  - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
+  - **`ui_helpers.R`**: UI component functions and reusable interface elements
 - **Features**:
   - Interactive map showing site status with color-coded dots (powered by `air_status_functions.R`)
   - Rainfall tracking and analysis
   - Treatment lifecycle management: Needs Inspection → Under Threshold → Needs Treatment → Active Treatment
   - Real-time status summary chart
   - Detailed site information table
-  - Flow testing and validation tools (powered by `flow_testing_functions.R`)
   - **Uses centralized colors from `db_helpers.R`**: Changing colors in db_helpers automatically updates the map, chart, and table
 
 ### Test Application

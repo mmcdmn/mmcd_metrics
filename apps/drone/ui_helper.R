@@ -36,11 +36,22 @@ drone_ui <- function() {
                                   "Area Chart" = "area",
                                   "Step Chart" = "step"),
                       selected = "stacked_bar"),
-          radioButtons("hist_display_metric", "Display Metric:",
-                       choices = c("Number of Sites" = "sites",
-                                   "Number of Treatments" = "treatments",
-                                   "Number of Acres" = "acres"),
-                       selected = "sites"),
+          # Conditional metric choices based on time period
+          conditionalPanel(
+            condition = "input.hist_time_period == 'yearly'",
+            radioButtons("hist_display_metric", "Display Metric:",
+                         choices = c("Number of Sites" = "sites",
+                                     "Number of Treatments" = "treatments", 
+                                     "Number of Acres" = "acres"),
+                         selected = "sites")
+          ),
+          conditionalPanel(
+            condition = "input.hist_time_period == 'weekly'",
+            radioButtons("hist_display_metric", "Display Metric:",
+                         choices = c("Number of Active Sites" = "active_sites",
+                                     "Number of Active Acres" = "active_acres"),
+                         selected = "active_sites")
+          ),
           sliderInput("hist_year_range", "Year Range:",
                       min = 2010, max = 2025, value = c(2018, 2025), step = 1)
         ),

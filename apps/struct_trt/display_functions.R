@@ -186,7 +186,7 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
 }
 
 # Function to create historical trends chart
-create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE, display_metric = "proportion", chart_type = "line") {
+create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE, display_metric = "proportion", chart_type = "line", average_lines = NULL) {
   if (nrow(treatments_data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No historical data available"), size = 6) +
@@ -337,20 +337,225 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
            theme_void())
   }
 
-  # Calculate seasonal average curve per group (average for each calendar day across all years)
-  seasonal_curve <- treatment_trends %>%
-    mutate(day_of_year = format(date, "%m-%d")) %>%
-    group_by(day_of_year, group_name) %>%
-    summarize(
-      seasonal_avg_proportion = mean(proportion_active_treatment, na.rm = TRUE),
-      seasonal_avg_raw = mean(raw_active_sites, na.rm = TRUE),
-      .groups = "drop"
-    )
-  
-  # Add seasonal average to main data
+  # Add day_of_year for multi-year average calculations
   treatment_trends <- treatment_trends %>%
-    mutate(day_of_year = format(date, "%m-%d")) %>%
-    left_join(seasonal_curve, by = c("day_of_year", "group_name"))
+    mutate(day_of_year = format(date, "%m-%d"))
+  
+  # Calculate multi-year averages if requested - using FULL historical data
+  multi_year_averages <- list()
+  if (!is.null(average_lines) && length(average_lines) > 0) {
+    # For average calculations, we need to load data beyond the filtered date range
+    # Calculate current date for rolling averages
+    current_date <- Sys.Date()
+    
+    for (avg_type in average_lines) {
+      if (avg_type == "avg_5yr") {
+        # Calculate 5-year rolling average using last 5 years of data
+        cutoff_date <- current_date - years(5)
+        
+        # Filter the original treatments_data (not the filtered treatment_trends)
+        avg_source_data <- treatments_data %>%
+          mutate(
+            inspdate = as.Date(inspdate),
+            effect_days = ifelse(is.na(effect_days) | effect_days == 0, 30, effect_days),
+            enddate = as.Date(inspdate) + effect_days
+          ) %>%
+          {map_facility_names(.)}
+        
+        # Add group column if needed
+        if (group_col == "mmcd_all") {
+          avg_source_data$mmcd_all <- "All MMCD"
+        }
+        
+        # Handle zone-aware grouping for averages
+        if (!combine_zones && length(parsed_zones) > 1) {
+          if (group_col == "mmcd_all") {
+            avg_source_data$combined_group <- paste0("All MMCD (P", avg_source_data$zone, ")")
+          } else {
+            avg_source_data$combined_group <- paste0(avg_source_data[[group_col]], " (P", avg_source_data$zone, ")")
+          }
+          group_col_for_avg <- "combined_group"
+        } else {
+          group_col_for_avg <- group_col
+        }
+        
+        # Calculate historical trends for 5-year period
+        avg_date_range <- seq(
+          from = cutoff_date,
+          to = current_date,
+          by = "day"
+        )
+        
+        # Calculate 5-year average for each group
+        avg_5yr_trends_list <- lapply(groups_to_process, function(current_group) {
+          # Filter data for current group
+          group_treatments <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+            avg_source_data
+          } else {
+            avg_source_data %>% filter(!!sym(group_col_for_avg) == current_group)
+          }
+          
+          # Calculate unique active sites for each date in 5-year period
+          unique_active_sites_list <- lapply(avg_date_range, function(current_date) {
+            active_sites <- group_treatments %>%
+              filter(
+                inspdate <= current_date & 
+                (is.na(enddate) | enddate > current_date)
+              ) %>%
+              distinct(sitecode) %>%
+              nrow()
+            
+            data.frame(
+              date = current_date,
+              active_unique_sites = active_sites,
+              group_name = current_group
+            )
+          })
+          
+          # Get total structures for this group (same logic as main calculation)
+          group_total_structures <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+            total_structures
+          } else if (group_col == "mmcd_all" && group_col_to_use == "combined_group") {
+            total_structures / 2
+          } else {
+            max(length(unique(group_treatments$sitecode)) * 2, 1)
+          }
+          
+          # Combine list into data frame and calculate proportions
+          do.call(rbind, unique_active_sites_list) %>%
+            mutate(
+              proportion_active_treatment = ifelse(
+                group_total_structures > 0, 
+                active_unique_sites / group_total_structures, 
+                0
+              ),
+              raw_active_sites = active_unique_sites
+            )
+        })
+        
+        # Combine all groups and calculate 5-year averages by day of year
+        avg_5yr_full_data <- do.call(rbind, avg_5yr_trends_list)
+        
+        avg_data <- avg_5yr_full_data %>%
+          mutate(day_of_year = format(date, "%m-%d")) %>%
+          group_by(day_of_year, group_name) %>%
+          summarize(
+            avg_5yr_proportion = mean(proportion_active_treatment, na.rm = TRUE),
+            avg_5yr_raw = mean(raw_active_sites, na.rm = TRUE),
+            .groups = "drop"
+          )
+        
+        multi_year_averages[["avg_5yr"]] <- avg_data
+        
+        # Add to main data
+        treatment_trends <- treatment_trends %>%
+          left_join(avg_data, by = c("day_of_year", "group_name"))
+      }
+      
+      if (avg_type == "avg_10yr") {
+        # Calculate 10-year rolling average using last 10 years of data
+        cutoff_date <- current_date - years(10)
+        
+        # Filter the original treatments_data (not the filtered treatment_trends)
+        avg_source_data <- treatments_data %>%
+          mutate(
+            inspdate = as.Date(inspdate),
+            effect_days = ifelse(is.na(effect_days) | effect_days == 0, 30, effect_days),
+            enddate = as.Date(inspdate) + effect_days
+          ) %>%
+          {map_facility_names(.)}
+        
+        # Add group column if needed
+        if (group_col == "mmcd_all") {
+          avg_source_data$mmcd_all <- "All MMCD"
+        }
+        
+        # Handle zone-aware grouping for averages
+        if (!combine_zones && length(parsed_zones) > 1) {
+          if (group_col == "mmcd_all") {
+            avg_source_data$combined_group <- paste0("All MMCD (P", avg_source_data$zone, ")")
+          } else {
+            avg_source_data$combined_group <- paste0(avg_source_data[[group_col]], " (P", avg_source_data$zone, ")")
+          }
+          group_col_for_avg <- "combined_group"
+        } else {
+          group_col_for_avg <- group_col
+        }
+        
+        # Calculate historical trends for 10-year period
+        avg_date_range <- seq(
+          from = cutoff_date,
+          to = current_date,
+          by = "day"
+        )
+        
+        # Calculate 10-year average for each group
+        avg_10yr_trends_list <- lapply(groups_to_process, function(current_group) {
+          # Filter data for current group
+          group_treatments <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+            avg_source_data
+          } else {
+            avg_source_data %>% filter(!!sym(group_col_for_avg) == current_group)
+          }
+          
+          # Calculate unique active sites for each date in 10-year period
+          unique_active_sites_list <- lapply(avg_date_range, function(current_date) {
+            active_sites <- group_treatments %>%
+              filter(
+                inspdate <= current_date & 
+                (is.na(enddate) | enddate > current_date)
+              ) %>%
+              distinct(sitecode) %>%
+              nrow()
+            
+            data.frame(
+              date = current_date,
+              active_unique_sites = active_sites,
+              group_name = current_group
+            )
+          })
+          
+          # Get total structures for this group (same logic as main calculation)
+          group_total_structures <- if (group_col == "mmcd_all" && group_col_to_use == "mmcd_all") {
+            total_structures
+          } else if (group_col == "mmcd_all" && group_col_to_use == "combined_group") {
+            total_structures / 2
+          } else {
+            max(length(unique(group_treatments$sitecode)) * 2, 1)
+          }
+          
+          # Combine list into data frame and calculate proportions
+          do.call(rbind, unique_active_sites_list) %>%
+            mutate(
+              proportion_active_treatment = ifelse(
+                group_total_structures > 0, 
+                active_unique_sites / group_total_structures, 
+                0
+              ),
+              raw_active_sites = active_unique_sites
+            )
+        })
+        
+        # Combine all groups and calculate 10-year averages by day of year
+        avg_10yr_full_data <- do.call(rbind, avg_10yr_trends_list)
+        
+        avg_data <- avg_10yr_full_data %>%
+          mutate(day_of_year = format(date, "%m-%d")) %>%
+          group_by(day_of_year, group_name) %>%
+          summarize(
+            avg_10yr_proportion = mean(proportion_active_treatment, na.rm = TRUE),
+            avg_10yr_raw = mean(raw_active_sites, na.rm = TRUE),
+            .groups = "drop"
+          )
+        
+        multi_year_averages[["avg_10yr"]] <- avg_data
+        
+        # Add to main data
+        treatment_trends <- treatment_trends %>%
+          left_join(avg_data, by = c("day_of_year", "group_name"))
+      }
+    }
+  }
   
   # Set display names for different group types
   if (group_col == "mmcd_all") {
@@ -528,11 +733,27 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   # Add geometry based on chart type
   if (chart_type == "line") {
     p <- p + 
-      geom_line(aes(color = display_name), linewidth = 1.2) +
-      # Add seasonal average line
-      {if (seasonal_metric %in% names(treatment_trends)) {
-        geom_line(aes(y = !!sym(seasonal_metric), color = display_name), linetype = "dashed", linewidth = 1.0, alpha = 0.7)
-      }}
+      geom_line(aes(color = display_name), linewidth = 1.2)
+    
+    # Add multi-year average lines if requested
+    if (!is.null(average_lines) && length(average_lines) > 0) {
+      for (avg_type in average_lines) {
+        if (avg_type == "avg_5yr") {
+          avg_metric_5yr <- if (display_metric == "proportion") "avg_5yr_proportion" else "avg_5yr_raw"
+          if (avg_metric_5yr %in% names(treatment_trends)) {
+            p <- p + geom_line(aes(y = !!sym(avg_metric_5yr), color = display_name), 
+                              linetype = "dotdash", linewidth = 1.2, alpha = 0.8)
+          }
+        }
+        if (avg_type == "avg_10yr") {
+          avg_metric_10yr <- if (display_metric == "proportion") "avg_10yr_proportion" else "avg_10yr_raw"
+          if (avg_metric_10yr %in% names(treatment_trends)) {
+            p <- p + geom_line(aes(y = !!sym(avg_metric_10yr), color = display_name), 
+                              linetype = "dotted", linewidth = 1.2, alpha = 0.8)
+          }
+        }
+      }
+    }
   } else if (chart_type == "area") {
     # For area charts with proportion mode, recalculate percentages based on total
     if (display_metric == "proportion") {
@@ -555,11 +776,27 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     }
   } else if (chart_type == "step") {
     p <- p + 
-      geom_step(aes(color = display_name), linewidth = 1.2, direction = "hv") +
-      # Add seasonal average step line
-      {if (seasonal_metric %in% names(treatment_trends)) {
-        geom_step(aes(y = !!sym(seasonal_metric), color = display_name), linetype = "dashed", linewidth = 1.0, alpha = 0.7, direction = "hv")
-      }}
+      geom_step(aes(color = display_name), linewidth = 1.2, direction = "hv")
+    
+    # Add multi-year average lines if requested
+    if (!is.null(average_lines) && length(average_lines) > 0) {
+      for (avg_type in average_lines) {
+        if (avg_type == "avg_5yr") {
+          avg_metric_5yr <- if (display_metric == "proportion") "avg_5yr_proportion" else "avg_5yr_raw"
+          if (avg_metric_5yr %in% names(treatment_trends)) {
+            p <- p + geom_step(aes(y = !!sym(avg_metric_5yr), color = display_name), 
+                              linetype = "dotdash", linewidth = 1.2, alpha = 0.8, direction = "hv")
+          }
+        }
+        if (avg_type == "avg_10yr") {
+          avg_metric_10yr <- if (display_metric == "proportion") "avg_10yr_proportion" else "avg_10yr_raw"
+          if (avg_metric_10yr %in% names(treatment_trends)) {
+            p <- p + geom_step(aes(y = !!sym(avg_metric_10yr), color = display_name), 
+                              linetype = "dotted", linewidth = 1.2, alpha = 0.8, direction = "hv")
+          }
+        }
+      }
+    }
   } else if (chart_type == "stacked_bar") {
     # For stacked bars, we need to aggregate by month to make it readable
     monthly_data <- treatment_trends %>%
@@ -624,8 +861,20 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     "Number of Structures with Active Treatment"
   }
   
+  # Create dynamic subtitle based on chart type and average lines
   chart_subtitle <- if (chart_type %in% c("line", "step")) {
-    "Solid: actual | Dashed: seasonal average"
+    subtitle_parts <- c("Solid: actual data")
+    
+    if (!is.null(average_lines) && length(average_lines) > 0) {
+      if ("avg_5yr" %in% average_lines) {
+        subtitle_parts <- c(subtitle_parts, "Dot-dash: 5yr average")
+      }
+      if ("avg_10yr" %in% average_lines) {
+        subtitle_parts <- c(subtitle_parts, "Dotted: 10yr average")
+      }
+    }
+    
+    paste(subtitle_parts, collapse = " | ")
   } else if (chart_type %in% c("stacked_bar", "grouped_bar")) {
     "Monthly averages for better readability"
   } else {

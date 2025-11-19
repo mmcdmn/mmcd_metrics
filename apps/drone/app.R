@@ -387,7 +387,7 @@ server <- function(input, output, session) {
     sitecode_table <- all_sites %>%
       left_join(latest_treatments, by = "sitecode") %>%
       mutate(
-        status = ifelse(is.na(status), "No Drone Treatment", status),
+        status = ifelse(is.na(status), "No Treatment", status),
         last_treatment = ifelse(is.na(inspdate), "Never", as.character(as.Date(inspdate)))
       ) %>%
       # Count treatments per site
@@ -845,7 +845,7 @@ server <- function(input, output, session) {
       spatial_data$acres,
       spatial_data$treatment_status,
       ifelse(is.na(spatial_data$last_treatment_date), 
-             "No Drone treatment recorded",
+             "No treatments recorded",
              sprintf("Last treated: %s<br/>Material: %s<br/>Treated acres: %.1f", 
                     spatial_data$last_treatment_date, 
                     spatial_data$last_material,

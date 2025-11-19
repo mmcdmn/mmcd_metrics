@@ -124,6 +124,18 @@ ui <- fluidPage(
                                       selected = "line")
                    )
                  ),
+                 fluidRow(
+                   column(6,
+                          checkboxGroupInput("hist_average_lines", "Show Average Lines:",
+                                            choices = c("5-Year Average" = "avg_5yr",
+                                                        "10-Year Average" = "avg_10yr"),
+                                            selected = NULL,
+                                            inline = TRUE)
+                   ),
+                   column(6,
+                          helpText(tags$small("Note: Average lines use all available historical data (5 or 10 years) regardless of selected date range"))
+                   )
+                 ),
                  plotOutput("historicalGraph", height = "600px")
         )
       )
@@ -163,7 +175,8 @@ server <- function(input, output) {
       start_year = isolate(input$start_year),
       end_year = isolate(input$end_year),
       hist_display_metric = isolate(input$hist_display_metric),
-      hist_chart_type = isolate(input$hist_chart_type)
+      hist_chart_type = isolate(input$hist_chart_type),
+      hist_average_lines = isolate(input$hist_average_lines)
     )
   })
   
@@ -264,7 +277,8 @@ server <- function(input, output) {
       inputs$zone_filter,
       inputs$combine_zones,
       inputs$hist_display_metric,
-      inputs$hist_chart_type
+      inputs$hist_chart_type,
+      inputs$hist_average_lines
     )
   })
 }

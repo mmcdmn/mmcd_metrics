@@ -71,30 +71,33 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     }
   }
 
-  # Prepare y variables for layered bars (like drone app)
+  # Prepare y variables for layered bars - FIXED TO INCLUDE ALL PREHATCH SITES
+  # Gray background: ALL prehatch sites (treated + expiring + expired + untreated)
+  # Blue bar: Active + Expiring sites (fills up portion of gray background)  
+  # Yellow overlay: Just expiring sites (on top of blue)
   data <- data %>%
     mutate(
-      y_total = ph_treated_cnt + ph_expiring_cnt + ph_expired_cnt,  # Total sites
-      y_active = ph_treated_cnt,                                   # Active (treated) sites
-      y_expiring = ph_expiring_cnt                                 # Expiring sites
+      y_total = prehatch_sites_cnt,                                # ALL prehatch sites (gray background)
+      y_active = ph_treated_cnt + ph_expiring_cnt,                 # Active + Expiring (blue bar)
+      y_expiring = ph_expiring_cnt                                 # Just Expiring (yellow overlay)
     )
 
-  # Apply filtering if needed
+  # Apply filtering if needed - FIXED LOGIC
   if (expiring_filter == "expiring") {
     # Show only expiring sites
     data <- data %>%
       mutate(
-        y_total = ph_expiring_cnt,
-        y_active = 0,
-        y_expiring = ph_expiring_cnt
+        y_total = ph_expiring_cnt,     # Total = just expiring sites
+        y_active = ph_expiring_cnt,    # Blue bar = expiring sites (fills total)
+        y_expiring = ph_expiring_cnt   # Yellow overlay = same expiring sites
       )
   } else if (expiring_filter == "expiring_expired") {
     # Show expiring + expired sites
     data <- data %>%
       mutate(
-        y_total = ph_expiring_cnt + ph_expired_cnt,
-        y_active = 0,
-        y_expiring = ph_expiring_cnt
+        y_total = ph_expiring_cnt + ph_expired_cnt,   # Total = expiring + expired
+        y_active = ph_expiring_cnt,                   # Blue bar = just expiring 
+        y_expiring = ph_expiring_cnt                  # Yellow overlay = expiring
       )
   }
 

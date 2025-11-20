@@ -628,37 +628,25 @@ ORDER BY inspdate DESC, sitecode
 **Purpose**: Generate comprehensive prehatch progress summary with treatment status
 
 ```sql
+-- NOTE: get_ground_prehatch_data() now uses get_site_details_data() and R aggregation
+-- This query is no longer used but kept for reference
+-- The function now calls get_site_details_data() then aggregates in R using dplyr
+
 WITH ActiveSites_g AS (
   SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
          b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
          sc.fosarea as foreman
   FROM loc_breeding_sites b
   LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate>'2024-05-01')
+  WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
     AND b.air_gnd='G'
   ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
 )
-SELECT sitecnts.facility, sitecnts.zone, sitecnts.fosarea, sitecnts.sectcode, sitecnts.foreman,
-       tot_ground, not_prehatch_sites, prehatch_sites_cnt, drone_sites_cnt,
-       COALESCE(ph_treated_cnt, 0) AS ph_treated_cnt,
-       COALESCE(ph_expiring_cnt, 0) AS ph_expiring_cnt,
-       COALESCE(ph_expired_cnt, 0) AS ph_expired_cnt
-FROM
-(SELECT facility, zone, fosarea, sectcode, foreman,
-        COUNT(CASE WHEN (air_gnd='G') THEN 1 END) AS tot_ground,
-        COUNT(CASE WHEN (air_gnd='G' AND prehatch IS NULL) THEN 1 END) AS not_prehatch_sites,
-        COUNT(CASE WHEN (air_gnd='G' AND prehatch IN ('PREHATCH','BRIQUET')) THEN 1 END) AS prehatch_sites_cnt,
-        COUNT(CASE WHEN (air_gnd='G' AND drone IN ('Y','M','C')) THEN 1 END) AS drone_sites_cnt
- FROM ActiveSites_g a
- GROUP BY facility, zone, fosarea, sectcode, foreman
- ORDER BY facility, zone, fosarea, sectcode, foreman) sitecnts
-LEFT JOIN(
-SELECT facility, zone, fosarea, sectcode, foreman,
-       COUNT(CASE WHEN (prehatch_status='treated') THEN 1 END) AS ph_treated_cnt,
-       COUNT(CASE WHEN (prehatch_status='expiring') THEN 1 END) AS ph_expiring_cnt,
-       COUNT(CASE WHEN (prehatch_status='expired') THEN 1 END) AS ph_expired_cnt
-FROM (  
-  SELECT facility, zone, fosarea, sectcode, foreman, sitecode,
+SELECT a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman, a.acres, a.priority, a.prehatch,
+       s.prehatch_status, s.inspdate, s.matcode, s.age, s.effect_days
+FROM activesites_g a 
+LEFT JOIN (
+  SELECT sitecode, sectcode, facility, fosarea, zone, foreman,
          CASE
            WHEN age > COALESCE(effect_days::integer, 30)::double precision THEN 'expired'::text
            WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
@@ -670,19 +658,17 @@ FROM (
     SELECT DISTINCT ON (a.sitecode)
            a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman,
            c.pkey_pg AS insptrt_id,
-           date_part('days'::text, '2024-11-19'::timestamp - c.inspdate::timestamp with time zone) AS age,
+           date_part('days'::text, '%s'::timestamp - c.inspdate::timestamp with time zone) AS age,
            c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
-    FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'2024-01-01' AND inspdate <= '2024-11-19') c
+    FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
     JOIN activesites_g a ON c.sitecode = a.sitecode
     JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
     ORDER BY a.sitecode, c.inspdate DESC, c.insptime DESC
   ) s_grd
   ORDER BY sitecode
-) list
-GROUP BY facility, zone, fosarea, sectcode, foreman
-ORDER BY facility, zone, fosarea, sectcode, foreman
-) trtcnts ON trtcnts.sectcode = sitecnts.sectcode AND COALESCE(trtcnts.foreman, '') = COALESCE(sitecnts.foreman, '')
-ORDER BY sectcode
+) s USING (sitecode, sectcode, facility, fosarea, zone, foreman)
+WHERE a.prehatch IN ('PREHATCH','BRIQUET')
+ORDER BY a.facility, a.sectcode, a.sitecode
 ```
 
 **Key Points**:

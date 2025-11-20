@@ -6,13 +6,14 @@ trap_ui <- function() {
     dashboardHeader(title = "Trap Surveillance Test"),
     dashboardSidebar(
       sidebarMenu(
-        menuItem("Map", tabName = "map", icon = icon("map")),
+        menuItem("Interactive Map", tabName = "map_leaflet", icon = icon("map")),
+        menuItem("Static SF Map", tabName = "map_sf", icon = icon("chart-area")),
         menuItem("Table", tabName = "table", icon = icon("table"))
       )
     ),
     dashboardBody(
       tabItems(
-        tabItem(tabName = "map",
+        tabItem(tabName = "map_leaflet",
           fluidRow(
             box(width = 4, title = "Controls", status = "primary", solidHeader = TRUE,
               dateInput("analysis_date", "Analysis Date:", value = Sys.Date(), max = Sys.Date()),
@@ -27,8 +28,28 @@ trap_ui <- function() {
               hr(),
               actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
             ),
-            box(width = 8, title = "Sections Vector Index Map", status = "info", solidHeader = TRUE,
+            box(width = 8, title = "Sections Vector Index Map (Interactive)", status = "info", solidHeader = TRUE,
                 leaflet::leafletOutput("map", height = 700)
+            )
+          )
+        ),
+        tabItem(tabName = "map_sf",
+          fluidRow(
+            box(width = 4, title = "Controls", status = "primary", solidHeader = TRUE,
+              dateInput("analysis_date_sf", "Analysis Date:", value = Sys.Date(), max = Sys.Date()),
+              selectizeInput("species_sf", "Species (select one or more):", choices = NULL, multiple = TRUE),
+              checkboxGroupInput("trap_types_sf", "Trap Types:", 
+                                 choices = c("Elevated CO2" = "4", 
+                                            "Gravid Trap" = "5", 
+                                            "CO2 Overnight" = "6"),
+                                 selected = c("4", "5", "6")),
+              numericInput("k_neighbors_sf", "k (nearest neighbors):", value = 4, min = 1, max = 10, step = 1),
+              selectizeInput("facility_sf", "Facility (optional):", choices = c("All" = "all"), multiple = TRUE),
+              hr(),
+              actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
+            ),
+            box(width = 8, title = "Sections Vector Index Map (Static SF with Zoom)", status = "warning", solidHeader = TRUE,
+                plotly::plotlyOutput("map_sf", height = 700)
             )
           )
         ),

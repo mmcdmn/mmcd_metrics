@@ -7,6 +7,13 @@ This folder contains shared utilities and resources used across all apps in the 
 ### Database Helpers
 - **`db_helpers.R`** - Common database connection and utility functions
 
+### Geospatial Data Export (Q_to_R)
+- **`Q_to_R/`** - PostgreSQL to R geospatial data extraction scripts
+  - `extract_geometries_from_db.R` - Direct database to shapefile conversion
+  - `extract_to_csv_then_shp.R` - Two-stage CSV then shapefile export
+  - `create_section_boundaries.R` - Minimal section boundaries extraction
+  - See `Q_to_R/README.md` for detailed usage instructions
+
 ### Documentation Sync System
 - **`sync_all_docs.R`** - Universal documentation sync script (main logic)
 - **`sync_all_docs.ps1`** - PowerShell wrapper with enhanced UI
@@ -36,12 +43,23 @@ The universal sync system automatically converts all `NOTES.md` files to `NOTES.
 # Or run R directly
 Rscript sync_all_docs.R
 
-#Run on windows
+# Run on windows
 & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --status
 & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --Force
 
 # out with the old, in with the new
 cd "c:\Users\datatech\Documents\mmcd_metrics\shared"; Remove-Item "c:\Users\datatech\Documents\mmcd_metrics\apps\cattail\NOTES.html" -Force; & "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" sync_all_docs.R --force
+```
+
+### Geospatial Data Extraction (Q_to_R)
+```powershell
+# Navigate to Q_to_R directory
+cd "c:\Users\datatech\Documents\mmcd_metrics\shared\Q_to_R"
+
+# Run geospatial data extraction (choose one)
+& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" extract_geometries_from_db.R     # Full extraction
+& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" extract_to_csv_then_shp.R       # CSV first approach
+& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" create_section_boundaries.R     # Minimal extraction
 ```
 
 ### Current Apps with Documentation
@@ -53,6 +71,13 @@ cd "c:\Users\datatech\Documents\mmcd_metrics\shared"; Remove-Item "c:\Users\data
 - `trap_surveillance_test/`
 
 The system automatically discovers new apps when you add `NOTES.md` files - no configuration needed!
+
+### Current Q_to_R Scripts
+- `extract_geometries_from_db.R` - PostgreSQL to shapefile conversion
+- `extract_to_csv_then_shp.R` - CSV export with shapefile conversion
+- `create_section_boundaries.R` - Essential section boundaries only
+
+See `Q_to_R/README.md` for complete geospatial data extraction documentation.
 
 ## Requirements
 

@@ -1007,6 +1007,48 @@ ORDER BY a.facility, a.sectcode, a.sitecode
 <li><strong>Prehatch Filter</strong>: Final WHERE clause restricts to prehatch sites only</li>
 <li><strong>Complete Information</strong>: Includes site characteristics, treatment details, and calculated age</li>
 </ul>
+
+<h3>6. Weekly Active Treatment Analysis Query</h3>
+<p><strong>Function</strong>: <code>get<em>weekly</em>active<em>treatment</em>data()</code> in <code>historical<em>functions</em>simple.R</code>  </p>
+<p><strong>Purpose</strong>: Load historical treatments for weekly active coverage analysis</p>
+
+<pre><code class="sql">
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+       c.acres as treated_acres, p.effect_days, 'current' as data_source,
+       sc.facility, b.acres as site_acres, sc.zone, sc.fosarea, left(b.sitecode,7) as sectcode
+FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate&gt;='%d-01-01' AND inspdate &lt;= '%d-12-31') c
+JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
+JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+WHERE (b.enddate IS NULL OR b.enddate&gt;'%d-05-01')
+  AND b.air_gnd='G'
+  AND b.prehatch IN ('PREHATCH','BRIQUET')
+
+UNION ALL
+
+SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+       c.acres as treated_acres, p.effect_days, 'archive' as data_source,
+       sc.facility, b.acres as site_acres, sc.zone, sc.fosarea, left(b.sitecode,7) as sectcode
+FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate&gt;='%d-01-01' AND inspdate &lt;= '%d-12-31') c
+JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
+JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+WHERE (b.enddate IS NULL OR b.enddate&gt;'%d-05-01')
+  AND b.air_gnd='G'
+  AND b.prehatch IN ('PREHATCH','BRIQUET')
+
+ORDER BY sitecode, inspdate DESC
+</code></pre>
+
+<p><strong>Key Points</strong>:</p>
+<ul>
+<li><strong>Direct JOIN Structure</strong>: Simplified joins without subqueries for better performance</li>
+<li><strong>Site Data from gis_sectcode</strong>: facility, zone, fosarea properly sourced from geographic table</li>
+<li><strong>Treatment Effectiveness</strong>: Includes effect_days for active coverage calculations</li>
+<li><strong>Year-Based Filtering</strong>: Uses parameterized date ranges for historical analysis</li>
+<li><strong>Both Data Sources</strong>: Combines current and archive treatments with UNION ALL</li>
+<li><strong>Material Validation</strong>: Ensures only prehatch-approved materials included</li>
+</ul>
     </div>
 </body>
 </html>

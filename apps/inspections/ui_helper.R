@@ -133,7 +133,7 @@ create_main_ui <- function() {
           ),
           column(2,
             selectizeInput("priority", "Priority:", 
-              choices = c("All" = "all", " RED" = "RED", " YELLOW" = "YELLOW", " GREEN" = "GREEN"), 
+              choices = get_priority_choices(include_all = TRUE), 
               selected = "all", multiple = TRUE)
           ),
           column(2,
@@ -142,17 +142,24 @@ create_main_ui <- function() {
           )
         ),
         fluidRow(
-          column(4,
+          column(3,
             radioButtons("drone_filter", "Drone Sites:", 
               choices = c(" Drone Sites Only" = "drone_only", 
                          " Non-Drone Sites Only" = "no_drone",
                          " Include Drone Sites" = "include_drone"), 
               selected = "include_drone", inline = TRUE)
           ),
-          column(4,
+          column(2,
+            br(),
+            checkboxInput("spring_only", "Spring Sites Only", 
+              value = FALSE),
+            tags$small("(Inspections before spring cutoff date)", 
+              style = "color: #666; font-style: italic;")
+          ),
+          column(3,
             br(),
             actionButton("load_data", 
-              " Load Data with Current Filters", 
+              " Load New Data", 
               class = "btn-refresh", 
               style = "width: 100%; padding: 12px; font-size: 16px;")
           ),
@@ -161,6 +168,17 @@ create_main_ui <- function() {
               div(class = "summary-text", 
                 textOutput("data_summary"),
                 style = "text-align: center;")
+            )
+          )
+        ),
+        fluidRow(
+          column(12,
+            div(style = "padding: 10px; text-align: center; margin-top: 5px;",
+              tags$small(
+                tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+                " Note: This button will load in new data. To run an analysis on this data, click the analysis buttons below.",
+                style = "color: #666; font-style: italic;"
+              )
             )
           )
         )
@@ -185,6 +203,16 @@ create_main_ui <- function() {
               div(style = "margin-top: 25px;",
                 textOutput("gaps_summary")
               )
+            )
+          ),
+          
+          fluidRow(
+            box(
+              title = "Gap Analysis by Facility", 
+              status = "primary", 
+              solidHeader = TRUE,
+              width = 12,
+              plotlyOutput("facility_gap_chart", height = "500px")
             )
           ),
           

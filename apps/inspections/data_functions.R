@@ -18,8 +18,26 @@ get_site_choices <- function() {
   )
 }
 
+# Check if an inspection date is a "spring inspection"
+is_spring_inspection <- function(inspdate, spring_thresholds) {
+  if (is.na(inspdate) || nrow(spring_thresholds) == 0) return(FALSE)
+  
+  insp_year <- year(inspdate)
+  
+  # Find the spring threshold for this year
+  year_threshold <- spring_thresholds[spring_thresholds$year == insp_year, ]
+  
+  if (nrow(year_threshold) == 0) return(FALSE)
+  
+  # Spring inspection: after Jan 1st and before the threshold date
+  spring_cutoff <- year_threshold$date_start[1]
+  year_start <- as.Date(paste0(insp_year, "-01-01"))
+  
+  return(inspdate >= year_start && inspdate < spring_cutoff)
+}
+
 # SINGLE UNIFIED DATA RETRIEVAL - Get ALL inspection data in one query
-get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NULL, zone_filter = NULL, priority_filter = NULL, drone_filter = "all") {
+get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NULL, zone_filter = NULL, priority_filter = NULL, drone_filter = "all", spring_only = FALSE) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -90,15 +108,22 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
         b.air_gnd,
         b.priority,
         b.drone,
-        b.acres,
-        CASE 
-          WHEN b.startdate IS NOT NULL THEN CURRENT_DATE - b.startdate::date
-          ELSE NULL
-        END as days_active
+        b.acres
       FROM loc_breeding_sites b
       INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
       WHERE b.enddate IS NULL
       %s
+    ),
+    site_years AS (
+      SELECT 
+        sitecode,
+        array_to_string(array_agg(DISTINCT EXTRACT(year FROM inspdate)::text ORDER BY EXTRACT(year FROM inspdate)::text), ', ') as years_with_data
+      FROM (
+        SELECT sitecode, inspdate FROM dblarv_insptrt_current WHERE inspdate IS NOT NULL
+        UNION ALL
+        SELECT sitecode, inspdate FROM dblarv_insptrt_archive WHERE inspdate IS NOT NULL
+      ) all_inspections
+      GROUP BY sitecode
     )
     SELECT 
       fs.sitecode,
@@ -109,12 +134,13 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
       fs.priority,
       fs.drone,
       fs.acres,
-      fs.days_active,
+      COALESCE(sy.years_with_data, 'No data') as years_with_data,
       i.inspdate,
       i.action,
       i.numdip,
       i.wet
     FROM filtered_sites fs
+    LEFT JOIN site_years sy ON fs.sitecode = sy.sitecode
     LEFT JOIN (
       SELECT sitecode, inspdate, action, numdip, wet
       FROM dblarv_insptrt_current
@@ -131,6 +157,44 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
     # Convert dates
     if (nrow(result) > 0 && "inspdate" %in% names(result)) {
       result$inspdate <- as.Date(result$inspdate)
+    }
+    
+    # Apply spring filtering if requested - but keep all sites
+    if (spring_only && nrow(result) > 0) {
+      spring_thresholds <- get_spring_date_thresholds()
+      if (nrow(spring_thresholds) > 0) {
+        # Get all unique sites first to preserve them
+        all_sites <- result %>%
+          distinct(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres)
+        
+        # Filter inspection records to only spring inspections
+        spring_inspections <- result %>%
+          filter(!is.na(inspdate)) %>%
+          rowwise() %>%
+          filter(is_spring_inspection(inspdate, spring_thresholds)) %>%
+          ungroup()
+        
+        # Calculate spring-specific years_with_data
+        spring_years <- spring_inspections %>%
+          group_by(sitecode) %>%
+          summarise(
+            years_with_data = paste(sort(unique(year(inspdate))), collapse = ", "),
+            .groups = 'drop'
+          ) %>%
+          mutate(
+            years_with_data = ifelse(years_with_data == "", "No spring data", years_with_data)
+          )
+        
+        # Join back to preserve all sites, even those without spring inspections
+        result <- all_sites %>%
+          left_join(spring_years, by = "sitecode") %>%
+          mutate(
+            years_with_data = ifelse(is.na(years_with_data), "No spring data", years_with_data)
+          ) %>%
+          left_join(spring_inspections %>%
+                   select(sitecode, inspdate, action, numdip, wet), 
+                   by = "sitecode")
+      }
     }
     
     return(result)
@@ -180,7 +244,7 @@ get_high_larvae_sites_from_data <- function(comprehensive_data, threshold = 2, y
   
   # Find sites with high larvae counts - show frequency, not just max
   high_larvae_sites <- filtered_data %>%
-    group_by(sitecode, facility, fosarea, zone, air_gnd, priority, acres, days_active) %>%
+    group_by(sitecode, facility, fosarea, zone, air_gnd, priority, acres, years_with_data) %>%
     summarise(
       total_inspections = n(),
       threshold_exceedances = sum(numdip >= threshold, na.rm = TRUE),
@@ -228,7 +292,7 @@ get_wet_frequency_from_data <- function(comprehensive_data, air_gnd_filter = "bo
   # Calculate wet frequency by site - updated logic for numeric values
   # 0 = dry, 1-9 = various wet levels, A = flooded (>100%)
   wet_frequency <- filtered_data %>%
-    group_by(sitecode, facility, fosarea, zone, air_gnd, priority, acres, days_active) %>%
+    group_by(sitecode, facility, fosarea, zone, air_gnd, priority, acres, years_with_data) %>%
     summarise(
       total_inspections = n(),
       wet_count = sum(wet %in% c('1', '2', '3', '4', '5', '6', '7', '8', '9', 'A'), na.rm = TRUE),
@@ -243,6 +307,33 @@ get_wet_frequency_from_data <- function(comprehensive_data, air_gnd_filter = "bo
     arrange(desc(wet_percentage), desc(total_inspections))
   
   return(wet_frequency)
+}
+
+# Get comprehensive gap analysis by facility and FOS area
+get_facility_gap_analysis <- function(comprehensive_data, gap_data) {
+  if (nrow(comprehensive_data) == 0) return(data.frame())
+  
+  # Get total sites by facility and fosarea from comprehensive data
+  total_sites <- comprehensive_data %>%
+    distinct(sitecode, facility, fosarea) %>%
+    count(facility, fosarea, name = "total_sites")
+  
+  # Get gap sites by facility and fosarea
+  gap_sites <- gap_data %>%
+    count(facility, fosarea, name = "gap_sites")
+  
+  # Combine and calculate percentages
+  facility_analysis <- total_sites %>%
+    left_join(gap_sites, by = c("facility", "fosarea")) %>%
+    mutate(
+      gap_sites = ifelse(is.na(gap_sites), 0, gap_sites),
+      recently_inspected_sites = total_sites - gap_sites,
+      gap_percentage = round(100 * gap_sites / total_sites, 1),
+      recently_inspected_percentage = round(100 * recently_inspected_sites / total_sites, 1)
+    ) %>%
+    filter(total_sites > 0)  # Only include facilities with sites
+  
+  return(facility_analysis)
 }
 
 # Get summary statistics from comprehensive data
@@ -303,14 +394,14 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
   site_inspections <- comprehensive_data %>%
     filter(!is.na(inspdate),
            action %in% c('1','2','4') | (action == '3' & wet == '0')) %>%  # Action filtering for gaps
-    group_by(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, days_active) %>%
+    group_by(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, years_with_data) %>%
     arrange(desc(inspdate)) %>%
     slice(1) %>%
     ungroup()
   
   # Get sites that never had inspections
   all_sites <- comprehensive_data %>%
-    distinct(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, days_active)
+    distinct(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, years_with_data)
   
   never_inspected <- all_sites %>%
     anti_join(site_inspections, by = "sitecode") %>%
@@ -333,7 +424,7 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
       )
     ) %>%
     filter(inspdate < gap_cutoff) %>%
-    select(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, days_active,
+    select(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, years_with_data,
            last_inspection_date, last_numdip, days_since_inspection, inspection_status) %>%
     bind_rows(never_inspected) %>%
     arrange(last_inspection_date, sitecode)

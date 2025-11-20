@@ -35,10 +35,7 @@ format_inspection_gaps <- function(data) {
         is.na(last_numdip) ~ "-",
         TRUE ~ as.character(last_numdip)
       ),
-      `Days Since` = case_when(
-        days_since_inspection == 999999 ~ "Never",
-        TRUE ~ paste(format(days_since_inspection, big.mark=","), "days")
-      ),
+      `Days Since` = days_since_inspection,  # Keep numeric for coloring
       `Status` = inspection_status
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
@@ -54,6 +51,9 @@ render_gap_table <- function(data) {
                         rownames = FALSE, options = list(dom = 't')))
   }
   
+  # Get status colors from db_helpers for consistent coloring
+  status_colors <- get_status_colors()
+
   DT::datatable(
     formatted_data,
     rownames = FALSE,
@@ -70,7 +70,7 @@ render_gap_table <- function(data) {
     'Status',
     backgroundColor = DT::styleEqual(
       c('Never Inspected', 'Inspection Gap'),
-      c('#ffebee', '#fff3e0')
+      c('#ffebee', status_colors['planned'])  # Use status orange for planned/pending
     )
   ) %>%
   DT::formatStyle(
@@ -79,7 +79,16 @@ render_gap_table <- function(data) {
       'Yes',
       '#e8f5e8'  # Light green for drone sites
     )
-  )
+  ) %>%
+  DT::formatStyle(
+    'Days Since',
+    backgroundColor = DT::styleInterval(
+      cuts = c(365, 730, 1095),  # 3 cuts
+      values = c("#e8f5e8", "#ffeb3b", "#ff9800", "#f44336")  # 4 values - green to yellow to orange to red
+    )
+  ) %>%
+  DT::formatCurrency('Days Since', currency = "", digits = 0, mark = ",") %>%
+  DT::formatString('Days Since', suffix = " days")
 }
 
 # Format wet frequency data for display
@@ -97,15 +106,15 @@ format_wet_frequency_data <- function(data) {
       `Air/Ground` = air_gnd,
       `Priority` = priority,
       `Acres` = format(acres, digits = 2, nsmall = 1),
-      `Days Active` = format(days_active, big.mark = ","),
+      `Years with Data` = years_with_data,
       `Total Inspections` = format(total_inspections, big.mark = ","),
       `Wet Count` = format(wet_count, big.mark = ","),
-      `Water Present` = paste0(wet_percentage, "%"),
+      `Water Present` = wet_percentage / 100,  # Convert to decimal for formatPercentage
       `Flooded Count` = format(flooded_count, big.mark = ","),
-      `Flooded %` = paste0(flooded_percentage, "%")
+      `Flooded %` = flooded_percentage / 100   # Convert to decimal for formatPercentage
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Acres`, `Days Active`, `Total Inspections`, `Wet Count`, `Water Present`, `Flooded Count`, `Flooded %`)
+           `Acres`, `Years with Data`, `Total Inspections`, `Wet Count`, `Water Present`, `Flooded Count`, `Flooded %`)
 }
 
 # Render wet frequency table
@@ -116,6 +125,9 @@ render_wet_frequency_table <- function(data) {
     return(DT::datatable(data.frame(Message = "No sites found with minimum inspection threshold"), 
                         rownames = FALSE, options = list(dom = 't')))
   }
+  
+  # Get status colors from db_helpers for consistent coloring
+  status_colors <- get_status_colors()
   
   DT::datatable(
     formatted_data,
@@ -131,18 +143,19 @@ render_wet_frequency_table <- function(data) {
   ) %>%
   DT::formatStyle(
     'Water Present',
-    background = DT::styleColorBar(c(0, 100), 'lightblue'),
-    backgroundSize = '98% 88%',
-    backgroundRepeat = 'no-repeat',
-    backgroundPosition = 'center'
+    backgroundColor = DT::styleInterval(
+      cuts = c(0.10, 0.20, 0.40, 0.60, 0.80, 0.95),  # Decimal cuts for percentage values
+      values = c("#f8f9fa", "#e3f2fd", "#bbdefb", "#64b5f6", "#42a5f5", "#2196f3", "#1e88e5")  # 7 values - light to dark blue
+    )
   ) %>%
   DT::formatStyle(
     'Flooded %',
-    background = DT::styleColorBar(c(0, 100), 'orange'),
-    backgroundSize = '98% 88%',
-    backgroundRepeat = 'no-repeat',
-    backgroundPosition = 'center'
-  )
+    backgroundColor = DT::styleInterval(
+      cuts = c(0.05, 0.10, 0.20, 0.40, 0.60, 0.80),  # Decimal cuts for percentage values
+      values = c("#f8f9fa", "#e8f5e8", "#c8e6c8", "#81c784", "#66bb6a", "#4caf50", "#388e3c")  # 7 values - light to dark green
+    )
+  ) %>%
+  DT::formatPercentage(c('Water Present', 'Flooded %'), digits = 1)
 }
 
 # Format high larvae sites data for display
@@ -160,10 +173,10 @@ format_high_larvae_data <- function(data) {
       `Air/Ground` = air_gnd,
       `Priority` = priority,
       `Acres` = format(acres, digits = 2, nsmall = 1),
-      `Days Active` = format(days_active, big.mark = ","),
+      `Years with Data` = years_with_data,
       `Total Inspections` = total_inspections,
       `Exceedances` = threshold_exceedances,
-      `Exceedance Frequency` = paste0(exceedance_frequency, "%"),
+      `Exceedance Frequency` = exceedance_frequency / 100,  # Convert to decimal for formatPercentage
       `Max Dip Count` = format(max_dip_count, big.mark = ","),
       `Avg Dip Count` = avg_dip_count,
       `First High Date` = case_when(
@@ -176,7 +189,7 @@ format_high_larvae_data <- function(data) {
       )
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Acres`, `Days Active`, `Total Inspections`, `Exceedances`, `Exceedance Frequency`, 
+           `Acres`, `Years with Data`, `Total Inspections`, `Exceedances`, `Exceedance Frequency`, 
            `Max Dip Count`, `Avg Dip Count`, `First High Date`, `Last High Date`)
 }
 
@@ -188,6 +201,9 @@ render_high_larvae_table <- function(data) {
     return(DT::datatable(data.frame(Message = "No sites found above larvae threshold"), 
                         rownames = FALSE, options = list(dom = 't')))
   }
+  
+  # Get status colors from db_helpers for consistent coloring
+  status_colors <- get_status_colors()
   
   DT::datatable(
     formatted_data,
@@ -203,18 +219,19 @@ render_high_larvae_table <- function(data) {
   ) %>%
   DT::formatStyle(
     'Exceedance Frequency',
-    background = DT::styleColorBar(c(0, 100), 'lightcoral'),
-    backgroundSize = '98% 88%',
-    backgroundRepeat = 'no-repeat',
-    backgroundPosition = 'center'
+    backgroundColor = DT::styleInterval(
+      cuts = c(0.05, 0.10, 0.25, 0.50, 0.75, 0.90),  # Decimal cuts for percentage values
+      values = c("#f3e5f5", "#e1bee7", "#ce93d8", "#ba68c8", "#ab47bc", "#9c27b0", "#f44336")  # 7 values - light to dark (purple to red)
+    )
   ) %>%
   DT::formatStyle(
-    'Max Dip Count',
-    background = DT::styleColorBar(range(as.numeric(gsub(",", "", data$max_dip_count)), na.rm = TRUE), 'lightyellow'),
-    backgroundSize = '98% 88%',
-    backgroundRepeat = 'no-repeat',
-    backgroundPosition = 'center'
-  )
+    'Avg Dip Count',
+    backgroundColor = DT::styleInterval(
+      cuts = c(1, 3, 6, 12, 25),  # 5 cuts
+      values = c("#e3f2fd", "#bbdefb", "#90caf9", "#64b5f6", "#ff8a65", "#ff6f00")  # 6 values - light blue to orange
+    )
+  ) %>%
+  DT::formatPercentage('Exceedance Frequency', digits = 1)
 }
 
 # =============================================================================
@@ -257,8 +274,19 @@ create_priority_chart <- function(data) {
     count(priority, name = "count") %>%
     mutate(priority = ifelse(is.na(priority), "Unassigned", priority))
   
-  colors <- c("RED" = "#d32f2f", "YELLOW" = "#f57c00", "GREEN" = "#388e3c", 
-              "BLUE" = "#1976d2", "Unassigned" = "#757575")
+  # Get dynamic priority choices from db_helpers
+  priority_choices <- get_priority_choices(include_all = FALSE)
+  status_colors <- get_status_colors()
+  
+  # Create color mapping that actually matches priority names
+  colors <- c(
+    "RED" = "red",                    # Literal red color for RED priority
+    "YELLOW" = "yellow",              # Literal yellow color for YELLOW priority  
+    "GREEN" = "green",                # Literal green color for GREEN priority
+    "BLUE" = "blue",                  # Literal blue color for BLUE priority
+    "PURPLE" = "purple",              # Literal purple color for PURPLE priority
+    "Unassigned" = "#888888"          # Gray color for unassigned
+  )
   
   p <- plot_ly(
     priority_counts,
@@ -339,66 +367,75 @@ create_larvae_distribution_chart <- function(data) {
   return(p)
 }
 
-# Create gap distribution chart
-create_gap_distribution_chart <- function(data) {
-  if (nrow(data) == 0) return(NULL)
+# Create facility gap chart - Stacked percentage comparison by facility only
+create_facility_gap_chart <- function(facility_analysis) {
+  if (nrow(facility_analysis) == 0) return(NULL)
   
-  # Create bins for days since last inspection
-  gap_bins <- cut(data$days_since_inspection,
-                 breaks = c(0, 365, 730, 1095, 1460, 2555, 999999),
-                 labels = c("<1 year", "1-2 years", "2-3 years", "3-4 years", "4-7 years", "Never"),
-                 include.lowest = TRUE)
+  # Aggregate by facility only (sum across FOS areas)
+  facility_summary <- facility_analysis %>%
+    group_by(facility) %>%
+    summarise(
+      total_sites = sum(total_sites),
+      gap_sites = sum(gap_sites),
+      recently_inspected_sites = sum(recently_inspected_sites),
+      .groups = 'drop'
+    ) %>%
+    mutate(
+      gap_percentage = round(100 * gap_sites / total_sites, 1),
+      recently_inspected_percentage = round(100 * recently_inspected_sites / total_sites, 1)
+    )
   
-  gap_counts <- table(gap_bins)
+  # Calculate overall percentage of green sites across all facilities
+  overall_green_pct <- round(100 * sum(facility_summary$recently_inspected_sites) / sum(facility_summary$total_sites), 1)
   
-  colors <- c("<1 year" = "#4caf50", "1-2 years" = "#8bc34a", "2-3 years" = "#ffeb3b", 
-              "3-4 years" = "#ff9800", "4-7 years" = "#f44336", "Never" = "#9e9e9e")
-  
-  p <- plot_ly(
-    x = names(gap_counts),
-    y = as.numeric(gap_counts),
-    type = 'bar',
-    marker = list(color = colors[names(gap_counts)], line = list(color = 'black', width = 1))
-  ) %>%
-  layout(
-    title = list(text = "Gap Distribution by Time", font = list(size = 14)),
-    xaxis = list(title = "Time Since Last Inspection"),
-    yaxis = list(title = "Number of Sites"),
-    margin = list(l = 50, r = 30, t = 50, b = 50)
-  )
-  
-  return(p)
-}
-
-# Create facility gap chart
-create_facility_gap_chart <- function(data) {
-  if (nrow(data) == 0) return(NULL)
-  
-  # Summarize gaps by facility
-  facility_summary <- data %>%
-    count(facility, inspection_status) %>%
-    tidyr::pivot_wider(names_from = inspection_status, values_from = n, values_fill = 0)
-  
-  # Ensure required columns exist
-  if (!"Never Inspected" %in% names(facility_summary)) {
-    facility_summary$`Never Inspected` <- 0
-  }
-  if (!"Inspection Gap" %in% names(facility_summary)) {
-    facility_summary$`Inspection Gap` <- 0
-  }
-  
-  # Create stacked bar chart
+  # Create the stacked percentage bar chart (each bar = 100%)
   p <- plot_ly(facility_summary) %>%
-    add_trace(y = ~facility, x = ~`Never Inspected`, name = "Never Inspected", 
-              type = 'bar', orientation = 'h', marker = list(color = '#f44336')) %>%
-    add_trace(y = ~facility, x = ~`Inspection Gap`, name = "Inspection Gap", 
-              type = 'bar', orientation = 'h', marker = list(color = '#ff9800')) %>%
+    add_trace(
+      x = ~facility, 
+      y = ~recently_inspected_percentage, 
+      type = 'bar',
+      name = "Recently Inspected",
+      text = ~paste("Recently Inspected:", recently_inspected_percentage, "%<br>", 
+                   recently_inspected_sites, " of ", total_sites, " sites"),
+      hovertemplate = "%{text}<extra></extra>",
+      marker = list(color = '#4CAF50')  # Green for good
+    ) %>%
+    add_trace(
+      x = ~facility, 
+      y = ~gap_percentage,
+      type = 'bar', 
+      name = "Has Inspection Gap",
+      text = ~paste("Has Gap:", gap_percentage, "%<br>", 
+                   gap_sites, " of ", total_sites, " sites"),
+      hovertemplate = "%{text}<extra></extra>",
+      marker = list(color = '#F44336')  # Red for gaps
+    ) %>%
     layout(
-      title = list(text = "Gap Status by Facility", font = list(size = 14)),
-      xaxis = list(title = "Number of Sites"),
-      yaxis = list(title = "Facility"),
+      title = list(text = "Inspection Gap Analysis by Facility", font = list(size = 14)),
+      xaxis = list(
+        title = "Facility", 
+        tickangle = -45,
+        categoryorder = "array",
+        categoryarray = unique(facility_summary$facility)
+      ),
+      yaxis = list(title = "Percentage of Total Sites in Category"),
       barmode = 'stack',
-      margin = list(l = 80, r = 30, t = 50, b = 50)
+      margin = list(l = 60, r = 30, t = 60, b = 120),
+      legend = list(
+        orientation = "h",
+        x = 0.5,
+        xanchor = "center",
+        y = -0.25
+      ),
+      annotations = list(
+        text = paste0("Each bar shows percentage of green (recently inspected) sites in all facilities. Overall: ", overall_green_pct, "% of sites are recently inspected."),
+        showarrow = FALSE,
+        x = 0.5,
+        y = -0.18,
+        xref = "paper",
+        yref = "paper",
+        font = list(size = 10, color = "#666")
+      )
     )
   
   return(p)

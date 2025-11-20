@@ -32,6 +32,7 @@ server <- function(input, output, session) {
     zone_filter <- if (length(input$zone) == 0 || "all" %in% input$zone) NULL else input$zone
     priority_filter <- if (length(input$priority) == 0 || "all" %in% input$priority) NULL else input$priority
     drone_filter <- input$drone_filter %||% "include_drone"
+    spring_only <- input$spring_only %||% FALSE
     
     # ONE SINGLE QUERY GETS ALL DATA
     get_all_inspection_data(
@@ -39,7 +40,8 @@ server <- function(input, output, session) {
       fosarea_filter = fosarea_filter, 
       zone_filter = zone_filter,
       priority_filter = priority_filter,
-      drone_filter = drone_filter
+      drone_filter = drone_filter,
+      spring_only = spring_only
     )
   }, ignoreNULL = FALSE)
   
@@ -308,18 +310,19 @@ server <- function(input, output, session) {
     create_larvae_distribution_chart(larvae_data_result)
   })
   
-  # Gap distribution chart
-  output$gap_distribution_chart <- renderPlotly({
-    if (input$analyze_gaps == 0) return(NULL)
-    gap_data_result <- gap_data()
-    create_gap_distribution_chart(gap_data_result)
-  })
-  
   # Facility gap chart
   output$facility_gap_chart <- renderPlotly({
-    if (input$analyze_gaps == 0) return(NULL)
+    if (input$analyze_gaps == 0 || input$load_data == 0) return(NULL)
+    
+    # Get both comprehensive data and gap data for analysis
+    comp_data <- comprehensive_data()
     gap_data_result <- gap_data()
-    create_facility_gap_chart(gap_data_result)
+    
+    # Create facility analysis
+    facility_analysis <- get_facility_gap_analysis(comp_data, gap_data_result)
+    
+    # Create the chart
+    create_facility_gap_chart(facility_analysis)
   })
 }
 

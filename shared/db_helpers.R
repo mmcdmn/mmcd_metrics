@@ -191,13 +191,45 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("RED" = "RED", "YELLOW" = "YELLOW", "BLUE" = "BLUE", "GREEN" = "GREEN")
+  choices <- c("RED" = "RED", "YELLOW" = "YELLOW", "BLUE" = "BLUE", "GREEN" = "GREEN", "PURPLE" = "PURPLE")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)
   }
   
   return(choices)
+}
+
+# Get spring date thresholds from ACT4-P1 lookup table
+get_spring_date_thresholds <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    # Get ACT4-P1 thresholds, excluding January 1st start dates
+    qry <- "
+    SELECT EXTRACT(year FROM date_start) as year, date_start
+    FROM public.lookup_threshold_larv
+    WHERE description = 'ACT4-P1'
+      AND EXTRACT(month FROM date_start) != 1
+      AND EXTRACT(day FROM date_start) != 1
+    ORDER BY year, date_start
+    "
+    
+    result <- dbGetQuery(con, qry)
+    dbDisconnect(con)
+    
+    if (nrow(result) > 0) {
+      result$date_start <- as.Date(result$date_start)
+    }
+    
+    return(result)
+    
+  }, error = function(e) {
+    warning(paste("Error in get_spring_date_thresholds:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
 }
 
 # Structure type lookup from database

@@ -89,7 +89,7 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
                  nrow(sections_sf), 
                  if(is.null(trap_df)) 0 else nrow(trap_df)))
   message(sprintf("Bounding box: %s", paste(round(st_bbox(sections_sf), 2), collapse=", ")))
-  message(sprintf("Vector index range: %.2f to %.2f", 
+  message(sprintf("Population index range: %.2f to %.2f", 
                  min(sections_sf$vector_index, na.rm=TRUE),
                  max(sections_sf$vector_index, na.rm=TRUE)))
 
@@ -107,27 +107,28 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
              expand = FALSE)
   
   # Add basemap tiles FIRST (they render at the back)
-  p <- p + annotation_map_tile(type = "cartolight", zoomin = 1, progress = "none", quiet = TRUE)
+  # Use cartodark for BLACK background with high contrast, zoomin=2 for more detail
+  p <- p + annotation_map_tile(type = "cartodark", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
   
-  # Then add sections with vector index coloring on TOP of tiles
+  # Then add sections with population index coloring on TOP of tiles
   if (!is.null(sections_sf$vector_index)) {
     p <- p + geom_sf(data = sections_sf, 
                      aes(fill = vector_index), 
-                     color = "white", 
-                     size = 0.1, 
-                     alpha = 0.75,
+                     color = "gray40",  # Less prominent borders
+                     size = 0.05,       # Thinner lines
+                     alpha = 0.4,       # Much more transparent to see basemap
                      inherit.aes = FALSE) +  # Don't inherit coord_sf
-             scale_fill_viridis_c(name = "Vector\nIndex", 
+             scale_fill_viridis_c(name = "Population\nIndex", 
                                 option = "plasma", 
                                 na.value = "lightgray",
                                 trans = "sqrt",
                                 labels = number_format(accuracy = 0.1))
   } else {
     p <- p + geom_sf(data = sections_sf, 
-                     fill = "lightblue", 
-                     color = "white", 
+                     fill = "transparent", 
+                     color = "black", 
                      size = 0.1, 
-                     alpha = 0.75,
+                     alpha = 0.55,
                      inherit.aes = FALSE)
   }
   
@@ -137,7 +138,7 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
                      fill = "transparent", 
                      color = "gray80", 
                      size = 0.2, 
-                     alpha = 1)
+                     alpha = 0.3)
   }
   
   # Add facility boundaries for reference (very subtle)
@@ -187,7 +188,7 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
       axis.title = element_text(size = 9)
     ) +
     labs(
-      title = "Mosquito Vector Index by Section (Live Data)",
+      title = "Mosquito Population Index by Section (Live Data)",
       subtitle = paste("Based on", species_label, "- Updates on Refresh"),
       caption = paste("Analysis Date:", Sys.Date(), "| Click refresh to update data"),
       x = "Longitude", 
@@ -224,10 +225,10 @@ render_vector_map <- function(section_df, trap_df = NULL, species_label = "selec
                      weight = 1,
                      group = "Sections",
                      popup = ~paste0("<strong>Section: ", sectcode, "</strong><br/>",
-                                   "Vector Index: ", round(vector_index, 2), "<br/>",
+                                   "Population Index: ", round(vector_index, 2), "<br/>",
                                    "Nearest Trap Total: ", nearest_trap_count, "<br/>",
                                    "Last Inspection: ", last_inspection)) %>%
-    addLegend(position = "bottomright", pal = pal, values = section_df$vector_index, title = "Vector Index")
+    addLegend(position = "bottomright", pal = pal, values = section_df$vector_index, title = "Population Index")
   
   # Add traps if provided
   if (!is.null(trap_df) && nrow(trap_df) > 0) {

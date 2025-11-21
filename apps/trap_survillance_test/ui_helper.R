@@ -28,7 +28,7 @@ trap_ui <- function() {
               hr(),
               actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
             ),
-            box(width = 8, title = "Sections Vector Index Map (Interactive)", status = "info", solidHeader = TRUE,
+            box(width = 8, title = "Sections Population Index Map (Interactive)", status = "info", solidHeader = TRUE,
                 leaflet::leafletOutput("map", height = 700)
             )
           )
@@ -46,16 +46,20 @@ trap_ui <- function() {
               numericInput("k_neighbors_sf", "k (nearest neighbors):", value = 4, min = 1, max = 10, step = 1),
               selectizeInput("facility_sf", "Facility (optional):", choices = c("All" = "all"), multiple = TRUE),
               hr(),
-              actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
+              actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%"),
+              hr(),
+              actionButton("reset_zoom_sf", "Reset Zoom", icon = icon("expand"), class = "btn-info", width = "100%")
             ),
-            box(width = 8, title = "Vector Index by Section Polygons (Static Map)", status = "warning", solidHeader = TRUE,
-                plotOutput("map_sf", height = 800)
+            box(width = 8, title = "Population Index by Section Polygons (Interactive - Click & Drag to Zoom)", status = "warning", solidHeader = TRUE,
+                plotOutput("map_sf", height = 800, 
+                          brush = brushOpts(id = "map_sf_brush", resetOnNew = TRUE),
+                          dblclick = "map_sf_dblclick")
             )
           )
         ),
         tabItem(tabName = "table",
           fluidRow(
-            box(width = 12, title = "Section Vector Index Table", status = "primary", solidHeader = TRUE,
+            box(width = 12, title = "Section Population Index Table", status = "primary", solidHeader = TRUE,
                 div(style = "margin-bottom: 10px;",
                   downloadButton("download_vector_data", "Download CSV", class = "btn-primary btn-sm")
                 ),

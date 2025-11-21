@@ -188,7 +188,7 @@ server <- function(input, output, session) {
     # Use custom date if provided, otherwise use current date
     simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+    get_ground_prehatch_data(inputs$zone_filter, simulation_date, inputs$expiring_days)
   })
   
   # Fetch site details data - ONLY when refresh button clicked
@@ -277,20 +277,7 @@ server <- function(input, output, session) {
     create_value_boxes(data)
   })
   
-  # Render value boxes using colors from db_helpers
-  output$total_sites <- renderValueBox({
-    req(input$refresh)  # Only render after refresh button clicked
-    
-    data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
-      value = data$total_ground,
-      subtitle = "Total Ground Sites",
-      icon = icon("map-marker"),
-      color = shiny_colors["completed"]
-    )
-  })
-  
+  # Render value boxes using colors from db_helpers  
   output$prehatch_sites <- renderValueBox({
     req(input$refresh)  # Only render after refresh button clicked
     
@@ -298,11 +285,13 @@ server <- function(input, output, session) {
     shiny_colors <- get_shiny_colors()
     valueBox(
       value = data$total_prehatch,
-      subtitle = "Prehatch Sites",
+      subtitle = "Total Prehatch Sites",
       icon = icon("egg"),
       color = shiny_colors["planned"]
     )
   })
+  
+
   
   output$treated_sites <- renderValueBox({
     req(input$refresh)  # Only render after refresh button clicked
@@ -327,6 +316,19 @@ server <- function(input, output, session) {
       subtitle = "Expired Sites",
       icon = icon("clock"),
       color = shiny_colors["somthing_else"]
+    )
+  })
+  
+  output$expiring_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_expiring,
+      subtitle = "Expiring Soon",
+      icon = icon("clock-o"),
+      color = shiny_colors["planned"]
     )
   })
   

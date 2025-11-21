@@ -79,7 +79,16 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     mutate(
       y_total = prehatch_sites_cnt,                                # ALL prehatch sites (gray background)
       y_active = ph_treated_cnt + ph_expiring_cnt,                 # Active + Expiring (blue bar)
-      y_expiring = ph_expiring_cnt                                 # Just Expiring (yellow overlay)
+      y_expiring = ph_expiring_cnt,                                # Just Expiring (yellow overlay)
+      # Add custom tooltip data for each layer
+      tooltip_total = paste0(display_name, "\nTotal Sites: ", prehatch_sites_cnt,
+                            "\n(Treated: ", ph_treated_cnt,
+                            ", Expiring: ", ph_expiring_cnt, 
+                            ", Expired: ", ph_expired_cnt, ")"),
+      tooltip_active = paste0(display_name, "\nActive Treatment: ", ph_treated_cnt + ph_expiring_cnt,
+                             "\n(Treated: ", ph_treated_cnt, ", Expiring: ", ph_expiring_cnt, ")"),
+      tooltip_expiring = paste0(display_name, "\nExpiring Sites: ", ph_expiring_cnt,
+                               "\n(Within ", expiring_days, " days)")
     )
 
   # Apply filtering if needed - FIXED LOGIC
@@ -110,20 +119,20 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     "Ground Prehatch Treatment Progress"
   }
 
-  # Create layered plot exactly like drone app
+  # Create layered plot with updated color scheme
   if (!is.null(group_colors) && length(group_colors) > 0 && group_by != "mmcd_all") {
-    # Use group colors for active sites (facility or foreman colors)
+    # Use group colors for total sites background, status green for active, orange for expiring
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +  # Gray background
-      geom_bar(aes(y = y_active, fill = display_name), stat = "identity", alpha = 0.8) +  # Group colors
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange overlay
+      geom_bar(aes(y = y_total, fill = display_name, text = tooltip_total), stat = "identity", alpha = 0.4) +  # Group colors background - more transparent
+      geom_bar(aes(y = y_active, text = tooltip_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +  # Green active
+      geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange overlay
       scale_fill_manual(values = group_colors, na.value = "grey70", guide = "none")  # Hide legend for group colors
   } else {
     # For MMCD grouping or when no specific colors available, use status colors only
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +     # Gray background
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +   # Green active
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"])  # Orange expiring
+      geom_bar(aes(y = y_total, text = tooltip_total), stat = "identity", fill = "gray80", alpha = 0.4) +     # Gray background - more transparent
+      geom_bar(aes(y = y_active, text = tooltip_active), stat = "identity", fill = status_colors["active"]) +   # Green active
+      geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"])  # Orange expiring
   }
   
   p <- p +
@@ -147,7 +156,7 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       legend.text = element_text(size = 11)
     )
   
-  return(ggplotly(p, tooltip = c("x", "y", "fill")))
+  return(ggplotly(p, tooltip = "text"))
 }
 
 # Function to create historical chart with multiple chart types (matching drone app exactly)
@@ -327,21 +336,25 @@ create_historical_chart <- function(data, hist_time_period, hist_display_metric,
 # Function to create all value boxes (like red_air does)
 create_value_boxes <- function(data) {
   # Calculate totals
-  total_ground <- sum(data$tot_ground, na.rm = TRUE)
   total_prehatch <- sum(data$prehatch_sites_cnt, na.rm = TRUE)
   total_treated <- sum(data$ph_treated_cnt, na.rm = TRUE)
   total_expired <- sum(data$ph_expired_cnt, na.rm = TRUE)
   total_expiring <- sum(data$ph_expiring_cnt, na.rm = TRUE)
+  
+  # Calculate inactive sites (not currently active or expiring - includes never treated + expired beyond expiring window)
+  total_inactive <- total_prehatch - total_treated - total_expired - total_expiring
+  total_inactive <- max(0, total_inactive)  # Ensure non-negative
   
   # Calculate percentages
   treated_pct <- if (total_prehatch > 0) round(100 * total_treated / total_prehatch, 1) else 0
   expiring_pct <- if (total_prehatch > 0) round(100 * total_expiring / total_prehatch, 1) else 0
   
   return(list(
-    total_ground = total_ground,
     total_prehatch = total_prehatch,
     total_treated = total_treated,
     total_expired = total_expired,
+    total_expiring = total_expiring,
+    total_untreated = total_inactive,
     treated_pct = treated_pct,
     expiring_pct = expiring_pct
   ))

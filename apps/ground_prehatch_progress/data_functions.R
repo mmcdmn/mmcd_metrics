@@ -118,109 +118,121 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
 }
 
 # Function to get ground prehatch data from database
-# FIXED: Use individual site records and include ALL prehatch sites in totals
-get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date()) {
-  # Use the same data source as details table but return it for aggregation
-  # This ensures chart and table use identical data
-  site_details_data <- get_site_details_data(expiring_days = 14, simulation_date)
+# Uses load_raw_data as single source of truth and processes status like get_site_details_data
+get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), expiring_days = 14) {
+  # Load raw data using the unified function
+  raw_data <- load_raw_data(analysis_date = simulation_date, include_archive = FALSE)
   
-  if (nrow(site_details_data) == 0) {
+  if (nrow(raw_data$ground_sites) == 0) {
     return(data.frame())
   }
   
-  # Convert to the format expected by aggregate_data_by_group
-  # Aggregate by sectcode and foreman to mimic the old structure
-  result <- site_details_data %>%
+  # Calculate treatment status for each site
+  site_details <- raw_data$ground_sites
+  
+  if (nrow(raw_data$ground_treatments) > 0) {
+    # Get latest treatment for each site
+    latest_treatments <- raw_data$ground_treatments %>%
+      group_by(sitecode) %>%
+      arrange(desc(inspdate), desc(insptime)) %>%
+      slice(1) %>%
+      ungroup() %>%
+      mutate(
+        age = as.numeric(simulation_date - inspdate),
+        prehatch_status = case_when(
+          age > effect_days ~ "expired",
+          age > (effect_days - expiring_days) ~ "expiring", 
+          age <= effect_days ~ "treated",
+          TRUE ~ "unknown"
+        )
+      ) %>%
+      select(sitecode, prehatch_status, inspdate, matcode, age, effect_days)
+    
+    # Join sites with treatment status
+    site_details <- site_details %>%
+      left_join(latest_treatments, by = "sitecode")
+  }
+  
+  # Sites without treatments are expired/unknown (count as expired)
+  site_details <- site_details %>%
+    mutate(
+      prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status)
+    )
+  
+  # Aggregate by sectcode and foreman to match expected structure
+  result <- site_details %>%
     group_by(facility, zone, fosarea, sectcode) %>%
     summarise(
-      foreman = first(fosarea),  # Use fosarea as foreman
-      tot_ground = n(),  # All sites in this group (simplified)
-      not_prehatch_sites = 0,  # Not used in current logic
-      prehatch_sites_cnt = n(),  # All prehatch sites (including untreated)
-      drone_sites_cnt = 0,  # Not used in current logic
-      # FIXED: Count treated status correctly, excluding untreated sites from treatment counts
+      foreman = first(fosarea),  # Use fosarea as foreman (gis_sectcode is source of truth)
+      tot_ground = n(),  
+      not_prehatch_sites = 0, 
+      prehatch_sites_cnt = n(),  # All prehatch sites
+      drone_sites_cnt = 0, 
       ph_treated_cnt = sum(prehatch_status == "treated", na.rm = TRUE),
       ph_expiring_cnt = sum(prehatch_status == "expiring", na.rm = TRUE),
-      ph_expired_cnt = sum(prehatch_status == "expired", na.rm = TRUE),
-      # Add untreated count for debugging
+      ph_expired_cnt = sum(prehatch_status == "expired" | is.na(prehatch_status), na.rm = TRUE),
       ph_untreated_cnt = sum(is.na(prehatch_status), na.rm = TRUE),
       .groups = "drop"
     )
   
-  # Map facility names for display
-  result <- map_facility_names(result)
-  
   return(result)
 }
 
-# Function to get site details data
+# Function to get site details data - uses same source as charts
 get_site_details_data <- function(expiring_days = 14, simulation_date = Sys.Date()) {
-  con <- get_db_connection()
-  if (is.null(con)) return(data.frame())
+  # Load raw data using the unified function - same as charts use
+  raw_data <- load_raw_data(analysis_date = simulation_date, include_archive = FALSE)
   
-  tryCatch({
-    current_year <- format(Sys.Date(), "%Y")
-    
-    query <- sprintf("
-WITH ActiveSites_g AS (
-  SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
-         b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
-         sc.fosarea as foreman
-  FROM loc_breeding_sites b
-  LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
-    AND b.air_gnd='G'
-  ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
-)
-SELECT a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman, a.acres, a.priority, a.prehatch,
-       s.prehatch_status, s.inspdate, s.matcode, s.age, s.effect_days
-FROM activesites_g a 
-LEFT JOIN (
-  SELECT sitecode, sectcode, facility, fosarea, zone, foreman,
-         CASE
-           WHEN age > COALESCE(effect_days::integer, 30)::double precision THEN 'expired'::text
-           WHEN days_retrt_early IS NOT NULL AND age > days_retrt_early::double precision THEN 'expiring'::text
-           WHEN age<= effect_days::integer::double precision THEN 'treated'::text
-           ELSE 'unknown'::text
-         END AS prehatch_status,
-         inspdate, matcode, age, effect_days, days_retrt_early
-  FROM (  
-    SELECT DISTINCT ON (a.sitecode)
-           a.sitecode, a.sectcode, a.facility, a.fosarea, a.zone, a.foreman,
-           c.pkey_pg AS insptrt_id,
-           date_part('days'::text, '%s'::timestamp - c.inspdate::timestamp with time zone) AS age,
-           c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
-    FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
-    JOIN activesites_g a ON c.sitecode = a.sitecode
-    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
-    ORDER BY a.sitecode, c.inspdate DESC, c.insptime DESC
-  ) s_grd
-  ORDER BY sitecode
-) s USING (sitecode, sectcode, facility, fosarea, zone, foreman)
-WHERE a.prehatch IN ('PREHATCH','BRIQUET')
-ORDER BY a.facility, a.sectcode, a.sitecode", current_year, format(simulation_date, "%Y-%m-%d"), current_year, format(simulation_date, "%Y-%m-%d"))
-    
-    result <- dbGetQuery(con, query)
-    dbDisconnect(con)
-    
-    # Convert integer64 columns to numeric to avoid overflow warnings
-    numeric_cols <- c("age", "effect_days", "acres")
-    for (col in numeric_cols) {
-      if (col %in% names(result)) {
-        result[[col]] <- as.numeric(result[[col]])
-      }
-    }
-    
-    # Map facility names for display
-    result <- map_facility_names(result)
-    
-    return(result)
-    
-  }, error = function(e) {
-    warning(paste("Error loading site details:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+  if (nrow(raw_data$ground_sites) == 0) {
     return(data.frame())
-  })
+  }
+  
+  # Start with all ground sites (gis_sectcode is source of truth)
+  result <- raw_data$ground_sites
+  
+  if (nrow(raw_data$ground_treatments) > 0) {
+    # Get latest treatment for each site
+    latest_treatments <- raw_data$ground_treatments %>%
+      group_by(sitecode) %>%
+      arrange(desc(inspdate), desc(insptime)) %>%
+      slice(1) %>%
+      ungroup() %>%
+      mutate(
+        age = as.numeric(simulation_date - inspdate),
+        prehatch_status = case_when(
+          age > effect_days ~ "expired",
+          age > (effect_days - expiring_days) ~ "expiring",
+          age <= effect_days ~ "treated", 
+          TRUE ~ "unknown"
+        )
+      ) %>%
+      select(sitecode, prehatch_status, inspdate, matcode, age, effect_days)
+    
+    # Join sites with treatment status
+    result <- result %>%
+      left_join(latest_treatments, by = "sitecode")
+  } else {
+    # No treatments data - add empty columns
+    result <- result %>%
+      mutate(
+        prehatch_status = NA_character_,
+        inspdate = as.Date(NA),
+        matcode = NA_character_,
+        age = NA_real_,
+        effect_days = NA_real_
+      )
+  }
+  
+  # Sites without treatments are expired/unknown (count as expired)
+  result <- result %>%
+    mutate(
+      prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status)
+    ) %>%
+    # Filter to only prehatch sites
+    filter(prehatch %in% c("PREHATCH", "BRIQUET")) %>%
+    arrange(facility, sectcode, sitecode)
+  
+  return(result)
 }
 
 # Function to filter data based on user selections

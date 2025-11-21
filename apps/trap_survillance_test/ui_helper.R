@@ -7,7 +7,7 @@ trap_ui <- function() {
     dashboardSidebar(
       sidebarMenu(
         menuItem("Interactive Map", tabName = "map_leaflet", icon = icon("map")),
-        menuItem("Static SF Map", tabName = "map_sf", icon = icon("chart-area")),
+        menuItem("Polygon Map", tabName = "map_sf", icon = icon("chart-area")),
         menuItem("Table", tabName = "table", icon = icon("table"))
       )
     ),
@@ -48,7 +48,7 @@ trap_ui <- function() {
               hr(),
               actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
             ),
-            box(width = 8, title = "Sections Vector Index Map (Static SF with Zoom)", status = "warning", solidHeader = TRUE,
+            box(width = 8, title = "Vector Index by Section Polygons (Live Data + Zoom)", status = "warning", solidHeader = TRUE,
                 plotly::plotlyOutput("map_sf", height = 700)
             )
           )

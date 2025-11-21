@@ -138,23 +138,174 @@ nearest_trap_count = sum(species_counts from k nearest traps)
 
 **Example**: If k=4 and nearest trap counts are [106, 76, 1, 90], then `nearest_trap_total = 273`
 
-## Spatial Operations
+## Spatial Operations & sf Package Implementation
 
-### Coordinate Systems
+### SF (Simple Features) Package Overview
+The app extensively uses the `sf` package for spatial operations, which provides standardized access to simple features. This includes reading shapefiles, coordinate transformations, spatial queries, and geometric operations.
+
+### Shapefile Loading & Layer Management
+
+#### Primary Spatial Data Sources
+1. **Section Boundaries** - The core spatial layer containing section polygons
+2. **Background Layers** - Supporting geographic context (facilities, counties, zones)
+3. **Point Data** - Trap locations converted from coordinates to spatial features
+
+#### Load Section Geometries Function (`load_section_geometries()`)
+```r
+# Hierarchical loading strategy for section boundaries
+1. Try GeoPackage (.gpkg) format first: "shared/Q_to_R/data/sections_boundaries.gpkg"
+2. Fallback to Shapefile (.shp): "shared/Q_to_R/data/sections_boundaries.shp"  
+3. Final fallback to database query with PostGIS geometry extraction
+```
+
+**sf Operations Applied:**
+- `st_read()` - Read spatial data from files or database
+- `st_is_longlat()` - Check if CRS is geographic (lat/lon)
+- `st_transform(4326)` - Ensure consistent WGS84 coordinate system
+- `st_make_valid()` - Clean up any invalid polygon geometries
+
+#### Background Layer Loading (`load_background_layers()`)
+The app dynamically loads multiple background layers from shared directories:
+
+**Layer Hierarchy:**
+1. **Facilities** - Administrative boundaries for mosquito control districts
+   - Primary: `shared/Q_to_R/data/facility_boundaries.shp`
+   - Fallback: `mosquito_surveillance_map/shp/FacilityArea_4326.shp`
+
+2. **Zones** - P1/P2 zone boundaries  
+   - Primary: `shared/Q_to_R/data/zone_boundaries.shp`
+   - Fallback: `mosquito_surveillance_map/shp/P1zonebdry_4326.shp`
+
+3. **Counties** - Administrative context
+   - Source: `mosquito_surveillance_map/shp/Counties_4326.shp`
+
+**Purpose**: Provides geographic context and reference layers without querying the database repeatedly.
+
+### Coordinate Systems & Transformations
 1. **Database Storage**: 
    - Traps: EPSG:4326 (WGS84 lat/lon) stored as x, y
-   - Sections: EPSG:26915 (UTM Zone 15N) in `the_geom`
+   - Sections: EPSG:26915 (UTM Zone 15N) in PostGIS `the_geom` column
 
-2. **Distance Calculation**: 
-   - Transform both to EPSG:3857 (Web Mercator Auxiliary Sphere)
-   - Units in meters for accurate distance calculations
-   - Use `st_distance()` from sf package
+2. **sf Transformation Pipeline**: 
+   ```r
+   # Step 1: Convert coordinates to sf objects
+   traps_sf <- st_as_sf(traps, coords = c("lon", "lat"), crs = 4326)
+   sects_sf <- st_as_sf(sects, coords = c("lon", "lat"), crs = 4326)
+   
+   # Step 2: Transform to projected CRS for accurate distance calculation
+   traps_m <- st_transform(traps_sf, 3857)  # Web Mercator meters
+   sects_m <- st_transform(sects_sf, 3857)  # Web Mercator meters
+   
+   # Step 3: Use st_distance() for precise meter-based calculations
+   dists <- as.numeric(st_distance(sect_row, traps_m))
+   ```
 
-3. **Display**: 
-   - Convert back to EPSG:4326 for Leaflet map display
+3. **Display Preparation**: 
+   - All layers transformed back to EPSG:4326 for map rendering
+   - Consistent CRS ensures proper overlay of all spatial elements
+
+### SF-Based Map Rendering
+
+#### Static Map with ggplot2 + ggspatial (`render_vector_map_sf()`)
+The app creates publication-quality static maps using `ggplot2` with `ggspatial` for basemap tiles:
+
+**Layer Rendering Order (back to front):**
+```r
+1. Basemap Tiles (ggspatial)
+   annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0)
+
+2. County Boundaries (context)
+   geom_sf(data = bg_layers$counties, color = "gray80", alpha = 0.3)
+
+3. Facility Boundaries (reference)  
+   geom_sf(data = bg_layers$facilities, color = "gray40", linetype = "dashed")
+
+4. Section Polygons (main data)
+   geom_sf(data = sections_sf, aes(fill = vector_index), alpha = 0.8)
+
+5. Trap Points (overlay data)
+   geom_sf(data = traps_sf, aes(color = trap_label, size = species_count))
+```
+
+**sf-Specific Features:**
+- `geom_sf()` automatically handles spatial geometries (polygons, points, lines)
+- `coord_sf()` sets map projection and extent based on bounding box
+- `st_bbox()` calculates extent from actual geometry bounds
+- `inherit.aes = FALSE` prevents coordinate conflicts between layers
+
+#### Dynamic Basemap Integration
+```r
+# ggspatial provides seamless OSM tile integration
+annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
+```
+- Downloads tiles automatically based on plot extent
+- `zoomin = 2` requests higher resolution tiles for detail
+- `type = "cartolight"` provides clean, minimal basemap styling
+
+#### Interactive Map with Leaflet (`render_vector_map()`)
+Traditional Leaflet implementation for comparison:
+- Point-based representation using `addCircleMarkers()`
+- Manual popup construction with HTML formatting
+- Layer control for toggling sections vs traps
+- Less detailed than sf-based approach but more interactive
+
+### Spatial Data Processing Pipeline
+
+#### Point-to-SF Conversion
+```r
+# Convert tabular coordinates to spatial features
+traps_sf <- st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+
+# remove = FALSE preserves original lon/lat columns alongside geometry
+# Essential for maintaining data table compatibility
+```
+
+#### Geometry Operations
+```r
+# Centroid calculation for KNN
+sections_centroids <- suppressWarnings(st_centroid(sections_sf))
+
+# Extract coordinates for tabular operations
+coords <- st_coordinates(sections_centroids)
+lon <- coords[,1]
+lat <- coords[,2]
+
+# Drop geometry when converting back to data.frame
+st_drop_geometry(sections_centroids)
+```
+
+#### Distance-Based Spatial Analysis
+```r
+# Vectorized distance calculation between all sections and traps
+dists <- as.numeric(st_distance(sect_row, traps_m))
+
+# Find k-nearest neighbors using R sorting (faster than spatial index)
+k_idx <- order(dists)[1:k_actual]
+```
 
 ### Why Transform for Distance?
-Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. Transforming to a projected coordinate system (EPSG:3857) with meter units provides accurate distances.
+Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. The sf package handles this by:
+1. **EPSG:4326** - Geographic coordinates for storage/display
+2. **EPSG:3857** - Projected coordinates for accurate meter-based calculations  
+3. **st_distance()** - Proper geodesic calculations accounting for Earth's curvature
+
+### Performance Optimizations with sf
+
+#### File Format Preference
+1. **GeoPackage (.gpkg)** - Faster loading, better compression, single-file format
+2. **Shapefile (.shp)** - Traditional format, multiple files (.shp, .shx, .dbf, .prj)
+3. **PostGIS query** - Database fallback when files unavailable
+
+#### Memory Management
+- `quiet = TRUE` suppresses verbose sf output
+- `st_make_valid()` cleans geometries once during loading
+- Background layers loaded once and cached in function scope
+- Geometry operations vectorized using sf's compiled C++ backends
+
+#### Spatial Indexing
+- sf automatically builds spatial indexes for large datasets
+- `st_distance()` leverages GEOS library for optimized calculations
+- R-side processing faster than multiple database calls for this use case
 
 ## Data Type Issues & Solutions
 

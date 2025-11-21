@@ -292,35 +292,214 @@ nearest_trap_count = sum(species_counts from k nearest traps)
 
 <p><strong>Example</strong>: If k=4 and nearest trap counts are [106, 76, 1, 90], then <code>nearest<em>trap</em>total = 273</code></p>
 
-<h2>Spatial Operations</h2>
+<h2>Spatial Operations &amp; sf Package Implementation</h2>
 
-<h3>Coordinate Systems</h3>
+<h3>SF (Simple Features) Package Overview</h3>
+<p>The app extensively uses the <code>sf</code> package for spatial operations, which provides standardized access to simple features. This includes reading shapefiles, coordinate transformations, spatial queries, and geometric operations.</p>
+
+<h3>Shapefile Loading &amp; Layer Management</h3>
+
+<h4>Primary Spatial Data Sources</h4>
+<ol>
+<li><strong>Section Boundaries</strong> - The core spatial layer containing section polygons</li>
+<li><strong>Background Layers</strong> - Supporting geographic context (facilities, counties, zones)</li>
+<li><strong>Point Data</strong> - Trap locations converted from coordinates to spatial features</li>
+</ul>
+
+<h4>Load Section Geometries Function (<code>load<em>section</em>geometries()</code>)</h4>
+<pre><code class="r">
+# Hierarchical loading strategy for section boundaries
+1. Try GeoPackage (.gpkg) format first: "shared/Q_to_R/data/sections_boundaries.gpkg"
+2. Fallback to Shapefile (.shp): "shared/Q_to_R/data/sections_boundaries.shp"  
+3. Final fallback to database query with PostGIS geometry extraction
+</code></pre>
+
+<p><strong>sf Operations Applied:</strong></p>
+<ul>
+<li><code>st_read()</code> - Read spatial data from files or database</li>
+<li><code>st<em>is</em>longlat()</code> - Check if CRS is geographic (lat/lon)</li>
+<li><code>st_transform(4326)</code> - Ensure consistent WGS84 coordinate system</li>
+<li><code>st<em>make</em>valid()</code> - Clean up any invalid polygon geometries</li>
+</ul>
+
+<h4>Background Layer Loading (<code>load<em>background</em>layers()</code>)</h4>
+<p>The app dynamically loads multiple background layers from shared directories:</p>
+
+<p><strong>Layer Hierarchy:</strong></p>
+<ol>
+<li><strong>Facilities</strong> - Administrative boundaries for mosquito control districts</li>
+<ul>
+<li>Primary: <code>shared/Q<em>to</em>R/data/facility_boundaries.shp</code></li>
+<li>Fallback: <code>mosquito<em>surveillance</em>map/shp/FacilityArea_4326.shp</code></li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Zones</strong> - P1/P2 zone boundaries  </li>
+<ul>
+<li>Primary: <code>shared/Q<em>to</em>R/data/zone_boundaries.shp</code></li>
+<li>Fallback: <code>mosquito<em>surveillance</em>map/shp/P1zonebdry_4326.shp</code></li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Counties</strong> - Administrative context</li>
+<ul>
+<li>Source: <code>mosquito<em>surveillance</em>map/shp/Counties_4326.shp</code></li>
+</ul>
+</ul>
+
+<p><strong>Purpose</strong>: Provides geographic context and reference layers without querying the database repeatedly.</p>
+
+<h3>Coordinate Systems &amp; Transformations</h3>
 <ol>
 <li><strong>Database Storage</strong>: </li>
 <ul>
 <li>Traps: EPSG:4326 (WGS84 lat/lon) stored as x, y</li>
-<li>Sections: EPSG:26915 (UTM Zone 15N) in <code>the_geom</code></li>
+<li>Sections: EPSG:26915 (UTM Zone 15N) in PostGIS <code>the_geom</code> column</li>
 </ul>
 </ul>
 
 <ol>
-<li><strong>Distance Calculation</strong>: </li>
+<li><strong>sf Transformation Pipeline</strong>: </li>
+</ul>
+<p>   ```r</p>
+<p>   # Step 1: Convert coordinates to sf objects</p>
+<p>   traps<em>sf &lt;- st</em>as_sf(traps, coords = c("lon", "lat"), crs = 4326)</p>
+<p>   sects<em>sf &lt;- st</em>as_sf(sects, coords = c("lon", "lat"), crs = 4326)</p>
+
+<p>   # Step 2: Transform to projected CRS for accurate distance calculation</p>
+<p>   traps<em>m &lt;- st</em>transform(traps_sf, 3857)  # Web Mercator meters</p>
+<p>   sects<em>m &lt;- st</em>transform(sects_sf, 3857)  # Web Mercator meters</p>
+
+<p>   # Step 3: Use st_distance() for precise meter-based calculations</p>
+<p>   dists &lt;- as.numeric(st<em>distance(sect</em>row, traps_m))</p>
+<p>   ```</p>
+
+<ol>
+<li><strong>Display Preparation</strong>: </li>
 <ul>
-<li>Transform both to EPSG:3857 (Web Mercator Auxiliary Sphere)</li>
-<li>Units in meters for accurate distance calculations</li>
-<li>Use <code>st_distance()</code> from sf package</li>
+<li>All layers transformed back to EPSG:4326 for map rendering</li>
+<li>Consistent CRS ensures proper overlay of all spatial elements</li>
 </ul>
 </ul>
 
-<ol>
-<li><strong>Display</strong>: </li>
+<h3>SF-Based Map Rendering</h3>
+
+<h4>Static Map with ggplot2 + ggspatial (<code>render<em>vector</em>map_sf()</code>)</h4>
+<p>The app creates publication-quality static maps using <code>ggplot2</code> with <code>ggspatial</code> for basemap tiles:</p>
+
+<p><strong>Layer Rendering Order (back to front):</strong></p>
+<pre><code class="r">
+1. Basemap Tiles (ggspatial)
+   annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0)
+
+2. County Boundaries (context)
+   geom_sf(data = bg_layers$counties, color = "gray80", alpha = 0.3)
+
+3. Facility Boundaries (reference)  
+   geom_sf(data = bg_layers$facilities, color = "gray40", linetype = "dashed")
+
+4. Section Polygons (main data)
+   geom_sf(data = sections_sf, aes(fill = vector_index), alpha = 0.8)
+
+5. Trap Points (overlay data)
+   geom_sf(data = traps_sf, aes(color = trap_label, size = species_count))
+</code></pre>
+
+<p><strong>sf-Specific Features:</strong></p>
 <ul>
-<li>Convert back to EPSG:4326 for Leaflet map display</li>
+<li><code>geom_sf()</code> automatically handles spatial geometries (polygons, points, lines)</li>
+<li><code>coord_sf()</code> sets map projection and extent based on bounding box</li>
+<li><code>st_bbox()</code> calculates extent from actual geometry bounds</li>
+<li><code>inherit.aes = FALSE</code> prevents coordinate conflicts between layers</li>
 </ul>
+
+<h4>Dynamic Basemap Integration</h4>
+<pre><code class="r">
+# ggspatial provides seamless OSM tile integration
+annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
+</code></pre>
+<ul>
+<li>Downloads tiles automatically based on plot extent</li>
+<li><code>zoomin = 2</code> requests higher resolution tiles for detail</li>
+<li><code>type = "cartolight"</code> provides clean, minimal basemap styling</li>
 </ul>
+
+<h4>Interactive Map with Leaflet (<code>render<em>vector</em>map()</code>)</h4>
+<p>Traditional Leaflet implementation for comparison:</p>
+<ul>
+<li>Point-based representation using <code>addCircleMarkers()</code></li>
+<li>Manual popup construction with HTML formatting</li>
+<li>Layer control for toggling sections vs traps</li>
+<li>Less detailed than sf-based approach but more interactive</li>
+</ul>
+
+<h3>Spatial Data Processing Pipeline</h3>
+
+<h4>Point-to-SF Conversion</h4>
+<pre><code class="r">
+# Convert tabular coordinates to spatial features
+traps_sf &lt;- st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+
+# remove = FALSE preserves original lon/lat columns alongside geometry
+# Essential for maintaining data table compatibility
+</code></pre>
+
+<h4>Geometry Operations</h4>
+<pre><code class="r">
+# Centroid calculation for KNN
+sections_centroids &lt;- suppressWarnings(st_centroid(sections_sf))
+
+# Extract coordinates for tabular operations
+coords &lt;- st_coordinates(sections_centroids)
+lon &lt;- coords[,1]
+lat &lt;- coords[,2]
+
+# Drop geometry when converting back to data.frame
+st_drop_geometry(sections_centroids)
+</code></pre>
+
+<h4>Distance-Based Spatial Analysis</h4>
+<pre><code class="r">
+# Vectorized distance calculation between all sections and traps
+dists &lt;- as.numeric(st_distance(sect_row, traps_m))
+
+# Find k-nearest neighbors using R sorting (faster than spatial index)
+k_idx &lt;- order(dists)[1:k_actual]
+</code></pre>
 
 <h3>Why Transform for Distance?</h3>
-<p>Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. Transforming to a projected coordinate system (EPSG:3857) with meter units provides accurate distances.</p>
+<p>Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. The sf package handles this by:</p>
+<ol>
+<li><strong>EPSG:4326</strong> - Geographic coordinates for storage/display</li>
+<li><strong>EPSG:3857</strong> - Projected coordinates for accurate meter-based calculations  </li>
+<li><strong>st_distance()</strong> - Proper geodesic calculations accounting for Earth's curvature</li>
+</ul>
+
+<h3>Performance Optimizations with sf</h3>
+
+<h4>File Format Preference</h4>
+<ol>
+<li><strong>GeoPackage (.gpkg)</strong> - Faster loading, better compression, single-file format</li>
+<li><strong>Shapefile (.shp)</strong> - Traditional format, multiple files (.shp, .shx, .dbf, .prj)</li>
+<li><strong>PostGIS query</strong> - Database fallback when files unavailable</li>
+</ul>
+
+<h4>Memory Management</h4>
+<ul>
+<li><code>quiet = TRUE</code> suppresses verbose sf output</li>
+<li><code>st<em>make</em>valid()</code> cleans geometries once during loading</li>
+<li>Background layers loaded once and cached in function scope</li>
+<li>Geometry operations vectorized using sf's compiled C++ backends</li>
+</ul>
+
+<h4>Spatial Indexing</h4>
+<ul>
+<li>sf automatically builds spatial indexes for large datasets</li>
+<li><code>st_distance()</code> leverages GEOS library for optimized calculations</li>
+<li>R-side processing faster than multiple database calls for this use case</li>
+</ul>
 
 <h2>Data Type Issues &amp; Solutions</h2>
 

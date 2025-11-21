@@ -137,7 +137,12 @@ drone_ui <- function() {
                    br(),
                    plotOutput("currentPlot", height = "auto"),
                    br(),
-                   h4("Sitecode Details"),
+                   fluidRow(
+                     column(10, h4("Sitecode Details")),
+                     column(2, downloadButton("download_current_data", "Download CSV", 
+                                             class = "btn-success btn-sm", 
+                                             style = "margin-top: 20px; float: right;"))
+                   ),
                    DT::dataTableOutput("currentDataTable")
           ),
           tabPanel("Map", value = "map",
@@ -146,13 +151,23 @@ drone_ui <- function() {
                    br(),
                    leafletOutput("droneMap", height = "600px"),
                    br(),
-                   h4("Site Details"),
+                   fluidRow(
+                     column(10, h4("Site Details")),
+                     column(2, downloadButton("download_map_data", "Download CSV", 
+                                             class = "btn-success btn-sm", 
+                                             style = "margin-top: 20px; float: right;"))
+                   ),
                    DT::dataTableOutput("mapDataTable")
           ),
           tabPanel("Historical Trends", value = "historical", 
                    plotOutput("historicalPlot", height = "auto"),
                    br(),
-                   h4("Historical Data"),
+                   fluidRow(
+                     column(10, h4("Historical Data")),
+                     column(2, downloadButton("download_historical_data", "Download CSV", 
+                                             class = "btn-success btn-sm", 
+                                             style = "margin-top: 20px; float: right;"))
+                   ),
                    DT::dataTableOutput("historicalDataTable")
           ),
           tabPanel("Site Statistics", value = "site_stats",

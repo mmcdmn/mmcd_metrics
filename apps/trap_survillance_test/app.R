@@ -1,3 +1,5 @@
+#KNN traps surveillance app
+
 library(shiny)
 library(shinydashboard)
 library(ggplot2)
@@ -99,6 +101,38 @@ server <- function(input, output, session) {
     DT::datatable(sections_display, options = list(pageLength = 15), 
                   caption = "Section Vector Index Results")
   })
+  
+  # Download handler for vector data CSV export
+  output$download_vector_data <- downloadHandler(
+    filename = function() {
+      paste("trap_vector_data_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        # Use data from either source
+        data <- if (exists("vector_data") && !is.null(vector_data())) {
+          vector_data()
+        } else if (exists("vector_data_sf") && !is.null(vector_data_sf())) {
+          vector_data_sf()
+        } else {
+          write.csv(data.frame(Message = "No vector data available"), file, row.names = FALSE)
+          return()
+        }
+        
+        # Export the sections data
+        if (!is.null(data$sections) && nrow(data$sections) > 0) {
+          result <- export_csv_safe(data$sections, file, clean_data = TRUE)
+          if (!result$success) {
+            write.csv(data$sections, file, row.names = FALSE, na = "")
+          }
+        } else {
+          write.csv(data.frame(Message = "No sections data available"), file, row.names = FALSE)
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
 }
 
 shinyApp(ui = ui, server = server)

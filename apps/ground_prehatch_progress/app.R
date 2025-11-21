@@ -1,3 +1,5 @@
+# Ground prehatch site status App
+
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -400,7 +402,13 @@ server <- function(input, output, session) {
       data <- details_data()
       foremen_lookup <- get_foremen_lookup()
       download_data <- prepare_download_data(data, foremen_lookup)
-      write.csv(download_data, file, row.names = FALSE)
+      
+      # Use the shared CSV export function
+      result <- export_csv_safe(download_data, file, clean_data = TRUE)
+      
+      if (!result$success) {
+        warning("CSV export failed: ", result$message)
+      }
     }
   )
   
@@ -508,7 +516,12 @@ server <- function(input, output, session) {
       # Filter data based on inputs (same as the chart and table use)
       filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
       
-      write.csv(filtered_data, file, row.names = FALSE)
+      # Use the shared CSV export function
+      result <- export_csv_safe(filtered_data, file, clean_data = TRUE)
+      
+      if (!result$success) {
+        warning("CSV export failed: ", result$message)
+      }
     }
   )
   
@@ -630,10 +643,20 @@ server <- function(input, output, session) {
       if (!is.null(spatial_data)) {
         # Remove geometry column for CSV export
         export_data <- spatial_data %>% sf::st_drop_geometry()
-        write.csv(export_data, file, row.names = FALSE)
+        
+        # Use the shared CSV export function
+        result <- export_csv_safe(export_data, file, clean_data = TRUE)
+        
+        if (!result$success) {
+          warning("CSV export failed: ", result$message)
+        }
       } else {
         # Create empty CSV if no data
-        write.csv(data.frame(Message = "No map data available"), file, row.names = FALSE)
+        empty_result <- export_csv_safe(
+          data.frame(Message = "No map data available"), 
+          file, 
+          clean_data = FALSE
+        )
       }
     }
   )

@@ -173,6 +173,9 @@ ui <- dashboardPage(
         
         fluidRow(
           box(title = "Site Details", status = "success", solidHeader = TRUE, width = 12,
+            div(style = "text-align: right; margin-bottom: 10px;",
+              downloadButton("download_site_details", "Download CSV", class = "btn-success")
+            ),
             DT::dataTableOutput("site_details_table")
           )
         )
@@ -292,12 +295,18 @@ ui <- dashboardPage(
             plotlyOutput("treatment_flow_chart", height = "400px")
           ),
           box(title = "Process Summary", status = "info", solidHeader = TRUE, width = 4,
+            div(style = "text-align: right; margin-bottom: 10px;",
+              downloadButton("download_process_summary", "Download CSV", class = "btn-info")
+            ),
             DT::dataTableOutput("process_summary_table")
           )
         ),
         
         fluidRow(
           box(title = "Facility Treatment Process Details", status = "success", solidHeader = TRUE, width = 12,
+            div(style = "text-align: right; margin-bottom: 10px;",
+              downloadButton("download_facility_process", "Download CSV", class = "btn-success")
+            ),
             DT::dataTableOutput("facility_process_table")
           )
         )
@@ -409,11 +418,17 @@ ui <- dashboardPage(
             div(style = "text-align: center; padding-bottom: 10px;",
               tags$small("Red Bug Ratio = (Red Bug Inspections ÷ Total Inspections) × 100%")
             ),
+            div(style = "text-align: right; margin-bottom: 10px;",
+              downloadButton("download_inspection_history", "Download CSV", class = "btn-success")
+            ),
             DT::dataTableOutput("historical_inspection_table")
           ),
           box(title = "Treatment Volume Summary", status = "warning", solidHeader = TRUE, width = 6,
             div(style = "text-align: center; padding-bottom: 10px;",
               tags$small("Weekly and yearly treatment volumes with acres treated")
+            ),
+            div(style = "text-align: right; margin-bottom: 10px;",
+              downloadButton("download_treatment_volume", "Download CSV", class = "btn-warning")
             ),
             DT::dataTableOutput("treatment_volume_table")
           )
@@ -1276,6 +1291,205 @@ server <- function(input, output, session) {
         )
       )
   })
+  
+  # Download handlers for CSV exports
+  output$download_site_details <- downloadHandler(
+    filename = function() {
+      paste("site_details_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        # Get the same data that the site details table uses
+        site_data <- filtered_data()
+        
+        # Debug: Check if we have data
+        cat("Debug: Site data rows:", nrow(site_data), "\n")
+        cat("Debug: File path:", file, "\n")
+        
+        if (is.null(site_data) || nrow(site_data) == 0) {
+          # Create empty file with message
+          write.csv(data.frame(Message = "No data available for selected filters"), 
+                    file, row.names = FALSE)
+          cat("Debug: Created empty file due to no data\n")
+        } else {
+          # Use the shared CSV export function
+          result <- export_csv_safe(site_data, file, clean_data = TRUE)
+          
+          cat("Debug: Export result - Success:", result$success, "\n")
+          cat("Debug: Export message:", result$message, "\n")
+          
+          # If export failed, try simple write.csv as fallback
+          if (!result$success) {
+            cat("Debug: Falling back to simple write.csv\n")
+            write.csv(site_data, file, row.names = FALSE, na = "")
+          }
+        }
+        
+        # Verify file was created
+        if (file.exists(file)) {
+          cat("Debug: File successfully created at:", file, "\n")
+          cat("Debug: File size:", file.size(file), "bytes\n")
+        } else {
+          cat("Debug: ERROR - File was not created!\n")
+        }
+        
+      }, error = function(e) {
+        cat("Debug: Download error:", e$message, "\n")
+        # Create error file
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), 
+                  file, row.names = FALSE)
+      })
+    }
+  )
+  
+  output$download_process_summary <- downloadHandler(
+    filename = function() {
+      paste("process_summary_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        # Get the same data that the process summary table uses
+        data <- process_data()
+        
+        if (input$refresh_process_data == 0 || nrow(data) == 0) {
+          write.csv(data.frame(Message = "No process data available"), file, row.names = FALSE)
+          return()
+        }
+        
+        summary_data <- create_treatment_process_summary(data)
+        
+        # Use the shared CSV export function
+        result <- export_csv_safe(summary_data, file, clean_data = TRUE)
+        
+        if (!result$success) {
+          write.csv(summary_data, file, row.names = FALSE, na = "")
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
+  
+  output$download_facility_process <- downloadHandler(
+    filename = function() {
+      paste("facility_process_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        # Get the same data that the facility process table uses
+        data <- process_data()
+        
+        if (input$refresh_process_data == 0 || nrow(data) == 0) {
+          write.csv(data.frame(Message = "No process data available"), file, row.names = FALSE)
+          return()
+        }
+        
+        # Create the same process details data as the table
+        process_details <- data %>%
+          select(sitecode, facility, priority, site_status, 
+                 last_inspection_date_display, last_larvae_count,
+                 last_treatment_date_display, last_treatment_material) %>%
+          arrange(facility, site_status, sitecode)
+        
+        colnames(process_details) <- c(
+          "Site Code", "Facility", "Priority", "Status", 
+          "Last Inspection", "Larvae Count", "Last Treatment", "Material"
+        )
+        
+        # Use the shared CSV export function
+        result <- export_csv_safe(process_details, file, clean_data = TRUE)
+        
+        if (!result$success) {
+          write.csv(process_details, file, row.names = FALSE, na = "")
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
+  
+  output$download_inspection_history <- downloadHandler(
+    filename = function() {
+      paste("inspection_history_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        # Get the same data that the historical inspection table uses
+        data <- historical_data()
+        
+        if (input$refresh_historical_data == 0 || nrow(data) == 0) {
+          write.csv(data.frame(Message = "No historical data available"), file, row.names = FALSE)
+          return()
+        }
+        
+        # Format the same way as the table
+        display_data <- data
+        colnames(display_data) <- c(
+          "Site Code", "Facility", "Priority", "Zone", "Acres", 
+          "Total Inspections", "Red Bug Inspections", "Red Bug Ratio (%)", "Years Active"
+        )
+        
+        # Use the shared CSV export function
+        result <- export_csv_safe(display_data, file, clean_data = TRUE)
+        
+        if (!result$success) {
+          write.csv(display_data, file, row.names = FALSE, na = "")
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
+  
+  output$download_treatment_volume <- downloadHandler(
+    filename = function() {
+      paste("treatment_volume_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        # Get the same data that the treatment volume table uses
+        data <- treatment_volume_data()
+        
+        if (input$refresh_historical_data == 0 || nrow(data) == 0) {
+          write.csv(data.frame(Message = "No treatment volume data available"), file, row.names = FALSE)
+          return()
+        }
+        
+        # Create the same summary as the table
+        summary_data <- data %>%
+          group_by(facility, priority, year, operation_type) %>%
+          summarise(
+            operations = sum(total_operations, na.rm = TRUE),
+            acres = round(sum(total_acres, na.rm = TRUE), 1),
+            .groups = 'drop'
+          ) %>%
+          pivot_wider(
+            names_from = operation_type,
+            values_from = c(operations, acres),
+            values_fill = 0
+          ) %>%
+          select(
+            Facility = facility,
+            Priority = priority,
+            Year = year,
+            Treatments = operations_treatment,
+            `Treatment Acres` = acres_treatment,
+            Inspections = operations_inspection,
+            `Inspection Acres` = acres_inspection
+          ) %>%
+          arrange(desc(Year), Facility, Priority)
+        
+        # Use the shared CSV export function
+        result <- export_csv_safe(summary_data, file, clean_data = TRUE)
+        
+        if (!result$success) {
+          write.csv(summary_data, file, row.names = FALSE, na = "")
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
 }
 
 # Run the application

@@ -56,6 +56,9 @@ trap_ui <- function() {
         tabItem(tabName = "table",
           fluidRow(
             box(width = 12, title = "Section Vector Index Table", status = "primary", solidHeader = TRUE,
+                div(style = "margin-bottom: 10px;",
+                  downloadButton("download_vector_data", "Download CSV", class = "btn-primary btn-sm")
+                ),
                 dataTableOutput("table")
             )
           )

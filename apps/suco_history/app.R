@@ -1,3 +1,5 @@
+# Suco History Analysis App
+
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -149,8 +151,24 @@ ui <- fluidPage(
           tabsetPanel(id = "current_tabset",
             tabPanel("Graph", value = "CurrentGraph", plotOutput("current_trend_plot", height = "500px")),
             tabPanel("Map", value = "CurrentMap", leafletOutput("current_map", height = "600px")),
-            tabPanel("Summary Table", value = "CurrentTable", dataTableOutput("current_summary_table")),
-            tabPanel("Detailed Samples", value = "CurrentDetailed", dataTableOutput("current_detailed_table")),
+            tabPanel("Summary Table", value = "CurrentTable", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Summary Table")),
+                       column(2, downloadButton("download_current_summary", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("current_summary_table")),
+            tabPanel("Detailed Samples", value = "CurrentDetailed", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Detailed Samples")),
+                       column(2, downloadButton("download_current_detailed", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("current_detailed_table")),
             tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "700px"))
           )
         ),
@@ -158,8 +176,24 @@ ui <- fluidPage(
           tabsetPanel(id = "all_tabset",
             tabPanel("Graph", value = "AllGraph", plotOutput("trend_plot", height = "500px")),
             tabPanel("Map", value = "AllMap", leafletOutput("map", height = "600px")),
-            tabPanel("Summary Table", value = "AllTable", dataTableOutput("summary_table")),
-            tabPanel("Detailed Samples", value = "AllDetailed", dataTableOutput("detailed_table")),
+            tabPanel("Summary Table", value = "AllTable", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Summary Table")),
+                       column(2, downloadButton("download_summary", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("summary_table")),
+            tabPanel("Detailed Samples", value = "AllDetailed", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Detailed Samples")),
+                       column(2, downloadButton("download_detailed", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("detailed_table")),
             tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "700px"))
           )
         )
@@ -745,6 +779,51 @@ server <- function(input, output, session) {
       leafletProxy("current_map") %>% clearGroup("highlighted_location_current")
     }
   })
+  
+  # Download handlers for CSV exports
+  output$download_summary <- downloadHandler(
+    filename = function() {
+      paste0("suco_summary_all_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      data <- filtered_data()
+      summary_data <- create_summary_stats(data, input$group_by, "all")
+      export_csv_safe(summary_data, file)
+    }
+  )
+  
+  output$download_detailed <- downloadHandler(
+    filename = function() {
+      paste0("suco_detailed_all_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      data <- filtered_data()
+      detailed_data <- create_detailed_samples_table(data, input$species_filter)
+      export_csv_safe(detailed_data, file)
+    }
+  )
+  
+  output$download_current_summary <- downloadHandler(
+    filename = function() {
+      paste0("suco_summary_current_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      data <- filtered_data_current()
+      summary_data <- create_summary_stats(data, input$group_by, "current")
+      export_csv_safe(summary_data, file)
+    }
+  )
+  
+  output$download_current_detailed <- downloadHandler(
+    filename = function() {
+      paste0("suco_detailed_current_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      data <- filtered_data_current()
+      detailed_data <- create_detailed_samples_table(data, input$species_filter)
+      export_csv_safe(detailed_data, file)
+    }
+  )
 }
 
 # Run the application

@@ -189,12 +189,12 @@
 </ul>
 
 <ul>
-<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material Active and dosage data</li>
+<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material active and dosage data</li>
 <ul>
 <li><strong>Key Columns</strong>:</li>
 <ul>
 <li><code>matcode</code> (material identifier, joins to treatment tables)</li>
-<li><code>effect_days</code> (treatment Active duration in days)</li>
+<li><code>effect_days</code> (treatment active duration in days)</li>
 </ul>
 <li><strong>Default Logic</strong>: When <code>effect_days IS NULL</code>, assume 14 days for air treatments</li>
 <li><strong>Usage</strong>: Calculate treatment end dates: <code>inspdate + effect_days</code></li>
@@ -362,7 +362,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <ol>
 <li><strong>Load Air Sites</strong>: Query active air sites with zone/facility information</li>
 <li><strong>Get Recent Inspections</strong>: Latest inspection per site within analysis window</li>
-<li><strong>Get Active Treatments</strong>: Current treatments with effectiveness calculations</li>
+<li><strong>Get Active Treatments</strong>: Current treatments with active site calculations</li>
 <li><strong>Get Lab Results</strong>: Link inspections to lab samples for red bug analysis</li>
 <li><strong>Calculate Status</strong>: Apply status logic rules to categorize each site</li>
 <li><strong>Aggregate Metrics</strong>: Summarize counts and percentages for value boxes and charts</li>
@@ -387,7 +387,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <li>Sitecode, facility, zone, priority, site acres</li>
 <li>Treatment status and last inspection/treatment details</li>
 <li>Lab results including red bug detection</li>
-<li>Last material used and effectiveness days</li>
+<li>Last material used and active days</li>
 </ul>
 <li><strong>Map legend</strong> showing status color scheme</li>
 <li><strong>Shared filters</strong> with Current Status tab (zone, facility, priority, larval threshold)</li>
@@ -413,7 +413,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt;= i.inspdate)  -- Active sites during 
 <h2>Tab 3: Historical Analysis</h2>
 
 <h3>Purpose</h3>
-<p>Analyze multi-year trends in air site inspection activity, red bug detection rates, and treatment effectiveness.</p>
+<p>Analyze multi-year trends in air site inspection activity, red bug detection rates, and treatment active or not.</p>
 
 <h3>Key Features</h3>
 <ul>
@@ -574,7 +574,7 @@ WHERE ls.form_type = 'AIR'               -- Air samples only
   AND (ls.missing = FALSE OR ls.missing IS NULL)  -- Valid samples
 </code></pre>
 
-<h4>Treatment Effectiveness</h4>
+<h4>Active Treatment</h4>
 <pre><code class="sql">
 -- Active treatments with end dates
 SELECT t.sitecode, t.inspdate, t.matcode,
@@ -762,7 +762,7 @@ ORDER BY a.facility, a.sitecode
 <li><strong>Coordinate Transform</strong>: <code>ST<em>Transform(ST</em>Centroid(b.geom), 4326)</code> for web mapping</li>
 <li><strong>Latest Data Only</strong>: <code>ROW_NUMBER()</code> window functions get most recent inspections/treatments</li>
 <li><strong>Lab Integration</strong>: Links inspections to samples via <code>sampnum_yr</code> for red bug analysis</li>
-<li><strong>BTI Override</strong>: Supports configurable BTI granule effectiveness days</li>
+<li><strong>BTI Override</strong>: Supports configurable BTI granule effect days (active)</li>
 </ul>
 
 <h3>2. Historical Air Sites Inspection Summary Query</h3>

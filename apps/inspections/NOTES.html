@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Site Inspection Coverage Gaps - Technical Notes</title>
+    <title>Site Inspection Analytics - Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -110,82 +110,104 @@
 </head>
 <body>
     <div class="container">
-<h1>Site Inspection Coverage Gaps - Technical Notes</h1>
+<h1>Site Inspection Analytics - Technical Notes</h1>
 
 <h2>Overview</h2>
-<p>This Shiny app identifies mosquito breeding sites with inspection coverage gaps across MMCD operations. It analyzes sites that haven't been inspected within a specified time period to help prioritize field work and ensure comprehensive site coverage.</p>
+<p>This Shiny app provides comprehensive analytics for mosquito breeding site inspections across MMCD operations. It includes site coverage gap analysis, wet site frequency tracking, and larvae threshold monitoring to optimize field operations and surveillance effectiveness.</p>
 
-<p><strong>Key Purpose</strong>: Find sites that are "falling through the cracks" - either never inspected or not inspected recently enough to maintain proper surveillance coverage.</p>
+<p><strong>Key Features</strong>:</p>
+<ul>
+<li><strong>Site Analytics</strong>: Total sites, wet frequency analysis, and summary statistics</li>
+<li><strong>Larvae Threshold Analysis</strong>: Sites exceeding larvae counts with frequency tracking</li>
+<li><strong>Coverage Gaps</strong>: Sites with inspection gaps or never inspected</li>
+<li><strong>Unified Filtering</strong>: Consistent filter system across all analytics tabs</li>
+</ul>
 
 <h2>Data Sources</h2>
 
-<h3>Tables Used</h3>
+<h3>Tables Used in Queries</h3>
 
-<h4>Primary Site Table</h4>
+<h4>1. <code>loc<em>breeding</em>sites</code> - Site Registry</h4>
+<p><strong>Entities Retrieved:</strong></p>
 <ul>
-<li><strong><code>loc<em>breeding</em>sites</code></strong> - Master site registry</li>
-<ul>
-<li>Contains all mosquito breeding sites in the system</li>
-<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>air_gnd</code>, <code>priority</code>, <code>enddate</code>, <code>drone</code></li>
-<li><strong>CRITICAL FILTER</strong>: <code>enddate IS NULL</code> for active sites only</li>
-<li><strong>NOTE</strong>: This is the authoritative source for active/inactive sites</li>
-<li><strong>Drone Field</strong>: <code>drone = 'Y'</code> identifies drone-designated sites</li>
-</ul>
+<li><code>sitecode</code> - Unique site identifier  </li>
+<li><code>air_gnd</code> - Site type ('A'=Air, 'G'=Ground)</li>
+<li><code>priority</code> - Site priority (RED, YELLOW, GREEN, BLUE)</li>
+<li><code>enddate</code> - Site termination date (NULL for active sites)</li>
+<li><code>drone</code> - Drone site designation ('Y' for drone sites)</li>
 </ul>
 
-<h4>Inspection Tables (Current &amp; Archive)</h4>
+<p><strong>Usage:</strong> Primary site information, filtered by <code>enddate IS NULL</code> for active sites only</p>
+
+<h4>2. <code>gis_sectcode</code> - Geographic/Administrative Data (AUTHORITATIVE SOURCE)</h4>
+<p><strong>Entities Retrieved:</strong></p>
 <ul>
-<li><strong><code>dblarv<em>insptrt</em>current</code></strong> - Active larval inspection/treatment records</li>
-<ul>
-<li>Contains ongoing and recent inspection records</li>
-<li>Fields: <code>sitecode</code>, <code>inspdate</code>, <code>action</code>, <code>numdip</code></li>
-<li>Filter: <code>action IN ('1','2','4')</code> for actual inspections</li>
-<li>Additional filter: <code>(action != '1' OR numdip IS NOT NULL)</code> to exclude incomplete dip counts</li>
-</ul>
+<li><code>sectcode</code> - 7-character section code (joins to left 7 chars of sitecode)</li>
+<li><code>facility</code> - Facility name (Sr, Nr, Er, Wr, etc.)</li>
+<li><code>fosarea</code> - FOS area code (4-digit formatted emp_num like "0203", "1904")  </li>
+<li><code>zone</code> - Zone designation ('1' for P1, '2' for P2)</li>
 </ul>
 
+<p><strong>Usage:</strong> Authoritative source for all facility/fosarea/zone data used in filtering</p>
+
+<h4>3. <code>dblarv<em>insptrt</em>current</code> - Current Inspection Records</h4>
+<p><strong>Entities Retrieved:</strong></p>
 <ul>
-<li><strong><code>dblarv<em>insptrt</em>archive</code></strong> - Historical larval inspection/treatment records</li>
-<ul>
-<li>Contains closed/archived inspection records from previous years</li>
-<li>Same schema as current table</li>
-<li>Same filtering logic as current table</li>
-<li><strong>UNION ALL</strong> with current table for complete inspection history</li>
-</ul>
+<li><code>sitecode</code> - Site identifier (joins to loc<em>breeding</em>sites)</li>
+<li><code>inspdate</code> - Inspection date</li>
+<li><code>action</code> - Action code ('1','2','3','4', etc.)</li>
+<li><code>numdip</code> - Larvae dip count (numeric)</li>
+<li><code>wet</code> - Wet condition ('0'=dry, '1'-'9'=wet levels, 'A'=flooded)</li>
 </ul>
 
-<h4>Supporting Tables</h4>
+<p><strong>Usage:</strong> Recent inspection data with action filtering: <code>(action IN ('1','2','4') OR (action = '3' AND wet = '0'))</code></p>
+
+<h4>4. <code>dblarv<em>insptrt</em>archive</code> - Historical Inspection Records  </h4>
+<p><strong>Entities Retrieved:</strong></p>
 <ul>
-<li><strong><code>gis_sectcode</code></strong> - Section/zone geographic mapping</li>
-<ul>
-<li>Links site codes to geographic zones and FOS areas</li>
-<li>Zone mapping: P1 = zone '1', P2 = zone '2' (character fields)</li>
-<li>FOS area assignment through <code>fosarea</code> field (maps to employee numbers)</li>
-<li>Join pattern: <code>LEFT JOIN gis_sectcode sc ON left(sitecode,7) = sc.sectcode</code></li>
-</ul>
+<li>Same fields as <code>dblarv<em>insptrt</em>current</code></li>
+<li>Historical inspection records from previous years</li>
 </ul>
 
+<p><strong>Usage:</strong> Combined with current table via UNION ALL for complete inspection history</p>
+
+<h4>5. <code>employee_list</code> - FOS Personnel Data</h4>
+<p><strong>Entities Retrieved:</strong></p>
 <ul>
-<li><strong><code>employee_list</code></strong> - Field Operations Supervisor (FOS) information</li>
-<ul>
-<li>Filter: <code>emp_type = 'FieldSuper'</code> AND <code>active = true</code></li>
-<li>Maps FOS areas (fosarea = emp_num) to foreman names and facilities</li>
-<li><strong>CRITICAL MAPPING</strong>: UI shows foreman names, but database fosarea contains emp_num</li>
+<li><code>emp<em>num</code> - Employee number (maps to gis</em>sectcode.fosarea when formatted as 4-digit)</li>
+<li><code>shortname</code> - Foreman short name (e.g., "Andrew M.", "Sarah K.")</li>
+<li><code>facility</code> - Facility assignment</li>
+<li><code>emp_type</code> - Employee type (filtered to 'FieldSuper')</li>
+<li><code>active</code> - Active status (filtered to true)</li>
 </ul>
-</ul>
+
+<p><strong>Usage:</strong> Maps UI foreman choices to fosarea codes for filtering: <code>sprintf("%04d", emp_num)</code></p>
+
 
 <h3>Site Type Filtering</h3>
 <ul>
 <li><strong>Air Sites</strong>: <code>air_gnd = 'A'</code> - Aerial treatment sites</li>
 <li><strong>Ground Sites</strong>: <code>air_gnd = 'G'</code> - Ground-accessible treatment sites</li>
+<li><strong>Both</strong>: No air_gnd filtering applied</li>
 </ul>
 
-<h3>Inspection Action Codes</h3>
+<h3>Inspection Action Codes (BASED ON ACTUAL FILTERING LOGIC)</h3>
+<p><strong>Note:</strong> Specific action descriptions not documented - filter logic based on inspection requirements:</p>
 <ul>
-<li><strong>Action '1'</strong>: Dip count inspection (must have numdip value)</li>
-<li><strong>Action '2'</strong>: Treatment applied</li>
-<li><strong>Action '4'</strong>: Site inspection/assessment</li>
-<li><strong>Filter Logic</strong>: <code>action IN ('1','2','4') AND (action != '1' OR numdip IS NOT NULL)</code></li>
+<li><strong>Action '1'</strong>: Always included as valid inspection</li>
+<li><strong>Action '2'</strong>: Always included as valid inspection  </li>
+<li><strong>Action '3'</strong>: Only included when <code>wet = '0'</code> (dry site inspection)</li>
+<li><strong>Action '4'</strong>: Always included as valid inspection</li>
+<li><strong>Filter Logic:</strong> <code>(action IN ('1','2','4') OR (action = '3' AND wet = '0'))</code></li>
+</ul>
+
+<h3>Wet Field Logic </h3>
+<p>The <code>wet</code> field uses numeric values, not Y/N:</p>
+<ul>
+<li><strong>'0'</strong>: Dry site (no standing water)</li>
+<li><strong>'1'-'9'</strong>: Various levels of wet conditions (1=minimal, 9=very wet)</li>
+<li><strong>'A'</strong>: Flooded site (equivalent to &gt;100% wet, maximum wet condition)</li>
+<li><strong>Analysis</strong>: Any wet value &gt; 0 or = 'A' counts as "wet" for frequency calculations</li>
 </ul>
 
 <h3>Priority System</h3>
@@ -203,517 +225,187 @@
 <li><strong>Non-Drone Sites</strong>: Sites where <code>drone IS NULL OR drone != 'Y'</code></li>
 <li><strong>Filter Options</strong>:</li>
 <ul>
-<li>🏠 <strong>All Sites</strong>: No drone filtering (default)</li>
-<li>🚁 <strong>Drone Sites Only</strong>: Show only <code>drone = 'Y'</code> sites</li>
-<li>🚶 <strong>Non-Drone Sites Only</strong>: Show only non-drone sites</li>
-<li>🔧 <strong>Include Drone Sites</strong>: Show all sites with drone highlighting</li>
+<li><strong>All Sites</strong>: No drone filtering (default)</li>
+<li><strong>Drone Sites Only</strong>: Show only <code>drone = 'Y'</code> sites</li>
+<li><strong>Non-Drone Sites Only</strong>: Show only non-drone sites</li>
 </ul>
 </ul>
 
-<h2>Gap Detection Logic</h2>
+<h2>App Architecture </h2>
 
-<h3>Core Algorithm</h3>
-<p>The app identifies sites with inspection gaps using a multi-step process:</p>
+<h3>Multi-Tab Dashboard</h3>
+<p>The app now features three main analytics tabs:</p>
 
-<ol>
-<li><strong>Active Site Identification</strong>: Query <code>loc<em>breeding</em>sites</code> for active sites only (<code>enddate IS NULL</code>)</li>
-<li><strong>Inspection History</strong>: Query both current and archive inspection tables for all inspection records</li>
-<li><strong>Most Recent Inspection</strong>: Use <code>ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate DESC NULLS LAST)</code> to find latest inspection per site</li>
-<li><strong>Gap Classification</strong>: Compare most recent inspection date to gap threshold</li>
-</ul>
-
-<h3>Gap Categories</h3>
+<h4>1. Site Analytics Tab</h4>
 <ul>
-<li><strong>Never Inspected</strong>: Sites with no inspection records (<code>inspdate IS NULL</code>)</li>
-<li><strong>Inspection Gap</strong>: Sites with most recent inspection older than threshold (<code>inspdate &lt; gap<em>cutoff</em>date</code>)</li>
-<li><strong>Recently Inspected</strong>: Sites inspected within the gap threshold (filtered out from results)</li>
+<li><strong>Total Sites Count</strong>: Active sites matching filters</li>
+<li><strong>Wet Frequency Analysis</strong>: How often sites are found wet (wet &gt; 0 or wet = 'A')</li>
+<li><strong>Summary Statistics</strong>: Comprehensive site metrics</li>
+<li><strong>Shared Filtering</strong>: Uses unified years_back filter</li>
 </ul>
 
-<h3>Gap Threshold Calculation</h3>
+<h4>2. Larvae Threshold Tab  </h4>
 <ul>
-<li><strong>User Input</strong>: "Years Since Last Inspection" (default: 3 years)</li>
-<li><strong>Cutoff Date</strong>: <code>gap<em>cutoff = current</em>date - (years_gap * 365 days)</code></li>
-<li><strong>Query Filter</strong>: <code>WHERE (inspdate IS NULL OR inspdate &lt; gap<em>cutoff</em>date)</code></li>
+<li><strong>High Larvae Sites</strong>: Sites exceeding larvae threshold with frequency analysis</li>
+<li><strong>Frequency Metrics</strong>: How often sites exceed thresholds (not just maximum counts)</li>
+<li><strong>Threshold Configuration</strong>: Adjustable larvae count threshold</li>
+<li><strong>Exceedance Tracking</strong>: Total inspections, exceedances, and frequency percentages</li>
 </ul>
 
-<h2>App Architecture</h2>
-
-<h3>UI Framework</h3>
+<h4>3. Coverage Gaps Tab</h4>
 <ul>
-<li><strong>shinydashboard</strong>: Modern dashboard layout with collapsible boxes</li>
-<li><strong>Custom CSS</strong>: Gradient styling, hover effects, professional appearance</li>
-<li><strong>Filter Panel</strong>: Organized with logical grouping and clear labels</li>
-<li><strong>Refresh Button</strong>: Prominent call-to-action with loading state</li>
+<li><strong>Inspection Gaps</strong>: Sites with inspection coverage gaps</li>
+<li><strong>Never Inspected</strong>: Sites without any inspection records</li>
+<li><strong>Gap Threshold</strong>: Configurable years since last inspection</li>
 </ul>
-
-<h3>Filter Controls</h3>
-
-<h4>Site Type Selector</h4>
-<ul>
-<li><strong>Air Sites (🚁)</strong>: <code>air_gnd = 'A'</code></li>
-<li><strong>Ground Sites (🚶)</strong>: <code>air_gnd = 'G'</code></li>
-<li>Single selection dropdown</li>
-</ul>
-
-<h4>Facility Filter</h4>
-<ul>
-<li><strong>Multi-select</strong>: Choose one or more facilities</li>
-<li><strong>Data Source</strong>: <code>get<em>facility</em>choices()</code> from db_helpers</li>
-<li><strong>Display</strong>: Full facility names (e.g., "South Rosemount")</li>
-<li><strong>Values</strong>: Short codes (e.g., "Sr") for SQL filtering</li>
-</ul>
-
-<h4>FOS Area Filter  </h4>
-<ul>
-<li><strong>Multi-select</strong>: Choose one or more Field Operations Supervisors</li>
-<li><strong>Data Source</strong>: <code>get<em>foreman</em>choices()</code> from db_helpers</li>
-<li><strong>Display</strong>: "Foreman Name (Facility)" format (e.g., "Andrew C (Sr)")</li>
-<li><strong>Values</strong>: Foreman shortnames (e.g., "Andrew C")</li>
-<li><strong>Database Mapping</strong>: Shortnames mapped to emp_num for fosarea filtering</li>
-</ul>
-
-<h4>Zone Filter</h4>
-<ul>
-<li><strong>Multi-select</strong>: Zone 1, Zone 2, or both</li>
-<li><strong>Hardcoded Values</strong>: Character '1' and '2' (zone is always these values)</li>
-<li><strong>Display</strong>: "Zone 1", "Zone 2", "All Zones"</li>
-</ul>
-
-<h4>Priority Filter</h4>
-<ul>
-<li><strong>Multi-select</strong>: RED, YELLOW, GREEN, BLUE priorities</li>
-<li><strong>Display</strong>: Color-coded priority levels</li>
-<li><strong>Database</strong>: Maps directly to priority field values</li>
-</ul>
-
-<h4>Drone Site Filter</h4>
-<ul>
-<li><strong>Radio Buttons</strong>: Single selection for drone site filtering</li>
-<li><strong>Options</strong>:</li>
-<ul>
-<li>"Drone Sites Only" - Filter to <code>drone = 'Y'</code> sites only</li>
-<li>"Non-Drone Sites Only" - Filter to exclude drone sites</li>
-<li>"Include Drone Sites" - Show all sites with drone highlighting</li>
-</ul>
-<li><strong>Database Filter</strong>: Applied to <code>b.drone</code> field in main query</li>
-</ul>
-
-<h4>Gap Threshold</h4>
-<ul>
-<li><strong>Numeric Input</strong>: Years since last inspection (1-10 years)</li>
-<li><strong>Default</strong>: 3 years</li>
-<li><strong>Purpose</strong>: Define what constitutes an "inspection gap"</li>
-</ul>
-
-<h3>Refresh Button Pattern</h3>
-<p>The app uses an <strong>eventReactive</strong> pattern to prevent automatic data loading:</p>
 
 <h2>Data Processing Pipeline</h2>
 
-<h3>Step 1: Site Filtering (<code>filtered_sites</code> CTE)</h3>
+<h3>Comprehensive Data Function</h3>
+<p><strong>Function</strong>: <code>get<em>comprehensive</em>inspection<em>data()</code> in <code>data</em>functions.R</code></p>
+<p><strong>Purpose</strong>: Single source for all inspection data with proper filtering</p>
+
 <pre><code class="sql">
 WITH filtered_sites AS (
   SELECT 
     b.sitecode,
     sc.facility,
-    sc.fosarea,
+    sc.fosarea, 
     sc.zone,
     b.air_gnd,
-    b.priority
+    b.priority,
+    b.drone
   FROM loc_breeding_sites b
   INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-  WHERE b.enddate IS NULL
-  AND b.air_gnd = '[air_gnd_filter]'
-  [additional_filters]
-)
-</code></pre>
-
-<h3>Step 2: Inspection History (<code>site_inspections</code> CTE)</h3>
-<pre><code class="sql">
-site_inspections AS (
-  SELECT 
-    fs.sitecode,
-    fs.facility,
-    fs.fosarea,
-    fs.zone,
-    fs.air_gnd,
-    fs.priority,
-    i.inspdate,
-    i.action,
-    i.numdip,
-    ROW_NUMBER() OVER (PARTITION BY fs.sitecode ORDER BY i.inspdate DESC NULLS LAST) as rn
-  FROM filtered_sites fs
-  LEFT JOIN (
-    SELECT sitecode, inspdate, action, numdip
-    FROM dblarv_insptrt_current
-    WHERE action IN ('1','2','4')
-    AND (action != '1' OR numdip IS NOT NULL)
-    UNION ALL
-    SELECT sitecode, inspdate, action, numdip
-    FROM dblarv_insptrt_archive
-    WHERE action IN ('1','2','4')
-    AND (action != '1' OR numdip IS NOT NULL)
-  ) i ON fs.sitecode = i.sitecode
-)
-</code></pre>
-
-<h3>Step 3: Gap Classification and Final Results</h3>
-<pre><code class="sql">
-SELECT 
-  sitecode,
-  facility,
-  fosarea,
-  zone,
-  air_gnd,
-  priority,
-  COALESCE(inspdate, '1900-01-01'::date) as last_inspection_date,
-  numdip as last_numdip,
-  CASE 
-    WHEN inspdate IS NULL THEN 999999
-    ELSE (CURRENT_DATE - inspdate::date)
-  END as days_since_inspection,
-  CASE 
-    WHEN inspdate IS NULL THEN 'Never Inspected'
-    WHEN inspdate &lt; '[gap_cutoff_date]'::date THEN 'Inspection Gap'
-    ELSE 'Recently Inspected'
-  END as inspection_status
-FROM site_inspections
-WHERE rn = 1
-AND (inspdate IS NULL OR inspdate &lt; '[gap_cutoff_date]'::date)
-ORDER BY COALESCE(inspdate, '1900-01-01'::date) ASC, sitecode
-</code></pre>
-
-<h2>Performance Optimization</h2>
-
-<h3>Query Optimization Techniques</h3>
-<ol>
-<li><strong>CTE Structure</strong>: Breaks complex query into logical steps for better execution planning</li>
-<li><strong>Early Filtering</strong>: Applies site filters before joining inspection data</li>
-<li><strong>UNION ALL</strong>: Combines current and archive inspection tables efficiently  </li>
-<li><strong>Indexed Joins</strong>: Uses sitecode for joins (likely indexed)</li>
-<li><strong>Window Functions</strong>: <code>ROW_NUMBER()</code> efficiently finds most recent inspection per site</li>
-</ul>
-
-<h2>Results Display</h2>
-
-<h3>Summary Statistics</h3>
-<p>The app displays a summary of findings in a gradient-styled box:</p>
-<ul>
-<li><strong>Total sites found</strong> with inspection gaps</li>
-<li><strong>Breakdown</strong>: Never inspected vs. sites with gaps</li>
-<li><strong>Time context</strong>: Gap threshold in user-friendly format</li>
-</ul>
-
-<p>Example: "Found 2,316 sites with gaps: 718 never inspected, 1,598 with 3+ year gaps"</p>
-
-<h3>Data Table Features</h3>
-<ul>
-<li><strong>Interactive filtering</strong>: Search and sort capabilities</li>
-<li><strong>Responsive design</strong>: Adapts to screen size  </li>
-<li><strong>Pagination</strong>: Handles large result sets efficiently</li>
-<li><strong>Export options</strong>: CSV download for further analysis</li>
-</ul>
-
-<h3>Column Definitions</h3>
-<ul>
-<li><strong>Site Code</strong>: Unique identifier for the breeding site</li>
-<li><strong>Facility</strong>: MMCD facility managing the site (full name display)</li>
-<li><strong>FOS Area</strong>: Field Operations Supervisor responsible (numeric code)</li>
-<li><strong>Zone</strong>: P1 or P2 geographic zone designation</li>
-<li><strong>Priority</strong>: Site priority level (RED/YELLOW/GREEN/BLUE)</li>
-<li><strong>Last Inspection</strong>: Date of most recent inspection (1900-01-01 if never inspected)</li>
-<li><strong>Last Numdip</strong>: Mosquito dip count from most recent inspection</li>
-<li><strong>Days Since</strong>: Number of days since last inspection (999999 if never inspected)</li>
-<li><strong>Status</strong>: "Never Inspected" or "Inspection Gap"</li>
-</ul>
-
-<h2>Code Organization</h2>
-
-<h3>File Structure</h3>
-<pre><code class="">
-inspections/
-├── app.R                     # Main app - UI orchestration and server logic
-├── ui_helper.R              # UI definition and styling
-├── data_functions.R         # Database queries and data processing
-├── display_functions.R      # Table formatting and display helpers
-└── NOTES.md                 # This file
-</code></pre>
-
-<h3>Key Functions by File</h3>
-
-<h4>app.R</h4>
-<ul>
-<li><strong>UI Definition</strong>: Calls <code>create<em>main</em>ui()</code> for dashboard layout</li>
-<li><strong>Server Logic</strong>: Manages reactive data and filter interactions  </li>
-<li><strong>Event Handling</strong>: Refresh button triggers data loading</li>
-<li><strong>Output Rendering</strong>: Summary statistics and data table display</li>
-</ul>
-
-<h4>ui_helper.R</h4>
-<ul>
-<li><code>create<em>main</em>ui()</code> - Creates shinydashboard layout with custom CSS</li>
-<li><code>get<em>facility</em>display_choices()</code> - Facility filter options with full names</li>
-<li><code>get<em>fosarea</em>display_choices()</code> - FOS area filter options using foreman data</li>
-<li>Custom CSS for modern styling and responsive design</li>
-</ul>
-
-<h4>data_functions.R</h4>
-<ul>
-<li><code>get<em>inspection</em>gaps()</code> - Main query function with optimized CTEs</li>
-<li><code>get<em>site</em>choices()</code> - Helper for site characteristic options</li>
-<li>Filter mapping logic (especially critical FOS area mapping)</li>
-<li>Error handling for database connection issues</li>
-</ul>
-
-<h4>display_functions.R</h4>
-<ul>
-<li><code>render<em>gap</em>table()</code> - Formats inspection gaps data for DT display</li>
-<li>Column formatting and styling</li>
-<li>Export configuration</li>
-<li>Table interaction setup</li>
-</ul>
-
-<h2>SQL Queries Reference</h2>
-
-<h3>1. Main Inspection Gaps Query</h3>
-<p><strong>Function</strong>: <code>get<em>inspection</em>gaps()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Find sites with inspection coverage gaps</p>
-
-<pre><code class="sql">
--- Step 1: Get filtered active sites
-WITH filtered_sites AS (
-  SELECT 
-    b.sitecode,
-    sc.facility,
-    sc.fosarea,
-    sc.zone,
-    b.air_gnd,
-    b.priority
-  FROM loc_breeding_sites b
-  INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE - INTERVAL '2 years')
-  AND b.air_gnd = '[air_gnd_filter]'
+  WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
   [additional_site_filters]
 ),
--- Step 2: Get most recent inspection per site
-site_inspections AS (
+all_inspections AS (
   SELECT 
-    fs.sitecode,
-    fs.facility,
-    fs.fosarea,
-    fs.zone,
-    fs.air_gnd,
-    fs.priority,
+    fs.*,
     i.inspdate,
     i.action,
     i.numdip,
-    ROW_NUMBER() OVER (PARTITION BY fs.sitecode ORDER BY i.inspdate DESC NULLS LAST) as rn
+    i.wet
   FROM filtered_sites fs
   LEFT JOIN (
-    SELECT sitecode, inspdate, action, numdip
+    SELECT sitecode, inspdate, action, numdip, wet
     FROM dblarv_insptrt_current
-    WHERE action IN ('1','2','4')
-    AND (action != '1' OR numdip IS NOT NULL)
+    WHERE (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
     UNION ALL
-    SELECT sitecode, inspdate, action, numdip
+    SELECT sitecode, inspdate, action, numdip, wet
     FROM dblarv_insptrt_archive
-    WHERE action IN ('1','2','4')
-    AND (action != '1' OR numdip IS NOT NULL)
+    WHERE (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
   ) i ON fs.sitecode = i.sitecode
 )
--- Step 3: Filter to gap sites only
-SELECT 
-  sitecode,
-  facility,
-  fosarea,
-  zone,
-  air_gnd,
-  priority,
-  COALESCE(inspdate, '1900-01-01'::date) as last_inspection_date,
-  numdip as last_numdip,
-  CASE 
-    WHEN inspdate IS NULL THEN 999999
-    ELSE (CURRENT_DATE - inspdate::date)
-  END as days_since_inspection,
-  CASE 
-    WHEN inspdate IS NULL THEN 'Never Inspected'
-    WHEN inspdate &lt; '[gap_cutoff_date]'::date THEN 'Inspection Gap'
-    ELSE 'Recently Inspected'
-  END as inspection_status
-FROM site_inspections
-WHERE rn = 1
-AND (inspdate IS NULL OR inspdate &lt; '[gap_cutoff_date]'::date)
-ORDER BY COALESCE(inspdate, '1900-01-01'::date) ASC, sitecode
+SELECT * FROM all_inspections
+ORDER BY sitecode, inspdate DESC
 </code></pre>
 
-<p><strong>Key Features</strong>:</p>
+<h3>Analytics Functions </h3>
+
+<h4>Wet Frequency Analysis</h4>
+<p><strong>Function</strong>: <code>get<em>wet</em>frequency<em>from</em>data()</code></p>
+<p><strong>Logic</strong>: </p>
 <ul>
-<li><strong>Three-step CTE structure</strong> for optimal performance</li>
-<li><strong>UNION ALL</strong> combines current and archive inspection tables</li>
-<li><strong>Window function</strong> finds most recent inspection per site</li>
-<li><strong>Gap classification</strong> separates never-inspected from gap sites</li>
-<li><strong>Filter flexibility</strong> supports all UI filter combinations</li>
+<li>Filters data by years_back parameter</li>
+<li>Counts total inspections per site</li>
+<li>Counts "wet" inspections (wet &gt; 0 or wet = 'A')</li>
+<li>Calculates wet frequency percentage</li>
+<li>Applies minimum inspection threshold</li>
 </ul>
 
-<h3>2. Site Choices Query</h3>
-<p><strong>Function</strong>: <code>get<em>site</em>choices()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Get available filter options from site data</p>
-
-<pre><code class="sql">
-SELECT DISTINCT facility, fosarea, zone 
-FROM gis_sectcode 
-ORDER BY facility, fosarea, zone
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
+<h4>High Larvae Analysis  </h4>
+<p><strong>Function</strong>: <code>get<em>high</em>larvae<em>sites</em>from_data()</code></p>
+<p><strong>Logic</strong>:</p>
 <ul>
-<li>Provides available options for dynamic filter population</li>
-<li>Currently unused in favor of db_helpers lookup functions</li>
-<li>Could be used for dynamic zone choices if needed</li>
+<li>Filters to sites with numdip data within years_back timeframe</li>
+<li>Groups by site characteristics</li>
+<li>Calculates frequency metrics:</li>
+<ul>
+<li><code>total_inspections</code>: Count of all inspections</li>
+<li><code>threshold_exceedances</code>: Count of inspections &gt;= threshold</li>
+<li><code>exceedance_frequency</code>: Percentage of inspections exceeding threshold</li>
+<li><code>max<em>numdip</code>, <code>avg</em>numdip</code>: Larvae count statistics</li>
+<li><code>first<em>high</em>date</code>, <code>last<em>high</em>date</code>: Date tracking</li>
+</ul>
 </ul>
 
-<h3>3. Foreman Lookup Query</h3>
-<p><strong>Function</strong>: <code>get<em>foremen</em>lookup()</code> in <code>shared/db_helpers.R</code>  </p>
-<p><strong>Purpose</strong>: Map foreman shortnames to employee numbers for FOS area filtering</p>
-
-<pre><code class="sql">
-SELECT 
-  emp_num,
-  shortname,
-  facility
-FROM employee_list 
-WHERE emp_type = 'FieldSuper'
-  AND active = true 
-  AND facility IS NOT NULL
-ORDER BY facility, shortname
-</code></pre>
-
-<h3>4. Basic Site Count Query (Debugging)</h3>
-<p><strong>Purpose</strong>: Verify data availability and filter effectiveness</p>
-
-<pre><code class="sql">
-SELECT COUNT(*) as total_sites
-FROM loc_breeding_sites 
-WHERE enddate IS NULL
-</code></pre>
-
-<p><strong>Usage</strong>: Troubleshooting when no results found</p>
-
-<h3>5. Air/Ground Distribution Query (Debugging)</h3>
-<p><strong>Purpose</strong>: Check site type distribution</p>
-
-<pre><code class="sql">
-SELECT air_gnd, COUNT(*) as count
-FROM loc_breeding_sites 
-WHERE enddate IS NULL
-GROUP BY air_gnd
-ORDER BY air_gnd
-</code></pre>
-
-<p><strong>Expected Results</strong>:</p>
+<h4>Summary Statistics</h4>
+<p><strong>Function</strong>: <code>get<em>summary</em>stats<em>from</em>data()</code></p>
+<p><strong>Metrics</strong>:</p>
 <ul>
-<li>A: ~28K air sites</li>
-<li>G: ~227K ground sites  </li>
-<li>NULL: Small number of unclassified sites</li>
-</ul>
-
-<h3>6. Zone Distribution Query (Debugging)</h3>
-<p><strong>Purpose</strong>: Verify zone mapping and counts</p>
-
-<pre><code class="sql">
-SELECT sc.zone, COUNT(*) as count
-FROM loc_breeding_sites b
-INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-WHERE b.enddate IS NULL
-AND b.air_gnd = 'A'
-GROUP BY sc.zone
-ORDER BY sc.zone
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>Confirms zone values are character '1' and '2'</li>
-<li>Tests sitecode join pattern</li>
-<li>Verifies geographic distribution</li>
-</ul>
-
-<h3>7. Inspection Statistics Query (Debugging)</h3>
-<p><strong>Purpose</strong>: Verify inspection data availability</p>
-
-<pre><code class="sql">
-SELECT 
-  COUNT(*) as total_inspections,
-  COUNT(DISTINCT sitecode) as unique_sites
-FROM (
-  SELECT sitecode, inspdate, action, numdip
-  FROM dblarv_insptrt_current
-  WHERE action IN ('1','2','4')
-  AND (action != '1' OR numdip IS NOT NULL)
-  UNION ALL
-  SELECT sitecode, inspdate, action, numdip
-  FROM dblarv_insptrt_archive
-  WHERE action IN ('1','2','4')
-  AND (action != '1' OR numdip IS NOT NULL)
-) inspections
-</code></pre>
-
-<p><strong>Expected Results</strong>:</p>
-<ul>
-<li>~1.7M total inspection records</li>
-<li>~128K unique sites with inspection history</li>
-<li>Confirms substantial inspection data exists</li>
+<li>Total active sites</li>
+<li>Sites with inspections vs. never inspected</li>
+<li>Inspection frequency distributions</li>
+<li>Wet site statistics</li>
+<li>Priority breakdown</li>
 </ul>
 
 <hr>
 
-<h2>Database Schema Notes</h2>
+<h2>SQL Queries Reference </h2>
 
-<h3>Table Relationships</h3>
-<ul>
-<li><code>loc<em>breeding</em>sites</code> ← (1:1) → <code>gis_sectcode</code> (via sitecode prefix)</li>
-<li><code>gis<em>sectcode</code> ← (1:1) → <code>employee</em>list</code> (via fosarea = emp_num)  </li>
-<li><code>loc<em>breeding</em>sites</code> ← (1:many) → <code>dblarv<em>insptrt</em>current</code> (via sitecode)</li>
-<li><code>loc<em>breeding</em>sites</code> ← (1:many) → <code>dblarv<em>insptrt</em>archive</code> (via sitecode)</li>
-</ul>
+<h3>1. Comprehensive Inspection Data Query </h3>
+<p><strong>Function</strong>: <code>get<em>comprehensive</em>inspection<em>data()</code> in <code>data</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Single source for all inspection analytics</p>
 
-<h3>Critical Field Mappings</h3>
-<ul>
-<li><strong>sitecode</strong>: 7-character prefix matches gis_sectcode.sectcode</li>
-<li><strong>fosarea</strong> (in gis<em>sectcode): Maps to emp</em>num in employee_list  </li>
-<li><strong>zone</strong> (in gis_sectcode): Character values '1' (P1) or '2' (P2)</li>
-<li><strong>air<em>gnd</strong> (in loc</em>breeding_sites): 'A' for air, 'G' for ground sites</li>
-<li><strong>action</strong> (in inspection tables): '1','2','4' for valid inspections</li>
-</ul>
+<p>[SQL structure shown above in Data Processing Pipeline]</p>
 
-<h3>Data Quality Considerations</h3>
-<ul>
-<li><strong>Active Sites Only</strong>: CRITICAL - Must filter by <code>enddate IS NULL</code> for current operations</li>
-<li><strong>Drone Site Identification</strong>: Use <code>drone = 'Y'</code> exclusively - no other values indicate drone sites</li>
-<li><strong>Valid Inspections</strong>: Action codes must be validated and numdip required for dip counts</li>
-<li><strong>Complete History</strong>: Archive and current tables must both be queried for full inspection history</li>
-<li><strong>Sitecode Consistency</strong>: Join pattern handles multiple sitecode formats consistently</li>
-</ul>
+<h3>2. High Larvae Sites Analysis </h3>
+<p><strong>Function</strong>: <code>get<em>high</em>larvae<em>sites</em>from_data()</code> </p>
+<p><strong>Purpose</strong>: Sites exceeding larvae thresholds with frequency analysis</p>
 
+<pre><code class="sql">
+filtered_data %&gt;%
+  filter(!is.na(numdip), 
+         !is.na(inspdate),
+         inspdate &gt;= cutoff_date) %&gt;%
+  group_by(sitecode, facility, fosarea, zone, air_gnd, priority) %&gt;%
+  summarise(
+    total_inspections = n(),
+    threshold_exceedances = sum(numdip &gt;= threshold, na.rm = TRUE),
+    max_numdip = max(numdip, na.rm = TRUE),
+    avg_numdip = round(mean(numdip, na.rm = TRUE), 1),
+    last_high_date = max(inspdate[numdip &gt;= threshold], na.rm = TRUE),
+    first_high_date = min(inspdate[numdip &gt;= threshold], na.rm = TRUE),
+    .groups = 'drop'
+  ) %&gt;%
+  filter(threshold_exceedances &gt; 0) %&gt;%
+  mutate(
+    exceedance_frequency = round(100.0 * threshold_exceedances / total_inspections, 1)
+  )
+</code></pre>
+
+<h3>3. Wet Frequency Analysis </h3>
+<p><strong>Function</strong>: <code>get<em>wet</em>frequency<em>from</em>data()</code></p>
+<p><strong>Purpose</strong>: Track how often sites have standing water</p>
+
+<pre><code class="sql">
+# R/dplyr equivalent of wet frequency calculation
+filtered_data %&gt;%
+  filter(!is.na(inspdate), inspdate &gt;= cutoff_date) %&gt;%
+  mutate(
+    is_wet = case_when(
+      wet == "A" ~ TRUE,           # A = flooded (&gt;100%)
+      wet == "0" ~ FALSE,          # 0 = dry
+      as.numeric(wet) &gt; 0 ~ TRUE,  # 1-9 = various wet levels
+      TRUE ~ FALSE
+    )
+  ) %&gt;%
+  group_by(sitecode, facility, fosarea, zone, air_gnd, priority) %&gt;%
+  summarise(
+    total_inspections = n(),
+    wet_inspections = sum(is_wet, na.rm = TRUE),
+    .groups = 'drop'
+  ) %&gt;%
+  filter(total_inspections &gt;= min_inspections) %&gt;%
+  mutate(
+    wet_frequency = round(100.0 * wet_inspections / total_inspections, 1)
+  )
+</code></pre>
 <hr>
 
-<h2>Key Implementation Points</h2>
-
-<h3>Critical Requirements</h3>
-<ol>
-<li><strong>Active Sites Only</strong>: Must filter <code>enddate IS NULL</code> </li>
-<li><strong>FOS Area Mapping</strong>: Always map foreman shortnames to emp_num for database filtering </li>
-<li><strong>Drone Site Logic</strong>: Use <code>drone = 'Y'</code> exclusively - no other values indicate drone sites</li>
-<li><strong>Refresh Button Pattern</strong>: Essential for performance - NO data queries until refresh clicked</li>
-<li><strong>Zone Fields Are Character</strong>: Zone '1' and '2' are stored as character, not numeric</li>
-</ul>
-
-<h3>Performance Considerations</h3>
-<ul>
-<li><strong>CTE Query Structure</strong>: Three-step CTE approach provides optimal performance (~2.7 seconds)</li>
-<li><strong>Early Filtering</strong>: Apply site filters before joining inspection data</li>
-<li><strong>UNION ALL Required</strong>: Must combine current and archive inspection tables for complete history</li>
-<li><strong>Window Functions</strong>: <code>ROW_NUMBER()</code> efficiently finds most recent inspection per site</li>
-</ul>
     </div>
 </body>
 </html>

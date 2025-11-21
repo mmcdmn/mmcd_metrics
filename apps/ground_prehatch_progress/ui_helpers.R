@@ -164,12 +164,12 @@ create_filter_panel <- function() {
 # Create the overview value boxes (like red_air does)
 create_overview_value_boxes <- function() {
   fluidRow(
-    valueBoxOutput("total_sites", width = 2),
     valueBoxOutput("prehatch_sites", width = 2),
     valueBoxOutput("treated_sites", width = 2),
     valueBoxOutput("expired_sites", width = 2),
-    valueBoxOutput("treated_pct", width = 2),
-    valueBoxOutput("expiring_pct", width = 2)
+    valueBoxOutput("expiring_sites", width = 2),
+    valueBoxOutput("skipped_sites", width = 2),
+    valueBoxOutput("treated_pct", width = 2)
   )
 }
 
@@ -254,7 +254,7 @@ create_help_text <- function() {
       tags$li(tags$strong("Grouping:"), "Group data by All MMCD, Facility, FOS, or Section"),
       tags$li(tags$strong("Date Simulation:"), "Use 'Pretend Today is' to see status on any date"),
       br(),
-      tags$li(tags$strong("Ground Site Definition:"), " Sites labeled as 'Ground' in the data are included in this analysis. Regardless of Drone status")
+      tags$li(tags$strong("Ground Site Definition:"), " Sites labeled as 'Ground' in the data are included in this analysis IF they also have an non null Prehatch field. Regardless of Drone status")
     ),
     br(),
     h5("Historical Analysis Display Metrics", style = "color: #17a2b8; margin-top: 0;"),

@@ -1,3 +1,5 @@
+# Suco History Analysis App
+
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -58,28 +60,8 @@ ui <- fluidPage(
       
       hr(),
       
-      # Date shortcuts
+      # Date range selection
       h4("Date Selection"),
-      fluidRow(
-        column(4, actionButton("this_year", "This Year", class = "btn-primary btn-sm", style = "width: 100%;")),
-        column(4, actionButton("this_month", "This Month", class = "btn-info btn-sm", style = "width: 100%;")),
-        column(4, actionButton("this_week", "This Week", class = "btn-success btn-sm", style = "width: 100%;"))
-      ),
-      br(),
-      
-      # Year slider (only visible for All Data tab with multi-year capability)
-      conditionalPanel(
-        condition = "input.main_tabset == 'All Data (Current + Archive)'",
-        tags$style(type = "text/css", ".irs-grid-pol.small {height: 0px;}",
-                   ".irs-grid-text {font-size: 8pt;}"),
-        sliderInput("year_range", "Year Range:",
-                    min = 2015, max = as.numeric(format(Sys.Date(), "%Y")),
-                    value = c(as.numeric(format(Sys.Date(), "%Y")), as.numeric(format(Sys.Date(), "%Y"))),
-                    sep = "", step = 1),
-        br()
-      ),
-      
-      # Date range selection - behavior depends on which tab is active
       dateRangeInput("date_range", "Custom Date Range:",
                      start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
                      end = Sys.Date(),
@@ -134,12 +116,15 @@ ui <- fluidPage(
                                 "Carto Light" = "carto",
                                 "Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
-                    selected = "carto"),
-        
-        # Marker size adjustment
-        sliderInput("marker_size", "Marker Size Multiplier:",
-                    min = 1, max = 5, value = 3, step = 0.5)
-      )
+                    selected = "carto")
+      ),
+      
+      # Refresh button
+      hr(),
+      actionButton("refresh", "Refresh Data", 
+                   icon = icon("refresh"),
+                   class = "btn-primary btn-lg",
+                   style = "width: 100%; margin-top: 20px;")
     ),
     
     # Main panel for displaying the graphs
@@ -149,8 +134,24 @@ ui <- fluidPage(
           tabsetPanel(id = "current_tabset",
             tabPanel("Graph", value = "CurrentGraph", plotOutput("current_trend_plot", height = "500px")),
             tabPanel("Map", value = "CurrentMap", leafletOutput("current_map", height = "600px")),
-            tabPanel("Summary Table", value = "CurrentTable", dataTableOutput("current_summary_table")),
-            tabPanel("Detailed Samples", value = "CurrentDetailed", dataTableOutput("current_detailed_table")),
+            tabPanel("Summary Table", value = "CurrentTable", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Summary Table")),
+                       column(2, downloadButton("download_current_summary", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("current_summary_table")),
+            tabPanel("Detailed Samples", value = "CurrentDetailed", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Detailed Samples")),
+                       column(2, downloadButton("download_current_detailed", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("current_detailed_table")),
             tabPanel("Top Locations", value = "CurrentTopLoc", plotlyOutput("current_location_plotly", height = "700px"))
           )
         ),
@@ -158,8 +159,24 @@ ui <- fluidPage(
           tabsetPanel(id = "all_tabset",
             tabPanel("Graph", value = "AllGraph", plotOutput("trend_plot", height = "500px")),
             tabPanel("Map", value = "AllMap", leafletOutput("map", height = "600px")),
-            tabPanel("Summary Table", value = "AllTable", dataTableOutput("summary_table")),
-            tabPanel("Detailed Samples", value = "AllDetailed", dataTableOutput("detailed_table")),
+            tabPanel("Summary Table", value = "AllTable", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Summary Table")),
+                       column(2, downloadButton("download_summary", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("summary_table")),
+            tabPanel("Detailed Samples", value = "AllDetailed", 
+                     br(),
+                     fluidRow(
+                       column(10, h4("Detailed Samples")),
+                       column(2, downloadButton("download_detailed", "Download CSV", 
+                                               class = "btn-success btn-sm", 
+                                               style = "float: right;"))
+                     ),
+                     dataTableOutput("detailed_table")),
             tabPanel("Top Locations", value = "AllTopLoc", plotlyOutput("location_plotly", height = "700px"))
           )
         )
@@ -174,29 +191,25 @@ server <- function(input, output, session) {
   updating_date_range <- reactiveVal(FALSE)
   updating_year_range <- reactiveVal(FALSE)
   
+  # =============================================================================
+  # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
+  # =============================================================================
+  
+  refresh_inputs <- eventReactive(input$refresh, {
+    list(
+      group_by = isolate(input$group_by),
+      date_range = isolate(input$date_range),
+      zone_filter = isolate(input$zone_filter),
+      facility_filter = isolate(input$facility_filter),
+      foreman_filter = isolate(input$foreman_filter),
+      species_filter = isolate(input$species_filter),
+      graph_type = isolate(input$graph_type),
+      top_locations_mode = isolate(input$top_locations_mode),
+      basemap = isolate(input$basemap)
+    )
+  })
+  
   # Date shortcut handlers - behavior depends on active tab
-  observeEvent(input$this_year, {
-    handle_date_shortcut("year", session, input, updating_date_range, updating_year_range)
-  })
-  
-  observeEvent(input$this_month, {
-    handle_date_shortcut("month", session, input, updating_date_range, updating_year_range)
-  })
-  
-  observeEvent(input$this_week, {
-    handle_date_shortcut("week", session, input, updating_date_range, updating_year_range)
-  })
-  
-  # Year slider handler - only works when on All Data tab and not updating
-  observeEvent(input$year_range, {
-    handle_year_range_change(input, session, updating_date_range, updating_year_range)
-  }, ignoreInit = TRUE)  # Ignore initial trigger
-  
-  # Custom date range handler - behavior depends on active tab and not updating
-  observeEvent(input$date_range, {
-    handle_date_range_change(input, session, updating_date_range, updating_year_range)
-  }, ignoreInit = TRUE)  # Ignore initial trigger
-  
   # Initialize facility choices from db_helpers
   observe({
     facilities <- get_facility_lookup()
@@ -209,34 +222,26 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "facility_filter", choices = facility_choices)
   })
   
-  # Fetch SUCO data - all data (current + archive)
-  suco_data <- reactive({
-    get_suco_data("all", input$date_range)
+  # Fetch SUCO data - all data (current + archive) - ONLY when refresh button clicked
+  suco_data <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
+    get_suco_data("all", inputs$date_range)
   })
   
-  # Fetch SUCO data - current only (more efficient for Current Data tab)
-  suco_data_current <- reactive({
-    # Simple checks only
-    req(input$date_range, input$main_tabset)
-    
-    # Only run when actually on Current Data tab
-    if (input$main_tabset != "Current Data") {
-      return(data.frame())
-    }
-    
-    tryCatch({
-      get_suco_data("current", input$date_range)
-    }, error = function(e) {
-      cat("Error in suco_data_current:", e$message, "\n")
-      return(data.frame())
-    })
+  # Fetch SUCO data - current only (more efficient for Current Data tab) - ONLY when refresh button clicked
+  suco_data_current <- eventReactive(input$refresh, {
+    inputs <- refresh_inputs()
+    get_suco_data("current", inputs$date_range)
   })
   
   # Helper function to create trend plots - eliminates code duplication
   # Update species filter choices based on available data (use new function)
   observe({
+    if (input$refresh == 0) return()  # Only run after refresh button clicked
+    
+    inputs <- refresh_inputs()
     # Get species choices using the new function
-    spp_choices <- get_available_species(input$date_range)
+    spp_choices <- get_available_species(inputs$date_range)
     spp_choices <- c("All", spp_choices)
     
     # Update select input
@@ -245,12 +250,15 @@ server <- function(input, output, session) {
   
   # Update foreman filter choices based on available data (multi-select aware)
   observe({
+    if (input$refresh == 0) return()  # Only run after refresh button clicked
+    
+    inputs <- refresh_inputs()
     data <- suco_data()
     foremen_lookup <- get_foremen_lookup()
     
     # Filter by facility if not 'All' and not empty
-    if (!is.null(input$facility_filter) && !("All" %in% input$facility_filter)) {
-      data <- data %>% filter(facility %in% input$facility_filter)
+    if (!is.null(inputs$facility_filter) && !("All" %in% inputs$facility_filter)) {
+      data <- data %>% filter(facility %in% inputs$facility_filter)
     }
     
     # Get unique foremen numbers from data
@@ -307,38 +315,50 @@ server <- function(input, output, session) {
   
   # Aggregate data by selected time interval and grouping
   aggregated_data <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
     data <- filtered_data()
-    zones <- convert_zone_selection(input$zone_filter)
-    aggregate_suco_data(data, input$group_by, zones)
+    zones <- convert_zone_selection(inputs$zone_filter)
+    aggregate_suco_data(data, inputs$group_by, zones)
   })
   
   # Aggregate current data by selected time interval and grouping
   aggregated_data_current <- reactive({
+    req(input$refresh)  # Require refresh button click
+    inputs <- refresh_inputs()
     data <- filtered_data_current()
-    zones <- convert_zone_selection(input$zone_filter)
-    aggregate_suco_data(data, input$group_by, zones)
+    zones <- convert_zone_selection(inputs$zone_filter)
+    aggregate_suco_data(data, inputs$group_by, zones)
   })
   
   # Generate trend plot
   output$trend_plot <- renderPlot({
-    create_trend_plot(aggregated_data, aggregated_data_current, input, "all")
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
+    create_trend_plot(aggregated_data, aggregated_data_current, inputs, "all")
   })
   
   # Generate current trend plot (for current data tab)
   output$current_trend_plot <- renderPlot({
-    create_trend_plot(aggregated_data, aggregated_data_current, input, "current")
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
+    create_trend_plot(aggregated_data, aggregated_data_current, inputs, "current")
   })
   
   # Generate map
   output$map <- renderLeaflet({
-    create_suco_map(spatial_data(), input, "all")
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
+    create_suco_map(spatial_data(), inputs, "all")
   })
 
 
   # Generate summary table
   output$summary_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
     data <- filtered_data()
-    summary_data <- create_summary_stats(data, input$group_by, "all")
+    summary_data <- create_summary_stats(data, inputs$group_by, "all")
     return(summary_data)
   }, options = list(pageLength = 15, 
                    searching = TRUE,
@@ -351,8 +371,10 @@ server <- function(input, output, session) {
   
   # Generate detailed samples table
   output$detailed_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
     data <- filtered_data()
-    detailed_data <- create_detailed_samples_table(data, input$species_filter)
+    detailed_data <- create_detailed_samples_table(data, inputs$species_filter)
     return(detailed_data)
   }, options = list(pageLength = 25, 
                    searching = TRUE,
@@ -405,17 +427,16 @@ server <- function(input, output, session) {
   
   # Generate current map (uses same logic as main map but with current data)
   output$current_map <- renderLeaflet({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
     # Use spatial_data_current() instead of spatial_data()
     data <- spatial_data_current()
-    
-    # Get marker size multiplier
-    size_multiplier <- input$marker_size
     
     # Get facility and foremen lookups for display names
     facilities <- get_facility_lookup()
     
     # Set up basemap provider
-    basemap <- switch(input$basemap,
+    basemap <- switch(inputs$basemap,
                       "osm" = providers$OpenStreetMap,
                       "carto" = providers$CartoDB.Positron,
                       "terrain" = providers$Stamen.Terrain,
@@ -499,10 +520,10 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~marker_size,
+          radius = 8,
           color = "black",
           weight = 1.5,
-          fillColor = ~pal(facility),
+          fillColor = ~pal(emp_num),
           fillOpacity = 0.8,
           popup = ~popup_text
         ) %>%
@@ -684,8 +705,10 @@ server <- function(input, output, session) {
   
   # Generate current summary table
   output$current_summary_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
     data <- filtered_data_current()
-    summary_data <- create_summary_stats(data, input$group_by, "current")
+    summary_data <- create_summary_stats(data, inputs$group_by, "current")
     return(summary_data)
   }, options = list(pageLength = 15, 
                    searching = TRUE,
@@ -698,8 +721,10 @@ server <- function(input, output, session) {
   
   # Generate current detailed samples table
   output$current_detailed_table <- renderDataTable({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
     data <- filtered_data_current()
-    detailed_data <- create_detailed_samples_table(data, input$species_filter)
+    detailed_data <- create_detailed_samples_table(data, inputs$species_filter)
     return(detailed_data)
   }, options = list(pageLength = 25, 
                    searching = TRUE,
@@ -713,9 +738,11 @@ server <- function(input, output, session) {
   
   # Generate current location plot
   output$current_location_plotly <- plotly::renderPlotly({
+    req(input$refresh)  # Only render after refresh button clicked
+    inputs <- refresh_inputs()
     data <- filtered_data_current()
-    top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
-    create_location_plotly(top_locations, "current", input$top_locations_mode)
+    top_locations <- get_top_locations(data, inputs$top_locations_mode, inputs$species_filter)
+    create_location_plotly(top_locations, "current", inputs$top_locations_mode)
   })
   
   # Handle current location plot clicks
@@ -745,6 +772,55 @@ server <- function(input, output, session) {
       leafletProxy("current_map") %>% clearGroup("highlighted_location_current")
     }
   })
+  
+  # Download handlers for CSV exports
+  output$download_summary <- downloadHandler(
+    filename = function() {
+      paste0("suco_summary_all_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      inputs <- refresh_inputs()
+      data <- filtered_data()
+      summary_data <- create_summary_stats(data, inputs$group_by, "all")
+      export_csv_safe(summary_data, file)
+    }
+  )
+  
+  output$download_detailed <- downloadHandler(
+    filename = function() {
+      paste0("suco_detailed_all_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      inputs <- refresh_inputs()
+      data <- filtered_data()
+      detailed_data <- create_detailed_samples_table(data, inputs$species_filter)
+      export_csv_safe(detailed_data, file)
+    }
+  )
+  
+  output$download_current_summary <- downloadHandler(
+    filename = function() {
+      paste0("suco_summary_current_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      inputs <- refresh_inputs()
+      data <- filtered_data_current()
+      summary_data <- create_summary_stats(data, inputs$group_by, "current")
+      export_csv_safe(summary_data, file)
+    }
+  )
+  
+  output$download_current_detailed <- downloadHandler(
+    filename = function() {
+      paste0("suco_detailed_current_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      inputs <- refresh_inputs()
+      data <- filtered_data_current()
+      detailed_data <- create_detailed_samples_table(data, inputs$species_filter)
+      export_csv_safe(detailed_data, file)
+    }
+  )
 }
 
 # Run the application

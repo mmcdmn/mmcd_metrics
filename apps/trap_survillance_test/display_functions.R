@@ -1,6 +1,183 @@
 library(leaflet)
 library(htmltools)
+library(ggplot2)
+library(sf)
+library(viridis)
+library(scales)
+library(ggspatial)
 
+# Load background layers for static maps
+load_background_layers <- function() {
+  # Try shared Q_to_R location first, then mosquito_surveillance_map
+  q_to_r_path <- file.path("..", "..", "shared", "Q_to_R", "data")
+  mosquito_map_path <- file.path("..", "mosquito_surveillance_map", "shp")
+  
+  layers <- list()
+  
+  # Try to load facilities and zones from Q_to_R first
+  facilities_q_path <- file.path(q_to_r_path, "facility_boundaries.shp")
+  zones_q_path <- file.path(q_to_r_path, "zone_boundaries.shp")
+  
+  if (file.exists(facilities_q_path)) {
+    layers$facilities <- st_read(facilities_q_path, quiet = TRUE)
+  }
+  
+  if (file.exists(zones_q_path)) {
+    layers$zones <- st_read(zones_q_path, quiet = TRUE)
+  }
+  
+  # Try mosquito_surveillance_map for counties if not found above
+  counties_path <- file.path(mosquito_map_path, "Counties_4326.shp")
+  if (file.exists(counties_path)) {
+    layers$counties <- st_read(counties_path, quiet = TRUE)
+  }
+  
+  # Fallback facility areas if not found in Q_to_R
+  if (is.null(layers$facilities)) {
+    facilities_path <- file.path(mosquito_map_path, "FacilityArea_4326.shp")
+    if (file.exists(facilities_path)) {
+      layers$facilities <- st_read(facilities_path, quiet = TRUE)
+    }
+  }
+  
+  # Fallback zone boundaries if not found in Q_to_R  
+  if (is.null(layers$zones)) {
+    zones_path <- file.path(mosquito_map_path, "P1zonebdry_4326.shp")
+    if (file.exists(zones_path)) {
+      layers$zones <- st_read(zones_path, quiet = TRUE)
+    }
+  }
+  
+  return(layers)
+}
+
+# Create interactive SF-based map with OpenStreetMap background
+render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "selected species") {
+  if (is.null(sections_sf) || nrow(sections_sf) == 0) {
+    return(ggplot() + 
+           theme_void() + 
+           labs(title = "No data available") +
+           theme(plot.title = element_text(hjust = 0.5)))
+  }
+
+  # Load background layers - simplified for debugging
+  bg_layers <- load_background_layers()
+  
+  # Get bounding box for sections to set map extent
+  bbox <- st_bbox(sections_sf)
+  
+  # Create base map with better OpenStreetMap approach
+  p <- ggplot()
+  
+  # Try to add OpenStreetMap background using a more reliable method
+  tryCatch({
+    # Use rosm package approach which is more reliable
+    p <- p + annotation_map_tile(type = "osm", zoom = NULL, alpha = 0.4, quiet = TRUE)
+  }, error = function(e) {
+    # Fallback: just use a light background
+    message("OSM tiles not available, using light background")
+    p <- p + theme(panel.background = element_rect(fill = "lightgray", color = NA))
+  })
+  
+  # Add background county lines for context (very light)
+  if (!is.null(bg_layers$counties)) {
+    p <- p + geom_sf(data = bg_layers$counties, 
+                     fill = "transparent", 
+                     color = "gray80", 
+                     size = 0.2, 
+                     alpha = 0.3)
+  }
+  
+  # Add sections with vector index coloring - MORE TRANSPARENT
+  if (!is.null(sections_sf$vector_index)) {
+    p <- p + geom_sf(data = sections_sf, 
+                     aes(fill = vector_index), 
+                     color = "white", 
+                     size = 0.1, 
+                     alpha = 0.5) +  # Much more transparent to see basemap
+             scale_fill_viridis_c(name = "Vector\nIndex", 
+                                option = "plasma", 
+                                na.value = "lightgray",
+                                trans = "sqrt",
+                                labels = number_format(accuracy = 0.1))
+  } else {
+    p <- p + geom_sf(data = sections_sf, 
+                     fill = "lightblue", 
+                     color = "white", 
+                     size = 0.1, 
+                     alpha = 0.4)  # More transparent
+  }
+  
+  # Add facility boundaries for reference (very subtle)
+  if (!is.null(bg_layers$facilities)) {
+    p <- p + geom_sf(data = bg_layers$facilities, 
+                     fill = "transparent", 
+                     color = "gray40", 
+                     size = 0.3, 
+                     linetype = "dashed",
+                     alpha = 0.6)
+  }
+  
+  # Add traps if provided
+  if (!is.null(trap_df) && nrow(trap_df) > 0) {
+    traps_sf <- st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326)
+    
+    # Map survtype to colors
+    trap_colors <- c("4" = "#2166ac", "5" = "#762a83", "6" = "#5aae61")
+    trap_labels <- c("4" = "Elevated CO2", "5" = "Gravid Trap", "6" = "CO2 Overnight")
+    
+    # Add trap type colors
+    traps_sf$trap_color <- trap_colors[as.character(traps_sf$survtype)]
+    traps_sf$trap_label <- trap_labels[as.character(traps_sf$survtype)]
+    
+    p <- p + geom_sf(data = traps_sf, 
+                     aes(color = trap_label, size = species_count), 
+                     alpha = 0.9,  # Keep traps highly visible
+                     stroke = 1) +
+             scale_color_manual(name = "Trap Type", 
+                              values = trap_colors,
+                              labels = trap_labels) +
+             scale_size_continuous(name = paste(species_label, "\nCount"), 
+                                 range = c(2, 5),  # Larger for better visibility
+                                 guide = guide_legend(override.aes = list(alpha = 1)))
+  }
+  
+  # Style the map
+  p <- p + 
+    theme_void() +
+    theme(
+      legend.position = "right",
+      legend.box = "vertical",
+      legend.background = element_rect(fill = "white", color = "gray"),
+      legend.margin = margin(5, 5, 5, 5),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 12),
+      plot.margin = margin(5, 5, 5, 5),
+      axis.text = element_text(size = 8),
+      axis.title = element_text(size = 9)
+    ) +
+    labs(
+      title = "Mosquito Vector Index by Section (Live Data)",
+      subtitle = paste("Based on", species_label, "- Updates on Refresh"),
+      caption = paste("Analysis Date:", Sys.Date(), "| Click refresh to update data"),
+      x = "Longitude", 
+      y = "Latitude"
+    ) +
+    coord_sf(expand = FALSE, 
+             xlim = c(bbox["xmin"], bbox["xmax"]),
+             ylim = c(bbox["ymin"], bbox["ymax"]),
+             datum = st_crs(4326)) +
+    
+    # Add scale bar and north arrow
+    annotation_scale(location = "bl", width_hint = 0.2) +
+    annotation_north_arrow(location = "tr", which_north = "true", 
+                          pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+                          style = north_arrow_fancy_orienteering)
+  
+  return(p)
+}
+
+# Original leaflet function (keep for compatibility)
 render_vector_map <- function(section_df, trap_df = NULL, species_label = "selected species") {
   if (is.null(section_df) || nrow(section_df) == 0) {
     return(leaflet() %>% addTiles() %>% setView(lng = -93.2, lat = 44.9, zoom = 9))

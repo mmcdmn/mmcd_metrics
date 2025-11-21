@@ -191,13 +191,45 @@ map_facility_names <- function(data, facility_col = "facility") {
 
 # Priority lookup
 get_priority_choices <- function(include_all = TRUE) {
-  choices <- c("RED" = "RED", "YELLOW" = "YELLOW", "BLUE" = "BLUE", "GREEN" = "GREEN")
+  choices <- c("RED" = "RED", "YELLOW" = "YELLOW", "BLUE" = "BLUE", "GREEN" = "GREEN", "PURPLE" = "PURPLE")
   
   if (include_all) {
     choices <- c("All Priorities" = "all", choices)
   }
   
   return(choices)
+}
+
+# Get spring date thresholds from ACT4-P1 lookup table
+get_spring_date_thresholds <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    # Get ACT4-P1 thresholds, excluding January 1st start dates
+    qry <- "
+    SELECT EXTRACT(year FROM date_start) as year, date_start
+    FROM public.lookup_threshold_larv
+    WHERE description = 'ACT4-P1'
+      AND EXTRACT(month FROM date_start) != 1
+      AND EXTRACT(day FROM date_start) != 1
+    ORDER BY year, date_start
+    "
+    
+    result <- dbGetQuery(con, qry)
+    dbDisconnect(con)
+    
+    if (nrow(result) > 0) {
+      result$date_start <- as.Date(result$date_start)
+    }
+    
+    return(result)
+    
+  }, error = function(e) {
+    warning(paste("Error in get_spring_date_thresholds:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
 }
 
 # Structure type lookup from database
@@ -850,7 +882,7 @@ get_shiny_colors <- function() {
     "planned" = "orange",      # #FFA500 → orange
     "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)
     "needs_treatment" = "red", # #FF0000 → red
-    "unknown" = "gray",         # #A9A9A9 → gray
+    "unknown" = "grey",         # #A9A9A9 → grey (NOTE: Shiny uses "grey" not "gray")
     "somthing_else" = "aqua"   # #00FFFF → aqua
   ))
 }
@@ -1168,4 +1200,122 @@ add_zone_alpha_to_plot <- function(plot, alpha_values, representative_color = NU
     ))
   
   return(plot)
+}
+
+# =============================================================================
+# CSV EXPORT HELPER FUNCTIONS
+# =============================================================================
+
+#' Clean Data for CSV Export
+#' 
+#' This function cleans data to prevent CSV formatting issues by handling
+#' line breaks, quotes, and other problematic characters in text fields.
+#' 
+#' @param data Data frame to clean
+#' @param remove_line_breaks Logical. If TRUE, converts line breaks to spaces
+#' @param collapse_whitespace Logical. If TRUE, collapses multiple spaces to single spaces
+#' @param trim_whitespace Logical. If TRUE, trims leading/trailing whitespace
+#' @param handle_na Logical. If TRUE, converts NA values to empty strings
+#' 
+#' @return Cleaned data frame ready for CSV export
+#' @export
+clean_data_for_csv <- function(data, 
+                               remove_line_breaks = TRUE,
+                               collapse_whitespace = TRUE, 
+                               trim_whitespace = TRUE,
+                               handle_na = TRUE) {
+  
+  if (is.null(data) || nrow(data) == 0) {
+    return(data)
+  }
+  
+  # Clean character columns
+  char_cols <- sapply(data, is.character)
+  
+  if (any(char_cols)) {
+    data[char_cols] <- lapply(data[char_cols], function(x) {
+      if (remove_line_breaks) {
+        # Replace line breaks with spaces - use proper regex escaping
+        x <- gsub("\\r\\n|\\r|\\n", " ", x)
+      }
+      
+      if (collapse_whitespace) {
+        # Remove extra whitespace - use proper regex escaping
+        x <- gsub("\\s+", " ", x)
+      }
+      
+      if (trim_whitespace) {
+        # Trim whitespace
+        x <- trimws(x)
+      }
+      
+      return(x)
+    })
+  }
+  
+  return(data)
+}
+
+#' Export Data to CSV with Error Handling
+#' 
+#' This function provides a robust way to export data to CSV with proper
+#' error handling, data cleaning, and informative error messages.
+#' 
+#' @param data Data frame to export
+#' @param file File path where CSV should be saved
+#' @param clean_data Logical. If TRUE, cleans data before export using clean_data_for_csv()
+#' @param row_names Logical. Include row names in CSV? (default: FALSE)
+#' @param na_string String to use for NA values (default: empty string)
+#' 
+#' @return List with success status and message
+#' @export
+export_csv_safe <- function(data,
+                            file,
+                            clean_data = TRUE,
+                            row_names = FALSE,
+                            na_string = "") {
+  
+  tryCatch({
+    # Validate inputs
+    if (is.null(data)) {
+      return(list(
+        success = FALSE,
+        message = "No data provided for export",
+        rows_exported = 0
+      ))
+    }
+    
+    if (nrow(data) == 0) {
+      # Create empty CSV with headers
+      write.csv(data, file, row.names = row_names, na = na_string)
+      return(list(
+        success = TRUE,
+        message = "Empty CSV file created with headers",
+        rows_exported = 0
+      ))
+    }
+    
+    # Clean data if requested
+    if (clean_data) {
+      data <- clean_data_for_csv(data)
+    }
+    
+    # Export to CSV
+    write.csv(data, file, row.names = row_names, na = na_string)
+    
+    return(list(
+      success = TRUE,
+      message = paste("Successfully exported", nrow(data), "rows to", file),
+      rows_exported = nrow(data),
+      file_path = file
+    ))
+    
+  }, error = function(e) {
+    return(list(
+      success = FALSE,
+      message = paste("CSV export failed:", e$message),
+      rows_exported = 0,
+      error_details = e$message
+    ))
+  })
 }

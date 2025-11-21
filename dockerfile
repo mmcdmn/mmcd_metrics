@@ -20,6 +20,9 @@ RUN R -e "install.packages(c( \
   'plotly', 'purrr', 'tibble' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
+# Install additional visualization packages for SF mapping
+RUN R -e "install.packages(c('viridis', 'gridExtra', 'ggspatial'), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
 # Copy app files and config to correct locations
 COPY apps /srv/shiny-server/apps
 COPY shared /srv/shiny-server/shared

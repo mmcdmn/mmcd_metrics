@@ -60,28 +60,8 @@ ui <- fluidPage(
       
       hr(),
       
-      # Date shortcuts
+      # Date range selection
       h4("Date Selection"),
-      fluidRow(
-        column(4, actionButton("this_year", "This Year", class = "btn-primary btn-sm", style = "width: 100%;")),
-        column(4, actionButton("this_month", "This Month", class = "btn-info btn-sm", style = "width: 100%;")),
-        column(4, actionButton("this_week", "This Week", class = "btn-success btn-sm", style = "width: 100%;"))
-      ),
-      br(),
-      
-      # Year slider (only visible for All Data tab with multi-year capability)
-      conditionalPanel(
-        condition = "input.main_tabset == 'All Data (Current + Archive)'",
-        tags$style(type = "text/css", ".irs-grid-pol.small {height: 0px;}",
-                   ".irs-grid-text {font-size: 8pt;}"),
-        sliderInput("year_range", "Year Range:",
-                    min = 2015, max = as.numeric(format(Sys.Date(), "%Y")),
-                    value = c(as.numeric(format(Sys.Date(), "%Y")), as.numeric(format(Sys.Date(), "%Y"))),
-                    sep = "", step = 1),
-        br()
-      ),
-      
-      # Date range selection - behavior depends on which tab is active
       dateRangeInput("date_range", "Custom Date Range:",
                      start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
                      end = Sys.Date(),
@@ -136,11 +116,7 @@ ui <- fluidPage(
                                 "Carto Light" = "carto",
                                 "Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
-                    selected = "carto"),
-        
-        # Marker size adjustment
-        sliderInput("marker_size", "Marker Size Multiplier:",
-                    min = 1, max = 5, value = 3, step = 0.5)
+                    selected = "carto")
       ),
       
       # Refresh button
@@ -222,7 +198,6 @@ server <- function(input, output, session) {
   refresh_inputs <- eventReactive(input$refresh, {
     list(
       group_by = isolate(input$group_by),
-      year_range = isolate(input$year_range),
       date_range = isolate(input$date_range),
       zone_filter = isolate(input$zone_filter),
       facility_filter = isolate(input$facility_filter),
@@ -230,34 +205,11 @@ server <- function(input, output, session) {
       species_filter = isolate(input$species_filter),
       graph_type = isolate(input$graph_type),
       top_locations_mode = isolate(input$top_locations_mode),
-      basemap = isolate(input$basemap),
-      marker_size = isolate(input$marker_size)
+      basemap = isolate(input$basemap)
     )
   })
   
   # Date shortcut handlers - behavior depends on active tab
-  observeEvent(input$this_year, {
-    handle_date_shortcut("year", session, input, updating_date_range, updating_year_range)
-  })
-  
-  observeEvent(input$this_month, {
-    handle_date_shortcut("month", session, input, updating_date_range, updating_year_range)
-  })
-  
-  observeEvent(input$this_week, {
-    handle_date_shortcut("week", session, input, updating_date_range, updating_year_range)
-  })
-  
-  # Year slider handler - only works when on All Data tab and not updating
-  observeEvent(input$year_range, {
-    handle_year_range_change(input, session, updating_date_range, updating_year_range)
-  }, ignoreInit = TRUE)  # Ignore initial trigger
-  
-  # Custom date range handler - behavior depends on active tab and not updating
-  observeEvent(input$date_range, {
-    handle_date_range_change(input, session, updating_date_range, updating_year_range)
-  }, ignoreInit = TRUE)  # Ignore initial trigger
-  
   # Initialize facility choices from db_helpers
   observe({
     facilities <- get_facility_lookup()
@@ -480,9 +432,6 @@ server <- function(input, output, session) {
     # Use spatial_data_current() instead of spatial_data()
     data <- spatial_data_current()
     
-    # Get marker size multiplier
-    size_multiplier <- inputs$marker_size
-    
     # Get facility and foremen lookups for display names
     facilities <- get_facility_lookup()
     
@@ -571,10 +520,10 @@ server <- function(input, output, session) {
           lat2 = max(st_coordinates(data)[,2])
         ) %>%
         addCircleMarkers(
-          radius = ~marker_size,
+          radius = 8,
           color = "black",
           weight = 1.5,
-          fillColor = ~pal(facility),
+          fillColor = ~pal(emp_num),
           fillOpacity = 0.8,
           popup = ~popup_text
         ) %>%

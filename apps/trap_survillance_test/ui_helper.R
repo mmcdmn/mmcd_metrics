@@ -48,8 +48,8 @@ trap_ui <- function() {
               hr(),
               actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
             ),
-            box(width = 8, title = "Vector Index by Section Polygons (Live Data + Zoom)", status = "warning", solidHeader = TRUE,
-                plotly::plotlyOutput("map_sf", height = 700)
+            box(width = 8, title = "Vector Index by Section Polygons (Static Map)", status = "warning", solidHeader = TRUE,
+                plotOutput("map_sf", height = 800)
             )
           )
         ),

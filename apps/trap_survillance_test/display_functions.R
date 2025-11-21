@@ -53,12 +53,45 @@ load_background_layers <- function() {
 
 # Create interactive SF-based map with OpenStreetMap background
 render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "selected species") {
-  if (is.null(sections_sf) || nrow(sections_sf) == 0) {
+  # Better error handling for empty/null data
+  if (is.null(sections_sf)) {
+    message("ERROR: sections_sf is NULL")
     return(ggplot() + 
            theme_void() + 
-           labs(title = "No data available") +
-           theme(plot.title = element_text(hjust = 0.5)))
+           geom_text(aes(x = 0.5, y = 0.5, label = "No section data available.\nCheck your filters and date selection."),
+                    size = 6, color = "red") +
+           theme(plot.title = element_text(hjust = 0.5)) +
+           labs(title = "No Data Available"))
   }
+  
+  if (nrow(sections_sf) == 0) {
+    message("ERROR: sections_sf has 0 rows")
+    return(ggplot() + 
+           theme_void() + 
+           geom_text(aes(x = 0.5, y = 0.5, label = "No sections found with current filters.\nTry:\n- More recent date\n- Different facility\n- 'All' species"),
+                    size = 5, color = "red") +
+           theme(plot.title = element_text(hjust = 0.5)) +
+           labs(title = "No Data Available"))
+  }
+  
+  # Check if geometry column exists
+  if (!"geometry" %in% names(sections_sf)) {
+    message("ERROR: no geometry column in sections_sf")
+    message("Columns:", paste(names(sections_sf), collapse=", "))
+    return(ggplot() + 
+           theme_void() + 
+           geom_text(aes(x = 0.5, y = 0.5, label = "Error: Missing geometry data"),
+                    size = 6, color = "red"))
+  }
+  
+  # Log what we're rendering
+  message(sprintf("Rendering map with %d sections and %d traps", 
+                 nrow(sections_sf), 
+                 if(is.null(trap_df)) 0 else nrow(trap_df)))
+  message(sprintf("Bounding box: %s", paste(round(st_bbox(sections_sf), 2), collapse=", ")))
+  message(sprintf("Vector index range: %.2f to %.2f", 
+                 min(sections_sf$vector_index, na.rm=TRUE),
+                 max(sections_sf$vector_index, na.rm=TRUE)))
 
   # Load background layers - simplified for debugging
   bg_layers <- load_background_layers()
@@ -66,35 +99,24 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
   # Get bounding box for sections to set map extent
   bbox <- st_bbox(sections_sf)
   
-  # Create base map with better OpenStreetMap approach
-  p <- ggplot()
+  # Create base plot and explicitly set coordinates first so tiles know the extent
+  p <- ggplot() +
+    coord_sf(xlim = c(bbox["xmin"], bbox["xmax"]),
+             ylim = c(bbox["ymin"], bbox["ymax"]),
+             crs = st_crs(4326),
+             expand = FALSE)
   
-  # Try to add OpenStreetMap background using a more reliable method
-  tryCatch({
-    # Use rosm package approach which is more reliable
-    p <- p + annotation_map_tile(type = "osm", zoom = NULL, alpha = 0.4, quiet = TRUE)
-  }, error = function(e) {
-    # Fallback: just use a light background
-    message("OSM tiles not available, using light background")
-    p <- p + theme(panel.background = element_rect(fill = "lightgray", color = NA))
-  })
+  # Add basemap tiles FIRST (they render at the back)
+  p <- p + annotation_map_tile(type = "cartolight", zoomin = 1, progress = "none", quiet = TRUE)
   
-  # Add background county lines for context (very light)
-  if (!is.null(bg_layers$counties)) {
-    p <- p + geom_sf(data = bg_layers$counties, 
-                     fill = "transparent", 
-                     color = "gray80", 
-                     size = 0.2, 
-                     alpha = 0.3)
-  }
-  
-  # Add sections with vector index coloring - MORE TRANSPARENT
+  # Then add sections with vector index coloring on TOP of tiles
   if (!is.null(sections_sf$vector_index)) {
     p <- p + geom_sf(data = sections_sf, 
                      aes(fill = vector_index), 
                      color = "white", 
                      size = 0.1, 
-                     alpha = 0.5) +  # Much more transparent to see basemap
+                     alpha = 0.75,
+                     inherit.aes = FALSE) +  # Don't inherit coord_sf
              scale_fill_viridis_c(name = "Vector\nIndex", 
                                 option = "plasma", 
                                 na.value = "lightgray",
@@ -105,7 +127,17 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
                      fill = "lightblue", 
                      color = "white", 
                      size = 0.1, 
-                     alpha = 0.4)  # More transparent
+                     alpha = 0.75,
+                     inherit.aes = FALSE)
+  }
+  
+  # Add background county lines for context (very light)
+  if (!is.null(bg_layers$counties)) {
+    p <- p + geom_sf(data = bg_layers$counties, 
+                     fill = "transparent", 
+                     color = "gray80", 
+                     size = 0.2, 
+                     alpha = 1)
   }
   
   # Add facility boundaries for reference (very subtle)
@@ -122,21 +154,19 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
   if (!is.null(trap_df) && nrow(trap_df) > 0) {
     traps_sf <- st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326)
     
-    # Map survtype to colors
-    trap_colors <- c("4" = "#2166ac", "5" = "#762a83", "6" = "#5aae61")
-    trap_labels <- c("4" = "Elevated CO2", "5" = "Gravid Trap", "6" = "CO2 Overnight")
+    # Map survtype to colors and labels
+    trap_colors <- c("Elevated CO2" = "#2166ac", "Gravid Trap" = "#762a83", "CO2 Overnight" = "#5aae61")
+    trap_type_map <- c("4" = "Elevated CO2", "5" = "Gravid Trap", "6" = "CO2 Overnight")
     
-    # Add trap type colors
-    traps_sf$trap_color <- trap_colors[as.character(traps_sf$survtype)]
-    traps_sf$trap_label <- trap_labels[as.character(traps_sf$survtype)]
+    # Add trap type labels
+    traps_sf$trap_label <- trap_type_map[as.character(traps_sf$survtype)]
     
     p <- p + geom_sf(data = traps_sf, 
                      aes(color = trap_label, size = species_count), 
                      alpha = 0.9,  # Keep traps highly visible
                      stroke = 1) +
              scale_color_manual(name = "Trap Type", 
-                              values = trap_colors,
-                              labels = trap_labels) +
+                              values = trap_colors) +
              scale_size_continuous(name = paste(species_label, "\nCount"), 
                                  range = c(2, 5),  # Larger for better visibility
                                  guide = guide_legend(override.aes = list(alpha = 1)))
@@ -163,10 +193,6 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
       x = "Longitude", 
       y = "Latitude"
     ) +
-    coord_sf(expand = FALSE, 
-             xlim = c(bbox["xmin"], bbox["xmax"]),
-             ylim = c(bbox["ymin"], bbox["ymax"]),
-             datum = st_crs(4326)) +
     
     # Add scale bar and north arrow
     annotation_scale(location = "bl", width_hint = 0.2) +

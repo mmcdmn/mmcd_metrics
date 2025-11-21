@@ -3,7 +3,6 @@
 library(shiny)
 library(shinydashboard)
 library(ggplot2)
-library(plotly)
 
 source("../../shared/db_helpers.R")
 source("ui_helper.R")
@@ -65,8 +64,8 @@ server <- function(input, output, session) {
     render_vector_map(data$sections, data$traps, species_label)
   })
   
-  # SF static map output with zoom functionality
-  output$map_sf <- renderPlotly({
+  # SF static map output (no plotly - it strips the OSM basemap tiles)
+  output$map_sf <- renderPlot({
     data <- vector_data_sf()
     species_label <- if ("all" %in% tolower(input$species_sf)) {
       "All Species"
@@ -74,16 +73,9 @@ server <- function(input, output, session) {
       paste(length(input$species_sf), "selected species")
     }
     
-    # Create the ggplot
-    p <- render_vector_map_sf(data$sections_sf, data$traps, species_label)
-    
-    # Convert to plotly for zoom/pan functionality
-    ggplotly(p, tooltip = c("fill", "colour")) %>%
-      config(displayModeBar = TRUE, 
-             modeBarButtonsToAdd = list("pan2d", "select2d", "lasso2d"),
-             modeBarButtonsToRemove = list("sendDataToCloud", "editInChartStudio")) %>%
-      layout(legend = list(orientation = "v", x = 1.02, y = 1))
-  })
+    # Create and return the ggplot (static map with ggspatial tiles)
+    render_vector_map_sf(data$sections_sf, data$traps, species_label)
+  }, height = 800, width = 1000)
 
   output$table <- DT::renderDT({
     # Use data from either source (they should be the same)

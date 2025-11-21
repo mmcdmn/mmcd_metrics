@@ -107,8 +107,8 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
              expand = FALSE)
   
   # Add basemap tiles FIRST (they render at the back)
-  # Use cartodark for BLACK background with high contrast, zoomin=2 for more detail
-  p <- p + annotation_map_tile(type = "cartodark", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
+  # Use zoomin=2 for more detail, and higher alpha to make it more prominent
+  p <- p + annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
   
   # Then add sections with population index coloring on TOP of tiles
   if (!is.null(sections_sf$vector_index)) {
@@ -116,7 +116,7 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
                      aes(fill = vector_index), 
                      color = "gray40",  # Less prominent borders
                      size = 0.05,       # Thinner lines
-                     alpha = 0.4,       # Much more transparent to see basemap
+                     alpha = 0.8,       # Much more transparent to see basemap
                      inherit.aes = FALSE) +  # Don't inherit coord_sf
              scale_fill_viridis_c(name = "Population\nIndex", 
                                 option = "plasma", 

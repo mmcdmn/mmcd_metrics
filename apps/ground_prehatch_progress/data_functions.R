@@ -77,7 +77,9 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       analysis_year <- format(analysis_date, "%Y")
       treatments_query <- sprintf("
       SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, p.effect_days, 'current' as data_source
+             c.acres as treated_acres, p.effect_days, 'current' as data_source,
+             -- Add inspection data for skipped status
+             i.inspdate as last_inspection_date, i.action as inspection_action, i.wet as inspection_wet
       FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
       JOIN (
         SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
@@ -90,6 +92,17 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
           AND b.prehatch IN ('PREHATCH','BRIQUET')
       ) a ON c.sitecode = a.sitecode
       JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+      -- Left join to get the most recent ground inspection for skipped status
+      LEFT JOIN LATERAL (
+        SELECT inspdate, action, wet
+        FROM dblarv_insptrt_current 
+        WHERE sitecode = c.sitecode 
+          AND action = '2'
+          AND wet = '0'
+          AND inspdate > c.inspdate
+        ORDER BY inspdate DESC, insptime DESC
+        LIMIT 1
+      ) i ON true
       ORDER BY c.inspdate DESC, c.sitecode
       ", analysis_year, format(analysis_date, "%Y-%m-%d"), analysis_year)
     }
@@ -139,7 +152,15 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
       ungroup() %>%
       mutate(
         age = as.numeric(simulation_date - inspdate),
+        # Calculate end of year date for skipped sites
+        end_of_year = as.Date(paste0(format(simulation_date, "%Y"), "-12-30")),
+        days_until_eoy = as.numeric(end_of_year - simulation_date),
         prehatch_status = case_when(
+          # If there's a ground inspection with action=2 and wet=0 after treatment, it's skipped
+          !is.na(last_inspection_date) & !is.na(inspection_action) & !is.na(inspection_wet) &
+            inspection_action == '2' & inspection_wet == '0' & 
+            last_inspection_date > inspdate ~ ifelse(days_until_eoy > 0, "skipped", "expired"),
+          # Regular status calculation
           age > effect_days ~ "expired",
           age > (effect_days - expiring_days) ~ "expiring", 
           age <= effect_days ~ "treated",
@@ -170,7 +191,8 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
       drone_sites_cnt = 0, 
       ph_treated_cnt = sum(prehatch_status == "treated", na.rm = TRUE),
       ph_expiring_cnt = sum(prehatch_status == "expiring", na.rm = TRUE),
-      ph_expired_cnt = sum(prehatch_status == "expired" | is.na(prehatch_status), na.rm = TRUE),
+      ph_expired_cnt = sum(prehatch_status %in% c("expired", NA), na.rm = TRUE),
+      ph_skipped_cnt = sum(prehatch_status == "skipped", na.rm = TRUE),
       ph_untreated_cnt = sum(is.na(prehatch_status), na.rm = TRUE),
       .groups = "drop"
     )
@@ -199,7 +221,15 @@ get_site_details_data <- function(expiring_days = 14, simulation_date = Sys.Date
       ungroup() %>%
       mutate(
         age = as.numeric(simulation_date - inspdate),
+        # Calculate end of year date for skipped sites
+        end_of_year = as.Date(paste0(format(simulation_date, "%Y"), "-12-30")),
+        days_until_eoy = as.numeric(end_of_year - simulation_date),
         prehatch_status = case_when(
+          # If there's a ground inspection with action=2 and wet=0 after treatment, it's skipped
+          !is.na(last_inspection_date) & !is.na(inspection_action) & !is.na(inspection_wet) &
+            inspection_action == '2' & inspection_wet == '0' & 
+            last_inspection_date > inspdate ~ ifelse(days_until_eoy > 0, "skipped", "expired"),
+          # Regular status calculation
           age > effect_days ~ "expired",
           age > (effect_days - expiring_days) ~ "expiring",
           age <= effect_days ~ "treated", 
@@ -332,6 +362,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -349,6 +380,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -369,6 +401,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
         ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
         ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
         ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+        ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(
@@ -388,6 +421,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -407,6 +441,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -431,6 +466,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -454,6 +490,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(

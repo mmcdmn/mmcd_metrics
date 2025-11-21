@@ -72,7 +72,7 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
   }
 
   # Prepare y variables for layered bars - FIXED TO INCLUDE ALL PREHATCH SITES
-  # Gray background: ALL prehatch sites (treated + expiring + expired + untreated)
+  # Gray background: ALL prehatch sites (treated + expiring + expired + skipped + untreated)
   # Blue bar: Active + Expiring sites (fills up portion of gray background)  
   # Yellow overlay: Just expiring sites (on top of blue)
   data <- data %>%
@@ -80,15 +80,19 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       y_total = prehatch_sites_cnt,                                # ALL prehatch sites (gray background)
       y_active = ph_treated_cnt + ph_expiring_cnt,                 # Active + Expiring (blue bar)
       y_expiring = ph_expiring_cnt,                                # Just Expiring (yellow overlay)
+      y_skipped = ph_skipped_cnt,                                  # Skipped sites (separate layer)
       # Add custom tooltip data for each layer
       tooltip_total = paste0(display_name, "\nTotal Sites: ", prehatch_sites_cnt,
                             "\n(Treated: ", ph_treated_cnt,
                             ", Expiring: ", ph_expiring_cnt, 
-                            ", Expired: ", ph_expired_cnt, ")"),
+                            ", Expired: ", ph_expired_cnt,
+                            ", Skipped: ", ph_skipped_cnt, ")"),
       tooltip_active = paste0(display_name, "\nActive Treatment: ", ph_treated_cnt + ph_expiring_cnt,
                              "\n(Treated: ", ph_treated_cnt, ", Expiring: ", ph_expiring_cnt, ")"),
       tooltip_expiring = paste0(display_name, "\nExpiring Sites: ", ph_expiring_cnt,
-                               "\n(Within ", expiring_days, " days)")
+                               "\n(Within ", expiring_days, " days)"),
+      tooltip_skipped = paste0(display_name, "\nSkipped Sites: ", ph_skipped_cnt,
+                              "\n(Dry inspections)")
     )
 
   # Apply filtering if needed - FIXED LOGIC
@@ -98,7 +102,8 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       mutate(
         y_total = ph_expiring_cnt,     # Total = just expiring sites
         y_active = ph_expiring_cnt,    # Blue bar = expiring sites (fills total)
-        y_expiring = ph_expiring_cnt   # Yellow overlay = same expiring sites
+        y_expiring = ph_expiring_cnt,  # Yellow overlay = same expiring sites
+        y_skipped = 0                  # No skipped in expiring filter
       )
   } else if (expiring_filter == "expiring_expired") {
     # Show expiring + expired sites
@@ -106,7 +111,8 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       mutate(
         y_total = ph_expiring_cnt + ph_expired_cnt,   # Total = expiring + expired
         y_active = ph_expiring_cnt,                   # Blue bar = just expiring 
-        y_expiring = ph_expiring_cnt                  # Yellow overlay = expiring
+        y_expiring = ph_expiring_cnt,                 # Yellow overlay = expiring
+        y_skipped = 0                                 # No skipped in this filter
       )
   }
 
@@ -121,18 +127,20 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
 
   # Create layered plot with updated color scheme
   if (!is.null(group_colors) && length(group_colors) > 0 && group_by != "mmcd_all") {
-    # Use group colors for total sites background, status green for active, orange for expiring
+    # Use group colors for total sites background, status green for active, orange for expiring, purple for skipped
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
       geom_bar(aes(y = y_total, fill = display_name, text = tooltip_total), stat = "identity", alpha = 0.4) +  # Group colors background - more transparent
       geom_bar(aes(y = y_active, text = tooltip_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +  # Green active
       geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange overlay
+      geom_bar(aes(y = y_skipped, text = tooltip_skipped), stat = "identity", fill = "purple", alpha = 0.7) +  # Purple skipped
       scale_fill_manual(values = group_colors, na.value = "grey70", guide = "none")  # Hide legend for group colors
   } else {
     # For MMCD grouping or when no specific colors available, use status colors only
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
       geom_bar(aes(y = y_total, text = tooltip_total), stat = "identity", fill = "gray80", alpha = 0.4) +     # Gray background - more transparent
       geom_bar(aes(y = y_active, text = tooltip_active), stat = "identity", fill = status_colors["active"]) +   # Green active
-      geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"])  # Orange expiring
+      geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange expiring
+      geom_bar(aes(y = y_skipped, text = tooltip_skipped), stat = "identity", fill = "purple", alpha = 0.7)  # Purple skipped
   }
   
   p <- p +
@@ -340,9 +348,10 @@ create_value_boxes <- function(data) {
   total_treated <- sum(data$ph_treated_cnt, na.rm = TRUE)
   total_expired <- sum(data$ph_expired_cnt, na.rm = TRUE)
   total_expiring <- sum(data$ph_expiring_cnt, na.rm = TRUE)
+  total_skipped <- sum(data$ph_skipped_cnt, na.rm = TRUE)
   
   # Calculate inactive sites (not currently active or expiring - includes never treated + expired beyond expiring window)
-  total_inactive <- total_prehatch - total_treated - total_expired - total_expiring
+  total_inactive <- total_prehatch - total_treated - total_expired - total_expiring - total_skipped
   total_inactive <- max(0, total_inactive)  # Ensure non-negative
   
   # Calculate percentages
@@ -354,6 +363,7 @@ create_value_boxes <- function(data) {
     total_treated = total_treated,
     total_expired = total_expired,
     total_expiring = total_expiring,
+    total_skipped = total_skipped,
     total_untreated = total_inactive,
     treated_pct = treated_pct,
     expiring_pct = expiring_pct

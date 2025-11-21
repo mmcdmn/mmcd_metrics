@@ -168,8 +168,8 @@ create_overview_value_boxes <- function() {
     valueBoxOutput("treated_sites", width = 2),
     valueBoxOutput("expired_sites", width = 2),
     valueBoxOutput("expiring_sites", width = 2),
-    valueBoxOutput("treated_pct", width = 2),
-    valueBoxOutput("expiring_pct", width = 2)
+    valueBoxOutput("skipped_sites", width = 2),
+    valueBoxOutput("treated_pct", width = 2)
   )
 }
 

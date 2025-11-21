@@ -287,7 +287,7 @@ server <- function(input, output, session) {
       value = data$total_prehatch,
       subtitle = "Total Prehatch Sites",
       icon = icon("egg"),
-      color = shiny_colors["planned"]
+      color = shiny_colors["completed"]
     )
   })
   
@@ -329,6 +329,19 @@ server <- function(input, output, session) {
       subtitle = "Expiring Soon",
       icon = icon("clock-o"),
       color = shiny_colors["planned"]
+    )
+  })
+  
+  output$skipped_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_skipped,
+      subtitle = "Skipped Sites",
+      icon = icon("ban"),
+      color = "purple"
     )
   })
   

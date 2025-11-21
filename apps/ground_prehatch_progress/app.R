@@ -1,3 +1,5 @@
+# Ground prehatch site status App
+
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -188,7 +190,7 @@ server <- function(input, output, session) {
     # Use custom date if provided, otherwise use current date
     simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+    get_ground_prehatch_data(inputs$zone_filter, simulation_date, inputs$expiring_days)
   })
   
   # Fetch site details data - ONLY when refresh button clicked
@@ -277,20 +279,7 @@ server <- function(input, output, session) {
     create_value_boxes(data)
   })
   
-  # Render value boxes using colors from db_helpers
-  output$total_sites <- renderValueBox({
-    req(input$refresh)  # Only render after refresh button clicked
-    
-    data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
-      value = data$total_ground,
-      subtitle = "Total Ground Sites",
-      icon = icon("map-marker"),
-      color = shiny_colors["completed"]
-    )
-  })
-  
+  # Render value boxes using colors from db_helpers  
   output$prehatch_sites <- renderValueBox({
     req(input$refresh)  # Only render after refresh button clicked
     
@@ -298,11 +287,13 @@ server <- function(input, output, session) {
     shiny_colors <- get_shiny_colors()
     valueBox(
       value = data$total_prehatch,
-      subtitle = "Prehatch Sites",
+      subtitle = "Total Prehatch Sites",
       icon = icon("egg"),
-      color = shiny_colors["planned"]
+      color = shiny_colors["completed"]
     )
   })
+  
+
   
   output$treated_sites <- renderValueBox({
     req(input$refresh)  # Only render after refresh button clicked
@@ -327,6 +318,32 @@ server <- function(input, output, session) {
       subtitle = "Expired Sites",
       icon = icon("clock"),
       color = shiny_colors["somthing_else"]
+    )
+  })
+  
+  output$expiring_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_expiring,
+      subtitle = "Expiring Soon",
+      icon = icon("clock-o"),
+      color = shiny_colors["planned"]
+    )
+  })
+  
+  output$skipped_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_skipped,
+      subtitle = "Skipped Sites",
+      icon = icon("ban"),
+      color = "purple"
     )
   })
   
@@ -385,7 +402,13 @@ server <- function(input, output, session) {
       data <- details_data()
       foremen_lookup <- get_foremen_lookup()
       download_data <- prepare_download_data(data, foremen_lookup)
-      write.csv(download_data, file, row.names = FALSE)
+      
+      # Use the shared CSV export function
+      result <- export_csv_safe(download_data, file, clean_data = TRUE)
+      
+      if (!result$success) {
+        warning("CSV export failed: ", result$message)
+      }
     }
   )
   
@@ -493,7 +516,12 @@ server <- function(input, output, session) {
       # Filter data based on inputs (same as the chart and table use)
       filtered_data <- filter_historical_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
       
-      write.csv(filtered_data, file, row.names = FALSE)
+      # Use the shared CSV export function
+      result <- export_csv_safe(filtered_data, file, clean_data = TRUE)
+      
+      if (!result$success) {
+        warning("CSV export failed: ", result$message)
+      }
     }
   )
   
@@ -615,10 +643,20 @@ server <- function(input, output, session) {
       if (!is.null(spatial_data)) {
         # Remove geometry column for CSV export
         export_data <- spatial_data %>% sf::st_drop_geometry()
-        write.csv(export_data, file, row.names = FALSE)
+        
+        # Use the shared CSV export function
+        result <- export_csv_safe(export_data, file, clean_data = TRUE)
+        
+        if (!result$success) {
+          warning("CSV export failed: ", result$message)
+        }
       } else {
         # Create empty CSV if no data
-        write.csv(data.frame(Message = "No map data available"), file, row.names = FALSE)
+        empty_result <- export_csv_safe(
+          data.frame(Message = "No map data available"), 
+          file, 
+          clean_data = FALSE
+        )
       }
     }
   )

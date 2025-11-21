@@ -1,3 +1,5 @@
+# drone site Status App
+
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -924,6 +926,127 @@ server <- function(input, output, session) {
       rownames = FALSE
     )
   })
+  
+  # Download handlers for CSV exports
+  output$download_current_data <- downloadHandler(
+    filename = function() {
+      paste0("drone_current_sites_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      # Get the same data used for the current data table
+      inputs <- refresh_inputs()
+      data <- load_raw_data(c("Y", "M", "C"), analysis_date = inputs$analysis_date)
+      filtered <- apply_data_filters(
+        data = data,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        prehatch_only = inputs$prehatch_only
+      )
+      
+      if (nrow(filtered$drone_treatments) > 0) {
+        # Get current date for active/expiring calculations
+        current_date <- as.Date(inputs$analysis_date)
+        expiring_start_date <- current_date
+        expiring_end_date <- current_date + inputs$expiring_days
+        
+        # Calculate treatment status
+        treatments_with_status <- filtered$drone_treatments %>%
+          mutate(
+            treatment_end_date = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
+            is_active = treatment_end_date >= current_date,
+            is_expiring = is_active & treatment_end_date >= expiring_start_date & treatment_end_date <= expiring_end_date,
+            status = case_when(
+              is_expiring ~ "Expiring",
+              is_active ~ "Active", 
+              TRUE ~ "Expired"
+            )
+          )
+        
+        # Create sitecode summary table
+        all_sites <- filtered$drone_sites
+        latest_treatments <- treatments_with_status %>%
+          group_by(sitecode) %>%
+          slice_max(inspdate, with_ties = FALSE) %>%
+          ungroup()
+        
+        # Combine sites with treatments
+        combined_data <- all_sites %>%
+          left_join(latest_treatments %>%
+                      select(sitecode, material, inspdate, status, treatment_end_date, treated_acres),
+                    by = "sitecode") %>%
+          mutate(
+            status = ifelse(is.na(status), "Never Treated", status),
+            material = ifelse(is.na(material), "None", material),
+            inspdate = ifelse(is.na(inspdate), "Never", as.character(inspdate)),
+            treatment_end_date = ifelse(is.na(treatment_end_date), "N/A", as.character(treatment_end_date)),
+            treated_acres = ifelse(is.na(treated_acres), 0, treated_acres)
+          )
+        
+        export_csv_safe(combined_data, file)
+      } else {
+        export_csv_safe(data.frame("No data available" = character(0)), file)
+      }
+    }
+  )
+  
+  output$download_map_data <- downloadHandler(
+    filename = function() {
+      paste0("drone_map_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      # Get the same spatial data used for the map
+      spatial_data <- map_spatial_data()
+      
+      if (!is.null(spatial_data) && nrow(spatial_data) > 0) {
+        # Create clean table without geometry
+        table_data <- spatial_data %>%
+          st_drop_geometry() %>%
+          arrange(desc(acres)) %>%
+          select(sitecode, facility, zone, acres, treatment_status, last_treatment_date, last_material, treated_acres) %>%
+          mutate(
+            zone = paste0("P", zone),
+            last_treatment_date = ifelse(is.na(last_treatment_date), "Never", as.character(last_treatment_date)),
+            last_material = ifelse(is.na(last_material), "None", last_material),
+            treated_acres = ifelse(is.na(treated_acres), 0, treated_acres)
+          )
+        
+        export_csv_safe(table_data, file)
+      } else {
+        export_csv_safe(data.frame("No data available" = character(0)), file)
+      }
+    }
+  )
+  
+  output$download_historical_data <- downloadHandler(
+    filename = function() {
+      paste0("drone_historical_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      # Get the same historical data used for the historical table
+      inputs <- refresh_inputs()
+      
+      historical_data <- get_historical_processed_data(
+        hist_start_year = inputs$hist_start_year,
+        hist_end_year = inputs$hist_end_year,
+        drone_types = c("Y", "M", "C"),
+        zone_filter = inputs$zone_filter,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        prehatch_only = inputs$prehatch_only,
+        group_by = inputs$group_by,
+        hist_time_period = inputs$hist_time_period,
+        hist_display_metric = inputs$hist_display_metric,
+        combine_zones = inputs$combine_zones,
+        analysis_date = inputs$analysis_date
+      )
+      
+      if (!is.null(historical_data) && nrow(historical_data) > 0) {
+        export_csv_safe(historical_data, file)
+      } else {
+        export_csv_safe(data.frame("No data available" = character(0)), file)
+      }
+    }
+  )
 }
 
 # =============================================================================

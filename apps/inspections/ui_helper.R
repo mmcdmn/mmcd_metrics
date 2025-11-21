@@ -222,6 +222,9 @@ create_main_ui <- function() {
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
+            div(style = "margin-bottom: 10px; text-align: right;",
+                downloadButton("download_gaps_data", "Download CSV", 
+                              class = "btn-success btn-sm")),
             DT::dataTableOutput("gaps_table")
           )
         ),
@@ -270,6 +273,9 @@ create_main_ui <- function() {
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
+            div(style = "margin-bottom: 10px; text-align: right;",
+                downloadButton("download_wet_frequency_data", "Download CSV", 
+                              class = "btn-success btn-sm")),
             DT::dataTableOutput("wet_frequency_table")
           )
         ),
@@ -318,6 +324,9 @@ create_main_ui <- function() {
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
+            div(style = "margin-bottom: 10px; text-align: right;",
+                downloadButton("download_larvae_data", "Download CSV", 
+                              class = "btn-success btn-sm")),
             DT::dataTableOutput("larvae_table")
           )
         )

@@ -2,6 +2,64 @@ library(DBI)
 library(dplyr)
 library(sf)
 
+# Load section boundary geometries from shared Q_to_R location
+load_section_geometries <- function() {
+  # Path to shared Q_to_R data directory
+  q_to_r_data_path <- file.path("..", "..", "shared", "Q_to_R", "data")
+  
+  gpkg_path <- file.path(q_to_r_data_path, "sections_boundaries.gpkg") 
+  shp_path <- file.path(q_to_r_data_path, "sections_boundaries.shp")
+  
+  # Try GeoPackage first
+  if (file.exists(gpkg_path)) {
+    message("Loading section geometries from shared Q_to_R: ", gpkg_path)
+    sections_sf <- st_read(gpkg_path, quiet = TRUE)
+    
+    # Ensure CRS is WGS84
+    if (!st_is_longlat(sections_sf)) {
+      sections_sf <- st_transform(sections_sf, 4326)
+    }
+    
+    # Clean up any invalid geometries
+    sections_sf <- st_make_valid(sections_sf)
+    
+    return(sections_sf)
+  } 
+  # Try shapefile next
+  else if (file.exists(shp_path)) {
+    message("Loading section geometries from shared Q_to_R: ", shp_path)
+    sections_sf <- st_read(shp_path, quiet = TRUE)
+    
+    # Ensure CRS is WGS84
+    if (!st_is_longlat(sections_sf)) {
+      sections_sf <- st_transform(sections_sf, 4326)
+    }
+    
+    # Clean up any invalid geometries
+    sections_sf <- st_make_valid(sections_sf)
+    
+    return(sections_sf)
+  } 
+  # Fallback to database
+  else {
+    message("No geometry files found in shared Q_to_R, loading from database...")
+    con <- get_db_connection()
+    if (is.null(con)) return(NULL)
+    on.exit(dbDisconnect(con))
+    
+    # Get full geometries from database
+    sect_q <- "SELECT gid, sectcode, zone, facility, fosarea,
+                      ST_Transform(the_geom, 4326) as geometry,
+                      ST_X(ST_Transform(ST_Centroid(the_geom), 4326)) as lon, 
+                      ST_Y(ST_Transform(ST_Centroid(the_geom), 4326)) as lat 
+               FROM public.gis_sectcode
+               WHERE the_geom IS NOT NULL"
+    
+    sections_sf <- st_read(con, query = sect_q, quiet = TRUE)
+    return(sections_sf)
+  }
+}
+
 # Return named vector of trap type choices
 get_trap_type_choices <- function() {
   # Hardcoded survtype values
@@ -80,17 +138,27 @@ compute_section_vector_index <- function(species_codes, analysis_date = Sys.Date
   message("Trap query returned ", nrow(traps), " rows")
   if (nrow(traps) == 0) {
     message("No traps found with query: ", trap_q)
-    return(list(sections = data.frame(), traps = data.frame()))
+    return(list(sections = data.frame(), traps = data.frame(), sections_sf = NULL))
   }
 
-  # Get sections - transform coordinates to lat/lon (EPSG:4326)
-  sect_q <- "SELECT gid, sectcode, zone, facility, 
-                    ST_X(ST_Transform(ST_Centroid(the_geom), 4326)) as lon, 
-                    ST_Y(ST_Transform(ST_Centroid(the_geom), 4326)) as lat 
-             FROM public.gis_sectcode"
-  sects <- dbGetQuery(con, sect_q)
-  message("Section query returned ", nrow(sects), " rows")
-  if (nrow(sects) == 0) return(list(sections = data.frame(), traps = data.frame()))
+  # Load section geometries (with full polygons)
+  sections_sf <- load_section_geometries()
+  if (is.null(sections_sf) || nrow(sections_sf) == 0) {
+    message("No section geometries found")
+    return(list(sections = data.frame(), traps = data.frame(), sections_sf = NULL))
+  }
+  
+  message("Section geometries loaded: ", nrow(sections_sf), " rows")
+
+  # Create centroids for KNN calculation
+  sections_centroids <- suppressWarnings(st_centroid(sections_sf))
+  sects <- sections_centroids %>%
+    mutate(
+      lon = st_coordinates(.)[,1],
+      lat = st_coordinates(.)[,2]
+    ) %>%
+    st_drop_geometry() %>%
+    select(gid, sectcode, zone, facility, lon, lat)
 
   # Now do all spatial operations in R (faster than multiple DB calls)
   traps_sf <- st_as_sf(traps, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
@@ -155,13 +223,21 @@ compute_section_vector_index <- function(species_codes, analysis_date = Sys.Date
   
   results <- results[!sapply(results, is.null)]
   message("Computed vector index for ", length(results), " sections")
-  if (length(results) == 0) return(list(sections = data.frame(), traps = data.frame()))
+  if (length(results) == 0) {
+    return(list(sections = data.frame(), traps = data.frame(), sections_sf = sections_sf))
+  }
   
   section_results <- do.call(rbind, results)
   
-  # Return both sections and traps data
+  # Merge vector index results back with geometries
+  sections_with_index <- sections_sf %>%
+    left_join(section_results, by = "sectcode") %>%
+    filter(!is.na(vector_index))
+  
+  # Return sections data, traps data, and section geometries
   return(list(
     sections = section_results,
-    traps = traps %>% select(ainspecnum, facility, lon, lat, survtype, inspdate, species_count)
+    traps = traps %>% select(ainspecnum, facility, lon, lat, survtype, inspdate, species_count),
+    sections_sf = sections_with_index
   ))
 }

@@ -1,3 +1,5 @@
+# Catttail Status App
+
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -120,6 +122,9 @@ ui <- fluidPage(
           plotOutput("historicalProgressPlot", height = "500px"),
           hr(),
           h4("Site Inspection Details", style = "font-weight: bold; margin-top: 20px;"),
+          div(style = "margin-bottom: 10px;",
+            downloadButton("download_sites_data", "Download CSV", class = "btn-success btn-sm")
+          ),
           DT::dataTableOutput("sitesTable")
         )
       )
@@ -167,6 +172,9 @@ ui <- fluidPage(
           plotOutput("treatmentGraph", height = "600px"),
           hr(),
           h4("Site Details", style = "font-weight: bold; margin-top: 20px;"),
+          div(style = "margin-bottom: 10px;",
+            downloadButton("download_treatment_details", "Download CSV", class = "btn-warning btn-sm")
+          ),
           DT::dataTableOutput("siteDetailsTable")
         )
       )
@@ -276,6 +284,51 @@ server <- function(input, output) {
       rownames = FALSE
     )
   })
+  
+  # Download handlers for CSV exports
+  output$download_sites_data <- downloadHandler(
+    filename = function() {
+      paste("cattail_sites_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        site_data <- get_sites_table_data(input$hist_years, input$hist_zone, input$hist_facility_filter, input$sites_view_type)
+        
+        if (is.null(site_data) || nrow(site_data) == 0) {
+          write.csv(data.frame(Message = "No sites data available"), file, row.names = FALSE)
+        } else {
+          result <- export_csv_safe(site_data, file, clean_data = TRUE)
+          if (!result$success) {
+            write.csv(site_data, file, row.names = FALSE, na = "")
+          }
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
+  
+  output$download_treatment_details <- downloadHandler(
+    filename = function() {
+      paste("cattail_treatment_details_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      tryCatch({
+        site_data <- get_site_details_data(input$facility, input$plan_types)
+        
+        if (is.null(site_data) || nrow(site_data) == 0) {
+          write.csv(data.frame(Message = "No treatment details available"), file, row.names = FALSE)
+        } else {
+          result <- export_csv_safe(site_data, file, clean_data = TRUE)
+          if (!result$success) {
+            write.csv(site_data, file, row.names = FALSE, na = "")
+          }
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
 }
 
 shinyApp(ui = ui, server = server)

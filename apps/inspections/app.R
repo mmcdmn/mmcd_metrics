@@ -324,6 +324,61 @@ server <- function(input, output, session) {
     # Create the chart
     create_facility_gap_chart(facility_analysis)
   })
+  
+  # Download handlers for CSV exports
+  output$download_gaps_data <- downloadHandler(
+    filename = function() {
+      paste0("inspection_gaps_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      if (input$analyze_gaps == 0 || input$load_data == 0) {
+        export_csv_safe(data.frame("No data available" = "Load data and analyze gaps first"), file)
+      } else {
+        gap_data_result <- gap_data()
+        if (!is.null(gap_data_result) && nrow(gap_data_result) > 0) {
+          export_csv_safe(gap_data_result, file)
+        } else {
+          export_csv_safe(data.frame("No gaps found" = character(0)), file)
+        }
+      }
+    }
+  )
+  
+  output$download_wet_frequency_data <- downloadHandler(
+    filename = function() {
+      paste0("wet_frequency_analysis_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      if (input$analyze_wet == 0 || input$load_data == 0) {
+        export_csv_safe(data.frame("No data available" = "Load data and analyze wet frequency first"), file)
+      } else {
+        wet_data <- wet_analysis_data()
+        if (!is.null(wet_data$wet_frequency) && nrow(wet_data$wet_frequency) > 0) {
+          export_csv_safe(wet_data$wet_frequency, file)
+        } else {
+          export_csv_safe(data.frame("No wet frequency data" = character(0)), file)
+        }
+      }
+    }
+  )
+  
+  output$download_larvae_data <- downloadHandler(
+    filename = function() {
+      paste0("larvae_analysis_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      if (input$analyze_larvae == 0 || input$load_data == 0) {
+        export_csv_safe(data.frame("No data available" = "Load data and analyze larvae first"), file)
+      } else {
+        larvae_data_result <- larvae_data()
+        if (!is.null(larvae_data_result) && nrow(larvae_data_result) > 0) {
+          export_csv_safe(larvae_data_result, file)
+        } else {
+          export_csv_safe(data.frame("No high larvae sites found" = character(0)), file)
+        }
+      }
+    }
+  )
 }
 
 # Run the application

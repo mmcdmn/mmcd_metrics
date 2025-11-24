@@ -61,7 +61,13 @@ render_gap_table <- function(data) {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(9, 'desc'))  # Sort by Days Since descending (column moved)
+      order = list(list(9, 'desc')),  # Sort by Days Since descending (column moved)
+      initComplete = JS(
+        "function(settings, json) {",
+        "$(this.api().table().container()).find('table').css('font-size', '14px');",
+        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
+        "}"
+      )
     ),
     filter = 'top',
     class = 'compact stripe hover'
@@ -136,7 +142,13 @@ render_wet_frequency_table <- function(data) {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(8, 'desc'))  # Sort by Water Present descending
+      order = list(list(8, 'desc')),  # Sort by Water Present descending
+      initComplete = JS(
+        "function(settings, json) {",
+        "$(this.api().table().container()).find('table').css('font-size', '14px');",
+        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
+        "}"
+      )
     ),
     filter = 'top',
     class = 'compact stripe hover'
@@ -212,7 +224,13 @@ render_high_larvae_table <- function(data) {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(8, 'desc'))  # Sort by Exceedance Frequency descending
+      order = list(list(8, 'desc')),  # Sort by Exceedance Frequency descending
+      initComplete = JS(
+        "function(settings, json) {",
+        "$(this.api().table().container()).find('table').css('font-size', '14px');",
+        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
+        "}"
+      )
     ),
     filter = 'top',
     class = 'compact stripe hover'
@@ -257,10 +275,17 @@ create_wet_frequency_chart <- function(data) {
     marker = list(color = 'lightblue', line = list(color = 'darkblue', width = 1))
   ) %>%
   layout(
-    title = list(text = "Distribution of Wet Frequencies", font = list(size = 14)),
-    xaxis = list(title = "Wet Frequency Range"),
-    yaxis = list(title = "Number of Sites"),
-    margin = list(l = 50, r = 30, t = 50, b = 50)
+    title = list(text = "Distribution of Wet Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
+    xaxis = list(
+      title = list(text = "Wet Frequency Range", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+    ),
+    yaxis = list(
+      title = list(text = "Number of Sites", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+    ),
+    margin = list(l = 70, r = 30, t = 100, b = 70),
+    font = list(size = 14, family = "Arial, sans-serif")
   )
   
   return(p)
@@ -293,11 +318,16 @@ create_priority_chart <- function(data) {
     labels = ~priority,
     values = ~count,
     type = 'pie',
-    marker = list(colors = colors[priority_counts$priority])
+    marker = list(colors = colors[priority_counts$priority]),
+    textfont = list(size = 14, family = "Arial, sans-serif", color = "white"),
+    textinfo = "label+percent",
+    textposition = "inside"
   ) %>%
   layout(
-    title = list(text = "Sites by Priority Level", font = list(size = 14)),
-    margin = list(l = 20, r = 20, t = 50, b = 20)
+    title = list(text = "Sites by Priority Level", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
+    margin = list(l = 20, r = 20, t = 100, b = 20),
+    font = list(size = 14, family = "Arial, sans-serif"),
+    legend = list(font = list(size = 14, family = "Arial, sans-serif"))
   )
   
   return(p)
@@ -322,10 +352,17 @@ create_exceedance_frequency_chart <- function(data) {
     marker = list(color = 'lightcoral', line = list(color = 'darkred', width = 1))
   ) %>%
   layout(
-    title = list(text = "Distribution of Exceedance Frequencies", font = list(size = 14)),
-    xaxis = list(title = "Exceedance Frequency Range"),
-    yaxis = list(title = "Number of Sites"),
-    margin = list(l = 50, r = 30, t = 50, b = 50)
+    title = list(text = "Distribution of Exceedance Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
+    xaxis = list(
+      title = list(text = "Exceedance Frequency Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
+    ),
+    yaxis = list(
+      title = list(text = "Number of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
+    ),
+    margin = list(l = 70, r = 30, t = 100, b = 70),
+    font = list(size = 18, family = "Arial, sans-serif")
   )
   
   return(p)
@@ -358,10 +395,19 @@ create_larvae_distribution_chart <- function(data) {
     marker = list(color = 'orange', line = list(color = 'darkorange', width = 1))
   ) %>%
   layout(
-    title = list(text = "Average Dip Count Distribution", font = list(size = 14)),
-    xaxis = list(title = "Average Dip Count Range", categoryorder = "array", categoryarray = ordered_labels),
-    yaxis = list(title = "Number of Sites"),
-    margin = list(l = 50, r = 30, t = 50, b = 50)
+    title = list(text = "Average Dip Count Distribution", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
+    xaxis = list(
+      title = list(text = "Average Dip Count Range", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
+      categoryorder = "array", 
+      categoryarray = ordered_labels,
+      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+    ),
+    yaxis = list(
+      title = list(text = "Number of Sites", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+    ),
+    margin = list(l = 70, r = 30, t = 100, b = 70),
+    font = list(size = 14, family = "Arial, sans-serif")
   )
   
   return(p)
@@ -398,6 +444,7 @@ create_facility_gap_chart <- function(facility_analysis) {
       text = ~paste("Recently Inspected:", recently_inspected_percentage, "%<br>", 
                    recently_inspected_sites, " of ", total_sites, " sites"),
       hovertemplate = "%{text}<extra></extra>",
+      hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12)),
       marker = list(color = '#4CAF50')  # Green for good
     ) %>%
     add_trace(
@@ -408,33 +455,41 @@ create_facility_gap_chart <- function(facility_analysis) {
       text = ~paste("Has Gap:", gap_percentage, "%<br>", 
                    gap_sites, " of ", total_sites, " sites"),
       hovertemplate = "%{text}<extra></extra>",
+      hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12)),
       marker = list(color = '#F44336')  # Red for gaps
     ) %>%
     layout(
-      title = list(text = "Inspection Gap Analysis by Facility", font = list(size = 14)),
+      title = list(text = "Inspection Gap Analysis by Facility", font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),
       xaxis = list(
-        title = "Facility", 
+        title = list(text = "Facility", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
         tickangle = -45,
         categoryorder = "array",
-        categoryarray = unique(facility_summary$facility)
+        categoryarray = unique(facility_summary$facility),
+        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
       ),
-      yaxis = list(title = "Percentage of Total Sites in Category"),
+      yaxis = list(
+        title = list(text = "Percentage of Total Sites in Category", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
+        range = c(0, 110)  # Extend range to 110% to provide space for hover text above bars
+      ),
       barmode = 'stack',
-      margin = list(l = 60, r = 30, t = 60, b = 120),
+      margin = list(l = 80, r = 30, t = 100, b = 160),
       legend = list(
         orientation = "h",
         x = 0.5,
         xanchor = "center",
-        y = -0.25
+        y = -0.55,
+        font = list(size = 18, family = "Arial, sans-serif")
       ),
+      font = list(size = 18, family = "Arial, sans-serif"),
       annotations = list(
         text = paste0("Each bar shows percentage of green (recently inspected) sites in all facilities. Overall: ", overall_green_pct, "% of sites are recently inspected."),
         showarrow = FALSE,
         x = 0.5,
-        y = -0.18,
+        y = -0.4,
         xref = "paper",
         yref = "paper",
-        font = list(size = 10, color = "#666")
+        font = list(size = 16, color = "#666", family = "Arial, sans-serif")
       )
     )
   

@@ -1,13 +1,23 @@
 # Cattail Treatments - Data Functions
 # Functions for loading and processing cattail treatment data
 
+# Source shared helpers
+source("../../shared/db_helpers.R")
+
 library(dplyr)
 library(lubridate)
 library(sf)
 
 # Function to load raw cattail treatment data
-load_cattail_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
+load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
                               start_year = NULL, end_year = NULL) {
+  
+  # Handle NULL analysis_date
+  if (is.null(analysis_date)) {
+    analysis_date <- Sys.Date()
+  } else if (is.character(analysis_date)) {
+    analysis_date <- as.Date(analysis_date)
+  }
   
   # Determine year range
   if (is.null(start_year)) start_year <- as.numeric(format(analysis_date, "%Y")) - 2
@@ -19,495 +29,625 @@ load_cattail_data <- function(analysis_date = Sys.Date(), include_archive = FALS
   
   tryCatch({
     # Get database connection
-    con <- get_database_connection()
+    con <- get_db_connection()
     if (is.null(con)) {
       warning("Could not connect to database")
       return(NULL)
     }
     
-    # Load cattail sites data
-    cattail_sites_query <- "
-      SELECT 
-        s.sitecode,
-        s.facility,
-        s.zone,
-        s.fosarea,
-        s.sectcode,
-        s.acres,
-        s.priority,
-        s.active,
-        ST_X(s.geom) as longitude,
-        ST_Y(s.geom) as latitude,
-        s.geom
-      FROM sites s 
-      WHERE s.sitetype = 'cattail' 
-        AND s.active = true
-      ORDER BY s.facility, s.sectcode, s.sitecode"
-    
-    cattail_sites <- dbGetQuery(con, cattail_sites_query)
-    
-    # Load cattail treatment plans
-    treatment_plans_query <- "
-      SELECT 
-        tp.plan_id,
-        tp.sitecode,
-        tp.planned_date,
-        tp.treatment_type,
-        tp.material_code,
-        tp.planned_acres,
-        tp.status,
-        tp.priority,
-        tp.notes,
-        tp.created_date,
-        tp.created_by,
-        tp.modified_date,
-        tp.modified_by
-      FROM treatment_plans tp
-      WHERE tp.treatment_category = 'cattail'
-        AND tp.planned_date BETWEEN ? AND ?
-      ORDER BY tp.planned_date, tp.sitecode"
-    
-    treatment_plans <- dbGetQuery(con, treatment_plans_query, params = list(start_date, end_date))
-    
-    # Load actual cattail treatments (current year)
-    current_treatments_query <- "
-      SELECT 
-        t.sitecode,
-        t.inspdate,
-        t.matcode,
-        t.treated_acres,
-        t.effect_days,
-        t.weather,
-        t.wind_speed,
-        t.wind_direction,
-        t.temperature,
-        t.humidity,
-        t.notes,
-        t.inspector,
-        t.crew_size,
-        t.equipment_type,
-        t.application_rate,
-        m.material_name,
-        m.category,
-        m.target_species
-      FROM db_insptrt_current t
-      LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
-      WHERE t.cattail = true
-        AND t.inspdate BETWEEN ? AND ?
-      ORDER BY t.inspdate DESC, t.sitecode"
-    
-    current_treatments <- dbGetQuery(con, current_treatments_query, params = list(start_date, end_date))
-    
-    # Load historical treatments if requested
-    historical_treatments <- data.frame()
-    if (include_archive && start_year < as.numeric(format(Sys.Date(), "%Y"))) {
-      historical_query <- "
+    # Main cattail treatments query 
+    cattail_treatments_query <- "
+      WITH breeding_sites AS (
         SELECT 
-          t.sitecode,
-          t.inspdate,
-          t.matcode,
-          t.treated_acres,
-          t.effect_days,
-          t.weather,
-          t.wind_speed,
-          t.wind_direction, 
-          t.temperature,
-          t.humidity,
-          t.notes,
-          t.inspector,
-          m.material_name,
-          m.category,
-          m.target_species
-        FROM db_insptrt_archive t
-        LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
-        WHERE t.cattail = true
-          AND t.inspdate BETWEEN ? AND ?
-        ORDER BY t.inspdate DESC, t.sitecode"
-      
-      historical_treatments <- dbGetQuery(con, historical_query, params = list(start_date, end_date))
-    }
-    
-    # Combine current and historical treatments
-    all_treatments <- bind_rows(current_treatments, historical_treatments)
-    
-    # Load treatment efficacy data
-    efficacy_query <- "
+          sc.facility, 
+          sc.zone, 
+          sc.fosarea, 
+          LEFT(b.sitecode,7) AS sectcode,
+          b.sitecode,
+          b.acres,
+          b.air_gnd,
+          CASE WHEN b.drone IS NOT NULL THEN 'D' ELSE NULL END as drone,
+          sc.fosarea as foreman
+        FROM public.loc_breeding_sites b
+        LEFT JOIN public.gis_sectcode sc ON LEFT(b.sitecode,7) = sc.sectcode
+        WHERE (b.enddate IS NULL OR b.enddate > $1)
+      ),
+      inspection_data AS (
+        -- Get the most recent inspection per site (distinct sites only)
+        WITH all_inspections AS (
+          -- Current year inspections
+          SELECT 
+            i.sitecode,
+            i.inspdate,
+            i.action,
+            i.numdip,
+            i.acres_plan,
+            EXTRACT(year FROM i.inspdate) as year
+          FROM public.dblarv_insptrt_current i
+          WHERE i.inspdate BETWEEN $2 AND $1
+            AND i.action = '9'  -- Action 9 = inspected
+          
+          UNION ALL
+          
+          -- Archive inspections (if include_archive is true)
+          SELECT 
+            a.sitecode,
+            a.inspdate,
+            a.action,
+            a.numdip,
+            a.acres_plan,
+            EXTRACT(year FROM a.inspdate) as year
+          FROM public.dblarv_insptrt_archive a
+          WHERE $3 = TRUE
+            AND a.inspdate BETWEEN $2 AND $1
+            AND a.action = '9'  -- Action 9 = inspected
+        )
+        SELECT DISTINCT ON (sitecode)
+          sitecode,
+          inspdate,
+          action,
+          numdip,
+          acres_plan,
+          year
+        FROM all_inspections
+        ORDER BY sitecode, inspdate DESC  -- Most recent inspection per site
+      )
       SELECT 
-        e.sitecode,
-        e.treatment_date,
-        e.evaluation_date,
-        e.efficacy_rating,
-        e.coverage_percent,
-        e.regrowth_percent,
-        e.notes as efficacy_notes,
-        e.evaluator
-      FROM treatment_efficacy e
-      WHERE e.treatment_type = 'cattail'
-        AND e.evaluation_date BETWEEN ? AND ?
-      ORDER BY e.evaluation_date DESC"
+        b.sitecode,
+        b.sectcode,
+        b.acres,
+        b.air_gnd,
+        b.drone,
+        b.facility,
+        b.zone,
+        b.fosarea,
+        b.foreman,
+        -- Add display and calculated fields
+        b.facility as facility_display,  -- We'll map this later
+        0 as treated_acres,  -- Placeholder for display functions
+        -- Determine treatment state - all sites are inspected since we use INNER JOIN
+        CASE 
+          WHEN i.sitecode IS NOT NULL THEN 'inspected'
+          ELSE 'inspected'  -- This shouldn't happen with INNER JOIN
+        END as inspection_status,
+        CASE 
+          WHEN i.numdip > 0 THEN 'need_treatment'
+          WHEN i.numdip = 0 THEN 'under_threshold' 
+          ELSE 'under_threshold'  -- Default to under_threshold for safety
+        END as treatment_status,
+        i.inspdate,
+        i.numdip,
+        i.acres_plan,
+        i.year as inspection_year
+      FROM breeding_sites b
+      INNER JOIN inspection_data i ON b.sitecode = i.sitecode  -- Only inspected sites
+      ORDER BY b.sitecode
+    "
     
-    efficacy_data <- dbGetQuery(con, efficacy_query, params = list(start_date, end_date))
+    # Execute query with parameters
+    cattail_sites <- dbGetQuery(con, cattail_treatments_query, list(
+      analysis_date,           # $1
+      start_date,              # $2  
+      include_archive          # $3
+    ))
     
-    # Get facility lookup for display names
-    facility_lookup <- get_facility_lookup()
-    
-    # Get foremen lookup
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Close database connection
     dbDisconnect(con)
     
-    # Process and enhance data
-    if (nrow(cattail_sites) > 0) {
-      # Add display names for facilities
-      cattail_sites$facility_display <- cattail_sites$facility
+    # Create the state column - all sites are inspected, just need treatment_status
+    cattail_sites <- cattail_sites %>%
+      mutate(
+        state = case_when(
+          treatment_status == "need_treatment" ~ "need_treatment",
+          treatment_status == "under_threshold" ~ "under_threshold",
+          TRUE ~ "under_threshold"  # Default
+        )
+      )
+    
+    # Get facility and foremen lookups using db_helpers functions
+    facility_lookup <- get_facility_lookup()
+    foremen_lookup <- get_foremen_lookup()
+    
+    # Map facility names for display
+    tryCatch({
       if (nrow(facility_lookup) > 0) {
+        # Keep original facility code for filtering
+        cattail_sites$facility_code <- cattail_sites$facility
+        
         facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
-        cattail_sites$facility_display <- ifelse(
-          cattail_sites$facility %in% names(facility_map),
-          facility_map[cattail_sites$facility],
+        # Use vectorized matching instead of ifelse
+        matched_facilities <- facility_map[cattail_sites$facility]
+        cattail_sites$facility <- ifelse(
+          !is.na(matched_facilities),
+          matched_facilities,
           cattail_sites$facility
         )
+      } else {
+        cattail_sites$facility_code <- cattail_sites$facility
       }
-      
-      # Convert to sf object for spatial operations
-      if ("longitude" %in% names(cattail_sites) && "latitude" %in% names(cattail_sites)) {
-        cattail_sites <- cattail_sites %>%
-          filter(!is.na(longitude) & !is.na(latitude)) %>%
-          st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
-      }
-    }
+    }, error = function(e) {
+      message("Warning: Could not map facility names: ", e$message)
+      cattail_sites$facility_code <- cattail_sites$facility
+    })
     
-    # Enhance treatments with site information
-    if (nrow(all_treatments) > 0 && nrow(cattail_sites) > 0) {
-      # Convert sf to regular dataframe for joining
-      sites_df <- cattail_sites
-      if ("sf" %in% class(cattail_sites)) {
-        sites_df <- st_drop_geometry(cattail_sites)
-      }
-      
-      # Join treatments with site data
-      all_treatments <- all_treatments %>%
-        left_join(
-          sites_df %>% select(sitecode, facility, zone, fosarea, sectcode, acres, facility_display),
-          by = "sitecode",
-          relationship = "many-to-many"
-        )
-      
-      # Add treatment status based on effect days
-      all_treatments <- all_treatments %>%
-        mutate(
-          treatment_end = as.Date(inspdate) + coalesce(effect_days, 30),
-          days_since_treatment = as.numeric(analysis_date - as.Date(inspdate)),
-          treatment_status = case_when(
-            treatment_end >= analysis_date ~ "Active",
-            days_since_treatment <= 7 ~ "Recently Expired",
-            days_since_treatment <= 30 ~ "Expired",
-            TRUE ~ "Long Expired"
-          ),
-          season = case_when(
-            month(inspdate) %in% c(3, 4, 5) ~ "Spring",
-            month(inspdate) %in% c(6, 7, 8) ~ "Summer", 
-            month(inspdate) %in% c(9, 10, 11) ~ "Fall",
-            TRUE ~ "Winter"
-          )
-        )
-    }
+    # Add facility_display for display function compatibility
+    cattail_sites$facility_display <- cattail_sites$facility
     
-    # Enhance treatment plans with site information
-    if (nrow(treatment_plans) > 0 && nrow(cattail_sites) > 0) {
-      sites_df <- cattail_sites
-      if ("sf" %in% class(cattail_sites)) {
-        sites_df <- st_drop_geometry(cattail_sites)
-      }
-      
-      treatment_plans <- treatment_plans %>%
-        left_join(
-          sites_df %>% select(sitecode, facility, zone, fosarea, sectcode, acres, facility_display),
-          by = "sitecode",
-          relationship = "many-to-many"
-        ) %>%
-        mutate(
-          days_until_planned = as.numeric(as.Date(planned_date) - analysis_date),
-          plan_status = case_when(
-            status == "cancelled" ~ "Cancelled",
-            status == "completed" ~ "Completed", 
-            as.Date(planned_date) < analysis_date ~ "Overdue",
-            days_until_planned <= 7 ~ "Due This Week",
-            days_until_planned <= 30 ~ "Due This Month",
-            TRUE ~ "Future"
-          )
-        )
-    }
+    # Load treatment data for current year
+    current_year <- if (!is.null(end_year)) end_year else year(analysis_date)
+    treatments <- load_cattail_treatments(analysis_date = analysis_date, current_year = current_year)
+    
+    # Convert to sf object if we have coordinates (we'll add this later for mapping)
+    # For now, return as regular data frame
     
     return(list(
       cattail_sites = cattail_sites,
-      treatments = all_treatments,
-      treatment_plans = treatment_plans,
-      efficacy_data = efficacy_data,
+      treatments = treatments,
       facility_lookup = facility_lookup,
-      foremen_lookup = foremen_lookup
+      foremen_lookup = foremen_lookup,
+      analysis_date = analysis_date,
+      date_range = c(start_date, end_date),
+      current_year = current_year
     ))
     
   }, error = function(e) {
     warning(paste("Error loading cattail data:", e$message))
+    if (!is.null(con)) dbDisconnect(con)
     return(NULL)
   })
 }
 
-# Function to filter cattail data based on UI inputs
-filter_cattail_data <- function(raw_data, zone_filter = c("1", "2"), facility_filter = "all",
-                                foreman_filter = "all", section_filter = "all", 
-                                treatment_type_filter = "all", status_filter = "all",
-                                date_range = NULL) {
+# Function to load cattail treatment data
+load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
   
-  if (is.null(raw_data)) return(NULL)
-  
-  # Extract data components
-  sites <- raw_data$cattail_sites
-  treatments <- raw_data$treatments
-  plans <- raw_data$treatment_plans
-  
-  # Apply zone filter to sites
-  if (!is.null(zone_filter) && !"all" %in% zone_filter) {
-    sites <- sites %>% filter(zone %in% zone_filter)
-    filtered_sitecodes <- sites$sitecode
-    treatments <- treatments %>% filter(sitecode %in% filtered_sitecodes)
-    plans <- plans %>% filter(sitecode %in% filtered_sitecodes)
+  # Handle NULL analysis_date
+  if (is.null(analysis_date)) {
+    analysis_date <- Sys.Date()
+  } else if (is.character(analysis_date)) {
+    analysis_date <- as.Date(analysis_date)
   }
   
-  # Apply facility filter
+  # Handle NULL current_year
+  if (is.null(current_year)) {
+    current_year <- year(analysis_date)
+  }
+  
+  tryCatch({
+    # Get database connection
+    con <- get_db_connection()
+    if (is.null(con)) {
+      warning("Could not connect to database")
+      return(data.frame())
+    }
+    
+    # Treatments query - actions '3' and 'A' with cattail material codes
+    # Covers fall/winter same year AND spring/summer next year
+    treatments_query <- "
+      SELECT 
+        i.sitecode, 
+        i.inspdate AS trtdate, 
+        i.action, 
+        i.mattype, 
+        i.matcode, 
+        i.amts, 
+        i.acres, 
+        sc.facility,
+        sc.zone,
+        sc.fosarea,
+        EXTRACT(year FROM i.inspdate) as trt_year,
+        EXTRACT(month FROM i.inspdate) as trt_month
+      FROM public.dblarv_insptrt_current i
+      LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode,7) = sc.sectcode
+      WHERE i.action IN ('3', 'A')  -- Action 3 = treatment, Action A = treatment
+        AND i.matcode IN (
+          SELECT matcode 
+          FROM public.mattype_list_targetdose
+          WHERE prgassign_default = 'Cat'
+        )
+        AND (
+          -- Fall/winter treatments (same year as inspection)
+          (i.inspdate BETWEEN $1 AND $2)
+          OR
+          -- Spring/summer treatments (year after inspection) 
+          (i.inspdate BETWEEN $3 AND $4)
+        )
+      
+      UNION ALL
+      
+      SELECT 
+        a.sitecode, 
+        a.inspdate AS trtdate, 
+        a.action, 
+        a.mattype, 
+        a.matcode, 
+        a.amts, 
+        a.acres, 
+        sc.facility,
+        sc.zone,
+        sc.fosarea,
+        EXTRACT(year FROM a.inspdate) as trt_year,
+        EXTRACT(month FROM a.inspdate) as trt_month
+      FROM public.dblarv_insptrt_archive a
+      LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode,7) = sc.sectcode
+      WHERE a.action IN ('3', 'A')  -- Action 3 = treatment, Action A = treatment
+        AND a.matcode IN (
+          SELECT matcode 
+          FROM public.mattype_list_targetdose
+          WHERE prgassign_default = 'Cat'
+        )
+        AND (
+          -- Fall/winter treatments (same year as inspection)
+          (a.inspdate BETWEEN $1 AND $2)
+          OR
+          -- Spring/summer treatments (year after inspection) 
+          (a.inspdate BETWEEN $3 AND $4)
+        )
+      
+      ORDER BY trtdate
+    "
+    
+    # Date ranges for current year treatment cycles
+    # For current date (Nov 2025), we want:
+    # - Fall 2024 treatments (for 2024 inspections): Sept-Dec 2024
+    # - Spring/Summer 2025 treatments (for 2024 inspections): May-July 2025
+    # - Fall 2025 treatments (for 2025 inspections): Sept-Dec 2025
+    
+    # Primary cycle: Fall of inspection year
+    fall_start <- as.Date(paste0(current_year, "-09-01"))
+    fall_end <- as.Date(paste0(current_year, "-12-31"))
+    
+    # Secondary cycle: Spring/summer of year after inspection  
+    spring_start <- as.Date(paste0(current_year + 1, "-05-01"))
+    spring_end <- as.Date(paste0(current_year + 1, "-07-31"))
+    
+    # Execute query
+    treatments <- dbGetQuery(con, treatments_query, list(
+      fall_start, fall_end, spring_start, spring_end
+    ))
+    dbDisconnect(con)
+    
+    if (nrow(treatments) == 0) {
+      return(data.frame())
+    }
+    
+    # Add facility mapping
+    facility_lookup <- get_facility_lookup()
+    if (nrow(facility_lookup) > 0) {
+      facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
+      matched_facilities <- facility_map[treatments$facility]
+      treatments$facility <- ifelse(
+        !is.na(matched_facilities),
+        matched_facilities,
+        treatments$facility
+      )
+    }
+    
+    # Add treatment season classification
+    treatments <- treatments %>%
+      mutate(
+        trtdate = as.Date(trtdate),
+        treatment_season = case_when(
+          trt_month %in% c(9, 10, 11, 12) ~ "Fall/Winter",
+          trt_month %in% c(5, 6, 7, 8) ~ "Spring/Summer", 
+          TRUE ~ "Other"
+        ),
+        inspection_year = case_when(
+          treatment_season == "Fall/Winter" ~ trt_year,
+          treatment_season == "Spring/Summer" ~ trt_year - 1,
+          TRUE ~ trt_year
+        ),
+        action_desc = case_when(
+          action == '3' ~ "Treatment",
+          action == 'A' ~ "Treatment", 
+          TRUE ~ paste("Action", action)
+        )
+      )
+    
+    return(treatments)
+    
+  }, error = function(e) {
+    warning(paste("Error loading cattail treatments:", e$message))
+    if (exists("con") && !is.null(con)) dbDisconnect(con)
+    return(data.frame())
+  })
+}
+
+# Function to aggregate cattail treatment data with 3-state metrics
+aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
+  
+  if (is.null(cattail_data) || nrow(cattail_data$cattail_sites) == 0) {
+    warning("No cattail data to aggregate")
+    return(NULL)
+  }
+  
+  if (is.null(analysis_date)) {
+    analysis_date <- Sys.Date()
+  }
+  
+  sites_data <- cattail_data$cattail_sites
+  treatments <- cattail_data$treatments
+  current_year <- cattail_data$current_year
+  
+  # Match treatments to sites for current year
+  if (!is.null(treatments) && nrow(treatments) > 0) {
+    # Get sites that were treated in the current year cycle
+    treated_sites <- treatments %>%
+      filter(inspection_year == current_year) %>%
+      pull(sitecode) %>%
+      unique()
+    
+    # Update treatment status to include 'treated' state
+    sites_data <- sites_data %>%
+      mutate(
+        final_status = case_when(
+          sitecode %in% treated_sites ~ "treated",
+          treatment_status == "need_treatment" ~ "need_treatment", 
+          treatment_status == "under_threshold" ~ "under_threshold",
+          TRUE ~ "under_threshold"
+        ),
+        # Update state field to match final_status for UI compatibility
+        state = final_status
+      )
+  } else {
+    # No treatments data, use original status
+    sites_data$final_status <- sites_data$treatment_status
+    sites_data$state <- sites_data$treatment_status
+  }
+  
+  # Calculate 3-state metrics using final_status
+  total_summary <- data.frame(
+    # Basic counts
+    total_sites = nrow(sites_data),
+    total_acres = sum(sites_data$acres, na.rm = TRUE),
+    
+    # Inspection status
+    inspected_sites = sum(sites_data$inspection_status == 'inspected', na.rm = TRUE),
+    not_inspected_sites = sum(sites_data$inspection_status == 'not_inspected', na.rm = TRUE),
+    
+    # Treatment status (for inspected sites only) - using final_status
+    need_treatment_sites = sum(sites_data$final_status == 'need_treatment', na.rm = TRUE),
+    under_threshold_sites = sum(sites_data$final_status == 'under_threshold', na.rm = TRUE),
+    treated_sites = sum(sites_data$final_status == 'treated', na.rm = TRUE),
+    
+    # Acres by status
+    inspected_acres = sum(sites_data$acres[sites_data$inspection_status == 'inspected'], na.rm = TRUE),
+    need_treatment_acres = sum(sites_data$acres[sites_data$final_status == 'need_treatment'], na.rm = TRUE),
+    treated_acres = sum(sites_data$acres[sites_data$final_status == 'treated'], na.rm = TRUE),
+    
+    # Inspection coverage percentage
+    inspection_coverage = round(
+      100 * sum(sites_data$inspection_status == 'inspected', na.rm = TRUE) / nrow(sites_data), 1
+    ),
+    
+    # Treatment need percentage (of inspected sites)
+    treatment_need_rate = ifelse(
+      sum(sites_data$inspection_status == 'inspected', na.rm = TRUE) > 0,
+      round(100 * sum(sites_data$final_status == 'need_treatment', na.rm = TRUE) / 
+            sum(sites_data$inspection_status == 'inspected', na.rm = TRUE), 1),
+      0
+    ),
+    # Treatment completion rate (of sites needing treatment)
+    treatment_completion_rate = ifelse(
+      sum(sites_data$final_status %in% c('need_treatment', 'treated'), na.rm = TRUE) > 0,
+      round(100 * sum(sites_data$final_status == 'treated', na.rm = TRUE) / 
+            sum(sites_data$final_status %in% c('need_treatment', 'treated'), na.rm = TRUE), 1),
+      0
+    )
+  )
+  
+  # Facility summary with 3-state metrics
+  facility_summary <- sites_data %>%
+    group_by(facility) %>%
+    summarise(
+      facility_code = first(facility),
+      total_sites = n(),
+      total_acres = sum(acres, na.rm = TRUE),
+      
+      # Inspection metrics
+      inspected_sites = sum(inspection_status == 'inspected', na.rm = TRUE),
+      not_inspected_sites = sum(inspection_status == 'not_inspected', na.rm = TRUE),
+      inspection_coverage = round(100 * sum(inspection_status == 'inspected', na.rm = TRUE) / n(), 1),
+      
+      # Treatment metrics (for inspected sites)
+      need_treatment_sites = sum(treatment_status == 'need_treatment', na.rm = TRUE),
+      under_threshold_sites = sum(treatment_status == 'under_threshold', na.rm = TRUE),
+      need_treatment_acres = sum(acres[treatment_status == 'need_treatment'], na.rm = TRUE),
+      
+      # Treatment need rate (of inspected sites)
+      treatment_need_rate = ifelse(
+        sum(inspection_status == 'inspected', na.rm = TRUE) > 0,
+        round(100 * sum(treatment_status == 'need_treatment', na.rm = TRUE) / 
+              sum(inspection_status == 'inspected', na.rm = TRUE), 1),
+        0
+      ),
+      
+      .groups = 'drop'
+    ) %>%
+    arrange(facility)
+  
+  # Zone summary with 3-state metrics
+  zone_summary <- sites_data %>%
+    filter(!is.na(zone)) %>%
+    group_by(facility, zone) %>%
+    summarise(
+      facility_code = first(facility),
+      total_sites = n(),
+      total_acres = sum(acres, na.rm = TRUE),
+      
+      # Inspection metrics
+      inspected_sites = sum(inspection_status == 'inspected', na.rm = TRUE),
+      not_inspected_sites = sum(inspection_status == 'not_inspected', na.rm = TRUE),
+      inspection_coverage = round(100 * sum(inspection_status == 'inspected', na.rm = TRUE) / n(), 1),
+      
+      # Treatment metrics
+      need_treatment_sites = sum(treatment_status == 'need_treatment', na.rm = TRUE),
+      under_threshold_sites = sum(treatment_status == 'under_threshold', na.rm = TRUE),
+      need_treatment_acres = sum(acres[treatment_status == 'need_treatment'], na.rm = TRUE),
+      
+      # Treatment need rate
+      treatment_need_rate = ifelse(
+        sum(inspection_status == 'inspected', na.rm = TRUE) > 0,
+        round(100 * sum(treatment_status == 'need_treatment', na.rm = TRUE) / 
+              sum(inspection_status == 'inspected', na.rm = TRUE), 1),
+        0
+      ),
+      
+      .groups = 'drop'
+    ) %>%
+    arrange(facility, zone)
+  
+  # Summary by foreman/FOS area
+  fos_summary <- sites_data %>%
+    filter(!is.na(fosarea)) %>%
+    group_by(facility, fosarea) %>%
+    summarise(
+      facility_code = first(facility),
+      total_sites = n(),
+      total_acres = sum(acres, na.rm = TRUE),
+      
+      # Inspection metrics
+      inspected_sites = sum(inspection_status == 'inspected', na.rm = TRUE),
+      inspection_coverage = round(100 * sum(inspection_status == 'inspected', na.rm = TRUE) / n(), 1),
+      
+      # Treatment metrics
+      need_treatment_sites = sum(treatment_status == 'need_treatment', na.rm = TRUE),
+      need_treatment_acres = sum(acres[treatment_status == 'need_treatment'], na.rm = TRUE),
+      
+      .groups = 'drop'
+    ) %>%
+    arrange(facility, fosarea)
+
+  
+  # Facility summary with 3-state metrics
+  facility_summary <- sites_data %>%
+    group_by(facility) %>%
+    summarise(
+      facility_code = first(facility),
+      total_sites = n(),
+      total_acres = sum(acres, na.rm = TRUE),
+      
+      # Inspection metrics
+      inspected_sites = sum(inspection_status == 'inspected', na.rm = TRUE),
+      not_inspected_sites = sum(inspection_status == 'not_inspected', na.rm = TRUE),
+      inspection_coverage = round(100 * sum(inspection_status == 'inspected', na.rm = TRUE) / n(), 1),
+      
+      # Treatment metrics (for inspected sites)
+      need_treatment_sites = sum(treatment_status == 'need_treatment', na.rm = TRUE),
+      under_threshold_sites = sum(treatment_status == 'under_threshold', na.rm = TRUE),
+      need_treatment_acres = sum(acres[treatment_status == 'need_treatment'], na.rm = TRUE),
+      
+      # Treatment need rate (of inspected sites)
+      treatment_need_rate = ifelse(
+        sum(inspection_status == 'inspected', na.rm = TRUE) > 0,
+        round(100 * sum(treatment_status == 'need_treatment', na.rm = TRUE) / 
+              sum(inspection_status == 'inspected', na.rm = TRUE), 1),
+        0
+      ),
+      
+      .groups = 'drop'
+    ) %>%
+    arrange(facility)
+  
+  # Zone summary with 3-state metrics
+  zone_summary <- sites_data %>%
+    filter(!is.na(zone)) %>%
+    group_by(facility, zone) %>%
+    summarise(
+      facility_code = first(facility),
+      total_sites = n(),
+      total_acres = sum(acres, na.rm = TRUE),
+      
+      # Inspection metrics
+      inspected_sites = sum(inspection_status == 'inspected', na.rm = TRUE),
+      not_inspected_sites = sum(inspection_status == 'not_inspected', na.rm = TRUE),
+      inspection_coverage = round(100 * sum(inspection_status == 'inspected', na.rm = TRUE) / n(), 1),
+      
+      # Treatment metrics
+      need_treatment_sites = sum(treatment_status == 'need_treatment', na.rm = TRUE),
+      under_threshold_sites = sum(treatment_status == 'under_threshold', na.rm = TRUE),
+      need_treatment_acres = sum(acres[treatment_status == 'need_treatment'], na.rm = TRUE),
+      
+      # Treatment need rate
+      treatment_need_rate = ifelse(
+        sum(inspection_status == 'inspected', na.rm = TRUE) > 0,
+        round(100 * sum(treatment_status == 'need_treatment', na.rm = TRUE) / 
+              sum(inspection_status == 'inspected', na.rm = TRUE), 1),
+        0
+      ),
+      
+      .groups = 'drop'
+    ) %>%
+    arrange(facility, zone)
+  
+  # Summary by foreman/FOS area
+  fos_summary <- sites_data %>%
+    filter(!is.na(fosarea)) %>%
+    group_by(facility, fosarea) %>%
+    summarise(
+      facility_code = first(facility),
+      total_sites = n(),
+      total_acres = sum(acres, na.rm = TRUE),
+      
+      # Inspection metrics
+      inspected_sites = sum(inspection_status == 'inspected', na.rm = TRUE),
+      inspection_coverage = round(100 * sum(inspection_status == 'inspected', na.rm = TRUE) / n(), 1),
+      
+      # Treatment metrics
+      need_treatment_sites = sum(treatment_status == 'need_treatment', na.rm = TRUE),
+      need_treatment_acres = sum(acres[treatment_status == 'need_treatment'], na.rm = TRUE),
+      
+      .groups = 'drop'
+    ) %>%
+    arrange(facility, fosarea)
+  
+  return(list(
+    total_summary = total_summary,
+    facility_summary = facility_summary, 
+    zone_summary = zone_summary,
+    fos_summary = fos_summary,
+    analysis_date = analysis_date
+  ))
+}
+
+# Function to filter cattail data based on UI inputs
+filter_cattail_data <- function(raw_data, zone_filter = c("1", "2"), facility_filter = "all",
+                                foreman_filter = "all", date_range = NULL) {
+  
+  if (is.null(raw_data) || is.null(raw_data$cattail_sites)) {
+    return(list(cattail_sites = data.frame()))
+  }
+  
+  sites_data <- raw_data$cattail_sites
+  
+  # Apply zone filter
+  if (!is.null(zone_filter) && !"all" %in% zone_filter) {
+    sites_data <- sites_data %>% filter(zone %in% zone_filter)
+  }
+  
+  # Apply facility filter - use facility_code (short codes) for filtering
   if (!"all" %in% facility_filter && !is.null(facility_filter)) {
-    sites <- sites %>% filter(facility %in% facility_filter)
-    treatments <- treatments %>% filter(facility %in% facility_filter)
-    plans <- plans %>% filter(facility %in% facility_filter)
+    sites_data <- sites_data %>% filter(facility_code %in% facility_filter)
   }
   
   # Apply foreman filter
   if (!"all" %in% foreman_filter && !is.null(foreman_filter)) {
     foremen_lookup <- raw_data$foremen_lookup
-    if (nrow(foremen_lookup) > 0) {
+    if (!is.null(foremen_lookup) && nrow(foremen_lookup) > 0) {
       selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-      sites <- sites %>% filter(fosarea %in% selected_emp_nums)
-      treatments <- treatments %>% filter(fosarea %in% selected_emp_nums)
-      plans <- plans %>% filter(fosarea %in% selected_emp_nums)
+      sites_data <- sites_data %>% filter(fosarea %in% selected_emp_nums)
     }
   }
   
-  # Apply section filter
-  if (!"all" %in% section_filter && !is.null(section_filter)) {
-    sites <- sites %>% filter(sectcode %in% section_filter)
-    treatments <- treatments %>% filter(sectcode %in% section_filter)
-    plans <- plans %>% filter(sectcode %in% section_filter)
-  }
-  
-  # Apply treatment type filter
-  if (!"all" %in% treatment_type_filter && !is.null(treatment_type_filter) && nrow(treatments) > 0) {
-    treatments <- treatments %>% filter(category %in% treatment_type_filter)
-  }
-  
-  # Apply status filter to treatments
-  if (!"all" %in% status_filter && !is.null(status_filter) && nrow(treatments) > 0) {
-    treatments <- treatments %>% filter(treatment_status %in% status_filter)
-  }
-  
-  # Apply date range filter
+  # Apply date range filter to inspection data
   if (!is.null(date_range) && length(date_range) == 2) {
-    start_date <- date_range[1]
-    end_date <- date_range[2]
-    
-    if (nrow(treatments) > 0) {
-      treatments <- treatments %>% 
-        filter(as.Date(inspdate) >= start_date & as.Date(inspdate) <= end_date)
-    }
-    
-    if (nrow(plans) > 0) {
-      plans <- plans %>% 
-        filter(as.Date(planned_date) >= start_date & as.Date(planned_date) <= end_date)
-    }
+    sites_data <- sites_data %>% 
+      filter(is.na(inspdate) | (inspdate >= date_range[1] & inspdate <= date_range[2]))
   }
   
   return(list(
-    cattail_sites = sites,
-    treatments = treatments,
-    treatment_plans = plans,
-    efficacy_data = raw_data$efficacy_data,
+    cattail_sites = sites_data,
     facility_lookup = raw_data$facility_lookup,
     foremen_lookup = raw_data$foremen_lookup
   ))
-}
-
-# Function to aggregate cattail data by grouping
-aggregate_cattail_data <- function(filtered_data, group_by = "facility") {
-  
-  if (is.null(filtered_data)) {
-    return(data.frame())
-  }
-  
-  sites <- filtered_data$cattail_sites
-  treatments <- filtered_data$treatments
-  plans <- filtered_data$treatment_plans
-  
-  if (nrow(sites) == 0) {
-    return(data.frame())
-  }
-  
-  # Convert sf to regular dataframe if needed
-  if ("sf" %in% class(sites)) {
-    sites_df <- st_drop_geometry(sites)
-  } else {
-    sites_df <- sites
-  }
-  
-  # Prepare grouping variables and display names
-  if (group_by == "facility") {
-    aggregated <- sites_df %>%
-      group_by(facility, facility_display) %>%
-      summarise(
-        total_sites = n(),
-        total_acres = sum(acres, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = facility_display)
-    
-  } else if (group_by == "foreman") {
-    foremen_lookup <- filtered_data$foremen_lookup
-    
-    # Map foreman numbers to names
-    sites_with_foreman <- sites_df
-    if (nrow(foremen_lookup) > 0) {
-      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-      sites_with_foreman$foreman_name <- ifelse(
-        sites_with_foreman$fosarea %in% names(foreman_map),
-        foreman_map[as.character(sites_with_foreman$fosarea)],
-        paste("FOS", sites_with_foreman$fosarea)
-      )
-    } else {
-      sites_with_foreman$foreman_name <- paste("FOS", sites_with_foreman$fosarea)
-    }
-    
-    aggregated <- sites_with_foreman %>%
-      group_by(fosarea, foreman_name) %>%
-      summarise(
-        total_sites = n(),
-        total_acres = sum(acres, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = foreman_name)
-    
-  } else if (group_by == "sectcode") {
-    aggregated <- sites_df %>%
-      group_by(sectcode) %>%
-      summarise(
-        total_sites = n(), 
-        total_acres = sum(acres, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = paste0(sectcode, " (Section)"))
-    
-  } else {  # mmcd_all
-    aggregated <- sites_df %>%
-      summarise(
-        total_sites = n(),
-        total_acres = sum(acres, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = "MMCD Total")
-  }
-  
-  # Add treatment statistics
-  if (nrow(treatments) > 0) {
-    treatment_stats <- treatments %>%
-      group_by(across(any_of(c("facility", "fosarea", "sectcode")))) %>%
-      summarise(
-        treatments_applied = n(),
-        acres_treated = sum(treated_acres, na.rm = TRUE),
-        active_treatments = sum(treatment_status == "Active", na.rm = TRUE),
-        recent_treatments = sum(days_since_treatment <= 30, na.rm = TRUE),
-        .groups = "drop"
-      )
-    
-    # Join with aggregated data based on grouping
-    if (group_by == "facility") {
-      aggregated <- aggregated %>%
-        left_join(treatment_stats, by = "facility")
-    } else if (group_by == "foreman") {
-      aggregated <- aggregated %>%
-        left_join(treatment_stats, by = "fosarea") 
-    } else if (group_by == "sectcode") {
-      aggregated <- aggregated %>%
-        left_join(treatment_stats, by = "sectcode")
-    } else {
-      # For mmcd_all, sum all treatment stats
-      total_stats <- treatment_stats %>%
-        summarise(
-          treatments_applied = sum(treatments_applied, na.rm = TRUE),
-          acres_treated = sum(acres_treated, na.rm = TRUE),
-          active_treatments = sum(active_treatments, na.rm = TRUE),
-          recent_treatments = sum(recent_treatments, na.rm = TRUE),
-          .groups = "drop"
-        )
-      aggregated <- bind_cols(aggregated, total_stats)
-    }
-  } else {
-    # Add zero treatment columns if no treatments
-    aggregated <- aggregated %>%
-      mutate(
-        treatments_applied = 0,
-        acres_treated = 0,
-        active_treatments = 0,
-        recent_treatments = 0
-      )
-  }
-  
-  # Add treatment plan statistics
-  if (nrow(plans) > 0) {
-    plan_stats <- plans %>%
-      group_by(across(any_of(c("facility", "fosarea", "sectcode")))) %>%
-      summarise(
-        planned_treatments = n(),
-        planned_acres = sum(planned_acres, na.rm = TRUE),
-        overdue_plans = sum(plan_status == "Overdue", na.rm = TRUE),
-        upcoming_plans = sum(plan_status %in% c("Due This Week", "Due This Month"), na.rm = TRUE),
-        .groups = "drop"
-      )
-    
-    # Join with aggregated data
-    if (group_by == "facility") {
-      aggregated <- aggregated %>%
-        left_join(plan_stats, by = "facility")
-    } else if (group_by == "foreman") {
-      aggregated <- aggregated %>%
-        left_join(plan_stats, by = "fosarea")
-    } else if (group_by == "sectcode") {
-      aggregated <- aggregated %>%
-        left_join(plan_stats, by = "sectcode")
-    } else {
-      total_plan_stats <- plan_stats %>%
-        summarise(
-          planned_treatments = sum(planned_treatments, na.rm = TRUE),
-          planned_acres = sum(planned_acres, na.rm = TRUE),
-          overdue_plans = sum(overdue_plans, na.rm = TRUE),
-          upcoming_plans = sum(upcoming_plans, na.rm = TRUE),
-          .groups = "drop"
-        )
-      aggregated <- bind_cols(aggregated, total_plan_stats)
-    }
-  } else {
-    # Add zero plan columns if no plans
-    aggregated <- aggregated %>%
-      mutate(
-        planned_treatments = 0,
-        planned_acres = 0,
-        overdue_plans = 0,
-        upcoming_plans = 0
-      )
-  }
-  
-  # Fill NA values with 0
-  aggregated[is.na(aggregated)] <- 0
-  
-  return(aggregated)
 }
 
 # Function to get unique filter values

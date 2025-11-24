@@ -526,7 +526,7 @@ server <- function(input, output, session) {
     filename = function() {
       paste0("cattail_plans_", Sys.Date(), ".csv")
     },
-    content = function() {
+    content = function(file) {
       plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
       foremen_lookup <- if (!is.null(values$filtered_data)) values$filtered_data$foremen_lookup else data.frame()
       

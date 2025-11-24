@@ -922,3 +922,9 @@ sudo ufw status
 
 # For testing purposes, you can modify applications to use sample data instead of live connections
 ```
+
+
+# One line remove all used ports and run new
+```bash
+docker stop mmcd-dashboard && docker rm mmcd-dashboard && cd /home/alex/Documents/mmcd/mmcd_metrics && docker build -t mmcd-dashboard . 2>&1 | tail -2 && docker run -d --name mmcd-dashboard -p 3838:3838 -e DB_HOST=rds-readonly.mmcd.org -e DB_PORT=5432 -e DB_USER=mmcd_read -e DB_PASSWORD=mmcd2012 -e DB_NAME=mmcd_data mmcd-dashboard
+```

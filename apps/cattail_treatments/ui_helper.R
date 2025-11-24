@@ -7,6 +7,58 @@ library(shinyWidgets)
 library(DT)
 library(plotly)
 
+# Function to create zone filter UI
+create_zone_filter <- function() {
+  radioButtons("zone_filter", "Zone Display:",
+               choices = list(
+                 "P1 Only" = "1",
+                 "P2 Only" = "2",
+                 "P1 and P2 Separate" = "1,2",
+                 "Combined P1+P2" = "combined"
+               ),
+               selected = "1,2",
+               inline = TRUE)
+}
+
+# Function to create section filter UI
+create_section_filter <- function() {
+  selectizeInput("section_filter", "Section:",
+                 choices = c("All" = "all"),
+                 selected = "all",
+                 multiple = TRUE,
+                 options = list(placeholder = "Select sections..."))
+}
+
+# Function to create treatment type filter UI
+create_treatment_type_filter <- function() {
+  selectizeInput("treatment_type_filter", "Treatment Type:",
+                 choices = c("All" = "all"),
+                 selected = "all",
+                 multiple = TRUE,
+                 options = list(placeholder = "Select treatment types..."))
+}
+
+# Function to create status filter UI
+create_status_filter <- function() {
+  selectizeInput("status_filter", "Status:",
+                 choices = c("All" = "all"),
+                 selected = "all",
+                 multiple = TRUE,
+                 options = list(placeholder = "Select status..."))
+}
+
+# Function to create date range filter UI
+create_date_range_filter <- function() {
+  list(
+    dateInput("start_date", "Start Date:",
+              value = Sys.Date() - 90,
+              format = "yyyy-mm-dd"),
+    dateInput("end_date", "End Date:",
+              value = Sys.Date(),
+              format = "yyyy-mm-dd")
+  )
+}
+
 # Function to create facility filter UI
 create_facility_filter <- function() {
   conditionalPanel(

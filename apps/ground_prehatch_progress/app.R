@@ -1,3 +1,4 @@
+# Ground Prehatch Treatment Progress
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
@@ -18,14 +19,17 @@ source("../../shared/db_helpers.R")
 source("data_functions.R")
 source("display_functions.R")
 source("ui_helpers.R")
+source("historical_functions.R")
 
 ui <- dashboardPage(
   dashboardHeader(title = "Ground Prehatch Treatment Progress"),
   
   dashboardSidebar(
     sidebarMenu(
+      id = "sidebar_tabs",
       menuItem("Progress Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table"))
+      menuItem("Detailed View", tabName = "details", icon = icon("table")),
+      menuItem("Historical Analysis", tabName = "historical", icon = icon("history"))
     )
   ),
   
@@ -72,6 +76,22 @@ ui <- dashboardPage(
         
         # Details table
         create_details_table_box()
+      ),
+      
+      # Historical Analysis tab
+      tabItem(tabName = "historical",
+        br(),
+        
+        # Section info panel
+        create_section_info_panel(),
+        
+        # Historical chart
+        create_historical_chart_box(),
+        
+        br(),
+        
+        # Historical details table
+        create_historical_details_table_box()
       )
     )
   )
@@ -105,6 +125,33 @@ server <- function(input, output, session) {
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
       expiring_filter = isolate(input$expiring_filter)
+    )
+  })
+  
+  # Historical refresh inputs - capture when historical refresh clicked
+  hist_refresh_inputs <- eventReactive(input$hist_refresh, {
+    zone_value <- isolate(input$zone_filter)
+    
+    # Parse zone filter
+    parsed_zones <- if (zone_value == "combined") {
+      c("1", "2")  # Include both zones but will be combined
+    } else if (zone_value == "1,2") {
+      c("1", "2")  # Include both zones separately
+    } else {
+      zone_value  # Single zone
+    }
+    
+    list(
+      zone_filter_raw = zone_value,
+      zone_filter = parsed_zones,
+      combine_zones = (zone_value == "combined"),
+      facility_filter = isolate(input$facility_filter),
+      foreman_filter = isolate(input$foreman_filter),
+      group_by = isolate(input$group_by),
+      hist_time_period = isolate(input$hist_time_period),
+      hist_display_metric = isolate(input$hist_display_metric),
+      hist_year_range = isolate(input$hist_year_range),
+      hist_chart_type = isolate(input$hist_chart_type)
     )
   })
   
@@ -234,10 +281,23 @@ server <- function(input, output, session) {
     data <- value_boxes()
     shiny_colors <- get_shiny_colors()
     valueBox(
-      value = data$total_treated,
-      subtitle = "Treated Sites",
+      value = data$total_active,
+      subtitle = "Active Sites",
       icon = icon("check-circle"),
       color = shiny_colors["active"]
+    )
+  })
+  
+  output$sites_expiring <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_expiring,
+      subtitle = "Sites Expiring",
+      icon = icon("exclamation-triangle"),
+      color = shiny_colors["needs_action"]
     )
   })
   
@@ -251,6 +311,19 @@ server <- function(input, output, session) {
       subtitle = "Expired Sites",
       icon = icon("clock"),
       color = shiny_colors["somthing_else"]
+    )
+  })
+  
+  output$skipped_sites <- renderValueBox({
+    req(input$refresh)  # Only render after refresh button clicked
+    
+    data <- value_boxes()
+    shiny_colors <- get_shiny_colors()
+    valueBox(
+      value = data$total_skipped,
+      subtitle = "Skipped Sites",
+      icon = icon("ban"),
+      color = shiny_colors["needs_treatment"]
     )
   })
   
@@ -285,7 +358,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only calculate after refresh button clicked
     inputs <- refresh_inputs()
     data <- aggregated_data()
-    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days)
+    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, return_height_info = TRUE)
   })
   
   # Render progress chart with dynamic height
@@ -331,6 +404,83 @@ server <- function(input, output, session) {
       foremen_lookup <- get_foremen_lookup()
       download_data <- prepare_download_data(data, foremen_lookup)
       write.csv(download_data, file, row.names = FALSE)
+    }
+  )
+  
+  # =============================================================================
+  # HISTORICAL ANALYSIS TAB
+  # =============================================================================
+  
+  # Historical data - ONLY when historical refresh button clicked
+  historical_data <- eventReactive(input$hist_refresh, {
+    inputs <- hist_refresh_inputs()
+    
+    # Load historical data based on time period
+    if (inputs$hist_time_period == "yearly") {
+      get_historical_yearly_data(
+        zone_filter = inputs$zone_filter,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        start_year = inputs$hist_year_range[1],
+        end_year = inputs$hist_year_range[2]
+      )
+    } else {
+      get_historical_weekly_data(
+        zone_filter = inputs$zone_filter,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        start_year = inputs$hist_year_range[1],
+        end_year = inputs$hist_year_range[2]
+      )
+    }
+  })
+  
+  # Aggregate historical data for visualization
+  historical_aggregated <- reactive({
+    req(input$hist_refresh)
+    inputs <- hist_refresh_inputs()
+    data <- historical_data()
+    
+    aggregate_historical_data(
+      data,
+      group_by = inputs$group_by,
+      time_period = inputs$hist_time_period,
+      display_metric = inputs$hist_display_metric,
+      combine_zones = inputs$combine_zones
+    )
+  })
+  
+  # Render historical chart
+  output$historical_chart <- renderPlotly({
+    req(input$hist_refresh)
+    inputs <- hist_refresh_inputs()
+    data <- historical_aggregated()
+    
+    create_historical_chart(
+      data,
+      chart_type = inputs$hist_chart_type,
+      display_metric = inputs$hist_display_metric,
+      time_period = inputs$hist_time_period,
+      group_by = inputs$group_by
+    )
+  })
+  
+  # Render historical details table
+  output$historical_details_table <- DT::renderDataTable({
+    req(input$hist_refresh)
+    data <- historical_data()
+    create_historical_details_table(data)
+  })
+  
+  # Download handler for historical data
+  output$download_historical_data <- downloadHandler(
+    filename = function() {
+      paste("ground_prehatch_historical_", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      req(input$hist_refresh)
+      data <- historical_data()
+      export_csv_safe(data, file)
     }
   )
 }

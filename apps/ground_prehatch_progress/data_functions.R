@@ -36,42 +36,63 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     
     # Load treatments based on include_archive flag
     if (include_archive && !is.null(start_year) && !is.null(end_year)) {
-      # Historical mode: use the working query pattern but with archive
-      treatments_query <- sprintf("
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, p.effect_days, 'current' as data_source
-      FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
-      JOIN (
-        SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
-               b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
-               sc.fosarea as foreman
-        FROM loc_breeding_sites b
-        LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-        WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
-          AND b.air_gnd='G'
-          AND b.prehatch IN ('PREHATCH','BRIQUET')
-      ) a ON c.sitecode = a.sitecode
-      JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+      # Historical mode: ALWAYS get current year data from current table, archive from archive table
+      current_year <- as.numeric(format(Sys.Date(), "%Y"))
       
-      UNION ALL
+      # Build query parts
+      query_parts <- c()
       
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, p.effect_days, 'archive' as data_source
-      FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
-      JOIN (
-        SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
-               b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
-               sc.fosarea as foreman
-        FROM loc_breeding_sites b
-        LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-        WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
-          AND b.air_gnd='G'
-          AND b.prehatch IN ('PREHATCH','BRIQUET')
-      ) a ON c.sitecode = a.sitecode
-      JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+      # ALWAYS include current year data from dblarv_insptrt_current
+      if (end_year >= current_year) {
+        current_query <- sprintf("
+        SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+               c.acres as treated_acres, p.effect_days, 'current' as data_source
+        FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+        JOIN (
+          SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+                 b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+                 sc.fosarea as foreman
+          FROM loc_breeding_sites b
+          LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+          WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+            AND b.air_gnd='G'
+            AND b.prehatch IN ('PREHATCH','BRIQUET')
+        ) a ON c.sitecode = a.sitecode
+        JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+        ", current_year, current_year, current_year)
+        query_parts <- c(query_parts, current_query)
+      }
       
-      ORDER BY inspdate DESC, sitecode
-      ", start_year, end_year, start_year, start_year, end_year, start_year)
+      # Include archive data for any years before current year
+      if (start_year < current_year) {
+        archive_end_year <- min(end_year, current_year - 1)
+        archive_query <- sprintf("
+        SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+               c.acres as treated_acres, p.effect_days, 'archive' as data_source
+        FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
+        JOIN (
+          SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
+                 b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
+                 sc.fosarea as foreman
+          FROM loc_breeding_sites b
+          LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
+          WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
+            AND b.air_gnd='G'
+            AND b.prehatch IN ('PREHATCH','BRIQUET')
+        ) a ON c.sitecode = a.sitecode
+        JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+        ", start_year, archive_end_year, start_year)
+        query_parts <- c(query_parts, archive_query)
+      }
+      
+      # Combine query parts
+      if (length(query_parts) > 0) {
+        treatments_query <- paste(query_parts, collapse = " UNION ALL ")
+        treatments_query <- paste(treatments_query, "ORDER BY inspdate DESC, sitecode")
+      } else {
+        # Fallback empty query
+        treatments_query <- "SELECT NULL::text as sitecode, NULL::date as inspdate, NULL::text as matcode, NULL::time as insptime, NULL::numeric as treated_acres, NULL::integer as effect_days, NULL::text as data_source WHERE FALSE"
+      }
     } else {
       # Current mode: use exact working pattern with current year from analysis_date
       analysis_year <- format(analysis_date, "%Y")

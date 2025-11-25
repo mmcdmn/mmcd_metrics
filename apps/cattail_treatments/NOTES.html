@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cattail Treatments - Data Documentation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #7f8c8d;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid #34495e;
+        }
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
+        }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+<h1>Cattail Treatments - Data Documentation</h1>
+
+<h2>Purpose</h2>
+<p>Documents the data sources, SQL queries, and aggregation logic for the cattail treatments dashboard. This file focuses exclusively on data definitions and processing.</p>
+
+<h2>Data Sources</h2>
+
+<h3>Core Database Tables and Columns</h3>
+
+<h4>Primary Inspection Tables</h4>
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval inspection records</li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>inspdate</code>, <code>action</code>, <code>numdip</code>, <code>matcode</code>, <code>mattype</code>, <code>amts</code>, <code>acres</code></li>
+<li><strong>Cattail Filter</strong>: <code>action = '9'</code> (inspection) with <code>numdip</code> determining treatment need</li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>facility</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Contains ongoing inspection records with cattail dip counts</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval inspection/treatment records  </li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>inspdate</code>, <code>action</code>, <code>numdip</code>, <code>matcode</code>, <code>mattype</code>, <code>amts</code>, <code>acres</code></li>
+<li><strong>Cattail Filter</strong>: <code>action = '9'</code> (inspection) OR <code>action IN ('3', 'A')</code> (treatments)</li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>facility</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Historical closed inspection/treatment records, generally more reliable</li>
+</ul>
+</ul>
+
+<h4>Primary Treatment Tables  </h4>
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval treatment records</li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>inspdate</code>, <code>action</code>, <code>matcode</code>, <code>mattype</code>, <code>amts</code>, <code>acres</code></li>
+<li><strong>Treatment Filter</strong>: <code>action IN ('3', 'A')</code> with cattail material codes</li>
+<li><strong>Treatment Actions</strong>: </li>
+<ul>
+<li><code>action = '3'</code> - Standard treatment application</li>
+<li><code>action = 'A'</code> - AIR treatment application</li>
+</ul>
+<li><strong>Data Quality</strong>: Contains ongoing treatments, some may be planned vs executed</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval treatment records  </li>
+<ul>
+<li><strong>Same structure as current table</strong></li>
+<li><strong>Data tine</strong>: Historical treatments from pervious years</li>
+</ul>
+</ul>
+
+<h4>Essential Supporting Tables</h4>
+<ul>
+<li><strong><code>public.loc<em>breeding</em>sites</code></strong> - Site master data</li>
+<ul>
+<li><strong>Key Columns</strong>: </li>
+<ul>
+<li><code>sitecode</code> (unique site identifier)</li>
+<li><code>acres</code> (site size, not treated acres)</li>
+<li><code>enddate</code> (<strong>CRITICAL</strong>: NULL = active site, NOT NULL = closed site)</li>
+<li><code>air_gnd</code> (treatment method designation) </li>
+<li><code>drone</code> (values: 'Y', 'M', 'C' for drone-capable sites)</li>
+<li><code>geom</code> (PostGIS geometry data for mapping, UTM projection)</li>
+</ul>
+<li><strong>Critical Join Logic</strong>: <strong>MUST filter <code>enddate IS NULL</code></strong> or risk including closed sites</li>
+<li><strong>Data Quality</strong>: Single row per sitecode for active sites</li>
+<li><strong>Usage</strong>: Source of truth for site characteristics and active status</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.gis_sectcode</code></strong> - Geographic section mapping and zone assignments</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sectcode</code> (7-character section identifier, e.g. '191031N')</li>
+<li><code>facility</code> (facility short code)</li>
+<li><code>zone</code> (values: '1' = Zone 1, '2' = Zone 2)</li>
+<li><code>fosarea</code> (FOS employee number assignment)</li>
+</ul>
+<li><strong>Join Pattern</strong>: <code>LEFT JOIN public.gis_sectcode sc ON LEFT(sitecode,7) = sc.sectcode</code></li>
+<li><strong>Sitecode Formats Handled</strong>:</li>
+<ul>
+<li>Standard: <code>190208-003</code> → sectcode <code>1902080</code></li>
+<li>Directional: <code>191102W010</code> → sectcode <code>1911020</code> </li>
+</ul>
+<li><strong>Data Quality</strong>: Authoritative source for facility, zone and FOS assignments</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material codes and target programs</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>matcode</code> (material identifier, joins to inspection/treatment tables)</li>
+<li><code>prgassign_default</code> (target program assignment)</li>
+<li><strong>Cattail Filter</strong>: <code>prgassign_default = 'Cat'</code> identifies cattail materials</li>
+</ul>
+<li><strong>Usage</strong>: Validates that treatments use cattail-appropriate materials</li>
+<li><strong>Treatment Logic</strong>: Used to identify valid cattail treatment materials</li>
+</ul>
+</ul>
+
+<h3>Data Collection Strategy</h3>
+
+<h4>Key Join Patterns Used Throughout Application</h4>
+
+<p><strong>Standard Inspection-to-Site Join Pattern:</strong></p>
+<pre><code class="sql">
+-- Connect inspection records with site information
+FROM public.dblarv_insptrt_current i
+LEFT JOIN public.loc_breeding_sites b ON i.sitecode = b.sitecode
+LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode,7) = sc.sectcode
+WHERE i.action = '9'  -- Action 9 = inspected
+  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
+</code></pre>
+
+<p><strong>Standard Treatment-to-Site Join Pattern:</strong></p>
+<pre><code class="sql">
+-- Connect treatment records with cattail material validation
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode,7) = sc.sectcode
+WHERE t.action IN ('3', 'A')  -- Actions 3/A = treatments
+  AND t.matcode IN (
+    SELECT matcode 
+    FROM public.mattype_list_targetdose
+    WHERE prgassign_default = 'Cat'
+  )
+</code></pre>
+
+<p><strong>Note</strong>: See "SQL Queries Reference" section below for complete, up-to-date query implementations.</p>
+
+<h4>Critical Data Integration Notes</h4>
+
+<p><strong>Sitecode Format Handling:</strong></p>
+<ul>
+<li><strong>Standard Format</strong>: <code>190208-003</code> (7-digit section + dash + site num)</li>
+<li><strong>Directional Format</strong>: <code>191102W010</code> (6-digit + direction + site num)</li>
+<li><strong>Join Logic</strong>: <code>LEFT(sitecode,7)</code> extracts section code for both formats</li>
+<li><strong>Example</strong>: Both <code>190208-003</code> and <code>191102W010</code> → sectcodes <code>1902080</code> and <code>1911020</code></li>
+</ul>
+
+<p><strong>Inspection vs Treatment Acres:</strong></p>
+<ul>
+<li><strong>Site Acres</strong>: <code>loc<em>breeding</em>sites.acres</code> = site capacity/potential treatment area</li>
+<li><strong>Treated Acres</strong>: <code>dblarv<em>insptrt</em>*.acres</code> = actual area treated in specific application</li>
+<li><strong>Usage</strong>: Site acres for capacity analysis, treated acres for actual treatment metrics</li>
+</ul>
+
+<p><strong>Cattail Treatment Determination:</strong></p>
+<ul>
+<li><strong>Inspection Logic</strong>: <code>numdip &gt; 0</code> indicates site needs cattail treatment</li>
+<li><strong>3-State System</strong>: </li>
+<ul>
+<li><code>under_threshold</code> (grey): <code>numdip = 0</code> - no treatment needed</li>
+<li><code>need_treatment</code> (red): <code>numdip &gt; 0</code> - treatment required</li>
+<li><code>treated</code> (green): site had treatment applied after inspection showing need</li>
+</ul>
+</ul>
+
+<p><strong>Treatment Timing Logic:</strong></p>
+<ul>
+<li><strong>Inspection Season</strong>: Typically fall season of year N</li>
+<li><strong>Treatment Season</strong>: Fall/winter of year N OR spring/summer of year N+1</li>
+<li><strong>Treatment Windows</strong>:</li>
+<ul>
+<li>Fall/Winter: September-December of inspection year</li>
+<li>Spring/Summer: May-July of year after inspection</li>
+</ul>
+<li><strong>Year Mapping</strong>: Spring/Summer treatments in year N+1 apply to year N inspections</li>
+</ul>
+
+<p><strong>Zone Assignment:</strong></p>
+<ul>
+<li><strong>Zone 1</strong>: <code>gis_sectcode.zone = '1'</code> </li>
+<li><strong>Zone 2</strong>: <code>gis_sectcode.zone = '2'</code></li>
+<li><strong>Missing Zones</strong>: Some sites may not have zone assignments in gis_sectcode</li>
+</ul>
+
+<p><strong>Material Code Validation:</strong></p>
+<ul>
+<li><strong>Cattail Materials</strong>: JOIN with <code>mattype<em>list</em>targetdose WHERE prgassign_default = 'Cat'</code></li>
+<li><strong>Treatment Validation</strong>: Only treatments using cattail materials are counted</li>
+<li><strong>Action Types</strong>: Both action '3' and action 'A' represent valid treatments</li>
+</ul>
+
+<h2>Inspection Year Definition</h2>
+
+<h3>DOY-Based Seasonal Logic</h3>
+<p>Cattail inspections and treatments follow seasonal cycles that don't align with calendar years. The <strong>inspection year</strong> is defined as:</p>
+
+<p><strong>Inspection Year N = Fall of Year N (Sept-Dec) + Summer of Year N+1 (May-Aug)</strong></p>
+
+<p>Example: <strong>Inspection Year 2024</strong> includes:</p>
+<ul>
+<li>Fall 2024: September 1, 2024 - December 31, 2024 (DOY 244-365)</li>
+<li>Summer 2025: May 1, 2025 - August 1, 2025 (DOY 135-213)</li>
+</ul>
+
+<h3>SQL Implementation</h3>
+<p>The inspection year is calculated in SQL using Day of Year (DOY):</p>
+
+<pre><code class="sql">
+-- Calculate inspection_year based on DOY
+CASE
+  WHEN EXTRACT(DOY FROM inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM inspdate)
+  WHEN EXTRACT(DOY FROM inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM inspdate) - 1
+  ELSE NULL
+END as inspection_year
+</code></pre>
+
+<p><strong>DOY Ranges:</strong></p>
+<ul>
+<li><strong>Fall/Winter Season</strong>: DOY 244-365 (Sept 1 - Dec 31) → Same calendar year</li>
+<li><strong>Spring/Summer Season</strong>: DOY 135-213 (May 15 - Aug 1) → Previous calendar year</li>
+</ul>
+
+<p><strong>Examples:</strong></p>
+<ul>
+<li>Inspection on September 15, 2024 (DOY 259) → Inspection Year 2024</li>
+<li>Inspection on July 1, 2025 (DOY 182) → Inspection Year 2024</li>
+<li>Treatment on November 10, 2024 → Applies to Inspection Year 2024</li>
+<li>Treatment on June 15, 2025 → Applies to Inspection Year 2024</li>
+</ul>
+
+<h3>Metric Labels</h3>
+<p>Metrics that are measured "as of Aug 1" are labeled accordingly:</p>
+<ul>
+<li>"Sites Treated (as of Aug 1)"</li>
+<li>"% Treated of Need Treatment (as of Aug 1)"</li>
+</ul>
+
+<p>This clarifies that treatment counts represent the snapshot at the end of the inspection year cycle.</p>
+
+<h2>SQL Queries</h2>
+
+<h3>1. Historical Cattail Inspection Data</h3>
+<p><strong>Function</strong>: <code>get<em>historical</em>cattail<em>data()</code> in <code>historical</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load inspection records with DOY-based inspection year calculation</p>
+
+<pre><code class="sql">
+-- Current inspections
+SELECT 
+  i.sitecode,
+  i.inspdate,
+  i.numdip,
+  sc.facility,
+  sc.zone,
+  sc.fosarea,
+  EXTRACT(DOY FROM i.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM i.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM i.inspdate)
+    WHEN EXTRACT(DOY FROM i.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM i.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
+FROM public.dblarv_insptrt_current i
+LEFT JOIN public.loc_breeding_sites b ON i.sitecode = b.sitecode
+LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode, 7) = sc.sectcode
+WHERE i.action = '9'  -- Inspection action
+  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+  AND EXTRACT(DOY FROM i.inspdate) BETWEEN 135 AND 365  -- Only seasonal dates
+
+UNION ALL
+
+-- Archive inspections
+SELECT 
+  a.sitecode,
+  a.inspdate,
+  a.numdip,
+  sc.facility,
+  sc.zone,
+  sc.fosarea,
+  EXTRACT(DOY FROM a.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM a.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM a.inspdate)
+    WHEN EXTRACT(DOY FROM a.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM a.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
+FROM public.dblarv_insptrt_archive a
+LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
+LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode, 7) = sc.sectcode
+WHERE a.action = '9'
+  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+  AND EXTRACT(DOY FROM a.inspdate) BETWEEN 135 AND 365
+</code></pre>
+
+<p><strong>Key Points:</strong></p>
+<ul>
+<li><strong>DOY Filtering</strong>: <code>BETWEEN 135 AND 365</code> excludes winter/early spring</li>
+<li><strong>Inspection Year</strong>: Calculated in SQL using DOY CASE logic</li>
+<li><strong>Active Sites</strong>: <code>enddate IS NULL</code> or active during analysis</li>
+<li><strong>Union</strong>: Combines current + archive for complete history</li>
+</ul>
+
+<h3>2. Historical Cattail Treatment Data</h3>
+<p><strong>Function</strong>: <code>get<em>historical</em>cattail<em>data()</code> in <code>historical</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load treatment records with DOY-based inspection year calculation</p>
+
+<pre><code class="sql">
+-- Current treatments
+SELECT 
+  t.sitecode,
+  t.inspdate as trtdate,
+  t.action,
+  sc.facility,
+  sc.zone,
+  sc.fosarea,
+  EXTRACT(DOY FROM t.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM t.inspdate)
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM t.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
+WHERE t.action IN ('3', 'A')  -- Treatment actions
+  AND t.matcode IN (
+    SELECT matcode 
+    FROM public.mattype_list_targetdose
+    WHERE prgassign_default = 'Cat'
+  )
+  AND EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 365
+
+UNION ALL
+
+-- Archive treatments
+SELECT 
+  t.sitecode,
+  t.inspdate as trtdate,
+  t.action,
+  sc.facility,
+  sc.zone,
+  sc.fosarea,
+  EXTRACT(DOY FROM t.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM t.inspdate)
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM t.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
+FROM public.dblarv_insptrt_archive t
+LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
+WHERE t.action IN ('3', 'A')
+  AND t.matcode IN (
+    SELECT matcode 
+    FROM public.mattype_list_targetdose
+    WHERE prgassign_default = 'Cat'
+  )
+  AND EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 365
+</code></pre>
+
+<p><strong>Key Points:</strong></p>
+<ul>
+<li><strong>Material Validation</strong>: Subquery ensures only cattail materials</li>
+<li><strong>Treatment Actions</strong>: Both '3' and 'A' are valid treatment actions</li>
+<li><strong>Same DOY Logic</strong>: Matches inspection query for consistency</li>
+<li><strong>Inspection Year</strong>: Treatments mapped to inspection year using DOY</li>
+</ul>
+
+<h2>Data Aggregation Logic</h2>
+
+<h3>Group Label Creation (R Processing)</h3>
+<p><strong>Function</strong>: <code>create<em>historical</em>analysis<em>chart()</code> in <code>historical</em>functions.R</code></p>
+
+<p>Inspection and treatment data are grouped with optional zone separation:</p>
+
+<pre><code class="r">
+# For inspections
+inspection_data &lt;- inspection_data %&gt;%
+  mutate(
+    group_label = case_when(
+      group_by == "facility" &amp; !combine_zones ~ paste(facility, "- Zone", zone),
+      group_by == "facility" &amp; combine_zones ~ facility,
+      group_by == "foreman" &amp; !combine_zones ~ paste("FOS", fosarea, "- Zone", zone),
+      group_by == "foreman" &amp; combine_zones ~ paste("FOS", fosarea),
+      group_by == "zone" ~ paste("Zone", zone),
+      TRUE ~ "All"
+    )
+  )
+
+# Same logic for treatments
+treatment_data &lt;- treatment_data %&gt;%
+  mutate(
+    group_label = case_when(
+      # ... identical to inspection logic
+    )
+  )
+</code></pre>
+
+<p><strong>Key Points:</strong></p>
+<ul>
+<li><strong>Zone Separation</strong>: <code>combine_zones = FALSE</code> adds "- Zone X" suffix</li>
+<li><strong>Consistency</strong>: Both inspections and treatments use identical grouping</li>
+<li><strong>Foreman Format</strong>: Uses "FOS 123" format for foreman display</li>
+<li><strong>Grouping Options</strong>: facility, foreman, or zone-only grouping</li>
+</ul>
+
+<h3>Metric Calculation (R Processing)</h3>
+<p><strong>Function</strong>: <code>create<em>historical</em>analysis<em>chart()</code> in <code>historical</em>functions.R</code></p>
+<ul>
+<li><strong>to be made</strong></li>
+</ul>
+    </div>
+</body>
+</html>

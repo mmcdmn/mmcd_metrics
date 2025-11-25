@@ -65,30 +65,6 @@ server <- function(input, output, session) {
   })
   
   # SF static map output (no plotly - it strips the OSM basemap tiles)
-  # Reactive values to track zoom
-  zoom_ranges <- reactiveValues(x = NULL, y = NULL)
-  
-  # Reset zoom when button clicked
-  observeEvent(input$reset_zoom_sf, {
-    zoom_ranges$x <- NULL
-    zoom_ranges$y <- NULL
-  })
-  
-  # Update zoom when brush is used
-  observeEvent(input$map_sf_brush, {
-    brush <- input$map_sf_brush
-    if (!is.null(brush)) {
-      zoom_ranges$x <- c(brush$xmin, brush$xmax)
-      zoom_ranges$y <- c(brush$ymin, brush$ymax)
-    }
-  })
-  
-  # Reset zoom on double-click
-  observeEvent(input$map_sf_dblclick, {
-    zoom_ranges$x <- NULL
-    zoom_ranges$y <- NULL
-  })
-  
   output$map_sf <- renderPlot({
     data <- vector_data_sf()
     species_label <- if ("all" %in% tolower(input$species_sf)) {
@@ -97,16 +73,8 @@ server <- function(input, output, session) {
       paste(length(input$species_sf), "selected species")
     }
     
-    # Create the ggplot (static map with ggspatial tiles)
-    p <- render_vector_map_sf(data$sections_sf, data$traps, species_label)
-    
-    # Apply zoom if set
-    if (!is.null(zoom_ranges$x) && !is.null(zoom_ranges$y)) {
-      p <- p + coord_sf(xlim = zoom_ranges$x, ylim = zoom_ranges$y, 
-                        crs = st_crs(4326), expand = FALSE)
-    }
-    
-    return(p)
+    # Create and return the ggplot (static map with ggspatial tiles)
+    render_vector_map_sf(data$sections_sf, data$traps, species_label)
   }, height = 800, width = 1000)
 
   output$table <- DT::renderDT({

@@ -5,13 +5,22 @@ library(stringr)  # For str_to_title function
 library(leaflet)  # For map functionality
 library(sf)       # For spatial data handling
 
-# Function to create progress chart exactly like drone app with layered bars
-create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14) {
+# Function to create progress chart 
+create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14, return_height_info = FALSE) {
   if (nrow(data) == 0) {
-    return(ggplot() + 
+    plot <- ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
-           theme_void())
+           theme_void()
+    if (return_height_info) {
+      return(list(plot = plot, height = 400))
+    } else {
+      return(plot)
+    }
   }
+  
+  # Calculate dynamic height: 80 pixels per y-axis item 
+  n_items <- nrow(data)
+  dynamic_height <- n_items * 80
   
   # Get status colors from db_helpers
   status_colors <- get_status_colors()
@@ -45,7 +54,7 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       }
     }
   } else if (group_by == "foreman") {
-    # Map foreman employee numbers to facility-based colors (same as drone app)
+    # Map foreman employee numbers to facility-based colors 
     foreman_colors <- get_foreman_colors()
     foremen_lookup <- get_foremen_lookup()
     group_colors <- character(0)
@@ -71,7 +80,7 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     }
   }
 
-  # Prepare y variables for layered bars - FIXED TO INCLUDE ALL PREHATCH SITES
+  # Prepare y variables for layered bars 
   # Gray background: ALL prehatch sites (treated + expiring + expired + skipped + untreated)
   # Blue bar: Active + Expiring sites (fills up portion of gray background)  
   # Yellow overlay: Just expiring sites (on top of blue)
@@ -129,18 +138,18 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
   if (!is.null(group_colors) && length(group_colors) > 0 && group_by != "mmcd_all") {
     # Use group colors for total sites background, status green for active, orange for expiring, purple for skipped
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-      geom_bar(aes(y = y_total, fill = display_name, text = tooltip_total), stat = "identity", alpha = 0.4) +  # Group colors background - more transparent
-      geom_bar(aes(y = y_active, text = tooltip_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +  # Green active
-      geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange overlay
-      geom_bar(aes(y = y_skipped, text = tooltip_skipped), stat = "identity", fill = "purple", alpha = 0.7) +  # Purple skipped
+      geom_bar(aes(y = y_total, fill = display_name), stat = "identity", alpha = 0.4) +  # Group colors background - more transparent
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +  # Green active
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange overlay
+      geom_bar(aes(y = y_skipped), stat = "identity", fill = "purple", alpha = 0.7) +  # Purple skipped
       scale_fill_manual(values = group_colors, na.value = "grey70", guide = "none")  # Hide legend for group colors
   } else {
     # For MMCD grouping or when no specific colors available, use status colors only
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-      geom_bar(aes(y = y_total, text = tooltip_total), stat = "identity", fill = "gray80", alpha = 0.4) +     # Gray background - more transparent
-      geom_bar(aes(y = y_active, text = tooltip_active), stat = "identity", fill = status_colors["active"]) +   # Green active
-      geom_bar(aes(y = y_expiring, text = tooltip_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange expiring
-      geom_bar(aes(y = y_skipped, text = tooltip_skipped), stat = "identity", fill = "purple", alpha = 0.7)  # Purple skipped
+      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.4) +     # Gray background - more transparent
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +   # Green active
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange expiring
+      geom_bar(aes(y = y_skipped), stat = "identity", fill = "purple", alpha = 0.7)  # Purple skipped
   }
   
   p <- p +
@@ -164,7 +173,34 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       legend.text = element_text(size = 11)
     )
   
-  return(ggplotly(p, tooltip = "text"))
+  # Convert to plotly with custom tooltip
+  plotly_chart <- ggplotly(p, tooltip = "none") %>%
+    layout(
+      hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12))
+    )
+  
+  # Add custom hover text for each layer
+  for (i in 1:nrow(data)) {
+    row_data <- data[i, ]
+    # Add hover info for each bar layer
+    plotly_chart <- plotly_chart %>%
+      add_trace(
+        x = row_data$display_name,
+        y = 0,
+        type = "scatter",
+        mode = "markers",
+        marker = list(size = 0, opacity = 0),
+        hoverinfo = "text",
+        text = row_data$tooltip_total,
+        showlegend = FALSE
+      )
+  }
+  
+  if (return_height_info) {
+    return(list(plot = plotly_chart, height = dynamic_height))
+  } else {
+    return(plotly_chart)
+  }
 }
 
 # Function to create historical chart with multiple chart types (matching drone app exactly)
@@ -350,17 +386,21 @@ create_value_boxes <- function(data) {
   total_expiring <- sum(data$ph_expiring_cnt, na.rm = TRUE)
   total_skipped <- sum(data$ph_skipped_cnt, na.rm = TRUE)
   
+  # Calculate active sites (treated + expiring)
+  total_active <- total_treated + total_expiring
+  
   # Calculate inactive sites (not currently active or expiring - includes never treated + expired beyond expiring window)
   total_inactive <- total_prehatch - total_treated - total_expired - total_expiring - total_skipped
   total_inactive <- max(0, total_inactive)  # Ensure non-negative
   
-  # Calculate percentages
-  treated_pct <- if (total_prehatch > 0) round(100 * total_treated / total_prehatch, 1) else 0
+  # Calculate percentages - treated percentage is active / (active + expired)
+  treated_pct <- if ((total_active + total_expired) > 0) round(100 * total_active / (total_active + total_expired), 1) else 0
   expiring_pct <- if (total_prehatch > 0) round(100 * total_expiring / total_prehatch, 1) else 0
   
   return(list(
     total_prehatch = total_prehatch,
     total_treated = total_treated,
+    total_active = total_active,
     total_expired = total_expired,
     total_expiring = total_expiring,
     total_skipped = total_skipped,
@@ -667,81 +707,4 @@ create_map_details_table <- function(spatial_data) {
     ),
     rownames = FALSE
   )
-}
-
-# Function to create historical chart
-create_historical_chart <- function(data, time_period, display_metric, group_by, chart_type) {
-  if (nrow(data) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 1, y = 1, label = "No historical data available"), size = 6) +
-           theme_void())
-  }
-  
-  # Get status colors from db_helpers
-  status_colors <- get_status_colors()
-  
-  # Create base plot
-  p <- ggplot(data, aes(x = time_period, y = count, group = display_name, color = display_name, fill = display_name))
-  
-  # Add chart type specific geometry
-  if (chart_type == "line") {
-    p <- p + 
-      geom_line(size = 1.2) +
-      geom_point(size = 2.5)
-  } else if (chart_type == "area") {
-    p <- p + 
-      geom_area(alpha = 0.7) +
-      geom_line(size = 1)
-  } else if (chart_type == "step") {
-    p <- p + 
-      geom_step(size = 1.2, direction = "hv") +
-      geom_point(size = 2.5)
-  } else if (chart_type == "grouped_bar") {
-    p <- p + 
-      geom_col(position = "dodge", alpha = 0.8)
-  } else {
-    # Default: stacked bar
-    p <- p + 
-      geom_col(position = "stack", alpha = 0.8)
-  }
-  
-  # Set title based on metric and time period
-  metric_title <- switch(display_metric,
-    "treatments" = "Treatments",
-    "sites" = "Sites Treated", 
-    "acres" = "Acres Treated",
-    "site_acres" = "Site Acres (Unique Sites)",
-    "weekly_active_sites" = "Active Sites",
-    "weekly_active_acres" = "Active Site Acres",
-    "Weekly Active Sites"
-  )
-  
-  period_title <- if (time_period == "weekly") "Weekly" else "Yearly"
-  chart_title <- paste(period_title, metric_title, "by", str_to_title(gsub("_", " ", group_by)))
-  
-  # Apply theme and formatting
-  p <- p + 
-    labs(
-      title = chart_title,
-      x = if (time_period == "weekly") "Week" else "Year",
-      y = metric_title,
-      color = "Group",
-      fill = "Group"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
-      axis.text.x = element_text(angle = if (time_period == "weekly") 45 else 0, hjust = 1),
-      legend.position = "bottom",
-      legend.title = element_text(size = 10),
-      legend.text = element_text(size = 9),
-      panel.grid.minor = element_blank()
-    )
-  
-  # Convert to plotly
-  ggplotly(p, tooltip = c("x", "y", "group")) %>%
-    layout(
-      title = list(text = chart_title, x = 0.5, font = list(size = 16)),
-      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.1)
-    )
 }

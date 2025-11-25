@@ -46,7 +46,7 @@ create_filter_panel <- function() {
     
     # Current analysis controls (hidden on historical tab)
     conditionalPanel(
-      condition = "input.sidebar_menu != 'historical'",
+      condition = "input.sidebar_tabs != 'historical'",
       fluidRow(
         column(3,
           dateInput("custom_today", "Pretend Today is:",
@@ -80,7 +80,7 @@ create_filter_panel <- function() {
     
     # Historical analysis controls (shown only on historical tab)
     conditionalPanel(
-      condition = "input.sidebar_menu == 'historical'",
+      condition = "input.sidebar_tabs == 'historical'",
       fluidRow(
         column(3,
           radioButtons("hist_time_period", "Time Period:",
@@ -94,8 +94,7 @@ create_filter_panel <- function() {
                       choices = c("Stacked Bar" = "stacked_bar",
                                   "Grouped Bar" = "grouped_bar", 
                                   "Line Chart" = "line",
-                                  "Area Chart" = "area",
-                                  "Step Chart" = "step"),
+                                  "Area Chart" = "area"),
                       selected = "stacked_bar")
         ),
         column(3,
@@ -166,8 +165,8 @@ create_overview_value_boxes <- function() {
   fluidRow(
     valueBoxOutput("prehatch_sites", width = 2),
     valueBoxOutput("treated_sites", width = 2),
+    valueBoxOutput("sites_expiring", width = 2),
     valueBoxOutput("expired_sites", width = 2),
-    valueBoxOutput("expiring_sites", width = 2),
     valueBoxOutput("skipped_sites", width = 2),
     valueBoxOutput("treated_pct", width = 2)
   )
@@ -176,7 +175,7 @@ create_overview_value_boxes <- function() {
 # Create the section filtering info panel
 create_section_info_panel <- function() {
   conditionalPanel(
-    condition = "input.group_by == 'sectcode'",
+    condition = "input.group_by == 'All MMCD'",
     div(
       style = "background-color: #d1ecf1; padding: 12px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #bee5eb;",
       HTML("<i class='fa fa-info-circle' style='color: #0c5460;'></i> 
@@ -187,16 +186,7 @@ create_section_info_panel <- function() {
 
 # Create the progress chart box
 create_progress_chart_box <- function() {
-  # Dynamically set chart height based on number of y-axis categories
-  n_bars <- isolate({
-    # Try to get the number of bars from the aggregated data if available
-    if (exists("aggregated_data", envir = .GlobalEnv)) {
-      nrow(get("aggregated_data", envir = .GlobalEnv))
-    } else {
-      10 # fallback default
-    }
-  })
-  chart_height <- max(100, min(66000, n_bars * 50)) # 50px per bar, clamp between 400 and 66000px
+  # Dynamic chart height will be set in server
   tagList(
     create_important_note(),
     box(
@@ -204,7 +194,7 @@ create_progress_chart_box <- function() {
       status = "primary",
       solidHeader = TRUE,
       width = 12,
-      plotlyOutput("progress_chart", height = paste0(chart_height, "px"))
+      uiOutput("dynamic_chart_ui")
     )
   )
 }
@@ -510,7 +500,6 @@ create_map_details_table_box <- function() {
   )
 }
 
-# No CSS needed - using inline styles and Shiny built-in components
 create_app_css <- function() {
   # Empty function - all styling is done via inline styles
   NULL

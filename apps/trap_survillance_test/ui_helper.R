@@ -46,14 +46,10 @@ trap_ui <- function() {
               numericInput("k_neighbors_sf", "k (nearest neighbors):", value = 4, min = 1, max = 10, step = 1),
               selectizeInput("facility_sf", "Facility (optional):", choices = c("All" = "all"), multiple = TRUE),
               hr(),
-              actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%"),
-              hr(),
-              actionButton("reset_zoom_sf", "Reset Zoom", icon = icon("expand"), class = "btn-info", width = "100%")
+              actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")
             ),
-            box(width = 8, title = "Population Index by Section Polygons (Interactive - Click & Drag to Zoom)", status = "warning", solidHeader = TRUE,
-                plotOutput("map_sf", height = 800, 
-                          brush = brushOpts(id = "map_sf_brush", resetOnNew = TRUE),
-                          dblclick = "map_sf_dblclick")
+            box(width = 8, title = "Population Index by Section Polygons (Static Map)", status = "warning", solidHeader = TRUE,
+                plotOutput("map_sf", height = 800)
             )
           )
         ),

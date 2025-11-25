@@ -39,6 +39,8 @@ create_main_ui <- function() {
       )
     ),
     dashboardBody(
+      # Use universal CSS from db_helpers for consistent text sizing
+      get_universal_text_css(),
       tags$head(
         tags$style(HTML("
           .content-wrapper, .right-side {
@@ -194,10 +196,7 @@ create_main_ui <- function() {
             ),
             column(4,
               br(),
-              actionButton("analyze_gaps", 
-                " Analyze Inspection Gaps", 
-                class = "btn-refresh", 
-                style = "width: 100%; padding: 12px;")
+              uiOutput("gaps_button_ui")
             ),
             column(4,
               div(style = "margin-top: 25px;",
@@ -212,7 +211,7 @@ create_main_ui <- function() {
               status = "primary", 
               solidHeader = TRUE,
               width = 12,
-              plotlyOutput("facility_gap_chart", height = "500px")
+              plotlyOutput("facility_gap_chart", height = "800px")
             )
           ),
           
@@ -238,10 +237,7 @@ create_main_ui <- function() {
             ),
             column(6,
               br(),
-              actionButton("analyze_wet", 
-                " Analyze Wet Frequency", 
-                class = "btn-refresh", 
-                style = "width: 100%; padding: 12px;")
+              uiOutput("wet_button_ui")
             )
           ),
           
@@ -284,15 +280,12 @@ create_main_ui <- function() {
         tabItem(tabName = "larvae",
           fluidRow(
             column(4,
-              numericInput("larvae_threshold", "Larvae Threshold (numdip):", 
+              numericInput("larvae_threshold", "Sites with at least this num dip:", 
                 value = 2, min = 0, max = 100, step = 1)
             ),
             column(4,
               br(),
-              actionButton("analyze_larvae", 
-                " Find High Dip Count Sites", 
-                class = "btn-refresh", 
-                style = "width: 100%; padding: 12px;")
+              uiOutput("larvae_button_ui")
             ),
             column(4,
               div(style = "margin-top: 25px;",

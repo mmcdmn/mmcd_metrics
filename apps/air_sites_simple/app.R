@@ -43,6 +43,8 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
     tabItems(
       tabItem(tabName = "status",
         fluidRow(
@@ -77,7 +79,7 @@ ui <- dashboardPage(
             ),
             fluidRow(
               column(3,
-                numericInput("larvae_threshold", "Larvae Threshold:",
+                numericInput("larvae_threshold", "dip count at least:",
                   value = 2,
                   min = 0,
                   max = 10,
@@ -89,7 +91,7 @@ ui <- dashboardPage(
                   choices = c("All Statuses" = "all",
                              "Unknown" = "Unknown",
                              "Inspected" = "Inspected", 
-                             "In Lab" = "In Lab",
+                             "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
                   selected = "all"
@@ -156,13 +158,13 @@ ui <- dashboardPage(
               tags$ul(
                 tags$li(tags$strong("Unknown:"), " Sites that have not been inspected or have no recent inspection data"),
                 tags$li(tags$strong("Inspected:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
-                tags$li(tags$strong("In Lab:"), " Sites with larvae ≥ threshold, samples sent to lab for red/blue bug identification"),
+                tags$li(tags$strong("Needs ID:"), " Sites with Dip ≥ threshold, samples sent to lab for red/blue bug identification"),
                 tags$li(tags$strong("Needs Treatment:"), " Sites with red bugs found in lab analysis (require treatment)"),
                 tags$li(tags$strong("Active Treatment:"), " Sites who recived treatment < effect_days ago acording to material type (see override for BTI)")
               ),
               tags$h5("Treatment Logic:"),
               tags$ul(
-                tags$li("Sites with larvae ≥ threshold → lab for species identification"),
+                tags$li("Sites with Dip ≥ threshold → lab for species identification"),
                 tags$li("Red bugs found → treatment required (species that bite humans)"),
                 tags$li("Blue bugs found → no treatment needed (species that don't bite humans)"),
                 tags$li("Active treatments last for BTI effect days (default varies by material)")
@@ -237,10 +239,10 @@ ui <- dashboardPage(
                 checkboxGroupInput("process_status_filter", "Status Filter (for Flow Chart):",
                   choices = c("Unknown" = "Unknown",
                              "Inspected" = "Inspected", 
-                             "In Lab" = "In Lab",
+                             "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
-                  selected = c("Unknown", "Inspected", "In Lab", "Needs Treatment", "Active Treatment"),
+                  selected = c("Unknown", "Inspected", "Needs ID", "Needs Treatment", "Active Treatment"),
                   inline = TRUE
                 )
               ),
@@ -653,10 +655,10 @@ server <- function(input, output, session) {
   
   output$sites_in_lab <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "In Lab", na.rm = TRUE)
+    count <- sum(data$site_status == "Needs ID", na.rm = TRUE)
     valueBox(
       value = count,
-      subtitle = "In Lab",
+      subtitle = "Needs ID",
       icon = icon("microscope"),
       color = "purple"
     )
@@ -720,8 +722,8 @@ server <- function(input, output, session) {
     chart_colors <- c(
       "Active Treatment" = as.character(status_color_map[["Active Treatment"]]),
       "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
-      "Inspected" = as.character(status_color_map[["Under Threshold"]]),  # Use green for inspected
-      "In Lab" = "#ff9800",  # Orange for lab processing
+      "Inspected" = as.character(status_color_map[["Inspected"]]),
+      "Needs ID" = as.character(status_color_map[["Needs ID"]]),
       "Unknown" = as.character(status_color_map[["Unknown"]])
     )
     
@@ -731,9 +733,9 @@ server <- function(input, output, session) {
             type = 'bar',
             marker = list(color = ~chart_colors[site_status])) %>%
       layout(
-        title = "Site Status Distribution",
-        xaxis = list(title = "Status"),
-        yaxis = list(title = "Number of Sites"),
+        title = list(text = "Site Status Distribution", font = list(size = 20)),
+        xaxis = list(title = list(text = "Status", font = list(size = 18)), tickfont = list(size = 16)),
+        yaxis = list(title = list(text = "Number of Sites", font = list(size = 18)), tickfont = list(size = 16)),
         showlegend = FALSE
       )
   })
@@ -935,7 +937,7 @@ server <- function(input, output, session) {
       DT::formatStyle(
         "Status",
         backgroundColor = DT::styleEqual(
-          c("Active Treatment", "Needs Treatment", "Inspected", "In Lab", "Unknown"),
+          c("Active Treatment", "Needs Treatment", "Inspected", "Needs ID", "Unknown"),
           c("#d4edda", "#f8d7da", "#d1ecf1", "#fff3cd", "#f8f9fa")
         )
       )
@@ -1232,9 +1234,10 @@ server <- function(input, output, session) {
     plot_ly(trend_data, x = ~primary_year, y = ~avg_red_bug_ratio, color = ~facility,
             type = 'scatter', mode = 'lines+markers') %>%
       layout(
-        title = "Red Bug Detection Trends",
-        xaxis = list(title = "Year"),
-        yaxis = list(title = "Avg Red Bug Ratio (%)"),
+        title = list(text = "Red Bug Detection Trends", font = list(size = 20)),
+        xaxis = list(title = list(text = "Year", font = list(size = 18)), tickfont = list(size = 16)),
+        yaxis = list(title = list(text = "Avg Red Bug Ratio (%)", font = list(size = 18)), tickfont = list(size = 16)),
+        legend = list(font = list(size = 16)),
         hovermode = 'x unified'
       )
   })

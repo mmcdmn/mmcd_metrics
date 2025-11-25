@@ -96,8 +96,8 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   } else {
     # Original logic for yearly or treatments
     # Prepare base data for each time period
-    if (hist_display_metric == "treatments") {
-      # For treatments, use treatment data directly
+    if (hist_display_metric == "treatments" || hist_display_metric == "treatment_acres") {
+      # For treatments and treatment_acres, use treatment data directly
       if (hist_time_period == "weekly") {
         data_source <- drone_treatments %>%
           mutate(time_period = paste0(year(inspdate), "-W", sprintf("%02d", week(inspdate))))
@@ -220,10 +220,13 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   if (hist_display_metric == "treatments") {
     summary_data <- grouped_data %>%
       summarize(value = n(), .groups = "drop")
+  } else if (hist_display_metric == "treatment_acres") {
+    summary_data <- grouped_data %>%
+      summarize(value = sum(treated_acres, na.rm = TRUE), .groups = "drop")
   } else if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
     summary_data <- grouped_data %>%
       summarize(value = n_distinct(sitecode), .groups = "drop")
-  } else if (hist_display_metric == "acres" || hist_display_metric == "active_acres") {
+  } else if (hist_display_metric == "site_acres" || hist_display_metric == "acres" || hist_display_metric == "active_acres") {
     summary_data <- grouped_data %>%
       summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
   }

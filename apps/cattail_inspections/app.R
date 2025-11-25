@@ -25,6 +25,8 @@ source("progress_functions.R")
 source("historical_functions.R")
 
 ui <- fluidPage(
+  # Use universal CSS from db_helpers for consistent text sizing
+  get_universal_text_css(),
   titlePanel("Cattail Inspection Progress and Treatment Planning"),
   
   tabsetPanel(

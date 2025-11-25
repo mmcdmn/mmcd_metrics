@@ -44,6 +44,8 @@ for (path in env_paths) {
 
 # Define UI for the application
 ui <- fluidPage(
+  # Use universal CSS from db_helpers for consistent text sizing
+  get_universal_text_css(),
   # Application title
   titlePanel("SUCO Analysis Dashboard"),
 

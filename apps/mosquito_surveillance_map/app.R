@@ -73,6 +73,8 @@ dfmapMISS2163UTM <- st_transform(dfmapMISS4326, crs=2163)
 
 
 ui <- fluidPage(
+  # Use universal CSS from db_helpers for consistent text sizing
+  get_universal_text_css(),
   theme = bslib::bs_theme(bootswatch = "united"),
   
   # Add header with data last updated info

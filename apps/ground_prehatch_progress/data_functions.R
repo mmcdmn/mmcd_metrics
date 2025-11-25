@@ -46,20 +46,14 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       if (end_year >= current_year) {
         current_query <- sprintf("
         SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-               c.acres as treated_acres, p.effect_days, 'current' as data_source
-        FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
-        JOIN (
-          SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
-                 b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
-                 sc.fosarea as foreman
-          FROM loc_breeding_sites b
-          LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-          WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
-            AND b.air_gnd='G'
-            AND b.prehatch IN ('PREHATCH','BRIQUET')
-        ) a ON c.sitecode = a.sitecode
-        JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
-        ", current_year, current_year, current_year)
+               c.acres as treated_acres, sc.facility, sc.zone, sc.fosarea,
+               p.effect_days, 'current' as data_source
+        FROM dblarv_insptrt_current c
+        JOIN gis_sectcode sc ON left(c.sitecode, 7) = sc.sectcode
+        JOIN mattype_list_targetdose p ON c.matcode = p.matcode
+        WHERE c.inspdate >= '%d-01-01' AND c.inspdate <= '%d-12-31'
+          AND p.prehatch IS TRUE
+        ", current_year, current_year)
         query_parts <- c(query_parts, current_query)
       }
       
@@ -68,20 +62,14 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
         archive_end_year <- min(end_year, current_year - 1)
         archive_query <- sprintf("
         SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-               c.acres as treated_acres, p.effect_days, 'archive' as data_source
-        FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate>='%d-01-01' AND inspdate <= '%d-12-31') c
-        JOIN (
-          SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
-                 b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
-                 sc.fosarea as foreman
-          FROM loc_breeding_sites b
-          LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-          WHERE (b.enddate IS NULL OR b.enddate>'%d-05-01')
-            AND b.air_gnd='G'
-            AND b.prehatch IN ('PREHATCH','BRIQUET')
-        ) a ON c.sitecode = a.sitecode
-        JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
-        ", start_year, archive_end_year, start_year)
+               c.acres as treated_acres, sc.facility, sc.zone, sc.fosarea,
+               p.effect_days, 'archive' as data_source
+        FROM dblarv_insptrt_archive c
+        JOIN gis_sectcode sc ON left(c.sitecode, 7) = sc.sectcode
+        JOIN mattype_list_targetdose p ON c.matcode = p.matcode
+        WHERE c.inspdate >= '%d-01-01' AND c.inspdate <= '%d-12-31'
+          AND p.prehatch IS TRUE
+        ", start_year, archive_end_year)
         query_parts <- c(query_parts, archive_query)
       }
       
@@ -91,7 +79,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
         treatments_query <- paste(treatments_query, "ORDER BY inspdate DESC, sitecode")
       } else {
         # Fallback empty query
-        treatments_query <- "SELECT NULL::text as sitecode, NULL::date as inspdate, NULL::text as matcode, NULL::time as insptime, NULL::numeric as treated_acres, NULL::integer as effect_days, NULL::text as data_source WHERE FALSE"
+        treatments_query <- "SELECT NULL::text as sitecode, NULL::date as inspdate, NULL::text as matcode, NULL::time as insptime, NULL::numeric as treated_acres, NULL::text as facility, NULL::text as zone, NULL::text as fosarea, NULL::integer as effect_days, NULL::text as data_source WHERE FALSE"
       }
     } else {
       # Current mode: use exact working pattern with current year from analysis_date

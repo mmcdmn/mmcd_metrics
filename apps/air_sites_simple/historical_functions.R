@@ -539,19 +539,22 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
     layout(
       title = list(
         text = paste0("Treatment and Inspection Volume (", stringr::str_to_title(time_period), ")"),
-        font = list(size = 16, color = "#2c3e50")
+        font = list(size = 20, color = "#2c3e50")
       ),
       xaxis = list(
-        title = list(text = x_title, font = list(size = 12)),
+        title = list(text = x_title, font = list(size = 18)),
+        tickfont = list(size = 16),
         tickangle = if(time_period == "weekly" && nrow(chart_data) > 8) -45 else 0
       ),
       yaxis = list(
-        title = list(text = "Number of Operations", font = list(size = 12)),
+        title = list(text = "Number of Operations", font = list(size = 18)),
+        tickfont = list(size = 16),
         side = "left",
         color = "#3498db"
       ),
       yaxis2 = list(
-        title = list(text = "Acres Treated", font = list(size = 12)),
+        title = list(text = "Acres Treated", font = list(size = 18)),
+        tickfont = list(size = 16),
         side = "right",
         overlaying = "y",
         color = "#e74c3c"
@@ -561,7 +564,8 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
         x = 0.02, y = 0.98,
         bgcolor = "rgba(255,255,255,0.8)",
         bordercolor = "rgba(0,0,0,0.2)",
-        borderwidth = 1
+        borderwidth = 1,
+        font = list(size = 16)
       ),
       margin = list(t = 60, r = 80, b = 60, l = 60),
       barmode = 'group'

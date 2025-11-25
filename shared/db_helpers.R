@@ -894,7 +894,9 @@ get_status_color_map <- function() {
     "Unknown" = status_colors["unknown"],
     "Needs Inspection" = status_colors["planned"],      # Orange/yellow for needs inspection
     "Under Threshold" = status_colors["completed"],
-    "In Lab" = status_colors["in_lab"],                              
+    "Inspected" = status_colors["completed"],           # Reuse completed color for inspected
+    "Needs ID" = status_colors["in_lab"],               # Purple for needs ID (formerly In Lab)
+    "In Lab" = status_colors["in_lab"],                 # Keep for backwards compatibility              
     "Needs Treatment" = status_colors["needs_treatment"],
     "Active Treatment" = status_colors["active"]
   ))
@@ -1318,4 +1320,147 @@ export_csv_safe <- function(data,
       error_details = e$message
     ))
   })
+}
+
+# =============================================================================
+# UNIVERSAL CSS HELPER FOR SHINY DASHBOARDS
+# =============================================================================
+
+#' Get Universal CSS for Text Size Increase
+#' 
+#' Returns HTML tags with CSS styling to increase all text sizes by 4px
+#' across a Shiny dashboard. This provides consistent text sizing across
+#' all MMCD dashboard applications.
+#' 
+#' Usage:
+#' ```r
+#' # In your Shiny UI:
+#' ui <- dashboardPage(
+#'   dashboardHeader(...),
+#'   dashboardSidebar(...),
+#'   dashboardBody(
+#'     get_universal_text_css(),  # Add this line
+#'     tabItems(...)
+#'   )
+#' )
+#' ```
+#' 
+#' @param base_increase Numeric. Base font size increase in pixels (default: 4)
+#' @return HTML tags containing CSS styles
+#' @export
+get_universal_text_css <- function(base_increase = 4) {
+  
+  # Calculate all font sizes based on standard defaults + increase
+  base_size <- 14 + base_increase      # 18px
+  label_size <- 14 + base_increase     # 18px
+  box_title_size <- 18 + base_increase # 22px
+  header_size <- 16 + base_increase    # 20px
+  table_size <- 14 + base_increase     # 18px
+  table_header_size <- 14 + base_increase # 18px
+  valuebox_h3 <- 18 + base_increase    # 22px
+  valuebox_p <- 14 + base_increase     # 18px
+  infobox_size <- 14 + base_increase   # 18px
+  
+  shiny::tags$head(
+    shiny::tags$style(shiny::HTML(paste0("
+      /* Universal MMCD Dashboard Text Size Increase - Base +", base_increase, "px */
+      
+      /* Increase base font size */
+      body, .content-wrapper, .main-sidebar, .sidebar {
+        font-size: ", base_size, "px !important;
+      }
+      
+      /* Increase input labels and text */
+      label, .control-label {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase select input text */
+      .selectize-input, .selectize-dropdown {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase radio button and checkbox text */
+      .radio label, .checkbox label {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase box titles */
+      .box-title {
+        font-size: ", box_title_size, "px !important;
+      }
+      
+      /* Increase button text */
+      .btn {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase input field text */
+      input[type='text'], input[type='number'], input[type='date'], textarea, select {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase tab text */
+      .nav-tabs > li > a {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase sidebar menu text */
+      .sidebar-menu > li > a {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Increase value box text */
+      .small-box h3 {
+        font-size: ", valuebox_h3, "px !important;
+      }
+      
+      .small-box p {
+        font-size: ", valuebox_p, "px !important;
+      }
+      
+      /* Increase info box text */
+      .info-box-text, .info-box-number {
+        font-size: ", infobox_size, "px !important;
+      }
+      
+      /* Increase DT table text */
+      table.dataTable {
+        font-size: ", table_size, "px !important;
+      }
+      
+      table.dataTable thead th {
+        font-size: ", table_header_size, "px !important;
+      }
+      
+      /* Increase dashboard header text */
+      .main-header .logo, .main-header .navbar {
+        font-size: ", header_size, "px !important;
+      }
+      
+      /* Increase help text and small text */
+      .text-muted, small, .small {
+        font-size: ", base_size - 2, "px !important;
+      }
+      
+      /* Increase modal text */
+      .modal-body, .modal-title {
+        font-size: ", label_size, "px !important;
+      }
+      
+      /* Reset datepicker calendar to normal size to prevent overflow */
+      .datepicker, .datepicker table {
+        font-size: 14px !important;
+      }
+      
+      .datepicker td, .datepicker th {
+        padding: 4px 5px !important;
+        font-size: 14px !important;
+      }
+      
+      .datepicker-dropdown {
+        font-size: 14px !important;
+      }
+    ")))
+  )
 }

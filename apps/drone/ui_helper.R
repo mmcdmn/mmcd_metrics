@@ -4,6 +4,8 @@
 #' @return Shiny UI object
 drone_ui <- function() {
   fluidPage(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
     # Application title
     titlePanel("Drone Sites with Active and Expiring Treatments"),
     
@@ -40,9 +42,9 @@ drone_ui <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'yearly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                         choices = c("Number of Sites" = "sites",
-                                     "Number of Treatments" = "treatments", 
-                                     "Number of Acres" = "acres"),
+                         choices = c("Sites Treated" = "sites",
+                                     "Site Acres (Unique)" = "site_acres",
+                                     "Treatment Acres (Total)" = "treatment_acres"),
                          selected = "sites")
           ),
           conditionalPanel(
@@ -124,7 +126,18 @@ drone_ui <- function() {
         
         # Refresh button
         hr(),
-        actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;")
+        actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;"),
+        
+        # Help text for historical metrics (collapsible)
+        hr(),
+        div(id = "help-section",
+          tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
+                 style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
+                 HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
+          div(style = "display: none;",
+            create_help_text()
+          )
+        )
       ),
       
       # Main panel with tabs
@@ -185,6 +198,56 @@ drone_ui <- function() {
           )
         )
       )
+    )
+  )
+}
+
+# Create help text for historical metrics
+create_help_text <- function() {
+  div(
+    style = "margin: 10px; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; font-size: 16px;",
+    h4("Understanding Historical Metrics", style = "margin-top: 0; font-size: 20px;"),
+    
+    p(style = "margin-bottom: 15px; font-size: 16px;",
+      strong("Time Period Differences:"),
+      " Historical metrics can be viewed ", strong("yearly"), " or ", strong("weekly"), ":"
+    ),
+    
+    tags$ul(style = "font-size: 16px;",
+      tags$li(strong("Yearly metrics"), " show totals for each calendar year"),
+      tags$li(strong("Weekly metrics"), " show which sites had active treatments on Fridays (tracking persistence over time)")
+    ),
+    
+    hr(style = "margin: 15px 0;"),
+    
+    h5("Yearly Metric Definitions", style = "font-size: 18px;"),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Sites Treated:"), " The number of unique sites that received at least one drone treatment during the time period."
+    ),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Site Acres (Unique):"), " The sum of site acreages, counting each site only once regardless of how many times it was treated.",
+      br(),
+      em("Example: If Site A (20 acres) is treated 3 times, it contributes 20 acres to this metric.")
+    ),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Treatment Acres (Total):"), " The sum of all treated acres from all treatment applications.",
+      br(),
+      em("Example: If Site A (20 acres) is treated 3 times with 10, 15, and 12 acres respectively, this metric shows 37 acres (10+15+12).")
+    ),
+    
+    hr(style = "margin: 15px 0;"),
+    
+    h5("Weekly Metric Definitions", style = "font-size: 18px;"),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Active Sites:"), " The number of sites with active drone treatments on each Friday, based on the treatment date plus the material's effect days."
+    ),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Active Acres:"), " The total acres of sites with active treatments on each Friday."
     )
   )
 }

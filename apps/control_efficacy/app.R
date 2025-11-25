@@ -57,6 +57,9 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
+    
     tags$head(
       tags$style(HTML("
         .content-wrapper, .right-side {

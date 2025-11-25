@@ -61,6 +61,77 @@ server <- function(input, output, session) {
     }
   })
   
+  # ============= DYNAMIC BUTTON RENDERING =============
+  # Gaps button with count
+  output$gaps_button_ui <- renderUI({
+    if (input$load_data == 0) {
+      actionButton("analyze_gaps", 
+        " Analyze Inspection Gaps", 
+        class = "btn-refresh", 
+        style = "width: 100%; padding: 12px;")
+    } else {
+      comp_data <- comprehensive_data()
+      filtered_data <- comp_data
+      if (!is.null(input$air_gnd) && input$air_gnd != "both") {
+        filtered_data <- filtered_data %>% filter(air_gnd == input$air_gnd)
+      }
+      gap_result <- get_inspection_gaps_from_data(filtered_data, input$years_gap %||% 3, Sys.Date())
+      count <- format(nrow(gap_result), big.mark = ",")
+      years <- input$years_gap %||% 3
+      actionButton("analyze_gaps", 
+        paste0(count, " sites with gaps ≥ ", years, " years"), 
+        class = "btn-refresh", 
+        style = "width: 100%; padding: 12px;")
+    }
+  })
+  
+  # Wet frequency button with count
+  output$wet_button_ui <- renderUI({
+    if (input$load_data == 0) {
+      actionButton("analyze_wet", 
+        " Analyze Wet Frequency", 
+        class = "btn-refresh", 
+        style = "width: 100%; padding: 12px;")
+    } else {
+      comp_data <- comprehensive_data()
+      filtered_data <- comp_data
+      if (!is.null(input$air_gnd) && input$air_gnd != "both") {
+        filtered_data <- filtered_data %>% filter(air_gnd == input$air_gnd)
+      }
+      wet_result <- get_wet_frequency_from_data(filtered_data, input$air_gnd %||% "both", 
+                                                 input$min_inspections %||% 5, 5)
+      count <- format(nrow(wet_result), big.mark = ",")
+      min_insp <- input$min_inspections %||% 5
+      actionButton("analyze_wet", 
+        paste0(count, " sites with ≥ ", min_insp, " inspections"), 
+        class = "btn-refresh", 
+        style = "width: 100%; padding: 12px;")
+    }
+  })
+  
+  # Larvae button with count
+  output$larvae_button_ui <- renderUI({
+    if (input$load_data == 0) {
+      actionButton("analyze_larvae", 
+        " Find High Dip Count Sites", 
+        class = "btn-refresh", 
+        style = "width: 100%; padding: 12px;")
+    } else {
+      comp_data <- comprehensive_data()
+      filtered_data <- comp_data
+      if (!is.null(input$air_gnd) && input$air_gnd != "both") {
+        filtered_data <- filtered_data %>% filter(air_gnd == input$air_gnd)
+      }
+      larvae_result <- get_high_larvae_sites_from_data(filtered_data, input$larvae_threshold %||% 2, 5, input$air_gnd %||% "both")
+      count <- format(nrow(larvae_result), big.mark = ",")
+      threshold <- input$larvae_threshold %||% 2
+      actionButton("analyze_larvae", 
+        paste0(count, " sites with larvae ≥ ", threshold, " in the last 5 years"), 
+        class = "btn-refresh", 
+        style = "width: 100%; padding: 12px;")
+    }
+  })
+  
   # ============= INSPECTION GAPS TAB =============
   gap_data <- eventReactive(input$analyze_gaps, {
     if (input$load_data == 0) {

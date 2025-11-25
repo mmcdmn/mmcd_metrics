@@ -277,15 +277,15 @@ create_wet_frequency_chart <- function(data) {
   layout(
     title = list(text = "Distribution of Wet Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
     xaxis = list(
-      title = list(text = "Wet Frequency Range", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+      title = list(text = "Wet Frequency Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
     ),
     yaxis = list(
-      title = list(text = "Number of Sites", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+      title = list(text = "Number of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
     ),
     margin = list(l = 70, r = 30, t = 100, b = 70),
-    font = list(size = 14, family = "Arial, sans-serif")
+    font = list(size = 18, family = "Arial, sans-serif")
   )
   
   return(p)
@@ -319,15 +319,16 @@ create_priority_chart <- function(data) {
     values = ~count,
     type = 'pie',
     marker = list(colors = colors[priority_counts$priority]),
-    textfont = list(size = 14, family = "Arial, sans-serif", color = "white"),
+    textfont = list(size = 18, family = "Arial, sans-serif", color = "white"),
     textinfo = "label+percent",
     textposition = "inside"
   ) %>%
   layout(
     title = list(text = "Sites by Priority Level", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
     margin = list(l = 20, r = 20, t = 100, b = 20),
-    font = list(size = 14, family = "Arial, sans-serif"),
-    legend = list(font = list(size = 14, family = "Arial, sans-serif"))
+    font = list(size = 18, family = "Arial, sans-serif"),
+    legend = list(font = list(size = 18, family = "Arial, sans-serif")),
+    textfont = list(size = 18, family = "Arial, sans-serif", color = "white")
   )
   
   return(p)
@@ -337,7 +338,7 @@ create_priority_chart <- function(data) {
 create_exceedance_frequency_chart <- function(data) {
   if (nrow(data) == 0) return(NULL)
   
-  # Create frequency bins for exceedance rates
+  # Create frequency bins for exceedance rates with ordered levels
   freq_bins <- cut(data$exceedance_frequency,
                   breaks = c(0, 5, 15, 30, 50, 75, 100),
                   labels = c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%"),
@@ -345,9 +346,17 @@ create_exceedance_frequency_chart <- function(data) {
   
   bin_counts <- table(freq_bins)
   
+  # Ensure proper ordering of factor levels
+  ordered_labels <- c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%")
+  freq_df <- data.frame(
+    bin = factor(names(bin_counts), levels = ordered_labels),
+    count = as.numeric(bin_counts)
+  )
+  
   p <- plot_ly(
-    x = names(bin_counts),
-    y = as.numeric(bin_counts),
+    data = freq_df,
+    x = ~bin,
+    y = ~count,
     type = 'bar',
     marker = list(color = 'lightcoral', line = list(color = 'darkred', width = 1))
   ) %>%
@@ -355,6 +364,8 @@ create_exceedance_frequency_chart <- function(data) {
     title = list(text = "Distribution of Exceedance Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
     xaxis = list(
       title = list(text = "Exceedance Frequency Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      categoryorder = "array",
+      categoryarray = ordered_labels,
       tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
     ),
     yaxis = list(
@@ -397,17 +408,17 @@ create_larvae_distribution_chart <- function(data) {
   layout(
     title = list(text = "Average Dip Count Distribution", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
     xaxis = list(
-      title = list(text = "Average Dip Count Range", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
+      title = list(text = "Average Dip Count Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
       categoryorder = "array", 
       categoryarray = ordered_labels,
-      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
     ),
     yaxis = list(
-      title = list(text = "Number of Sites", font = list(size = 16, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 14, family = "Arial, sans-serif", color = "#333")
+      title = list(text = "Number of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
     ),
     margin = list(l = 70, r = 30, t = 100, b = 70),
-    font = list(size = 14, family = "Arial, sans-serif")
+    font = list(size = 18, family = "Arial, sans-serif")
   )
   
   return(p)
@@ -431,13 +442,16 @@ create_facility_gap_chart <- function(facility_analysis) {
       recently_inspected_percentage = round(100 * recently_inspected_sites / total_sites, 1)
     )
   
+  # Map facility codes to display names
+  facility_summary <- map_facility_names(facility_summary)
+  
   # Calculate overall percentage of green sites across all facilities
   overall_green_pct <- round(100 * sum(facility_summary$recently_inspected_sites) / sum(facility_summary$total_sites), 1)
   
   # Create the stacked percentage bar chart (each bar = 100%)
   p <- plot_ly(facility_summary) %>%
     add_trace(
-      x = ~facility, 
+      x = ~facility_display, 
       y = ~recently_inspected_percentage, 
       type = 'bar',
       name = "Recently Inspected",
@@ -448,7 +462,7 @@ create_facility_gap_chart <- function(facility_analysis) {
       marker = list(color = '#4CAF50')  # Green for good
     ) %>%
     add_trace(
-      x = ~facility, 
+      x = ~facility_display, 
       y = ~gap_percentage,
       type = 'bar', 
       name = "Has Inspection Gap",
@@ -464,21 +478,21 @@ create_facility_gap_chart <- function(facility_analysis) {
         title = list(text = "Facility", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
         tickangle = -45,
         categoryorder = "array",
-        categoryarray = unique(facility_summary$facility),
+        categoryarray = unique(facility_summary$facility_display),
         tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
       ),
       yaxis = list(
         title = list(text = "Percentage of Total Sites in Category", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
         tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
-        range = c(0, 110)  # Extend range to 110% to provide space for hover text above bars
+        range = c(0, 115)  # Extend range to 115% to provide space for hover text above bars
       ),
       barmode = 'stack',
-      margin = list(l = 80, r = 30, t = 100, b = 160),
+      margin = list(l = 80, r = 30, t = 80, b = 200),
       legend = list(
         orientation = "h",
         x = 0.5,
         xanchor = "center",
-        y = -0.55,
+        y = -0.25,
         font = list(size = 18, family = "Arial, sans-serif")
       ),
       font = list(size = 18, family = "Arial, sans-serif"),
@@ -486,7 +500,7 @@ create_facility_gap_chart <- function(facility_analysis) {
         text = paste0("Each bar shows percentage of green (recently inspected) sites in all facilities. Overall: ", overall_green_pct, "% of sites are recently inspected."),
         showarrow = FALSE,
         x = 0.5,
-        y = -0.4,
+        y = -0.98,
         xref = "paper",
         yref = "paper",
         font = list(size = 16, color = "#666", family = "Arial, sans-serif")

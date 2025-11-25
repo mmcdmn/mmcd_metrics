@@ -12,6 +12,8 @@ trap_ui <- function() {
       )
     ),
     dashboardBody(
+      # Use universal CSS from db_helpers for consistent text sizing
+      get_universal_text_css(),
       tabItems(
         tabItem(tabName = "map_leaflet",
           fluidRow(

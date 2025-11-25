@@ -39,7 +39,8 @@ LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
   - [SUCO History](#suco-history) - [Notes](apps/suco_history/NOTES.md)
   - [Drone Treatment](#drone-treatment) -[Notes](apps/drone/NOTES.md)
   - [Structural Treatment](#structural-treatment) - [Notes](apps/struct_trt/NOTES.md)
-  - [Cattail Management](#cattail-management) - [Notes](apps/cattail/NOTES.md)
+  - [Cattail Inspections](#cattail-inspections) - [Notes](apps/cattail_inspections/NOTES.md)
+  - [Cattail Treatments](#cattail-treatments) - [Notes](apps/cattail_treatments/NOTES.md)
   - [Ground Prehatch Progress](#ground-prehatch-progress) - [Notes](apps/ground_prehatch_progress/NOTES.md)
   - [Red Air Pipeline](#red-air-pipeline)
   - [Mosquito Surveillance Map](#mosquito-surveillance-map)
@@ -105,13 +106,22 @@ mmcd_metrics/
 │   │   ├── ui_helpers.R          # UI component functions
 │   │   ├── NOTES.md              # Technical documentation
 │   │   └── NOTES.html            # HTML documentation
-│   ├── cattail/                  # Comprehensive cattail management (modular structure)
-│   │   ├── app.R                 # Main application logic
-│   │   ├── planned_treatment_functions.R # Treatment planning functions
-│   │   ├── progress_functions.R  # Progress tracking functions
-│   │   ├── historical_functions.R # Historical data functions
-│   │   ├── NOTES.md              # Technical documentation
-│   │   └── NOTES.html            # HTML documentation
+  ├── cattail_inspections/          # Cattail inspection tracking (modular structure)
+  │   ├── app.R                 # Main application logic
+  │   ├── data_functions.R      # Data processing and database queries
+  │   ├── display_functions.R   # Visualization and chart generation
+  │   ├── historical_functions.R # Historical analysis functions
+  │   ├── ui_helper.R           # UI component functions
+  │   ├── NOTES.md              # Technical documentation
+  │   └── NOTES.html            # HTML documentation
+  ├── cattail_treatments/       # Cattail treatment tracking (modular structure)
+  │   ├── app.R                 # Main application logic
+  │   ├── data_functions.R      # Data processing and database queries
+  │   ├── display_functions.R   # Visualization and chart generation
+  │   ├── historical_functions.R # Historical analysis with DOY-based inspection years
+  │   ├── ui_helper.R           # UI component functions
+  │   ├── NOTES.md              # Technical documentation
+  │   └── NOTES.html            # HTML documentation
 │   ├── red_air_legacy/           # Legacy air treatment pipeline
 │   │   ├── app.R                 # Main application logic
 │   │   ├── air_status_functions.R # Air site status processing
@@ -210,19 +220,44 @@ mmcd_metrics/
   - Date simulation ("pretend today is") functionality
   - Snapshot and priority breakdowns for comprehensive analysis
 
-### Cattail 
-- **Path**: `/cattail/`
-- **Purpose**: Comprehensive cattail  dashboard with inspection tracking and treatment planning
-- **Documentation**: [Technical Notes](apps/cattail/NOTES.md)
+### Cattail Inspections
+- **Path**: `/cattail_inspections/`
+- **Purpose**: Track cattail inspection progress and site assessments
+- **Documentation**: [Technical Notes](apps/cattail_inspections/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with multi-tab interface
+  - **`data_functions.R`**: Database queries, site calculations, and inspection data processing
+  - **`display_functions.R`**: Chart generation, progress visualizations, and map displays
+  - **`historical_functions.R`**: Historical trend analysis functions
+  - **`ui_helper.R`**: UI component functions and interface helpers
 - **Features**:
-  - **Inspection Progress Tab**: Track completed cattail inspections versus annual goals
-  - **Treatment Planning Tab**: Planning and tracking dashboard for cattail treatments
-  - Real-time inspection status monitoring and progress metrics
-  - Facility-level inspection performance analysis
-  - Planned treatment area visualization and resource allocation
-  - Schedule and resource allocation tracking for targeted cattail habitat 
-  - Centralized color system for consistent status visualization
-  - Modular external function files for treatment planning functionality
+  - Real-time inspection progress tracking
+  - Site assessment and status monitoring
+  - Facility and zone filtering
+  - Historical inspection trend analysis
+  - Interactive maps showing inspection status
+  - Progress metrics and completion rates
+
+### Cattail Treatments
+- **Path**: `/cattail_treatments/`
+- **Purpose**: Track cattail treatment applications and effectiveness with DOY-based inspection year logic
+- **Documentation**: [Technical Notes](apps/cattail_treatments/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with multi-tab interface (Progress, Historical, Map)
+  - **`data_functions.R`**: Database queries, treatment calculations, and data processing
+  - **`display_functions.R`**: Chart generation with multiple chart types (line/bar/stacked), progress visualizations
+  - **`historical_functions.R`**: Historical analysis with DOY-based inspection year calculation (Fall-Summer seasonal cycles)
+  - **`ui_helper.R`**: UI component functions and reusable interface elements
+- **Features**:
+  - **Progress Tab**: Current treatment status with 3 chart types and zone separation
+  - **Historical Tab**: Multi-year trends using DOY-based inspection years (Fall Year N + Summer Year N+1)
+  - **Inspection Year Logic**: DOY 244-365 (Fall) and DOY 135-213 (Summer) seasonal definitions
+  - Multiple display metrics: Sites Treated (as of Aug 1), % Treated, Sites Need Treatment
+  - Chart type options: Line charts, grouped bar charts, stacked bar charts
+  - Zone filtering: P1/P2 separate or combined display
+  - Facility and foreman grouping options
+  - Treatment effectiveness tracking
+  - Consistent color schemes from centralized `db_helpers.R`
 
 ### Ground Prehatch Progress
 - **Path**: `/ground_prehatch_progress/`
@@ -626,7 +661,8 @@ facilities <- get_facility_choices(include_all = TRUE)
 - **SUCO History**: `http://localhost:3838/suco_history/`
 - **Drone Treatment**: `http://localhost:3838/drone/`
 - **Structural Treatment**: `http://localhost:3838/struct_trt/`
-- **Cattail Management**: `http://localhost:3838/cattail/`
+- **Cattail Inspections**: `http://localhost:3838/cattail_inspections/`
+- **Cattail Treatments**: `http://localhost:3838/cattail_treatments/`
 - **Control Efficacy**: `http://localhost:3838/control_efficacy/`
 - **Ground Prehatch Progress**: `http://localhost:3838/ground_prehatch_progress/`
 - **Red Air Pipeline**: `http://localhost:3838/red_air/`
@@ -921,4 +957,10 @@ telnet your-database-host.com 5432
 sudo ufw status
 
 # For testing purposes, you can modify applications to use sample data instead of live connections
+```
+
+
+# One line remove all used ports and run new
+```bash
+docker stop mmcd-dashboard && docker rm mmcd-dashboard && cd /home/alex/Documents/mmcd/mmcd_metrics && docker build -t mmcd-dashboard . 2>&1 | tail -2 && docker run -d --name mmcd-dashboard -p 3838:3838 -e DB_HOST=rds-readonly.mmcd.org -e DB_PORT=5432 -e DB_USER=mmcd_read -e DB_PASSWORD=mmcd2012 -e DB_NAME=mmcd_data mmcd-dashboard
 ```

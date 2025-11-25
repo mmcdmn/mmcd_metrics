@@ -80,7 +80,7 @@ ui <- dashboardPage(
         
         fluidRow(
           box(
-            title = "Current Inspection Progress", status = "primary", solidHeader = TRUE,
+            title = "Current Cattail Progress", status = "primary", solidHeader = TRUE,
             width = 8, height = "500px",
             plotlyOutput("timeline_chart", height = "450px")
           ),
@@ -93,9 +93,9 @@ ui <- dashboardPage(
         
         fluidRow(
           box(
-            title = "Recent Activity", status = "primary", solidHeader = TRUE,
+            title = "Status table", status = "primary", solidHeader = TRUE,
             width = 12, 
-            DTOutput("recent_activity_table")
+            DTOutput("status_table")
           )
         )
       ),
@@ -160,22 +160,27 @@ ui <- dashboardPage(
             title = "Historical Analysis Settings", status = "primary", solidHeader = TRUE,
             width = 12, collapsible = TRUE,
             fluidRow(
-              column(2, create_time_period_selector()),
-              column(2, selectInput("hist_display_metric", "Metric:",
+              column(4, create_year_range_selector()),
+              column(4, selectInput("hist_display_metric", "Metric:",
                                    choices = list(
-                                     "Sites Inspected" = "sites",
-                                     "Sites Need Treatment" = "need_treatment",
-                                     "Number of Inspections" = "inspections"
+                                     "Sites Need Treatment (as of December 1)" = "need_treatment",
+                                     "Sites Treated (as of Aug 1)" = "treated",
+                                     "% Treated of Need Treatment (as of Aug 1)" = "pct_treated"
                                    ),
-                                   selected = "sites")),
-              column(2, create_year_range_selector()[[1]]),
-              column(2, create_year_range_selector()[[2]]),
+                                   selected = "need_treatment")),
               column(2, create_chart_type_selector()),
-              column(2, dateRangeInput("hist_date_range", "Date Range:",
-                                     start = Sys.Date() - 365,
-                                     end = Sys.Date(),
-                                     format = "yyyy-mm-dd",
-                                     width = "100%"))
+              column(2, actionButton("refresh_historical", "Refresh Data", 
+                                   icon = icon("refresh"),
+                                   class = "btn-primary",
+                                   style = "margin-top: 25px; width: 100%;"))
+            ),
+            fluidRow(
+              column(12, 
+                tags$p(
+                  style = "margin-top: 10px; font-style: italic; color: #666;",
+                  "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug). Year 2022 = Fall 2022 through Summer 2023."
+                )
+              )
             )
           )
         ),
@@ -228,21 +233,16 @@ server <- function(input, output, session) {
     filter_choices = NULL
   )
   
-  # Initialize facility choices from db_helpers - runs immediately on app load
+  # Initialize filter choices on app startup
   observe({
-    facility_choices <- get_facility_choices()
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
-  })
-  
-  # Initialize foreman choices from db_helpers - runs immediately on app load
-  observe({
-    foremen_lookup <- get_foremen_lookup()
-    foremen_choices <- c("All" = "all")
-    foremen_choices <- c(
-      foremen_choices,
-      setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
-    )
-    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+    basic_choices <- get_basic_filter_choices()
+    
+    # Initialize facility choices
+    if (length(basic_choices$facilities) > 0) {
+      facility_choices <- c("All" = "all")
+      facility_choices <- c(facility_choices, setNames(basic_choices$facility_codes, basic_choices$facilities))
+      updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    }
   })
   
   # Refresh data when button clicked - ONLY source of data loading
@@ -283,8 +283,7 @@ server <- function(input, output, session) {
       values$filtered_data <- filter_cattail_data(
         values$raw_data,
         zone_filter = zone_filter,
-        facility_filter = if("all" %in% input$facility_filter || is.null(input$facility_filter)) "all" else input$facility_filter,
-        foreman_filter = if("all" %in% input$foreman_filter || is.null(input$foreman_filter)) "all" else input$foreman_filter
+        facility_filter = if("all" %in% input$facility_filter || is.null(input$facility_filter)) "all" else input$facility_filter
       )
       
       if (!is.null(values$filtered_data)) {
@@ -293,60 +292,32 @@ server <- function(input, output, session) {
     }
   })
   
-  # Create value boxes
+  # Create value boxes using aggregated data
   cattail_values <- reactive({
-    if (is.null(values$filtered_data) || is.null(values$filtered_data$cattail_sites)) {
+    if (is.null(values$aggregated_data) || is.null(values$aggregated_data$total_summary)) {
       return(list(
         total_sites = 0, total_acres = 0, sites_inspected = 0,
-        sites_need_treatment = 0, inspection_coverage = 0, percent_need_treatment = 0
+        sites_need_treatment = 0, sites_treated = 0, 
+        percent_need_treatment = 0, percent_treated = 0
       ))
     }
     
-    cattail_sites <- values$filtered_data$cattail_sites
-    
-    if (nrow(cattail_sites) == 0) {
-      return(list(
-        total_sites = 0, total_acres = 0, sites_inspected = 0,
-        sites_need_treatment = 0, inspection_coverage = 0, percent_need_treatment = 0
-      ))
-    }
-    
-    # Calculate the actual metrics - only inspected sites (action 9) this year
-    sites_under_threshold <- sum(cattail_sites$state == "under_threshold", na.rm = TRUE)
-    sites_need_treatment <- sum(cattail_sites$state == "need_treatment", na.rm = TRUE)
-    sites_treated <- sum(cattail_sites$state == "treated", na.rm = TRUE)
-    sites_inspected <- sites_under_threshold + sites_need_treatment + sites_treated
+    summary <- values$aggregated_data$total_summary
     
     list(
-      sites_inspected = sites_inspected,  # This is the "total" 
-      total_acres = round(sum(cattail_sites$acres, na.rm = TRUE), 1),
-      sites_under_threshold = sites_under_threshold,
-      sites_need_treatment = sites_need_treatment,
-      sites_treated = sites_treated,
-      percent_need_treatment = if(sites_inspected > 0) round(sites_need_treatment / sites_inspected * 100, 1) else 0,
-      percent_treated = if(sites_inspected > 0) round(sites_treated / sites_inspected * 100, 1) else 0
+      sites_inspected = summary$inspected_sites,
+      total_acres = round(summary$total_acres, 1),
+      sites_under_threshold = summary$under_threshold_sites,
+      sites_need_treatment = summary$need_treatment_sites,
+      sites_treated = summary$treated_sites,  # This should now work!
+      percent_need_treatment = summary$treatment_need_rate,
+      percent_treated = summary$treatment_completion_rate
     )
   })
   
   # Value box outputs
   
-  output$total_acres_box <- renderValueBox({
-    valueBox(
-      value = paste(cattail_values()$total_acres, "ac"),
-      subtitle = "Total Acres", 
-      icon = icon("area-chart"),
-      color = "green"
-    )
-  })
-  
-  output$total_treatments_box <- renderValueBox({
-    valueBox(
-      value = cattail_values()$total_treatments,
-      subtitle = "Treatments Applied",
-      icon = icon("spray-can"),
-      color = "yellow"
-    )
-  })
+  # Value box outputs for Progress tab
   
   output$active_treatments_box <- renderValueBox({
     valueBox(
@@ -449,117 +420,76 @@ server <- function(input, output, session) {
     if (is.null(values$aggregated_data) || nrow(values$aggregated_data) == 0) {
       return(ggplot() + geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) + theme_void())
     }
-    create_treatment_progress_chart(values$aggregated_data, input$group_by)
+    combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
+    create_treatment_progress_chart(values$aggregated_data, input$group_by, input$progress_chart_type, combine_zones)
   })
   
   output$timeline_chart <- renderPlotly({
-    if (is.null(values$filtered_data) || is.null(values$filtered_data$cattail_sites)) {
-      return(ggplot() + geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) + theme_void())
-    }
-    
-    # Create current progress stacked bar chart
-    cattail_sites <- values$filtered_data$cattail_sites
-    
-    # Group by facility (or other grouping) for the stacked bars
-    group_by <- input$group_by
-    if (is.null(group_by)) group_by <- "facility"
-    
-    progress_data <- cattail_sites %>%
-      group_by(
-        group_name = case_when(
-          group_by == "facility" ~ facility,
-          group_by == "foreman" ~ paste("FOS", fosarea),
-          group_by == "sectcode" ~ paste("Section", sectcode),
-          TRUE ~ "All"
-        )
-      ) %>%
-      summarise(
-        inspected_under_threshold = sum(state == "under_threshold", na.rm = TRUE),
-        need_treatment = sum(state == "need_treatment", na.rm = TRUE), 
-        treated = sum(state == "treated", na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      # Reshape for stacked bar chart
-      pivot_longer(
-        cols = c("inspected_under_threshold", "need_treatment", "treated"),
-        names_to = "status",
-        values_to = "count"
-      ) %>%
-      mutate(
-        status = factor(status, 
-                       levels = c("inspected_under_threshold", "need_treatment", "treated"),
-                       labels = c("Inspected (Under Threshold)", "Need Treatment", "Treated"))
-      )
-    
-    # Create stacked bar chart
-    p <- ggplot(progress_data, aes(x = group_name, y = count, fill = status)) +
-      geom_col(position = "stack", width = 0.7) +
-      scale_fill_manual(
-        values = c("Inspected (Under Threshold)" = "lightgrey", 
-                   "Need Treatment" = "firebrick",
-                   "Treated" = "forestgreen")
-      ) +
-      labs(
-        title = "Current Cattail Inspection Progress",
-        x = stringr::str_to_title(group_by),
-        y = "Number of Sites",
-        fill = "Status"
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom"
-      )
-    
-    ggplotly(p, tooltip = c("x", "y", "fill"))
-  })
-  
-  output$efficacy_chart <- renderPlotly({
-    efficacy_data <- data.frame() # No efficacy data yet
-    treatments_data <- if (!is.null(values$filtered_data)) {
-      values$filtered_data$cattail_sites %>% filter(state == "treated")
+    sites_data <- if (!is.null(values$aggregated_data) && !is.null(values$aggregated_data$sites_data)) {
+      values$aggregated_data$sites_data
     } else {
       data.frame()
     }
-    create_efficacy_chart(efficacy_data, treatments_data)
+    
+    combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
+    create_current_progress_chart(sites_data, input$group_by, input$progress_chart_type, combine_zones)
+  })
+  
+  # Charts that need implementation
+  output$efficacy_chart <- renderPlotly({
+    # Placeholder for future efficacy analysis
+    ggplot() + geom_text(aes(x = 1, y = 1, label = "Efficacy Analysis - Coming Soon"), size = 6) + theme_void()
   })
   
   output$planning_calendar <- renderPlotly({
-    plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
-    create_planning_calendar(plans_data)
+    # Placeholder for future planning calendar
+    ggplot() + geom_text(aes(x = 1, y = 1, label = "Planning Calendar - Coming Soon"), size = 6) + theme_void()
+  })
+  
+  # Reactive value to track if historical data should be loaded
+  historical_data_ready <- reactiveVal(FALSE)
+  
+  # Load historical data only when refresh button is clicked
+  observeEvent(input$refresh_historical, {
+    historical_data_ready(TRUE)
   })
   
   output$historical_chart <- renderPlotly({
-    if (is.null(values$raw_data)) {
-      return(ggplot() + geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) + theme_void())
+    # Don't load until refresh button is clicked
+    if (!historical_data_ready()) {
+      return(ggplot() + 
+             geom_text(aes(x = 1, y = 1, label = "Click 'Refresh Data' to load historical analysis"), size = 6) + 
+             theme_void())
     }
     
-    time_period <- input$time_period
+    # Require refresh button click
+    req(input$refresh_historical)
+    
     chart_type <- input$chart_type
     hist_display_metric <- input$hist_display_metric
-    start_year <- input$start_year
-    end_year <- input$end_year
-    hist_date_range <- input$hist_date_range
+    year_range <- input$year_range
     
     # Use defaults if inputs are NULL
-    if (is.null(time_period)) time_period <- "monthly"
     if (is.null(chart_type)) chart_type <- "line"
-    if (is.null(hist_display_metric)) hist_display_metric <- "sites"
-    if (is.null(start_year)) start_year <- 2022
-    if (is.null(end_year)) end_year <- year(Sys.Date())
-    if (is.null(hist_date_range)) {
-      start_date <- as.Date("2022-01-01")
-      end_date <- Sys.Date()
+    if (is.null(hist_display_metric)) hist_display_metric <- "need_treatment"
+    if (is.null(year_range)) {
+      start_year <- max(2022, year(Sys.Date()) - 4)
+      end_year <- year(Sys.Date())
     } else {
-      start_date <- hist_date_range[1]
-      end_date <- hist_date_range[2]
+      start_year <- year_range[1]
+      end_year <- year_range[2]
     }
+    
+    # Convert years to dates - need to include fall of start_year through summer of end_year+1
+    # Fall start_year is Sept 1 of start_year
+    # Summer end_year ends Aug 1 of end_year+1
+    start_date <- as.Date(paste0(start_year, "-09-01"))
+    end_date <- as.Date(paste0(end_year + 1, "-08-01"))
     
     create_historical_analysis_chart(
       values$raw_data, 
       group_by = input$group_by,
-      time_period = time_period,
+      time_period = "yearly",  # Always yearly for inspection year grouping
       chart_type = chart_type,
       display_metric = hist_display_metric,
       start_date = start_date,
@@ -569,46 +499,33 @@ server <- function(input, output, session) {
   })
   
   # Table outputs
+  # Tables that need implementation 
   output$treatments_table <- renderDT({
-    treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$cattail_sites)) {
-      values$filtered_data$cattail_sites %>% filter(state == "treated")
-    } else {
-      data.frame()
-    }
-    foremen_lookup <- if (!is.null(values$filtered_data)) values$filtered_data$foremen_lookup else data.frame()
-    create_treatments_table(treatments_data, foremen_lookup)
+    # Placeholder - will be implemented when treatment tracking is added
+    datatable(data.frame(Message = "Treatment tracking - Coming Soon"), 
+              options = list(dom = 't'), rownames = FALSE)
   })
   
   output$plans_table <- renderDT({
-    plans_data <- data.frame() # No plans data yet
-    foremen_lookup <- if (!is.null(values$filtered_data)) values$filtered_data$foremen_lookup else data.frame()
-    create_plans_table(plans_data, foremen_lookup)
+    # Placeholder - will be implemented when planning module is added  
+    datatable(data.frame(Message = "Treatment planning - Coming Soon"), 
+              options = list(dom = 't'), rownames = FALSE)
   })
   
-  output$recent_activity_table <- renderDT({
-    treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$cattail_sites)) {
-      values$filtered_data$cattail_sites %>% filter(state == "treated")
+  output$status_table <- renderDT({
+    sites_data <- if (!is.null(values$aggregated_data) && !is.null(values$aggregated_data$sites_data)) {
+      values$aggregated_data$sites_data
     } else {
       data.frame()
     }
     
-    if (nrow(treatments_data) > 0) {
-      recent_treatments <- treatments_data %>%
-        arrange(desc(as.Date(inspdate))) %>%
-        head(10) %>%
-        select(
-          Date = inspdate,
-          Sitecode = sitecode,
-          Facility = facility_display,
-          Material = material_name,
-          "Acres Treated" = treated_acres,
-          Status = treatment_status
-        )
-      
-      datatable(recent_treatments, options = list(pageLength = 10, dom = 't'), rownames = FALSE)
+    treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$treatments)) {
+      values$filtered_data$treatments
     } else {
-      datatable(data.frame(Message = "No recent activity"), options = list(dom = 't'), rownames = FALSE)
+      data.frame()
     }
+    
+    create_status_table(sites_data, treatments_data, input$analysis_date)
   })
   
   # Map output
@@ -632,8 +549,7 @@ server <- function(input, output, session) {
           Facility = facility_display, 
           Zone = zone,
           Section = sectcode,
-          Acres = acres,
-          Priority = priority
+          Acres = acres
         ) %>%
         arrange(Facility, Sitecode)
       
@@ -650,11 +566,23 @@ server <- function(input, output, session) {
     }
     
     stats <- cattail_values()
+    # Calculate corrected percentages
+    total_inspected <- stats$sites_inspected
+    sites_needing_treatment <- stats$sites_need_treatment
+    sites_treated <- stats$sites_treated
+    
+    # % of all inspected sites that need treatment
+    pct_need_treatment <- if (total_inspected > 0) round(100 * sites_needing_treatment / total_inspected, 1) else 0
+    
+    # % treated of sites that need treatment (treated / (treated + need_treatment))
+    sites_requiring_treatment <- sites_needing_treatment + sites_treated
+    pct_treated_of_requiring <- if (sites_requiring_treatment > 0) round(100 * sites_treated / sites_requiring_treatment, 1) else 0
+    
     data.frame(
       Metric = c("Sites Inspected", "Total Acres", "Under Threshold", "Need Treatment", 
-                "% Need Treatment", "% Treated"),
+                "% Need Treatment (of inspected)", "% Treated (of sites requiring treatment)"),
       Value = c(stats$sites_inspected, paste(stats$total_acres, "ac"), stats$sites_under_threshold,
-               stats$sites_need_treatment, paste0(stats$percent_need_treatment, "%"), paste0(stats$percent_treated, "%"))
+               stats$sites_need_treatment, paste0(pct_need_treatment, "%"), paste0(pct_treated_of_requiring, "%"))
     )
   }, bordered = TRUE, spacing = "xs")
   

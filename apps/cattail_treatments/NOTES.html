@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cattail Treatments - Technical Notes</title>
+    <title>Cattail Treatments - Data Documentation</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -110,15 +110,10 @@
 </head>
 <body>
     <div class="container">
-<h1>Cattail Treatments - Technical Notes</h1>
+<h1>Cattail Treatments - Data Documentation</h1>
 
-<h2>Overview</h2>
-<p>This Shiny app tracks cattail treatment progress at mosquito breeding sites across three perspectives:</p>
-<ol>
-<li><strong>Progress Overview</strong> - Sites with inspection status and treatment progress, aggregated by facility, FOS, or section</li>
-<li><strong>Historical Analysis</strong> - Multi-year trends in cattail inspections and treatments </li>
-<li><strong>Future Tabs</strong> - Treatment planning and management (to be developed)</li>
-</ul>
+<h2>Purpose</h2>
+<p>Documents the data sources, SQL queries, and aggregation logic for the cattail treatments dashboard. This file focuses exclusively on data definitions and processing.</p>
 
 <h2>Data Sources</h2>
 
@@ -154,7 +149,7 @@
 <li><strong>Treatment Actions</strong>: </li>
 <ul>
 <li><code>action = '3'</code> - Standard treatment application</li>
-<li><code>action = 'A'</code> - Alternative treatment application</li>
+<li><code>action = 'A'</code> - AIR treatment application</li>
 </ul>
 <li><strong>Data Quality</strong>: Contains ongoing treatments, some may be planned vs executed</li>
 </ul>
@@ -164,7 +159,7 @@
 <li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval treatment records  </li>
 <ul>
 <li><strong>Same structure as current table</strong></li>
-<li><strong>Data Quality</strong>: Historical closed treatments, generally more reliable than current</li>
+<li><strong>Data tine</strong>: Historical treatments from pervious years</li>
 </ul>
 </ul>
 
@@ -175,7 +170,7 @@
 <li><strong>Key Columns</strong>: </li>
 <ul>
 <li><code>sitecode</code> (unique site identifier)</li>
-<li><code>acres</code> (site capacity, not treated acres)</li>
+<li><code>acres</code> (site size, not treated acres)</li>
 <li><code>enddate</code> (<strong>CRITICAL</strong>: NULL = active site, NOT NULL = closed site)</li>
 <li><code>air_gnd</code> (treatment method designation) </li>
 <li><code>drone</code> (values: 'Y', 'M', 'C' for drone-capable sites)</li>
@@ -304,642 +299,220 @@ WHERE t.action IN ('3', 'A')  -- Actions 3/A = treatments
 <li><strong>Action Types</strong>: Both action '3' and action 'A' represent valid treatments</li>
 </ul>
 
-<h2>Tab 1: Progress Overview</h2>
+<h2>Inspection Year Definition</h2>
 
-<h3>Purpose</h3>
-<p>Display current status of cattail sites with 3-state progress tracking (under threshold, need treatment, treated).</p>
+<h3>DOY-Based Seasonal Logic</h3>
+<p>Cattail inspections and treatments follow seasonal cycles that don't align with calendar years. The <strong>inspection year</strong> is defined as:</p>
 
-<h3>Key Features</h3>
+<p><strong>Inspection Year N = Fall of Year N (Sept-Dec) + Summer of Year N+1 (May-Aug)</strong></p>
+
+<p>Example: <strong>Inspection Year 2024</strong> includes:</p>
 <ul>
-<li><strong>Value boxes</strong> showing summary statistics (total sites inspected, sites needing treatment, sites treated, treatment completion percentage)</li>
-<li><strong>Stacked progress chart</strong> showing 3-state breakdown by facility</li>
-<li><strong>Zone filters</strong> - Zone 1, Zone 2, or both zones</li>
-<li><strong>Facility filters</strong> - Individual facilities or all facilities combined</li>
-<li><strong>Date range controls</strong> - Analysis date and year selection</li>
-<li><strong>Refresh button</strong> - Manual data loading (no auto-refresh)</li>
+<li>Fall 2024: September 1, 2024 - December 31, 2024 (DOY 244-365)</li>
+<li>Summer 2025: May 1, 2025 - August 1, 2025 (DOY 135-213)</li>
 </ul>
 
-<h3>Data Flow</h3>
-<ol>
-<li>Query cattail inspection sites via <code>load<em>cattail</em>data()</code>:</li>
-<ul>
-<li>Filter for sites with cattail inspections (<code>action = '9'</code>)</li>
-<li>Join with site characteristics and zone assignments</li>
-<li>Get most recent inspection per site (DISTINCT ON sitecode)</li>
-<li>Calculate treatment need based on <code>numdip &gt; 0</code></li>
-</ul>
-</ul>
-
-<ol>
-<li>Query cattail treatments via <code>load<em>cattail</em>treatments()</code>:</li>
-<ul>
-<li>Get treatments using cattail materials (<code>prgassign_default = 'Cat'</code>)</li>
-<li>Include both action types ('3' and 'A') for treatments</li>
-<li>Cover both treatment seasons (fall same year + spring next year)</li>
-<li>Map treatments to inspection year using season logic</li>
-</ul>
-</ul>
-
-<ol>
-<li>Aggregate via <code>aggregate<em>cattail</em>data()</code>:</li>
-<ul>
-<li>Match treatments to sites that need treatment</li>
-<li>Calculate 3-state metrics:</li>
-<ul>
-<li><code>under<em>threshold</em>sites</code>: Sites with <code>numdip = 0</code></li>
-<li><code>need<em>treatment</em>sites</code>: Sites with <code>numdip &gt; 0</code> and no treatment</li>
-<li><code>treated_sites</code>: Sites with <code>numdip &gt; 0</code> and treatment applied</li>
-</ul>
-<li>Calculate completion percentage</li>
-</ul>
-</ul>
-
-<h3>Visualization</h3>
-<ul>
-<li><strong>3-state value boxes</strong>:</li>
-<ul>
-<li>Grey box: Sites under threshold (no treatment needed)</li>
-<li>Red box: Sites needing treatment </li>
-<li>Green box: Sites treated</li>
-<li>Blue box: Treatment completion percentage</li>
-</ul>
-<li><strong>Stacked progress chart</strong>:</li>
-<ul>
-<li>Grey bars: Total sites under threshold</li>
-<li>Red bars: Sites needing treatment (remaining)</li>
-<li>Green bars: Sites treated</li>
-<li>Colors consistent with 3-state system</li>
-</ul>
-</ul>
-
-<h3>3-State Logic Implementation</h3>
-<pre><code class="r">
-# Sites categorized into 3 states based on inspection + treatment status
-sites_data &lt;- sites_data %&gt;%
-  mutate(
-    final_status = case_when(
-      sitecode %in% treated_sites ~ "treated",           # Green - has treatment
-      treatment_status == "need_treatment" ~ "need_treatment",  # Red - needs treatment  
-      treatment_status == "under_threshold" ~ "under_threshold", # Grey - no treatment needed
-      TRUE ~ "under_threshold"
-    ),
-    state = final_status  # UI compatibility
-  )
-</code></pre>
-
-<h2>Tab 2: Historical Analysis</h2>
-
-<h3>Purpose</h3>
-<p>Analyze multi-year trends in cattail inspections and treatment progress across facilities and zones.</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Display Metric selector</strong> - Sites Inspected, Sites Need Treatment, Number of Inspections</li>
-<li><strong>Time Period selector</strong> - Monthly or Yearly aggregation</li>
-<li><strong>Chart Type selector</strong> - Line Chart or Bar Chart</li>
-<li><strong>Date Range controls</strong> - Start and end dates (defaults to 2022-01-01 to current)</li>
-<li><strong>Zone/Facility filters</strong> - Same as Progress Overview tab</li>
-<li><strong>Group By selector</strong> - Facility, Foreman (FOS), or Zone</li>
-</ul>
-
-<h3>Data Flow</h3>
-<ol>
-<li>Query historical data via <code>get<em>historical</em>cattail_data()</code>:</li>
-<ul>
-<li>Combine current and archive inspection tables</li>
-<li>Filter for cattail inspections (<code>action = '9'</code>)</li>
-<li>Join with site and zone information</li>
-<li>Filter by selected date range</li>
-</ul>
-</ul>
-
-<ol>
-<li>Process time periods:</li>
-<ul>
-<li><strong>Monthly</strong>: Use <code>floor_date(inspdate, "month")</code> for monthly grouping</li>
-<li><strong>Yearly</strong>: Use <code>floor_date(inspdate, "year")</code> for yearly grouping</li>
-<li>Sort by time period for proper chart ordering</li>
-</ul>
-</ul>
-
-<ol>
-<li>Aggregate via chart creation:</li>
-<ul>
-<li>Group by selected dimension (facility, foreman, zone) and time period</li>
-<li>Calculate metrics:</li>
-<ul>
-<li><strong>Sites Inspected</strong>: <code>n_distinct(sitecode)</code> - Count unique sites inspected</li>
-<li><strong>Sites Need Treatment</strong>: Filter <code>numdip &gt; 0</code> then count distinct sites</li>
-<li><strong>Number of Inspections</strong>: <code>n()</code> - Count total inspection instances</li>
-</ul>
-</ul>
-</ul>
-
-<h3>Visualization</h3>
-<ul>
-<li><strong>Line Charts</strong>: Show trends over time with distinct colors per group</li>
-<li><strong>Bar Charts</strong>: Show volumes with grouped or stacked bars</li>
-<li><strong>Interactive plotly</strong>: Hover tooltips with detailed information</li>
-<li><strong>Legend Management</strong>: Proper legend titles based on chart type (color vs fill)</li>
-<li><strong>Date Formatting</strong>: Appropriate axis labels based on time period selection</li>
-</ul>
-
-<h2>Code Organization</h2>
-
-<h3>File Structure</h3>
-<pre><code class="">
-cattail_treatments/
-├── app.R                     # Main app - UI orchestration and server logic
-├── data_functions.R          # All database queries and data processing
-├── display_functions.R       # Visualization helpers (placeholder for future)
-├── historical_functions.R    # Historical trends data and plotting
-└── NOTES.md                  # This file
-</code></pre>
-
-<h3>Key Functions by File</h3>
-
-<h4>app.R</h4>
-<ul>
-<li><code>cattail_values()</code> - Reactive value box calculations with 3-state metrics</li>
-<li>Server output renderers:</li>
-<ul>
-<li><code>output$progress_chart</code> - 3-state progress chart</li>
-<li><code>output$historical_chart</code> - Historical trend analysis</li>
-<li>Value box outputs for all 3 states plus completion rate</li>
-</ul>
-</ul>
-
-<h4>data_functions.R</h4>
-<ul>
-<li><code>load<em>cattail</em>data()</code> - Main data loading with inspection sites and treatments</li>
-<li><code>load<em>cattail</em>treatments()</code> - Treatment data loading with seasonal logic</li>
-<li><code>aggregate<em>cattail</em>data()</code> - 3-state aggregation with treatment matching</li>
-<li><code>filter<em>cattail</em>data()</code> - Apply UI filters (zone, facility, foreman, date range)</li>
-</ul>
-
-<h4>historical_functions.R</h4>
-<ul>
-<li><code>get<em>historical</em>cattail_data()</code> - Queries combined historical inspection data</li>
-<li><code>create<em>historical</em>analysis_chart()</code> - Generates historical charts with multiple options</li>
-<li>UI helper functions for time period, chart type, and date range selectors</li>
-</ul>
-
-<h2>Data Collection and Aggregation Logic</h2>
-
-<h3>Overview of Data Processing Pipeline</h3>
-<p>The cattail treatments app processes inspection and treatment data separately, then matches them in R to determine the final 3-state status.</p>
-
-<h3>Core Aggregation Methods</h3>
-
-<h4>3-State Sites Calculation</h4>
-<p><strong>All calculations performed in R using dplyr after SQL returns raw records:</strong></p>
-
-<p><strong>Inspection Sites Classification:</strong></p>
-<pre><code class="r">
-# Classify sites based on cattail dip count (numdip)
-cattail_sites &lt;- cattail_sites %&gt;%
-  mutate(
-    treatment_status = case_when(
-      numdip &gt; 0 ~ "need_treatment",    # Red - cattail found
-      numdip == 0 ~ "under_threshold", # Grey - no cattail
-      TRUE ~ "under_threshold"         # Default to safe state
-    )
-  )
-</code></pre>
-
-<p><strong>Treatment Matching Logic:</strong></p>
-<pre><code class="r">
-# Match treatments to sites for current inspection year
-treated_sites &lt;- treatments %&gt;%
-  filter(inspection_year == current_year) %&gt;%  # Match to inspection year
-  pull(sitecode) %&gt;%
-  unique()
-
-# Update final status based on treatment application
-sites_data &lt;- sites_data %&gt;%
-  mutate(
-    final_status = case_when(
-      sitecode %in% treated_sites ~ "treated",              # Green - treated
-      treatment_status == "need_treatment" ~ "need_treatment", # Red - still needs treatment
-      treatment_status == "under_threshold" ~ "under_threshold", # Grey - no treatment needed
-      TRUE ~ "under_threshold"
-    ),
-    state = final_status  # For UI compatibility
-  )
-</code></pre>
-
-<p><strong>Progress Metrics:</strong></p>
-<pre><code class="r">
-# Calculate 3-state summary metrics
-total_summary &lt;- data.frame(
-  under_threshold_sites = sum(sites_data$final_status == 'under_threshold', na.rm = TRUE),
-  need_treatment_sites = sum(sites_data$final_status == 'need_treatment', na.rm = TRUE),
-  treated_sites = sum(sites_data$final_status == 'treated', na.rm = TRUE),
-  
-  # Treatment completion rate
-  treatment_completion_rate = ifelse(
-    sum(sites_data$final_status %in% c('need_treatment', 'treated'), na.rm = TRUE) &gt; 0,
-    round(100 * sum(sites_data$final_status == 'treated', na.rm = TRUE) / 
-          sum(sites_data$final_status %in% c('need_treatment', 'treated'), na.rm = TRUE), 1),
-    0
-  )
-)
-</code></pre>
-
-<h4>Historical Metrics Aggregation</h4>
-<p><strong>All historical aggregations done in R after SQL returns raw inspection records:</strong></p>
-
-<p><strong>Sites Inspected Metric:</strong></p>
-<pre><code class="r">
-# Count unique sites inspected per group per time period
-if (display_metric == "sites") {
-  plot_data &lt;- historical_data %&gt;%
-    group_by(time_group, group_label) %&gt;%
-    summarise(value = n_distinct(sitecode), .groups = "drop")
-}
-</code></pre>
-
-<p><strong>Sites Need Treatment Metric:</strong></p>
-<pre><code class="r">
-# Count unique sites needing treatment per group per time period  
-if (display_metric == "need_treatment") {
-  plot_data &lt;- historical_data %&gt;%
-    filter(state == "need_treatment") %&gt;%  # Only sites with numdip &gt; 0
-    group_by(time_group, group_label) %&gt;%
-    summarise(value = n_distinct(sitecode), .groups = "drop")
-}
-</code></pre>
-
-<p><strong>Number of Inspections Metric:</strong></p>
-<pre><code class="r">
-# Count total inspection instances per group per time period
-if (display_metric == "inspections") {
-  plot_data &lt;- historical_data %&gt;%
-    group_by(time_group, group_label) %&gt;%
-    summarise(value = n(), .groups = "drop")  # n() counts all inspection records
-}
-</code></pre>
-
-<h3>Treatment Seasonal Logic (R-based)</h3>
-<p><strong>Treatment Season Classification:</strong></p>
-<pre><code class="r">
-treatments &lt;- treatments %&gt;%
-  mutate(
-    treatment_season = case_when(
-      trt_month %in% c(9, 10, 11, 12) ~ "Fall/Winter",      # Sept-Dec
-      trt_month %in% c(5, 6, 7, 8) ~ "Spring/Summer",       # May-Aug  
-      TRUE ~ "Other"
-    ),
-    # Map treatment year to inspection year
-    inspection_year = case_when(
-      treatment_season == "Fall/Winter" ~ trt_year,          # Same year
-      treatment_season == "Spring/Summer" ~ trt_year - 1,    # Previous year
-      TRUE ~ trt_year
-    )
-  )
-</code></pre>
-
-<h3>Data Sources vs Aggregation Separation</h3>
-
-<p><strong>SQL Queries</strong>: Return raw, individual records</p>
-<ul>
-<li><code>load<em>cattail</em>data()</code>: Returns individual inspection site records with most recent inspection per site</li>
-<li><code>load<em>cattail</em>treatments()</code>: Returns individual treatment records with seasonal classification</li>
-<li><code>get<em>historical</em>cattail_data()</code>: Returns individual historical inspections</li>
-</ul>
-
-<p><strong>R Aggregation</strong>: Processes raw records into summaries</p>
-<ul>
-<li><code>aggregate<em>cattail</em>data()</code>: Matches treatments to sites and calculates 3-state metrics</li>
-<li>Historical chart functions: Aggregate by time period and grouping dimension</li>
-<li>Value box calculations: Summarize overall 3-state statistics</li>
-</ul>
-
-<h2>SQL Queries Reference</h2>
-
-<p>This section documents all SQL queries used in the cattail treatments app for reference and troubleshooting.</p>
-
-<h3>1. Cattail Inspection Sites Query  </h3>
-<p><strong>Function</strong>: <code>load<em>cattail</em>data()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load cattail inspection sites with zone and treatment need determination</p>
+<h3>SQL Implementation</h3>
+<p>The inspection year is calculated in SQL using Day of Year (DOY):</p>
 
 <pre><code class="sql">
-WITH breeding_sites AS (
-  SELECT 
-    sc.facility, 
-    sc.zone, 
-    sc.fosarea, 
-    LEFT(b.sitecode,7) AS sectcode,
-    b.sitecode,
-    b.acres,
-    b.air_gnd,
-    CASE WHEN b.drone IS NOT NULL THEN 'D' ELSE NULL END as drone,
-    sc.fosarea as foreman
-  FROM public.loc_breeding_sites b
-  LEFT JOIN public.gis_sectcode sc ON LEFT(b.sitecode,7) = sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate &gt; $1)
-),
-inspection_data AS (
-  -- Get the most recent inspection per site (distinct sites only)
-  WITH all_inspections AS (
-    -- Current year inspections
-    SELECT 
-      i.sitecode,
-      i.inspdate,
-      i.action,
-      i.numdip,
-      i.acres_plan,
-      EXTRACT(year FROM i.inspdate) as year
-    FROM public.dblarv_insptrt_current i
-    WHERE i.inspdate BETWEEN $2 AND $1
-      AND i.action = '9'  -- Action 9 = inspected
-    
-    UNION ALL
-    
-    -- Archive inspections (if include_archive is true)
-    SELECT 
-      a.sitecode,
-      a.inspdate,
-      a.action,
-      a.numdip,
-      a.acres_plan,
-      EXTRACT(year FROM a.inspdate) as year
-    FROM public.dblarv_insptrt_archive a
-    WHERE $3 = TRUE
-      AND a.inspdate BETWEEN $2 AND $1
-      AND a.action = '9'  -- Action 9 = inspected
-  )
-  SELECT DISTINCT ON (sitecode)
-    sitecode,
-    inspdate,
-    action,
-    numdip,
-    acres_plan,
-    year
-  FROM all_inspections
-  ORDER BY sitecode, inspdate DESC  -- Most recent inspection per site
-)
-SELECT 
-  b.sitecode,
-  b.sectcode,
-  b.acres,
-  b.air_gnd,
-  b.drone,
-  b.facility,
-  b.zone,
-  b.fosarea,
-  b.foreman,
-  -- Add display and calculated fields
-  b.facility as facility_display,  -- We'll map this later
-  0 as treated_acres,  -- Placeholder for display functions
-  -- Determine treatment state - all sites are inspected since we use INNER JOIN
-  CASE 
-    WHEN i.sitecode IS NOT NULL THEN 'inspected'
-    ELSE 'inspected'  -- This shouldn't happen with INNER JOIN
-  END as inspection_status,
-  CASE 
-    WHEN i.numdip &gt; 0 THEN 'need_treatment'
-    WHEN i.numdip = 0 THEN 'under_threshold' 
-    ELSE 'under_threshold'  -- Default to under_threshold for safety
-  END as treatment_status,
-  i.inspdate,
-  i.numdip,
-  i.acres_plan,
-  i.year as inspection_year
-FROM breeding_sites b
-INNER JOIN inspection_data i ON b.sitecode = i.sitecode  -- Only inspected sites
-ORDER BY b.sitecode
+-- Calculate inspection_year based on DOY
+CASE
+  WHEN EXTRACT(DOY FROM inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM inspdate)
+  WHEN EXTRACT(DOY FROM inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM inspdate) - 1
+  ELSE NULL
+END as inspection_year
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
+<p><strong>DOY Ranges:</strong></p>
 <ul>
-<li><strong>CTE Structure</strong>: Uses CTEs for clear separation of site and inspection logic</li>
-<li><strong>DISTINCT ON</strong>: Ensures one record per site with most recent inspection</li>
-<li><strong>Action Filter</strong>: <code>action = '9'</code> identifies inspection records (vs treatment records)</li>
-<li><strong>Treatment Need Logic</strong>: <code>numdip &gt; 0</code> indicates cattail found and treatment needed</li>
-<li><strong>Active Sites</strong>: Filters for sites with <code>enddate IS NULL</code> or active during analysis period</li>
-<li><strong>Archive Support</strong>: Optionally includes archived inspections based on parameter</li>
+<li><strong>Fall/Winter Season</strong>: DOY 244-365 (Sept 1 - Dec 31) → Same calendar year</li>
+<li><strong>Spring/Summer Season</strong>: DOY 135-213 (May 15 - Aug 1) → Previous calendar year</li>
 </ul>
 
-<h3>2. Cattail Treatments Query</h3>
-<p><strong>Function</strong>: <code>load<em>cattail</em>treatments()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load cattail treatments with seasonal timing logic</p>
-
-<pre><code class="sql">
-SELECT 
-  i.sitecode, 
-  i.inspdate AS trtdate, 
-  i.action, 
-  i.mattype, 
-  i.matcode, 
-  i.amts, 
-  i.acres, 
-  sc.facility,
-  sc.zone,
-  sc.fosarea,
-  EXTRACT(year FROM i.inspdate) as trt_year,
-  EXTRACT(month FROM i.inspdate) as trt_month
-FROM public.dblarv_insptrt_current i
-LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode,7) = sc.sectcode
-WHERE i.action IN ('3', 'A')  -- Action 3 = treatment, Action A = treatment
-  AND i.matcode IN (
-    SELECT matcode 
-    FROM public.mattype_list_targetdose
-    WHERE prgassign_default = 'Cat'
-  )
-  AND (
-    -- Fall/winter treatments (same year as inspection)
-    (i.inspdate BETWEEN $1 AND $2)
-    OR
-    -- Spring/summer treatments (year after inspection) 
-    (i.inspdate BETWEEN $3 AND $4)
-  )
-
-UNION ALL
-
-SELECT 
-  a.sitecode, 
-  a.inspdate AS trtdate, 
-  a.action, 
-  a.mattype, 
-  a.matcode, 
-  a.amts, 
-  a.acres, 
-  sc.facility,
-  sc.zone,
-  sc.fosarea,
-  EXTRACT(year FROM a.inspdate) as trt_year,
-  EXTRACT(month FROM a.inspdate) as trt_month
-FROM public.dblarv_insptrt_archive a
-LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode,7) = sc.sectcode
-WHERE a.action IN ('3', 'A')  -- Action 3 = treatment, Action A = treatment
-  AND a.matcode IN (
-    SELECT matcode 
-    FROM public.mattype_list_targetdose
-    WHERE prgassign_default = 'Cat'
-  )
-  AND (
-    -- Fall/winter treatments (same year as inspection)
-    (a.inspdate BETWEEN $1 AND $2)
-    OR
-    -- Spring/summer treatments (year after inspection) 
-    (a.inspdate BETWEEN $3 AND $4)
-  )
-
-ORDER BY trtdate
-</code></pre>
-
-<p><strong>Date Parameters</strong>:</p>
-<pre><code class="r">
-# For current_year = 2024 (inspection year)
-fall_start &lt;- as.Date("2024-09-01")    # $1 - Fall treatments start
-fall_end &lt;- as.Date("2024-12-31")      # $2 - Fall treatments end
-spring_start &lt;- as.Date("2025-05-01")  # $3 - Spring treatments start  
-spring_end &lt;- as.Date("2025-07-31")    # $4 - Spring treatments end
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
+<p><strong>Examples:</strong></p>
 <ul>
-<li><strong>Treatment Actions</strong>: Both <code>action = '3'</code> and <code>action = 'A'</code> represent treatments</li>
-<li><strong>Material Validation</strong>: JOIN with <code>mattype<em>list</em>targetdose WHERE prgassign_default = 'Cat'</code></li>
-<li><strong>Seasonal Windows</strong>: Covers both fall same year and spring following year</li>
-<li><strong>UNION ALL</strong>: Combines current and archive treatment records</li>
-<li><strong>Geographic Info</strong>: Joins with <code>gis_sectcode</code> for facility/zone assignment</li>
+<li>Inspection on September 15, 2024 (DOY 259) → Inspection Year 2024</li>
+<li>Inspection on July 1, 2025 (DOY 182) → Inspection Year 2024</li>
+<li>Treatment on November 10, 2024 → Applies to Inspection Year 2024</li>
+<li>Treatment on June 15, 2025 → Applies to Inspection Year 2024</li>
 </ul>
 
-<h3>3. Historical Cattail Inspections Query</h3>
+<h3>Metric Labels</h3>
+<p>Metrics that are measured "as of Aug 1" are labeled accordingly:</p>
+<ul>
+<li>"Sites Treated (as of Aug 1)"</li>
+<li>"% Treated of Need Treatment (as of Aug 1)"</li>
+</ul>
+
+<p>This clarifies that treatment counts represent the snapshot at the end of the inspection year cycle.</p>
+
+<h2>SQL Queries</h2>
+
+<h3>1. Historical Cattail Inspection Data</h3>
 <p><strong>Function</strong>: <code>get<em>historical</em>cattail<em>data()</code> in <code>historical</em>functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load historical cattail inspections for trend analysis</p>
+<p><strong>Purpose</strong>: Load inspection records with DOY-based inspection year calculation</p>
 
 <pre><code class="sql">
+-- Current inspections
 SELECT 
   i.sitecode,
   i.inspdate,
-  i.action,
   i.numdip,
-  i.acres_plan,
-  EXTRACT(year FROM i.inspdate) as year,
-  EXTRACT(month FROM i.inspdate) as month,
-  EXTRACT(week FROM i.inspdate) as week,
   sc.facility,
   sc.zone,
   sc.fosarea,
-  b.acres
+  EXTRACT(DOY FROM i.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM i.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM i.inspdate)
+    WHEN EXTRACT(DOY FROM i.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM i.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
 FROM public.dblarv_insptrt_current i
 LEFT JOIN public.loc_breeding_sites b ON i.sitecode = b.sitecode
-LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode,7) = sc.sectcode
-WHERE i.inspdate BETWEEN $1 AND $2
-  AND i.action = '9'  -- Action 9 = inspected
-  AND (b.enddate IS NULL OR b.enddate &gt; $2)
+LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode, 7) = sc.sectcode
+WHERE i.action = '9'  -- Inspection action
+  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+  AND EXTRACT(DOY FROM i.inspdate) BETWEEN 135 AND 365  -- Only seasonal dates
 
 UNION ALL
 
+-- Archive inspections
 SELECT 
   a.sitecode,
   a.inspdate,
-  a.action,
   a.numdip,
-  a.acres_plan,
-  EXTRACT(year FROM a.inspdate) as year,
-  EXTRACT(month FROM a.inspdate) as month,
-  EXTRACT(week FROM a.inspdate) as week,
   sc.facility,
   sc.zone,
   sc.fosarea,
-  b.acres
+  EXTRACT(DOY FROM a.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM a.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM a.inspdate)
+    WHEN EXTRACT(DOY FROM a.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM a.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
 FROM public.dblarv_insptrt_archive a
 LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode,7) = sc.sectcode
-WHERE a.inspdate BETWEEN $1 AND $2
-  AND a.action = '9'  -- Action 9 = inspected
-  AND (b.enddate IS NULL OR b.enddate &gt; $2)
-
-ORDER BY inspdate
+LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode, 7) = sc.sectcode
+WHERE a.action = '9'
+  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+  AND EXTRACT(DOY FROM a.inspdate) BETWEEN 135 AND 365
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
+<p><strong>Key Points:</strong></p>
 <ul>
-<li><strong>Historical Range</strong>: Uses start<em>date and end</em>date parameters for flexible date ranges</li>
-<li><strong>Time Extractions</strong>: Extracts year, month, week for different aggregation periods</li>
-<li><strong>All Inspections</strong>: Does NOT use DISTINCT ON - includes all historical inspections</li>
-<li><strong>Active Sites Filter</strong>: Ensures sites were active during the analysis period</li>
-<li><strong>Archive Integration</strong>: Combines current and archive tables for complete history</li>
+<li><strong>DOY Filtering</strong>: <code>BETWEEN 135 AND 365</code> excludes winter/early spring</li>
+<li><strong>Inspection Year</strong>: Calculated in SQL using DOY CASE logic</li>
+<li><strong>Active Sites</strong>: <code>enddate IS NULL</code> or active during analysis</li>
+<li><strong>Union</strong>: Combines current + archive for complete history</li>
 </ul>
 
-<h3>4. Treatment Season Classification (R Logic)</h3>
-<p><strong>Function</strong>: R processing in <code>load<em>cattail</em>treatments()</code>  </p>
-<p><strong>Purpose</strong>: Classify treatments by season and map to inspection years</p>
+<h3>2. Historical Cattail Treatment Data</h3>
+<p><strong>Function</strong>: <code>get<em>historical</em>cattail<em>data()</code> in <code>historical</em>functions.R</code>  </p>
+<p><strong>Purpose</strong>: Load treatment records with DOY-based inspection year calculation</p>
+
+<pre><code class="sql">
+-- Current treatments
+SELECT 
+  t.sitecode,
+  t.inspdate as trtdate,
+  t.action,
+  sc.facility,
+  sc.zone,
+  sc.fosarea,
+  EXTRACT(DOY FROM t.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM t.inspdate)
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM t.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
+FROM public.dblarv_insptrt_current t
+LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
+WHERE t.action IN ('3', 'A')  -- Treatment actions
+  AND t.matcode IN (
+    SELECT matcode 
+    FROM public.mattype_list_targetdose
+    WHERE prgassign_default = 'Cat'
+  )
+  AND EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 365
+
+UNION ALL
+
+-- Archive treatments
+SELECT 
+  t.sitecode,
+  t.inspdate as trtdate,
+  t.action,
+  sc.facility,
+  sc.zone,
+  sc.fosarea,
+  EXTRACT(DOY FROM t.inspdate) as doy,
+  CASE
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 244 AND 365 THEN EXTRACT(YEAR FROM t.inspdate)
+    WHEN EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 213 THEN EXTRACT(YEAR FROM t.inspdate) - 1
+    ELSE NULL
+  END as inspection_year
+FROM public.dblarv_insptrt_archive t
+LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
+WHERE t.action IN ('3', 'A')
+  AND t.matcode IN (
+    SELECT matcode 
+    FROM public.mattype_list_targetdose
+    WHERE prgassign_default = 'Cat'
+  )
+  AND EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 365
+</code></pre>
+
+<p><strong>Key Points:</strong></p>
+<ul>
+<li><strong>Material Validation</strong>: Subquery ensures only cattail materials</li>
+<li><strong>Treatment Actions</strong>: Both '3' and 'A' are valid treatment actions</li>
+<li><strong>Same DOY Logic</strong>: Matches inspection query for consistency</li>
+<li><strong>Inspection Year</strong>: Treatments mapped to inspection year using DOY</li>
+</ul>
+
+<h2>Data Aggregation Logic</h2>
+
+<h3>Group Label Creation (R Processing)</h3>
+<p><strong>Function</strong>: <code>create<em>historical</em>analysis<em>chart()</code> in <code>historical</em>functions.R</code></p>
+
+<p>Inspection and treatment data are grouped with optional zone separation:</p>
 
 <pre><code class="r">
-# Add treatment season classification
-treatments &lt;- treatments %&gt;%
+# For inspections
+inspection_data &lt;- inspection_data %&gt;%
   mutate(
-    trtdate = as.Date(trtdate),
-    treatment_season = case_when(
-      trt_month %in% c(9, 10, 11, 12) ~ "Fall/Winter",
-      trt_month %in% c(5, 6, 7, 8) ~ "Spring/Summer", 
-      TRUE ~ "Other"
-    ),
-    inspection_year = case_when(
-      treatment_season == "Fall/Winter" ~ trt_year,     # Same year as inspection
-      treatment_season == "Spring/Summer" ~ trt_year - 1, # Previous year inspection
-      TRUE ~ trt_year
-    ),
-    action_desc = case_when(
-      action == '3' ~ "Treatment",
-      action == 'A' ~ "Treatment", 
-      TRUE ~ paste("Action", action)
+    group_label = case_when(
+      group_by == "facility" &amp; !combine_zones ~ paste(facility, "- Zone", zone),
+      group_by == "facility" &amp; combine_zones ~ facility,
+      group_by == "foreman" &amp; !combine_zones ~ paste("FOS", fosarea, "- Zone", zone),
+      group_by == "foreman" &amp; combine_zones ~ paste("FOS", fosarea),
+      group_by == "zone" ~ paste("Zone", zone),
+      TRUE ~ "All"
+    )
+  )
+
+# Same logic for treatments
+treatment_data &lt;- treatment_data %&gt;%
+  mutate(
+    group_label = case_when(
+      # ... identical to inspection logic
     )
   )
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
+<p><strong>Key Points:</strong></p>
 <ul>
-<li><strong>Season Windows</strong>: Fall/Winter (Sept-Dec), Spring/Summer (May-Aug)</li>
-<li><strong>Year Mapping</strong>: Spring treatments in year N+1 map to year N inspections</li>
-<li><strong>Treatment Types</strong>: Both action '3' and 'A' classified as "Treatment"</li>
-<li><strong>Inspection Matching</strong>: <code>inspection_year</code> used to match treatments to inspection cycles</li>
+<li><strong>Zone Separation</strong>: <code>combine_zones = FALSE</code> adds "- Zone X" suffix</li>
+<li><strong>Consistency</strong>: Both inspections and treatments use identical grouping</li>
+<li><strong>Foreman Format</strong>: Uses "FOS 123" format for foreman display</li>
+<li><strong>Grouping Options</strong>: facility, foreman, or zone-only grouping</li>
 </ul>
 
-<h3>5. 3-State Aggregation Logic (R Logic)</h3>
-<p><strong>Function</strong>: R processing in <code>aggregate<em>cattail</em>data()</code>  </p>
-<p><strong>Purpose</strong>: Calculate final treatment status by matching inspections with treatments</p>
-
-<pre><code class="r">
-# Match treatments to sites for current year
-if (!is.null(treatments) &amp;&amp; nrow(treatments) &gt; 0) {
-  # Get sites that were treated in the current year cycle
-  treated_sites &lt;- treatments %&gt;%
-    filter(inspection_year == current_year) %&gt;%
-    pull(sitecode) %&gt;%
-    unique()
-  
-  # Update treatment status to include 'treated' state
-  sites_data &lt;- sites_data %&gt;%
-    mutate(
-      final_status = case_when(
-        sitecode %in% treated_sites ~ "treated",
-        treatment_status == "need_treatment" ~ "need_treatment", 
-        treatment_status == "under_threshold" ~ "under_threshold",
-        TRUE ~ "under_threshold"
-      ),
-      # Update state field to match final_status for UI compatibility
-      state = final_status
-    )
-} else {
-  # No treatments data, use original status
-  sites_data$final_status &lt;- sites_data$treatment_status
-  sites_data$state &lt;- sites_data$treatment_status
-}
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
+<h3>Metric Calculation (R Processing)</h3>
+<p><strong>Function</strong>: <code>create<em>historical</em>analysis<em>chart()</code> in <code>historical</em>functions.R</code></p>
 <ul>
-<li><strong>Treatment Matching</strong>: Uses <code>inspection_year</code> to match treatments to inspection cycles</li>
-<li><strong>3-State Logic</strong>: under<em>threshold → need</em>treatment → treated progression</li>
-<li><strong>Site-Based</strong>: Tracks unique sites, not treatment instances</li>
-<li><strong>Fallback Logic</strong>: Handles case when no treatments are available</li>
-<li><strong>UI Compatibility</strong>: Maintains <code>state</code> field for existing UI components</li>
+<li><strong>to be made</strong></li>
 </ul>
     </div>
 </body>

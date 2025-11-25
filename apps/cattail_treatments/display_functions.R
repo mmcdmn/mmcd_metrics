@@ -7,9 +7,11 @@ library(DT)
 library(leaflet)
 library(sf)
 library(stringr)
+library(tidyr)
+library(dplyr)
 
 # Function to create treatment progress chart
-create_treatment_progress_chart <- function(data, group_by = "facility") {
+create_treatment_progress_chart <- function(data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE) {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -23,14 +25,24 @@ create_treatment_progress_chart <- function(data, group_by = "facility") {
   # Get status colors from db_helpers
   status_colors <- get_status_colors()
   
-  # Prepare data for stacked bar chart
+  # Prepare data for chart - apply zone separation if needed
   chart_data <- data %>%
+    mutate(
+      # Update display_name to include zone if separate zones requested
+      display_name = if (!combine_zones && group_by == "facility") {
+        paste(display_name, "- Zone", zone)
+      } else if (!combine_zones && group_by == "foreman") {
+        paste(display_name, "- Zone", zone)
+      } else {
+        display_name
+      }
+    ) %>%
     select(display_name, total_sites, treatments_applied, active_treatments, planned_treatments) %>%
     mutate(
       untreated_sites = pmax(0, total_sites - treatments_applied),
       inactive_treatments = pmax(0, treatments_applied - active_treatments)
     ) %>%
-    # Reshape for stacked chart
+    # Reshape for chart
     tidyr::pivot_longer(
       cols = c(active_treatments, inactive_treatments, untreated_sites, planned_treatments),
       names_to = "category",
@@ -49,30 +61,89 @@ create_treatment_progress_chart <- function(data, group_by = "facility") {
     "Planned Treatments" = unname(status_colors["planned"])
   )
   
-  # Create the chart
-  p <- ggplot(chart_data, aes(x = reorder(display_name, -count), y = count, fill = category)) +
-    geom_bar(stat = "identity", alpha = 0.8) +
-    coord_flip() +
-    scale_fill_manual(values = category_colors, name = "Status") +
-    labs(
-      title = "Cattail Treatment Progress",
-      x = case_when(
-        group_by == "facility" ~ "Facility",
-        group_by == "foreman" ~ "FOS",
-        group_by == "sectcode" ~ "Section",
-        TRUE ~ "Group"
-      ),
-      y = "Count"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 18, family = "Arial"),
-      axis.title = element_text(face = "bold", size = 14, family = "Arial"),
-      axis.text = element_text(size = 13, family = "Arial"),
-      legend.title = element_text(face = "bold", size = 12, family = "Arial"),
-      legend.text = element_text(size = 11, family = "Arial"),
-      legend.position = "bottom"
-    )
+  # Create the chart based on chart_type
+  if (chart_type == "line") {
+    # For line chart, aggregate by category and display_name
+    line_data <- chart_data %>%
+      group_by(display_name, category) %>%
+      summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
+    
+    p <- ggplot(line_data, aes(x = category, y = count, color = display_name, group = display_name)) +
+      geom_line(linewidth = 1.2) +
+      geom_point(size = 3) +
+      scale_color_brewer(palette = "Set2") +
+      labs(
+        title = "Cattail Treatment Progress",
+        x = "Status Category",
+        y = "Count",
+        color = case_when(
+          group_by == "facility" ~ "Facility",
+          group_by == "foreman" ~ "FOS",
+          group_by == "sectcode" ~ "Section",
+          TRUE ~ "Group"
+        )
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 14, family = "Arial"),
+        axis.text = element_text(size = 13, family = "Arial"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(face = "bold", size = 12, family = "Arial"),
+        legend.text = element_text(size = 11, family = "Arial"),
+        legend.position = "bottom"
+      )
+  } else if (chart_type == "bar") {
+    # Grouped bar chart
+    p <- ggplot(chart_data, aes(x = reorder(display_name, -count), y = count, fill = category)) +
+      geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+      coord_flip() +
+      scale_fill_manual(values = category_colors, name = "Status") +
+      labs(
+        title = "Cattail Treatment Progress",
+        x = case_when(
+          group_by == "facility" ~ "Facility",
+          group_by == "foreman" ~ "FOS",
+          group_by == "sectcode" ~ "Section",
+          TRUE ~ "Group"
+        ),
+        y = "Count"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 14, family = "Arial"),
+        axis.text = element_text(size = 13, family = "Arial"),
+        legend.title = element_text(face = "bold", size = 12, family = "Arial"),
+        legend.text = element_text(size = 11, family = "Arial"),
+        legend.position = "bottom"
+      )
+  } else {
+    # Default: stacked bar chart
+    p <- ggplot(chart_data, aes(x = reorder(display_name, -count), y = count, fill = category)) +
+      geom_bar(stat = "identity", position = "stack", alpha = 0.8) +
+      coord_flip() +
+      scale_fill_manual(values = category_colors, name = "Status") +
+      labs(
+        title = "Cattail Treatment Progress",
+        x = case_when(
+          group_by == "facility" ~ "Facility",
+          group_by == "foreman" ~ "FOS",
+          group_by == "sectcode" ~ "Section",
+          TRUE ~ "Group"
+        ),
+        y = "Count"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 18, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 14, family = "Arial"),
+        axis.text = element_text(size = 13, family = "Arial"),
+        legend.title = element_text(face = "bold", size = 12, family = "Arial"),
+        legend.text = element_text(size = 11, family = "Arial"),
+        legend.position = "bottom"
+      )
+  }
   
   return(ggplotly(p, tooltip = c("x", "y", "fill")) %>%
          layout(height = dynamic_height))
@@ -577,4 +648,197 @@ prepare_cattail_download_data <- function(treatments_data, plans_data, sites_dat
   }
   
   return(download_data)
+}
+
+# Function to create recent activity table
+create_status_table <- function(sites_data, treatments_data, analysis_date = NULL) {
+  if (is.null(analysis_date)) analysis_date <- Sys.Date()
+  
+  if (is.null(sites_data) || nrow(sites_data) == 0) {
+    return(datatable(data.frame(Message = "No site data available"), 
+                     options = list(dom = 't'), rownames = FALSE))
+  }
+  
+  # Drop geometry if it's an sf object
+  if ("sf" %in% class(sites_data)) {
+    sites_data <- st_drop_geometry(sites_data)
+  }
+  
+  # Create comprehensive status table with treatment information
+  if (!is.null(treatments_data) && nrow(treatments_data) > 0) {
+    treatment_summary <- treatments_data %>%
+      filter(inspection_year == year(analysis_date)) %>%
+      group_by(sitecode) %>%
+      summarise(
+        last_treatment_date = max(trtdate, na.rm = TRUE),
+        treatment_action = first(action_desc),
+        treatment_material = first(mattype),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        last_treatment_date = ifelse(
+          is.infinite(last_treatment_date) | is.na(last_treatment_date),
+          NA,
+          as.character(as.Date(last_treatment_date, origin = "1970-01-01"))
+        )
+      )
+    
+    status_data <- sites_data %>%
+      left_join(treatment_summary, by = "sitecode")
+  } else {
+    status_data <- sites_data %>%
+      mutate(
+        last_treatment_date = NA_character_,
+        treatment_action = NA_character_,
+        treatment_material = NA_character_
+      )
+  }
+  
+  # Format table data showing all sites
+  table_data <- status_data %>%
+    select(
+      Sitecode = sitecode,
+      Facility = facility_display,
+      Zone = zone,
+      Section = sectcode,
+      Acres = acres,
+      Status = final_status,
+      "Inspection Date" = inspdate,
+      "Treatment Date" = last_treatment_date,
+      "Treatment Action" = treatment_action
+    ) %>%
+    mutate(
+      Status = case_when(
+        Status == "treated" ~ "Treated",
+        Status == "need_treatment" ~ "Need Treatment",
+        Status == "under_threshold" ~ "Under Threshold",
+        TRUE ~ "Unknown"
+      ),
+      Acres = round(as.numeric(Acres), 2)
+    ) %>%
+    arrange(Status, Facility, Sitecode)
+  
+  # Create datatable with status-based row styling
+  datatable(
+    table_data,
+    options = list(
+      pageLength = 25,
+      scrollX = TRUE,
+      order = list(list(5, 'asc')), # Sort by Status
+      columnDefs = list(
+        list(className = 'dt-center', targets = c(2, 4, 5))
+      )
+    ),
+    rownames = FALSE
+  ) %>%
+    formatStyle(
+      "Status",
+      backgroundColor = styleEqual(
+        c("Treated", "Need Treatment", "Under Threshold"),
+        c("#d4edda", "#f8d7da", "#d1ecf1")
+      )
+    )
+}
+
+# Function to create treatment methods chart
+create_treatment_methods_chart <- function(treatments_data) {
+}
+
+# Function to create current cattail progress chart
+create_current_progress_chart <- function(sites_data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE) {
+  if (is.null(sites_data) || nrow(sites_data) == 0) {
+    return(ggplot() + geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) + theme_void())
+  }
+  
+  progress_data <- sites_data %>%
+    group_by(
+      group_name = case_when(
+        group_by == "facility" & !combine_zones ~ paste(facility, "- Zone", zone),
+        group_by == "facility" & combine_zones ~ facility,
+        group_by == "foreman" & !combine_zones ~ paste("FOS", fosarea, "- Zone", zone),
+        group_by == "foreman" & combine_zones ~ paste("FOS", fosarea),
+        group_by == "sectcode" ~ paste("Section", sectcode),
+        TRUE ~ "All"
+      )
+    ) %>%
+    summarise(
+      inspected_under_threshold = sum(final_status == "under_threshold", na.rm = TRUE),
+      need_treatment = sum(final_status == "need_treatment", na.rm = TRUE), 
+      treated = sum(final_status == "treated", na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    # Reshape for stacked bar chart
+    pivot_longer(
+      cols = c("inspected_under_threshold", "need_treatment", "treated"),
+      names_to = "status",
+      values_to = "count"
+    ) %>%
+    mutate(
+      status = factor(status, 
+                     levels = c("inspected_under_threshold", "need_treatment", "treated"),
+                     labels = c("Inspected (Under Threshold)", "Need Treatment", "Treated"))
+    )
+  
+  # Create chart based on chart_type
+  if (chart_type == "line") {
+    p <- ggplot(progress_data, aes(x = status, y = count, color = group_name, group = group_name)) +
+      geom_line(linewidth = 1.2) +
+      geom_point(size = 3) +
+      scale_color_brewer(palette = "Set2") +
+      labs(
+        title = "Current Cattail Inspection Progress",
+        x = "Status",
+        y = "Number of Sites",
+        color = stringr::str_to_title(group_by)
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 16),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom"
+      )
+  } else if (chart_type == "bar") {
+    p <- ggplot(progress_data, aes(x = group_name, y = count, fill = status)) +
+      geom_col(position = "dodge", width = 0.7) +
+      scale_fill_manual(
+        values = c("Inspected (Under Threshold)" = "lightgrey", 
+                   "Need Treatment" = "firebrick",
+                   "Treated" = "forestgreen")
+      ) +
+      labs(
+        title = "Current Cattail Inspection Progress",
+        x = stringr::str_to_title(group_by),
+        y = "Number of Sites",
+        fill = "Status"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 16),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom"
+      )
+  } else {
+    # Default: stacked bar chart
+    p <- ggplot(progress_data, aes(x = group_name, y = count, fill = status)) +
+      geom_col(position = "stack", width = 0.7) +
+      scale_fill_manual(
+        values = c("Inspected (Under Threshold)" = "lightgrey", 
+                   "Need Treatment" = "firebrick",
+                   "Treated" = "forestgreen")
+      ) +
+      labs(
+        title = "Current Cattail Inspection Progress",
+        x = stringr::str_to_title(group_by),
+        y = "Number of Sites",
+        fill = "Status"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 16),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom"
+      )
+  }
+  
+  ggplotly(p, tooltip = c("x", "y", "fill"))
 }

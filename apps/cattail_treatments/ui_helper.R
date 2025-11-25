@@ -90,9 +90,8 @@ create_filter_panel <- function() {
         column(2, create_analysis_date_selector()),
         column(2, create_grouping_selector()),
         column(2, create_zone_display_selector()),
-        column(2, create_metric_toggle()),
         column(2, create_facility_filter()),
-        column(2, create_foreman_filter())
+        column(2, create_progress_chart_type_selector())
       ),
       
       fluidRow(
@@ -111,6 +110,18 @@ create_refresh_button <- function() {
   actionButton("refresh_data", "Refresh Data", 
                class = "btn-primary btn-block",
                icon = icon("refresh"))
+}
+
+# Function to create progress chart type selector (for Progress tab)
+create_progress_chart_type_selector <- function() {
+  selectInput("progress_chart_type", "Progress Chart Type:",
+              choices = list(
+                "Line Chart" = "line",
+                "Grouped Bar Chart" = "bar",
+                "Stacked Bar Chart" = "stacked"
+              ),
+              selected = "stacked",
+              width = "100%")
 }
 
 # Function to create download button

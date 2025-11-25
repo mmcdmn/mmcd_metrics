@@ -158,13 +158,13 @@ ui <- dashboardPage(
               tags$ul(
                 tags$li(tags$strong("Unknown:"), " Sites that have not been inspected or have no recent inspection data"),
                 tags$li(tags$strong("Inspected:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
-                tags$li(tags$strong("Needs ID:"), " Sites with larvae ≥ threshold, samples sent to lab for red/blue bug identification"),
+                tags$li(tags$strong("Needs ID:"), " Sites with Dip ≥ threshold, samples sent to lab for red/blue bug identification"),
                 tags$li(tags$strong("Needs Treatment:"), " Sites with red bugs found in lab analysis (require treatment)"),
                 tags$li(tags$strong("Active Treatment:"), " Sites who recived treatment < effect_days ago acording to material type (see override for BTI)")
               ),
               tags$h5("Treatment Logic:"),
               tags$ul(
-                tags$li("Sites with larvae ≥ threshold → lab for species identification"),
+                tags$li("Sites with Dip ≥ threshold → lab for species identification"),
                 tags$li("Red bugs found → treatment required (species that bite humans)"),
                 tags$li("Blue bugs found → no treatment needed (species that don't bite humans)"),
                 tags$li("Active treatments last for BTI effect days (default varies by material)")

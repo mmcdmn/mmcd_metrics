@@ -137,18 +137,22 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
   # Create layered plot with updated color scheme
   if (!is.null(group_colors) && length(group_colors) > 0 && group_by != "mmcd_all") {
     # Use group colors for total sites background, status green for active, orange for expiring, purple for skipped
+    # Ensure group_colors are unnamed to avoid plotly issues
+    group_colors_clean <- unname(group_colors)
+    names(group_colors_clean) <- names(group_colors)
+    
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
       geom_bar(aes(y = y_total, fill = display_name), stat = "identity", alpha = 0.4) +  # Group colors background - more transparent
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +  # Green active
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange overlay
+      geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"]), alpha = 0.8) +  # Green active
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"])) +  # Orange overlay
       geom_bar(aes(y = y_skipped), stat = "identity", fill = "purple", alpha = 0.7) +  # Purple skipped
-      scale_fill_manual(values = group_colors, na.value = "grey70", guide = "none")  # Hide legend for group colors
+      scale_fill_manual(values = group_colors_clean, na.value = "grey70", guide = "none")  # Hide legend for group colors
   } else {
     # For MMCD grouping or when no specific colors available, use status colors only
     p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
       geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.4) +     # Gray background - more transparent
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +   # Green active
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +  # Orange expiring
+      geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"])) +   # Green active
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"])) +  # Orange expiring
       geom_bar(aes(y = y_skipped), stat = "identity", fill = "purple", alpha = 0.7)  # Purple skipped
   }
   
@@ -179,20 +183,20 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12))
     )
   
-  # Add custom hover text for each layer
+  # Add custom hover text for each bar - use invisible bars instead of scatter points
   for (i in 1:nrow(data)) {
     row_data <- data[i, ]
-    # Add hover info for each bar layer
+    # Add invisible overlay bar for hover tooltip
     plotly_chart <- plotly_chart %>%
       add_trace(
         x = row_data$display_name,
-        y = 0,
-        type = "scatter",
-        mode = "markers",
-        marker = list(size = 0, opacity = 0),
+        y = 0.1,  # Small height to trigger hover
+        type = "bar",
+        marker = list(color = "rgba(0,0,0,0)"),  # Completely transparent
         hoverinfo = "text",
         text = row_data$tooltip_total,
-        showlegend = FALSE
+        showlegend = FALSE,
+        inherit = FALSE
       )
   }
   

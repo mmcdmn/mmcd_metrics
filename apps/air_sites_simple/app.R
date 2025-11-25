@@ -79,7 +79,7 @@ ui <- dashboardPage(
             ),
             fluidRow(
               column(3,
-                numericInput("larvae_threshold", "Larvae Threshold:",
+                numericInput("larvae_threshold", "dip count at least:",
                   value = 2,
                   min = 0,
                   max = 10,
@@ -1234,9 +1234,10 @@ server <- function(input, output, session) {
     plot_ly(trend_data, x = ~primary_year, y = ~avg_red_bug_ratio, color = ~facility,
             type = 'scatter', mode = 'lines+markers') %>%
       layout(
-        title = "Red Bug Detection Trends",
-        xaxis = list(title = "Year"),
-        yaxis = list(title = "Avg Red Bug Ratio (%)"),
+        title = list(text = "Red Bug Detection Trends", font = list(size = 20)),
+        xaxis = list(title = list(text = "Year", font = list(size = 18)), tickfont = list(size = 16)),
+        yaxis = list(title = list(text = "Avg Red Bug Ratio (%)", font = list(size = 18)), tickfont = list(size = 16)),
+        legend = list(font = list(size = 16)),
         hovermode = 'x unified'
       )
   })

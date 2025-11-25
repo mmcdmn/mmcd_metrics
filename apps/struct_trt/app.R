@@ -38,6 +38,46 @@ for (path in env_paths) {
   }
 }
 
+# Create help text for historical metrics
+create_help_text <- function() {
+  div(
+    style = "margin: 10px; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; font-size: 16px;",
+    h4("Understanding Historical Metrics", style = "margin-top: 0; font-size: 20px;"),
+    
+    p(style = "margin-bottom: 15px; font-size: 16px;",
+      "The historical trends chart shows structure treatment coverage over time. You can view the data in two different ways:"
+    ),
+    
+    hr(style = "margin: 15px 0;"),
+    
+    h5("Metric Definitions", style = "font-size: 18px;"),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Proportion (%):"), " The percentage of all structures (within your selected filters) that had active treatments during each time period.",
+      br(),
+      em("Example: If there are 1,000 structures total and 250 had active treatments in a given week, the proportion is 25%.")
+    ),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Number of Structures:"), " The absolute count of structures that had active treatments during each time period.",
+      br(),
+      em("Example: If 250 structures had active treatments in a given week, this metric shows 250.")
+    ),
+    
+    hr(style = "margin: 15px 0;"),
+    
+    h5("Chart Options", style = "font-size: 18px;"),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Average Lines:"), " You can overlay 5-year or 10-year average lines to compare current performance against historical trends. These averages use all available historical data, regardless of the selected date range."
+    ),
+    
+    p(style = "margin-bottom: 10px; font-size: 16px;",
+      strong("Chart Types:"), " Choose from line, area, step, stacked bar, or grouped bar charts to visualize the data in different ways."
+    )
+  )
+}
+
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
@@ -75,9 +115,9 @@ ui <- fluidPage(
                               "Combined P1+P2" = "combined"),
                    selected = "1,2"),
       
-      selectInput("structure_type_filter", "Structure Type:",
+      selectizeInput("structure_type_filter", "Structure Type:",
                   choices = get_structure_type_choices(include_all = TRUE),
-                  selected = "all"),
+                  selected = "all", multiple = TRUE),
       # we removed priority filter for now because data is incomplete
       # not all facilities have priorities for the structures
       
@@ -92,7 +132,18 @@ ui <- fluidPage(
       actionButton("refresh", "Refresh Data", 
                    icon = icon("refresh"),
                    class = "btn-primary btn-lg",
-                   style = "width: 100%; margin-top: 20px;")
+                   style = "width: 100%; margin-top: 20px;"),
+      
+      # Help text for historical metrics (collapsible)
+      hr(),
+      div(id = "help-section",
+        tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
+               style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
+               HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
+        div(style = "display: none;",
+          create_help_text()
+        )
+      )
     ),
     
     mainPanel(
@@ -123,7 +174,7 @@ ui <- fluidPage(
                    column(3,
                           radioButtons("hist_display_metric", "Display Metric:",
                                       choices = c("Proportion (%)" = "proportion",
-                                                  "Raw Numbers" = "raw_numbers"),
+                                                  "Number of Structures" = "raw_numbers"),
                                       selected = "proportion",
                                       inline = TRUE)
                    ),

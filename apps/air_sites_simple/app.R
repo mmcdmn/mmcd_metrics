@@ -43,79 +43,8 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
-    # Custom CSS to increase all text sizes by 4px
-    tags$head(
-      tags$style(HTML("
-        /* Increase base font size */
-        body, .content-wrapper, .main-sidebar, .sidebar {
-          font-size: 18px !important;
-        }
-        
-        /* Increase input labels and text */
-        label, .control-label {
-          font-size: 18px !important;
-        }
-        
-        /* Increase select input text */
-        .selectize-input, .selectize-dropdown {
-          font-size: 18px !important;
-        }
-        
-        /* Increase radio button and checkbox text */
-        .radio label, .checkbox label {
-          font-size: 18px !important;
-        }
-        
-        /* Increase box titles */
-        .box-title {
-          font-size: 22px !important;
-        }
-        
-        /* Increase button text */
-        .btn {
-          font-size: 18px !important;
-        }
-        
-        /* Increase input field text */
-        input[type='text'], input[type='number'], input[type='date'], textarea, select {
-          font-size: 18px !important;
-        }
-        
-        /* Increase tab text */
-        .nav-tabs > li > a {
-          font-size: 18px !important;
-        }
-        
-        /* Increase sidebar menu text */
-        .sidebar-menu > li > a {
-          font-size: 18px !important;
-        }
-        
-        /* Increase value box text */
-        .small-box h3, .small-box p {
-          font-size: 22px !important;
-        }
-        
-        /* Increase info box text */
-        .info-box-text, .info-box-number {
-          font-size: 18px !important;
-        }
-        
-        /* Increase DT table text */
-        table.dataTable {
-          font-size: 18px !important;
-        }
-        
-        table.dataTable thead th {
-          font-size: 18px !important;
-        }
-        
-        /* Increase dashboard header text */
-        .main-header .logo, .main-header .navbar {
-          font-size: 20px !important;
-        }
-      "))
-    ),
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
     tabItems(
       tabItem(tabName = "status",
         fluidRow(

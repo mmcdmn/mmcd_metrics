@@ -39,6 +39,9 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
+    
     # Filter panel - always visible (matching ground prehatch style)
     create_filter_panel(),
     

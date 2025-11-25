@@ -39,6 +39,8 @@ for (path in env_paths) {
 }
 
 ui <- fluidPage(
+  # Use universal CSS from db_helpers for consistent text sizing
+  get_universal_text_css(),
   titlePanel("Structures with Active and Expiring Treatments"),
   
   sidebarLayout(

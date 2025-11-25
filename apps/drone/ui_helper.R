@@ -4,6 +4,8 @@
 #' @return Shiny UI object
 drone_ui <- function() {
   fluidPage(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
     # Application title
     titlePanel("Drone Sites with Active and Expiring Treatments"),
     

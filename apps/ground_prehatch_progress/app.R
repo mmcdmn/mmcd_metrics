@@ -34,6 +34,9 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
+    
     # Filter panel - always visible
     create_filter_panel(),
     
@@ -411,42 +414,24 @@ server <- function(input, output, session) {
   # HISTORICAL ANALYSIS TAB
   # =============================================================================
   
-  # Historical data - ONLY when historical refresh button clicked
-  historical_data <- eventReactive(input$hist_refresh, {
+  # Aggregate historical data for visualization - ONLY when hist_refresh clicked
+  historical_aggregated <- eventReactive(input$hist_refresh, {
     inputs <- hist_refresh_inputs()
     
-    # Load historical data based on time period
-    if (inputs$hist_time_period == "yearly") {
-      get_historical_yearly_data(
-        zone_filter = inputs$zone_filter,
-        facility_filter = inputs$facility_filter,
-        foreman_filter = inputs$foreman_filter,
-        start_year = inputs$hist_year_range[1],
-        end_year = inputs$hist_year_range[2]
-      )
-    } else {
-      get_historical_weekly_data(
-        zone_filter = inputs$zone_filter,
-        facility_filter = inputs$facility_filter,
-        foreman_filter = inputs$foreman_filter,
-        start_year = inputs$hist_year_range[1],
-        end_year = inputs$hist_year_range[2]
-      )
-    }
-  })
-  
-  # Aggregate historical data for visualization
-  historical_aggregated <- reactive({
-    req(input$hist_refresh)
-    inputs <- hist_refresh_inputs()
-    data <- historical_data()
+    # Determine zone display mode from zone_filter_raw
+    hist_zone_display <- if(inputs$zone_filter_raw == "1,2") "show-both" else "combined"
     
-    aggregate_historical_data(
-      data,
-      group_by = inputs$group_by,
-      time_period = inputs$hist_time_period,
-      display_metric = inputs$hist_display_metric,
-      combine_zones = inputs$combine_zones
+    # Call create_historical_data directly
+    create_historical_data(
+      start_year = inputs$hist_year_range[1],
+      end_year = inputs$hist_year_range[2],
+      hist_time_period = inputs$hist_time_period,
+      hist_display_metric = inputs$hist_display_metric,
+      hist_group_by = inputs$group_by,
+      hist_zone_display = hist_zone_display,
+      facility_filter = inputs$facility_filter,
+      zone_filter = inputs$zone_filter,
+      foreman_filter = inputs$foreman_filter
     )
   })
   
@@ -468,7 +453,7 @@ server <- function(input, output, session) {
   # Render historical details table
   output$historical_details_table <- DT::renderDataTable({
     req(input$hist_refresh)
-    data <- historical_data()
+    data <- historical_aggregated()
     create_historical_details_table(data)
   })
   
@@ -479,7 +464,7 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(input$hist_refresh)
-      data <- historical_data()
+      data <- historical_aggregated()
       export_csv_safe(data, file)
     }
   )

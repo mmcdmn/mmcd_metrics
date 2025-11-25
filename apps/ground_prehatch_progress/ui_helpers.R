@@ -49,9 +49,11 @@ create_filter_panel <- function() {
       condition = "input.sidebar_tabs != 'historical'",
       fluidRow(
         column(3,
-          dateInput("custom_today", "Pretend Today is:",
-                   value = Sys.Date(), 
-                   format = "yyyy-mm-dd")
+          div(style = "padding-top: 200px;",
+            dateInput("custom_today", "Pretend Today is:",
+                     value = Sys.Date(), 
+                     format = "yyyy-mm-dd")
+          )
         ),
         column(3,
           sliderInput("expiring_days", "Days Until Expiring:",
@@ -102,18 +104,17 @@ create_filter_panel <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'yearly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                        choices = c("Treatments" = "treatments",
-                                   "Sites Treated" = "sites",
-                                   "Acres Treated" = "acres",
-                                   "Site Acres (Unique Sites)" = "site_acres"),
-                        selected = "treatments",
+                        choices = c("Sites Treated" = "sites",
+                                   "Site Acres (Unique)" = "acres",
+                                   "Treatment Acres (Total)" = "treatment_acres"),
+                        selected = "sites",
                         inline = TRUE)
           ),
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
                         choices = c("Active Sites" = "weekly_active_sites",
-                                   "Active Site Acres" = "weekly_active_acres"),
+                                   "Active Acres" = "weekly_active_acres"),
                         selected = "weekly_active_sites",
                         inline = TRUE)
           )
@@ -265,28 +266,22 @@ create_help_text <- function() {
       tags$strong("Yearly Analysis Metrics:"),
       tags$ul(
         tags$li(
-          tags$strong("Treatments:"), 
-          " Total number of treatment applications. ",
-          tags$em("Each treatment instance is counted separately"),
-          " - if the same site is treated multiple times, each treatment counts."
-        ),
-        tags$li(
           tags$strong("Sites Treated:"), 
           " Number of unique sites that received treatment. ",
           tags$em("Each site is counted only once per time period"),
           " regardless of how many times it was treated."
         ),
         tags$li(
-          tags$strong("Acres Treated:"), 
-          " Total acres covered by all treatments. ",
-          tags$em("Sums actual treated acres from treatment records"),
-          " - if a site is treated multiple times, all treated acres are included."
+          tags$strong("Site Acres (Unique):"), 
+          " Total site capacity (acres) of unique sites that received treatment. ",
+          tags$em("Each site's acres are counted only once per time period"),
+          " - if a site is treated multiple times, its acres count only once. This shows the total acreage capacity that received any treatment."
         ),
         tags$li(
-          tags$strong("Site Acres (Unique Sites):"), 
-          " Total site capacity of unique sites that received treatment. ",
-          tags$em("Sums site acres for unique sites only"),
-          " - if a site is treated multiple times, its acres are counted only once."
+          tags$strong("Treatment Acres (Total):"), 
+          " Total acres covered by all treatment applications. ",
+          tags$em("Sums actual treated acres from each treatment record"),
+          " - if a site is treated multiple times, all treated acres are included. This shows total treatment effort/coverage."
         )
       ),
       
@@ -295,24 +290,23 @@ create_help_text <- function() {
         tags$li(
           tags$strong("Active Sites:"), 
           " Number of sites with active treatment coverage on each Friday. ",
-          tags$em("Counts sites where most recent treatment + effect_days >= Friday date"),
+          tags$em("Counts unique sites where inspdate <= Friday AND (inspdate + effect_days) >= Friday"),
           " - shows how many sites are currently protected."
         ),
         tags$li(
-          tags$strong("Active Site Acres:"), 
+          tags$strong("Active Acres:"), 
           " Total site capacity (acres) covered by active treatments on each Friday. ",
-          tags$em("Sums site acres for sites with active treatment"),
-          " - shows total acreage under active protection."
+          tags$em("Sums unique site acres for sites with active treatment"),
+          " - shows total acreage capacity under active protection."
         )
       ),
       
       tags$p(
         style = "margin-top: 10px; padding: 8px; background-color: #e7f3ff; border-left: 3px solid #007bff; margin-bottom: 0;",
         tags$strong("Example:"), " If Site A (20 acres) is treated 3 times with 10, 15, and 12 acres respectively: ",
-        tags$strong("Treatments = 3"), ", ",
         tags$strong("Sites Treated = 1"), ", ",
-        tags$strong("Acres Treated = 37"), " (10+15+12), ",
-        tags$strong("Site Acres = 20"), " (site capacity counted once)."
+        tags$strong("Site Acres = 20"), " (site capacity counted once), ",
+        tags$strong("Treatment Acres = 37"), " (10+15+12 from all treatments)."
       ),
       tags$p(
         style = "margin-top: 10px; padding: 8px; background-color: #fff3cd; border-left: 3px solid #ffc107; margin-bottom: 0;",

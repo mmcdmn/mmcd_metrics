@@ -18,13 +18,13 @@ create_site_map <- function(data) {
       setView(lng = -93.2, lat = 44.9, zoom = 10))
   }
   
-  # Define colors for all status types using shared color scheme with In Lab
+  # Define colors for all status types using shared color scheme with Needs ID
   status_color_map <- get_status_color_map()
   status_colors <- c(
     "Active Treatment" = as.character(status_color_map[["Active Treatment"]]),
     "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
-    "Inspected" = as.character(status_color_map[["Under Threshold"]]),  # Reuse green color
-    "In Lab" = as.character(status_color_map[["In Lab"]]),
+    "Inspected" = as.character(status_color_map[["Inspected"]]),
+    "Needs ID" = as.character(status_color_map[["Needs ID"]]),
     "Unknown" = as.character(status_color_map[["Unknown"]])
   )
   
@@ -98,7 +98,7 @@ create_summary_stats <- function(data) {
     active_treatment = sum(data$site_status == "Active Treatment", na.rm = TRUE),
     needs_treatment = sum(data$site_status == "Needs Treatment", na.rm = TRUE),
     inspected = sum(data$site_status == "Inspected", na.rm = TRUE),
-    in_lab = sum(data$site_status == "In Lab", na.rm = TRUE),
+    in_lab = sum(data$site_status == "Needs ID", na.rm = TRUE),
     unknown = sum(data$site_status == "Unknown", na.rm = TRUE)
   )
   
@@ -203,7 +203,7 @@ create_treatment_flow_chart <- function(data) {
   # Ensure all columns exist
   if (!"Unknown" %in% colnames(facility_summary)) facility_summary$Unknown <- 0
   if (!"Inspected" %in% colnames(facility_summary)) facility_summary$Inspected <- 0
-  if (!"In Lab" %in% colnames(facility_summary)) facility_summary$`In Lab` <- 0
+  if (!"Needs ID" %in% colnames(facility_summary)) facility_summary$`Needs ID` <- 0
   if (!"Needs Treatment" %in% colnames(facility_summary)) facility_summary$`Needs Treatment` <- 0
   if (!"Active Treatment" %in% colnames(facility_summary)) facility_summary$`Active Treatment` <- 0
   
@@ -211,8 +211,8 @@ create_treatment_flow_chart <- function(data) {
   status_color_map <- get_status_color_map()
   colors <- list(
     "Unknown" = as.character(status_color_map[["Unknown"]]),
-    "Inspected" = as.character(status_color_map[["Under Threshold"]]),
-    "In Lab" = as.character(status_color_map[["In Lab"]]),
+    "Inspected" = as.character(status_color_map[["Inspected"]]),
+    "Needs ID" = as.character(status_color_map[["Needs ID"]]),
     "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
     "Active Treatment" = as.character(status_color_map[["Active Treatment"]])
   )
@@ -222,18 +222,19 @@ create_treatment_flow_chart <- function(data) {
                name = 'Unknown', marker = list(color = colors$Unknown)) %>%
     add_trace(y = ~Inspected, name = 'Inspected', 
               marker = list(color = colors$Inspected)) %>%
-    add_trace(y = ~`In Lab`, name = 'In Lab', 
-              marker = list(color = colors$`In Lab`)) %>%
+    add_trace(y = ~`Needs ID`, name = 'Needs ID', 
+              marker = list(color = colors$`Needs ID`)) %>%
     add_trace(y = ~`Needs Treatment`, name = 'Needs Treatment', 
               marker = list(color = colors$`Needs Treatment`)) %>%
     add_trace(y = ~`Active Treatment`, name = 'Active Treatment', 
               marker = list(color = colors$`Active Treatment`)) %>%
     layout(
-      title = "Treatment Process Flow by Facility",
-      xaxis = list(title = "Facility"),
-      yaxis = list(title = "Number of Sites"),
+      title = list(text = "Treatment Process Flow by Facility", font = list(size = 20)),
+      xaxis = list(title = list(text = "Facility", font = list(size = 18)), tickfont = list(size = 16)),
+      yaxis = list(title = list(text = "Number of Sites", font = list(size = 18)), tickfont = list(size = 16)),
       barmode = 'stack',
-      showlegend = TRUE
+      showlegend = TRUE,
+      legend = list(font = list(size = 16))
     )
   
   return(p)

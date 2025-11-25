@@ -154,7 +154,7 @@ Air sites are classified into mutually exclusive status categories based on rece
 - **Threshold**: Below configurable larvae threshold
 - **Priority**: Medium - Site is monitored but doesn't need treatment
 
-#### **In Lab**
+#### **Needs ID**
 - **Definition**: Site has recent inspection with sample sent to lab, awaiting results
 - **Logic**: `has_recent_inspection AND has_sampnum_yr AND no lab results yet`
 - **Sample Status**: Sample sent but `redblue` result not available

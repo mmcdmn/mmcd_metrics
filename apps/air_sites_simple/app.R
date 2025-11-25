@@ -43,6 +43,79 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
+    # Custom CSS to increase all text sizes by 4px
+    tags$head(
+      tags$style(HTML("
+        /* Increase base font size */
+        body, .content-wrapper, .main-sidebar, .sidebar {
+          font-size: 18px !important;
+        }
+        
+        /* Increase input labels and text */
+        label, .control-label {
+          font-size: 18px !important;
+        }
+        
+        /* Increase select input text */
+        .selectize-input, .selectize-dropdown {
+          font-size: 18px !important;
+        }
+        
+        /* Increase radio button and checkbox text */
+        .radio label, .checkbox label {
+          font-size: 18px !important;
+        }
+        
+        /* Increase box titles */
+        .box-title {
+          font-size: 22px !important;
+        }
+        
+        /* Increase button text */
+        .btn {
+          font-size: 18px !important;
+        }
+        
+        /* Increase input field text */
+        input[type='text'], input[type='number'], input[type='date'], textarea, select {
+          font-size: 18px !important;
+        }
+        
+        /* Increase tab text */
+        .nav-tabs > li > a {
+          font-size: 18px !important;
+        }
+        
+        /* Increase sidebar menu text */
+        .sidebar-menu > li > a {
+          font-size: 18px !important;
+        }
+        
+        /* Increase value box text */
+        .small-box h3, .small-box p {
+          font-size: 22px !important;
+        }
+        
+        /* Increase info box text */
+        .info-box-text, .info-box-number {
+          font-size: 18px !important;
+        }
+        
+        /* Increase DT table text */
+        table.dataTable {
+          font-size: 18px !important;
+        }
+        
+        table.dataTable thead th {
+          font-size: 18px !important;
+        }
+        
+        /* Increase dashboard header text */
+        .main-header .logo, .main-header .navbar {
+          font-size: 20px !important;
+        }
+      "))
+    ),
     tabItems(
       tabItem(tabName = "status",
         fluidRow(
@@ -89,7 +162,7 @@ ui <- dashboardPage(
                   choices = c("All Statuses" = "all",
                              "Unknown" = "Unknown",
                              "Inspected" = "Inspected", 
-                             "In Lab" = "In Lab",
+                             "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
                   selected = "all"
@@ -156,7 +229,7 @@ ui <- dashboardPage(
               tags$ul(
                 tags$li(tags$strong("Unknown:"), " Sites that have not been inspected or have no recent inspection data"),
                 tags$li(tags$strong("Inspected:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
-                tags$li(tags$strong("In Lab:"), " Sites with larvae ≥ threshold, samples sent to lab for red/blue bug identification"),
+                tags$li(tags$strong("Needs ID:"), " Sites with larvae ≥ threshold, samples sent to lab for red/blue bug identification"),
                 tags$li(tags$strong("Needs Treatment:"), " Sites with red bugs found in lab analysis (require treatment)"),
                 tags$li(tags$strong("Active Treatment:"), " Sites who recived treatment < effect_days ago acording to material type (see override for BTI)")
               ),
@@ -237,10 +310,10 @@ ui <- dashboardPage(
                 checkboxGroupInput("process_status_filter", "Status Filter (for Flow Chart):",
                   choices = c("Unknown" = "Unknown",
                              "Inspected" = "Inspected", 
-                             "In Lab" = "In Lab",
+                             "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
-                  selected = c("Unknown", "Inspected", "In Lab", "Needs Treatment", "Active Treatment"),
+                  selected = c("Unknown", "Inspected", "Needs ID", "Needs Treatment", "Active Treatment"),
                   inline = TRUE
                 )
               ),
@@ -653,10 +726,10 @@ server <- function(input, output, session) {
   
   output$sites_in_lab <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "In Lab", na.rm = TRUE)
+    count <- sum(data$site_status == "Needs ID", na.rm = TRUE)
     valueBox(
       value = count,
-      subtitle = "In Lab",
+      subtitle = "Needs ID",
       icon = icon("microscope"),
       color = "purple"
     )
@@ -720,8 +793,8 @@ server <- function(input, output, session) {
     chart_colors <- c(
       "Active Treatment" = as.character(status_color_map[["Active Treatment"]]),
       "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
-      "Inspected" = as.character(status_color_map[["Under Threshold"]]),  # Use green for inspected
-      "In Lab" = "#ff9800",  # Orange for lab processing
+      "Inspected" = as.character(status_color_map[["Inspected"]]),
+      "Needs ID" = as.character(status_color_map[["Needs ID"]]),
       "Unknown" = as.character(status_color_map[["Unknown"]])
     )
     
@@ -731,9 +804,9 @@ server <- function(input, output, session) {
             type = 'bar',
             marker = list(color = ~chart_colors[site_status])) %>%
       layout(
-        title = "Site Status Distribution",
-        xaxis = list(title = "Status"),
-        yaxis = list(title = "Number of Sites"),
+        title = list(text = "Site Status Distribution", font = list(size = 20)),
+        xaxis = list(title = list(text = "Status", font = list(size = 18)), tickfont = list(size = 16)),
+        yaxis = list(title = list(text = "Number of Sites", font = list(size = 18)), tickfont = list(size = 16)),
         showlegend = FALSE
       )
   })
@@ -935,7 +1008,7 @@ server <- function(input, output, session) {
       DT::formatStyle(
         "Status",
         backgroundColor = DT::styleEqual(
-          c("Active Treatment", "Needs Treatment", "Inspected", "In Lab", "Unknown"),
+          c("Active Treatment", "Needs Treatment", "Inspected", "Needs ID", "Unknown"),
           c("#d4edda", "#f8d7da", "#d1ecf1", "#fff3cd", "#f8f9fa")
         )
       )

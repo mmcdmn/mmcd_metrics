@@ -369,8 +369,8 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
                 data$site_status[i] <- "Inspected"
               }
             } else {
-              # Sample sent but no lab results yet (missing = TRUE) - in lab
-              data$site_status[i] <- "In Lab"
+              # Sample sent but no lab results yet (missing = TRUE) - needs ID
+              data$site_status[i] <- "Needs ID"
             }
           } else {
             # High larvae count but no sample sent - direct to needs treatment (fallback)
@@ -404,7 +404,7 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
     "No Sample",
     ifelse(
       is.na(data$missing) | data$missing == TRUE,
-      "In Lab",
+      "Needs ID",
       ifelse(
         !is.na(data$has_red_bugs) & data$has_red_bugs == 1,
         "Red Bugs Found",
@@ -503,7 +503,7 @@ analyze_lab_processing_metrics <- function(site_data) {
   ]
   total_completed_samples <- nrow(completed_samples)
   
-  # Sites in lab: samples without completed timestamps (missing == TRUE)
+  # Sites needing ID: samples without completed timestamps (missing == TRUE)
   sites_in_lab <- total_all_samples - total_completed_samples
 
   # For other metrics, only use completed samples (those with timestamps)

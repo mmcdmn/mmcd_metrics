@@ -894,7 +894,9 @@ get_status_color_map <- function() {
     "Unknown" = status_colors["unknown"],
     "Needs Inspection" = status_colors["planned"],      # Orange/yellow for needs inspection
     "Under Threshold" = status_colors["completed"],
-    "In Lab" = status_colors["in_lab"],                              
+    "Inspected" = status_colors["completed"],           # Reuse completed color for inspected
+    "Needs ID" = status_colors["in_lab"],               # Purple for needs ID (formerly In Lab)
+    "In Lab" = status_colors["in_lab"],                 # Keep for backwards compatibility              
     "Needs Treatment" = status_colors["needs_treatment"],
     "Active Treatment" = status_colors["active"]
   ))

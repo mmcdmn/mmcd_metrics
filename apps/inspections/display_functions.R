@@ -338,7 +338,7 @@ create_priority_chart <- function(data) {
 create_exceedance_frequency_chart <- function(data) {
   if (nrow(data) == 0) return(NULL)
   
-  # Create frequency bins for exceedance rates
+  # Create frequency bins for exceedance rates with ordered levels
   freq_bins <- cut(data$exceedance_frequency,
                   breaks = c(0, 5, 15, 30, 50, 75, 100),
                   labels = c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%"),
@@ -346,9 +346,17 @@ create_exceedance_frequency_chart <- function(data) {
   
   bin_counts <- table(freq_bins)
   
+  # Ensure proper ordering of factor levels
+  ordered_labels <- c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%")
+  freq_df <- data.frame(
+    bin = factor(names(bin_counts), levels = ordered_labels),
+    count = as.numeric(bin_counts)
+  )
+  
   p <- plot_ly(
-    x = names(bin_counts),
-    y = as.numeric(bin_counts),
+    data = freq_df,
+    x = ~bin,
+    y = ~count,
     type = 'bar',
     marker = list(color = 'lightcoral', line = list(color = 'darkred', width = 1))
   ) %>%
@@ -356,6 +364,8 @@ create_exceedance_frequency_chart <- function(data) {
     title = list(text = "Distribution of Exceedance Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
     xaxis = list(
       title = list(text = "Exceedance Frequency Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+      categoryorder = "array",
+      categoryarray = ordered_labels,
       tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
     ),
     yaxis = list(

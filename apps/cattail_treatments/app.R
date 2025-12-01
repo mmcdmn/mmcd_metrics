@@ -84,14 +84,18 @@ ui <- dashboardPage(
         fluidRow(
           box(
             title = "Current Cattail Progress", status = "primary", solidHeader = TRUE,
-            width = 8, height = "500px",
+            width = 12,
             plotlyOutput("timeline_chart", height = "450px")
-          ),
-          box(
-            title = "Summary Statistics", status = "primary", solidHeader = TRUE,
-            width = 4, height = "500px",
-            tableOutput("summary_stats")
           )
+        ),
+        
+        fluidRow(
+          valueBoxOutput("total_inspected_stat", width = 2),
+          valueBoxOutput("total_acres_stat", width = 2),
+          valueBoxOutput("under_threshold_stat", width = 2),
+          valueBoxOutput("need_treatment_stat", width = 2),
+          valueBoxOutput("pct_need_treatment_stat", width = 2),
+          valueBoxOutput("pct_treated_stat", width = 2)
         ),
         
         fluidRow(
@@ -108,8 +112,8 @@ ui <- dashboardPage(
         fluidRow(
           box(
             title = "Treatment Progress by Group", status = "primary", solidHeader = TRUE,
-            width = 12, height = "600px",
-            plotlyOutput("progress_chart", height = "550px")
+            width = 12, height = "500",
+            plotlyOutput("progress_chart", height = "900px")
           )
         ),
         
@@ -164,10 +168,10 @@ ui <- dashboardPage(
             width = 12, collapsible = TRUE,
             fluidRow(
               column(4, create_year_range_selector()),
-              column(4, selectInput("hist_display_metric", "Metric:",
+              column(4, selectInput("hist_status_metric", "Status Metric:",
                                    choices = list(
-                                     "Sites Need Treatment (as of December 1)" = "need_treatment",
-                                     "Sites Treated (as of Aug 1)" = "treated",
+                                     "Need Treatment (as of December 1)" = "need_treatment",
+                                     "Treated (as of Aug 1)" = "treated",
                                      "% Treated of Need Treatment (as of Aug 1)" = "pct_treated"
                                    ),
                                    selected = "need_treatment")),
@@ -181,7 +185,7 @@ ui <- dashboardPage(
               column(12, 
                 tags$p(
                   style = "margin-top: 10px; font-style: italic; color: #666;",
-                  "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug). Year 2022 = Fall 2022 through Summer 2023."
+                  "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug). Year 2022 = Fall 2022 through Summer 2023. Use Analysis Settings above to toggle between Sites and Acres."
                 )
               )
             )
@@ -426,16 +430,16 @@ server <- function(input, output, session) {
     combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
     create_treatment_progress_chart(values$aggregated_data, input$group_by, input$progress_chart_type, combine_zones)
   })
-  
   output$timeline_chart <- renderPlotly({
     sites_data <- if (!is.null(values$aggregated_data) && !is.null(values$aggregated_data$sites_data)) {
       values$aggregated_data$sites_data
     } else {
       data.frame()
     }
-    
+
     combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
-    create_current_progress_chart(sites_data, input$group_by, input$progress_chart_type, combine_zones)
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    create_current_progress_chart(sites_data, input$group_by, input$progress_chart_type, combine_zones, metric_type)
   })
   
   # Charts that need implementation
@@ -469,12 +473,12 @@ server <- function(input, output, session) {
     req(input$refresh_historical)
     
     chart_type <- input$chart_type
-    hist_display_metric <- input$hist_display_metric
+    hist_status_metric <- input$hist_status_metric
     year_range <- input$year_range
     
     # Use defaults if inputs are NULL
     if (is.null(chart_type)) chart_type <- "line"
-    if (is.null(hist_display_metric)) hist_display_metric <- "need_treatment"
+    if (is.null(hist_status_metric)) hist_status_metric <- "need_treatment"
     if (is.null(year_range)) {
       start_year <- max(2022, year(Sys.Date()) - 4)
       end_year <- year(Sys.Date())
@@ -489,15 +493,18 @@ server <- function(input, output, session) {
     start_date <- as.Date(paste0(start_year, "-09-01"))
     end_date <- as.Date(paste0(end_year + 1, "-08-01"))
     
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    
     create_historical_analysis_chart(
       values$raw_data, 
       group_by = input$group_by,
       time_period = "yearly",  # Always yearly for inspection year grouping
       chart_type = chart_type,
-      display_metric = hist_display_metric,
+      display_metric = hist_status_metric,
       start_date = start_date,
       end_date = end_date,
-      combine_zones = input$zone_display %in% c("combined", "p1", "p2")
+      combine_zones = input$zone_display %in% c("combined", "p1", "p2"),
+      metric_type = metric_type
     )
   })
   
@@ -562,32 +569,75 @@ server <- function(input, output, session) {
     }
   })
   
-  # Summary statistics
-  output$summary_stats <- renderTable({
-    if (is.null(values$filtered_data) || is.null(values$filtered_data$cattail_sites) || nrow(values$filtered_data$cattail_sites) == 0) {
-      return(data.frame(Metric = "No data available", Value = ""))
-    }
-    
+  # Summary statistics value boxes
+  output$total_inspected_stat <- renderValueBox({
     stats <- cattail_values()
-    # Calculate corrected percentages
+    valueBox(
+      value = stats$sites_inspected,
+      subtitle = "Sites Inspected",
+      icon = icon("clipboard-check"),
+      color = "light-blue"
+    )
+  })
+  
+  output$total_acres_stat <- renderValueBox({
+    stats <- cattail_values()
+    valueBox(
+      value = paste(stats$total_acres, "ac"),
+      subtitle = "Total Acres",
+      icon = icon("ruler-combined"),
+      color = "aqua"
+    )
+  })
+  
+  output$under_threshold_stat <- renderValueBox({
+    stats <- cattail_values()
+    valueBox(
+      value = stats$sites_under_threshold,
+      subtitle = "Under Threshold",
+      icon = icon("check-circle"),
+      color = "green"
+    )
+  })
+  
+  output$need_treatment_stat <- renderValueBox({
+    stats <- cattail_values()
+    valueBox(
+      value = stats$sites_need_treatment,
+      subtitle = "Need Treatment",
+      icon = icon("exclamation-triangle"),
+      color = "red"
+    )
+  })
+  
+  output$pct_need_treatment_stat <- renderValueBox({
+    stats <- cattail_values()
     total_inspected <- stats$sites_inspected
     sites_needing_treatment <- stats$sites_need_treatment
-    sites_treated <- stats$sites_treated
-    
-    # % of all inspected sites that need treatment
     pct_need_treatment <- if (total_inspected > 0) round(100 * sites_needing_treatment / total_inspected, 1) else 0
     
-    # % treated of sites that need treatment (treated / (treated + need_treatment))
+    valueBox(
+      value = paste0(pct_need_treatment, "%"),
+      subtitle = "% Need Treatment (of inspected)",
+      icon = icon("percentage"),
+      color = "orange"
+    )
+  })
+  
+  output$pct_treated_stat <- renderValueBox({
+    stats <- cattail_values()
+    sites_needing_treatment <- stats$sites_need_treatment
+    sites_treated <- stats$sites_treated
     sites_requiring_treatment <- sites_needing_treatment + sites_treated
     pct_treated_of_requiring <- if (sites_requiring_treatment > 0) round(100 * sites_treated / sites_requiring_treatment, 1) else 0
     
-    data.frame(
-      Metric = c("Sites Inspected", "Total Acres", "Under Threshold", "Need Treatment", 
-                "% Need Treatment (of inspected)", "% Treated (of sites requiring treatment)"),
-      Value = c(stats$sites_inspected, paste(stats$total_acres, "ac"), stats$sites_under_threshold,
-               stats$sites_need_treatment, paste0(pct_need_treatment, "%"), paste0(pct_treated_of_requiring, "%"))
+    valueBox(
+      value = paste0(pct_treated_of_requiring, "%"),
+      subtitle = "% Treated (of need treatment)",
+      icon = icon("chart-pie"),
+      color = "teal"
     )
-  }, bordered = TRUE, spacing = "xs")
+  })
   
   # Download handlers
   output$download_treatments <- downloadHandler(

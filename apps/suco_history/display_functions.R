@@ -329,22 +329,18 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
     } else {
       "Top Locations by Species Count - Individual Samples"
     }
-    chart_subtitle <- "Each segment represents one SUCO sample. Hover for details."
+    chart_subtitle <- "Each segment represents one SUCO sample. Colors show epi week. Hover for details."
     y_label <- "Species Count per Sample"
     value_col <- "species_count"
-    # Use consistent color scheme for both current and all data
-    fill_colors <- scale_fill_viridis_c(option = "viridis", name = "Date")
   } else {
     chart_title <- if (data_source == "current") {
       "Top SUCO Locations - Individual Samples (Current Data Only)"
     } else {
       "Top SUCO Locations - Individual Samples"
     }
-    chart_subtitle <- "Each segment represents one SUCO sample. Colors show sample dates."
+    chart_subtitle <- "Each segment represents one SUCO sample. Colors show epi week."
     y_label <- "Individual Samples"
     value_col <- "visits"
-    # Use consistent color scheme for both current and all data
-    fill_colors <- scale_fill_viridis_c(option = "viridis", name = "Date")
   }
   
   # Calculate location totals for ordering
@@ -359,13 +355,14 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
   
   # Create stacked bar chart
   p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
-                                     fill = date_numeric, 
+                                     fill = epi_week, 
                                      text = paste("Location:", location, "<br>",
                                                  "Date:", format(inspdate, "%m/%d/%y"), "<br>",
+                                                 "Epi Week:", epi_week, "<br>",
                                                  "Species Found:<br>",
                                                  gsub("<br>", "<br>", species_summary)))) +
     geom_bar(stat = "identity", position = "stack", na.rm = TRUE) +
-    fill_colors +
+    scale_fill_viridis_c(option = "viridis", name = "Epi Week") +
     coord_flip() +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +  # Better scale handling
     labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +
@@ -379,7 +376,7 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
       legend.text = element_text(size = 10)
     ) +
     guides(fill = guide_colorbar(
-      title = "Sample Date\n(Newer → Lighter)",
+      title = "Epi Week\n(Earlier → Darker)",
       title.position = "top",
       title.hjust = 0.5,
       barwidth = 1,

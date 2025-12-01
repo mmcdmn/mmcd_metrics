@@ -85,12 +85,12 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(face = "bold", size = 18, family = "Arial"),
-        axis.title = element_text(face = "bold", size = 14, family = "Arial"),
-        axis.text = element_text(size = 13, family = "Arial"),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.title = element_text(face = "bold", size = 12, family = "Arial"),
-        legend.text = element_text(size = 11, family = "Arial"),
+        plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+        axis.text = element_text(size = 16, family = "Arial"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+        legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+        legend.text = element_text(size = 16, family = "Arial"),
         legend.position = "bottom"
       )
   } else if (chart_type == "bar") {
@@ -111,11 +111,11 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(face = "bold", size = 18, family = "Arial"),
-        axis.title = element_text(face = "bold", size = 14, family = "Arial"),
-        axis.text = element_text(size = 13, family = "Arial"),
-        legend.title = element_text(face = "bold", size = 12, family = "Arial"),
-        legend.text = element_text(size = 11, family = "Arial"),
+        plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+        axis.text = element_text(size = 16, family = "Arial"),
+        legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+        legend.text = element_text(size = 16, family = "Arial"),
         legend.position = "bottom"
       )
   } else {
@@ -136,11 +136,11 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(face = "bold", size = 18, family = "Arial"),
-        axis.title = element_text(face = "bold", size = 14, family = "Arial"),
-        axis.text = element_text(size = 13, family = "Arial"),
-        legend.title = element_text(face = "bold", size = 12, family = "Arial"),
-        legend.text = element_text(size = 11, family = "Arial"),
+        plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+        axis.text = element_text(size = 16, family = "Arial"),
+        legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+        legend.text = element_text(size = 16, family = "Arial"),
         legend.position = "bottom"
       )
   }
@@ -188,13 +188,13 @@ create_treatment_timeline <- function(treatments_data, group_by = "facility") {
     ) +
     theme_minimal() +
     theme(
-      plot.title = element_text(face = "bold", size = 18, family = "Arial"),
-      axis.title = element_text(face = "bold", size = 14, family = "Arial"),
-      axis.text = element_text(size = 13, family = "Arial"),
-      legend.title = element_text(face = "bold", size = 12, family = "Arial"),
-      legend.text = element_text(size = 11, family = "Arial"),
+      plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+      axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+      axis.text = element_text(size = 16, family = "Arial"),
+      legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+      legend.text = element_text(size = 16, family = "Arial"),
       legend.position = "bottom",
-      axis.text.x = element_text(angle = 45, hjust = 1)
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 16)
     ) +
     scale_x_date(date_breaks = "1 month", date_labels = "%b %Y")
   
@@ -745,10 +745,13 @@ create_treatment_methods_chart <- function(treatments_data) {
 }
 
 # Function to create current cattail progress chart
-create_current_progress_chart <- function(sites_data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE) {
+create_current_progress_chart <- function(sites_data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE, metric_type = "sites") {
   if (is.null(sites_data) || nrow(sites_data) == 0) {
     return(ggplot() + geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) + theme_void())
   }
+  
+  # Determine y-axis label based on metric type
+  y_label <- if (metric_type == "acres") "Acres" else "Number of Sites"
   
   progress_data <- sites_data %>%
     group_by(
@@ -762,9 +765,9 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
       )
     ) %>%
     summarise(
-      inspected_under_threshold = sum(final_status == "under_threshold", na.rm = TRUE),
-      need_treatment = sum(final_status == "need_treatment", na.rm = TRUE), 
-      treated = sum(final_status == "treated", na.rm = TRUE),
+      inspected_under_threshold = if (metric_type == "acres") sum(ifelse(final_status == "under_threshold", acres, 0), na.rm = TRUE) else sum(final_status == "under_threshold", na.rm = TRUE),
+      need_treatment = if (metric_type == "acres") sum(ifelse(final_status == "need_treatment", acres, 0), na.rm = TRUE) else sum(final_status == "need_treatment", na.rm = TRUE),
+      treated = if (metric_type == "acres") sum(ifelse(final_status == "treated", acres, 0), na.rm = TRUE) else sum(final_status == "treated", na.rm = TRUE),
       .groups = "drop"
     ) %>%
     # Reshape for stacked bar chart
@@ -788,13 +791,17 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
       labs(
         title = "Current Cattail Inspection Progress",
         x = "Status",
-        y = "Number of Sites",
+        y = y_label,
         color = stringr::str_to_title(group_by)
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+        axis.text = element_text(size = 16, family = "Arial"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+        legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+        legend.text = element_text(size = 16, family = "Arial"),
         legend.position = "bottom"
       )
   } else if (chart_type == "bar") {
@@ -808,13 +815,17 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
       labs(
         title = "Current Cattail Inspection Progress",
         x = stringr::str_to_title(group_by),
-        y = "Number of Sites",
+        y = y_label,
         fill = "Status"
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+        axis.text = element_text(size = 16, family = "Arial"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+        legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+        legend.text = element_text(size = 16, family = "Arial"),
         legend.position = "bottom"
       )
   } else {
@@ -829,13 +840,17 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
       labs(
         title = "Current Cattail Inspection Progress",
         x = stringr::str_to_title(group_by),
-        y = "Number of Sites",
+        y = y_label,
         fill = "Status"
       ) +
       theme_minimal() +
       theme(
-        plot.title = element_text(face = "bold", size = 16),
-        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+        axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+        axis.text = element_text(size = 16, family = "Arial"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+        legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+        legend.text = element_text(size = 16, family = "Arial"),
         legend.position = "bottom"
       )
   }

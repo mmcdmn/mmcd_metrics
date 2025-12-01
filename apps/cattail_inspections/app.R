@@ -1,4 +1,4 @@
-# Catttail Status App
+# Catttail inspections App
 
 # Load required libraries
 suppressPackageStartupMessages({
@@ -102,6 +102,16 @@ ui <- fluidPage(
           ),
           
           radioButtons(
+            "hist_metric",
+            "Historical Progress Metric:",
+            choices = c(
+              "Unique Sites Inspected" = "sites",
+              "Unique Acres Inspected" = "acres"
+            ),
+            selected = "sites"
+          ),
+          
+          radioButtons(
             "sites_view_type",
             "Sites Table View:",
             choices = c(
@@ -130,57 +140,58 @@ ui <- fluidPage(
           DT::dataTableOutput("sitesTable")
         )
       )
-    ),
-    
-    # Third tab: Treatment Planning
-    tabPanel("Treatment Planning",
-      sidebarLayout(
-        sidebarPanel(
-          # Radio buttons to select view type
-          radioButtons(
-            "view_type",
-            "View By:",
-            choices = c("Acres" = "acres", "Number of Sites" = "sites"),
-            selected = "acres"
-          ),
-          
-          # Dropdown to select facility
-          selectInput(
-            "facility",
-            "Select Facility:",
-            choices = get_facility_choices(),
-            selected = "all"
-          ),
-          
-          # Checkboxes to select treatment plan types
-          checkboxGroupInput(
-            "plan_types",
-            "Select Treatment Plan Types:",
-            choices = get_treatment_plan_choices(),
-            selected = c("A", "D", "G", "N", "U")
-          ),
-          
-          # Refresh button
-          actionButton(
-            "refresh_treatment",
-            "Refresh Data",
-            icon = icon("refresh"),
-            style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
-          )
-        ),
-        
-        # Main panel for displaying the graph and table
-        mainPanel(
-          plotOutput("treatmentGraph", height = "600px"),
-          hr(),
-          h4("Site Details", style = "font-weight: bold; margin-top: 20px;"),
-          div(style = "margin-bottom: 10px;",
-            downloadButton("download_treatment_details", "Download CSV", class = "btn-warning btn-sm")
-          ),
-          DT::dataTableOutput("siteDetailsTable")
-        )
-      )
     )
+    
+    # NOTE: Treatment Planning tab commented out - this functionality will be moved to the treatment progress app
+    # Third tab: Treatment Planning
+    # tabPanel("Treatment Planning",
+    #   sidebarLayout(
+    #     sidebarPanel(
+    #       # Radio buttons to select view type
+    #       radioButtons(
+    #         "view_type",
+    #         "View By:",
+    #         choices = c("Acres" = "acres", "Number of Sites" = "sites"),
+    #         selected = "acres"
+    #       ),
+    #       
+    #       # Dropdown to select facility
+    #       selectInput(
+    #         "facility",
+    #         "Select Facility:",
+    #         choices = get_facility_choices(),
+    #         selected = "all"
+    #       ),
+    #       
+    #       # Checkboxes to select treatment plan types
+    #       checkboxGroupInput(
+    #         "plan_types",
+    #         "Select Treatment Plan Types:",
+    #         choices = get_treatment_plan_choices(),
+    #         selected = c("A", "D", "G", "N", "U")
+    #       ),
+    #       
+    #       # Refresh button
+    #       actionButton(
+    #         "refresh_treatment",
+    #         "Refresh Data",
+    #         icon = icon("refresh"),
+    #         style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
+    #       )
+    #     ),
+    #     
+    #     # Main panel for displaying the graph and table
+    #     mainPanel(
+    #       plotOutput("treatmentGraph", height = "600px"),
+    #       hr(),
+    #       h4("Site Details", style = "font-weight: bold; margin-top: 20px;"),
+    #       div(style = "margin-bottom: 10px;",
+    #         downloadButton("download_treatment_details", "Download CSV", class = "btn-warning btn-sm")
+    #       ),
+    #       DT::dataTableOutput("siteDetailsTable")
+    #     )
+    #   )
+    # )
   )
 )
 
@@ -203,7 +214,7 @@ server <- function(input, output) {
   # Historical progress plot - overlaid bars like drone app
   output$historicalProgressPlot <- renderPlot({
     data <- historical_progress_data()
-    create_historical_progress_plot(data, input$hist_years)
+    create_historical_progress_plot(data, input$hist_years, input$hist_metric)
   })
   
   # Sites table data - sites inspected in last X years (with toggle for unchecked this year)
@@ -227,8 +238,7 @@ server <- function(input, output) {
         `Last Inspection` = last_inspection,
         Wet = wet,
         `Num Dip` = numdip,
-        Acres = acres,
-        `Acres Plan` = acres_plan
+        Acres = acres
       )
     
     DT::datatable(
@@ -242,50 +252,51 @@ server <- function(input, output) {
     )
   })
   
+  # NOTE: Treatment Planning server code commented out - functionality to be moved to treatment progress app
   # Treatment Planning - fetch data only on refresh
-  treatment_data <- eventReactive(input$refresh_treatment, {
-    get_treatment_plan_data()
-  })
-  
-  output$treatmentGraph <- renderPlot({
-    data <- treatment_data()
-    create_treatment_plan_plot_with_data(data, input$facility, input$plan_types, input$view_type)
-  })
-  
-  # Site details table
-  output$siteDetailsTable <- DT::renderDataTable({
-    # Fetch site data only when refresh is clicked
-    req(input$refresh_treatment)
-    
-    site_data <- get_site_details_data(input$facility, input$plan_types)
-    
-    if (nrow(site_data) == 0) {
-      return(data.frame(Message = "No site data available for the selected filters."))
-    }
-    
-    # Select and rename columns for display - only relevant columns
-    display_data <- site_data %>%
-      select(
-        `Site Code` = sitecode,
-        Facility = facility,
-        `Plan Type` = plan_name,
-        `Inspection Date` = inspdate,
-        Wet = wet,
-        `Num Dip` = numdip,
-        Acres = acres,
-        `Acres Plan` = acres_plan
-      )
-    
-    DT::datatable(
-      display_data,
-      options = list(
-        pageLength = 15,
-        scrollX = TRUE,
-        order = list(list(1, 'asc'), list(2, 'asc'))
-      ),
-      rownames = FALSE
-    )
-  })
+  # treatment_data <- eventReactive(input$refresh_treatment, {
+  #   get_treatment_plan_data()
+  # })
+  # 
+  # output$treatmentGraph <- renderPlot({
+  #   data <- treatment_data()
+  #   create_treatment_plan_plot_with_data(data, input$facility, input$plan_types, input$view_type)
+  # })
+  # 
+  # # Site details table
+  # output$siteDetailsTable <- DT::renderDataTable({
+  #   # Fetch site data only when refresh is clicked
+  #   req(input$refresh_treatment)
+  #   
+  #   site_data <- get_site_details_data(input$facility, input$plan_types)
+  #   
+  #   if (nrow(site_data) == 0) {
+  #     return(data.frame(Message = "No site data available for the selected filters."))
+  #   }
+  #   
+  #   # Select and rename columns for display - only relevant columns
+  #   display_data <- site_data %>%
+  #     select(
+  #       `Site Code` = sitecode,
+  #       Facility = facility,
+  #       `Plan Type` = plan_name,
+  #       `Inspection Date` = inspdate,
+  #       Wet = wet,
+  #       `Num Dip` = numdip,
+  #       Acres = acres,
+  #       `Acres Plan` = acres_plan
+  #     )
+  #   
+  #   DT::datatable(
+  #     display_data,
+  #     options = list(
+  #       pageLength = 15,
+  #       scrollX = TRUE,
+  #       order = list(list(1, 'asc'), list(2, 'asc'))
+  #     ),
+  #     rownames = FALSE
+  #   )
+  # })
   
   # Download handlers for CSV exports
   output$download_sites_data <- downloadHandler(
@@ -310,27 +321,28 @@ server <- function(input, output) {
     }
   )
   
-  output$download_treatment_details <- downloadHandler(
-    filename = function() {
-      paste("cattail_treatment_details_", Sys.Date(), ".csv", sep = "")
-    },
-    content = function(file) {
-      tryCatch({
-        site_data <- get_site_details_data(input$facility, input$plan_types)
-        
-        if (is.null(site_data) || nrow(site_data) == 0) {
-          write.csv(data.frame(Message = "No treatment details available"), file, row.names = FALSE)
-        } else {
-          result <- export_csv_safe(site_data, file, clean_data = TRUE)
-          if (!result$success) {
-            write.csv(site_data, file, row.names = FALSE, na = "")
-          }
-        }
-      }, error = function(e) {
-        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
-      })
-    }
-  )
+  # NOTE: Treatment Planning download handler commented out - functionality to be moved to treatment progress app
+  # output$download_treatment_details <- downloadHandler(
+  #   filename = function() {
+  #     paste("cattail_treatment_details_", Sys.Date(), ".csv", sep = "")
+  #   },
+  #   content = function(file) {
+  #     tryCatch({
+  #       site_data <- get_site_details_data(input$facility, input$plan_types)
+  #       
+  #       if (is.null(site_data) || nrow(site_data) == 0) {
+  #         write.csv(data.frame(Message = "No treatment details available"), file, row.names = FALSE)
+  #       } else {
+  #         result <- export_csv_safe(site_data, file, clean_data = TRUE)
+  #         if (!result$success) {
+  #           write.csv(site_data, file, row.names = FALSE, na = "")
+  #         }
+  #       }
+  #     }, error = function(e) {
+  #       write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+  #     })
+  #   }
+  # )
 }
 
 shinyApp(ui = ui, server = server)

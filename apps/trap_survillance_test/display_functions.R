@@ -106,11 +106,11 @@ render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "s
              crs = st_crs(4326),
              expand = FALSE)
   
-  # Add basemap tiles FIRST (they render at the back)
-  # Use zoomin=2 for more detail, and higher alpha to make it more prominent
-  p <- p + annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
+  # Add basemap tiles - commented out due to missing prettymapr dependency
+  # Use annotation_map_tile if ggspatial and prettymapr are installed
+  # p <- p + annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
   
-  # Then add sections with population index coloring on TOP of tiles
+  # Then add sections with population index coloring
   if (!is.null(sections_sf$vector_index)) {
     p <- p + geom_sf(data = sections_sf, 
                      aes(fill = vector_index), 

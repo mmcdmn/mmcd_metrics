@@ -29,10 +29,21 @@ server <- function(input, output, session) {
     # Apply ALL shared filters consistently
     facility_filter <- if (length(input$facility) == 0 || "all" %in% input$facility) NULL else input$facility
     fosarea_filter <- if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea
-    zone_filter <- if (length(input$zone) == 0 || "all" %in% input$zone) NULL else input$zone
+    
+    # Parse zone filter - handle radio button
+    zone_value <- input$zone %||% "all"
+    zone_filter <- if (zone_value == "all") {
+      NULL
+    } else if (zone_value == "1,2") {
+      c("1", "2")
+    } else {
+      zone_value
+    }
+    
     priority_filter <- if (length(input$priority) == 0 || "all" %in% input$priority) NULL else input$priority
     drone_filter <- input$drone_filter %||% "include_drone"
     spring_only <- input$spring_only %||% FALSE
+    prehatch_only <- input$prehatch_only %||% FALSE
     
     # ONE SINGLE QUERY GETS ALL DATA
     get_all_inspection_data(
@@ -41,7 +52,8 @@ server <- function(input, output, session) {
       zone_filter = zone_filter,
       priority_filter = priority_filter,
       drone_filter = drone_filter,
-      spring_only = spring_only
+      spring_only = spring_only,
+      prehatch_only = prehatch_only
     )
   }, ignoreNULL = FALSE)
   

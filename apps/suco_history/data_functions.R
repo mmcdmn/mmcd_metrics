@@ -412,9 +412,21 @@ filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter,
   }
   
   # Apply foreman filter  
-  if (!is.null(foreman_filter) && !("All" %in% foreman_filter)) {
-    filtered_data <- filtered_data %>%
-      filter(foreman %in% foreman_filter)
+  if (!is.null(foreman_filter) && !("all" %in% tolower(foreman_filter))) {
+    # Convert shortnames to emp_nums for filtering
+    foremen_lookup <- get_foremen_lookup()
+    
+    # Get emp_nums that match the selected shortnames
+    selected_emp_nums <- foremen_lookup %>%
+      filter(shortname %in% foreman_filter) %>%
+      pull(emp_num) %>%
+      as.character()
+    
+    # Filter by the emp_nums
+    if (length(selected_emp_nums) > 0) {
+      filtered_data <- filtered_data %>%
+        filter(as.character(foreman) %in% selected_emp_nums)
+    }
   }
   
   # Apply species filter - check if species appears in species_summary

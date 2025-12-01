@@ -175,8 +175,8 @@ create_treatment_process_summary <- function(data) {
     select(facility, total_sites, unknown, needs_treatment, active_treatment, inspected, treatment_rate_display)
   
   colnames(process_summary_display) <- c(
-    "Facility", "Total Sites", "Unknown", "Needs Treatment", 
-    "Active Treatment", "Inspected", "Treatment Rate"
+    "Facility", "Total Sites", "Not Insp", "Needs Treatment", 
+    "Active Treatment", "Insp", "Treatment Rate"
   )
   
   return(process_summary_display)
@@ -219,8 +219,8 @@ create_treatment_flow_chart <- function(data) {
   
   # Create stacked bar chart
   p <- plot_ly(facility_summary, x = ~facility, y = ~Unknown, type = 'bar', 
-               name = 'Unknown', marker = list(color = colors$Unknown)) %>%
-    add_trace(y = ~Inspected, name = 'Inspected', 
+               name = 'Not Insp', marker = list(color = colors$Unknown)) %>%
+    add_trace(y = ~Inspected, name = 'Insp', 
               marker = list(color = colors$Inspected)) %>%
     add_trace(y = ~`Needs ID`, name = 'Needs ID', 
               marker = list(color = colors$`Needs ID`)) %>%

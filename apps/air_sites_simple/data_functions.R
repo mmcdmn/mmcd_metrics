@@ -9,7 +9,7 @@ suppressPackageStartupMessages({
 })
 
 # Get air sites data with filtering and status logic
-get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL, include_archive = FALSE, start_year = NULL, end_year = NULL) {
+get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL, include_archive = FALSE, start_year = NULL, end_year = NULL, prehatch_only = FALSE) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -79,6 +79,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
           b.sitecode,
           b.acres,
           b.priority,
+          b.prehatch,
           g.zone,
           ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
           ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
@@ -178,6 +179,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
         a.sitecode,
         a.facility,
         a.priority,
+        a.prehatch,
         a.zone,
         a.acres,
         a.longitude,
@@ -201,6 +203,11 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
        sample_table, bti_effect_days_sql, bti_effect_days_sql)
     
     result <- dbGetQuery(con, query)
+    
+    # Apply prehatch filtering if requested
+    if (prehatch_only && nrow(result) > 0) {
+      result <- result %>% filter(!is.na(prehatch))
+    }
     
     # Debug logging for archive queries
     if (include_archive) {
@@ -382,7 +389,6 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
         }
       }
       # If inspection is older than 7 days, status expires back to Unknown
-      # (this is already set as default)
     }
   }
   

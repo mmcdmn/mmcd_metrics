@@ -89,8 +89,8 @@ ui <- dashboardPage(
               column(3,
                 selectInput("status_filter", "Status Filter:",
                   choices = c("All Statuses" = "all",
-                             "Unknown" = "Unknown",
-                             "Inspected" = "Inspected", 
+                             "Not Insp" = "Unknown",
+                             "Insp" = "Inspected", 
                              "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
@@ -115,7 +115,12 @@ ui <- dashboardPage(
               )
             ),
             fluidRow(
-              column(12, style = "text-align: center; padding-top: 10px;",
+              column(3,
+                br(),
+                checkboxInput("prehatch_only", "Prehatch Sites Only",
+                  value = FALSE)
+              ),
+              column(9, style = "text-align: center; padding-top: 10px;",
                 actionButton("refresh_data", "Refresh Data", class = "btn-primary btn-lg", 
                            style = "width: 30%;")
               )
@@ -156,8 +161,8 @@ ui <- dashboardPage(
             tags$div(
               tags$h5("Air Site Status Definitions:"),
               tags$ul(
-                tags$li(tags$strong("Unknown:"), " Sites that have not been inspected or have no recent inspection data"),
-                tags$li(tags$strong("Inspected:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
+                tags$li(tags$strong("Not Insp:"), " Sites that have not been inspected or have no recent inspection data"),
+                tags$li(tags$strong("Insp:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
                 tags$li(tags$strong("Needs ID:"), " Sites with Dip ≥ threshold, samples sent to lab for red/blue bug identification"),
                 tags$li(tags$strong("Needs Treatment:"), " Sites with red bugs found in lab analysis (require treatment)"),
                 tags$li(tags$strong("Active Treatment:"), " Sites who recived treatment < effect_days ago acording to material type (see override for BTI)")
@@ -280,11 +285,11 @@ ui <- dashboardPage(
               tags$h5("Treatment Process Metrics:"),
               tags$ul(
                 tags$li(tags$strong("Treatment completion:"), " Active Treatments ÷ (Needs Treatment + Active Treatment) × 100%"),
-                tags$li(tags$strong("Inspection Coverage:"), " (Inspected + Needs Treatment + Active Treatment) ÷ Total Sites × 100%")
+                tags$li(tags$strong("Inspection Coverage:"), " (Insp + Needs Treatment + Active Treatment) ÷ Total Sites × 100%")
               ),
               tags$h5("Lab Processing Metrics:"),
               tags$ul(
-                tags$li(tags$strong("Total Inspected Samples:"), " Number of inspected sites with completed lab results (timestamp data)"),
+                tags$li(tags$strong("Total Insp Samples:"), " Number of inspected sites with completed lab results (timestamp data)"),
                 tags$li(tags$strong("Red Bug Detection Rate:"), " (Red Bugs Found ÷ Total Samples) × 100% - Percentage needing treatment"),
               ),
               tags$p(tags$strong("Note:"), " Total samples = only completed lab samples with timestamps from current analysis date. Pending samples without timestamps are excluded.")
@@ -591,7 +596,8 @@ server <- function(input, output, session) {
       priority_filter = input$priority_filter,
       zone_filter = input$zone_filter,
       larvae_threshold = input$larvae_threshold,
-      bti_effect_days_override = input$bti_effect_days_override
+      bti_effect_days_override = input$bti_effect_days_override,
+      prehatch_only = input$prehatch_only
     )
   })
   
@@ -636,7 +642,7 @@ server <- function(input, output, session) {
     count <- sum(data$site_status == "Unknown", na.rm = TRUE)
     valueBox(
       value = count,
-      subtitle = "Unknown Status",
+      subtitle = "Not Insp (in last 7 days)",
       icon = icon("question-circle"),
       color = "yellow"
     )
@@ -647,7 +653,7 @@ server <- function(input, output, session) {
     count <- sum(data$site_status == "Inspected", na.rm = TRUE)
     valueBox(
       value = count,
-      subtitle = "Inspected (Under Threshold)",
+      subtitle = "Insp (under threshold, last 7 days)",
       icon = icon("magnifying-glass"),
       color = "blue"
     )
@@ -761,7 +767,8 @@ server <- function(input, output, session) {
       priority_filter = NULL,  # Include all priorities for process tracking
       zone_filter = input$process_zone_filter,
       larvae_threshold = input$process_larvae_threshold,
-      bti_effect_days_override = input$process_bti_effect_days_override
+      bti_effect_days_override = input$process_bti_effect_days_override,
+      prehatch_only = FALSE  # Process tab always shows all sites
     )
     
     # Apply material filter for active treatments
@@ -833,12 +840,12 @@ server <- function(input, output, session) {
   # Lab processing metrics value boxes
   output$total_inspected_samples <- renderValueBox({
     data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox(0, "Inspected Samples", icon = icon("vial"), color = "orange"))
+    if (input$refresh_process_data == 0) return(valueBox(0, "Insp Samples", icon = icon("vial"), color = "orange"))
     
     lab_metrics <- analyze_lab_processing_metrics(data)
     valueBox(
       value = lab_metrics$total_inspected_with_samples,
-      subtitle = "Inspected Samples",
+      subtitle = "Insp Samples",
       icon = icon("vial"),
       color = "orange"
     )

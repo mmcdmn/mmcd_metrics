@@ -382,7 +382,6 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
         }
       }
       # If inspection is older than 7 days, status expires back to Unknown
-      # (this is already set as default)
     }
   }
   
@@ -434,10 +433,11 @@ create_treatment_efficiency_metrics <- function(data) {
   sites_needing_treatment <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
   sites_receiving_treatment <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
   sites_inspected <- sum(data$site_status == "Inspected", na.rm = TRUE)
+  sites_in_lab <- sum(data$site_status == "Needs ID", na.rm = TRUE)
   sites_unknown <- sum(data$site_status == "Unknown", na.rm = TRUE)
   
-  # Sites that have been inspected or treated
-  sites_with_action <- sites_needing_treatment + sites_receiving_treatment + sites_inspected
+  # Sites that have been inspected, in lab, or treated
+  sites_with_action <- sites_inspected + sites_in_lab + sites_needing_treatment + sites_receiving_treatment
   
   # Treatment efficiency: active treatments / (needs treatment + active treatment)
   sites_requiring_treatment <- sites_needing_treatment + sites_receiving_treatment
@@ -447,7 +447,14 @@ create_treatment_efficiency_metrics <- function(data) {
     0
   }
   
-  # Inspection coverage: (inspected + needs treatment + active treatment) / total sites
+  # Treatment rate: needs treatment / (needs treatment + active treatment) - shows % still needing treatment
+  treatment_rate <- if (sites_requiring_treatment > 0) {
+    round((sites_needing_treatment / sites_requiring_treatment) * 100, 1)
+  } else {
+    0
+  }
+  
+  # Inspection coverage: (inspected + in lab + needs treatment + active treatment) / total sites
   inspection_coverage <- if (total_sites > 0) {
     round((sites_with_action / total_sites) * 100, 1)
   } else {
@@ -458,6 +465,7 @@ create_treatment_efficiency_metrics <- function(data) {
     total_sites_needing_action = sites_requiring_treatment,
     sites_receiving_treatment = sites_receiving_treatment,
     treatment_efficiency = paste0(treatment_efficiency, "%"),
+    treatment_rate = paste0(treatment_rate, "%"),
     inspection_coverage = paste0(inspection_coverage, "%")
   ))
 }

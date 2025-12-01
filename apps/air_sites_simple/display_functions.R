@@ -170,13 +170,16 @@ create_treatment_process_summary <- function(data) {
       treatment_rate_display = paste0(treatment_rate, "%")
     )
   
-  # Rename columns for display
+  # Map facility short names to full names
+  process_summary <- map_facility_names(process_summary, "facility")
+  
+  # Rename columns for display (reorder to match status order)
   process_summary_display <- process_summary %>%
-    select(facility, total_sites, unknown, needs_treatment, active_treatment, inspected, treatment_rate_display)
+    select(facility_display, total_sites, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
   
   colnames(process_summary_display) <- c(
-    "Facility", "Total Sites", "Unknown", "Needs Treatment", 
-    "Active Treatment", "Inspected", "Treatment Rate"
+    "Facility", "Total Sites", "Not Insp", "Insp", "Needs Treatment", 
+    "Active Treatment", "Treatment Rate"
   )
   
   return(process_summary_display)
@@ -200,6 +203,9 @@ create_treatment_flow_chart <- function(data) {
     summarise(count = n(), .groups = 'drop') %>%
     tidyr::pivot_wider(names_from = site_status, values_from = count, values_fill = 0)
   
+  # Map facility short names to full names
+  facility_summary <- map_facility_names(facility_summary, "facility")
+  
   # Ensure all columns exist
   if (!"Unknown" %in% colnames(facility_summary)) facility_summary$Unknown <- 0
   if (!"Inspected" %in% colnames(facility_summary)) facility_summary$Inspected <- 0
@@ -217,10 +223,10 @@ create_treatment_flow_chart <- function(data) {
     "Active Treatment" = as.character(status_color_map[["Active Treatment"]])
   )
   
-  # Create stacked bar chart
-  p <- plot_ly(facility_summary, x = ~facility, y = ~Unknown, type = 'bar', 
-               name = 'Unknown', marker = list(color = colors$Unknown)) %>%
-    add_trace(y = ~Inspected, name = 'Inspected', 
+  # Create stacked bar chart (ordered: Not Insp, Insp, Needs ID, Needs Treatment, Active Treatment)
+  p <- plot_ly(facility_summary, x = ~facility_display, y = ~Unknown, type = 'bar', 
+               name = 'Not Insp', marker = list(color = colors$Unknown)) %>%
+    add_trace(y = ~Inspected, name = 'Insp', 
               marker = list(color = colors$Inspected)) %>%
     add_trace(y = ~`Needs ID`, name = 'Needs ID', 
               marker = list(color = colors$`Needs ID`)) %>%

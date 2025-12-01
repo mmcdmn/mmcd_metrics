@@ -89,8 +89,8 @@ ui <- dashboardPage(
               column(3,
                 selectInput("status_filter", "Status Filter:",
                   choices = c("All Statuses" = "all",
-                             "Unknown" = "Unknown",
-                             "Inspected" = "Inspected", 
+                             "Not Insp" = "Unknown",
+                             "Insp" = "Inspected", 
                              "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
@@ -156,8 +156,8 @@ ui <- dashboardPage(
             tags$div(
               tags$h5("Air Site Status Definitions:"),
               tags$ul(
-                tags$li(tags$strong("Unknown:"), " Sites that have not been inspected or have no recent inspection data"),
-                tags$li(tags$strong("Inspected:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
+                tags$li(tags$strong("Not Insp:"), " Sites that have not been inspected or have no recent inspection data"),
+                tags$li(tags$strong("Insp:"), " Sites inspected with larvae count below threshold (no treatment needed)"),
                 tags$li(tags$strong("Needs ID:"), " Sites with Dip ≥ threshold, samples sent to lab for red/blue bug identification"),
                 tags$li(tags$strong("Needs Treatment:"), " Sites with red bugs found in lab analysis (require treatment)"),
                 tags$li(tags$strong("Active Treatment:"), " Sites who recived treatment < effect_days ago acording to material type (see override for BTI)")
@@ -237,8 +237,8 @@ ui <- dashboardPage(
               ),
               column(6,
                 checkboxGroupInput("process_status_filter", "Status Filter (for Flow Chart):",
-                  choices = c("Unknown" = "Unknown",
-                             "Inspected" = "Inspected", 
+                  choices = c("Not Insp" = "Unknown",
+                             "Insp" = "Inspected", 
                              "Needs ID" = "Needs ID",
                              "Needs Treatment" = "Needs Treatment",
                              "Active Treatment" = "Active Treatment"),
@@ -263,9 +263,10 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          valueBoxOutput("sites_receiving_treatment", width = 4),
-          valueBoxOutput("treatment_efficiency", width = 4),
-          valueBoxOutput("inspection_coverage", width = 4)
+          valueBoxOutput("sites_receiving_treatment", width = 3),
+          valueBoxOutput("treatment_rate", width = 3),
+          valueBoxOutput("treatment_efficiency", width = 3),
+          valueBoxOutput("inspection_coverage", width = 3)
         ),
         
         fluidRow(
@@ -279,12 +280,13 @@ ui <- dashboardPage(
             tags$div(
               tags$h5("Treatment Process Metrics:"),
               tags$ul(
-                tags$li(tags$strong("Treatment completion:"), " Active Treatments ÷ (Needs Treatment + Active Treatment) × 100%"),
-                tags$li(tags$strong("Inspection Coverage:"), " (Inspected + Needs Treatment + Active Treatment) ÷ Total Sites × 100%")
+                tags$li(tags$strong("Treatment Rate:"), " Active Treatments ÷ (Needs Treatment + Active Treatment) × 100%"),
+                tags$li(tags$strong("Treatment Completion:"), " Active Treatments ÷ (Needs Treatment + Active Treatment) × 100%"),
+                tags$li(tags$strong("Inspection Coverage:"), " (Insp + In Lab + Needs Treatment + Active Treatment) ÷ Total Sites × 100%")
               ),
               tags$h5("Lab Processing Metrics:"),
               tags$ul(
-                tags$li(tags$strong("Total Inspected Samples:"), " Number of inspected sites with completed lab results (timestamp data)"),
+                tags$li(tags$strong("Total Insp Samples:"), " Number of inspected sites with completed lab results (timestamp data)"),
                 tags$li(tags$strong("Red Bug Detection Rate:"), " (Red Bugs Found ÷ Total Samples) × 100% - Percentage needing treatment"),
               ),
               tags$p(tags$strong("Note:"), " Total samples = only completed lab samples with timestamps from current analysis date. Pending samples without timestamps are excluded.")
@@ -391,10 +393,24 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          valueBoxOutput("hist_total_treatments", width = 3),
-          valueBoxOutput("hist_total_treatment_acres", width = 3),
-          valueBoxOutput("hist_total_inspection_acres", width = 3),
-          valueBoxOutput("hist_avg_acres_per_treatment", width = 3)
+          valueBoxOutput("hist_total_treatments", width = 4),
+          valueBoxOutput("hist_total_treatment_acres", width = 4),
+          valueBoxOutput("hist_total_inspection_acres", width = 4)
+        ),
+        
+        fluidRow(
+          box(title = "Calculation Notes", status = "info", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = TRUE,
+            tags$div(
+              tags$h5("Historical Analysis Metrics:"),
+              tags$ul(
+                tags$li(tags$strong("Red Bug Ratio:"), " (Red Bug Inspections ÷ Total Inspections) × 100%"),
+                tags$li(tags$strong("Total Treatments:"), " Count of treatment applications across all sites and years"),
+                tags$li(tags$strong("Total Treatment Acres:"), " Sum of acres treated across all treatments"),
+                tags$li(tags$strong("Total Inspection Acres:"), " Sum of acres inspected across all inspections")
+              ),
+              tags$p(tags$strong("Note:"), " Historical data includes all inspections and treatments within the selected year range.")
+            )
+          )
         ),
         
         fluidRow(
@@ -636,7 +652,7 @@ server <- function(input, output, session) {
     count <- sum(data$site_status == "Unknown", na.rm = TRUE)
     valueBox(
       value = count,
-      subtitle = "Unknown Status",
+      subtitle = "Not Insp (in last 7 days)",
       icon = icon("question-circle"),
       color = "yellow"
     )
@@ -647,7 +663,7 @@ server <- function(input, output, session) {
     count <- sum(data$site_status == "Inspected", na.rm = TRUE)
     valueBox(
       value = count,
-      subtitle = "Inspected (Under Threshold)",
+      subtitle = "Insp (under threshold, last 7 days)",
       icon = icon("magnifying-glass"),
       color = "blue"
     )
@@ -717,18 +733,32 @@ server <- function(input, output, session) {
       group_by(site_status) %>%
       summarise(count = n(), .groups = 'drop')
     
+    # Map internal status names to display labels
+    status_display_map <- c(
+      "Unknown" = "Not Insp",
+      "Inspected" = "Insp",
+      "Needs ID" = "Needs ID",
+      "Needs Treatment" = "Needs Treatment",
+      "Active Treatment" = "Active Treatment"
+    )
+    status_counts$display_status <- status_display_map[status_counts$site_status]
+    
+    # Define desired order
+    status_order <- c("Not Insp", "Insp", "Needs ID", "Needs Treatment", "Active Treatment")
+    status_counts$display_status <- factor(status_counts$display_status, levels = status_order)
+    
     # Get colors from db_helpers to match the map
     status_color_map <- get_status_color_map()
     chart_colors <- c(
-      "Active Treatment" = as.character(status_color_map[["Active Treatment"]]),
-      "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
+      "Unknown" = as.character(status_color_map[["Unknown"]]),
       "Inspected" = as.character(status_color_map[["Inspected"]]),
       "Needs ID" = as.character(status_color_map[["Needs ID"]]),
-      "Unknown" = as.character(status_color_map[["Unknown"]])
+      "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
+      "Active Treatment" = as.character(status_color_map[["Active Treatment"]])
     )
     
     plot_ly(status_counts, 
-            x = ~site_status, 
+            x = ~display_status, 
             y = ~count,
             type = 'bar',
             marker = list(color = ~chart_colors[site_status])) %>%
@@ -806,14 +836,27 @@ server <- function(input, output, session) {
   
   output$treatment_efficiency <- renderValueBox({
     data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox("0%", "Treatment coverage", icon = icon("percent"), color = "blue"))
+    if (input$refresh_process_data == 0) return(valueBox("0%", "Treatment completion", icon = icon("percent"), color = "blue"))
     
     metrics <- create_treatment_efficiency_metrics(data)
     valueBox(
       value = metrics$treatment_efficiency,
-      subtitle = "Treatment coverage",
+      subtitle = "Treatment completion",
       icon = icon("percent"),
       color = "blue"
+    )
+  })
+  
+  output$treatment_rate <- renderValueBox({
+    data <- process_data()
+    if (input$refresh_process_data == 0) return(valueBox("0%", "% Need Treatment", icon = icon("exclamation-triangle"), color = "yellow"))
+    
+    metrics <- create_treatment_efficiency_metrics(data)
+    valueBox(
+      value = metrics$treatment_rate,
+      subtitle = "% Need Treatment",
+      icon = icon("exclamation-triangle"),
+      color = "yellow"
     )
   })
   
@@ -833,12 +876,12 @@ server <- function(input, output, session) {
   # Lab processing metrics value boxes
   output$total_inspected_samples <- renderValueBox({
     data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox(0, "Inspected Samples", icon = icon("vial"), color = "orange"))
+    if (input$refresh_process_data == 0) return(valueBox(0, "Insp Samples", icon = icon("vial"), color = "orange"))
     
     lab_metrics <- analyze_lab_processing_metrics(data)
     valueBox(
       value = lab_metrics$total_inspected_with_samples,
-      subtitle = "Inspected Samples",
+      subtitle = "Insp Samples",
       icon = icon("vial"),
       color = "orange"
     )
@@ -1101,23 +1144,6 @@ server <- function(input, output, session) {
       subtitle = "Inspection Acres",
       icon = icon("search"),
       color = "blue"
-    )
-  })
-  
-  output$hist_avg_acres_per_treatment <- renderValueBox({
-    data <- treatment_volume_data()
-    if (input$refresh_historical_data == 0) return(valueBox("0", "Avg Acres/Treatment", icon = icon("calculator"), color = "purple"))
-    
-    treatment_data <- data[data$operation_type == 'treatment', ]
-    total_treatments <- sum(treatment_data$total_operations, na.rm = TRUE)
-    total_acres <- sum(treatment_data$total_acres, na.rm = TRUE)
-    avg_acres <- if (total_treatments > 0) round(total_acres / total_treatments, 2) else 0
-    
-    valueBox(
-      value = avg_acres,
-      subtitle = "Avg Acres/Treatment",
-      icon = icon("calculator"),
-      color = "purple"
     )
   })
   

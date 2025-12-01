@@ -52,6 +52,16 @@ ui <- fluidPage(
   # Sidebar with controls
   sidebarLayout(
     sidebarPanel(
+      # Refresh button at top with instruction
+      actionButton("refresh", "Refresh Data", 
+                   icon = icon("refresh"),
+                   class = "btn-primary btn-lg",
+                   style = "width: 100%;"),
+      p(style = "text-align: center; margin-top: 10px; font-size: 0.9em; color: #666;",
+        "Click refresh to get data for selected filters"),
+      
+      hr(),
+      
       # Group by selection
       h4("Analysis Options"),
       radioButtons("group_by", "Group By:",
@@ -71,24 +81,26 @@ ui <- fluidPage(
       
       hr(),
       
+      # Filters section - more compact
+      h4("Filters"),
+      
       # Filter by zone (P1/P2)
-      h4("Location Filters"),
-      selectInput("zone_filter", "Filter by Zone:",
+      selectInput("zone_filter", "Zone:",
                   choices = c("P1 + P2" = "all", "P1" = "1", "P2" = "2"),
                   selected = "all"),
       
       # Filter by facility (multi-select)
-      selectizeInput("facility_filter", "Filter by Facility:",
+      selectizeInput("facility_filter", "Facility:",
                   choices = c("All"),  # Will be populated from get_facility_lookup()
                   selected = "All", multiple = TRUE),
       
       # Filter by foreman (multi-select, populated dynamically)
-      selectizeInput("foreman_filter", "Filter by FOS:",
+      selectizeInput("foreman_filter", "FOS:",
                   choices = c("All"),
                   selected = "All", multiple = TRUE),
       
       # Add species filter to sidebarPanel
-      selectInput("species_filter", "Filter by Species:", choices = c("All"), selected = "All"),
+      selectInput("species_filter", "Species:", choices = c("All"), selected = "All"),
       
       hr(),
       
@@ -102,31 +114,20 @@ ui <- fluidPage(
       # Top locations mode toggle
       conditionalPanel(
         condition = "input.current_tabset == 'CurrentTopLoc' || input.all_tabset == 'AllTopLoc'",
-        selectInput("top_locations_mode", "Top Locations Display:",
+        selectInput("top_locations_mode", "Top Locations:",
                     choices = c("Most Visited" = "visits", "Most Species" = "species"),
                     selected = "visits")
       ),
       # Map Controls
       conditionalPanel(
         condition = "input.current_tabset == 'CurrentMap' || input.all_tabset == 'AllMap'",
-        hr(),
-        h4("Map Options"),
-        
-        # Base map selection
         selectInput("basemap", "Base Map:",
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
                                 "Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
                     selected = "carto")
-      ),
-      
-      # Refresh button
-      hr(),
-      actionButton("refresh", "Refresh Data", 
-                   icon = icon("refresh"),
-                   class = "btn-primary btn-lg",
-                   style = "width: 100%; margin-top: 20px;")
+      )
     ),
     
     # Main panel for displaying the graphs
@@ -224,6 +225,23 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "facility_filter", choices = facility_choices)
   })
   
+  # Initialize FOS choices from db_helpers
+  observe({
+    foreman_choices <- get_foreman_choices(include_all = TRUE)
+    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
+  })
+  
+  # Initialize species choices from db_helpers
+  observe({
+    species_lookup <- get_species_lookup()
+    if (nrow(species_lookup) > 0) {
+      # Create species display names
+      species_names <- paste(species_lookup$genus, species_lookup$species)
+      species_choices <- c("All", unique(species_names))
+      updateSelectInput(session, "species_filter", choices = species_choices, selected = "All")
+    }
+  })
+  
   # Fetch SUCO data - all data (current + archive) - ONLY when refresh button clicked
   suco_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
@@ -234,57 +252,6 @@ server <- function(input, output, session) {
   suco_data_current <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     get_suco_data("current", inputs$date_range)
-  })
-  
-  # Helper function to create trend plots - eliminates code duplication
-  # Update species filter choices based on available data (use new function)
-  observe({
-    if (input$refresh == 0) return()  # Only run after refresh button clicked
-    
-    inputs <- refresh_inputs()
-    # Get species choices using the new function
-    spp_choices <- get_available_species(inputs$date_range)
-    spp_choices <- c("All", spp_choices)
-    
-    # Update select input
-    updateSelectInput(session, "species_filter", choices = spp_choices)
-  })
-  
-  # Update foreman filter choices based on available data (multi-select aware)
-  observe({
-    if (input$refresh == 0) return()  # Only run after refresh button clicked
-    
-    inputs <- refresh_inputs()
-    data <- suco_data()
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Filter by facility if not 'All' and not empty
-    if (!is.null(inputs$facility_filter) && !("All" %in% inputs$facility_filter)) {
-      data <- data %>% filter(facility %in% inputs$facility_filter)
-    }
-    
-    # Get unique foremen numbers from data
-    foremen_nums <- sort(unique(na.omit(data$foreman)))
-    
-    # Create mapping from emp_num to shortname for display with robust matching
-    foremen_names <- sapply(foremen_nums, function(num) {
-      # Ensure both sides are strings and trimmed
-      num_str <- trimws(as.character(num))
-      matches <- which(trimws(as.character(foremen_lookup$emp_num)) == num_str)
-      if(length(matches) > 0) {
-        foremen_lookup$shortname[matches[1]]
-      } else {
-        paste0("FOS #", num_str)  # fallback to formatted number
-      }
-    })
-    
-    # Create choices with names as labels and numbers as values
-    foremen_choices <- setNames(
-      c("All", foremen_nums),
-      c("All", foremen_names)
-    )
-    
-    updateSelectInput(session, "foreman_filter", choices = foremen_choices)
   })
 
   # Filter data based on user selections
@@ -525,7 +492,7 @@ server <- function(input, output, session) {
           radius = 8,
           color = "black",
           weight = 1.5,
-          fillColor = ~pal(emp_num),
+          fillColor = ~pal(facility),
           fillOpacity = 0.8,
           popup = ~popup_text
         ) %>%

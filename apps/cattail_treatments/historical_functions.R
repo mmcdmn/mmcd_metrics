@@ -251,7 +251,7 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
                                            time_period = "monthly", chart_type = "line",
                                            display_metric = "need_treatment", 
                                            start_date = NULL, end_date = NULL,
-                                           combine_zones = FALSE) {
+                                           combine_zones = FALSE, metric_type = "sites") {
   
   # Get historical data
   hist_data <- get_historical_cattail_data(
@@ -302,38 +302,75 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
   
   # Aggregate data based on display metric
   if (display_metric == "need_treatment") {
-    # Count sites needing treatment at end of inspections for each inspection year
+    # Count sites or acres needing treatment at end of inspections for each inspection year
     # Get the most recent inspection per site per inspection_year
-    plot_data <- inspection_data %>%
-      filter(need_treatment == TRUE) %>%
-      group_by(sitecode, inspection_year, group_label) %>%
-      arrange(desc(inspdate)) %>%
-      slice(1) %>%
-      ungroup() %>%
-      group_by(inspection_year, group_label) %>%
-      summarise(
-        value = n_distinct(sitecode),
-        .groups = "drop"
-      ) %>%
-      mutate(
-        # Create time_group for plotting (use middle of inspection year)
-        time_group = as.Date(paste0(inspection_year, "-06-01"))
-      )
-    y_label <- "Sites Need Treatment"
+    if (metric_type == "acres") {
+      plot_data <- inspection_data %>%
+        filter(need_treatment == TRUE) %>%
+        group_by(sitecode, inspection_year, group_label) %>%
+        arrange(desc(inspdate)) %>%
+        slice(1) %>%
+        ungroup() %>%
+        group_by(inspection_year, group_label) %>%
+        summarise(
+          value = sum(acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          # Create time_group for plotting (use middle of inspection year)
+          time_group = as.Date(paste0(inspection_year, "-06-01"))
+        )
+      y_label <- "Acres Need Treatment"
+    } else {
+      plot_data <- inspection_data %>%
+        filter(need_treatment == TRUE) %>%
+        group_by(sitecode, inspection_year, group_label) %>%
+        arrange(desc(inspdate)) %>%
+        slice(1) %>%
+        ungroup() %>%
+        group_by(inspection_year, group_label) %>%
+        summarise(
+          value = n_distinct(sitecode),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          # Create time_group for plotting (use middle of inspection year)
+          time_group = as.Date(paste0(inspection_year, "-06-01"))
+        )
+      y_label <- "Sites Need Treatment"
+    }
     
   } else if (display_metric == "treated") {
-    # Count sites treated per inspection year
-    plot_data <- treatment_data %>%
-      group_by(inspection_year, group_label) %>%
-      summarise(
-        value = n_distinct(sitecode),
-        .groups = "drop"
-      ) %>%
-      mutate(
-        # Create time_group for plotting (use middle of inspection year)
-        time_group = as.Date(paste0(inspection_year, "-06-01"))
-      )
-    y_label <- "Sites Treated"
+    # Count sites or acres treated per inspection year
+    if (metric_type == "acres") {
+      plot_data <- treatment_data %>%
+        group_by(sitecode, inspection_year, group_label) %>%
+        arrange(desc(trtdate)) %>%
+        slice(1) %>%
+        ungroup() %>%
+        group_by(inspection_year, group_label) %>%
+        summarise(
+          value = sum(acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          # Create time_group for plotting (use middle of inspection year)
+          time_group = as.Date(paste0(inspection_year, "-06-01"))
+        )
+      y_label <- "Acres Treated"
+    } else {
+      plot_data <- treatment_data %>%
+        group_by(inspection_year, group_label) %>%
+        summarise(
+          value = n_distinct(sitecode),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          # Create time_group for plotting (use middle of inspection year)
+          time_group = as.Date(paste0(inspection_year, "-06-01"))
+        )
+      y_label <- "Sites Treated"
+    }
     
   } else if (display_metric == "pct_treated") {
     # Calculate % of sites needing treatment that were treated
@@ -427,7 +464,7 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
   legend_title <- stringr::str_to_title(group_by)
   
   metric_title <- case_when(
-    display_metric == "need_treatment" ~ "Sites Need Treatment (End of Season)",
+    display_metric == "need_treatment" ~ "Sites Need Treatment",
     display_metric == "treated" ~ "Sites Treated (as of Aug 1)",
     display_metric == "pct_treated" ~ "% Sites Treated (as of Aug 1)",
     TRUE ~ "Historical Analysis"
@@ -452,8 +489,12 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
   p <- p +
     theme_minimal() +
     theme(
-      plot.title = element_text(face = "bold", size = 16),
-      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", size = 20, family = "Arial"),
+      axis.title = element_text(face = "bold", size = 16, family = "Arial"),
+      axis.text = element_text(size = 16, family = "Arial"),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
+      legend.title = element_text(face = "bold", size = 16, family = "Arial"),
+      legend.text = element_text(size = 16, family = "Arial"),
       legend.position = "bottom"
     )
   

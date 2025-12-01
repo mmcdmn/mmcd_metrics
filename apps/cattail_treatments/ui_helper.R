@@ -91,7 +91,8 @@ create_filter_panel <- function() {
         column(2, create_grouping_selector()),
         column(2, create_zone_display_selector()),
         column(2, create_facility_filter()),
-        column(2, create_progress_chart_type_selector())
+        column(2, create_progress_chart_type_selector()),
+        column(2, create_metric_selector())
       ),
       
       fluidRow(
@@ -110,6 +111,18 @@ create_refresh_button <- function() {
   actionButton("refresh_data", "Refresh Data", 
                class = "btn-primary btn-block",
                icon = icon("refresh"))
+}
+
+# Function to create metric selector (sites vs acres)
+create_metric_selector <- function() {
+  radioButtons("display_metric_type", "Display Metric:",
+              choices = list(
+                "Number of Sites" = "sites",
+                "Acres" = "acres"
+              ),
+              selected = "sites",
+              inline = TRUE,
+              width = "100%")
 }
 
 # Function to create progress chart type selector (for Progress tab)

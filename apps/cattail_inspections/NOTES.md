@@ -33,13 +33,10 @@ This Shiny app tracks cattail larval mosquito inspection progress across three p
   - Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')
   - Join pattern: 
     ```sql
-    LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-      OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-      OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-      OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-      OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
     ```
-  - Note: Some sitecodes use directional suffixes (N, S, E, W) instead of '-'
+  - **CRITICAL**: Uses exact 7-character match to prevent ambiguous zone assignments
+  - **Fixed November 2025**: Changed from broad pattern matching to precise sectcode matching (see README.md Bug Fixes)
   
 - **`cattail_pctcomplete_base`** - Goal/target data
   - Contains facility-specific goals for P1 and P2 zones
@@ -258,11 +255,7 @@ WITH ranked_inspections AS (
     g.zone,
     ROW_NUMBER() OVER (PARTITION BY a.sitecode, a.facility ORDER BY a.inspdate DESC) as rn
   FROM public.dblarv_insptrt_current a
-  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
   LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
   WHERE a.action = '9'
     AND EXTRACT(YEAR FROM a.inspdate) >= [start_year]
@@ -408,11 +401,7 @@ WITH all_inspections AS (
     a.sitecode,
     g.zone
   FROM public.dblarv_insptrt_archive a
-  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
   LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
   WHERE a.action = '9'
     AND EXTRACT(YEAR FROM a.inspdate) >= 2022
@@ -428,11 +417,7 @@ WITH all_inspections AS (
     a.sitecode,
     g.zone
   FROM public.dblarv_insptrt_current a
-  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
   LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
   WHERE a.action = '9'
     AND EXTRACT(YEAR FROM a.inspdate) >= 2022
@@ -458,11 +443,7 @@ WITH all_inspections AS (
     a.sitecode,
     g.zone
   FROM public.dblarv_insptrt_archive a
-  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
   LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
   WHERE a.action = '9'
     AND EXTRACT(YEAR FROM a.inspdate) = 2025
@@ -477,11 +458,7 @@ WITH all_inspections AS (
     a.sitecode,
     g.zone
   FROM public.dblarv_insptrt_current a
-  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 6) || '-' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'N' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'S' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'E' = g.sectcode
-    OR LEFT(a.sitecode, 6) || 'W' = g.sectcode
+  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
   LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
   WHERE a.action = '9'
     AND EXTRACT(YEAR FROM a.inspdate) = 2025

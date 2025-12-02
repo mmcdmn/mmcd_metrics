@@ -12,88 +12,16 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
   # Get status colors from db_helpers
   status_colors <- get_status_colors()
   
-  # Prepare data for plotting
+  # Prepare data for plotting with status-based colors
   data <- data %>%
     mutate(
       y_total = total_structures,
-      y_active = active_structures,
+      y_active = active_structures - expiring_structures,  # Active only (not expiring)
       y_expiring = expiring_structures
     )
   
   # Determine plot group column - always use display_name for consistency
   plot_group_col <- "display_name"
-  
-  # Get zone and facility colors for custom coloring
-  # Set up custom colors based on grouping
-  custom_colors <- NULL
-  if (group_by == "facility" && (length(zone_filter) == 1 || combine_zones)) {
-    # Single zone OR combined zones - use basic facility colors mapped to display names
-    facility_colors <- get_facility_base_colors()
-    # Map facility short names to display names
-    custom_colors <- character(0)
-    for (i in 1:nrow(data)) {
-      facility_short <- data$group_name[i]
-      display_name <- data$display_name[i]
-      if (facility_short %in% names(facility_colors)) {
-        custom_colors[display_name] <- facility_colors[facility_short]
-      }
-    }
-  } else if (group_by == "facility" && length(zone_filter) > 1 && !combine_zones) {
-    # Multiple zones shown separately - need to map display names back to short names for colors
-    facilities <- get_facility_lookup()
-    facility_map <- setNames(facilities$short_name, facilities$full_name)  # reverse mapping
-    
-    # Extract short names from display names for color mapping
-    short_groups <- sapply(unique(data$display_name), function(display_name) {
-      # Extract facility name without zone, e.g., "North (P1)" -> "North"
-      base_name <- gsub("\\s*\\([^)]+\\)$", "", display_name)
-      base_name <- trimws(base_name)
-      
-      # Map back to short name, e.g., "North" -> "N"
-      if (base_name %in% names(facility_map)) {
-        short_name <- facility_map[base_name]
-        # Recreate combined group with short name for color mapping
-        zone_part <- gsub("^[^(]*", "", display_name)  # extract "(P1)" part
-        return(paste0(short_name, zone_part))
-      } else {
-        return(display_name)  # fallback
-      }
-    })
-    
-    zone_result <- get_facility_base_colors(
-      alpha_zones = zone_filter,
-      combined_groups = short_groups
-    )
-    
-    # Map the colors back to display names
-    custom_colors <- character(0)
-    for (i in 1:length(unique(data$display_name))) {
-      display_name <- unique(data$display_name)[i]
-      short_group <- short_groups[i]
-      if (short_group %in% names(zone_result$colors)) {
-        custom_colors[display_name] <- zone_result$colors[short_group]
-      }
-    }
-  } else if (group_by == "foreman" && length(zone_filter) == 1) {
-    # Single zone - use basic foreman colors mapped to display names
-    foreman_colors <- get_foreman_colors()
-    # Map foreman shortnames to display names directly
-    custom_colors <- character(0)
-    for (i in 1:nrow(data)) {
-      display_name <- data$display_name[i]
-      # The display_name is already the shortname, so use it directly
-      if (display_name %in% names(foreman_colors)) {
-        custom_colors[display_name] <- foreman_colors[display_name]
-      }
-    }
-  } else if (group_by == "foreman" && length(zone_filter) > 1) {
-    # Multiple zones - use zone-aware foreman colors
-    zone_result <- get_foreman_colors(
-      alpha_zones = zone_filter,
-      combined_groups = unique(data$display_name)
-    )
-    custom_colors <- zone_result$colors
-  }
   
   # Create a new column to determine which labels to show (avoiding overplot)
   data$show_active_label <- data$y_active != data$y_expiring
@@ -116,39 +44,19 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
     paste("Zone:", paste0("P", zone_filter))
   }
   
-  # Create the plot - use colors when available
-  if (!is.null(custom_colors) && group_by != "mmcd_all") {
-    p <- ggplot(data, aes(x = display_name, fill = !!sym(plot_group_col))) +
-      # First draw total bars
-      geom_bar(aes(y = y_total), stat = "identity", alpha = 0.3) +
-      # Then overlay active bars  
-      geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +
-      # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
-      scale_fill_manual(values = custom_colors)  # Removed guide = "none" to show legend
-  } else {
-    # Default colors when no custom scheme available
-    p <- ggplot(data, aes(x = display_name)) +
-      # First draw total bars
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
-      # Then overlay active bars
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
-      # Finally overlay expiring bars
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"])
-  }
+  
+  # Create the plot with status-based colors (not facility colors)
+  # Gray background shows total, green shows active treatment, orange shows expiring
+  p <- ggplot(data, aes(x = display_name)) +
+    geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4) +                         # Gray background
+    geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) + # Green active
+    geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"]), alpha = 1)  # Orange expiring
   
   # Add text labels with larger size
   p <- p +
     # Label total structures
     geom_text(aes(x = display_name, y = y_total, label = y_total), 
               vjust = -0.5, size = 6, fontface = "bold") +
-    # Label active structures (only when different from expiring)
-    geom_text(data = subset(data, show_active_label), 
-              aes(x = display_name, y = y_active, label = y_active), 
-              vjust = -0.5, size = 6, fontface = "bold", color = "white") +
-    # Label expiring structures
-    geom_text(aes(x = display_name, y = y_expiring, label = y_expiring), 
-              vjust = -0.5, size = 6, fontface = "bold", color = "white") +
     coord_flip() +
     labs(
       title = sprintf("Structures with Active and Expiring Treatments (%s, Status: %s, %s)",
@@ -159,27 +67,47 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
         group_by == "mmcd_all" ~ "MMCD",
         TRUE ~ "Group"
       ),
-      y = "Number of Structures",
-      fill = case_when(
-        group_by == "facility" ~ "Facility",
-        group_by == "foreman" ~ "FOS",
-        group_by == "mmcd_all" ~ "MMCD",
-        TRUE ~ "Group"
-      )
+      y = "Number of Structures"
     ) +
     scale_y_continuous(limits = c(0, y_max)) +
     theme_minimal() +
     theme(
       plot.title = element_text(face = "bold", size = 16),
-      axis.title = element_text(face = "bold", size = 18),     # Increased from 14 to 18
-      axis.title.x = element_text(face = "bold", size = 20),   # X-axis title even larger
-      axis.text = element_text(size = 16, face = "bold"),      # Increased from 12 to 16
-      axis.text.x = element_text(size = 18, face = "bold"),    # X-axis numbers larger (from 12 to 18)
+      axis.title = element_text(face = "bold", size = 18),
+      axis.title.x = element_text(face = "bold", size = 20),
+      axis.text = element_text(size = 16, face = "bold"),
+      axis.text.x = element_text(size = 18, face = "bold"),
       panel.grid.minor = element_blank(),
-      plot.margin = margin(20, 20, 20, 20),  # Add some margin for better spacing
-      legend.position = "bottom",
-      legend.title = element_text(face = "bold", size = 14),
-      legend.text = element_text(size = 12)
+      plot.margin = margin(20, 20, 20, 20),
+      legend.title = element_blank(),
+      legend.text = element_text(size = 16),
+      legend.position = "bottom"
+    )
+  
+  # Add status color legend
+  legend_data <- data.frame(
+    status = factor(
+      c("Expired/Untreated", "Active Treatment", "Expiring Soon"),
+      levels = c("Expired/Untreated", "Active Treatment", "Expiring Soon")
+    ),
+    color = c("gray70", unname(status_colors["active"]), unname(status_colors["planned"]))
+  )
+  
+  p <- p +
+    geom_point(
+      data = legend_data,
+      aes(x = -Inf, y = -Inf, fill = status),
+      shape = 21,
+      size = 10,
+      alpha = 1,
+      inherit.aes = FALSE
+    ) +
+    scale_fill_manual(
+      name = NULL,
+      values = setNames(legend_data$color, legend_data$status),
+      breaks = legend_data$status,
+      limits = legend_data$status,
+      drop = FALSE
     )
   
   return(p)

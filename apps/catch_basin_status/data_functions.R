@@ -111,7 +111,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
                JOIN loc_catchbasin ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
                JOIN mattype_list_targetdose USING (matcode)
                LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode,7)=sc.sectcode
-               WHERE 1=1
+               WHERE dblarv_insptrt_current.inspdate <= '%s'::date
                %s
                %s
                ORDER BY loc_catchbasin.gid, dblarv_insptrt_current.inspdate DESC, dblarv_insptrt_current.insptime DESC) s_tcb
@@ -123,7 +123,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
     
     ORDER BY o.facility, o.zone, o.fosarea, o.sectcode
     ", facility_clause, foreman_where, zone_where, foreman_where, zone_where, 
-       expiring_days, custom_today, foreman_where, zone_where)
+       expiring_days, custom_today, custom_today, foreman_where, zone_where)
     
     data <- dbGetQuery(con, query)
     dbDisconnect(con)

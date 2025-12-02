@@ -141,9 +141,17 @@ server <- function(input, output, session) {
     # Get the correct display metric based on time period
     hist_time_period_val <- isolate(input$hist_time_period)
     hist_display_metric_val <- if (hist_time_period_val == "yearly") {
-      isolate(input$hist_display_metric_yearly)
+      if (!is.null(input$hist_display_metric_yearly)) {
+        isolate(input$hist_display_metric_yearly)
+      } else {
+        "treatments"  # default for yearly
+      }
     } else {
-      isolate(input$hist_display_metric_weekly)
+      if (!is.null(input$hist_display_metric_weekly)) {
+        isolate(input$hist_display_metric_weekly)
+      } else {
+        "weekly_active_treatments"  # default for weekly
+      }
     }
     
     list(

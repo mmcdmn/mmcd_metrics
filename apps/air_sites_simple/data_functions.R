@@ -147,7 +147,13 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
           rt.sitecode,
           rt.last_treatment_date,
           rt.matcode,
-          rt.mattype as last_treatment_material,
+          rt.mattype,
+          -- Create better material name with dosage details
+          CASE 
+            WHEN mt.tdose IS NOT NULL AND mt.unit IS NOT NULL AND mt.area IS NOT NULL
+            THEN CONCAT(rt.mattype, ' ', mt.tdose, ' ', mt.unit, ' per ', mt.area)
+            ELSE rt.mattype
+          END as last_treatment_material,
           -- Calculate treatment expiry based on material effect days
           CASE 
             WHEN (%s) IS NOT NULL
@@ -183,6 +189,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
         a.longitude,
         a.latitude,
         t.last_treatment_date,
+        t.matcode,
         t.last_treatment_material,
         t.treatment_expiry,
         i.last_inspection_date,

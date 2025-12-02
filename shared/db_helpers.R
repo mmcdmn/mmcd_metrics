@@ -281,60 +281,75 @@ get_structure_type_choices <- function(include_all = TRUE) {
   return(choices)
 }
 
-# Material type lookup
-get_material_types <- function() {
+# Get material choices with optional filtering for prehatch or BTI materials
+# filter_type: NULL (all materials), "prehatch" (prehatch=TRUE only), "bti" (BTI/Bs materials only)
+get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
   con <- get_db_connection()
-  if (is.null(con)) return(data.frame())
+  if (is.null(con)) {
+    if (is.null(filter_type)) {
+      return(c("All Materials" = "all"))
+    } else {
+      return(character(0))
+    }
+  }
   
   tryCatch({
-    materials <- dbGetQuery(con, "
-      SELECT 
-        list_type,
+    # Build WHERE clause based on filter type
+    where_clause <- "WHERE mattype IS NOT NULL"
+    
+    if (!is.null(filter_type)) {
+      if (filter_type == "prehatch") {
+        where_clause <- paste(where_clause, "AND prehatch = TRUE")
+      } else if (filter_type == "bti") {
+        where_clause <- paste(where_clause, "AND (mattype ILIKE '%bti%' OR mattype ILIKE '%bs%')")
+      }
+    }
+    
+    # Get matcode and enhanced material names from mattype_list_targetdose
+    # Return matcode as value (for filtering) and enhanced name as label (for display)
+    query <- sprintf("
+      SELECT DISTINCT
         matcode,
-        display_text,
-        order_num,
-        heading,
-        startdate,
-        enddate,
-        tdose,
-        unit,
-        area,
-        tdosedisplay,
-        mattype
-      FROM lookup_matcode_entrylist 
-      ORDER BY matcode
-    ")
+        CASE 
+          WHEN tdose IS NOT NULL AND unit IS NOT NULL AND area IS NOT NULL
+          THEN CONCAT(mattype, ' ', tdose, ' ', unit, ' per ', area)
+          ELSE mattype
+        END AS enhanced_name
+      FROM mattype_list_targetdose
+      %s
+      ORDER BY enhanced_name
+    ", where_clause)
+    
+    materials <- dbGetQuery(con, query)
     
     dbDisconnect(con)
-    return(materials)
+    
+    if (nrow(materials) == 0) {
+      if (is.null(filter_type) && include_all) {
+        return(c("All Materials" = "all"))
+      } else {
+        return(character(0))
+      }
+    }
+    
+    # Create choices with enhanced names as labels and matcode as values
+    choices <- setNames(materials$matcode, materials$enhanced_name)
+    
+    if (include_all && is.null(filter_type)) {
+      choices <- c("All Materials" = "all", choices)
+    }
+    
+    return(choices)
     
   }, error = function(e) {
-    warning(paste("Error loading material types:", e$message))
+    warning(paste("Error loading material choices:", e$message))
     if (!is.null(con)) dbDisconnect(con)
-    return(data.frame())
+    if (is.null(filter_type) && include_all) {
+      return(c("All Materials" = "all"))
+    } else {
+      return(character(0))
+    }
   })
-}
-
-# Get material choices for selectInput widgets
-get_material_choices <- function(include_all = TRUE) {
-  materials <- get_material_types()
-  
-  if (nrow(materials) == 0) {
-    return(c("All Materials" = "all"))
-  }
-  
-  # Use display_text if available, otherwise fall back to matcode
-  labels <- ifelse(!is.na(materials$display_text) & materials$display_text != "", 
-                   materials$display_text, 
-                   materials$matcode)
-  
-  choices <- setNames(materials$matcode, labels)
-  
-  if (include_all) {
-    choices <- c("All Materials" = "all", choices)
-  }
-  
-  return(choices)
 }
 
 # Get foremen (field supervisors) lookup table

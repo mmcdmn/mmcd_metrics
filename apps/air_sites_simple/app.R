@@ -102,6 +102,10 @@ ui <- dashboardPage(
                   choices = c("Loading..." = "LOADING"),
                   selected = "LOADING",
                   multiple = TRUE
+                ),
+                div(style = "margin-top: -10px;",
+                  actionButton("btn_prehatch", "Prehatch Only", class = "btn-sm btn-primary", style = "margin-right: 5px;"),
+                  actionButton("btn_bti", "BTI Only", class = "btn-sm btn-success")
                 )
               ),
               column(3,
@@ -222,6 +226,10 @@ ui <- dashboardPage(
                   choices = c("Loading..." = "LOADING"),
                   selected = "LOADING",
                   multiple = TRUE
+                ),
+                div(style = "margin-top: -10px;",
+                  actionButton("btn_process_prehatch", "Prehatch Only", class = "btn-sm btn-primary", style = "margin-right: 5px;"),
+                  actionButton("btn_process_bti", "BTI Only", class = "btn-sm btn-success")
                 )
               )
             ),
@@ -401,14 +409,21 @@ ui <- dashboardPage(
         fluidRow(
           box(title = "Calculation Notes", status = "info", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = TRUE,
             tags$div(
-              tags$h5("Historical Analysis Metrics:"),
+              tags$h5("What is Counted:"),
               tags$ul(
-                tags$li(tags$strong("Red Bug Ratio:"), " (Red Bug Inspections ÷ Total Inspections) × 100%"),
-                tags$li(tags$strong("Total Treatments:"), " Count of treatment applications across all sites and years"),
-                tags$li(tags$strong("Total Treatment Acres:"), " Sum of acres treated across all treatments"),
-                tags$li(tags$strong("Total Inspection Acres:"), " Sum of acres inspected across all inspections")
+                tags$li(tags$strong("Inspections:"), " Action code 4 (AIR inspection) from dblarv_insptrt tables"),
+                tags$li(tags$strong("Treatments:"), " Action codes 3 (Ground treatment), A (AIR treatment), and D (Drone treatment) from dblarv_insptrt tables"),
+                tags$li(tags$strong("Red Bug Inspections:"), " Inspections where lab samples show has_red_bugs = TRUE (species requiring treatment)")
               ),
-              tags$p(tags$strong("Note:"), " Historical data includes all inspections and treatments within the selected year range.")
+              tags$h5("Metric Calculations:"),
+              tags$ul(
+                tags$li(tags$strong("Total Inspections:"), " Count of all AIR inspection records (action 4) within year range"),
+                tags$li(tags$strong("Total Treatments:"), " Count of all treatment records (actions 3, A, D) within year range"),
+                tags$li(tags$strong("Red Bug Ratio:"), " (Red Bug Inspections ÷ Total Inspections) × 100%"),
+                tags$li(tags$strong("Total Treatment Acres:"), " Sum of site acres for all treatment records"),
+                tags$li(tags$strong("Total Inspection Acres:"), " Sum of site acres for all inspection records")
+              ),
+              tags$p(tags$strong("Note:"), " Only includes air sites (air_gnd = 'A') that were active during the operation date (between startdate and enddate).")
             )
           )
         ),
@@ -582,6 +597,36 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "material_filter", selected = input$process_material_filter)
   })
   
+  # Quick filter buttons for Status Overview tab
+  observeEvent(input$btn_prehatch, {
+    prehatch_mats <- get_material_choices(include_all = FALSE, filter_type = "prehatch")
+    if (length(prehatch_mats) > 0) {
+      updateSelectizeInput(session, "material_filter", selected = prehatch_mats)
+    }
+  })
+  
+  observeEvent(input$btn_bti, {
+    bti_mats <- get_material_choices(include_all = FALSE, filter_type = "bti")
+    if (length(bti_mats) > 0) {
+      updateSelectizeInput(session, "material_filter", selected = bti_mats)
+    }
+  })
+  
+  # Quick filter buttons for Treatment Process tab
+  observeEvent(input$btn_process_prehatch, {
+    prehatch_mats <- get_material_choices(include_all = FALSE, filter_type = "prehatch")
+    if (length(prehatch_mats) > 0) {
+      updateSelectizeInput(session, "process_material_filter", selected = prehatch_mats)
+    }
+  })
+  
+  observeEvent(input$btn_process_bti, {
+    bti_mats <- get_material_choices(include_all = FALSE, filter_type = "bti")
+    if (length(bti_mats) > 0) {
+      updateSelectizeInput(session, "process_material_filter", selected = bti_mats)
+    }
+  })
+  
   # Synchronize facility filters between Status and Process tabs
   observeEvent(input$facility_filter, {
     updateSelectizeInput(session, "process_facility_filter", selected = input$facility_filter)
@@ -625,10 +670,10 @@ server <- function(input, output, session) {
     
     # Apply material filter for active treatments
     if (!is.null(input$material_filter) && length(input$material_filter) > 0 && !"all" %in% input$material_filter) {
-      # Filter active treatments by material, keep all other statuses
+      # Filter active treatments by material using matcode, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
-                               (!is.na(data$last_treatment_material) & 
-                                data$last_treatment_material %in% input$material_filter), ]
+                               (!is.na(data$matcode) & 
+                                data$matcode %in% input$material_filter), ]
       other_statuses <- data[data$site_status != "Active Treatment", ]
       data <- rbind(active_treatments, other_statuses)
     }
@@ -796,10 +841,10 @@ server <- function(input, output, session) {
     
     # Apply material filter for active treatments
     if (!is.null(input$process_material_filter) && length(input$process_material_filter) > 0 && !"all" %in% input$process_material_filter) {
-      # Filter active treatments by material, keep all other statuses
+      # Filter active treatments by material using matcode, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
-                               (!is.na(data$last_treatment_material) & 
-                                data$last_treatment_material %in% input$process_material_filter), ]
+                               (!is.na(data$matcode) & 
+                                data$matcode %in% input$process_material_filter), ]
       other_statuses <- data[data$site_status != "Active Treatment", ]
       data <- rbind(active_treatments, other_statuses)
     }

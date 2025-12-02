@@ -1,8 +1,6 @@
 # Catch Basin Status - Data Functions
 # Functions for fetching and processing catch basin status data
-
-# Source shared helpers
-source("../../shared/db_helpers.R")
+# Note: db_helpers.R is sourced by app.R before this file
 
 # Load catch basin status data
 load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all", 

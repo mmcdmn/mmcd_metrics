@@ -173,7 +173,7 @@ create_historical_filter_panel <- function() {
       column(3,
         conditionalPanel(
           condition = "input.hist_time_period == 'yearly'",
-          radioButtons("hist_display_metric", "Display Metric:",
+          radioButtons("hist_display_metric_yearly", "Display Metric:",
                      choices = c("Total Treatments" = "treatments",
                                 "Unique Wet CB Treated" = "wet_cb_count"),
                      selected = "treatments",
@@ -181,7 +181,7 @@ create_historical_filter_panel <- function() {
         ),
         conditionalPanel(
           condition = "input.hist_time_period == 'weekly'",
-          radioButtons("hist_display_metric", "Display Metric:",
+          radioButtons("hist_display_metric_weekly", "Display Metric:",
                      choices = c("Active Treatments" = "weekly_active_treatments"),
                      selected = "weekly_active_treatments",
                      inline = TRUE)

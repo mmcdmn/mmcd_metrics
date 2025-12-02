@@ -138,6 +138,14 @@ server <- function(input, output, session) {
       zone_value
     }
     
+    # Get the correct display metric based on time period
+    hist_time_period_val <- isolate(input$hist_time_period)
+    hist_display_metric_val <- if (hist_time_period_val == "yearly") {
+      isolate(input$hist_display_metric_yearly)
+    } else {
+      isolate(input$hist_display_metric_weekly)
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
@@ -145,8 +153,8 @@ server <- function(input, output, session) {
       facility_filter = isolate(input$facility_filter),
       foreman_filter = isolate(input$foreman_filter),
       group_by = isolate(input$group_by),
-      hist_time_period = isolate(input$hist_time_period),
-      hist_display_metric = isolate(input$hist_display_metric),
+      hist_time_period = hist_time_period_val,
+      hist_display_metric = hist_display_metric_val,
       hist_chart_type = isolate(input$hist_chart_type),
       hist_year_range = isolate(input$hist_year_range)
     )

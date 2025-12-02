@@ -147,6 +147,7 @@ server <- function(input, output, session) {
       group_by = isolate(input$group_by),
       hist_time_period = isolate(input$hist_time_period),
       hist_display_metric = isolate(input$hist_display_metric),
+      hist_chart_type = isolate(input$hist_chart_type),
       hist_year_range = isolate(input$hist_year_range)
     )
   })
@@ -398,23 +399,68 @@ server <- function(input, output, session) {
   # HISTORICAL TAB OUTPUTS
   # =============================================================================
   
+  # Load historical data when hist_refresh clicked
+  historical_data <- eventReactive(input$hist_refresh, {
+    inputs <- hist_refresh_inputs()
+    
+    withProgress(message = 'Loading historical data...', value = 0, {
+      incProgress(0.3, detail = "Querying database...")
+      
+      hist_data <- create_historical_cb_data(
+        start_year = inputs$hist_year_range[1],
+        end_year = inputs$hist_year_range[2],
+        hist_time_period = inputs$hist_time_period,
+        hist_display_metric = inputs$hist_display_metric,
+        hist_group_by = inputs$group_by,
+        hist_zone_display = if (inputs$combine_zones) "combined" else "show-both",
+        facility_filter = inputs$facility_filter,
+        zone_filter = inputs$zone_filter,
+        foreman_filter = inputs$foreman_filter
+      )
+      
+      incProgress(0.7, detail = "Processing data...")
+      
+      return(hist_data)
+    })
+  })
+  
   # Historical chart
   output$historical_chart <- renderPlotly({
-    # Placeholder for now - will be implemented in historical_functions.R
-    plot_ly() %>%
-      layout(
-        title = "Historical Analysis - Coming Soon",
-        xaxis = list(title = "Time Period"),
-        yaxis = list(title = "Count")
-      )
+    data <- historical_data()
+    inputs <- hist_refresh_inputs()
+    
+    create_historical_cb_chart(
+      data = data,
+      hist_time_period = inputs$hist_time_period,
+      hist_display_metric = inputs$hist_display_metric,
+      hist_group_by = inputs$group_by,
+      chart_type = inputs$hist_chart_type
+    )
   })
   
   # Historical table
   output$historical_table <- renderDT({
-    # Placeholder for now
+    data <- historical_data()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(datatable(
+        data.frame(Message = "No historical data available"),
+        options = list(pageLength = 10),
+        rownames = FALSE
+      ))
+    }
+    
+    display_data <- format_historical_cb_table(data)
+    
     datatable(
-      data.frame(Message = "Historical data will appear here after implementation"),
-      options = list(pageLength = 10),
+      display_data,
+      options = list(
+        pageLength = 25,
+        dom = 'Bfrtip',
+        buttons = c('copy', 'csv', 'excel'),
+        scrollX = TRUE
+      ),
+      class = 'cell-border stripe',
       rownames = FALSE
     )
   })

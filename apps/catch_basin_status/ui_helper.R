@@ -103,7 +103,13 @@ create_help_text <- function() {
               tags$em("Calculation: (Active Treatment Count / Total Wet CB Count) × 100")),
       tags$li(strong("Expiring:"), " Catch basins with treatments nearing expiration (within specified days threshold)."),
       tags$li(strong("Expired:"), " Catch basins with treatments that have passed their effective treatment period."),
-      tags$li(strong("Never Treated:"), " Wet catch basins that have never received any treatment.")
+      tags$li(strong("Never Treated:"), " Wet catch basins that have never received any treatment this year.")
+    ),
+    h4("Historical Metrics Explained", style = "color: #17a2b8;"),
+    tags$ul(
+      tags$li(strong("Yearly - Total Treatments:"), " Counts every treatment applied. Since catch basins are treated multiple times per year, a single catch basin treated 3 times will contribute 3 to this count. Use this to track treatment workload."),
+      tags$li(strong("Yearly - Unique Wet CB Treated:"), " Counts each catch basin only once, regardless of how many times it was treated. Use this to track coverage of the wet catch basin inventory."),
+      tags$li(strong("Weekly - Active Treatments:"), " For each week, counts how many treatments were still active (not expired) on Friday of that week. Shows treatment effectiveness over time.")
     )
   )
 }
@@ -157,19 +163,28 @@ create_historical_filter_panel <- function() {
                     selected = "yearly")
       ),
       column(3,
+        selectInput("hist_chart_type", "Chart Type:",
+                    choices = c("Stacked Bar" = "stacked_bar",
+                                "Grouped Bar" = "grouped_bar", 
+                                "Line Chart" = "line",
+                                "Area Chart" = "area"),
+                    selected = "stacked_bar")
+      ),
+      column(3,
         conditionalPanel(
           condition = "input.hist_time_period == 'yearly'",
-          selectInput("hist_display_metric", "Display Metric:",
-                     choices = c("Treatments" = "treatments",
-                                "Wet CB Count" = "wet_cb_count"),
-                     selected = "treatments")
+          radioButtons("hist_display_metric", "Display Metric:",
+                     choices = c("Total Treatments" = "treatments",
+                                "Unique Wet CB Treated" = "wet_cb_count"),
+                     selected = "treatments",
+                     inline = TRUE)
         ),
         conditionalPanel(
           condition = "input.hist_time_period == 'weekly'",
-          selectInput("hist_display_metric", "Display Metric:",
-                     choices = c("Active Treatments" = "weekly_active_treatments",
-                                "Active Wet CB" = "weekly_active_wet_cb"),
-                     selected = "weekly_active_treatments")
+          radioButtons("hist_display_metric", "Display Metric:",
+                     choices = c("Active Treatments" = "weekly_active_treatments"),
+                     selected = "weekly_active_treatments",
+                     inline = TRUE)
         )
       ),
       column(3,

@@ -92,15 +92,24 @@ create_help_text <- function() {
       tags$li(strong("Days Until Expiring:"), " Adjust the threshold for identifying catch basins nearing treatment expiration."),
       tags$li(strong("Site Filter:"), " Filter to show all sites, only expiring sites, or expiring plus expired sites."),
       tags$li(strong("Status Overview:"), " View summary statistics and visual charts of catch basin treatment status."),
-      tags$li(strong("Detailed View:"), " Browse detailed data table with all catch basin counts and percentages.")
+      tags$li(strong("Detailed View:"), " Browse detailed data table with all catch basin counts and percentages."),
+      tags$li(strong("Historical Analysis:"), " Analyze catch basin treatment trends over time.")
     ),
     h4("Key Metrics", style = "color: #17a2b8;"),
     tags$ul(
       tags$li(strong("Total Wet Catch Basins:"), " Count of all catch basins currently classified as wet (status_udw='W')."),
       tags$li(strong("Wet CB with Active Treatment:"), " Count of wet catch basins with current active or expiring treatment."),
-      tags$li(strong("Treatment Coverage:"), " Percentage of wet catch basins that have active treatment."),
+      tags$li(strong("Treatment Coverage:"), " Percentage of wet catch basins that have active treatment. ", 
+              tags$em("Calculation: (Active Treatment Count / Total Wet CB Count) × 100")),
       tags$li(strong("Expiring:"), " Catch basins with treatments nearing expiration (within specified days threshold)."),
-      tags$li(strong("Expired:"), " Catch basins with treatments that have passed their effective treatment period.")
+      tags$li(strong("Expired:"), " Catch basins with treatments that have passed their effective treatment period."),
+      tags$li(strong("Never Treated:"), " Wet catch basins that have never received any treatment this year.")
+    ),
+    h4("Historical Metrics Explained", style = "color: #17a2b8;"),
+    tags$ul(
+      tags$li(strong("Yearly - Total Treatments:"), " Counts every treatment applied. Since catch basins are treated multiple times per year, a single catch basin treated 3 times will contribute 3 to this count. Use this to track treatment workload."),
+      tags$li(strong("Yearly - Unique Wet CB Treated:"), " Counts each catch basin only once, regardless of how many times it was treated. Use this to track coverage of the wet catch basin inventory."),
+      tags$li(strong("Weekly - Active Treatments:"), " For each week, counts how many treatments were still active (not expired) on Friday of that week. Shows treatment effectiveness over time.")
     )
   )
 }
@@ -135,5 +144,82 @@ create_details_table_box <- function() {
     solidHeader = TRUE,
     width = 12,
     DTOutput("details_table")
+  )
+}
+
+# Historical tab UI components
+create_historical_filter_panel <- function() {
+  box(
+    title = "Historical Analysis Filters",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    collapsible = TRUE,
+    
+    fluidRow(
+      column(3,
+        radioButtons("hist_time_period", "Time Period:",
+                    choices = c("Yearly" = "yearly", "Weekly" = "weekly"),
+                    selected = "yearly")
+      ),
+      column(3,
+        selectInput("hist_chart_type", "Chart Type:",
+                    choices = c("Stacked Bar" = "stacked_bar",
+                                "Grouped Bar" = "grouped_bar", 
+                                "Line Chart" = "line",
+                                "Area Chart" = "area"),
+                    selected = "stacked_bar")
+      ),
+      column(3,
+        conditionalPanel(
+          condition = "input.hist_time_period == 'yearly'",
+          radioButtons("hist_display_metric", "Display Metric:",
+                     choices = c("Total Treatments" = "treatments",
+                                "Unique Wet CB Treated" = "wet_cb_count"),
+                     selected = "treatments",
+                     inline = TRUE)
+        ),
+        conditionalPanel(
+          condition = "input.hist_time_period == 'weekly'",
+          radioButtons("hist_display_metric", "Display Metric:",
+                     choices = c("Active Treatments" = "weekly_active_treatments"),
+                     selected = "weekly_active_treatments",
+                     inline = TRUE)
+        )
+      ),
+      column(3,
+        sliderInput("hist_year_range", "Year Range:",
+                   min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
+                   value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
+                   step = 1, sep = "")
+      ),
+      column(3,
+        div(style = "margin-top: 25px;",
+          actionButton("hist_refresh", "Refresh Historical Data", 
+                      icon = icon("sync"), 
+                      class = "btn-primary btn-block")
+        )
+      )
+    )
+  )
+}
+
+create_historical_chart_box <- function() {
+  box(
+    title = "Historical Trends",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    plotlyOutput("historical_chart", height = "500px")
+  )
+}
+
+create_historical_details_table_box <- function() {
+  box(
+    title = "Historical Data Table",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    DTOutput("historical_table")
   )
 }

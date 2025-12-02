@@ -18,9 +18,13 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     }
   }
   
-  # Calculate dynamic height: 80 pixels per y-axis item 
+  # Calculate dynamic height
   n_items <- nrow(data)
   dynamic_height <- n_items * 80
+  # Make MMCD-all bars visibly larger (more vertical space when 1–2 groups)
+  if (group_by == "mmcd_all") {
+    dynamic_height <- max(300, n_items * 220)
+  }
   
   # Get status colors from db_helpers
   status_colors <- get_status_colors()
@@ -80,11 +84,35 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
   }
 
   # Create layered plot - USE STATUS COLORS FOR ALL BARS
+  # Create dummy data for legend
+  legend_data <- data.frame(
+    category = factor(c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)"),
+                     levels = c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)")),
+    value = c(1, 1, 1, 1)
+  )
+  
+  # Wider bars when viewing MMCD-wide (1-2 groups) so they fill more vertical space
+  bar_width <- if (group_by == "mmcd_all" && nrow(data) <= 2) 0.95 else 0.85
+
   p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-    geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4, width = if(nrow(data) == 1) 0.5 else 0.9) +  # Gray for expired/untreated background
-    geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"]), alpha = 0.8, width = if(nrow(data) == 1) 0.5 else 0.9) +  # Green active
-    geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"]), width = if(nrow(data) == 1) 0.5 else 0.9) +  # Orange overlay
-    geom_bar(aes(y = y_skipped), stat = "identity", fill = unname(status_colors["needs_treatment"]), alpha = 0.7, width = if(nrow(data) == 1) 0.5 else 0.9) +  # Red skipped
+    geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4, width = bar_width) +  # Gray for expired/untreated background
+    geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"]), alpha = 0.8, width = bar_width) +  # Green active
+    geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"]), width = bar_width) +  # Orange overlay
+    geom_bar(aes(y = y_skipped), stat = "identity", fill = unname(status_colors["needs_treatment"]), alpha = 0.7, width = bar_width) +  # Red skipped
+    # Add legend items outside plot area (large, solid)
+      geom_point(data = legend_data, aes(x = Inf, y = Inf, color = category), 
+                 size = 10, alpha = 1, shape = 19, inherit.aes = FALSE) +
+    scale_color_manual(
+      name = "Status",
+      values = c("Expired/Untreated" = "gray70", 
+                 "Active Treatment" = unname(status_colors["active"]), 
+                 "Expiring Soon" = unname(status_colors["planned"]),
+                 "Skipped (Dry)" = unname(status_colors["needs_treatment"])),
+      breaks = c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)"),
+      limits = c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)"),
+      drop = FALSE
+    ) +
+      guides(color = guide_legend(override.aes = list(size = 10, alpha = 1, shape = 19))) +
     coord_flip() +
     labs(
       title = chart_title,
@@ -101,13 +129,22 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       plot.title = element_text(face = "bold", size = 18),
       axis.title = element_text(face = "bold", size = 14),
       axis.text = element_text(size = 13),
-      legend.title = element_text(face = "bold", size = 12),
-      legend.text = element_text(size = 11)
+      legend.title = element_text(face = "bold", size = 16),
+      legend.text = element_text(size = 16),
+        legend.position = "bottom",
+        legend.key.size = unit(1.5, "cm")
     )
   
   # Convert to plotly with custom tooltip
   plotly_chart <- ggplotly(p, tooltip = "none") %>%
     layout(
+      legend = list(
+        font = list(size = 16),
+        orientation = "h",
+        x = 0.5,
+        xanchor = "center",
+        y = -0.2
+      ),
       hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12))
     )
   

@@ -69,6 +69,15 @@ server <- function(input, output, session) {
     }
   })
   
+  # Update hist_display_metric when hist_time_period changes
+  observeEvent(input$hist_time_period, {
+    if (input$hist_time_period == "yearly") {
+      updateRadioButtons(session, "hist_display_metric", selected = "sites")
+    } else if (input$hist_time_period == "weekly") {
+      updateRadioButtons(session, "hist_display_metric", selected = "active_sites")
+    }
+  })
+  
   # =============================================================================
   # DATA LOADING AND PROCESSING
   # =============================================================================
@@ -287,15 +296,45 @@ server <- function(input, output, session) {
       data$y_active <- data$active_acres
       data$y_expiring <- data$expiring_acres
     }
+    # For visual stacking via overlay, compute active+expiring layer
+    data$y_active_plus_exp <- data$y_active + data$y_expiring
     
     # Create plot - USE STATUS COLORS FOR ALL BARS
+    # Create dummy data for legend (ensures all statuses appear)
+    legend_data <- data.frame(
+      category = factor(c("Expired/Untreated", "Active Treatment", "Expiring Soon"),
+                        levels = c("Expired/Untreated", "Active Treatment", "Expiring Soon")),
+      value = c(1, 1, 1),
+      x_pos = rep(Inf, 3),
+      y_pos = rep(Inf, 3)
+    )
+    
     p <- ggplot(data, aes(x = .data[[x_var]])) +
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4) +
-      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
+      # Slightly transparent gray background for total
+      geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4, position = "identity") +
+      # Overlay colored bars to create a stacked look: first active+expiring (green), then expiring (orange)
+      geom_bar(aes(y = y_active_plus_exp), stat = "identity", fill = status_colors["active"], alpha = 1, position = "identity") +
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"], alpha = 1, position = "identity") +
+      # Add legend items (outside plot area) using FILL mapping to force correct colors
+      geom_point(
+        data = legend_data,
+        aes(x = x_pos, y = y_pos, fill = category),
+        size = 10, alpha = 1, shape = 21, stroke = 0, inherit.aes = FALSE
+      ) +
+      scale_fill_manual(
+        name = "Status",
+        values = c(
+          "Expired/Untreated" = "gray70",
+          "Active Treatment" = unname(status_colors["active"]),
+          "Expiring Soon" = unname(status_colors["planned"]) 
+        ),
+        breaks = c("Expired/Untreated", "Active Treatment", "Expiring Soon"),
+        limits = c("Expired/Untreated", "Active Treatment", "Expiring Soon"),
+        drop = FALSE
+      ) +
+      guides(fill = guide_legend(override.aes = list(size = 10, alpha = 1, shape = 21))) +
       labs(
         title = paste0("Drone Sites Progress by ", group_label, zone_text, prehatch_text),
-        subtitle = paste0("Gray: Total sites, Blue: Active treatments, Orange: Expiring in ", inputs$expiring_days, " days"),
         x = group_label,
         y = metric_label
       ) +
@@ -305,8 +344,10 @@ server <- function(input, output, session) {
         plot.title = element_text(face = "bold", size = 18),
         axis.title = element_text(face = "bold", size = 18),
         axis.text = element_text(size = 13),
-        legend.title = element_text(face = "bold", size = 12),
-        legend.text = element_text(size = 11)
+        legend.title = element_text(face = "bold", size = 16),
+        legend.text = element_text(size = 16),
+          legend.position = "bottom",
+          legend.key.size = unit(1.5, "cm")
       )
     print(p)
   }, height = 900)
@@ -787,8 +828,8 @@ server <- function(input, output, session) {
                         "p1_p2_combined" = " in P1 and P2 zones")
     
     paste0("Interactive map showing drone sites", zone_text, 
-           ". Markers are colored by treatment status: Active (blue), Expiring within ", 
-           inputs$expiring_days, " days (orange), Expired (red), No Treatment (gray)", 
+           ". Markers are colored by treatment status: Active (green), Expiring within ", 
+           inputs$expiring_days, " days (orange), Expired (gray), No Treatment (gray)", 
            filter_text, ".")
   })
   
@@ -804,17 +845,22 @@ server <- function(input, output, session) {
         setView(lng = -93.2, lat = 44.9, zoom = 8))
     }
     
-    # Define colors for treatment status
+    # Get status colors from db_helpers to match current progress chart
+    db_status_colors <- get_status_colors()
+    
+    # Define colors for treatment status using db_helpers
+    # Note: data labels are Expired/Expiring/Active based on treatment_end_date
     status_colors <- c(
-      "Active" = "#1f77b4",      # Blue
-      "Expiring" = "#ff7f0e",    # Orange  
-      "Expired" = "#d62728",     # Red
-      "No Treatment" = "#7f7f7f" # Gray
+      "Active" = unname(db_status_colors["active"]),        # Green - active treatment
+      "Expiring" = unname(db_status_colors["planned"]),     # Orange - expiring soon
+      "Expired" = "gray70",                                  # Gray - expired treatment
+      "No Treatment" = "gray70"                              # Gray - never treated
     )
     
-    # Create color palette function
+    # Create color palette function with explicit levels to control legend order
     pal <- colorFactor(
       palette = status_colors,
+      levels = c("Active", "Expiring", "Expired", "No Treatment"),
       domain = spatial_data$treatment_status
     )
     

@@ -59,7 +59,7 @@ create_facility_filter <- function() {
     selectizeInput("facility_filter", "Facility:",
                    choices = c("All" = "all"),
                    selected = "all",
-                   multiple = FALSE,
+                   multiple = TRUE,
                    width = "100%")
   )
 }
@@ -71,7 +71,7 @@ create_foreman_filter <- function() {
     selectizeInput("foreman_filter", "FOS:",
                    choices = c("All" = "all"),
                    selected = "all",
-                   multiple = FALSE,
+                   multiple = TRUE,
                    width = "100%")
   )
 }

@@ -227,15 +227,15 @@ create_help_text <- function() {
     ),
     
     p(style = "margin-bottom: 10px; font-size: 16px;",
-      strong("Site Acres (Unique):"), " The sum of site acreages, counting each site only once regardless of how many times it was treated.",
+      strong("Site Acres (Unique):"), "Site acres treated one or more times during the year, counted only once per site.",
       br(),
       em("Example: If Site A (20 acres) is treated 3 times, it contributes 20 acres to this metric.")
     ),
     
     p(style = "margin-bottom: 10px; font-size: 16px;",
-      strong("Treatment Acres (Total):"), " The sum of all treated acres from all treatment applications.",
+      strong("Treatment Acres (Total):"), " Total acres of treatment applied, summing all treatments even if on the same site.",
       br(),
-      em("Example: If Site A (20 acres) is treated 3 times with 10, 15, and 12 acres respectively, this metric shows 37 acres (10+15+12).")
+      em("Example: If Site A (20 acres) is treated 3 times with 10, 15, and 12 acres of treatment respectively, this metric shows 37 acres (10+15+12).")
     ),
     
     hr(style = "margin: 15px 0;"),

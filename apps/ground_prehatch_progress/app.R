@@ -131,6 +131,15 @@ server <- function(input, output, session) {
     )
   })
   
+  # Update hist_display_metric when hist_time_period changes
+  observeEvent(input$hist_time_period, {
+    if (input$hist_time_period == "yearly") {
+      updateRadioButtons(session, "hist_display_metric", selected = "sites")
+    } else if (input$hist_time_period == "weekly") {
+      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_sites")
+    }
+  })
+  
   # Historical refresh inputs - capture when historical refresh clicked
   hist_refresh_inputs <- eventReactive(input$hist_refresh, {
     zone_value <- isolate(input$zone_filter)
@@ -184,7 +193,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # Fetch ground prehatch data - ONLY when refresh button clicked
+  # Fetch ground prehatch data, ONLY when refresh button clicked
   ground_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     

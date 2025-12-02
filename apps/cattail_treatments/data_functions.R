@@ -161,7 +161,16 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
     # Add facility mapping
     cattail_sites <- map_facility_names(cattail_sites, "facility")
     
-    # Add facility_display for display function compatibility
+    # Add facility_code column - map to actual short codes from lookup
+    facility_lookup <- get_facility_lookup()
+    facility_map <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+    cattail_sites$facility_code <- ifelse(
+      cattail_sites$facility %in% names(facility_map),
+      facility_map[cattail_sites$facility],
+      cattail_sites$facility  # Keep as-is if not in lookup
+    )
+    
+    # Add facility_display for display function compatibility  
     cattail_sites$facility_display <- cattail_sites$facility
     
     # Load treatment data for current year
@@ -179,29 +188,98 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
       if (nrow(treatment_only_sites) > 0) {
         cat("Found", nrow(treatment_only_sites), "sites with treatments but no cattail inspections\n")
         
-        # Add these sites as "not inspected but treated"
-        additional_sites <- treatment_only_sites %>%
-          mutate(
-            sectcode = substr(sitecode, 1, 7),
-            acres = 0,  # We don't have site acres for these
-            air_gnd = "G",
-            drone = NA_character_,
-            facility = "Unknown",
-            zone = NA_character_,
-            fosarea = NA_character_,
-            foreman = NA_character_,
-            facility_display = "Unknown",
-            treated_acres = 0,
-            inspection_status = 'not_inspected',
-            treatment_status = 'treated',  # They have treatments
-            final_status = 'treated',  # Initialize final_status
-            inspdate = as.Date(NA),
-            numdip = NA_real_,
-            acres_plan = 0,
-            inspection_year = current_year,
-            state = 'treated',
-            facility_code = "UNK"
+        # Look up facility info from gis_sectcode for these sites
+        con2 <- get_db_connection()
+        if (!is.null(con2)) {
+          # Batch the queries to avoid parameter limits (max 1000 at a time)
+          batch_size <- 1000
+          n_sites <- nrow(treatment_only_sites)
+          site_info <- data.frame()
+          
+          for (i in seq(1, n_sites, by = batch_size)) {
+            batch_end <- min(i + batch_size - 1, n_sites)
+            batch_sites <- treatment_only_sites$sitecode[i:batch_end]
+            
+            placeholders <- paste0("$", seq_along(batch_sites), collapse = ", ")
+            sectcode_lookup_query <- sprintf("
+              SELECT DISTINCT
+                LEFT(b.sitecode, 7) as sectcode,
+                sc.facility,
+                sc.zone,
+                sc.fosarea,
+                b.sitecode,
+                b.acres,
+                b.air_gnd,
+                CASE WHEN b.drone IS NOT NULL THEN 'D' ELSE NULL END as drone
+              FROM public.loc_breeding_sites b
+              LEFT JOIN public.gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
+              WHERE b.sitecode IN (%s)
+            ", placeholders)
+            
+            batch_info <- dbGetQuery(con2, sectcode_lookup_query, as.list(batch_sites))
+            site_info <- bind_rows(site_info, batch_info)
+          }
+          
+          dbDisconnect(con2)
+          
+          # Add these sites with proper facility info
+          additional_sites <- treatment_only_sites %>%
+            left_join(site_info, by = "sitecode") %>%
+            mutate(
+              facility = coalesce(facility, "Unknown"),
+              zone = coalesce(zone, NA_character_),
+              fosarea = coalesce(fosarea, NA_character_),
+              foreman = fosarea,
+              acres = coalesce(acres, 0),
+              air_gnd = coalesce(air_gnd, "G"),
+              drone = coalesce(drone, NA_character_),
+              treated_acres = 0,
+              inspection_status = 'not_inspected',
+              treatment_status = 'treated',
+              final_status = 'treated',
+              inspdate = as.Date(NA),
+              numdip = NA_real_,
+              acres_plan = 0,
+              inspection_year = current_year,
+              state = 'treated'
+            )
+          
+          # Map facility names for display
+          additional_sites <- map_facility_names(additional_sites, "facility")
+          
+          # Map to short codes using facility lookup
+          facility_map <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+          additional_sites$facility_code <- ifelse(
+            additional_sites$facility %in% names(facility_map),
+            facility_map[additional_sites$facility],
+            additional_sites$facility
           )
+          additional_sites$facility_display <- additional_sites$facility
+        } else {
+          # Fallback if can't connect to DB
+          additional_sites <- treatment_only_sites %>%
+            mutate(
+              sectcode = substr(sitecode, 1, 7),
+              acres = 0,
+              air_gnd = "G",
+              drone = NA_character_,
+              facility = "Unknown",
+              zone = NA_character_,
+              fosarea = NA_character_,
+              foreman = NA_character_,
+              facility_display = "Unknown",
+              treated_acres = 0,
+              inspection_status = 'not_inspected',
+              treatment_status = 'treated',
+              final_status = 'treated',
+              inspdate = as.Date(NA),
+              numdip = NA_real_,
+              acres_plan = 0,
+              inspection_year = current_year,
+              state = 'treated',
+              facility_code = "UNK"
+            )
+        }
         
         # Combine with existing sites
         cattail_sites <- bind_rows(cattail_sites, additional_sites)
@@ -656,9 +734,11 @@ filter_cattail_data <- function(raw_data, zone_filter = c("1", "2"), facility_fi
     sites_data <- sites_data %>% filter(zone %in% zone_filter)
   }
   
-  # Apply facility filter - use facility_code (short codes) for filtering
+  # Apply facility filter - use facility (short codes) for filtering
   if (!"all" %in% facility_filter && !is.null(facility_filter)) {
-    sites_data <- sites_data %>% filter(facility_code %in% facility_filter)
+    # Use facility_code if it exists, otherwise use facility
+    filter_col <- if("facility_code" %in% names(sites_data)) "facility_code" else "facility"
+    sites_data <- sites_data %>% filter(.data[[filter_col]] %in% facility_filter)
   }
   
   # Apply date range filter to inspection data

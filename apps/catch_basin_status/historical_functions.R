@@ -1,13 +1,10 @@
 # Catch Basin Status - Historical Functions
-
+# Note: data_functions.R and display_functions.R are sourced by app.R before this file
 
 library(dplyr)
 library(lubridate)
 library(plotly)
 library(DT)
-
-source("data_functions.R")
-source("display_functions.R")
 
 # Load historical catch basin treatment data
 # Combines current year (dblarv_insptrt_current) and archive (dblarv_insptrt_archive)

@@ -92,15 +92,18 @@ create_help_text <- function() {
       tags$li(strong("Days Until Expiring:"), " Adjust the threshold for identifying catch basins nearing treatment expiration."),
       tags$li(strong("Site Filter:"), " Filter to show all sites, only expiring sites, or expiring plus expired sites."),
       tags$li(strong("Status Overview:"), " View summary statistics and visual charts of catch basin treatment status."),
-      tags$li(strong("Detailed View:"), " Browse detailed data table with all catch basin counts and percentages.")
+      tags$li(strong("Detailed View:"), " Browse detailed data table with all catch basin counts and percentages."),
+      tags$li(strong("Historical Analysis:"), " Analyze catch basin treatment trends over time.")
     ),
     h4("Key Metrics", style = "color: #17a2b8;"),
     tags$ul(
       tags$li(strong("Total Wet Catch Basins:"), " Count of all catch basins currently classified as wet (status_udw='W')."),
       tags$li(strong("Wet CB with Active Treatment:"), " Count of wet catch basins with current active or expiring treatment."),
-      tags$li(strong("Treatment Coverage:"), " Percentage of wet catch basins that have active treatment."),
+      tags$li(strong("Treatment Coverage:"), " Percentage of wet catch basins that have active treatment. ", 
+              tags$em("Calculation: (Active Treatment Count / Total Wet CB Count) × 100")),
       tags$li(strong("Expiring:"), " Catch basins with treatments nearing expiration (within specified days threshold)."),
-      tags$li(strong("Expired:"), " Catch basins with treatments that have passed their effective treatment period.")
+      tags$li(strong("Expired:"), " Catch basins with treatments that have passed their effective treatment period."),
+      tags$li(strong("Never Treated:"), " Wet catch basins that have never received any treatment.")
     )
   )
 }
@@ -135,5 +138,73 @@ create_details_table_box <- function() {
     solidHeader = TRUE,
     width = 12,
     DTOutput("details_table")
+  )
+}
+
+# Historical tab UI components
+create_historical_filter_panel <- function() {
+  box(
+    title = "Historical Analysis Filters",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    collapsible = TRUE,
+    
+    fluidRow(
+      column(3,
+        radioButtons("hist_time_period", "Time Period:",
+                    choices = c("Yearly" = "yearly", "Weekly" = "weekly"),
+                    selected = "yearly")
+      ),
+      column(3,
+        conditionalPanel(
+          condition = "input.hist_time_period == 'yearly'",
+          selectInput("hist_display_metric", "Display Metric:",
+                     choices = c("Treatments" = "treatments",
+                                "Wet CB Count" = "wet_cb_count"),
+                     selected = "treatments")
+        ),
+        conditionalPanel(
+          condition = "input.hist_time_period == 'weekly'",
+          selectInput("hist_display_metric", "Display Metric:",
+                     choices = c("Active Treatments" = "weekly_active_treatments",
+                                "Active Wet CB" = "weekly_active_wet_cb"),
+                     selected = "weekly_active_treatments")
+        )
+      ),
+      column(3,
+        sliderInput("hist_year_range", "Year Range:",
+                   min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
+                   value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
+                   step = 1, sep = "")
+      ),
+      column(3,
+        div(style = "margin-top: 25px;",
+          actionButton("hist_refresh", "Refresh Historical Data", 
+                      icon = icon("sync"), 
+                      class = "btn-primary btn-block")
+        )
+      )
+    )
+  )
+}
+
+create_historical_chart_box <- function() {
+  box(
+    title = "Historical Trends",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    plotlyOutput("historical_chart", height = "500px")
+  )
+}
+
+create_historical_details_table_box <- function() {
+  box(
+    title = "Historical Data Table",
+    status = "primary",
+    solidHeader = TRUE,
+    width = 12,
+    DTOutput("historical_table")
   )
 }

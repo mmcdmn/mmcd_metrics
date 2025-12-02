@@ -28,7 +28,8 @@ ui <- dashboardPage(
     sidebarMenu(
       id = "sidebar_tabs",
       menuItem("Status Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table"))
+      menuItem("Detailed View", tabName = "details", icon = icon("table")),
+      menuItem("Historical Analysis", tabName = "historical", icon = icon("history"))
     )
   ),
   
@@ -72,6 +73,22 @@ ui <- dashboardPage(
         
         # Details table
         create_details_table_box()
+      ),
+      
+      # Historical tab
+      tabItem(tabName = "historical",
+        br(),
+        
+        # Historical filters
+        create_historical_filter_panel(),
+        
+        # Historical chart
+        create_historical_chart_box(),
+        
+        br(),
+        
+        # Historical details table
+        create_historical_details_table_box()
       )
     )
   )
@@ -105,6 +122,32 @@ server <- function(input, output, session) {
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
       expiring_filter = isolate(input$expiring_filter)
+    )
+  })
+  
+  # Historical refresh inputs - capture when historical refresh clicked
+  hist_refresh_inputs <- eventReactive(input$hist_refresh, {
+    zone_value <- isolate(input$zone_filter)
+    
+    # Parse zone filter
+    parsed_zones <- if (zone_value == "combined") {
+      c("1", "2")
+    } else if (zone_value == "1,2") {
+      c("1", "2")
+    } else {
+      zone_value
+    }
+    
+    list(
+      zone_filter_raw = zone_value,
+      zone_filter = parsed_zones,
+      combine_zones = (zone_value == "combined"),
+      facility_filter = isolate(input$facility_filter),
+      foreman_filter = isolate(input$foreman_filter),
+      group_by = isolate(input$group_by),
+      hist_time_period = isolate(input$hist_time_period),
+      hist_display_metric = isolate(input$hist_display_metric),
+      hist_year_range = isolate(input$hist_year_range)
     )
   })
   
@@ -347,6 +390,31 @@ server <- function(input, output, session) {
         scrollX = TRUE
       ),
       class = 'cell-border stripe',
+      rownames = FALSE
+    )
+  })
+  
+  # =============================================================================
+  # HISTORICAL TAB OUTPUTS
+  # =============================================================================
+  
+  # Historical chart
+  output$historical_chart <- renderPlotly({
+    # Placeholder for now - will be implemented in historical_functions.R
+    plot_ly() %>%
+      layout(
+        title = "Historical Analysis - Coming Soon",
+        xaxis = list(title = "Time Period"),
+        yaxis = list(title = "Count")
+      )
+  })
+  
+  # Historical table
+  output$historical_table <- renderDT({
+    # Placeholder for now
+    datatable(
+      data.frame(Message = "Historical data will appear here after implementation"),
+      options = list(pageLength = 10),
       rownames = FALSE
     )
   })

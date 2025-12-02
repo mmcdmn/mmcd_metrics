@@ -288,23 +288,11 @@ server <- function(input, output, session) {
       data$y_expiring <- data$expiring_acres
     }
     
-    # Create plot
-    if (!is.null(custom_colors) && length(custom_colors) > 0 && inputs$group_by != "mmcd_all") {
-      p <- ggplot(data, aes(x = .data[[x_var]], fill = !!sym(fill_var))) +
-        geom_bar(aes(y = y_total), stat = "identity", alpha = 0.3) +
-        geom_bar(aes(y = y_active), stat = "identity", alpha = 0.8) +
-        geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
-        scale_fill_manual(values = custom_colors, guide = "none")
-    } else {
-      # For MMCD grouping or when no specific colors available, use status colors only
-      p <- ggplot(data, aes(x = .data[[x_var]])) +
-        geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.7) +
-        geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"]) +
-        geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"])
-    }
-    
-    # Add formatting
-    p <- p +
+    # Create plot - USE STATUS COLORS FOR ALL BARS
+    p <- ggplot(data, aes(x = .data[[x_var]])) +
+      geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4) +
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"], alpha = 0.8) +
+      geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"]) +
       labs(
         title = paste0("Drone Sites Progress by ", group_label, zone_text, prehatch_text),
         subtitle = paste0("Gray: Total sites, Blue: Active treatments, Orange: Expiring in ", inputs$expiring_days, " days"),

@@ -174,6 +174,15 @@ server <- function(input, output, session) {
     )
     updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
+  
+  # Update chart type default when zone filter changes to P1 and P2 separate
+  observeEvent(input$zone_filter, {
+    # Only update if on historical tab and switching to P1 and P2 separate
+    if (input$sidebar_tabs == "historical" && input$zone_filter == "1,2") {
+      # Default to grouped_bar but user can still change it
+      updateSelectInput(session, "hist_chart_type", selected = "grouped_bar")
+    }
+  })
 
   # Fetch ground prehatch data - ONLY when refresh button clicked
   ground_data <- eventReactive(input$refresh, {

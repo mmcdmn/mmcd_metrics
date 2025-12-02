@@ -18,67 +18,16 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     }
   }
   
-  # Calculate dynamic height: 80 pixels per y-axis item 
+  # Calculate dynamic height
   n_items <- nrow(data)
   dynamic_height <- n_items * 80
+  # Make MMCD-all bars visibly larger (more vertical space when 1–2 groups)
+  if (group_by == "mmcd_all") {
+    dynamic_height <- max(300, n_items * 220)
+  }
   
   # Get status colors from db_helpers
   status_colors <- get_status_colors()
-  
-  # Get appropriate group colors for active sites (same logic as drone app)
-  group_colors <- NULL
-  if (group_by == "facility") {
-    facility_colors <- get_facility_base_colors()
-    # Map facility names from display_name to get proper colors
-    group_colors <- character(0)
-    for (display_name in unique(data$display_name)) {
-      # Extract facility code from display names - handle multiple formats
-      facility_code <- display_name
-      # Try removing facility suffix patterns
-      facility_code <- gsub(" \\(Facility\\)", "", facility_code)
-      facility_code <- gsub(" P[12]", "", facility_code)  # Remove zone suffixes
-      
-      # Try direct mapping first
-      if (facility_code %in% names(facility_colors)) {
-        group_colors[display_name] <- facility_colors[facility_code]
-      } else {
-        # Try finding by facility lookup for full names
-        facilities <- get_facility_lookup()
-        matching_facility <- facilities[facilities$full_name == facility_code, ]
-        if (nrow(matching_facility) > 0) {
-          short_name <- matching_facility$short_name[1]
-          if (short_name %in% names(facility_colors)) {
-            group_colors[display_name] <- facility_colors[short_name]
-          }
-        }
-      }
-    }
-  } else if (group_by == "foreman") {
-    # Map foreman employee numbers to facility-based colors 
-    foreman_colors <- get_foreman_colors()
-    foremen_lookup <- get_foremen_lookup()
-    group_colors <- character(0)
-    
-    # Get foreman numbers from data for mapping
-    foremen_in_data <- unique(na.omit(data$group_name))  # group_name contains the foreman number
-    
-    for (foreman_num in foremen_in_data) {
-      foreman_num_str <- trimws(as.character(foreman_num))
-      matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-      
-      if (length(matches) > 0) {
-        shortname <- foremen_lookup$shortname[matches[1]]
-        if (shortname %in% names(foreman_colors)) {
-          # Find corresponding display_name for this foreman number
-          matching_rows <- data[data$group_name == foreman_num, ]
-          if (nrow(matching_rows) > 0) {
-            display_name <- unique(matching_rows$display_name)[1]
-            group_colors[display_name] <- foreman_colors[shortname]
-          }
-        }
-      }
-    }
-  }
 
   # Prepare y variables for layered bars 
   # Gray background: ALL prehatch sites (treated + expiring + expired + skipped + untreated)
@@ -134,29 +83,36 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
     "Ground Prehatch Treatment Progress"
   }
 
-  # Create layered plot with updated color scheme
-  if (!is.null(group_colors) && length(group_colors) > 0 && group_by != "mmcd_all") {
-    # Use group colors for total sites background, status green for active, orange for expiring, purple for skipped
-    # Ensure group_colors are unnamed to avoid plotly issues
-    group_colors_clean <- unname(group_colors)
-    names(group_colors_clean) <- names(group_colors)
-    
-    p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-      geom_bar(aes(y = y_total, fill = display_name), stat = "identity", alpha = 0.4) +  # Group colors background - more transparent
-      geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"]), alpha = 0.8) +  # Green active
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"])) +  # Orange overlay
-      geom_bar(aes(y = y_skipped), stat = "identity", fill = "purple", alpha = 0.7) +  # Purple skipped
-      scale_fill_manual(values = group_colors_clean, na.value = "grey70", guide = "none")  # Hide legend for group colors
-  } else {
-    # For MMCD grouping or when no specific colors available, use status colors only
-    p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
-      geom_bar(aes(y = y_total), stat = "identity", fill = "gray80", alpha = 0.4) +     # Gray background - more transparent
-      geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"])) +   # Green active
-      geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"])) +  # Orange expiring
-      geom_bar(aes(y = y_skipped), stat = "identity", fill = "purple", alpha = 0.7)  # Purple skipped
-  }
+  # Create layered plot - USE STATUS COLORS FOR ALL BARS
+  # Create dummy data for legend
+  legend_data <- data.frame(
+    category = factor(c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)"),
+                     levels = c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)")),
+    value = c(1, 1, 1, 1)
+  )
   
-  p <- p +
+  # Wider bars when viewing MMCD-wide (1-2 groups) so they fill more vertical space
+  bar_width <- if (group_by == "mmcd_all" && nrow(data) <= 2) 0.95 else 0.85
+
+  p <- ggplot(data, aes(x = reorder(display_name, y_total))) +
+    geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4, width = bar_width) +  # Gray for expired/untreated background
+    geom_bar(aes(y = y_active), stat = "identity", fill = unname(status_colors["active"]), alpha = 0.8, width = bar_width) +  # Green active
+    geom_bar(aes(y = y_expiring), stat = "identity", fill = unname(status_colors["planned"]), width = bar_width) +  # Orange overlay
+    geom_bar(aes(y = y_skipped), stat = "identity", fill = unname(status_colors["needs_treatment"]), alpha = 0.7, width = bar_width) +  # Red skipped
+    # Add legend items outside plot area (large, solid)
+      geom_point(data = legend_data, aes(x = Inf, y = Inf, color = category), 
+                 size = 10, alpha = 1, shape = 19, inherit.aes = FALSE) +
+    scale_color_manual(
+      name = "Status",
+      values = c("Expired/Untreated" = "gray70", 
+                 "Active Treatment" = unname(status_colors["active"]), 
+                 "Expiring Soon" = unname(status_colors["planned"]),
+                 "Skipped (Dry)" = unname(status_colors["needs_treatment"])),
+      breaks = c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)"),
+      limits = c("Expired/Untreated", "Active Treatment", "Expiring Soon", "Skipped (Dry)"),
+      drop = FALSE
+    ) +
+      guides(color = guide_legend(override.aes = list(size = 10, alpha = 1, shape = 19))) +
     coord_flip() +
     labs(
       title = chart_title,
@@ -173,13 +129,22 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       plot.title = element_text(face = "bold", size = 18),
       axis.title = element_text(face = "bold", size = 14),
       axis.text = element_text(size = 13),
-      legend.title = element_text(face = "bold", size = 12),
-      legend.text = element_text(size = 11)
+      legend.title = element_text(face = "bold", size = 16),
+      legend.text = element_text(size = 16),
+        legend.position = "bottom",
+        legend.key.size = unit(1.5, "cm")
     )
   
   # Convert to plotly with custom tooltip
   plotly_chart <- ggplotly(p, tooltip = "none") %>%
     layout(
+      legend = list(
+        font = list(size = 16),
+        orientation = "h",
+        x = 0.5,
+        xanchor = "center",
+        y = -0.2
+      ),
       hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12))
     )
   

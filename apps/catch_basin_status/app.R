@@ -174,26 +174,38 @@ server <- function(input, output, session) {
   
   # Initialize facility choices from db_helpers - runs immediately on app load
   observe({
-    facility_choices <- get_facility_choices()
-    # Filter to only N, E, MO, Sr, Sj, Wm, Wp as specified in query
-    facilities <- get_facility_lookup()
-    if (!is.null(facilities) && nrow(facilities) > 0) {
-      facilities <- facilities %>%
-        filter(short_name %in% c("N", "E", "MO", "Sr", "Sj", "Wm", "Wp"))
-      facility_choices <- c("All" = "all", setNames(facilities$short_name, facilities$full_name))
-    }
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    tryCatch({
+      facility_choices <- get_facility_choices()
+      # Filter to only N, E, MO, Sr, Sj, Wm, Wp as specified in query
+      facilities <- get_facility_lookup()
+      if (!is.null(facilities) && nrow(facilities) > 0) {
+        facilities <- facilities %>%
+          filter(short_name %in% c("N", "E", "MO", "Sr", "Sj", "Wm", "Wp"))
+        facility_choices <- c("All" = "all", setNames(facilities$short_name, facilities$full_name))
+      }
+      updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    }, error = function(e) {
+      warning(paste("Error initializing facility choices:", e$message))
+      updateSelectizeInput(session, "facility_filter", choices = c("All" = "all"), selected = "all")
+    })
   })
   
   # Initialize foreman choices from db_helpers - runs immediately on app load
   observe({
-    foremen_lookup <- get_foremen_lookup()
-    foremen_choices <- c("All" = "all")
-    foremen_choices <- c(
-      foremen_choices,
-      setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
-    )
-    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+    tryCatch({
+      foremen_lookup <- get_foremen_lookup()
+      foremen_choices <- c("All" = "all")
+      if (!is.null(foremen_lookup) && nrow(foremen_lookup) > 0) {
+        foremen_choices <- c(
+          foremen_choices,
+          setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+        )
+      }
+      updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+    }, error = function(e) {
+      warning(paste("Error initializing foreman choices:", e$message))
+      updateSelectizeInput(session, "foreman_filter", choices = c("All" = "all"), selected = "all")
+    })
   })
   
   # =============================================================================
@@ -331,39 +343,8 @@ server <- function(input, output, session) {
     )
   })
   
-  output$total_expiring <- renderValueBox({
-    data <- catch_basin_data()
-    
-    if (is.null(data) || nrow(data) == 0) {
-      total <- 0
-    } else {
-      total <- sum(data$count_wet_expiring, na.rm = TRUE)
-    }
-    
-    valueBox(
-      format(total, big.mark = ","),
-      "Expiring",
-      icon = icon("exclamation-triangle"),
-      color = "yellow"
-    )
-  })
-  
-  output$total_expired <- renderValueBox({
-    data <- catch_basin_data()
-    
-    if (is.null(data) || nrow(data) == 0) {
-      total <- 0
-    } else {
-      total <- sum(data$count_wet_expired, na.rm = TRUE)
-    }
-    
-    valueBox(
-      format(total, big.mark = ","),
-      "Expired",
-      icon = icon("times-circle"),
-      color = "red"
-    )
-  })
+  # DUPLICATE OUTPUTS REMOVED - these were causing the app to crash!
+  # output$total_expiring and output$total_expired were defined twice
   
   # Status chart
   output$status_chart <- renderPlotly({
@@ -485,18 +466,8 @@ server <- function(input, output, session) {
   # INITIAL DATA LOAD
   # =============================================================================
   
-  # Trigger initial data load
-  observe({
-    # Simulate refresh button click on startup
-    updateActionButton(session, "refresh", label = "Refresh Data")
-  })
-  
-  # Auto-refresh on startup (after UI is ready)
-  observeEvent(session$clientData, {
-    if (!is.null(session$clientData$url_hostname)) {
-      shinyjs::delay(500, click("refresh"))
-    }
-  }, once = TRUE, ignoreInit = FALSE)
+  # Note: Auto-refresh on startup disabled - requires shinyjs package
+  # To re-enable, add library(shinyjs) to libraries and useShinyjs() to UI
   
 }
 

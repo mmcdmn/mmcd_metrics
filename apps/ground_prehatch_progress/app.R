@@ -131,6 +131,15 @@ server <- function(input, output, session) {
     )
   })
   
+  # Update hist_display_metric when hist_time_period changes
+  observeEvent(input$hist_time_period, {
+    if (input$hist_time_period == "yearly") {
+      updateRadioButtons(session, "hist_display_metric", selected = "sites")
+    } else if (input$hist_time_period == "weekly") {
+      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_sites")
+    }
+  })
+  
   # Historical refresh inputs - capture when historical refresh clicked
   hist_refresh_inputs <- eventReactive(input$hist_refresh, {
     zone_value <- isolate(input$zone_filter)
@@ -174,8 +183,17 @@ server <- function(input, output, session) {
     )
     updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
+  
+  # Update chart type default when zone filter changes to P1 and P2 separate
+  observeEvent(input$zone_filter, {
+    # Only update if on historical tab and switching to P1 and P2 separate
+    if (input$sidebar_tabs == "historical" && input$zone_filter == "1,2") {
+      # Default to grouped_bar but user can still change it
+      updateSelectInput(session, "hist_chart_type", selected = "grouped_bar")
+    }
+  })
 
-  # Fetch ground prehatch data - ONLY when refresh button clicked
+  # Fetch ground prehatch data, ONLY when refresh button clicked
   ground_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     

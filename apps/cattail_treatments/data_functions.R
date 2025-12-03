@@ -30,6 +30,11 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
     analysis_date <- as.Date(analysis_date)
   }
   
+  # Automatically include archive if analysis_date is before current year
+  if (year(analysis_date) < year(Sys.Date())) {
+    include_archive <- TRUE
+  }
+  
   # Determine year range
   if (is.null(start_year)) start_year <- as.numeric(format(analysis_date, "%Y")) - 2
   if (is.null(end_year)) end_year <- as.numeric(format(analysis_date, "%Y"))
@@ -139,8 +144,8 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
     
     # Execute query with parameters
     cattail_sites <- dbGetQuery(con, cattail_treatments_query, list(
-      analysis_date,           # $1
-      start_date,              # $2  
+      analysis_date,           # $1 - for site enddate filter AND inspection date filter (no future inspections!)
+      start_date,              # $2 - start of inspection date range (3 years back)
       include_archive          # $3
     ))
     
@@ -173,118 +178,14 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
     # Add facility_display for display function compatibility  
     cattail_sites$facility_display <- cattail_sites$facility
     
-    # Load treatment data for current year
+    # Load treatment data for current year (filtered by analysis_date)
     current_year <- if (!is.null(end_year)) end_year else year(analysis_date)
     treatments <- load_cattail_treatments(analysis_date = analysis_date, current_year = current_year)
     
-    # Add sites that have cattail treatments but no cattail inspections
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      # Get sites with treatments that aren't already in cattail_sites
-      treatment_only_sites <- treatments %>%
-        filter(!sitecode %in% cattail_sites$sitecode) %>%
-        select(sitecode) %>%
-        distinct()
-      
-      if (nrow(treatment_only_sites) > 0) {
-        cat("Found", nrow(treatment_only_sites), "sites with treatments but no cattail inspections\n")
-        
-        # Look up facility info from gis_sectcode for these sites
-        con2 <- get_db_connection()
-        if (!is.null(con2)) {
-          # Batch the queries to avoid parameter limits (max 1000 at a time)
-          batch_size <- 1000
-          n_sites <- nrow(treatment_only_sites)
-          site_info <- data.frame()
-          
-          for (i in seq(1, n_sites, by = batch_size)) {
-            batch_end <- min(i + batch_size - 1, n_sites)
-            batch_sites <- treatment_only_sites$sitecode[i:batch_end]
-            
-            placeholders <- paste0("$", seq_along(batch_sites), collapse = ", ")
-            sectcode_lookup_query <- sprintf("
-              SELECT DISTINCT
-                LEFT(b.sitecode, 7) as sectcode,
-                sc.facility,
-                sc.zone,
-                sc.fosarea,
-                b.sitecode,
-                b.acres,
-                b.air_gnd,
-                CASE WHEN b.drone IS NOT NULL THEN 'D' ELSE NULL END as drone
-              FROM public.loc_breeding_sites b
-              LEFT JOIN public.gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
-              WHERE b.sitecode IN (%s)
-            ", placeholders)
-            
-            batch_info <- dbGetQuery(con2, sectcode_lookup_query, as.list(batch_sites))
-            site_info <- bind_rows(site_info, batch_info)
-          }
-          
-          dbDisconnect(con2)
-          
-          # Add these sites with proper facility info
-          additional_sites <- treatment_only_sites %>%
-            left_join(site_info, by = "sitecode") %>%
-            mutate(
-              facility = coalesce(facility, "Unknown"),
-              zone = coalesce(zone, NA_character_),
-              fosarea = coalesce(fosarea, NA_character_),
-              foreman = fosarea,
-              acres = coalesce(acres, 0),
-              air_gnd = coalesce(air_gnd, "G"),
-              drone = coalesce(drone, NA_character_),
-              treated_acres = 0,
-              inspection_status = 'not_inspected',
-              treatment_status = 'treated',
-              final_status = 'treated',
-              inspdate = as.Date(NA),
-              numdip = NA_real_,
-              acres_plan = 0,
-              inspection_year = current_year,
-              state = 'treated'
-            )
-          
-          # Map facility names for display
-          additional_sites <- map_facility_names(additional_sites, "facility")
-          
-          # Map to short codes using facility lookup
-          facility_map <- setNames(facility_lookup$short_name, facility_lookup$full_name)
-          additional_sites$facility_code <- ifelse(
-            additional_sites$facility %in% names(facility_map),
-            facility_map[additional_sites$facility],
-            additional_sites$facility
-          )
-          additional_sites$facility_display <- additional_sites$facility
-        } else {
-          # Fallback if can't connect to DB
-          additional_sites <- treatment_only_sites %>%
-            mutate(
-              sectcode = substr(sitecode, 1, 7),
-              acres = 0,
-              air_gnd = "G",
-              drone = NA_character_,
-              facility = "Unknown",
-              zone = NA_character_,
-              fosarea = NA_character_,
-              foreman = NA_character_,
-              facility_display = "Unknown",
-              treated_acres = 0,
-              inspection_status = 'not_inspected',
-              treatment_status = 'treated',
-              final_status = 'treated',
-              inspdate = as.Date(NA),
-              numdip = NA_real_,
-              acres_plan = 0,
-              inspection_year = current_year,
-              state = 'treated',
-              facility_code = "UNK"
-            )
-        }
-        
-        # Combine with existing sites
-        cattail_sites <- bind_rows(cattail_sites, additional_sites)
-      }
-    }
+    # NOTE: We do NOT add "treatment-only" sites anymore
+    # Cattail treatments are ONLY valid if there was a prior fall inspection
+    # Those sites should already be in cattail_sites from the inspection query
+    # Any site with treatments but no inspection is incorrectly coded and should not appear
     
     # Convert to sf object if we have coordinates (we'll add this later for mapping)
     # For now, return as regular data frame
@@ -334,7 +235,7 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
     }
     
     # Treatments query - actions '3', 'A', and 'D' with improved cattail material codes
-    # Uses DOY (day-of-year) for better seasonal matching across years
+    # Filter by analysis_date to exclude future treatments
     treatments_query <- "
       SELECT 
         i.sitecode,
@@ -353,6 +254,7 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
       FROM public.dblarv_insptrt_current i
       LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode,7) = sc.sectcode
       WHERE i.action IN ('3', 'A', 'D')  -- Actions 3, A, D = treatments
+        AND i.inspdate <= $1  -- Only treatments up to analysis_date
         AND i.matcode IN (
           SELECT matcode 
           FROM public.mattype_list_targetdose
@@ -385,6 +287,7 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
       FROM public.dblarv_insptrt_archive a
       LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode,7) = sc.sectcode
       WHERE a.action IN ('3', 'A', 'D')  -- Actions 3, A, D = treatments
+        AND a.inspdate <= $1  -- Only treatments up to analysis_date
         AND a.matcode IN (
           SELECT matcode 
           FROM public.mattype_list_targetdose
@@ -401,11 +304,8 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
       ORDER BY trtdate
     "
     
-    # Execute query - no date parameters needed since using DOY filtering
-    # DOY ranges:
-    # - Fall/winter: day 244-365 (Sept 1 - Dec 31)
-    # - Spring/summer: day 135-213 (May 15 - Aug 1)
-    treatments <- dbGetQuery(con, treatments_query)
+    # Execute query with analysis_date parameter to filter out future treatments
+    treatments <- dbGetQuery(con, treatments_query, list(analysis_date))
     dbDisconnect(con)
     
     if (nrow(treatments) == 0) {
@@ -458,25 +358,37 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     analysis_date <- Sys.Date()
   }
   
-  # Filter to current year analysis 
+  # Determine which inspection year to use based on analysis_date
   analysis_year <- year(analysis_date)
+  analysis_month <- month(analysis_date)
   
-  # Filter sites to current analysis year only
+  # Cattail logic: Fall inspections (Aug-Dec) drive treatments in same fall OR following spring
+  # If analysis_date is Jan-July, we want PREVIOUS YEAR's fall inspections
+  # If analysis_date is Aug-Dec, we want CURRENT YEAR's fall inspections
+  if (analysis_month >= 1 && analysis_month <= 7) {
+    # Spring/early summer: use previous fall's inspections
+    inspection_year_filter <- analysis_year - 1
+  } else {
+    # Fall/winter: use current year's inspections
+    inspection_year_filter <- analysis_year
+  }
+  
+  # Filter sites to relevant inspection year
   sites_data <- cattail_data$cattail_sites %>%
-    filter(inspection_year == analysis_year)
+    filter(inspection_year == inspection_year_filter)
     
   treatments <- cattail_data$treatments
   current_year <- analysis_year
   
-  cat("Aggregating data for year", analysis_year, "(", nrow(sites_data), "sites)\n")
+  cat("Aggregating data for year", analysis_year, "using inspection year", inspection_year_filter, "(", nrow(sites_data), "sites)\n")
   
-  # Match treatments to sites - focus on current year cycle
+  # Match treatments to sites - focus on current inspection cycle
   if (!is.null(treatments) && nrow(treatments) > 0) {
-    # For current year analysis, we want treatments that map to current year inspections
-    # This represents the complete treatment cycle for sites inspected in current year
+    # For the inspection cycle, we want treatments that map to the inspection year
+    # Treatments can be in same fall OR following spring
     
     treated_sites <- treatments %>%
-      filter(inspection_year == current_year) %>%
+      filter(inspection_year == inspection_year_filter) %>%
       pull(sitecode) %>%
       unique()
     

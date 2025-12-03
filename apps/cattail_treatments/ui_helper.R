@@ -86,6 +86,21 @@ create_filter_panel <- function() {
       width = 12, 
       collapsible = TRUE,
       
+      # Important note about material codes
+      fluidRow(
+        column(12,
+          div(style = "background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 10px; margin-bottom: 15px;",
+            icon("info-circle", style = "color: #856404; margin-right: 5px;"),
+            tags$strong("Note:", style = "color: #856404;"),
+            tags$span(style = "color: #856404;",
+              "This dashboard only shows treatments entered with cattail-specific material codes (e.g., G3). ",
+              "If a site was treated for cattails but entered with a general larvicide code (e.g., G2, matcode 16), ",
+              "the treatment will not appear here and the site may incorrectly show as 'Need Treatment'."
+            )
+          )
+        )
+      ),
+      
       fluidRow(
         column(2, create_analysis_date_selector()),
         column(2, create_grouping_selector()),

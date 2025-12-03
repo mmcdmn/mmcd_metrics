@@ -170,9 +170,9 @@ ui <- dashboardPage(
               column(4, create_year_range_selector()),
               column(4, selectInput("hist_status_metric", "Status Metric:",
                                    choices = list(
-                                     "Need Treatment (as of December 1)" = "need_treatment",
-                                     "Treated (as of Aug 1)" = "treated",
-                                     "% Treated of Need Treatment (as of Aug 1)" = "pct_treated"
+                                     "Need Treatment (up to December 1)" = "need_treatment",
+                                     "Treated (up to Aug 1)" = "treated",
+                                     "% Treated of Need Treatment (up to Aug 1)" = "pct_treated"
                                    ),
                                    selected = "need_treatment")),
               column(2, create_chart_type_selector()),
@@ -258,12 +258,15 @@ server <- function(input, output, session) {
     if (is.null(analysis_date)) analysis_date <- Sys.Date()
     
     current_year <- year(analysis_date)
-    values$raw_data <- load_cattail_data(
-      analysis_date = analysis_date,
-      include_archive = TRUE,
-      start_year = current_year - 2,
-      end_year = current_year
-    )
+    
+    withProgress(message = "Loading cattail treatment data...", value = 0.5, {
+      values$raw_data <- load_cattail_data(
+        analysis_date = analysis_date,
+        include_archive = TRUE,
+        start_year = current_year - 2,
+        end_year = current_year
+      )
+    })
     
     # Show notification
     if (!is.null(values$raw_data)) {

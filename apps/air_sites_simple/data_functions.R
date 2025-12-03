@@ -15,14 +15,15 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
   
   tryCatch({
     # Build filter conditions with safer checks
+    # Treat NULL, empty, or "all" as no filter
     facility_condition <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && all(!is.na(facility_filter))) {
+    if (!is.null(facility_filter) && length(facility_filter) > 0 && all(!is.na(facility_filter)) && !"all" %in% facility_filter) {
       facility_list <- paste(sprintf("'%s'", facility_filter), collapse=", ")
       facility_condition <- sprintf("AND b.facility IN (%s)", facility_list)
     }
     
     priority_condition <- ""
-    if (!is.null(priority_filter) && length(priority_filter) > 0 && all(!is.na(priority_filter))) {
+    if (!is.null(priority_filter) && length(priority_filter) > 0 && all(!is.na(priority_filter)) && !"all" %in% priority_filter) {
       priority_list <- paste(sprintf("'%s'", priority_filter), collapse=", ")
       priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
     }

@@ -670,7 +670,7 @@ create_status_table <- function(sites_data, treatments_data, analysis_date = NUL
       filter(inspection_year == year(analysis_date)) %>%
       group_by(sitecode) %>%
       summarise(
-        last_treatment_date = max(trtdate, na.rm = TRUE),
+        last_treatment_date = if(all(is.na(trtdate))) NA_real_ else max(trtdate, na.rm = TRUE),
         treatment_action = first(action_desc),
         treatment_material = first(mattype),
         .groups = "drop"

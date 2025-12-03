@@ -122,8 +122,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     drone_types <- c("Y", "M", "C")  # Default drone types
     
-    # Load raw data
-    data <- load_raw_data(drone_types, analysis_date = inputs$analysis_date)
+    withProgress(message = "Loading drone data...", value = 0.5, {
+      # Load raw data
+      data <- load_raw_data(drone_types, analysis_date = inputs$analysis_date)
+    })
     
     # Apply filters immediately using captured input values
     filtered <- apply_data_filters(
@@ -788,14 +790,16 @@ server <- function(input, output, session) {
   map_spatial_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    load_spatial_data(
-      analysis_date = inputs$analysis_date,
-      zone_filter = inputs$zone_filter,
-      facility_filter = inputs$facility_filter,
-      foreman_filter = inputs$foreman_filter,
-      prehatch_only = inputs$prehatch_only,
-      expiring_days = inputs$expiring_days
-    )
+    withProgress(message = "Loading map data...", value = 0.5, {
+      load_spatial_data(
+        analysis_date = inputs$analysis_date,
+        zone_filter = inputs$zone_filter,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        prehatch_only = inputs$prehatch_only,
+        expiring_days = inputs$expiring_days
+      )
+    })
   })
   
   # Map description
@@ -833,6 +837,7 @@ server <- function(input, output, session) {
            filter_text, ".")
   })
   
+  # Leaflet map rendering for the drone sites
   # Leaflet map output
   output$droneMap <- renderLeaflet({
     req(input$refresh)

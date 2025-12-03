@@ -198,7 +198,9 @@ ui <- fluidPage(
 server <- function(input, output) {
   # Progress vs Goal tab - data loads on refresh button
   goal_progress_data <- eventReactive(input$refresh_goal_progress, {
-    get_progress_data(input$goal_year, input$goal_column, input$custom_today)
+    withProgress(message = "Loading progress data...", value = 0.5, {
+      get_progress_data(input$goal_year, input$goal_column, input$custom_today)
+    })
   })
   
   output$progressPlot <- renderPlot({
@@ -208,7 +210,9 @@ server <- function(input, output) {
   
   # Historical Comparison tab - data loads on refresh button
   historical_progress_data <- eventReactive(input$refresh_historical, {
-    get_historical_progress_data(input$hist_years, input$hist_zone, input$hist_facility_filter)
+    withProgress(message = "Loading historical data...", value = 0.5, {
+      get_historical_progress_data(input$hist_years, input$hist_zone, input$hist_facility_filter)
+    })
   })
   
   # Historical progress plot - overlaid bars like drone app
@@ -219,7 +223,9 @@ server <- function(input, output) {
   
   # Sites table data - sites inspected in last X years (with toggle for unchecked this year)
   sites_table_data <- eventReactive(input$refresh_historical, {
-    get_sites_table_data(input$hist_years, input$hist_zone, input$hist_facility_filter, input$sites_view_type)
+    withProgress(message = "Loading sites data...", value = 0.5, {
+      get_sites_table_data(input$hist_years, input$hist_zone, input$hist_facility_filter, input$sites_view_type)
+    })
   })
   
   # Sites table output

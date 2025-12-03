@@ -256,28 +256,32 @@ server <- function(input, output) {
   current_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    get_current_structure_data(
-      inputs$custom_today,
-      inputs$expiring_days,
-      inputs$facility_filter,
-      inputs$structure_type_filter,
-      inputs$priority_filter,
-      inputs$status_types,
-      inputs$zone_filter
-    )
+    withProgress(message = "Loading structure treatment data...", value = 0.5, {
+      get_current_structure_data(
+        inputs$custom_today,
+        inputs$expiring_days,
+        inputs$facility_filter,
+        inputs$structure_type_filter,
+        inputs$priority_filter,
+        inputs$status_types,
+        inputs$zone_filter
+      )
+    })
   })
   
   # Load all structures - ONLY when refresh button clicked
   all_structures <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    get_all_structures(
-      inputs$facility_filter,
-      inputs$structure_type_filter,
-      inputs$priority_filter,
-      inputs$status_types,
-      inputs$zone_filter
-    )
+    withProgress(message = "Loading structures...", value = 0.5, {
+      get_all_structures(
+        inputs$facility_filter,
+        inputs$structure_type_filter,
+        inputs$priority_filter,
+        inputs$status_types,
+        inputs$zone_filter
+      )
+    })
   })
   
   # Load historical data - ONLY when refresh button clicked

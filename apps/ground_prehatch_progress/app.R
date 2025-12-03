@@ -200,7 +200,9 @@ server <- function(input, output, session) {
     # Use custom date if provided, otherwise use current date
     simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+    withProgress(message = "Loading ground prehatch data...", value = 0.5, {
+      get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+    })
   })
   
   # Fetch site details data - ONLY when refresh button clicked
@@ -210,7 +212,9 @@ server <- function(input, output, session) {
     # Use custom date if provided, otherwise use current date
     simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    get_site_details_data(inputs$expiring_days, simulation_date)
+    withProgress(message = "Loading site details...", value = 0.5, {
+      get_site_details_data(inputs$expiring_days, simulation_date)
+    })
   })
   
   # Filter data based on user selections

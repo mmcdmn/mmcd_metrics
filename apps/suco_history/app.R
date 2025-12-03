@@ -245,13 +245,17 @@ server <- function(input, output, session) {
   # Fetch SUCO data - all data (current + archive) - ONLY when refresh button clicked
   suco_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
-    get_suco_data("all", inputs$date_range)
+    withProgress(message = "Loading SUCO data...", value = 0.5, {
+      get_suco_data("all", inputs$date_range)
+    })
   })
   
   # Fetch SUCO data - current only (more efficient for Current Data tab) - ONLY when refresh button clicked
   suco_data_current <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
-    get_suco_data("current", inputs$date_range)
+    withProgress(message = "Loading current SUCO data...", value = 0.5, {
+      get_suco_data("current", inputs$date_range)
+    })
   })
 
   # Filter data based on user selections

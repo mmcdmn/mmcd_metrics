@@ -26,13 +26,14 @@ server <- function(input, output, session) {
   # ============= SINGLE UNIFIED DATA RETRIEVAL =============
   # Single reactive data source that loads ALL inspection data with shared filters
   comprehensive_data <- eventReactive(input$load_data, {
-    # Apply ALL shared filters consistently
-    facility_filter <- if (length(input$facility) == 0 || "all" %in% input$facility) NULL else input$facility
-    fosarea_filter <- if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea
-    
-    # Parse zone filter - handle radio button
-    zone_value <- input$zone %||% "all"
-    zone_filter <- if (zone_value == "all") {
+    withProgress(message = "Loading inspection data...", value = 0.5, {
+      # Apply ALL shared filters consistently
+      facility_filter <- if (length(input$facility) == 0 || "all" %in% input$facility) NULL else input$facility
+      fosarea_filter <- if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea
+      
+      # Parse zone filter - handle radio button
+      zone_value <- input$zone %||% "all"
+      zone_filter <- if (zone_value == "all") {
       NULL
     } else if (zone_value == "1,2") {
       c("1", "2")
@@ -46,6 +47,7 @@ server <- function(input, output, session) {
     prehatch_only <- input$prehatch_only %||% FALSE
     
     # ONE SINGLE QUERY GETS ALL DATA
+    
     get_all_inspection_data(
       facility_filter = facility_filter,
       fosarea_filter = fosarea_filter, 
@@ -55,6 +57,7 @@ server <- function(input, output, session) {
       spring_only = spring_only,
       prehatch_only = prehatch_only
     )
+    })
   }, ignoreNULL = FALSE)
   
   # Data loading summary

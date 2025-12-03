@@ -646,14 +646,16 @@ server <- function(input, output, session) {
   # ============ AIR SITE STATUS TAB LOGIC ============
   # Reactive data - only loads when refresh button is clicked
   air_sites_data <- eventReactive(input$refresh_data, {
-    get_air_sites_data(
-      analysis_date = input$analysis_date,
-      facility_filter = input$facility_filter,
-      priority_filter = input$priority_filter,
-      zone_filter = input$zone_filter,
-      larvae_threshold = input$larvae_threshold,
-      bti_effect_days_override = input$bti_effect_days_override
-    )
+    withProgress(message = "Loading air sites data...", value = 0.5, {
+      get_air_sites_data(
+        analysis_date = input$analysis_date,
+        facility_filter = input$facility_filter,
+        priority_filter = input$priority_filter,
+        zone_filter = input$zone_filter,
+        larvae_threshold = input$larvae_threshold,
+        bti_effect_days_override = input$bti_effect_days_override
+      )
+    })
   })
   
   # Filter data by status and material if needed

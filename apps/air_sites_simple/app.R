@@ -37,7 +37,7 @@ ui <- dashboardPage(
   dashboardSidebar(
     sidebarMenu(
       menuItem("Air Site Status", tabName = "status", icon = icon("helicopter")),
-      menuItem("Treatment Process", tabName = "process", icon = icon("chart-line")),
+      menuItem("Pipeline Snapshot", tabName = "process", icon = icon("chart-line")),
       menuItem("Historical Analysis", tabName = "historical", icon = icon("chart-area"))
     )
   ),
@@ -87,6 +87,13 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
+                radioButtons("metric_type", "Display Metric:",
+                  choices = c("Number of Sites" = "sites", "Acres" = "acres"),
+                  selected = "sites",
+                  inline = TRUE
+                )
+              ),
+              column(3,
                 selectInput("status_filter", "Status Filter:",
                   choices = c("All Statuses" = "all",
                              "Not Insp" = "Unknown",
@@ -107,8 +114,10 @@ ui <- dashboardPage(
                   actionButton("btn_prehatch", "Prehatch Only", class = "btn-sm btn-primary", style = "margin-right: 5px;"),
                   actionButton("btn_bti", "BTI Only", class = "btn-sm btn-success")
                 )
-              ),
-              column(3,
+              )
+            ),
+            fluidRow(
+              column(6,
                 numericInput("bti_effect_days_override", "BTI Effect Days Override:",
                   value = NA,
                   min = 1,
@@ -480,14 +489,14 @@ server <- function(input, output, session) {
   # Load facility choices (static, load once)
   facility_lookup <- get_facility_lookup()
   if (nrow(facility_lookup) > 0) {
-    facility_choices <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+    facility_choices <- c("All Facilities" = "all", setNames(facility_lookup$short_name, facility_lookup$full_name))
   } else {
     facility_choices <- c("Failed to load facilities", "error")
   }
   
   # Load priority choices (static, load once)
-  priority_choices <- get_priority_choices(include_all = FALSE)
-  priority_choices <- priority_choices[names(priority_choices) != "All Priorities"]
+  priority_choices_raw <- get_priority_choices(include_all = FALSE)
+  priority_choices <- c("All Priorities" = "all", priority_choices_raw)
   
   # Load zone choices (static, load once)
   zone_choices <- get_available_zones()
@@ -502,18 +511,18 @@ server <- function(input, output, session) {
   
   # Update all filter inputs ONCE on startup
   observe({
-    # Update facility filters
+    # Update facility filters - start empty
     updateSelectizeInput(session, "facility_filter", 
                         choices = facility_choices,
-                        selected = unname(facility_choices))
+                        selected = NULL)
     updateSelectizeInput(session, "process_facility_filter", 
                         choices = facility_choices,
-                        selected = unname(facility_choices))
+                        selected = NULL)
     
-    # Update priority filter
+    # Update priority filter - start empty
     updateSelectizeInput(session, "priority_filter", 
                         choices = priority_choices,
-                        selected = unname(priority_choices))
+                        selected = NULL)
     
     # Update zone filter
     updateRadioButtons(session, "zone_filter", 
@@ -683,12 +692,33 @@ server <- function(input, output, session) {
     return(data)
   })
   
+  # Helper function to calculate metric (sites or acres)
+  calc_metric <- function(data, metric_type = "sites") {
+    if (nrow(data) == 0) return(0)
+    if (metric_type == "acres") {
+      return(round(sum(data$acres, na.rm = TRUE), 1))
+    } else {
+      return(nrow(data))
+    }
+  }
+  
+  # Helper function to format metric value
+  format_metric <- function(value, metric_type = "sites") {
+    if (metric_type == "acres") {
+      return(paste0(format(value, big.mark = ","), " ac"))
+    } else {
+      return(format(value, big.mark = ","))
+    }
+  }
+  
   # Value boxes
   output$total_air_sites <- renderValueBox({
     data <- filtered_data()
+    metric_val <- calc_metric(data, input$metric_type)
+    label <- if (input$metric_type == "acres") "Total Air Site Acres" else "Total Air Sites"
     valueBox(
-      value = nrow(data),
-      subtitle = "Total Air Sites",
+      value = format_metric(metric_val, input$metric_type),
+      subtitle = label,
       icon = icon("helicopter"),
       color = "teal"
     )
@@ -696,10 +726,12 @@ server <- function(input, output, session) {
   
   output$sites_unknown <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "Unknown", na.rm = TRUE)
+    data_subset <- data[data$site_status == "Unknown", ]
+    metric_val <- calc_metric(data_subset, input$metric_type)
+    label <- if (input$metric_type == "acres") "Not Insp Acres (in last 7 days)" else "Not Insp (in last 7 days)"
     valueBox(
-      value = count,
-      subtitle = "Not Insp (in last 7 days)",
+      value = format_metric(metric_val, input$metric_type),
+      subtitle = label,
       icon = icon("question-circle"),
       color = "yellow"
     )
@@ -707,10 +739,12 @@ server <- function(input, output, session) {
   
   output$sites_inspected <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "Inspected", na.rm = TRUE)
+    data_subset <- data[data$site_status == "Inspected", ]
+    metric_val <- calc_metric(data_subset, input$metric_type)
+    label <- if (input$metric_type == "acres") "Insp Acres (under threshold)" else "Insp (under threshold, last 7 days)"
     valueBox(
-      value = count,
-      subtitle = "Insp (under threshold, last 7 days)",
+      value = format_metric(metric_val, input$metric_type),
+      subtitle = label,
       icon = icon("magnifying-glass"),
       color = "blue"
     )
@@ -718,10 +752,12 @@ server <- function(input, output, session) {
   
   output$sites_in_lab <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "Needs ID", na.rm = TRUE)
+    data_subset <- data[data$site_status == "Needs ID", ]
+    metric_val <- calc_metric(data_subset, input$metric_type)
+    label <- if (input$metric_type == "acres") "Needs ID Acres" else "Needs ID"
     valueBox(
-      value = count,
-      subtitle = "Needs ID",
+      value = format_metric(metric_val, input$metric_type),
+      subtitle = label,
       icon = icon("microscope"),
       color = "purple"
     )
@@ -729,10 +765,12 @@ server <- function(input, output, session) {
 
   output$sites_needs_treatment <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
+    data_subset <- data[data$site_status == "Needs Treatment", ]
+    metric_val <- calc_metric(data_subset, input$metric_type)
+    label <- if (input$metric_type == "acres") "Needs Treatment Acres" else "Needs Treatment"
     valueBox(
-      value = count,
-      subtitle = "Needs Treatment",
+      value = format_metric(metric_val, input$metric_type),
+      subtitle = label,
       icon = icon("exclamation-triangle"),
       color = "red"
     )
@@ -740,10 +778,12 @@ server <- function(input, output, session) {
 
   output$sites_active_treatment <- renderValueBox({
     data <- filtered_data()
-    count <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
+    data_subset <- data[data$site_status == "Active Treatment", ]
+    metric_val <- calc_metric(data_subset, input$metric_type)
+    label <- if (input$metric_type == "acres") "Active Treatment Acres" else "Active Treatment"
     valueBox(
-      value = count,
-      subtitle = "Active Treatment",
+      value = format_metric(metric_val, input$metric_type),
+      subtitle = label,
       icon = icon("check-circle"),
       color = "green"
     )
@@ -775,10 +815,18 @@ server <- function(input, output, session) {
         ))
     }
     
-    # Create status summary chart
-    status_counts <- data %>%
-      group_by(site_status) %>%
-      summarise(count = n(), .groups = 'drop')
+    # Create status summary chart (sites or acres)
+    if (input$metric_type == "acres") {
+      status_summary <- data %>%
+        group_by(site_status) %>%
+        summarise(value = sum(acres, na.rm = TRUE), .groups = 'drop')
+      y_label <- "Acres"
+    } else {
+      status_summary <- data %>%
+        group_by(site_status) %>%
+        summarise(value = n(), .groups = 'drop')
+      y_label <- "Number of Sites"
+    }
     
     # Map internal status names to display labels
     status_display_map <- c(
@@ -788,11 +836,11 @@ server <- function(input, output, session) {
       "Needs Treatment" = "Needs Treatment",
       "Active Treatment" = "Active Treatment"
     )
-    status_counts$display_status <- status_display_map[status_counts$site_status]
+    status_summary$display_status <- status_display_map[status_summary$site_status]
     
     # Define desired order
     status_order <- c("Not Insp", "Insp", "Needs ID", "Needs Treatment", "Active Treatment")
-    status_counts$display_status <- factor(status_counts$display_status, levels = status_order)
+    status_summary$display_status <- factor(status_summary$display_status, levels = status_order)
     
     # Get colors from db_helpers to match the map
     status_color_map <- get_status_color_map()
@@ -804,15 +852,15 @@ server <- function(input, output, session) {
       "Active Treatment" = as.character(status_color_map[["Active Treatment"]])
     )
     
-    plot_ly(status_counts, 
+    plot_ly(status_summary, 
             x = ~display_status, 
-            y = ~count,
+            y = ~value,
             type = 'bar',
             marker = list(color = ~chart_colors[site_status])) %>%
       layout(
         title = list(text = "Site Status Distribution", font = list(size = 20)),
         xaxis = list(title = list(text = "Status", font = list(size = 18)), tickfont = list(size = 16)),
-        yaxis = list(title = list(text = "Number of Sites", font = list(size = 18)), tickfont = list(size = 16)),
+        yaxis = list(title = list(text = y_label, font = list(size = 18)), tickfont = list(size = 16)),
         showlegend = FALSE
       )
   })
@@ -1041,10 +1089,10 @@ server <- function(input, output, session) {
       # Load facility choices for historical tab
       facility_lookup <- get_facility_lookup()
       if (nrow(facility_lookup) > 0) {
-        facility_choices_hist <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+        facility_choices_hist <- c("All Facilities" = "all", setNames(facility_lookup$short_name, facility_lookup$full_name))
         updateSelectizeInput(session, "hist_facility_filter", 
                             choices = facility_choices_hist,
-                            selected = facility_lookup$short_name)
+                            selected = NULL)
       }
       
       # Load priority choices for historical tab

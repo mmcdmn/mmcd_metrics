@@ -54,7 +54,7 @@ ui <- dashboardPage(
       ),
       
       # Foremen tab
-      tabItem(tabName = "FOS",
+      tabItem(tabName = "Foreman",
         fluidRow(
           box(
             title = "Foreman Information",

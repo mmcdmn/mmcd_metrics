@@ -780,7 +780,7 @@ server <- function(input, output, session) {
       value = format_metric(metric_val, input$metric_type),
       subtitle = label,
       icon = icon("helicopter"),
-      color = "grey"
+      color = "teal"
     )
   })
   

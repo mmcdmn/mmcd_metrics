@@ -72,11 +72,13 @@ get_theme_palette <- function(theme = "MMCD") {
         WB = "#6f6f6f"   # Gray 60
       ),
       status = c(
-        Complete = "#42be65",      # Green 50
-        Incomplete = "#f1c21b",    # Yellow 30
-        "Not Started" = "#fa4d56", # Red 50
-        "In Progress" = "#0f62fe", # Blue 60
-        Pending = "#878d96"        # Gray 50
+        active = "#0f62fe",        # Blue 60 for active treatment
+        completed = "#42be65",     # Green 50 for completed/inspected
+        planned = "#878d96",       # Gray 50 for planned
+        needs_action = "#f1c21b",  # Yellow 30 for needs action
+        in_lab = "#8a3ffc",        # Purple 60 for lab/needs ID
+        needs_treatment = "#fa4d56", # Red 50 for needs treatment
+        unknown = "#a8a8a8"        # Gray for unknown
       ),
       sequential = c("#edf5ff", "#d0e2ff", "#a6c8ff", "#78a9ff", "#4589ff",
                      "#0f62fe", "#0043ce", "#002d9c", "#001d6c"),

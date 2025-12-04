@@ -1415,7 +1415,11 @@ server <- function(input, output, session) {
         ))
     }
     
+    # Get facility colors from theme
+    facility_colors <- get_facility_base_colors(theme = current_theme())
+    
     plot_ly(trend_data, x = ~primary_year, y = ~avg_red_bug_ratio, color = ~facility,
+            colors = unname(facility_colors),
             type = 'scatter', mode = 'lines+markers') %>%
       layout(
         title = list(text = "Red Bug Detection Trends", font = list(size = 20)),

@@ -16,7 +16,7 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
   
   # Set default date range if not provided
   if (is.null(start_date)) {
-    start_date <- as.Date(paste0(max(2022, year(Sys.Date()) - 4), "-01-01"))
+    start_date <- as.Date(paste0(year(Sys.Date()) - 4, "-01-01"))  # Default to 4 years ago
   }
   if (is.null(end_date)) end_date <- Sys.Date()
   
@@ -514,7 +514,7 @@ create_chart_type_selector <- function() {
 
 create_year_range_selector <- function() {
   current_year <- year(Sys.Date())
-  min_year <- 2022
+  min_year <- 2000  # Allow historical data back to 2000
   default_start <- max(min_year, current_year - 4)
   
   sliderInput("year_range", "Inspection Year Range:",

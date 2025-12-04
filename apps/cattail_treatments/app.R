@@ -90,15 +90,6 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          valueBoxOutput("total_inspected_stat", width = 2),
-          valueBoxOutput("total_acres_stat", width = 2),
-          valueBoxOutput("under_threshold_stat", width = 2),
-          valueBoxOutput("need_treatment_stat", width = 2),
-          valueBoxOutput("pct_need_treatment_stat", width = 2),
-          valueBoxOutput("pct_treated_stat", width = 2)
-        ),
-        
-        fluidRow(
           box(
             title = "Status table", status = "primary", solidHeader = TRUE,
             width = 12, 
@@ -330,48 +321,133 @@ server <- function(input, output, session) {
   # Value box outputs for Progress tab
   
   output$active_treatments_box <- renderValueBox({
-    valueBox(
-      value = cattail_values()$sites_need_treatment,
-      subtitle = "Need Treatment",
-      icon = icon("exclamation-triangle"),
-      color = "red"
-    )
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    
+    if (metric_type == "acres") {
+      # Calculate acres needing treatment from aggregated data
+      acres_val <- if (!is.null(values$aggregated_data$total_summary)) {
+        values$aggregated_data$total_summary$need_treatment_acres
+      } else {
+        0
+      }
+      valueBox(
+        value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
+        subtitle = "Acres Need Treatment",
+        icon = icon("exclamation-triangle"),
+        color = "red"
+      )
+    } else {
+      valueBox(
+        value = cattail_values()$sites_need_treatment,
+        subtitle = "Sites Need Treatment",
+        icon = icon("exclamation-triangle"),
+        color = "red"
+      )
+    }
   })
   
   output$treatment_coverage_box <- renderValueBox({
-    valueBox(
-      value = paste0(cattail_values()$percent_treated, "% Treated"),
-      subtitle = "Treatment Progress", 
-      icon = icon("chart-line"),
-      color = "green"
-    )
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    
+    if (metric_type == "acres") {
+      # Calculate % acres treated
+      pct_val <- if (!is.null(values$aggregated_data$total_summary)) {
+        need_acres <- values$aggregated_data$total_summary$need_treatment_acres
+        treated_acres <- values$aggregated_data$total_summary$treated_acres
+        if (need_acres > 0) {
+          round(100 * treated_acres / need_acres, 1)
+        } else {
+          0
+        }
+      } else {
+        0
+      }
+      valueBox(
+        value = paste0(pct_val, "% Treated"),
+        subtitle = "% Acres Treated", 
+        icon = icon("chart-line"),
+        color = "green"
+      )
+    } else {
+      valueBox(
+        value = paste0(cattail_values()$percent_treated, "% Treated"),
+        subtitle = "% Sites Treated", 
+        icon = icon("chart-line"),
+        color = "green"
+      )
+    }
   })
   
   output$sites_inspected_box <- renderValueBox({
-    valueBox(
-      value = cattail_values()$sites_inspected,
-      subtitle = "Total Sites Inspected",
-      icon = icon("clipboard-check"),
-      color = "blue"
-    )
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    
+    if (metric_type == "acres") {
+      valueBox(
+        value = format(cattail_values()$total_acres, big.mark = ",", nsmall = 1),
+        subtitle = "Total Acres Inspected",
+        icon = icon("clipboard-check"),
+        color = "blue"
+      )
+    } else {
+      valueBox(
+        value = cattail_values()$sites_inspected,
+        subtitle = "Total Sites Inspected",
+        icon = icon("clipboard-check"),
+        color = "blue"
+      )
+    }
   })
   
   output$under_threshold_box <- renderValueBox({
-    valueBox(
-      value = cattail_values()$sites_under_threshold,
-      subtitle = "Under Threshold",
-      icon = icon("check-circle"),
-      color = "light-blue"
-    )
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    
+    if (metric_type == "acres") {
+      # Calculate acres under threshold from aggregated data
+      acres_val <- if (!is.null(values$aggregated_data$total_summary)) {
+        values$aggregated_data$total_summary$under_threshold_acres
+      } else {
+        0
+      }
+      valueBox(
+        value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
+        subtitle = "Acres Under Threshold",
+        icon = icon("check-circle"),
+        color = "light-blue"
+      )
+    } else {
+      valueBox(
+        value = cattail_values()$sites_under_threshold,
+        subtitle = "Sites Under Threshold",
+        icon = icon("check-circle"),
+        color = "light-blue"
+      )
+    }
   })
   
   output$treated_sites_box <- renderValueBox({
-    valueBox(
-      value = cattail_values()$sites_treated,
-      subtitle = "Treated Sites",
-      icon = icon("check-double"),
-      color = "green"
-    )
+    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    
+    if (metric_type == "acres") {
+      # Calculate acres treated from aggregated data
+      acres_val <- if (!is.null(values$aggregated_data$total_summary)) {
+        values$aggregated_data$total_summary$treated_acres
+      } else {
+        0
+      }
+      valueBox(
+        value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
+        subtitle = "Acres Treated",
+        icon = icon("check-double"),
+        color = "green"
+      )
+    } else {
+      valueBox(
+        value = cattail_values()$sites_treated,
+        subtitle = "Sites Treated",
+        icon = icon("check-double"),
+        color = "green"
+      )
+    }
   })
   
   output$upcoming_plans_box <- renderValueBox({
@@ -465,50 +541,67 @@ server <- function(input, output, session) {
   })
   
   output$historical_chart <- renderPlotly({
-    # Don't load until refresh button is clicked
+    # Don't load until refresh button is clicked at least once
     if (!historical_data_ready()) {
       return(ggplot() + 
              geom_text(aes(x = 1, y = 1, label = "Click 'Refresh Data' to load historical analysis"), size = 6) + 
              theme_void())
     }
     
-    # Require refresh button click
-    req(input$refresh_historical)
-    
-    chart_type <- input$chart_type
-    hist_status_metric <- input$hist_status_metric
-    year_range <- input$year_range
-    
-    # Use defaults if inputs are NULL
-    if (is.null(chart_type)) chart_type <- "line"
-    if (is.null(hist_status_metric)) hist_status_metric <- "need_treatment"
-    if (is.null(year_range)) {
-      start_year <- max(2022, year(Sys.Date()) - 4)
-      end_year <- year(Sys.Date())
-    } else {
-      start_year <- year_range[1]
-      end_year <- year_range[2]
-    }
-    
-    # Convert years to dates - need to include fall of start_year through summer of end_year+1
-    # Fall start_year is Sept 1 of start_year
-    # Summer end_year ends Aug 1 of end_year+1
-    start_date <- as.Date(paste0(start_year, "-09-01"))
-    end_date <- as.Date(paste0(end_year + 1, "-08-01"))
-    
-    metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
-    
-    create_historical_analysis_chart(
-      values$raw_data, 
-      group_by = input$group_by,
-      time_period = "yearly",  # Always yearly for inspection year grouping
-      chart_type = chart_type,
-      display_metric = hist_status_metric,
-      start_date = start_date,
-      end_date = end_date,
-      combine_zones = input$zone_display %in% c("combined", "p1", "p2"),
-      metric_type = metric_type
-    )
+    # Wrap in progress indicator
+    withProgress(message = 'Loading historical data...', value = 0, {
+      
+      # After first refresh, chart will update automatically when inputs change
+      chart_type <- input$chart_type
+      hist_status_metric <- input$hist_status_metric
+      year_range <- input$year_range
+      
+      incProgress(0.2, detail = "Reading parameters")
+      
+      # Debug: Log the input values to console
+      cat("Historical Chart Rendering - Chart Type:", chart_type, "| Metric:", hist_status_metric, 
+          "| Year Range:", if(!is.null(year_range)) paste(year_range, collapse="-") else "NULL", "\n")
+      
+      # Use defaults if inputs are NULL
+      if (is.null(chart_type)) chart_type <- "line"
+      if (is.null(hist_status_metric)) hist_status_metric <- "need_treatment"
+      if (is.null(year_range)) {
+        start_year <- year(Sys.Date()) - 4
+        end_year <- year(Sys.Date())
+      } else {
+        start_year <- year_range[1]
+        end_year <- year_range[2]
+      }
+      
+      cat("  Using Years:", start_year, "to", end_year, "| Chart:", chart_type, "\n")
+      
+      incProgress(0.3, detail = "Querying database")
+      
+      # Convert years to dates - need to include fall of start_year through summer of end_year+1
+      # Fall start_year is Sept 1 of start_year
+      # Summer end_year ends Aug 1 of end_year+1
+      start_date <- as.Date(paste0(start_year, "-09-01"))
+      end_date <- as.Date(paste0(end_year + 1, "-08-01"))
+      
+      metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+      
+      incProgress(0.5, detail = "Creating chart")
+      
+      result <- create_historical_analysis_chart(
+        values$raw_data, 
+        group_by = input$group_by,
+        time_period = "yearly",  # Always yearly for inspection year grouping
+        chart_type = chart_type,
+        display_metric = hist_status_metric,
+        start_date = start_date,
+        end_date = end_date,
+        combine_zones = input$zone_display %in% c("combined", "p1", "p2"),
+        metric_type = metric_type
+      )
+      
+      incProgress(1.0, detail = "Done")
+      result
+    })
   })
   
   # Table outputs

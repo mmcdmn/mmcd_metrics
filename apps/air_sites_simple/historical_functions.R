@@ -459,7 +459,7 @@ create_yearly_treatment_summary <- function(volume_data) {
 }
 
 # Create treatment volume chart
-create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
+create_treatment_volume_chart <- function(volume_data, time_period = "weekly", theme = "MMCD") {
   if (nrow(volume_data) == 0) {
     return(plot_ly() %>%
       add_annotations(
@@ -490,6 +490,12 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
       ))
   }
   
+  # Get theme-based colors
+  status_colors <- get_status_colors(theme = theme)
+  treatment_color <- as.character(status_colors[["active"]])
+  inspection_color <- as.character(status_colors[["completed"]])
+  acres_color <- as.character(status_colors[["needs_treatment"]])
+  
   # Create dual-axis chart: bars for operations, line for acres
   p <- plot_ly(chart_data) %>%
     
@@ -498,7 +504,7 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
       x = x_var,
       y = ~treatment_operations,
       name = "Treatments",
-      marker = list(color = "#2ecc71"),
+      marker = list(color = treatment_color),
       hovertemplate = paste0(
         "<b>%{x}</b><br>",
         "Treatments: %{y}<br>",
@@ -512,7 +518,7 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
       x = x_var,
       y = ~inspection_operations,
       name = "Inspections",
-      marker = list(color = "#3498db"),
+      marker = list(color = inspection_color),
       hovertemplate = paste0(
         "<b>%{x}</b><br>",
         "Inspections: %{y}<br>",
@@ -527,8 +533,8 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
       y = ~treatment_acres,
       yaxis = "y2",
       name = "Treatment Acres",
-      line = list(color = "#e74c3c", width = 3),
-      marker = list(color = "#e74c3c", size = 6),
+      line = list(color = acres_color, width = 3),
+      marker = list(color = acres_color, size = 6),
       hovertemplate = paste0(
         "<b>%{x}</b><br>",
         "Treatment Acres: %{y}<br>",
@@ -551,14 +557,14 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly") {
         title = list(text = "Number of Operations", font = list(size = 18)),
         tickfont = list(size = 16),
         side = "left",
-        color = "#3498db"
+        color = inspection_color
       ),
       yaxis2 = list(
         title = list(text = "Acres Treated", font = list(size = 18)),
         tickfont = list(size = 16),
         side = "right",
         overlaying = "y",
-        color = "#e74c3c"
+        color = acres_color
       ),
       hovermode = "x unified",
       legend = list(

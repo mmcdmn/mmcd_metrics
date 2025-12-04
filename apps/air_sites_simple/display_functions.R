@@ -11,7 +11,7 @@ suppressPackageStartupMessages({
 })
 
 # Create interactive site map with status colors
-create_site_map <- function(data) {
+create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD")) {
   if (nrow(data) == 0) {
     return(leaflet() %>% 
       addTiles() %>%
@@ -19,7 +19,7 @@ create_site_map <- function(data) {
   }
   
   # Define colors for all status types using shared color scheme with Needs ID
-  status_color_map <- get_status_color_map()
+  status_color_map <- get_status_color_map(theme = theme)
   status_colors <- c(
     "Active Treatment" = as.character(status_color_map[["Active Treatment"]]),
     "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
@@ -186,7 +186,7 @@ create_treatment_process_summary <- function(data) {
 }
 
 # Create treatment flow chart
-create_treatment_flow_chart <- function(data) {
+create_treatment_flow_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) {
     return(plot_ly() %>%
       add_annotations(
@@ -213,8 +213,8 @@ create_treatment_flow_chart <- function(data) {
   if (!"Needs Treatment" %in% colnames(facility_summary)) facility_summary$`Needs Treatment` <- 0
   if (!"Active Treatment" %in% colnames(facility_summary)) facility_summary$`Active Treatment` <- 0
   
-  # Get colors from db_helpers
-  status_color_map <- get_status_color_map()
+  # Get colors from db_helpers with theme parameter
+  status_color_map <- get_status_color_map(theme = theme)
   colors <- list(
     "Unknown" = as.character(status_color_map[["Unknown"]]),
     "Inspected" = as.character(status_color_map[["Inspected"]]),

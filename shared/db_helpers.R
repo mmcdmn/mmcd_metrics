@@ -14,6 +14,64 @@ suppressPackageStartupMessages({
   library(dplyr)
 })
 
+# Source color themes - try multiple paths to find color_themes.R
+source_color_themes <- function() {
+  # Get the directory where db_helpers.R is located
+  this_file <- tryCatch({
+    # Method 1: If sourced normally
+    if (exists("ofile", where = sys.frame(1))) {
+      dirname(sys.frame(1)$ofile)
+    } else {
+      NULL
+    }
+  }, error = function(e) NULL)
+  
+  # Possible paths to color_themes.R (relative to where apps typically run)
+  possible_paths <- c(
+    if (!is.null(this_file)) file.path(this_file, "color_themes.R"),
+    "shared/color_themes.R",                   # From app root (most common)
+    "../../shared/color_themes.R",             # From apps/*/
+    "color_themes.R",                          # Same directory as db_helpers
+    "../shared/color_themes.R",                # From one level up
+    "../../../shared/color_themes.R",          # From deeper nesting
+    file.path(getwd(), "shared/color_themes.R"), # Absolute from working dir
+    file.path(dirname(getwd()), "shared/color_themes.R") # Parent dir
+  )
+  
+  # Try each path
+  for (path in possible_paths) {
+    if (!is.null(path) && file.exists(path)) {
+      tryCatch({
+        source(path, local = FALSE)
+        return(TRUE)
+      }, error = function(e) {
+        # Continue to next path
+      })
+    }
+  }
+  
+  return(FALSE)
+}
+
+# Attempt to source color themes
+if (!source_color_themes()) {
+  message("Note: color_themes.R not found. Using default MMCD colors only.")
+}
+
+# Set default color theme to MMCD if not already set
+#########################################################
+## HERE IS WHERE WE SET THE COLOR THEME
+##########################################################
+# This ensures all apps use MMCD theme unless explicitly changed
+if (is.null(getOption("mmcd.color.theme"))) {
+  options(mmcd.color.theme = "MMCD")
+}
+
+# Define NULL coalescing operator if not already defined (from color_themes.R)
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+}
+
 # Load environment variables function
 load_env_vars <- function() {
   # Load environment variables from .env file (for local development)
@@ -118,7 +176,7 @@ get_facility_lookup <- function() {
         abbrv as short_name,
         city as full_name
       FROM public.gis_facility
-      WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW')
+      WHERE abbrv NOT IN ('OT', 'MF', 'AW', 'RW', 'OW')
       ORDER BY abbrv
     ")
     
@@ -561,99 +619,27 @@ get_enhanced_species_mapping <- function(format_style = "display", include_code 
   return(species_map)
 }
 
-#' Get Consistent Color Scheme for Top Locations Charts
-#' 
-#' This function provides a consistent color scheme for top locations visualizations
-#' across different modes (visits vs species) and data sources (current vs all).
-#' It ensures visual consistency while maintaining distinguishability between different
-#' chart types.
-#' 
-#' @param chart_type Character. Either "visits" or "species" to determine color palette
-#' @param data_source Character. Either "current" or "all" for slight palette variations
-#' 
-#' Usage:
-#' ```r
-#' # For visits-based charts
-#' visits_colors <- get_top_locations_colors("visits", "current")
-#' ggplot(data, aes(fill = date_numeric)) +
-#'   visits_colors$scale_function +
-#'   visits_colors$theme_additions
-#' 
-#' # For species-based charts  
-#' species_colors <- get_top_locations_colors("species", "all")
-#' ```
-#' 
-#' Returns:
-#'   List containing:
-#'   - scale_function: ggplot2 scale function (scale_fill_viridis_c or scale_fill_gradient)
-#'   - legend_title: Appropriate legend title
-#'   - color_description: Description for tooltips/legends
-get_top_locations_colors <- function(chart_type = "visits", data_source = "all") {
-  
-  # Define consistent base colors for MMCD applications
-  # Using colorbrewer-inspired palettes for better accessibility
-  base_colors <- list(
-    visits = list(
-      current = c("#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#fee090", "#fdae61", "#f46d43", "#d73027"),
-      all = c("#313695", "#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#fee090", "#fdae61", "#f46d43")
-    ),
-    species = list(
-      current = c("#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837"),
-      all = c("#40004b", "#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#d9f0d3", "#a6dba0", "#5aae61")
-    )
-  )
-  
-  # Get appropriate colors
-  colors <- base_colors[[chart_type]][[data_source]]
-  
-  # Create scale function - use gradient for better continuous mapping
-  scale_function <- scale_fill_gradientn(
-    name = "Sample Date",
-    colors = colors,
-    guide = guide_colorbar(
-      title = "Sample Date\n(Older → Newer)",
-      title.position = "top",
-      title.hjust = 0.5,
-      barwidth = 1,
-      barheight = 8
-    )
-  )
-  
-  # Determine legend title and description
-  legend_title <- switch(chart_type,
-    "visits" = "Sample Date (Visits)",
-    "species" = "Sample Date (Species)",
-    "Sample Date"
-  )
-  
-  color_description <- switch(chart_type,
-    "visits" = "Colors represent when SUCO visits occurred, from older (darker) to newer (lighter)",
-    "species" = "Colors represent when species samples were collected, from older (darker) to newer (lighter)",
-    "Colors represent sample dates from older to newer"
-  )
-  
-  return(list(
-    scale_function = scale_function,
-    legend_title = legend_title,
-    color_description = color_description,
-    colors = colors
-  ))
-}
-
-
-
 # Internal helper function to generate visually distinct colors
 # This function creates a set of unique colors that are visually distinct from each other
+# Now supports theme-based color generation
 # Parameters:
 #   n: Number of colors to generate
+#   theme: Color theme to use (default: getOption("mmcd.color.theme", "MMCD"))
 # Returns: Vector of hex color codes
-generate_distinct_colors <- function(n) {
+generate_distinct_colors_internal <- function(n, theme = getOption("mmcd.color.theme", "MMCD")) {
   if (n <= 0) return(character(0))
   
-  # Use HSV color space for even distribution
-  hues <- seq(0, 1, length.out = n + 1)[1:n]  # Spread hues evenly
+  # Try to use theme-based colors if color_themes.R is loaded
+  if (exists("generate_distinct_colors", mode = "function", inherits = TRUE)) {
+    tryCatch({
+      return(generate_distinct_colors(n, theme))
+    }, error = function(e) {
+      # Fall through to default generation
+    })
+  }
   
-  # Create colors with constant saturation and value for consistency
+  # Fallback to HSV generation if theme system not available
+  hues <- seq(0, 1, length.out = n + 1)[1:n]
   colors <- sapply(hues, function(h) {
     hsv(h = h, s = 0.8, v = 0.9)
   })
@@ -671,6 +657,7 @@ generate_distinct_colors <- function(n) {
 #'   P2 zones get reduced opacity (0.6). If NULL, returns standard colors.
 #' @param combined_groups Optional. Vector of combined group names (e.g., "AP (P1)", "NM (P2)")
 #'   to extract base facility names from for color mapping. Used with alpha_zones.
+#' @param theme Character. Color theme to use (default: getOption("mmcd.color.theme", "MMCD"))
 #' 
 #' Usage:
 #' ```r
@@ -692,12 +679,43 @@ generate_distinct_colors <- function(n) {
 #' Returns:
 #'   If alpha_zones is NULL: Named vector where names are facility short names and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
-get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
+get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
   facilities <- get_facility_lookup()
   if (nrow(facilities) == 0) return(c())
   
-  # Generate one color per facility
-  colors <- generate_distinct_colors(nrow(facilities))
+  # Try to use theme-specific facility colors
+  if (exists("get_theme_palette", mode = "function", inherits = TRUE)) {
+    tryCatch({
+      palette <- get_theme_palette(theme)
+      if (!is.null(palette$facilities) && all(facilities$short_name %in% names(palette$facilities))) {
+        colors <- palette$facilities[facilities$short_name]
+        result <- setNames(as.character(colors), facilities$short_name)
+        
+        # Handle zone differentiation if requested
+        if (!is.null(alpha_zones) && length(alpha_zones) > 1 && !is.null(combined_groups)) {
+          combined_colors <- character(0)
+          for (combined_name in combined_groups) {
+            base_name <- gsub("\\\\s*\\\\([^)]+\\\\)$", "", combined_name)
+            base_name <- trimws(base_name)
+            if (base_name %in% names(result)) {
+              combined_colors[combined_name] <- result[base_name]
+            }
+          }
+          return(list(
+            colors = combined_colors,
+            alpha_values = c("1" = 1.0, "2" = 0.6)
+          ))
+        }
+        
+        return(result)
+      }
+    }, error = function(e) {
+      # Fall through to default generation
+    })
+  }
+  
+  # Fallback: Generate one color per facility
+  colors <- generate_distinct_colors_internal(nrow(facilities), theme)
   
   # Map colors to facility short names
   result <- setNames(colors, facilities$short_name)
@@ -875,9 +893,10 @@ format_display_date <- function(date_col) {
 }
 
 # Core status colors - single source of truth for all status indicators
-get_status_colors <- function() {
-  return(c(
-    # Core status colors - no duplicates or aliases
+# Now supports theme-based colors
+get_status_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
+  # Default MMCD colors
+  default_colors <- c(
     "active" = "#187018",      # forest green for active/in-progress/treatment
     "completed" = "#4169E1",   # Royal blue for completed
     "planned" = "#fdb73e",     # Orange for planned/pending
@@ -885,7 +904,26 @@ get_status_colors <- function() {
     "in_lab" = "#5841c0",        # Purple for lab processing
     "needs_treatment" = "#FF0000", # Pure red for needs treatment
     "unknown" = "#A9A9A9"      # Dark gray for unknown status
-  ))
+  )
+  
+  # For MMCD theme or if theme system not available, use default colors
+  if (theme == "MMCD" || !exists("get_theme_palette", mode = "function", inherits = TRUE)) {
+    return(default_colors)
+  }
+  
+  # Try to use theme-specific status colors for non-MMCD themes
+  tryCatch({
+    palette <- get_theme_palette(theme)
+    if (!is.null(palette$status)) {
+      # All themes now have the required keys directly
+      return(palette$status)
+    }
+  }, error = function(e) {
+    warning(paste("Error getting theme palette:", e$message))
+  })
+  
+  # Final fallback to default MMCD colors
+  return(default_colors)
 }
 
 # Map hex colors to Shiny named colors for valueBox and dashboard elements
@@ -903,17 +941,17 @@ get_shiny_colors <- function() {
 }
 
 # Map status names to hex colors for visualizations (maps, charts, tables)
-get_status_color_map <- function() {
-  status_colors <- get_status_colors()
+get_status_color_map <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
+  status_colors <- get_status_colors(theme = theme)
   return(list(
-    "Unknown" = status_colors["unknown"],
-    "Needs Inspection" = status_colors["planned"],      # Orange/yellow for needs inspection
-    "Under Threshold" = status_colors["completed"],
-    "Inspected" = status_colors["completed"],           # Reuse completed color for inspected
-    "Needs ID" = status_colors["in_lab"],               # Purple for needs ID (formerly In Lab)
-    "In Lab" = status_colors["in_lab"],                 # Keep for backwards compatibility              
-    "Needs Treatment" = status_colors["needs_treatment"],
-    "Active Treatment" = status_colors["active"]
+    "Unknown" = as.character(status_colors[["unknown"]]),
+    "Needs Inspection" = as.character(status_colors[["planned"]]),      # Orange/yellow for needs inspection
+    "Under Threshold" = as.character(status_colors[["completed"]]),
+    "Inspected" = as.character(status_colors[["completed"]]),           # Reuse completed color for inspected
+    "Needs ID" = as.character(status_colors[["in_lab"]]),               # Purple for needs ID (formerly In Lab)
+    "In Lab" = as.character(status_colors[["in_lab"]]),                 # Keep for backwards compatibility              
+    "Needs Treatment" = as.character(status_colors[["needs_treatment"]]),
+    "Active Treatment" = as.character(status_colors[["active"]])
   ))
 }
 
@@ -1094,10 +1132,11 @@ get_treatment_plan_types <- function() {
 #' Parameters:
 #'   use_names: If TRUE, returns colors mapped to plan names (Air, Drone, etc.)
 #'              If FALSE (default), returns colors mapped to plan codes (A, D, etc.)
+#'   theme: Color theme to use for generating additional colors (default: getOption("mmcd.color.theme", "MMCD"))
 #' 
 #' Returns:
 #'   Named vector where names are either plan codes or plan names, and values are hex colors
-get_treatment_plan_colors <- function(use_names = FALSE) {
+get_treatment_plan_colors <- function(use_names = FALSE, theme = getOption("mmcd.color.theme", "MMCD")) {
   plan_types <- get_treatment_plan_types()
   if (nrow(plan_types) == 0) return(c())
   
@@ -1125,7 +1164,7 @@ get_treatment_plan_colors <- function(use_names = FALSE) {
   # For any codes not in predefined list, generate distinct colors
   missing_codes <- plan_types$plan_code[!plan_types$plan_code %in% names(predefined_colors)]
   if (length(missing_codes) > 0) {
-    additional_colors <- generate_distinct_colors(length(missing_codes))
+    additional_colors <- generate_distinct_colors_internal(length(missing_codes), theme)
     names(additional_colors) <- missing_codes
     colors[missing_codes] <- additional_colors
   }

@@ -94,6 +94,18 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
+                selectInput("color_theme", "Color Theme:",
+                  choices = c("MMCD (Default)" = "MMCD",
+                             "IBM Design" = "IBM",
+                             "Color-Blind Friendly" = "Wong",
+                             "Scientific" = "Tol",
+                             "Viridis" = "Viridis",
+                             "ColorBrewer" = "ColorBrewer"),
+                  selected = "MMCD"
+                ),
+                tags$small(style = "color: #666;", "Changes map and chart colors")
+              ),
+              column(3,
                 selectInput("status_filter", "Status Filter:",
                   choices = c("All Statuses" = "all",
                              "Not Insp" = "Unknown",
@@ -103,7 +115,9 @@ ui <- dashboardPage(
                              "Active Treatment" = "Active Treatment"),
                   selected = "all"
                 )
-              ),
+              )
+            ),
+            fluidRow(
               column(3,
                 selectizeInput("material_filter", "Treatment Materials:",
                   choices = c("Loading..." = "LOADING"),
@@ -114,10 +128,8 @@ ui <- dashboardPage(
                   actionButton("btn_prehatch", "Prehatch Only", class = "btn-sm btn-primary", style = "margin-right: 5px;"),
                   actionButton("btn_bti", "BTI Only", class = "btn-sm btn-success")
                 )
-              )
-            ),
-            fluidRow(
-              column(6,
+              ),
+              column(3,
                 numericInput("bti_effect_days_override", "BTI Effect Days Override:",
                   value = NA,
                   min = 1,
@@ -252,6 +264,18 @@ ui <- dashboardPage(
                 ),
                 tags$small(class = "text-muted", "Leave empty to use default")
               ),
+              column(3,
+                selectInput("process_color_theme", "Color Theme:",
+                  choices = c("MMCD (Default)" = "MMCD",
+                             "IBM Design" = "IBM",
+                             "Color-Blind Friendly" = "Wong",
+                             "Scientific" = "Tol",
+                             "Viridis" = "Viridis",
+                             "ColorBrewer" = "ColorBrewer"),
+                  selected = "MMCD"
+                ),
+                tags$small(style = "color: #666;", "Changes chart colors")
+              ),
               column(6,
                 checkboxGroupInput("process_status_filter", "Status Filter (for Flow Chart):",
                   choices = c("Not Insp" = "Unknown",
@@ -365,6 +389,18 @@ ui <- dashboardPage(
                   max = 10,
                   step = 1
                 )
+              ),
+              column(3,
+                selectInput("hist_color_theme", "Color Theme:",
+                  choices = c("MMCD (Default)" = "MMCD",
+                             "IBM Design" = "IBM",
+                             "Color-Blind Friendly" = "Wong",
+                             "Scientific" = "Tol",
+                             "Viridis" = "Viridis",
+                             "ColorBrewer" = "ColorBrewer"),
+                  selected = "MMCD"
+                ),
+                tags$small(style = "color: #666;", "Changes chart colors")
               )
             ),
             fluidRow(
@@ -482,6 +518,30 @@ ui <- dashboardPage(
 
 # Server Logic
 server <- function(input, output, session) {
+  
+  # Reactive value for current theme
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Update global theme option when theme changes and sync all theme selectors
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+    updateSelectInput(session, "hist_color_theme", selected = input$color_theme)
+    updateSelectInput(session, "process_color_theme", selected = input$color_theme)
+  })
+  
+  observeEvent(input$hist_color_theme, {
+    options(mmcd.color.theme = input$hist_color_theme)
+    updateSelectInput(session, "color_theme", selected = input$hist_color_theme)
+    updateSelectInput(session, "process_color_theme", selected = input$hist_color_theme)
+  })
+  
+  observeEvent(input$process_color_theme, {
+    options(mmcd.color.theme = input$process_color_theme)
+    updateSelectInput(session, "color_theme", selected = input$process_color_theme)
+    updateSelectInput(session, "hist_color_theme", selected = input$process_color_theme)
+  })
   
   # Initialize filters ONCE on startup - do not make reactive
   # This prevents constant updating and "loading" states
@@ -720,7 +780,7 @@ server <- function(input, output, session) {
       value = format_metric(metric_val, input$metric_type),
       subtitle = label,
       icon = icon("helicopter"),
-      color = "teal"
+      color = "grey"
     )
   })
   
@@ -799,7 +859,7 @@ server <- function(input, output, session) {
         setView(lng = -93.2, lat = 44.9, zoom = 10))
     }
     
-    create_site_map(data)
+    create_site_map(data, theme = current_theme())
   })
   
   # Status Chart
@@ -842,21 +902,24 @@ server <- function(input, output, session) {
     status_order <- c("Not Insp", "Insp", "Needs ID", "Needs Treatment", "Active Treatment")
     status_summary$display_status <- factor(status_summary$display_status, levels = status_order)
     
-    # Get colors from db_helpers to match the map
-    status_color_map <- get_status_color_map()
-    chart_colors <- c(
-      "Unknown" = as.character(status_color_map[["Unknown"]]),
-      "Inspected" = as.character(status_color_map[["Inspected"]]),
-      "Needs ID" = as.character(status_color_map[["Needs ID"]]),
-      "Needs Treatment" = as.character(status_color_map[["Needs Treatment"]]),
-      "Active Treatment" = as.character(status_color_map[["Active Treatment"]])
-    )
+    # Get colors from db_helpers to match the map - use reactive theme
+    status_color_map <- get_status_color_map(theme = current_theme())
+    
+    # Map colors to each status using the original site_status value
+    status_summary$color <- sapply(status_summary$site_status, function(s) {
+      color <- as.character(status_color_map[[s]])
+      if (is.null(color) || is.na(color) || color == "" || color == "NA") {
+        warning(paste("Missing color for status:", s, "- using gray"))
+        return("#808080")
+      }
+      return(color)
+    })
     
     plot_ly(status_summary, 
             x = ~display_status, 
             y = ~value,
             type = 'bar',
-            marker = list(color = ~chart_colors[site_status])) %>%
+            marker = list(color = ~color)) %>%
       layout(
         title = list(text = "Site Status Distribution", font = list(size = 20)),
         xaxis = list(title = list(text = "Status", font = list(size = 18)), tickfont = list(size = 16)),
@@ -1009,7 +1072,7 @@ server <- function(input, output, session) {
         ))
     }
     
-    create_treatment_flow_chart(data)
+    create_treatment_flow_chart(data, theme = current_theme())
   })
   
   # Process summary table
@@ -1300,7 +1363,7 @@ server <- function(input, output, session) {
         ))
     }
     
-    create_treatment_volume_chart(data, input$volume_time_period)
+    create_treatment_volume_chart(data, input$volume_time_period, theme = current_theme())
   })
   
   # Red bug trend chart

@@ -7,6 +7,7 @@ suppressPackageStartupMessages({
   library(RPostgres)
   library(dplyr)
   library(ggplot2)
+  library(plotly)
   library(purrr)
   library(tibble)
   library(DT)
@@ -65,7 +66,7 @@ ui <- fluidPage(
           )
         ),
         mainPanel(
-          plotOutput("progressPlot", height = "600px")
+          plotlyOutput("progressPlot", height = "600px")
         )
       )
     ),
@@ -78,10 +79,12 @@ ui <- fluidPage(
             "hist_zone",
             "Zone:",
             choices = c(
-              "P1 (Zone 1)" = "1",
-              "P2 (Zone 2)" = "2"
+              "P1 (Zone 1)" = "p1",
+              "P2 (Zone 2)" = "p2",
+              "P1 + P2 Combined" = "combined",
+              "P1 and P2 Separate" = "separate"
             ),
-            selected = "1"
+            selected = "p1"
           ),
           
           numericInput(
@@ -203,7 +206,7 @@ server <- function(input, output) {
     })
   })
   
-  output$progressPlot <- renderPlot({
+  output$progressPlot <- renderPlotly({
     data <- goal_progress_data()
     create_progress_plot(data)
   })

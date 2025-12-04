@@ -98,7 +98,8 @@ create_progress_plot <- function(data) {
   # Get colors from centralized db_helpers
   status_colors <- get_status_colors()
   
-  ggplot(data, aes(x = facility_display, y = count, fill = type)) +
+  p <- ggplot(data, aes(x = facility_display, y = count, fill = type, 
+                        text = paste0(type, ": ", count, " sites"))) +
     geom_bar(stat = "identity", position = position_dodge(width = 0.5), width = 0.7) +
     scale_fill_manual(values = c("Actual Inspections" = unname(status_colors["active"]), 
                                    "Goal" = unname(status_colors["planned"]))) +
@@ -116,4 +117,7 @@ create_progress_plot <- function(data) {
       legend.text = element_text(face = "bold", size = 14),
       legend.title = element_text(face = "bold", size = 14)
     )
+  
+  # Convert to plotly for interactive tooltips
+  ggplotly(p, tooltip = "text")
 }

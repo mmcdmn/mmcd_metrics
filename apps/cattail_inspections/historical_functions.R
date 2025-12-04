@@ -10,8 +10,19 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
   start_year <- current_year - hist_years
   end_year <- current_year - 1  # Historical years only (exclude current)
   
-  # Use zone directly (no goal table involved)
-  selected_zone <- hist_zone
+  # Convert zone display option to SQL filter
+  zone_condition <- ""
+  group_by_zone <- FALSE
+  if (hist_zone == "p1") {
+    zone_condition <- "AND g.zone = '1'"
+  } else if (hist_zone == "p2") {
+    zone_condition <- "AND g.zone = '2'"
+  } else if (hist_zone == "combined") {
+    zone_condition <- "AND g.zone IN ('1', '2')"
+  } else if (hist_zone == "separate") {
+    zone_condition <- "AND g.zone IN ('1', '2')"
+    group_by_zone <- TRUE
+  }
   
   # Build facility filter
   facility_filter <- ""
@@ -19,6 +30,15 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       !("all" %in% hist_facility_filter)) {
     facility_list <- paste0("'", hist_facility_filter, "'", collapse = ", ")
     facility_filter <- sprintf("AND a.facility IN (%s)", facility_list)
+  }
+  
+  # Build GROUP BY and SELECT based on zone option
+  if (group_by_zone) {
+    group_select <- "facility, zone,"
+    group_by_clause <- "GROUP BY facility, zone"
+  } else {
+    group_select <- "facility,"
+    group_by_clause <- "GROUP BY facility"
   }
   
   # Query for HISTORICAL inspections (last X years, excluding current year)
@@ -36,7 +56,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       AND EXTRACT(YEAR FROM a.inspdate) <= %d
       AND (a.reinspect IS NULL OR a.reinspect = 'f')
       AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-      AND g.zone = '%s'
+      %s
       %s
     
     UNION ALL
@@ -53,17 +73,18 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       AND EXTRACT(YEAR FROM a.inspdate) <= %d
       AND (a.reinspect IS NULL OR a.reinspect = 'f')
       AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-      AND g.zone = '%s'
+      %s
       %s
   )
   SELECT 
-    facility,
+    %s
     COUNT(DISTINCT sitecode)::integer as site_count,
     SUM(DISTINCT_ACRES.acres)::numeric as acre_count
   FROM (
     SELECT DISTINCT
       facility,
       sitecode,
+      %s
       FIRST_VALUE(COALESCE(acres_plan, acres)) OVER (
         PARTITION BY facility, sitecode 
         ORDER BY inspdate DESC
@@ -72,6 +93,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       SELECT 
         ai.facility,
         ai.sitecode,
+        %s
         a.inspdate,
         a.acres_plan,
         b.acres
@@ -87,6 +109,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       SELECT 
         ai.facility,
         ai.sitecode,
+        %s
         a.inspdate,
         a.acres_plan,
         b.acres
@@ -98,12 +121,18 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
         AND EXTRACT(YEAR FROM a.inspdate) <= %d
     ) site_acres
   ) DISTINCT_ACRES
-  GROUP BY facility
-  ORDER BY facility
-  ", start_year, end_year, selected_zone, facility_filter,
-     start_year, end_year, selected_zone, facility_filter,
+  %s
+  ORDER BY facility%s
+  ", start_year, end_year, zone_condition, facility_filter,
+     start_year, end_year, zone_condition, facility_filter,
+     group_select,
+     if (group_by_zone) "zone," else "",
+     if (group_by_zone) "ai.zone," else "",
      start_year, end_year,
-     start_year, end_year)
+     if (group_by_zone) "ai.zone," else "",
+     start_year, end_year,
+     group_by_clause,
+     if (group_by_zone) ", zone" else "")
   
   historical_result <- dbGetQuery(con, query_historical)
   
@@ -121,7 +150,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       AND EXTRACT(YEAR FROM a.inspdate) = %d
       AND (a.reinspect IS NULL OR a.reinspect = 'f')
       AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-      AND g.zone = '%s'
+      %s
       %s
     
     UNION ALL
@@ -137,17 +166,18 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       AND EXTRACT(YEAR FROM a.inspdate) = %d
       AND (a.reinspect IS NULL OR a.reinspect = 'f')
       AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-      AND g.zone = '%s'
+      %s
       %s
   )
   SELECT 
-    facility,
+    %s
     COUNT(DISTINCT sitecode)::integer as site_count,
     SUM(DISTINCT_ACRES.acres)::numeric as acre_count
   FROM (
     SELECT DISTINCT
       facility,
       sitecode,
+      %s
       FIRST_VALUE(COALESCE(acres_plan, acres)) OVER (
         PARTITION BY facility, sitecode 
         ORDER BY inspdate DESC
@@ -156,6 +186,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       SELECT 
         ai.facility,
         ai.sitecode,
+        %s
         a.inspdate,
         a.acres_plan,
         b.acres
@@ -170,6 +201,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
       SELECT 
         ai.facility,
         ai.sitecode,
+        %s
         a.inspdate,
         a.acres_plan,
         b.acres
@@ -180,12 +212,18 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
         AND EXTRACT(YEAR FROM a.inspdate) = %d
     ) site_acres
   ) DISTINCT_ACRES
-  GROUP BY facility
-  ORDER BY facility
-  ", current_year, selected_zone, facility_filter,
-     current_year, selected_zone, facility_filter,
+  %s
+  ORDER BY facility%s
+  ", current_year, zone_condition, facility_filter,
+     current_year, zone_condition, facility_filter,
+     group_select,
+     if (group_by_zone) "zone," else "",
+     if (group_by_zone) "ai.zone," else "",
      current_year,
-     current_year)
+     if (group_by_zone) "ai.zone," else "",
+     current_year,
+     group_by_clause,
+     if (group_by_zone) ", zone" else "")
   
   current_result <- dbGetQuery(con, query_current)
   
@@ -239,11 +277,23 @@ create_historical_progress_plot <- function(data, hist_years, metric = "sites") 
     metric_label <- "Sites"
   }
   
+  # Check if zone column exists (for "P1 and P2 Separate" option)
+  has_zone <- "zone" %in% names(data)
+  
+  # Create combined display label for x-axis
+  if (has_zone) {
+    data$x_label <- paste0(data$facility_display, " - P", data$zone)
+    title_suffix <- "(P1 and P2 Separate)"
+  } else {
+    data$x_label <- data$facility_display
+    title_suffix <- ""
+  }
+  
   # Get status colors for the comparison types
   status_colors <- get_status_colors()
   
   # Create side-by-side bars for better comparison visibility
-  ggplot(data, aes(x = facility_display, y = value, fill = type)) +
+  ggplot(data, aes(x = x_label, y = value, fill = type)) +
     geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
     scale_fill_manual(
       values = c(
@@ -253,8 +303,8 @@ create_historical_progress_plot <- function(data, hist_years, metric = "sites") 
       name = "Period"
     ) +
     labs(
-      title = sprintf("Cattail Inspections (%s): %d vs Previous %d Years (Combined Total)", 
-                     metric_label, current_year, hist_years),
+      title = sprintf("Cattail Inspections (%s): %d vs Previous %d Years %s", 
+                     metric_label, current_year, hist_years, title_suffix),
       x = "Facility",
       y = y_label
     ) +
@@ -280,8 +330,15 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
   start_year <- current_year - hist_years
   end_year <- current_year - 1  # EXCLUDE current year for historical range
   
-  # Use zone directly (no goal table involved)
-  selected_zone <- hist_zone
+  # Convert zone display option to SQL filter
+  zone_condition <- ""
+  if (hist_zone == "p1") {
+    zone_condition <- "AND g.zone = '1'"
+  } else if (hist_zone == "p2") {
+    zone_condition <- "AND g.zone = '2'"
+  } else if (hist_zone %in% c("combined", "separate")) {
+    zone_condition <- "AND g.zone IN ('1', '2')"
+  }
   
   # Build facility filter
   facility_filter <- ""
@@ -305,7 +362,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
         AND EXTRACT(YEAR FROM a.inspdate) <= %d
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-        AND g.zone = '%s'
+        %s
         %s
       
       UNION
@@ -320,7 +377,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
         AND EXTRACT(YEAR FROM a.inspdate) <= %d
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-        AND g.zone = '%s'
+        %s
         %s
     ),
     current_year_sites AS (
@@ -333,7 +390,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) = %d
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-        AND g.zone = '%s'
+        %s
         %s
       
       UNION
@@ -347,7 +404,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
       WHERE a.action = '9'
         AND EXTRACT(YEAR FROM a.inspdate) = %d
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-        AND g.zone = '%s'
+        %s
         %s
     ),
     unchecked_sites AS (
@@ -401,10 +458,10 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
     FROM ranked_inspections
     WHERE rn = 1
     ORDER BY facility, sitecode
-    ", start_year, end_year, selected_zone, facility_filter,
-       start_year, end_year, selected_zone, facility_filter,
-       current_year, selected_zone, facility_filter,
-       current_year, selected_zone, facility_filter,
+    ", start_year, end_year, zone_condition, facility_filter,
+       start_year, end_year, zone_condition, facility_filter,
+       current_year, zone_condition, facility_filter,
+       current_year, zone_condition, facility_filter,
        start_year, end_year,
        start_year, end_year)
     
@@ -428,7 +485,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
         AND EXTRACT(YEAR FROM a.inspdate) <= %d
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-        AND g.zone = '%s'
+        %s
         %s
       
       UNION ALL
@@ -449,7 +506,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
         AND EXTRACT(YEAR FROM a.inspdate) >= %d
         AND EXTRACT(YEAR FROM a.inspdate) <= %d
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
-        AND g.zone = '%s'
+        %s
         %s
     )
     SELECT 
@@ -462,8 +519,8 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
     FROM ranked_inspections
     WHERE rn = 1
     ORDER BY facility, sitecode
-    ", start_year, end_year, selected_zone, facility_filter,
-       start_year, end_year, selected_zone, facility_filter)
+    ", start_year, end_year, zone_condition, facility_filter,
+       start_year, end_year, zone_condition, facility_filter)
   }
   
   result <- dbGetQuery(con, query)

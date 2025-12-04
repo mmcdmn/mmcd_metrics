@@ -138,7 +138,7 @@ server <- function(input, output, session) {
       zone_value
     }
     
-    # Get the correct display metric based on time period
+    # Get the display metric based on time period
     hist_time_period_val <- isolate(input$hist_time_period)
     hist_display_metric_val <- if (hist_time_period_val == "yearly") {
       if (!is.null(input$hist_display_metric_yearly)) {
@@ -462,12 +462,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # =============================================================================
-  # INITIAL DATA LOAD
-  # =============================================================================
-  
-  # Note: Auto-refresh on startup disabled - requires shinyjs package
-  # To re-enable, add library(shinyjs) to libraries and useShinyjs() to UI
+
   
 }
 

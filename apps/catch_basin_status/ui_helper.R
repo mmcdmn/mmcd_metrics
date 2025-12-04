@@ -190,7 +190,7 @@ create_historical_filter_panel <- function() {
       column(3,
         sliderInput("hist_year_range", "Year Range:",
                    min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
-                   value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
+                   value = c(2000, as.numeric(format(Sys.Date(), "%Y"))),
                    step = 1, sep = "")
       ),
       column(3,

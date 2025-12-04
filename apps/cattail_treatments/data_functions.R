@@ -432,6 +432,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     
     # Acres by status
     inspected_acres = sum(sites_data$acres[sites_data$inspection_status == 'inspected'], na.rm = TRUE),
+    under_threshold_acres = sum(sites_data$acres[sites_data$final_status == 'under_threshold'], na.rm = TRUE),
     need_treatment_acres = sum(sites_data$acres[sites_data$final_status == 'need_treatment'], na.rm = TRUE),
     treated_acres = sum(sites_data$acres[sites_data$final_status == 'treated'], na.rm = TRUE),
     

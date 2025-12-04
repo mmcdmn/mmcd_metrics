@@ -170,34 +170,9 @@ create_time_period_selector <- function() {
               width = "100%")
 }
 
-create_chart_type_selector <- function() {
-  selectInput("chart_type", "Chart Type:",
-              choices = list(
-                "Line Chart" = "line",
-                "Stacked Bar" = "stacked_bar",
-                "Grouped Bar" = "grouped_bar"
-              ),
-              selected = "line",
-              width = "100%")
-}
+# create_chart_type_selector moved to historical_functions.R to avoid duplication
 
-create_year_range_selector <- function() {
-  current_year <- as.numeric(format(Sys.Date(), "%Y"))
-  list(
-    numericInput("start_year", "Start Year:",
-                 value = current_year - 2,
-                 min = 2020,
-                 max = current_year,
-                 step = 1,
-                 width = "100%"),
-    numericInput("end_year", "End Year:",
-                 value = current_year,
-                 min = 2020,
-                 max = current_year,
-                 step = 1,
-                 width = "100%")
-  )
-}
+# create_year_range_selector moved to historical_functions.R to avoid duplication
 
 # Function to create value boxes with metric awareness
 create_cattail_value_boxes <- function(aggregated_data, treatments_data = NULL, plans_data = NULL) {

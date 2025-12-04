@@ -6,7 +6,9 @@ suppressPackageStartupMessages({
   library(DBI)
   library(RPostgres)
   library(dplyr)
+  library(tidyr)
   library(ggplot2)
+  library(plotly)
   library(purrr)
   library(tibble)
   library(DT)
@@ -65,7 +67,16 @@ ui <- fluidPage(
           )
         ),
         mainPanel(
-          plotOutput("progressPlot", height = "600px")
+          h4("Progress Summary", style = "font-weight: bold; margin-bottom: 15px;"),
+          uiOutput("progressValueBoxes"),
+          hr(),
+          plotlyOutput("progressPlot", height = "600px"),
+          hr(),
+          h4("Site Details", style = "font-weight: bold; margin-top: 20px;"),
+          div(style = "margin-bottom: 10px;",
+            downloadButton("download_progress_sites", "Download CSV", class = "btn-success btn-sm")
+          ),
+          DT::dataTableOutput("progressSitesTable")
         )
       )
     ),
@@ -78,10 +89,12 @@ ui <- fluidPage(
             "hist_zone",
             "Zone:",
             choices = c(
-              "P1 (Zone 1)" = "1",
-              "P2 (Zone 2)" = "2"
+              "P1 (Zone 1)" = "p1",
+              "P2 (Zone 2)" = "p2",
+              "P1 + P2 Combined" = "combined",
+              "P1 and P2 Separate" = "separate"
             ),
-            selected = "1"
+            selected = "p1"
           ),
           
           numericInput(
@@ -130,6 +143,9 @@ ui <- fluidPage(
           )
         ),
         mainPanel(
+          h4("Current Year Progress", style = "font-weight: bold; margin-top: 20px; margin-bottom: 15px;"),
+          uiOutput("historicalValueBoxes"),
+          hr(),
           h4("Historical Progress Comparison", style = "font-weight: bold; margin-top: 20px;"),
           plotOutput("historicalProgressPlot", height = "500px"),
           hr(),
@@ -203,9 +219,121 @@ server <- function(input, output) {
     })
   })
   
-  output$progressPlot <- renderPlot({
+  output$progressPlot <- renderPlotly({
     data <- goal_progress_data()
     create_progress_plot(data)
+  })
+  
+  # Get site details for progress data
+  progress_sites_data <- eventReactive(input$refresh_goal_progress, {
+    withProgress(message = "Loading site details...", value = 0.5, {
+      get_progress_sites_detail(input$goal_year, input$goal_column, input$custom_today)
+    })
+  })
+  
+  # Progress sites table
+  output$progressSitesTable <- DT::renderDataTable({
+    site_data <- progress_sites_data()
+    
+    if (nrow(site_data) == 0) {
+      return(data.frame(Message = "No site data available."))
+    }
+    
+    # Rename columns for display
+    display_data <- site_data %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        `Inspection Date` = inspdate,
+        Wet = wet,
+        `Num Dip` = numdip,
+        Acres = acres
+      )
+    
+    DT::datatable(
+      display_data,
+      options = list(
+        pageLength = 25,
+        order = list(list(1, 'asc'), list(2, 'desc')),
+        scrollX = TRUE,
+        autoWidth = TRUE
+      ),
+      rownames = FALSE,
+      filter = 'top'
+    )
+  })
+  
+  # Download handler for progress sites
+  output$download_progress_sites <- downloadHandler(
+    filename = function() {
+      sprintf("cattail_progress_sites_%s.csv", format(Sys.Date(), "%Y%m%d"))
+    },
+    content = function(file) {
+      site_data <- get_progress_sites_detail(input$goal_year, input$goal_column, input$custom_today)
+      if (nrow(site_data) > 0) {
+        result <- export_csv_safe(site_data, file, clean_data = TRUE)
+        if (!result$success) {
+          warning(result$message)
+        }
+      }
+    }
+  )
+  
+  # Progress value boxes
+  output$progressValueBoxes <- renderUI({
+    data <- goal_progress_data()
+    
+    if (nrow(data) == 0) {
+      return(div(style = "text-align: center; padding: 20px;", "No data available"))
+    }
+    
+    # Calculate % complete for each facility
+    summary_data <- data %>%
+      tidyr::pivot_wider(names_from = type, values_from = count) %>%
+      mutate(
+        pct_complete = ifelse(Goal > 0, round((`Actual Inspections` / Goal) * 100, 1), 0),
+        status_color = case_when(
+          pct_complete >= 100 ~ "#28a745",  # green
+          pct_complete >= 75 ~ "#ffc107",   # yellow
+          pct_complete >= 50 ~ "#fd7e14",   # orange
+          TRUE ~ "#dc3545"                   # red
+        )
+      )
+    
+    # Create value boxes dynamically
+    value_boxes <- lapply(1:nrow(summary_data), function(i) {
+      row <- summary_data[i, ]
+      
+      div(
+        class = "col-sm-6 col-md-4 col-lg-3",
+        style = "padding: 5px;",
+        div(
+          style = sprintf(
+            "background-color: %s; color: white; padding: 15px; border-radius: 5px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
+            row$status_color
+          ),
+          div(
+            style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
+            sprintf("%.1f%%", row$pct_complete)
+          ),
+          div(
+            style = "font-size: 16px; font-weight: bold; margin-bottom: 3px;",
+            row$facility_display
+          ),
+          div(
+            style = "font-size: 12px; opacity: 0.9;",
+            sprintf("%d / %d sites", row$`Actual Inspections`, row$Goal)
+          )
+        )
+      )
+    })
+    
+    # Wrap in a row
+    div(
+      class = "row",
+      style = "margin-bottom: 20px;",
+      value_boxes
+    )
   })
   
   # Historical Comparison tab - data loads on refresh button
@@ -219,6 +347,147 @@ server <- function(input, output) {
   output$historicalProgressPlot <- renderPlot({
     data <- historical_progress_data()
     create_historical_progress_plot(data, input$hist_years, input$hist_metric)
+  })
+  
+  # Historical value boxes showing current year progress with goals
+  output$historicalValueBoxes <- renderUI({
+    data <- historical_progress_data()
+    
+    if (nrow(data) == 0) {
+      return(div(style = "text-align: center; padding: 20px;", "No data available"))
+    }
+    
+    # Get current year data and calculate % progress vs goals
+    current_year <- as.numeric(format(Sys.Date(), "%Y"))
+    current_data <- data %>%
+      filter(type == "Current Year")
+    
+    # Get goals from database
+    con <- get_db_connection()
+    if (is.null(con)) {
+      return(div(style = "text-align: center; padding: 20px;", "Database connection error"))
+    }
+    
+    goals <- tryCatch({
+      dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
+        mutate(facility = trimws(facility))
+    }, error = function(e) {
+      data.frame()
+    })
+    
+    dbDisconnect(con)
+    
+    if (nrow(goals) == 0) {
+      return(div(style = "text-align: center; padding: 20px;", "Goals not available"))
+    }
+    
+    # Determine which zone(s) to show based on hist_zone selection
+    if (input$hist_zone == "p1") {
+      zone_filter <- "1"
+      goal_col <- "p1_totsitecount"
+    } else if (input$hist_zone == "p2") {
+      zone_filter <- "2"
+      goal_col <- "p2_totsitecount"
+    } else {
+      zone_filter <- c("1", "2")
+      goal_col <- NULL  # Will use both
+    }
+    
+    # Filter current data by zone if needed
+    if ("zone" %in% names(current_data)) {
+      current_data <- current_data %>% filter(zone %in% zone_filter)
+    }
+    
+    # Calculate progress with goals
+    if (input$hist_zone == "separate" && "zone" %in% names(current_data)) {
+      # Show separate boxes for each facility-zone combination
+      summary_data <- current_data %>%
+        left_join(goals, by = "facility") %>%
+        mutate(
+          goal = ifelse(zone == "1", p1_totsitecount, p2_totsitecount),
+          pct_complete = ifelse(goal > 0, 
+                               round((site_count / goal) * 100, 1), 0),
+          display_label = paste0(facility_display, " - P", zone),
+          status_color = case_when(
+            pct_complete >= 100 ~ "#28a745",  # green
+            pct_complete >= 75 ~ "#ffc107",   # yellow
+            pct_complete >= 50 ~ "#fd7e14",   # orange
+            TRUE ~ "#dc3545"                   # red
+          )
+        )
+    } else if (input$hist_zone == "combined") {
+      # Combine P1 and P2 for each facility
+      summary_data <- current_data %>%
+        group_by(facility, facility_display) %>%
+        summarize(
+          site_count = sum(site_count, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        left_join(goals, by = "facility") %>%
+        mutate(
+          goal = p1_totsitecount + p2_totsitecount,
+          pct_complete = ifelse(goal > 0, 
+                               round((site_count / goal) * 100, 1), 0),
+          display_label = facility_display,
+          status_color = case_when(
+            pct_complete >= 100 ~ "#28a745",
+            pct_complete >= 75 ~ "#ffc107",
+            pct_complete >= 50 ~ "#fd7e14",
+            TRUE ~ "#dc3545"
+          )
+        )
+    } else {
+      # Single zone (P1 or P2)
+      summary_data <- current_data %>%
+        left_join(goals, by = "facility") %>%
+        mutate(
+          goal = if (input$hist_zone == "p1") p1_totsitecount else p2_totsitecount,
+          pct_complete = ifelse(goal > 0, 
+                               round((site_count / goal) * 100, 1), 0),
+          display_label = facility_display,
+          status_color = case_when(
+            pct_complete >= 100 ~ "#28a745",
+            pct_complete >= 75 ~ "#ffc107",
+            pct_complete >= 50 ~ "#fd7e14",
+            TRUE ~ "#dc3545"
+          )
+        )
+    }
+    
+    # Create value boxes
+    value_boxes <- lapply(seq_len(nrow(summary_data)), function(i) {
+      row <- summary_data[i, ]
+      
+      div(
+        class = "col-sm-6 col-md-4 col-lg-3",
+        style = "padding: 5px;",
+        div(
+          style = sprintf(
+            "background-color: %s; color: white; padding: 15px; border-radius: 5px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
+            row$status_color
+          ),
+          div(
+            style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
+            sprintf("%.1f%%", row$pct_complete)
+          ),
+          div(
+            style = "font-size: 16px; font-weight: bold; margin-bottom: 3px;",
+            row$display_label
+          ),
+          div(
+            style = "font-size: 12px; opacity: 0.9;",
+            sprintf("%d / %d sites", row$site_count, row$goal)
+          )
+        )
+      )
+    })
+    
+    # Wrap in a row
+    div(
+      class = "row",
+      style = "margin-bottom: 20px;",
+      value_boxes
+    )
   })
   
   # Sites table data - sites inspected in last X years (with toggle for unchecked this year)

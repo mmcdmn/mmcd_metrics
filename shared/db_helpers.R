@@ -935,7 +935,7 @@ get_shiny_colors <- function() {
     "planned" = "orange",      # #FFA500 → orange
     "needs_action" = "yellow", # #FF4500 → yellow (closest to red-orange)
     "needs_treatment" = "red", # #FF0000 → red
-    "unknown" = "grey",         # #A9A9A9 → grey (NOTE: Shiny uses "grey" not "gray")
+    "unknown" = "gray",         # #A9A9A9 → gray (NOTE: Shiny uses "gray" not "grey")
     "somthing_else" = "aqua"   # #00FFFF → aqua
   ))
 }
@@ -943,7 +943,7 @@ get_shiny_colors <- function() {
 # Map status names to hex colors for visualizations (maps, charts, tables)
 get_status_color_map <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
   status_colors <- get_status_colors(theme = theme)
-  return(list(
+  color_map <- c(
     "Unknown" = as.character(status_colors[["unknown"]]),
     "Needs Inspection" = as.character(status_colors[["planned"]]),      # Orange/yellow for needs inspection
     "Under Threshold" = as.character(status_colors[["completed"]]),
@@ -952,7 +952,8 @@ get_status_color_map <- function(theme = getOption("mmcd.color.theme", "MMCD")) 
     "In Lab" = as.character(status_colors[["in_lab"]]),                 # Keep for backwards compatibility              
     "Needs Treatment" = as.character(status_colors[["needs_treatment"]]),
     "Active Treatment" = as.character(status_colors[["active"]])
-  ))
+  )
+  return(color_map)
 }
 
 # Get color descriptions for different status types

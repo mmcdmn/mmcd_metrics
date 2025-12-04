@@ -70,7 +70,13 @@ ui <- fluidPage(
           h4("Progress Summary", style = "font-weight: bold; margin-bottom: 15px;"),
           uiOutput("progressValueBoxes"),
           hr(),
-          plotlyOutput("progressPlot", height = "600px")
+          plotlyOutput("progressPlot", height = "600px"),
+          hr(),
+          h4("Site Details", style = "font-weight: bold; margin-top: 20px;"),
+          div(style = "margin-bottom: 10px;",
+            downloadButton("download_progress_sites", "Download CSV", class = "btn-success btn-sm")
+          ),
+          DT::dataTableOutput("progressSitesTable")
         )
       )
     ),
@@ -217,6 +223,61 @@ server <- function(input, output) {
     data <- goal_progress_data()
     create_progress_plot(data)
   })
+  
+  # Get site details for progress data
+  progress_sites_data <- eventReactive(input$refresh_goal_progress, {
+    withProgress(message = "Loading site details...", value = 0.5, {
+      get_progress_sites_detail(input$goal_year, input$goal_column, input$custom_today)
+    })
+  })
+  
+  # Progress sites table
+  output$progressSitesTable <- DT::renderDataTable({
+    site_data <- progress_sites_data()
+    
+    if (nrow(site_data) == 0) {
+      return(data.frame(Message = "No site data available."))
+    }
+    
+    # Rename columns for display
+    display_data <- site_data %>%
+      select(
+        `Site Code` = sitecode,
+        Facility = facility,
+        `Inspection Date` = inspdate,
+        Wet = wet,
+        `Num Dip` = numdip,
+        Acres = acres
+      )
+    
+    DT::datatable(
+      display_data,
+      options = list(
+        pageLength = 25,
+        order = list(list(1, 'asc'), list(2, 'desc')),
+        scrollX = TRUE,
+        autoWidth = TRUE
+      ),
+      rownames = FALSE,
+      filter = 'top'
+    )
+  })
+  
+  # Download handler for progress sites
+  output$download_progress_sites <- downloadHandler(
+    filename = function() {
+      sprintf("cattail_progress_sites_%s.csv", format(Sys.Date(), "%Y%m%d"))
+    },
+    content = function(file) {
+      site_data <- get_progress_sites_detail(input$goal_year, input$goal_column, input$custom_today)
+      if (nrow(site_data) > 0) {
+        result <- export_csv_safe(site_data, file, clean_data = TRUE)
+        if (!result$success) {
+          warning(result$message)
+        }
+      }
+    }
+  )
   
   # Progress value boxes
   output$progressValueBoxes <- renderUI({

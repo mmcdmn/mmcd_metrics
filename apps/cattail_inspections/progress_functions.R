@@ -24,6 +24,8 @@ get_progress_data <- function(year, goal_column, custom_today) {
       "      AND inspdate <= '%s'",
       "  ) a",
       "  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 7) = g.sectcode",
+      "  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode",
+      "  WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)",
       ")",
       "SELECT facility, zone, COUNT(DISTINCT sitecode) AS inspections",
       "FROM all_inspections",
@@ -120,4 +122,70 @@ create_progress_plot <- function(data) {
   
   # Convert to plotly for interactive tooltips
   ggplotly(p, tooltip = "text")
+}
+
+# Get detailed site list for progress data
+get_progress_sites_detail <- function(year, goal_column, custom_today) {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  # Determine which zone to use based on goal_column
+  selected_zone <- ifelse(goal_column == "p1_totsitecount", "1", "2")
+  
+  # Get detailed site information with most recent inspection
+  query_detail <- sprintf(
+    paste(
+      "WITH all_inspections AS (",
+      "  SELECT a.facility, a.sitecode, a.inspdate, a.wet, a.numdip,",
+      "         g.zone,",
+      "         ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn",
+      "  FROM (",
+      "    SELECT facility, sitecode, inspdate, wet, numdip FROM public.dblarv_insptrt_archive",
+      "    WHERE action = '9'",
+      "      AND EXTRACT(YEAR FROM inspdate) = %d",
+      "      AND inspdate <= '%s'",
+      "    UNION ALL",
+      "    SELECT facility, sitecode, inspdate, wet, numdip FROM public.dblarv_insptrt_current",
+      "    WHERE action = '9'",
+      "      AND EXTRACT(YEAR FROM inspdate) = %d",
+      "      AND inspdate <= '%s'",
+      "  ) a",
+      "  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 7) = g.sectcode",
+      "  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode",
+      "  WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)",
+      ")",
+      "SELECT ",
+      "  ai.facility,",
+      "  ai.sitecode,",
+      "  ai.inspdate,",
+      "  ai.wet,",
+      "  ai.numdip,",
+      "  COALESCE(b.acres, 0) as acres",
+      "FROM all_inspections ai",
+      "LEFT JOIN public.loc_breeding_sites b ON ai.sitecode = b.sitecode",
+      "WHERE ai.rn = 1",
+      "  AND ai.zone = '%s'",
+      "  AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)",
+      "ORDER BY ai.facility, ai.inspdate DESC",
+      sep = "\n"
+    ),
+    as.numeric(year),
+    as.character(custom_today),
+    as.numeric(year),
+    as.character(custom_today),
+    selected_zone
+  )
+  
+  result <- dbGetQuery(con, query_detail)
+  dbDisconnect(con)
+  
+  if (nrow(result) > 0) {
+    result <- result %>%
+      mutate(
+        facility = trimws(facility),
+        inspdate = as.Date(inspdate)
+      )
+  }
+  
+  return(result)
 }

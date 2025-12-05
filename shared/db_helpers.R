@@ -410,6 +410,11 @@ get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
   })
 }
 
+# Alias function for consistency with some apps
+get_treatment_material_choices <- function(include_all = TRUE, filter_type = NULL) {
+  return(get_material_choices(include_all = include_all, filter_type = filter_type))
+}
+
 # Get foremen (field supervisors) lookup table
 get_foremen_lookup <- function() {
   con <- get_db_connection()

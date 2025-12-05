@@ -1,64 +1,60 @@
-# Suppress R CMD check notes for dplyr/ggplot2 NSE variables
-if (getRversion() >= "2.15.1") {
-  utils::globalVariables(c(
-    "facility", "inspdate", "date_diff", "round_start", "round_id", "sitecode", "acres", "start_date", "checkback_count", "last_treatment_date", "next_treatment_date", "checkback", "last_treatment", "daily_summary", "sites_treated", "timing_df", "days_to_checkback"
-  ))
-}
-
-library(shiny)
-library(shinydashboard)
-library(shinyWidgets)
-library(DBI)
-library(RPostgreSQL)
-library(dplyr)
-library(ggplot2)
-library(lubridate)
-library(DT)
-library(plotly)
-library(shiny)
-library(shinydashboard)
-library(shinyWidgets)
-library(DBI)
-library(RPostgreSQL)
-library(dplyr)
-library(ggplot2)
-library(lubridate)
-library(DT)
+# Control Efficacy App
+# Load required libraries
+suppressPackageStartupMessages({
+  library(shiny)
+  library(shinydashboard)
+  library(shinyWidgets)
+  library(shinyjs)
+  library(DBI)
+  library(RPostgres)
+  library(dplyr)
+  library(ggplot2)
+  library(lubridate)
+  library(DT)
+  library(plotly)
+})
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
 
-# Database connection function
-get_db_connection <- function() {
-  tryCatch({
-    dbConnect(PostgreSQL(),
-              host = "rds-readonly.mmcd.org",
-              port = 5432,
-              dbname = "mmcd_data",
-              user = "mmcd_read",
-              password = "mmcd2012")
-  }, error = function(e) {
-    showNotification(paste("Database connection failed:", e$message), type = "error", duration = 10)
-    NULL
-  })
+# Source external function files
+source("data_functions.R")
+source("checkback_functions.R")
+source("display_functions.R")
+
+# Suppress R CMD check notes for dplyr/ggplot2 NSE variables
+if (getRversion() >= "2.15.1") {
+  utils::globalVariables(c(
+    "facility", "inspdate", "date_diff", "round_start", "round_id", "sitecode", 
+    "acres", "start_date", "checkback_count", "last_treatment_date", 
+    "next_treatment_date", "checkback", "last_treatment", "daily_summary", 
+    "sites_treated", "timing_df", "days_to_checkback", "facility_display"
+  ))
 }
 
 # UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Control Efficacy - Air Treatment Checkbacks"),
+  dashboardHeader(
+    title = "Control Efficacy - Air Treatment Checkbacks",
+    tags$li(class = "dropdown",
+      actionLink("show_help", "Help", icon = icon("question-circle"), 
+                 style = "padding: 15px; color: white; cursor: pointer;")
+    )
+  ),
   
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Treatment Analysis", tabName = "analysis", icon = icon("chart-line")),
-      menuItem("Control Efficacy", tabName = "status", icon = icon("tasks")),
-      menuItem("Site Details", tabName = "details", icon = icon("map-marker")),
-    menuItem("Checkback Status", tabName = "checkback_status", icon = icon("search-plus"))
+      menuItem("Checkback Progress", tabName = "progress", icon = icon("chart-bar")),
+      menuItem("Status Tables", tabName = "status_tables", icon = icon("table")),
+      menuItem("Control Efficacy", tabName = "status", icon = icon("tasks"))
     )
   ),
   
   dashboardBody(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
+    
+    useShinyjs(),
     
     tags$head(
       tags$style(HTML("
@@ -76,134 +72,163 @@ ui <- dashboardPage(
         .nav-tabs-custom > .nav-tabs > li.active {
           border-top-color: #3c8dbc;
         }
-        .hidden-box {
-          display: none !important;
-        }
       "))
     ),
     
-    tabItems(
-      # Analysis Tab
-      tabItem(tabName = "analysis",
+    # SHARED CONTROLS - Visible across all tabs
+    fluidRow(
+      box(title = "Controls", status = "primary", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = FALSE,
         fluidRow(
-          # Controls
-          box(title = "Analysis Controls", status = "primary", solidHeader = TRUE, width = 12,
-            fluidRow(
-              column(3,
-                dateRangeInput("date_range", "Select Date Range:",
-                  start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
-                  end = Sys.Date(),
-                  max = Sys.Date()
-                )
-              ),
-              column(2,
-                selectInput("facility_filter", "Facility:",
-                  choices = get_facility_choices(),
-                  selected = "all"
-                )
-              ),
-              column(2,
-                selectInput("matcode_filter", "Material Code:",
-                  choices = c("All Materials" = "all"),
-                  selected = "all"
-                )
-              ),
-              column(3,
-                radioButtons("checkback_type", "Checkback Target:",
-                  choices = list("Percentage" = "percent", "Fixed Number" = "number"),
-                  selected = "percent",
-                  inline = TRUE
-                )
-              ),
-              column(3,
-                conditionalPanel(
-                  condition = "input.checkback_type == 'percent'",
-                  numericInput("checkback_percent", "Required Checkback %:",
-                    value = 10,
-                    min = 0,
-                    max = 100,
-                    step = 5
-                  )
-                ),
-                conditionalPanel(
-                  condition = "input.checkback_type == 'number'",
-                  numericInput("checkback_number", "Number of Checkbacks Required:",
-                    value = 10,
-                    min = 1,
-                    step = 1
-                  )
-                )
+          column(3,
+            dateRangeInput("date_range_progress", "Select Date Range:",
+              start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
+              end = Sys.Date(),
+              max = Sys.Date()
+            )
+          ),
+          column(2,
+            selectInput("facility_filter_progress", "Facility:",
+              choices = get_facility_choices(),
+              selected = "all"
+            )
+          ),
+          column(2,
+            selectInput("matcode_filter_progress", "Material Code:",
+              choices = get_treatment_material_choices(),
+              selected = "all"
+            )
+          ),
+          column(2,
+            selectInput("color_theme_progress", "Color Theme:",
+              choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+              selected = "MMCD"
+            )
+          ),
+          column(2,
+            br(),
+            actionButton("refresh_data_progress", "Refresh Data", 
+              icon = icon("refresh"),
+              class = "btn-primary",
+              style = "margin-top: 0px; width: 100%;")
+          ),
+          column(3,
+            radioButtons("checkback_type_progress", "Checkback Target:",
+              choices = list("Percentage" = "percent", "Fixed Number" = "number"),
+              selected = "percent",
+              inline = TRUE
+            )
+          )
+        ),
+        fluidRow(
+          column(3,
+            conditionalPanel(
+              condition = "input.checkback_type_progress == 'percent'",
+              numericInput("checkback_percent_progress", "Required Checkback %:",
+                value = 10, min = 0, max = 100, step = 5
               )
             ),
-            # Removed duplicate numericInput for checkback_number
+            conditionalPanel(
+              condition = "input.checkback_type_progress == 'number'",
+              numericInput("checkback_number_progress", "Number of Checkbacks Required:",
+                value = 10, min = 1, step = 1
+              )
+            )
+          ),
+          column(3,
+            selectInput("species_filter_progress", "Species Filter:",
+              choices = c("All Species" = "all"),
+              selected = "all"
+            )
           )
-        ),
-        
+        )
+      )
+    ),
+    
+    tabItems(
+      # Progress Tab
+      tabItem(tabName = "progress",
         fluidRow(
           # Summary Statistics
-          valueBoxOutput("total_treatments", width = 3),
-          valueBoxOutput("sites_treated", width = 3),
-          valueBoxOutput("checkbacks_needed", width = 3),
-          valueBoxOutput("checkbacks_completed", width = 3)
+          valueBoxOutput("total_checkbacks_needed", width = 3),
+          valueBoxOutput("total_checkbacks_completed", width = 3),
+          valueBoxOutput("overall_completion_rate", width = 3),
+          valueBoxOutput("avg_days_to_checkback", width = 3)
         ),
         
         fluidRow(
-          # Treatment Timeline
-          box(title = "Air Treatment Events", status = "info", solidHeader = TRUE, width = 12,
-            plotOutput("treatment_timeline", height = "400px")
-          )
-        ),
-        
-        fluidRow(
-          # Air Treatment Details
-          box(title = "Air Treatment Details", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("treatment_rounds")
+          box(title = "Checkback Progress by Brood", status = "success", solidHeader = TRUE, width = 12,
+            uiOutput("checkback_progress_chart_ui")
           )
         )
       ),
       
-      # Status Tab
-      tabItem(tabName = "status",
+      # Status Tables Tab (Brood Status + Site Details)
+      tabItem(tabName = "status_tables",
         fluidRow(
-            box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 12,
-                DT::dataTableOutput("all_checkbacks_table")
+          box(title = "Brood Status Table", status = "info", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("checkback_status_table")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "Checkback Details Filters", status = "primary", solidHeader = TRUE, width = 12, collapsible = TRUE,
+            fluidRow(
+              column(4,
+                selectInput("site_facility_filter", "Facility:",
+                  choices = NULL,
+                  selected = "all"
+                )
+              ),
+              column(4,
+                numericInput("site_min_acres", "Min Acres:",
+                  value = 0, min = 0, step = 0.1
+                )
+              ),
+              column(4,
+                numericInput("site_min_days", "Min Days to Checkback:",
+                  value = 0, min = 0, step = 1
+                )
+              )
             )
+          )
         ),
         
-        fluidRow(
-            box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 12,
-                plotly::plotlyOutput("dip_changes_plot", height = "600px")
-            )
-        )
-      ),
-      
-      # Details Tab  
-      tabItem(tabName = "details",
-        fluidRow(
-          box(title = "Efficacy Analysis", status = "success", solidHeader = TRUE, width = 12,
-            plotOutput("efficacy_plot", height = "400px")
-          )
-        )
-      ),
-      
-      # Multiple Checkbacks Tab
-      tabItem(tabName = "checkback_status",
-        fluidRow(
-          box(title = "Sites with Multiple Checkbacks", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("multiple_checkbacks_table")
-          )
-        ),
         fluidRow(
           box(title = "Site-Level Treatment and Checkback Details", status = "primary", solidHeader = TRUE, width = 12,
             DT::dataTableOutput("site_details")
           )
-        ),
+        )
+      ),
+      
+      # Control Efficacy Tab
+      tabItem(tabName = "status",
         fluidRow(
-          box(title = "Checkback Status by Facility", status = "success", solidHeader = TRUE, width = 8,
-            DT::dataTableOutput("facility_status")
-          ),
-          box(title = "Time to Checkback", status = "warning", solidHeader = TRUE, width = 4,
-            plotOutput("checkback_timing", height = "300px")
+          box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 12,
+            tags$p(style = "color: #856404; background-color: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 10px;",
+              tags$strong("Note:"),
+              " Chart looks too busy? Try filtering to a single facility or viewing only the most recent broods."
+            ),
+            fluidRow(
+              column(2,
+                actionButton("show_recent_only", "Show Most Recent Brood Only",
+                  icon = icon("filter"),
+                  class = "btn-info",
+                  style = "margin-bottom: 10px;")
+              ),
+              column(2,
+                actionButton("show_all_broods", "Show All Broods",
+                  icon = icon("list"),
+                  class = "btn-default",
+                  style = "margin-bottom: 10px;")
+              )
+            ),
+            plotly::plotlyOutput("dip_changes_plot", height = "800px")
+          )
+        ),
+        
+        fluidRow(
+          box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 12,
+            DT::dataTableOutput("all_checkbacks_table")
           )
         )
       )
@@ -214,758 +239,393 @@ ui <- dashboardPage(
 # Server
 server <- function(input, output, session) {
   
-  # Reactive values
-  values <- reactiveValues(
-    treatments = NULL,
-    checkbacks = NULL,
-    facilities = NULL,
-    selected_sitecode = NULL
-  )
+  # Show help modal when help link is clicked
+  observeEvent(input$show_help, {
+    showModal(modalDialog(
+      title = "Control Efficacy App - Help",
+      size = "l",
+      easyClose = TRUE,
+      
+      h3("Key Definitions"),
+      tags$dl(
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Brood (Treatment Round)"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "A group of consecutive treatment days at the same facility. Consecutive means a maximum of 1 day gap between treatments. Each brood is identified by facility and start date (e.g., 'BBF-06/14')."
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Air Treatment"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "A treatment record with action code 'A' from the database. These are the treatments that require checkback inspections."
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Checkback Inspection"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "An inspection conducted after a treatment to assess its effectiveness. Valid checkbacks have:",
+          tags$ul(
+            tags$li("Action code '4' in the database"),
+            tags$li("Non-null posttrt_p value (post-treatment dip count recorded)"),
+            tags$li("Occurred after the treatment date"),
+            tags$li("Not invalidated by a subsequent treatment at the same site")
+          )
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Valid vs Invalid Checkbacks"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "A checkback is only valid if no new treatment occurred at that site between the original treatment and the checkback. If a site is re-treated, any checkbacks before the next treatment are counted for the first brood, but checkbacks after the re-treatment belong to the new brood."
+        )
+      ),
+      
+      h3(style = "margin-top: 25px;", "Calculations"),
+      tags$dl(
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Checkbacks Needed"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          tags$b("Percentage Mode:"), " ceiling(unique_sites_treated × percentage / 100)",
+          tags$br(),
+          "Example: 105 sites treated × 10% = 10.5, rounded up = 11 checkbacks needed",
+          tags$br(), tags$br(),
+          tags$b("Fixed Number Mode:"), " min(fixed_number, unique_sites_treated)",
+          tags$br(),
+          "Example: Fixed number = 10, but only 8 sites treated = 8 checkbacks needed"
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Completion Rate"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "(checkbacks_completed / checkbacks_needed) × 100",
+          tags$br(),
+          "Example: 7 completed / 11 needed = 63.6%"
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Days to Checkback"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "Number of days between the last treatment date at a site and its checkback inspection date. Averaged across all checkbacks for a brood."
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Brood Duration"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "(end_date - start_date) + 1",
+          tags$br(),
+          "Example: Treatments from June 14-16 = 3 days duration"
+        ),
+        
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Control Efficacy (% Reduction)"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          "((pre_treatment_dips - post_treatment_dips) / pre_treatment_dips) × 100",
+          tags$br(),
+          "Example: Pre = 50 dips, Post = 10 dips → (50-10)/50 = 80% reduction"
+        )
+      ),
+      
+      h3(style = "margin-top: 25px;", "Data Sources"),
+      tags$dl(
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Database Tables"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;", 
+          tags$ul(
+            tags$li(tags$b("dblarv_insptrt_current:"), " Current year treatments and inspections"),
+            tags$li(tags$b("dblarv_insptrt_archive:"), " Historical data from previous years"),
+            tags$li(tags$b("gis_sectcode:"), " Facility and zone information")
+          ),
+          "The app intelligently queries only the needed table(s) based on your selected date range."
+        )
+      ),
+      
+      footer = modalButton("Close")
+    ))
+  })
   
-  # Load data
+  # Update material code choices when facility changes
   observe({
-    con <- get_db_connection()
-    if (!is.null(con)) {
-      tryCatch({
-        # Get material codes for filter with display names from lookup table
-        matcodes_query <- "
-          SELECT DISTINCT 
-            t.matcode,
-            COALESCE(l.display_text, t.matcode) as display_text,
-            l.tdosedisplay
-          FROM dblarv_insptrt_current t
-          LEFT JOIN public.lookup_matcode_entrylist l ON t.matcode = l.matcode
-          WHERE t.action = 'A' 
-            AND t.matcode IS NOT NULL 
-            AND t.matcode != '' 
-          ORDER BY COALESCE(l.display_text, t.matcode)
-        "
-        matcodes <- dbGetQuery(con, matcodes_query)
-        
-        if (nrow(matcodes) == 0) {
-          # Ensure dropdown always has at least the All option
-          mat_choices <- c("All Materials" = "all")
-        } else {
-          # Create display names: use display_text + tdosedisplay if available
-          display_names <- ifelse(
-            !is.na(matcodes$tdosedisplay) & matcodes$tdosedisplay != "",
-            paste0(matcodes$display_text, " (", matcodes$tdosedisplay, ")"),
-            matcodes$display_text
-          )
-          mat_choices <- setNames(matcodes$matcode, display_names)
-          mat_choices <- c("All Materials" = "all", mat_choices)
-        }
-        
-        updateSelectInput(session, "matcode_filter", choices = mat_choices)
-        
-        dbDisconnect(con)
-      }, error = function(e) {
-        showNotification(paste("Error loading filters:", e$message), type = "error")
-        dbDisconnect(con)
-      })
-    }
+    matcodes <- get_treatment_material_choices()
+    updateSelectInput(session, "matcode_filter", choices = matcodes)
+    updateSelectInput(session, "matcode_filter_progress", choices = matcodes)
   })
   
-  # Reactive data loading
-  treatment_data <- reactive({
-    req(input$date_range)
+  # ===== PROGRESS TAB REACTIVES =====
+  treatment_data_progress <- eventReactive(input$refresh_data_progress, {
+    req(input$date_range_progress, input$facility_filter_progress, input$matcode_filter_progress)
     
-    # Validate date range inputs
-    if (is.null(input$date_range) || length(input$date_range) != 2) {
-      return(NULL)
-    }
-    
-    con <- get_db_connection()
-    if (is.null(con)) return(NULL)
-    
-    tryCatch({
-      # Query for air treatments (action = 'A')
-      query <- "
-        SELECT 
-          inspdate,
-          facility,
-          foreman,
-          sitecode,
-          action,
-          numdip,
-          diphabitat,
-          acres,
-          matcode,
-          pkey_pg,
-          insptime
-        FROM dblarv_insptrt_current 
-        WHERE action = 'A' 
-          AND inspdate >= $1 
-          AND inspdate <= $2
-        ORDER BY inspdate, facility, sitecode
-      "
-      
-      params <- list(
-        as.character(input$date_range[1]),
-        as.character(input$date_range[2])
+    withProgress(message = "Loading treatment data...", value = 0.5, {
+      load_treatment_data(
+        start_date = as.character(input$date_range_progress[1]),
+        end_date = as.character(input$date_range_progress[2]),
+        facility_filter = input$facility_filter_progress,
+        matcode_filter = input$matcode_filter_progress
       )
-      
-      treatments <- dbGetQuery(con, query, params = params)
-      dbDisconnect(con)
-      
-      if (!is.null(treatments) && nrow(treatments) > 0) {
-        treatments$inspdate <- as.Date(treatments$inspdate)
-        # Filter by facility if selected
-        if (!is.null(input$facility_filter) && input$facility_filter != "all") {
-          treatments <- treatments[treatments$facility == input$facility_filter, ]
-        }
-        # Filter by matcode if selected
-        if (!is.null(input$matcode_filter) && input$matcode_filter != "all") {
-          treatments <- treatments[treatments$matcode == input$matcode_filter, ]
-        }
-        return(treatments)
-      } else {
-        return(NULL)
-      }
-      
-    }, error = function(e) {
-      showNotification(paste("Error loading treatment data:", e$message), type = "error")
-      if (exists("con") && !is.null(con)) {
-        try(dbDisconnect(con), silent = TRUE)
-      }
-      return(NULL)
     })
   })
   
-  # Get checkback data
-  checkback_data <- reactive({
-    req(treatment_data())
+  checkback_data_progress <- eventReactive(input$refresh_data_progress, {
+    req(treatment_data_progress())
     
-    # Validate treatment data exists
-    treatments <- treatment_data()
-    if (is.null(treatments) || nrow(treatments) == 0) {
-      return(NULL)
-    }
-    
-    con <- get_db_connection()
-    if (is.null(con)) return(NULL)
-    
-    tryCatch({
-      # Get checkback inspections for treated sites
+    withProgress(message = "Loading checkback data...", value = 0.5, {
+      treatments <- treatment_data_progress()
+      if (is.null(treatments) || nrow(treatments) == 0) return(NULL)
+      
       treated_sites <- unique(treatments$sitecode)
-      
-      if (length(treated_sites) == 0) return(NULL)
-      
-      # Create placeholder string for SQL IN clause - use $3, $4, etc. for consistency
-      site_placeholders <- paste0("$", 3:(2 + length(treated_sites)), collapse = ",")
-      
-      query <- paste("
-        SELECT 
-          inspdate,
-          facility,
-          foreman,
-          sitecode,
-          action,
-          numdip,
-          diphabitat,
-          pkey_pg,
-          insptime,
-          posttrt_p
-        FROM dblarv_insptrt_current 
-        WHERE sitecode IN (", site_placeholders, ")
-          AND inspdate >= $1 
-          AND inspdate <= $2
-          AND action = '4'
-          AND posttrt_p IS NOT NULL
-        ORDER BY inspdate, sitecode
-      ")
-      
-      params <- c(list(
-        as.character(input$date_range[1]),
-        as.character(input$date_range[2])
-      ), as.list(treated_sites))
-      
-      checkbacks <- dbGetQuery(con, query, params = params)
-      
-      dbDisconnect(con)
-      
-      if (nrow(checkbacks) > 0) {
-        checkbacks$inspdate <- as.Date(checkbacks$inspdate)
-        return(checkbacks)
-      } else {
-        return(NULL)
-      }
-      
-    }, error = function(e) {
-      showNotification(paste("Error loading checkback data:", e$message), type = "error")
-      if (exists("con") && !is.null(con)) {
-        try(dbDisconnect(con), silent = TRUE)
-      }
-      return(NULL)
+      load_checkback_data(
+        treated_sites = treated_sites,
+        start_date = as.character(input$date_range_progress[1]),
+        end_date = as.character(input$date_range_progress[2])
+      )
     })
   })
   
-  # Calculate broods (multi-day treatments grouped)
-  treatment_rounds <- reactive({
-    req(treatment_data())
+  treatment_rounds_progress <- eventReactive(input$refresh_data_progress, {
+    req(treatment_data_progress())
     
-    treatments <- treatment_data()
-    if (is.null(treatments) || nrow(treatments) == 0) {
-      return(NULL)
-    }
-    
-    # Group consecutive treatment days by facility
-    rounds <- treatments %>%
-      arrange(facility, inspdate) %>%
-      group_by(facility) %>%
-      mutate(
-        date_diff = as.numeric(inspdate - lag(inspdate, default = inspdate[1] - 2)),
-        round_start = ifelse(date_diff > 1, TRUE, FALSE),
-        round_id = cumsum(round_start)
-      ) %>%
-      group_by(facility, round_id) %>%
-      summarise(
-        start_date = min(inspdate),
-        end_date = max(inspdate),
-        days_duration = as.numeric(max(inspdate) - min(inspdate)) + 1,
-        sites_treated = n_distinct(sitecode),
-        total_sites = n(),
-        total_acres = sum(acres, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(
-        round_name = paste(facility, format(start_date, "%m/%d"), sep = "-"),
-        checkbacks_needed = case_when(
-          input$checkback_type == "percent" ~ ceiling(sites_treated * input$checkback_percent / 100),
-          TRUE ~ pmin(input$checkback_number, sites_treated)
-        )
+    withProgress(message = "Calculating treatment rounds...", value = 0.5, {
+      calculate_treatment_rounds(
+        treatments = treatment_data_progress(),
+        checkback_type = input$checkback_type_progress,
+        checkback_percent = input$checkback_percent_progress,
+        checkback_number = input$checkback_number_progress
       )
-    
-    return(rounds)
+    })
   })
   
-  # Calculate checkback status
-  checkback_status <- reactive({
-    req(treatment_rounds())
+  checkback_status_progress <- eventReactive(input$refresh_data_progress, {
+    req(treatment_rounds_progress())
     
-    rounds <- treatment_rounds()
-    checkbacks <- checkback_data()
-    treatments <- treatment_data()
-    
-    # Validate required data exists
-    if (is.null(rounds) || nrow(rounds) == 0 || is.null(treatments) || nrow(treatments) == 0) {
-      return(NULL)
-    }
-    
-    # Allow function to work even if no checkbacks exist yet
-    if (is.null(checkbacks)) {
-      checkbacks <- data.frame()
-    }
-    
-    # For each round, find checkbacks within reasonable timeframe
-    results <- list()
-    
-    for (i in seq_len(nrow(rounds))) {
-      round <- rounds[i, ]
-      
-      # Get sites treated in this round
-      round_treatments <- treatments %>%
-        filter(
-          facility == round$facility,
-          inspdate >= round$start_date,
-          inspdate <= round$end_date
-        )
-      
-      # For each site in this round, only count checkbacks that haven't been invalidated by newer treatments
-      valid_checkbacks <- data.frame()
-      
-      if (nrow(checkbacks) > 0) {
-        for (site in unique(round_treatments$sitecode)) {
-          # Get the last treatment date for this site in this round
-          last_treatment_date <- max(round_treatments$inspdate[round_treatments$sitecode == site])
-          
-          # Get all future treatments for this site (to invalidate checkbacks)
-          future_treatments <- treatments %>%
-            filter(sitecode == site, inspdate > last_treatment_date)
-          
-          # Get checkbacks for this site after the round
-          site_checkbacks <- checkbacks %>%
-            filter(
-              sitecode == site,
-              inspdate > last_treatment_date
-            )
-          
-          if (nrow(site_checkbacks) > 0) {
-            # If there are future treatments, only count checkbacks before the next treatment
-            if (nrow(future_treatments) > 0) {
-              next_treatment_date <- min(future_treatments$inspdate)
-              site_checkbacks <- site_checkbacks %>%
-                filter(inspdate < next_treatment_date)
-            }
-            
-            # Take only the first valid checkback
-            if (nrow(site_checkbacks) > 0) {
-              first_checkback <- site_checkbacks %>%
-                arrange(inspdate) %>%
-                slice(1) %>%
-                mutate(
-                  days_to_checkback = as.numeric(inspdate - last_treatment_date),
-                  round_end = round$end_date
-                )
-              
-              valid_checkbacks <- rbind(valid_checkbacks, first_checkback)
-            }
-          }
-        }
-      }
-      
-      results[[i]] <- data.frame(
-        facility = round$facility,
-        round_name = round$round_name,
-        start_date = round$start_date,
-        end_date = round$end_date,
-        sites_treated = round$sites_treated,
-        checkbacks_needed = round$checkbacks_needed,
-        checkbacks_completed = nrow(valid_checkbacks),
-        completion_rate = round(nrow(valid_checkbacks) / round$checkbacks_needed * 100, 1),
-        avg_days_to_checkback = ifelse(nrow(valid_checkbacks) > 0, 
-                                     round(mean(valid_checkbacks$days_to_checkback, na.rm = TRUE), 1), 
-                                     NA)
+    withProgress(message = "Calculating checkback status...", value = 0.5, {
+      calculate_checkback_status(
+        rounds = treatment_rounds_progress(),
+        checkbacks = checkback_data_progress(),
+        treatments = treatment_data_progress()
       )
-    }
+    })
+  })
+  
+  # Progress Tab Outputs
+  output$checkback_progress_chart <- renderPlotly({
+    input$color_theme_progress  # Reactive dependency
+    status <- checkback_status_progress()
     
-    if (length(results) > 0) {
-      return(do.call(rbind, results))
+    result <- create_checkback_progress_chart(
+      checkback_status = status,
+      theme = input$color_theme_progress
+    )
+    
+    # Return the plot (result is now a list with $plot and $height)
+    if (is.list(result)) result$plot else result
+  })
+  
+  # Dynamic height for checkback progress chart
+  output$checkback_progress_chart_ui <- renderUI({
+    status <- checkback_status_progress()
+    result <- create_checkback_progress_chart(
+      checkback_status = status,
+      theme = input$color_theme_progress
+    )
+    
+    # Get height from result (30px per bar for spacing, min 300px)
+    height <- if (is.list(result)) result$height else 400
+    
+    plotlyOutput("checkback_progress_chart", height = paste0(height, "px"))
+  })
+  
+  output$total_checkbacks_needed <- renderValueBox({
+    status <- checkback_status_progress()
+    total <- if (!is.null(status)) sum(status$checkbacks_needed, na.rm = TRUE) else 0
+    
+    valueBox(
+      value = total,
+      subtitle = "Total Checkbacks Needed",
+      icon = icon("clipboard-list"),
+      color = "blue"
+    )
+  })
+  
+  output$total_checkbacks_completed <- renderValueBox({
+    status <- checkback_status_progress()
+    completed <- if (!is.null(status)) sum(status$checkbacks_completed, na.rm = TRUE) else 0
+    
+    valueBox(
+      value = completed,
+      subtitle = "Total Checkbacks Completed",
+      icon = icon("check-circle"),
+      color = "green"
+    )
+  })
+  
+  output$overall_completion_rate <- renderValueBox({
+    status <- checkback_status_progress()
+    
+    if (!is.null(status)) {
+      needed <- sum(status$checkbacks_needed, na.rm = TRUE)
+      completed <- sum(status$checkbacks_completed, na.rm = TRUE)
+      rate <- if (needed > 0) round(completed / needed * 100, 1) else 0
+      color <- if (rate >= 80) "green" else if (rate >= 50) "yellow" else "red"
     } else {
-      return(NULL)
+      rate <- 0
+      color <- "red"
     }
+    
+    valueBox(
+      value = paste0(rate, "%"),
+      subtitle = "Overall Completion Rate",
+      icon = icon("percentage"),
+      color = color
+    )
   })
   
-  # Multiple checkbacks analysis
-  multiple_checkbacks_data <- reactive({
-    checkbacks <- checkback_data()
-    treatments <- treatment_data()
+  output$avg_days_to_checkback <- renderValueBox({
+    status <- checkback_status_progress()
+    avg <- if (!is.null(status)) round(mean(status$avg_days_to_checkback, na.rm = TRUE), 1) else 0
     
-    if (is.null(checkbacks) || nrow(checkbacks) == 0 || 
-        is.null(treatments) || nrow(treatments) == 0) {
-      return(NULL)
-    }
-    
-    # Find sites with multiple checkbacks
-    sites_with_multiple <- checkbacks %>%
-      group_by(sitecode) %>%
-      summarise(checkback_count = n(), .groups = "drop") %>%
-      filter(checkback_count > 1) %>%
-      pull(sitecode)
-    
-    if (length(sites_with_multiple) == 0) {
-      return(NULL)
-    }
-    
-    # Get detailed checkback sequence for sites with multiple checkbacks
-    multiple_details <- list()
-    
-    for (site in sites_with_multiple) {
-      site_treatments <- treatments %>%
-        filter(sitecode == site) %>%
-        arrange(inspdate)
-      
-      site_checkbacks <- checkbacks %>%
-        filter(sitecode == site) %>%
-        arrange(inspdate)
-      
-      # Create sequence showing treatment -> checkback patterns
-      for (i in seq_len(nrow(site_checkbacks))) {
-        checkback <- site_checkbacks[i, ]
-        
-        # Find the most recent treatment before this checkback
-        recent_treatment <- site_treatments %>%
-          filter(inspdate <= checkback$inspdate) %>%
-          arrange(desc(inspdate)) %>%
-          slice(1)
-        
-        if (nrow(recent_treatment) > 0) {
-          # Calculate change from previous checkback
-          prev_dip <- if (i > 1) site_checkbacks$numdip[i-1] else recent_treatment$numdip
-          dip_change <- checkback$numdip - prev_dip
-          
-          multiple_details[[length(multiple_details) + 1]] <- data.frame(
-            sitecode = site,
-            facility = checkback$facility,
-            treatment_date = recent_treatment$inspdate,
-            checkback_date = checkback$inspdate,
-            checkback_sequence = i,
-            days_since_treatment = as.numeric(checkback$inspdate - recent_treatment$inspdate),
-            treatment_dip = recent_treatment$numdip,
-            checkback_dip = checkback$numdip,
-            previous_dip = prev_dip,
-            dip_change_from_previous = dip_change,
-            total_change_from_treatment = checkback$numdip - recent_treatment$numdip
-          )
-        }
-      }
-    }
-    
-    if (length(multiple_details) > 0) {
-      return(do.call(rbind, multiple_details))
-    } else {
-      return(NULL)
-    }
+    valueBox(
+      value = avg,
+      subtitle = "Avg Days to Checkback",
+      icon = icon("calendar-day"),
+      color = "purple"
+    )
   })
   
-  # All checkbacks summary
-  all_checkbacks_summary <- reactive({
-    checkbacks <- checkback_data()
-    treatments <- treatment_data()
+  # ===== SHARED DATA (used by Status and Details tabs) =====
+  # These use the Progress tab filters
+  
+  # Load species data for checkbacks
+  species_data_for_checkbacks <- eventReactive(input$refresh_data_progress, {
+    req(checkback_data_progress())
     
-    if (is.null(checkbacks) || nrow(checkbacks) == 0 || 
-        is.null(treatments) || nrow(treatments) == 0) {
-      return(NULL)
-    }
-
-    # Get material lookup data for display names
-    con <- get_db_connection()
-    material_lookup <- data.frame()
-    if (!is.null(con)) {
-      tryCatch({
-        material_lookup <- dbGetQuery(con, "
-          SELECT 
-            matcode,
-            display_text,
-            tdosedisplay
-          FROM public.lookup_matcode_entrylist
-        ")
-        dbDisconnect(con)
-      }, error = function(e) {
-        if (!is.null(con)) dbDisconnect(con)
-      })
-    }
-    
-    # Get all sites with at least one checkback
-    checkback_summary <- list()
-    
-    for (site in unique(checkbacks$sitecode)) {
-      site_treatments <- treatments %>%
-        filter(sitecode == site) %>%
-        arrange(inspdate)
-      
-      site_checkbacks <- checkbacks %>%
-        filter(sitecode == site) %>%
-        arrange(inspdate)
-      
-      # For each checkback, find the most recent treatment BEFORE it
-      for (i in 1:nrow(site_checkbacks)) {
-        checkback <- site_checkbacks[i, ]
-        
-        # Get most recent treatment before this checkback
-        treatment_before <- site_treatments %>%
-          filter(inspdate <= checkback$inspdate) %>%
-          arrange(desc(inspdate)) %>%
-          slice(1)
-        
-        if (nrow(treatment_before) > 0) {
-          # Get material display name
-          material_display <- treatment_before$matcode
-          if (nrow(material_lookup) > 0) {
-            lookup_row <- material_lookup[material_lookup$matcode == treatment_before$matcode, ]
-            if (nrow(lookup_row) > 0) {
-              # Take the first row if multiple matches and ensure single values
-              lookup_row <- lookup_row[1, ]
-              if (!is.na(lookup_row$tdosedisplay[1]) && lookup_row$tdosedisplay[1] != "") {
-                material_display <- paste0(lookup_row$display_text[1], " (", lookup_row$tdosedisplay[1], ")")
-              } else {
-                material_display <- lookup_row$display_text[1]
-              }
-            }
-          }
-          
-          checkback_summary[[length(checkback_summary) + 1]] <- data.frame(
-            sitecode = site,
-            facility = checkback$facility,
-            material = material_display,
-            last_treatment_date = treatment_before$inspdate,
-            first_checkback_date = checkback$inspdate,
-            total_checkbacks = nrow(site_checkbacks),
-            days_to_first_checkback = as.numeric(checkback$inspdate - treatment_before$inspdate),
-            treatment_dip = treatment_before$numdip,
-            first_checkback_dip = checkback$numdip,
-            initial_reduction = treatment_before$numdip - checkback$numdip,
-            percent_reduction = ifelse(treatment_before$numdip > 0, 
-                                     round((treatment_before$numdip - checkback$numdip) / treatment_before$numdip * 100, 1), 
-                                     0)
-          )
-        }
-      }
-    }
-    
-    if (length(checkback_summary) > 0) {
-      result <- do.call(rbind, checkback_summary)
-      
-      # Calculate mean days and identify outliers
-      mean_days <- mean(result$days_to_first_checkback, na.rm = TRUE)
-      outlier_threshold <- mean_days + 12
-      
-      # Replace outlier days with mean for coloring purposes
-      result$days_to_first_checkback_display <- ifelse(
-        result$days_to_first_checkback > outlier_threshold,
-        mean_days,
-        result$days_to_first_checkback
+    withProgress(message = 'Loading species data...', value = 0, {
+      load_species_data_for_checkbacks(
+        checkbacks = checkback_data_progress(),
+        start_date = input$date_range_progress[1],
+        end_date = input$date_range_progress[2]
       )
+    })
+  })
+  
+  site_details <- eventReactive(input$refresh_data_progress, {
+    req(treatment_data_progress())
+    
+    create_site_details(
+      treatments = treatment_data_progress(),
+      checkbacks = checkback_data_progress(),
+      species_data = species_data_for_checkbacks()
+    )
+  })
+  
+  # Update facility choices for site details filter
+  observe({
+    details <- site_details()
+    if (!is.null(details)) {
+      facilities <- c("all", sort(unique(details$facility)))
+      updateSelectInput(session, "site_facility_filter", choices = facilities, selected = "all")
+    }
+  })
+  
+  # Update species filter choices
+  observe({
+    details <- site_details()
+    if (!is.null(details)) {
+      # Extract unique species from species_composition
+      # Parse species strings like "Ae. vexans (90%), Cu. pipiens (10%)"
+      species_set <- unique(unlist(lapply(details$species_composition, function(comp) {
+        if (is.na(comp) || comp == "" || comp == "[Sample Missing]" || comp == "[No Species Data]") {
+          return(NULL)
+        }
+        # Split by comma and extract species names (before the percentage)
+        parts <- strsplit(comp, ",\\s*")[[1]]
+        sapply(parts, function(part) {
+          # Extract just the species name before the percentage
+          gsub("\\s*\\(.*", "", part)
+        })
+      })))
       
-      cat("\n=== FINAL SUMMARY ===\n")
-      cat("Max first_checkback_dip:", max(result$first_checkback_dip, na.rm = TRUE), "\n")
-      cat("Sites/Checkbacks included:", nrow(result), "\n")
-      cat("Mean days to checkback:", round(mean_days, 1), "\n")
-      cat("Outlier threshold (mean + 12):", round(outlier_threshold, 1), "\n")
-      cat("====================\n\n")
-      return(result)
-    } else {
-      return(NULL)
+      species_choices <- c("All Species" = "all", 
+                          "Sample Missing" = "[Sample Missing]",
+                          "No Species Data" = "[No Species Data]",
+                          sort(species_set[!is.na(species_set)]))
+      updateSelectInput(session, "species_filter_progress", choices = species_choices, selected = "all")
     }
   })
   
-  # Value boxes
-  output$total_treatments <- renderValueBox({
-    treatments <- treatment_rounds()
-    value <- ifelse(is.null(treatments), 0, nrow(treatments))
+  # Filtered site details based on user selections
+  filtered_site_details <- reactive({
+    details <- site_details()
     
-    # Get colors from centralized helper
-    shiny_colors <- get_shiny_colors()
+    if (is.null(details)) return(NULL)
     
-    valueBox(
-      value = value,
-  subtitle = "Broods",
-  icon = icon("helicopter"),
-      color = shiny_colors["completed"]
-    )
-  })
-  
-  output$sites_treated <- renderValueBox({
-    treatments <- treatment_rounds()
-    value <- ifelse(is.null(treatments), 0, sum(treatments$sites_treated, na.rm = TRUE))
+    # Apply filters
+    filtered <- details
     
-    # Get colors from centralized helper
-    shiny_colors <- get_shiny_colors()
-    
-    valueBox(
-      value = value,
-      subtitle = "Sites Treated",
-      icon = icon("map-marker"),
-      color = shiny_colors["active"]
-    )
-  })
-  
-  output$checkbacks_needed <- renderValueBox({
-    treatments <- treatment_rounds()
-    value <- ifelse(is.null(treatments), 0, sum(treatments$checkbacks_needed, na.rm = TRUE))
-    
-    # Get colors from centralized helper
-    shiny_colors <- get_shiny_colors()
-    
-    valueBox(
-      value = value,
-      subtitle = "Checkbacks Needed",
-      icon = icon("tasks"),
-      color = shiny_colors["planned"]
-    )
-  })
-  
-  output$checkbacks_completed <- renderValueBox({
-    status <- checkback_status()
-    value <- ifelse(is.null(status), 0, sum(status$checkbacks_completed, na.rm = TRUE))
-    
-    # Get colors from centralized helper
-    shiny_colors <- get_shiny_colors()
-    
-    valueBox(
-      value = value,
-      subtitle = "Checkbacks Completed",
-      icon = icon("check"),
-      color = shiny_colors["completed"]
-    )
-  })
-  
-  # Treatment timeline plot
-  output$treatment_timeline <- renderPlot({
-    treatments <- treatment_data()
-    
-    if (is.null(treatments)) {
-      p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No treatment data available"), size = 6) +
-        theme_void()
-      return(p)
+    # Facility filter
+    if (!is.null(input$site_facility_filter) && input$site_facility_filter != "all") {
+      filtered <- filtered %>% filter(facility == input$site_facility_filter)
     }
     
-    # Daily site counts by facility
-    daily_summary <- treatments %>%
-      group_by(inspdate, facility) %>%
-      summarise(sites_treated = n(), .groups = "drop") %>%
-      map_facility_names()
+    # Min acres filter
+    if (!is.null(input$site_min_acres) && input$site_min_acres > 0) {
+      filtered <- filtered %>% filter(acres >= input$site_min_acres)
+    }
     
-    # Get facility colors from centralized helper and map to display names
-    facility_colors <- get_facility_base_colors()
-    facilities <- get_facility_lookup()
-    facility_map <- setNames(facilities$full_name, facilities$short_name)
-    display_colors <- setNames(facility_colors, facility_map[names(facility_colors)])
+    # Min days to checkback filter
+    if (!is.null(input$site_min_days) && input$site_min_days > 0) {
+      filtered <- filtered %>% filter(days_to_checkback >= input$site_min_days)
+    }
     
-    p <- ggplot(daily_summary, aes(x = inspdate, y = sites_treated, fill = facility_display)) +
-      geom_col(position = "dodge") +
-      scale_fill_manual(values = display_colors) +
-      labs(
-        title = "Air Treatment Activity Over Time",
-        x = "Date",
-        y = "Sites Treated",
-        fill = "Facility"
-      ) +
-      theme_minimal() +
-      theme(
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.title = element_text(hjust = 0.5)
-      )
+    # Species filter
+    if (!is.null(input$species_filter_progress) && input$species_filter_progress != "all") {
+      filtered <- filtered %>% filter(grepl(input$species_filter_progress, species_composition, fixed = TRUE))
+    }
     
-    return(p)
+    return(filtered)
   })
   
-  # Facility status table
-  output$facility_status <- DT::renderDataTable({
-    status <- checkback_status()
+  # ===== STATUS TAB OUTPUTS =====
+  # Brood Status Table (used in Status Tables tab)
+  output$checkback_status_table <- DT::renderDataTable({
+    status <- checkback_status_progress()
     
     if (is.null(status)) {
       return(data.frame(Message = "No data available"))
     }
     
-    datatable(status,
-      options = list(
-        pageLength = 10,
-        scrollX = TRUE,
-        columnDefs = list(
-          list(targets = c("completion_rate"), render = JS(
-            "function(data, type, row, meta) {",
-            "if(type === 'display' && data != null) {",
-            "var color = data >= 80 ? 'green' : data >= 50 ? 'orange' : 'red';",
-            "return '<span style=\"color: ' + color + '; font-weight: bold;\">' + data + '%</span>';",
-            "} else { return data; }",
-            "}"
-          ))
-        )
-      ),
-      rownames = FALSE
-    ) %>%
-      formatStyle("completion_rate", {
-        # Get colors from centralized helper for consistent styling
-        status_colors <- get_status_colors()
-        backgroundColor = styleInterval(c(50, 80), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
-      })
-  })
-  
-  # Checkback timing plot
-  output$checkback_timing <- renderPlot({
-    treatments <- treatment_data()
-    checkbacks <- checkback_data()
-    
-    if (is.null(treatments) || is.null(checkbacks)) {
-      p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No data"), size = 4) +
-        theme_void()
-      return(p)
-    }
-    
-    # Calculate days between treatment and checkback
-    timing_data <- list()
-    
-    for (site in unique(treatments$sitecode)) {
-      site_treatments <- treatments[treatments$sitecode == site, ]
-      site_checkbacks <- checkbacks[checkbacks$sitecode == site, ]
-      
-      if (nrow(site_checkbacks) > 0) {
-        for (i in 1:nrow(site_treatments)) {
-          treatment_date <- site_treatments$inspdate[i]
-          future_checkbacks <- site_checkbacks[site_checkbacks$inspdate > treatment_date, ]
-          
-          if (nrow(future_checkbacks) > 0) {
-            first_checkback <- future_checkbacks[which.min(future_checkbacks$inspdate), ]
-            days_diff <- as.numeric(first_checkback$inspdate - treatment_date)
-            
-            timing_data[[length(timing_data) + 1]] <- data.frame(
-              sitecode = site,
-              facility = site_treatments$facility[i],
-              days_to_checkback = days_diff
-            )
-          }
-        }
-      }
-    }
-    
-    if (length(timing_data) > 0) {
-      timing_df <- do.call(rbind, timing_data)
-      
-      # Get colors from centralized helper
-      status_colors <- get_status_colors()
-      
-      p <- ggplot(timing_df, aes(x = days_to_checkback)) +
-        geom_histogram(binwidth = 2, fill = status_colors["active"], alpha = 0.7) +
-        labs(
-          title = "Days to Checkback",
-          x = "Days After Treatment",
-          y = "Count"
-        ) +
-        theme_minimal() +
-        theme(plot.title = element_text(hjust = 0.5))
-      
-      return(p)
-    } else {
-      p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No checkbacks found"), size = 4) +
-        theme_void()
-      return(p)
-    }
-  })
-  
-  # Broods table
-  output$treatment_rounds <- DT::renderDataTable({
-    rounds <- treatment_rounds()
-    
-    if (is.null(rounds)) {
-  return(data.frame(Message = "No broods found"))
-    }
-    
-    display_data <- rounds %>%
+    display_data <- status %>%
       select(
         Brood = round_name,
         Facility = facility,
         `Start Date` = start_date,
         `End Date` = end_date,
-        `Duration (Days)` = days_duration,
         `Sites Treated` = sites_treated,
-        `Total Visits` = total_sites,
-        `Acres Treated` = total_acres,
-        `Checkbacks Needed` = checkbacks_needed
-      ) %>%
-      mutate(
-        `Acres Treated` = round(`Acres Treated`, 1)
+        `Checkbacks Needed` = checkbacks_needed,
+        `Checkbacks Completed` = checkbacks_completed,
+        `Completion Rate (%)` = completion_rate,
+        `Avg Days to Checkback` = avg_days_to_checkback
       )
     
-    datatable(display_data,
+    DT::datatable(
+      display_data,
       options = list(
-        pageLength = 15,
-        scrollX = TRUE
+        pageLength = 25,
+        scrollX = TRUE,
+        autoWidth = TRUE,
+        columnDefs = list(
+          list(className = 'dt-center', targets = '_all')
+        )
       ),
       rownames = FALSE
     )
   })
   
-  # Checkback progress table
-  output$checkback_progress <- DT::renderDataTable({
-    status <- checkback_status()
+  # Brood Status Table (legacy output for backward compatibility)
+  output$facility_status <- DT::renderDataTable({
+    status <- checkback_status_progress()
     
     if (is.null(status)) {
-      return(data.frame(Message = "No checkback data available"))
+      return(data.frame(Message = "No data available"))
     }
     
     display_data <- status %>%
       select(
-        Round = round_name,
+        Brood = round_name,
         Facility = facility,
-        `Treatment Period` = paste(start_date, "to", end_date),
+        `Start Date` = start_date,
+        `End Date` = end_date,
         `Sites Treated` = sites_treated,
         `Checkbacks Needed` = checkbacks_needed,
-        `Checkbacks Done` = checkbacks_completed,
-        `Completion %` = completion_rate,
+        `Checkbacks Completed` = checkbacks_completed,
+        `Completion Rate (%)` = completion_rate,
         `Avg Days to Checkback` = avg_days_to_checkback
       )
     
@@ -976,415 +636,130 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     ) %>%
-      formatStyle("Completion %", {
-        # Get colors from centralized helper for consistent styling
-        status_colors <- get_status_colors()
-        backgroundColor = styleInterval(c(50, 80), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
-        fontWeight = "bold"
-      })
-  })
-  
-  # Site details table
-  output$site_details <- DT::renderDataTable({
-    treatments <- treatment_data()
-    checkbacks <- checkback_data()
-    
-    if (is.null(treatments)) {
-      return(data.frame(Message = "No treatment data available"))
-    }
-    
-    # Combine treatment and checkback information
-    site_details <- list()
-    
-    for (site in unique(treatments$sitecode)) {
-      site_treatments <- treatments[treatments$sitecode == site, ]
-      site_checkbacks <- if (!is.null(checkbacks)) {
-        checkbacks[checkbacks$sitecode == site, ]
-      } else {
-        data.frame()
-      }
-      
-      for (i in 1:nrow(site_treatments)) {
-        treatment <- site_treatments[i, ]
-        
-        # Find checkbacks after this treatment
-        if (nrow(site_checkbacks) > 0) {
-          future_checkbacks <- site_checkbacks[site_checkbacks$inspdate > treatment$inspdate, ]
-          
-          if (nrow(future_checkbacks) > 0) {
-            first_checkback <- future_checkbacks[which.min(future_checkbacks$inspdate), ]
-            days_diff <- as.numeric(first_checkback$inspdate - treatment$inspdate)
-            checkback_status <- "Completed"
-            checkback_date <- first_checkback$inspdate
-            checkback_dip <- first_checkback$numdip
-          } else {
-            days_diff <- NA
-            checkback_status <- "Pending"
-            checkback_date <- NA
-            checkback_dip <- NA
-          }
-        } else {
-          days_diff <- NA
-          checkback_status <- "Pending"
-          checkback_date <- NA
-          checkback_dip <- NA
-        }
-        
-        site_details[[length(site_details) + 1]] <- data.frame(
-          sitecode = treatment$sitecode,
-          facility = treatment$facility,
-          matcode = treatment$matcode,
-          treatment_date = treatment$inspdate,
-          treatment_dip = treatment$numdip,
-          checkback_status = checkback_status,
-          checkback_date = checkback_date,
-          checkback_dip = checkback_dip,
-          days_to_checkback = days_diff,
-          stringsAsFactors = FALSE
+      formatStyle(
+        "Completion Rate (%)",
+        backgroundColor = styleInterval(
+          c(50, 80), 
+          c("#f8d7da", "#fff3cd", "#d4edda")
         )
-      }
-    }
-    
-    if (length(site_details) > 0) {
-      details_df <- do.call(rbind, site_details)
-      
-      display_data <- details_df %>%
-        arrange(facility, treatment_date, sitecode) %>%
-        select(
-          `Site Code` = sitecode,
-          Facility = facility,
-          `Material Code` = matcode,
-          `Treatment Date` = treatment_date,
-          `Treatment Dip Count` = treatment_dip,
-          `Checkback Status` = checkback_status,
-          `Checkback Date` = checkback_date,
-          `Checkback Dip Count` = checkback_dip,
-          `Days to Checkback` = days_to_checkback
-        )
-      
-      datatable(display_data,
-        options = list(
-          pageLength = 20,
-          scrollX = TRUE
-        ),
-        rownames = FALSE
-      ) %>%
-        formatStyle("Checkback Status", {
-          # Get colors from centralized helper for consistent styling
-          status_colors <- get_status_colors()
-          backgroundColor = styleEqual(c("Completed", "Pending"), c(paste0(status_colors["active"], "44"), paste0(status_colors["planned"], "44")))
-        })
-    } else {
-      return(data.frame(Message = "No detailed site data available"))
-    }
+      )
   })
   
-  # Efficacy plot
-  output$efficacy_plot <- renderPlot({
-    treatments <- treatment_data()
-    checkbacks <- checkback_data()
+  # All checkbacks table (uses progress tab data)
+  output$all_checkbacks_table <- DT::renderDataTable({
+    details <- site_details()
     
-    if (is.null(treatments) || is.null(checkbacks)) {
-      p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No data for efficacy analysis"), size = 6) +
-        theme_void()
-      return(p)
+    if (is.null(details)) {
+      return(data.frame(Message = "No checkback data available"))
     }
     
-    # Calculate dip count changes
-    efficacy_data <- list()
-    
-    for (site in unique(treatments$sitecode)) {
-      site_treatments <- treatments[treatments$sitecode == site, ]
-      site_checkbacks <- checkbacks[checkbacks$sitecode == site, ]
-      
-      for (i in 1:nrow(site_treatments)) {
-        treatment <- site_treatments[i, ]
-        
-        # Find checkbacks after this treatment
-        future_checkbacks <- site_checkbacks[site_checkbacks$inspdate > treatment$inspdate, ]
-        
-        if (nrow(future_checkbacks) > 0) {
-          checkback <- future_checkbacks[which.min(future_checkbacks$inspdate), ]
-          
-          efficacy_data[[length(efficacy_data) + 1]] <- data.frame(
-            sitecode = treatment$sitecode,
-            facility = treatment$facility,
-            matcode = treatment$matcode,
-            treatment_date = treatment$inspdate,
-            pre_treatment_dip = treatment$numdip,
-            post_treatment_dip = checkback$numdip,
-            days_between = as.numeric(checkback$inspdate - treatment$inspdate),
-            reduction = treatment$numdip - checkback$numdip,
-            percent_reduction = ifelse(treatment$numdip > 0, 
-                                     (treatment$numdip - checkback$numdip) / treatment$numdip * 100, 
-                                     0)
-          )
-        }
-      }
-    }
-    
-    if (length(efficacy_data) > 0) {
-      efficacy_df <- do.call(rbind, efficacy_data) %>%
-        map_facility_names()
-      
-      # Get facility colors from centralized helper and map to display names
-      facility_colors <- get_facility_base_colors()
-      facilities <- get_facility_lookup()
-      facility_map <- setNames(facilities$full_name, facilities$short_name)
-      display_colors <- setNames(facility_colors, facility_map[names(facility_colors)])
-      
-      p <- ggplot(efficacy_df, aes(x = pre_treatment_dip, y = post_treatment_dip, 
-                                   color = facility_display, size = days_between)) +
-        geom_point(alpha = 0.7) +
-        geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray", size = 1) +
-        scale_color_manual(values = display_colors) +
-        labs(
-          title = "Treatment Efficacy: Pre vs Post Treatment Dip Counts",
-          x = "Pre-Treatment Dip Count",
-          y = "Post-Treatment Dip Count",
-          color = "Facility",
-          size = "Days to Checkback"
-        ) +
-        theme_minimal() +
-        theme(
-          plot.title = element_text(hjust = 0.5),
-          legend.position = "right"
-        ) +
-        scale_size_continuous(range = c(2, 6))
-      
-      return(p)
-    } else {
-      p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No efficacy data available"), size = 6) +
-        theme_void()
-      return(p)
-    }
-  })
-  
-  # Multiple checkbacks table
-  output$multiple_checkbacks_table <- DT::renderDataTable({
-    multiple_data <- multiple_checkbacks_data()
-    
-    if (is.null(multiple_data)) {
-      return(data.frame(Message = "No sites with multiple checkbacks found"))
-    }
-    
-    display_data <- multiple_data %>%
-      arrange(sitecode, checkback_sequence) %>%
+    display_data <- details %>%
       select(
-        `Site Code` = sitecode,
+        Site = sitecode,
         Facility = facility,
+        `Inspection Date` = inspection_date,
         `Treatment Date` = treatment_date,
         `Checkback Date` = checkback_date,
-        `Checkback #` = checkback_sequence,
-        `Days Since Treatment` = days_since_treatment,
-        `Treatment Dip` = treatment_dip,
-        `Checkback Dip` = checkback_dip,
-        `Previous Dip` = previous_dip,
-        `Change from Previous` = dip_change_from_previous,
-        `Total Change` = total_change_from_treatment
+        `Days to Checkback` = days_to_checkback,
+        `Pre Dips` = pre_treatment_dips,
+        `Post Dips` = post_treatment_dips,
+        Acres = acres
       )
     
     datatable(display_data,
       options = list(
-        pageLength = 15,
+        pageLength = 25,
         scrollX = TRUE
       ),
       rownames = FALSE
-    ) %>%
-      formatStyle("Change from Previous", {
-        # Get colors from centralized helper for consistent styling
-        status_colors <- get_status_colors()
-        backgroundColor = styleInterval(c(-0.1, 0.1), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
-        fontWeight = "bold"
-      }) %>%
-      formatStyle("Total Change", {
-        # Get colors from centralized helper for consistent styling
-        status_colors <- get_status_colors()
-        backgroundColor = styleInterval(c(-0.1, 0.1), c(paste0(status_colors["needs_treatment"], "44"), paste0(status_colors["planned"], "44"), paste0(status_colors["active"], "44")))
-        fontWeight = "bold"
-      })
+    )
   })
   
-  # All checkbacks table
-  output$all_checkbacks_table <- DT::renderDataTable({
-    all_data <- all_checkbacks_summary()
-    # Trigger reactive dependency on selected_sitecode so table updates when selection changes
-    selected <- values$selected_sitecode
+  # Reactive value to track filter state for dip changes chart
+  dip_filter_mode <- reactiveVal("all")
+  
+  observeEvent(input$show_recent_only, {
+    dip_filter_mode("recent")
+  })
+  
+  observeEvent(input$show_all_broods, {
+    dip_filter_mode("all")
+  })
+  
+  # Filtered site details for dip changes chart
+  filtered_site_details_for_dip <- reactive({
+    details <- site_details()
     
-    if (is.null(all_data)) {
-      return(data.frame(Message = "No sites with checkbacks found"))
+    if (is.null(details) || nrow(details) == 0) return(NULL)
+    
+    # All rows in site_details already have checkbacks (it's per-checkback now)
+    details_with_checkback <- details
+    
+    if (dip_filter_mode() == "recent") {
+      # Get the most recent treatment date from the data itself
+      if (nrow(details_with_checkback) > 0) {
+        most_recent_date <- max(details_with_checkback$treatment_date, na.rm = TRUE)
+        
+        # Filter to only checkbacks from the most recent treatment date
+        details_with_checkback <- details_with_checkback %>%
+          filter(treatment_date >= most_recent_date)
+      }
     }
     
-    tryCatch({
-      display_data <- all_data %>%
-        as.data.frame() %>%
-        arrange(material, sitecode) %>%
-        select(
-          `Site Code` = sitecode,
-          Material = material,
-          `Last Treatment` = last_treatment_date,
-          `First Checkback` = first_checkback_date,
-          `Total Checkbacks` = total_checkbacks,
-          `Days to Checkback` = days_to_first_checkback,
-          `Treatment Dip` = treatment_dip,
-          `First Checkback Dip` = first_checkback_dip,
-          `Initial Reduction` = initial_reduction,
-          `% Reduction` = percent_reduction
-        )
-    }, error = function(e) {
-      showNotification(paste("Error preparing table data:", e$message), type = "error")
-      return(data.frame(Message = "Error loading data"))
-    })
+    return(details_with_checkback)
+  })
+  
+  output$dip_changes_plot <- renderPlotly({
+    input$color_theme_progress  # Reactive dependency
+    input$show_recent_only  # Reactive dependency
+    input$show_all_broods  # Reactive dependency
     
-    dt <- datatable(display_data,
-      options = list(
-        pageLength = 20,
-        scrollX = TRUE
-      ),
-      rownames = FALSE,
-      selection = "single"
-    ) %>%
-      formatStyle("% Reduction",
-        backgroundColor = styleInterval(c(0, 50, 80), c("#ffcdd2", "#fff9c4", "#c8e6c9", "#a5d6a7")),
-        fontWeight = "bold"
+    withProgress(message = "Rendering dip changes chart...", value = 0.5, {
+      create_dip_changes_chart(
+        site_details = filtered_site_details_for_dip(),
+        theme = input$color_theme_progress
+      )
+    })
+  })
+  
+  # ===== SITE DETAILS TAB OUTPUTS =====
+  output$site_details <- DT::renderDataTable({
+    details <- filtered_site_details()
+    
+    if (is.null(details) || nrow(details) == 0) {
+      return(data.frame(Message = "No data available with current filters"))
+    }
+    
+    display_data <- details %>%
+      select(
+        Site = sitecode,
+        Facility = facility,
+        `Inspection Date` = inspection_date,
+        `Treatment Date` = treatment_date,
+        `Checkback Date` = checkback_date,
+        `Pre-Trt Dips` = pre_treatment_dips,
+        `Post-Trt Dips` = post_treatment_dips,
+        Acres = acres,
+        `Mat Code` = matcode,
+        `Material Type` = mattype,
+        `Effect Days` = effect_days,
+        `Days to Checkback` = days_to_checkback,
+        `Red/Blue` = redblue,
+        `Species Composition` = species_composition
+      ) %>%
+      mutate(
+        Acres = round(Acres, 1)
       )
     
-    # Highlight selected row based on selected_sitecode
-    if (!is.null(selected) && selected != "") {
-      # Find which row has the selected sitecode
-      selected_rows <- which(display_data$`Site Code` == selected)
-      if (length(selected_rows) > 0) {
-        selected_row_idx <- selected_rows[1] - 1  # Convert to 0-based index
-        dt <- dt %>%
-          formatStyle(
-            columns = 0:ncol(display_data),
-            target = "row",
-            backgroundColor = styleEqual(selected_row_idx, "lightyellow")
-          )
-      }
-    }
-    
-    dt
-  })
-  
-  # Dip changes plot (pre-treatment vs first checkback for all sites)
-  output$dip_changes_plot <- renderPlotly({
-    all_data <- all_checkbacks_summary()
-    # Trigger reactive dependency on selected_sitecode so plot updates when selection changes
-    selected <- values$selected_sitecode
-    
-    if (is.null(all_data) || nrow(all_data) == 0) {
-      p <- ggplot() + 
-        geom_text(aes(x = 0, y = 0, label = "No checkback data"), size = 5) +
-        theme_void()
-      return(ggplotly(p))
-    }
-    
-    tryCatch({
-      # Prepare paired data: one row per site, pre-treatment and first checkback
-      plot_df <- all_data %>%
-        select(sitecode, treatment_dip, first_checkback_dip, days_to_first_checkback_display) %>%
-        tidyr::pivot_longer(cols = c(treatment_dip, first_checkback_dip),
-                             names_to = "type", values_to = "dip")
-      plot_df$type <- factor(plot_df$type, levels = c("treatment_dip", "first_checkback_dip"),
-                             labels = c("Pre-Treatment", "First Checkback"))
-
-  # Calculate Q1, Q3, and IQR for each type
-  q1_treatment <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.25, na.rm = TRUE)
-  q3_treatment <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.75, na.rm = TRUE)
-  iqr_treatment <- q3_treatment - q1_treatment
-  q1_checkback <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.25, na.rm = TRUE)
-  q3_checkback <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.75, na.rm = TRUE)
-  iqr_checkback <- q3_checkback - q1_checkback
-  # Use the higher Q3 and IQR
-  y_top <- max(q3_treatment, q3_checkback)
-  iqr_top <- max(iqr_treatment, iqr_checkback)
-  # Set y-axis upper limit to Q3 + max(25% of IQR, 2), rounded up
-  y_lim_top <- ceiling(y_top + max(0.25 * iqr_top, 2))
-
-      # Add highlight indicator for selected sitecode
-      plot_df$is_selected <- ifelse(is.null(selected) || selected == "", FALSE, plot_df$sitecode == selected)
-      # Store the color value: gold if selected, otherwise use days value
-      plot_df$point_color <- ifelse(plot_df$is_selected, "gold", as.numeric(plot_df$days_to_first_checkback_display))
-      # Create a group ID that will be used for highlighting entire dumbbells
-      plot_df$dumbbell_group <- plot_df$sitecode
-
-      # Dumbbell plot: paired points with lines, plus boxplot overlay
-      dodge_amt <- 0.5
-      p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode)) +
-        geom_boxplot(aes(group = type), color = "gray40", fill = NA, width = 0.3, position = position_nudge(x = -0.30), outlier.shape = NA, coef = Inf) +
-        geom_line(aes(size = ifelse(is_selected, 3, 1), alpha = ifelse(is_selected, 1, 0.5), color = ifelse(is_selected, "gold", days_to_first_checkback_display), customdata = dumbbell_group), position = position_dodge(width = dodge_amt)) +
-        geom_point(aes(text = sitecode, size = ifelse(is_selected, 7, 3), alpha = ifelse(is_selected, 1, 0.8), color = ifelse(is_selected, "gold", days_to_first_checkback_display)), position = position_dodge(width = dodge_amt)) +
-        labs(
-          title = "Dip Count Change: Pre-Treatment vs First Checkback",
-          x = "",
-          y = "Dip Count",
-          color = "Days Between"
-        ) +
-        scale_color_gradientn(colors = c("red", "orange", "green", "blue", "purple"), na.value = "gold") +
-        scale_size_identity() +
-        scale_y_continuous(limits = c(-2, y_lim_top), oob = scales::oob_keep) +
-        theme_minimal() +
-        theme(
-          plot.title = element_text(hjust = 0.5, size = 14),
-          axis.text.x = element_text(size = 12),
-          legend.position = "right"
-        )
-
-      p_plotly <- ggplotly(p, tooltip = "text", source = "dip_changes_plot") %>%
-        layout(clickmode = "event")
-
-      p_plotly <- event_register(p_plotly, "plotly_click")
-      p_plotly
-    }, error = function(e) {
-      showNotification(paste("Plot error:", e$message), type = "error")
-      ggplotly(ggplot() + geom_text(aes(x = 0, y = 0, label = "Error rendering plot")))
-    })
-  })
-  
-  # Debug observer - print selected sitecode whenever it changes
-  observe({
-    cat(">>> values$selected_sitecode changed to:", values$selected_sitecode, "\n")
-  })
-  
-  # Handle plot clicks to select sitecode using plotly event
-  observeEvent(event_data("plotly_click", source = "dip_changes_plot"), {
-    cat(">>> observeEvent triggered for plotly_click\n")
-    d <- event_data("plotly_click", source = "dip_changes_plot")
-    cat(">>> event_data returned:", class(d), "\n")
-    if (!is.null(d)) {
-      cat(">>> d structure:", paste(names(d), collapse = ", "), "\n")
-      cat(">>> d$text:", d$text, "\n")
-    }
-    if (!is.null(d) && !is.null(d$text)) {
-      sitecode <- d$text
-      cat(">>> Extracted sitecode from plot click:", sitecode, "\n")
-      values$selected_sitecode <- sitecode
-    } else {
-      cat(">>> No text found in event_data\n")
-    }
-  }, ignoreInit = TRUE)
-  
-  # Handle table row selection
-  observeEvent(input$all_checkbacks_table_rows_selected, {
-    all_data <- all_checkbacks_summary()
-    cat("Table row selected:", input$all_checkbacks_table_rows_selected, "\n")
-    if (!is.null(all_data) && is.data.frame(all_data) && length(input$all_checkbacks_table_rows_selected) > 0) {
-      # Get the selected row index
-      selected_row <- input$all_checkbacks_table_rows_selected[1]
-      # Sort the data the same way the table does
-      sorted_data <- all_data[order(all_data$facility, all_data$sitecode), ]
-      # Get the sitecode from the selected row
-      if (selected_row <= nrow(sorted_data)) {
-        selected_sitecode <- sorted_data$sitecode[selected_row]
-        cat("Selected sitecode from table:", selected_sitecode, "\n")
-        values$selected_sitecode <- selected_sitecode
-      }
-    }
+    datatable(display_data,
+      options = list(
+        pageLength = 25,
+        scrollX = TRUE
+      ),
+      rownames = FALSE
+    )
   })
 }
 
-# Run the application
+# Run the app
 shinyApp(ui = ui, server = server)

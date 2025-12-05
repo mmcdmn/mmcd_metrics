@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Efficacy - Air Treatment Checkbacks - Technical Notes</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #7f8c8d;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid #34495e;
+        }
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
+        }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+<h1>Control Efficacy - Air Treatment Checkbacks - Technical Notes</h1>
+
+<h2>Overview</h2>
+<p>This Shiny app tracks control efficacy of air treatments by analyzing checkback inspection data across three perspectives:</p>
+<ol>
+<li><strong>Checkback Progress</strong> - Tracks treatment rounds (broods) and checkback completion status by facility</li>
+<li><strong>Status Tables</strong> - Shows brood status and detailed checkback results with species composition</li>
+<li><strong>Control Efficacy</strong> - Visualizes pre/post treatment dip counts to assess treatment effectiveness</li>
+</ul>
+
+<h2>Data Sources</h2>
+
+<h3>Core Database Tables and Columns</h3>
+
+<h4>Primary Treatment and Checkback Tables</h4>
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval inspection/treatment records</li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>action</code>, <code>numdip</code>, <code>diphabitat</code>, <code>acres</code>, <code>matcode</code>, <code>sampnum<em>yr</code>, <code>posttrt</em>p</code></li>
+<li><strong>Action Codes</strong>: </li>
+<ul>
+<li><code>'A'</code> = Air treatment (primary treatments tracked in this app)</li>
+<li><code>'4'</code> = Checkback inspection (post-treatment follow-up)</li>
+</ul>
+<li><strong>Checkback Link</strong>: <code>posttrt_p</code> field indicates if inspection is post-treatment</li>
+<li><strong>Sample Link</strong>: <code>sampnum_yr</code> connects to species and sample metadata tables</li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>mattype</code>, <code>effect_days</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Contains ongoing treatments and checkbacks</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval inspection/treatment records  </li>
+<ul>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>action</code>, <code>numdip</code>, <code>diphabitat</code>, <code>matcode</code>, <code>sampnum<em>yr</code>, <code>posttrt</em>p</code></li>
+<li><strong>Action Codes</strong>: Same as current table ('A' for treatment, '4' for checkback)</li>
+<li><strong>Checkback Link</strong>: <code>posttrt_p</code> field indicates post-treatment status</li>
+<li><strong>Sample Link</strong>: <code>sampnum_yr</code> connects to species and sample metadata</li>
+<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>mattype</code>, <code>effect_days</code>, <code>acres</code> - must join for these</li>
+<li><strong>Data Quality</strong>: Historical closed records, generally reliable</li>
+</ul>
+</ul>
+
+<h4>Species and Sample Data Tables</h4>
+<ul>
+<li><strong><code>public.dblarv<em>species</em>current</code></strong> - Active species composition records</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sampnum<em>yr</code> (joins to dblarv</em>insptrt via sampnum_yr)</li>
+<li><code>spp</code> (species code as VARCHAR, joins to lookup_specieslist.sppcode)</li>
+<li><code>per</code> (percentage of sample, INTEGER 0-100)</li>
+</ul>
+<li><strong>Join Pattern</strong>: <code>ON spp.spp = CAST(spec.sppcode AS VARCHAR)</code> - type conversion required!</li>
+<li><strong>Aggregation</strong>: Multiple rows per sampnum_yr (one per species found)</li>
+<li><strong>Data Quality</strong>: Contains species composition for each sample taken</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>species</em>archive</code></strong> - Historical species composition records</li>
+<ul>
+<li><strong>Key Columns</strong>: Same as current (<code>sampnum_yr</code>, <code>spp</code>, <code>per</code>)</li>
+<li><strong>Join Pattern</strong>: Same type conversion required for species lookup</li>
+<li><strong>Aggregation</strong>: Multiple rows per sampnum_yr</li>
+<li><strong>Data Quality</strong>: Historical species data for archived samples</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>sample</em>current</code></strong> - Active sample metadata</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sampnum_yr</code> (joins to species and inspection tables)</li>
+<li><code>redblue</code> (sample designation: 'R' = Red, 'B' = Blue)</li>
+<li><code>missing</code> (BOOLEAN: TRUE = sample was missing/not collected)</li>
+</ul>
+<li><strong>Usage</strong>: Provides sample quality flags and classifications</li>
+<li><strong>Data Quality</strong>: Essential for filtering out missing or problematic samples</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.dblarv<em>sample</em>archive</code></strong> - Historical sample metadata</li>
+<ul>
+<li><strong>Key Columns</strong>: Same as current (<code>sampnum_yr</code>, <code>redblue</code>, <code>missing</code>)</li>
+<li><strong>Usage</strong>: Same metadata flags for archived samples</li>
+<li><strong>Data Quality</strong>: Historical sample quality information</li>
+</ul>
+</ul>
+
+<h4>Essential Supporting Tables</h4>
+<ul>
+<li><strong><code>public.gis_sectcode</code></strong> - Geographic section mapping and zone assignments</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sectcode</code> (7-character section identifier, e.g. '191031N')</li>
+<li><code>zone</code> (values: '1' = P1, '2' = P2)</li>
+<li><code>facility</code> (facility designation)</li>
+</ul>
+<li><strong>Join Pattern</strong>: <code>LEFT JOIN public.gis_sectcode sc ON left(sitecode,7) = sc.sectcode</code></li>
+<li><strong>Sitecode Formats Handled</strong>:</li>
+<ul>
+<li>Standard: <code>190208-003</code> → sectcode <code>1902080</code></li>
+<li>Directional: <code>191102W010</code> → sectcode <code>1911020</code> </li>
+</ul>
+<li><strong>Data Quality</strong>: Authoritative source for zone and facility assignments</li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material effectiveness and dosage data</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>matcode</code> (material identifier, joins to treatment tables)</li>
+<li><code>mattype</code> (material type description, e.g., 'Bs_Vlexgran')</li>
+<li><code>effect_days</code> (treatment effectiveness duration in days, e.g., 30)</li>
+</ul>
+<li><strong>Usage</strong>: Provides material names and effectiveness windows</li>
+<li><strong>Join</strong>: <code>LEFT JOIN mattype<em>list</em>targetdose mat ON insp.matcode = mat.matcode</code></li>
+</ul>
+</ul>
+
+<ul>
+<li><strong><code>public.lookup_specieslist</code></strong> - Mosquito species reference data</li>
+<ul>
+<li><strong>Key Columns</strong>:</li>
+<ul>
+<li><code>sppcode</code> (INTEGER species code)</li>
+<li><code>genus</code> (genus name, e.g., 'Aedes', 'Culex')</li>
+<li><code>species</code> (species name, e.g., 'vexans', 'pipiens')</li>
+</ul>
+<li><strong>Critical Join</strong>: <code>ON spp.spp = CAST(spec.sppcode AS VARCHAR)</code> - CAST required due to type mismatch</li>
+<li><strong>Usage</strong>: Translates numeric species codes to readable names</li>
+<li><strong>Output Format</strong>: "Ae. vexans", "Cu. pipiens" (abbreviated genus + species)</li>
+</ul>
+</ul>
+
+<h3>Data Collection Strategy</h3>
+
+<h4>Key Join Patterns Used Throughout Application</h4>
+
+<p><strong>Standard Treatment Query with Material Data:</strong></p>
+<pre><code class="sql">
+-- Get air treatments with material type information
+SELECT 
+  insp.inspdate,
+  gis.facility,
+  gis.zone,
+  insp.sitecode,
+  insp.action,
+  insp.numdip,
+  insp.diphabitat,
+  insp.acres,
+  insp.matcode,
+  mat.mattype,
+  mat.effect_days,
+  insp.pkey_pg,
+  insp.insptime
+FROM public.dblarv_insptrt_current insp
+LEFT JOIN public.gis_sectcode gis ON left(insp.sitecode,7) = gis.sectcode
+LEFT JOIN public.mattype_list_targetdose mat ON insp.matcode = mat.matcode
+WHERE insp.action = 'A'  -- Air treatments only
+  AND insp.inspdate &gt;= ?
+  AND insp.inspdate &lt;= ?
+ORDER BY insp.inspdate
+</code></pre>
+
+<p><strong>Checkback Query with Sample Numbers:</strong></p>
+<pre><code class="sql">
+-- Get checkback inspections with sample data linkage
+SELECT 
+  insp.inspdate,
+  gis.facility,
+  gis.zone,
+  insp.sitecode,
+  insp.action,
+  insp.numdip,
+  insp.diphabitat,
+  insp.posttrt_p,
+  insp.sampnum_yr,  -- Critical for species join
+  insp.pkey_pg
+FROM public.dblarv_insptrt_current insp
+LEFT JOIN public.gis_sectcode gis ON left(insp.sitecode,7) = gis.sectcode
+WHERE insp.sitecode IN (treated_sites)
+  AND insp.action = '4'  -- Checkback inspections only
+  AND insp.posttrt_p IS NOT NULL
+  AND insp.inspdate &gt;= ?
+  AND insp.inspdate &lt;= ?
+</code></pre>
+
+<p><strong>Species Composition Query with Type Conversion:</strong></p>
+<pre><code class="sql">
+-- Get species composition with readable names
+-- CRITICAL: Type conversion required (spp is VARCHAR, sppcode is INTEGER)
+SELECT 
+  spp.sampnum_yr,
+  spp.spp,
+  spp.per,
+  spec.genus,
+  spec.species,
+  samp.redblue,
+  samp.missing
+FROM public.dblarv_species_current spp
+LEFT JOIN public.lookup_specieslist spec 
+  ON spp.spp = CAST(spec.sppcode AS VARCHAR)  -- Type conversion essential!
+LEFT JOIN public.dblarv_sample_current samp 
+  ON spp.sampnum_yr = samp.sampnum_yr
+WHERE spp.sampnum_yr IN (checkback_samples)
+ORDER BY spp.sampnum_yr, spp.per DESC
+</code></pre>
+
+<h4>Critical Data Integration Notes</h4>
+
+<p><strong>Sitecode Format Handling:</strong></p>
+<ul>
+<li><strong>Standard Format</strong>: <code>190208-003</code> (7-digit section + dash + site num)</li>
+<li><strong>Directional Format</strong>: <code>191102W010</code> (6-digit + direction + site num)</li>
+<li><strong>Join Logic</strong>: <code>left(sitecode,7)</code> extracts section code for both formats</li>
+<li><strong>Example</strong>: Both <code>190208-003</code> and <code>191102W010</code> → sectcodes <code>1902080</code> and <code>1911020</code></li>
+</ul>
+
+<p><strong>Treatment Rounds (Broods):</strong></p>
+<ul>
+<li><strong>Definition</strong>: Groups of treatments on consecutive days at same facility</li>
+<li><strong>Gap Tolerance</strong>: Maximum 1 day between treatments to remain in same round</li>
+<li><strong>Round ID</strong>: Facility code + start date (e.g., "BBF-06/14")</li>
+<li><strong>Purpose</strong>: Track treatment campaigns as operational units</li>
+</ul>
+
+<p><strong>Checkback Timing:</strong></p>
+<ul>
+<li><strong>Post-Treatment</strong>: Checkbacks occur after air treatments</li>
+<li><strong>Timing Window</strong>: Tracked via days<em>to</em>checkback (checkback<em>date - treatment</em>date)</li>
+<li><strong>Material Effect Window</strong>: Compare checkback timing to material effect_days</li>
+<li><strong>Optimal Range</strong>: Typically checkbacks within effect window show best efficacy</li>
+</ul>
+
+<p><strong>Species Composition Formatting:</strong></p>
+<ul>
+<li><strong>Format</strong>: "Ae. vexans (90%), Cu. pipiens (10%)"</li>
+<li><strong>Abbreviation</strong>: Genus first letter + period + species name</li>
+<li><strong>Percentage</strong>: From dblarv_species.per field</li>
+<li><strong>Special Cases</strong>:</li>
+<ul>
+<li><code>"[Sample Missing]"</code> when dblarv_sample.missing = TRUE</li>
+<li><code>"[No Species Data]"</code> when no species records found for sample</li>
+</ul>
+<li><strong>Aggregation</strong>: Concatenate all species per sampnum_yr, ordered by percentage DESC</li>
+</ul>
+
+<p><strong>Dip Count Changes:</strong></p>
+<ul>
+<li><strong>Pre-Treatment</strong>: <code>numdip</code> from treatment inspection (action = 'A')</li>
+<li><strong>Post-Treatment</strong>: <code>numdip</code> from checkback inspection (action = '4')</li>
+<li><strong>Effectiveness Metric</strong>: Compare pre vs post dip counts</li>
+<li><strong>Expected Pattern</strong>: Lower post-treatment dips indicate effective control</li>
+<li><strong>Habitat Context</strong>: <code>diphabitat</code> indicates dips per specific habitat count</li>
+</ul>
+
+<h2>Tab 1: Checkback Progress</h2>
+
+<h3>Purpose</h3>
+<p>Track progress of checkback inspections for air treatment rounds (broods) by facility.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Value boxes</strong> showing summary statistics:</li>
+<ul>
+<li>Total Sites Treated (across all rounds)</li>
+<li>Total Checkbacks Completed</li>
+<li>Average Days to First Checkback</li>
+<li>Checkback Completion Rate (percentage)</li>
+</ul>
+<li><strong>Interactive bar chart</strong> showing checkback completion by facility</li>
+<li><strong>Treatment round grouping</strong> with configurable gap tolerance</li>
+<li><strong>Checkback target selector</strong>:</li>
+<ul>
+<li><strong>Percent</strong> - Target percentage of sites needing checkbacks</li>
+<li><strong>Number</strong> - Fixed number of checkback sites per round</li>
+</ul>
+<li><strong>Date range selector</strong> - Filter treatments by inspection date</li>
+<li><strong>Facility filter</strong> - View specific facilities or all combined</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li>Load treatments via <code>load<em>treatment</em>data()</code>:</li>
+<ul>
+<li>Query air treatments (action = 'A') in date range</li>
+<li>Include material type and effect days</li>
+<li>Join with gis_sectcode for facility/zone</li>
+</ul>
+</ul>
+
+<ol>
+<li>Calculate treatment rounds via <code>calculate<em>treatment</em>rounds()</code>:</li>
+<ul>
+<li>Group consecutive treatment days by facility</li>
+<li>Use 1-day gap tolerance (configurable)</li>
+<li>Assign round IDs (facility-date format)</li>
+<li>Track sites treated per round</li>
+</ul>
+</ul>
+
+<ol>
+<li>Load checkbacks via <code>load<em>checkback</em>data()</code>:</li>
+<ul>
+<li>Query checkback inspections (action = '4') for treated sites</li>
+<li>Include sampnum_yr for species linkage</li>
+<li>Filter for post-treatment checkbacks only</li>
+</ul>
+</ul>
+
+<ol>
+<li>Calculate checkback status via <code>calculate<em>checkback</em>status()</code>:</li>
+<ul>
+<li>Match checkbacks to treatment rounds</li>
+<li>Count sites checked vs sites treated per round</li>
+<li>Calculate completion percentages</li>
+<li>Track timing (days to first checkback)</li>
+</ul>
+</ul>
+
+<h3>Visualization</h3>
+<ul>
+<li><strong>Stacked bar chart</strong> per facility showing:</li>
+<ul>
+<li>Total sites treated (background bar)</li>
+<li>Sites with checkbacks completed (colored bar)</li>
+<li>Completion percentage labels</li>
+</ul>
+<li><strong>Color scheme</strong>: Facility-specific colors from get<em>facility</em>colors()</li>
+<li><strong>Tooltip</strong>: Detailed breakdown on hover</li>
+</ul>
+
+<h2>Tab 2: Status Tables</h2>
+
+<h3>Purpose</h3>
+<p>Provide detailed tabular views of treatment rounds (brood status) and individual checkback results.</p>
+
+<h3>Key Features</h3>
+<p>Two distinct tables in single tab:</p>
+
+<p><strong>Brood Status Table:</strong></p>
+<ul>
+<li>Shows treatment round summaries</li>
+<li>Columns: Facility, Round ID, Start/End Date, Days Duration, Sites Treated, Checkbacks Count, Completion %</li>
+<li>Sortable and filterable</li>
+</ul>
+
+<p><strong>Site Details Table:</strong></p>
+<ul>
+<li>Shows individual checkback records (one row per checkback)</li>
+<li>Columns: </li>
+<ul>
+<li>Site Info: Sitecode, Facility, Inspection Date</li>
+<li>Treatment Info: Treatment Date, Material Code, Material Type, Effect Days, Acres, Pre-Treatment Dips</li>
+<li>Checkback Info: Checkback Date, Days to Checkback, Post-Treatment Dips</li>
+<li>Species Info: Species Composition, Red/Blue Designation, Missing Flag</li>
+</ul>
+<li><strong>Per-Checkback Model</strong>: Same site can appear multiple times if multiple checkbacks conducted</li>
+<li>Filterable by date range, facility, material, species</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li>Load all data sources:</li>
+<ul>
+<li>Treatments (with material metadata)</li>
+<li>Checkbacks (with sample numbers)</li>
+<li>Species data (aggregated compositions)</li>
+<li>Sample metadata (redblue, missing flags)</li>
+</ul>
+</ul>
+
+<ol>
+<li>Create site details via <code>create<em>site</em>details()</code>:</li>
+<ul>
+<li><strong>Critical</strong>: Iterate through each checkback (not sites)</li>
+<li>For each checkback, find last treatment BEFORE checkback date</li>
+<li>Calculate days<em>to</em>checkback</li>
+<li>Join species composition from species_data</li>
+<li>Join redblue and missing flags</li>
+<li>Return one row per checkback with full context</li>
+</ul>
+</ul>
+
+<ol>
+<li>Apply filters:</li>
+<ul>
+<li>Date range on treatment dates</li>
+<li>Facility filter</li>
+<li>Material code filter</li>
+<li><strong>Species filter</strong> - Filter by species presence in composition string</li>
+</ul>
+</ul>
+
+<h3>Species Filter Implementation</h3>
+<ul>
+<li><strong>Dynamic population</strong>: Extract unique species from all species_composition strings</li>
+<li><strong>Options include</strong>:</li>
+<ul>
+<li>"All Species" (default - no filter)</li>
+<li>Individual species (e.g., "Ae. vexans", "Cu. pipiens")</li>
+<li>"[Sample Missing]" - Show only checkbacks with missing samples</li>
+<li>"[No Species Data]" - Show checkbacks without species data</li>
+</ul>
+<li><strong>Filter logic</strong>: <code>grepl(selected<em>species, species</em>composition, fixed=TRUE)</code></li>
+</ul>
+
+<h3>Data Model - Per-Checkback vs Per-Site</h3>
+<p><strong>IMPORTANT</strong>: Data model changed from per-site aggregation to per-checkback records.</p>
+
+<p><strong>Old Model (Incorrect)</strong>:</p>
+<ul>
+<li>One row per site</li>
+<li>Aggregated checkback data (first checkback, last checkback, etc.)</li>
+<li>Problem: Lost detail when multiple checkbacks per site</li>
+</ul>
+
+<p><strong>New Model (Current)</strong>:</p>
+<ul>
+<li>One row per checkback</li>
+<li>Same site can appear multiple times</li>
+<li>Each row shows: inspection → treatment → checkback chain</li>
+<li>Benefits: Full detail, proper species tracking, accurate timing</li>
+</ul>
+
+<p><strong>Column Name Changes</strong>:</p>
+<pre><code class="">
+OLD NAME                  → NEW NAME
+first_treatment          → treatment_date
+first_checkback          → checkback_date
+days_to_first_checkback  → days_to_checkback
+last_dip_count           → post_treatment_dips
+total_acres              → acres
+has_checkback            → (removed - all rows have checkbacks)
+</code></pre>
+
+<h2>Tab 3: Control Efficacy</h2>
+
+<h3>Purpose</h3>
+<p>Visualize treatment effectiveness by comparing pre-treatment vs post-treatment dip counts.</p>
+
+<h3>Key Features</h3>
+<ul>
+<li><strong>Dumbbell chart</strong> showing dip count changes:</li>
+<ul>
+<li>Each line connects pre-treatment (left) to post-treatment (right) dip count</li>
+<li>Color gradient by days to checkback (red = soon, purple = late)</li>
+<li>Interactive tooltips with site details</li>
+</ul>
+<li><strong>"Show Most Recent Brood Only"</strong> button - Filter to most recent treatment date</li>
+<li><strong>"Show All Broods"</strong> button - Display all checkbacks in date range</li>
+<li><strong>All checkbacks table</strong> - Detailed table of all sites with checkbacks</li>
+<li><strong>Shared filters</strong> - Date range, facility, material, species</li>
+</ul>
+
+<h3>Data Flow</h3>
+<ol>
+<li>Use same data sources as Status Tables tab</li>
+<li>Filter via <code>filtered<em>site</em>details<em>for</em>dip()</code>:</li>
+<ul>
+<li>Apply all standard filters</li>
+<li>Additional mode: "recent" vs "all"</li>
+<li>Recent mode: Filter to max(treatment_date) only</li>
+</ul>
+</ul>
+
+<ol>
+<li>Create visualization via <code>create<em>dip</em>changes_chart()</code>:</li>
+<ul>
+<li>Reshape data: pre<em>treatment</em>dips and post<em>treatment</em>dips as separate rows</li>
+<li>Create dumbbell plot with geom<em>line and geom</em>point</li>
+<li>Color by days<em>to</em>checkback gradient</li>
+<li>Add boxplots for distribution context</li>
+</ul>
+</ul>
+
+<h3>Dumbbell Chart Details</h3>
+<ul>
+<li><strong>X-axis</strong>: Treatment stage ("Pre-Treatment" vs "Post-Treatment")</li>
+<li><strong>Y-axis</strong>: Dip count (log scale for wide range)</li>
+<li><strong>Lines</strong>: Connect same site's pre/post values</li>
+<li><strong>Color gradient</strong>: </li>
+<ul>
+<li>Red: Early checkbacks (0 days)</li>
+<li>Orange → Yellow → Green: Mid-range</li>
+<li>Blue → Purple: Late checkbacks (30+ days)</li>
+</ul>
+<li><strong>Boxplots</strong>: Show distribution at each stage (faded, behind data)</li>
+<li><strong>Tooltips</strong>: Sitecode, facility, acres, material, days to checkback</li>
+</ul>
+
+<h3>Recent Brood Filter Logic</h3>
+<p><strong>Fixed Implementation</strong> (no longer depends on treatment_rounds):</p>
+<pre><code class="r">
+if (dip_filter_mode() == "recent") {
+  most_recent_date &lt;- max(details$treatment_date, na.rm = TRUE)
+  details &lt;- details %&gt;% filter(treatment_date &gt;= most_recent_date)
+}
+</code></pre>
+<ul>
+<li>Always shows checkbacks from the most recent treatment date in filtered data</li>
+<li>No dependency on Progress tab's treatment_rounds calculation</li>
+<li>Works immediately without needing to click refresh</li>
+</ul>
+
+<h2>Code Organization</h2>
+
+<h3>File Structure</h3>
+<pre><code class="">
+control_efficacy/
+├── app.R                      # Main app - UI and server logic
+├── data_functions.R           # Database queries (treatments, checkbacks, species)
+├── checkback_functions.R      # Treatment round and checkback processing
+├── display_functions.R        # Chart and table visualization functions
+├── test_all_functions.R       # Comprehensive function testing script
+└── NOTES.md                   # This file
+</code></pre>
+
+<h3>Key Functions by File</h3>
+
+<h4>app.R</h4>
+<ul>
+<li><code>treatment<em>data</em>progress()</code> - Loads treatments when refresh clicked</li>
+<li><code>checkback<em>data</em>progress()</code> - Loads checkbacks when refresh clicked</li>
+<li><code>species<em>data</em>for_checkbacks()</code> - Loads species composition data</li>
+<li><code>treatment<em>rounds</em>progress()</code> - Calculates treatment rounds for Progress tab</li>
+<li><code>checkback<em>status</em>progress()</code> - Calculates checkback completion status</li>
+<li><code>site_details()</code> - Creates detailed per-checkback records with species</li>
+<li><code>filtered<em>site</em>details()</code> - Applies all filters to site details</li>
+<li><code>filtered<em>site</em>details<em>for</em>dip()</code> - Additional filter for dip chart (recent mode)</li>
+</ul>
+
+<h4>data_functions.R</h4>
+<ul>
+<li><code>load<em>treatment</em>data(start<em>date, end</em>date)</code> - Queries air treatments with material info</li>
+<ul>
+<li>Combines current and archive tables</li>
+<li>Joins with gis_sectcode for facility/zone</li>
+<li>Joins with mattype<em>list</em>targetdose for material metadata</li>
+<li>Returns: inspdate, facility, zone, sitecode, action, numdip, diphabitat, acres, matcode, mattype, effect_days</li>
+</ul>
+</ul>
+
+<ul>
+<li><code>load<em>checkback</em>data(treated<em>sites, start</em>date, end_date)</code> - Queries checkback inspections</li>
+<ul>
+<li>Filters to action = '4' (checkbacks only)</li>
+<li>Requires posttrt_p IS NOT NULL</li>
+<li>Includes sampnum_yr for species linkage</li>
+<li>Returns: inspdate, facility, zone, sitecode, action, numdip, diphabitat, posttrt<em>p, sampnum</em>yr</li>
+</ul>
+</ul>
+
+<ul>
+<li><code>load<em>species</em>data<em>for</em>checkbacks(checkbacks, start<em>date, end</em>date)</code> - Queries species composition</li>
+<ul>
+<li>Joins dblarv<em>species with lookup</em>specieslist (with type conversion)</li>
+<li>Joins dblarv_sample for redblue and missing flags</li>
+<li>Aggregates species per sampnum_yr into formatted strings</li>
+<li>Returns: sampnum<em>yr, species</em>composition, redblue, missing</li>
+</ul>
+</ul>
+
+<h4>checkback_functions.R</h4>
+<ul>
+<li><code>calculate<em>treatment</em>rounds(treatments, checkback<em>type, checkback</em>percent, checkback_number)</code> - Groups consecutive treatments into rounds</li>
+<ul>
+<li>Groups by facility</li>
+<li>Identifies gaps &gt; 1 day to split rounds</li>
+<li>Assigns round IDs</li>
+<li>Calculates round statistics</li>
+<li>Returns: facility, round<em>id, start</em>date, end<em>date, days</em>duration, sites<em>treated, total</em>sites, total_acres</li>
+</ul>
+</ul>
+
+<ul>
+<li><code>calculate<em>checkback</em>status(rounds, checkbacks, treatments)</code> - Matches checkbacks to rounds</li>
+<ul>
+<li>Links checkbacks to treatment rounds by facility and date</li>
+<li>Counts checkbacks per round</li>
+<li>Calculates completion percentages</li>
+<li>Tracks timing metrics</li>
+<li>Returns: round data + checkback<em>count, first</em>checkback<em>date, days</em>to<em>first</em>checkback, pct_checked</li>
+</ul>
+</ul>
+
+<ul>
+<li><code>create<em>site</em>details(treatments, checkbacks, species_data)</code> - Creates per-checkback detail records</li>
+<ul>
+<li><strong>CRITICAL</strong>: Iterates through checkbacks (not sites)</li>
+<li>For each checkback: finds last treatment BEFORE that checkback</li>
+<li>Calculates days<em>to</em>checkback = checkback<em>date - treatment</em>date</li>
+<li>Joins species<em>composition from species</em>data by sampnum_yr</li>
+<li>Joins redblue and missing from species_data</li>
+<li>Returns: sitecode, facility, inspection<em>date, treatment</em>date, checkback<em>date, pre</em>treatment<em>dips, post</em>treatment<em>dips, acres, matcode, mattype, effect</em>days, days<em>to</em>checkback, species_composition, redblue, missing</li>
+</ul>
+</ul>
+
+<h4>display_functions.R</h4>
+<ul>
+<li><code>create<em>checkback</em>progress_chart(data)</code> - Stacked bar chart for Progress tab</li>
+<ul>
+<li>Shows sites treated vs sites checked per facility</li>
+<li>Facility color scheme</li>
+<li>Completion percentage labels</li>
+</ul>
+</ul>
+
+<ul>
+<li><code>create<em>dip</em>changes<em>chart(site</em>details, theme)</code> - Dumbbell plot for Control Efficacy tab</li>
+<ul>
+<li>Reshapes data for pre/post comparison</li>
+<li>Creates connected points with lines</li>
+<li>Color gradient by days<em>to</em>checkback</li>
+<li>Adds boxplot context</li>
+<li>Interactive plotly output</li>
+</ul>
+</ul>
+
+<ul>
+<li><code>create<em>efficacy</em>scatter(site<em>details, selected</em>sites)</code> - Scatter plot alternative</li>
+<ul>
+<li>Shows post<em>treatment</em>dips vs days<em>to</em>checkback</li>
+<li>Highlights selected sites</li>
+<li>Shows trend lines</li>
+</ul>
+</ul>
+
+<h2>Data Quality and Edge Cases</h2>
+
+<h3>Missing Data Handling</h3>
+
+<p><strong>Missing Checkbacks:</strong></p>
+<ul>
+<li>Sites without checkbacks are excluded from site_details table</li>
+<li>Progress tab tracks completion rate (shows 0% if no checkbacks)</li>
+<li>Not an error - some treatments may not require checkbacks yet</li>
+</ul>
+
+<p><strong>Missing Species Data:</strong></p>
+<ul>
+<li>Species composition shows "[No Species Data]" when no species records</li>
+<li>Species composition shows "[Sample Missing]" when missing = TRUE in dblarv_sample</li>
+<li>Both cases are valid filter options in species filter</li>
+</ul>
+
+<p><strong>Missing Material Metadata:</strong></p>
+<ul>
+<li>effect<em>days defaults to NULL if not in mattype</em>list_targetdose</li>
+<li>mattype shows matcode if no match found</li>
+<li>Does not break calculations - just limits metadata display</li>
+</ul>
+
+<p><strong>Missing Facility/Zone:</strong></p>
+<ul>
+<li>Some sites may not have gis_sectcode matches</li>
+<li>facility and zone will be NULL</li>
+<li>Filters handle NULL appropriately (excluded from specific facility filters)</li>
+</ul>
+
+<h3>Type Conversion Gotcha</h3>
+<p><strong>CRITICAL</strong>: Species join requires type conversion:</p>
+<pre><code class="sql">
+-- WRONG (will fail):
+LEFT JOIN lookup_specieslist spec ON spp.spp = spec.sppcode
+
+-- CORRECT:
+LEFT JOIN lookup_specieslist spec ON spp.spp = CAST(spec.sppcode AS VARCHAR)
+</code></pre>
+<ul>
+<li><code>dblarv_species.spp</code> is VARCHAR</li>
+<li><code>lookup_specieslist.sppcode</code> is INTEGER</li>
+<li>Without CAST, join returns zero matches</li>
+</ul>
+
+<h3>Treatment-Checkback Matching Logic</h3>
+<p><strong>Per-Checkback Model</strong> requires finding correct treatment:</p>
+<pre><code class="r">
+# For each checkback, find last treatment BEFORE checkback date
+treatment_before &lt;- treatments %&gt;%
+  filter(sitecode == checkback$sitecode,
+         inspdate &lt;= checkback$inspdate) %&gt;%
+  arrange(desc(inspdate)) %&gt;%
+  slice(1)
+</code></pre>
+<ul>
+<li>Prevents negative days<em>to</em>checkback</li>
+<li>Handles multiple treatments at same site</li>
+<li>Ensures proper treatment-checkback pairing</li>
+</ul>
+
+<h3>Species Composition Aggregation</h3>
+<p><strong>Multi-Species Samples</strong> require string aggregation:</p>
+<pre><code class="r">
+# Group by sampnum_yr and concatenate species
+species_by_sample &lt;- species_raw %&gt;%
+  group_by(sampnum_yr) %&gt;%
+  summarize(
+    species_composition = paste(
+      paste0(genus_abbrev, ". ", species, " (", per, "%)"),
+      collapse = ", "
+    )
+  )
+</code></pre>
+<ul>
+<li>Orders by percentage DESC before concatenation</li>
+<li>Handles 1-N species per sample</li>
+<li>Creates human-readable format</li>
+</ul>
+
+<h2>Testing</h2>
+
+<h3>Test Script: test<em>all</em>functions.R</h3>
+<p>Comprehensive testing framework that validates:</p>
+<ol>
+<li>Database connection</li>
+<li>Treatment data loading (with material metadata)</li>
+<li>Checkback data loading (with sample numbers)</li>
+<li>Species data loading (with type conversion and aggregation)</li>
+<li>Site details creation (per-checkback model)</li>
+<li>Display function rendering (chart generation)</li>
+</ul>
+
+<h3>Running Tests</h3>
+<pre><code class="r">
+# From control_efficacy directory
+Rscript test_all_functions.R
+
+# Or from R console
+source("test_all_functions.R")
+</code></pre>
+
+<h3>Test Output</h3>
+<ul>
+<li>✓ = Success</li>
+<li>✗ = Error</li>
+<li>⚠ = Warning or skipped</li>
+</ul>
+
+<h3>Common Test Issues</h3>
+<ul>
+<li><strong>No treatments in date range</strong>: Expand start_date range (default 90 days)</li>
+<li><strong>Checkback query hangs</strong>: Large site lists may be slow, test limits to 10 sites</li>
+<li><strong>Species data missing</strong>: Expected for samples without species collection</li>
+</ul>
+
+<h2>Known Issues and Warnings</h2>
+
+<h3>Harmless Warnings</h3>
+<p><strong>"Ignoring unknown aesthetics: text"</strong></p>
+<ul>
+<li>Appears when creating plotly charts</li>
+<li>Reason: ggplot doesn't recognize plotly's text aesthetic</li>
+<li>Impact: None - plotly uses text for tooltips correctly</li>
+<li>Status: Cosmetic warning, can be ignored</li>
+</ul>
+
+<h3>Performance Considerations</h3>
+<p><strong>Large Date Ranges:</strong></p>
+<ul>
+<li>Queries spanning years may be slow</li>
+<li>Checkback query with 100+ sites can take 10-30 seconds</li>
+<li>Recommendation: Use focused date ranges when possible</li>
+</ul>
+
+<p><strong>Species Data Loading:</strong></p>
+<ul>
+<li>Aggregation of species strings can be slow with 1000+ samples</li>
+<li>Progress indicator shows loading status</li>
+<li>Recommendation: Filter by facility to reduce data volume</li>
+</ul>
+
+<h2>Future Enhancements</h2>
+
+<h3>Potential Features</h3>
+<ul>
+<li><strong>Species color coding</strong> in display tables</li>
+<li><strong>Redblue filter</strong> in shared controls</li>
+<li><strong>Species summary statistics</strong> in value boxes</li>
+<li><strong>Species trend analysis</strong> over time</li>
+<li><strong>Material effectiveness comparison</strong> charts</li>
+<li><strong>Checkback timing optimization</strong> analysis</li>
+</ul>
+
+<h3>Data Model Improvements</h3>
+<ul>
+<li><strong>Add GPS coordinates</strong> to site details for mapping</li>
+<li><strong>Track multiple checkbacks per site</strong> with sequence numbers</li>
+<li><strong>Add weather data</strong> for treatment effectiveness context</li>
+<li><strong>Link to air site data</strong> for site characteristics</li>
+</ul>
+
+<h2>SQL Queries Reference</h2>
+
+<h3>Complete Treatment Query</h3>
+<pre><code class="sql">
+-- Union current and archive tables for date ranges spanning years
+SELECT 
+  insp.inspdate,
+  gis.facility,
+  gis.zone,
+  insp.sitecode,
+  insp.action,
+  insp.numdip,
+  insp.diphabitat,
+  insp.acres,
+  insp.matcode,
+  mat.mattype,
+  mat.effect_days,
+  insp.pkey_pg,
+  insp.insptime
+FROM public.dblarv_insptrt_current insp
+LEFT JOIN public.gis_sectcode gis ON left(insp.sitecode,7) = gis.sectcode
+LEFT JOIN public.mattype_list_targetdose mat ON insp.matcode = mat.matcode
+WHERE insp.action = 'A'
+  AND insp.inspdate &gt;= ?
+  AND insp.inspdate &lt;= ?
+
+UNION ALL
+
+SELECT 
+  insp.inspdate,
+  gis.facility,
+  gis.zone,
+  insp.sitecode,
+  insp.action,
+  insp.numdip,
+  insp.diphabitat,
+  NULL as acres,  -- Not in archive
+  insp.matcode,
+  mat.mattype,
+  mat.effect_days,
+  insp.pkey_pg,
+  NULL as insptime  -- Not in archive
+FROM public.dblarv_insptrt_archive insp
+LEFT JOIN public.gis_sectcode gis ON left(insp.sitecode,7) = gis.sectcode
+LEFT JOIN public.mattype_list_targetdose mat ON insp.matcode = mat.matcode
+WHERE insp.action = 'A'
+  AND insp.inspdate &gt;= ?
+  AND insp.inspdate &lt;= ?
+ORDER BY inspdate
+</code></pre>
+
+<h3>Complete Checkback Query</h3>
+<pre><code class="sql">
+-- Query checkbacks for treated sites
+SELECT 
+  insp.inspdate,
+  gis.facility,
+  gis.zone,
+  insp.sitecode,
+  insp.action,
+  insp.numdip,
+  insp.diphabitat,
+  insp.posttrt_p,
+  insp.sampnum_yr,
+  insp.pkey_pg
+FROM public.dblarv_insptrt_current insp
+LEFT JOIN public.gis_sectcode gis ON left(insp.sitecode,7) = gis.sectcode
+WHERE insp.sitecode IN ('site1', 'site2', ...)
+  AND insp.action = '4'
+  AND insp.posttrt_p IS NOT NULL
+  AND insp.inspdate &gt;= ?
+  AND insp.inspdate &lt;= ?
+
+UNION ALL
+
+SELECT 
+  insp.inspdate,
+  gis.facility,
+  gis.zone,
+  insp.sitecode,
+  insp.action,
+  insp.numdip,
+  insp.diphabitat,
+  insp.posttrt_p,
+  insp.sampnum_yr,
+  insp.pkey_pg
+FROM public.dblarv_insptrt_archive insp
+LEFT JOIN public.gis_sectcode gis ON left(insp.sitecode,7) = gis.sectcode
+WHERE insp.sitecode IN ('site1', 'site2', ...)
+  AND insp.action = '4'
+  AND insp.posttrt_p IS NOT NULL
+  AND insp.inspdate &gt;= ?
+  AND insp.inspdate &lt;= ?
+ORDER BY inspdate
+</code></pre>
+
+<h3>Complete Species Query with Type Conversion</h3>
+<pre><code class="sql">
+-- Query species composition with required type conversion
+SELECT 
+  spp.sampnum_yr,
+  spp.spp,
+  spp.per,
+  spec.genus,
+  spec.species,
+  samp.redblue,
+  samp.missing
+FROM public.dblarv_species_current spp
+LEFT JOIN public.lookup_specieslist spec 
+  ON spp.spp = CAST(spec.sppcode AS VARCHAR)  -- Type conversion essential!
+LEFT JOIN public.dblarv_sample_current samp 
+  ON spp.sampnum_yr = samp.sampnum_yr
+WHERE spp.sampnum_yr IN ('2024-12345', '2024-12346', ...)
+
+UNION ALL
+
+SELECT 
+  spp.sampnum_yr,
+  spp.spp,
+  spp.per,
+  spec.genus,
+  spec.species,
+  samp.redblue,
+  samp.missing
+FROM public.dblarv_species_archive spp
+LEFT JOIN public.lookup_specieslist spec 
+  ON spp.spp = CAST(spec.sppcode AS VARCHAR)
+LEFT JOIN public.dblarv_sample_archive samp 
+  ON spp.sampnum_yr = samp.sampnum_yr
+WHERE spp.sampnum_yr IN ('2024-12345', '2024-12346', ...)
+ORDER BY sampnum_yr, per DESC
+</code></pre>
+
+<h2>Changelog</h2>
+
+<h3>2024-12-05 - Per-Checkback Model Implementation</h3>
+<ul>
+<li><strong>BREAKING CHANGE</strong>: Restructured data model from per-site to per-checkback</li>
+<li>Changed <code>create<em>site</em>details()</code> to iterate through checkbacks instead of sites</li>
+<li>Added species composition tracking from dblarv_species tables</li>
+<li>Added sample metadata (redblue, missing flags) from dblarv_sample tables</li>
+<li>Implemented species filter with dynamic population</li>
+<li>Added material type and effect days from mattype<em>list</em>targetdose</li>
+<li>Updated all column names to reflect new model:</li>
+<ul>
+<li>treatment<em>date, checkback</em>date, days<em>to</em>checkback, post<em>treatment</em>dips, acres</li>
+</ul>
+<li>Fixed "Recent Brood Only" button to work without dependency on treatment_rounds</li>
+<li>Removed obsolete has_checkback filters (all rows have checkbacks now)</li>
+<li>Created comprehensive test suite (test<em>all</em>functions.R)</li>
+<li>Updated all display functions to use new column names</li>
+</ul>
+    </div>
+</body>
+</html>

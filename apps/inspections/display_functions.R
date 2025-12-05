@@ -43,7 +43,7 @@ format_inspection_gaps <- function(data) {
 }
 
 # Render the inspection gap table
-render_gap_table <- function(data) {
+render_gap_table <- function(data, theme = "MMCD") {
   formatted_data <- format_inspection_gaps(data)
   
   if (nrow(formatted_data) == 0) {
@@ -52,7 +52,7 @@ render_gap_table <- function(data) {
   }
   
   # Get status colors from db_helpers for consistent coloring
-  status_colors <- get_status_colors()
+  status_colors <- get_status_colors(theme = theme)
 
   DT::datatable(
     formatted_data,
@@ -61,7 +61,7 @@ render_gap_table <- function(data) {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(9, 'desc')),  # Sort by Days Since descending (column moved)
+      order = list(list(9, 'desc')),  # Sort by Days Since descending 
       initComplete = JS(
         "function(settings, json) {",
         "$(this.api().table().container()).find('table').css('font-size', '14px');",
@@ -124,7 +124,7 @@ format_wet_frequency_data <- function(data) {
 }
 
 # Render wet frequency table
-render_wet_frequency_table <- function(data) {
+render_wet_frequency_table <- function(data, theme = "MMCD") {
   formatted_data <- format_wet_frequency_data(data)
   
   if (nrow(formatted_data) == 0) {
@@ -133,7 +133,7 @@ render_wet_frequency_table <- function(data) {
   }
   
   # Get status colors from db_helpers for consistent coloring
-  status_colors <- get_status_colors()
+  status_colors <- get_status_colors(theme = theme)
   
   DT::datatable(
     formatted_data,
@@ -205,8 +205,8 @@ format_high_larvae_data <- function(data) {
            `Max Dip Count`, `Avg Dip Count`, `First High Date`, `Last High Date`)
 }
 
-# Render high larvae sites table
-render_high_larvae_table <- function(data) {
+# Render high larvae table
+render_high_larvae_table <- function(data, theme = "MMCD") {
   formatted_data <- format_high_larvae_data(data)
   
   if (nrow(formatted_data) == 0) {
@@ -215,7 +215,7 @@ render_high_larvae_table <- function(data) {
   }
   
   # Get status colors from db_helpers for consistent coloring
-  status_colors <- get_status_colors()
+  status_colors <- get_status_colors(theme = theme)
   
   DT::datatable(
     formatted_data,
@@ -257,8 +257,11 @@ render_high_larvae_table <- function(data) {
 # =============================================================================
 
 # Create wet frequency distribution chart
-create_wet_frequency_chart <- function(data) {
+create_wet_frequency_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
+  
+  # Get status colors for consistent theming
+  status_colors <- get_status_colors(theme = theme)
   
   # Create frequency bins using the correct column name 'wet_percentage' from raw data
   wet_freq_bins <- cut(data$wet_percentage, 
@@ -292,7 +295,7 @@ create_wet_frequency_chart <- function(data) {
 }
 
 # Create priority distribution chart
-create_priority_chart <- function(data) {
+create_priority_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
   
   priority_counts <- data %>%
@@ -301,7 +304,7 @@ create_priority_chart <- function(data) {
   
   # Get dynamic priority choices from db_helpers
   priority_choices <- get_priority_choices(include_all = FALSE)
-  status_colors <- get_status_colors()
+  status_colors <- get_status_colors(theme = theme)
   
   # Create color mapping that actually matches priority names
   colors <- c(
@@ -335,8 +338,11 @@ create_priority_chart <- function(data) {
 }
 
 # Create exceedance frequency distribution chart
-create_exceedance_frequency_chart <- function(data) {
+create_exceedance_frequency_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
+  
+  # Get status colors for consistent theming
+  status_colors <- get_status_colors(theme = theme)
   
   # Create frequency bins for exceedance rates with ordered levels
   freq_bins <- cut(data$exceedance_frequency,
@@ -380,8 +386,11 @@ create_exceedance_frequency_chart <- function(data) {
 }
 
 # Create larvae count distribution chart
-create_larvae_distribution_chart <- function(data) {
+create_larvae_distribution_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
+  
+  # Get status colors for consistent theming
+  status_colors <- get_status_colors(theme = theme)
   
   # Create bins for average dip count with ordered levels
   avg_bins <- cut(data$avg_dip_count, 
@@ -425,7 +434,7 @@ create_larvae_distribution_chart <- function(data) {
 }
 
 # Create facility gap chart - Stacked percentage comparison by facility only
-create_facility_gap_chart <- function(facility_analysis) {
+create_facility_gap_chart <- function(facility_analysis, theme = "MMCD") {
   if (nrow(facility_analysis) == 0) return(NULL)
   
   # Aggregate by facility only (sum across FOS areas)
@@ -445,6 +454,9 @@ create_facility_gap_chart <- function(facility_analysis) {
   # Map facility codes to display names
   facility_summary <- map_facility_names(facility_summary)
   
+  # Get themed status colors (green for active/good, red/orange for gaps/issues)
+  status_colors <- get_status_colors(theme = theme)
+  
   # Calculate overall percentage of green sites across all facilities
   overall_green_pct <- round(100 * sum(facility_summary$recently_inspected_sites) / sum(facility_summary$total_sites), 1)
   
@@ -458,8 +470,7 @@ create_facility_gap_chart <- function(facility_analysis) {
       text = ~paste("Recently Inspected:", recently_inspected_percentage, "%<br>", 
                    recently_inspected_sites, " of ", total_sites, " sites"),
       hovertemplate = "%{text}<extra></extra>",
-      hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12)),
-      marker = list(color = '#4CAF50')  # Green for good
+      marker = list(color = status_colors["active"], line = list(color = 'white', width = 1))
     ) %>%
     add_trace(
       x = ~facility_display, 
@@ -470,7 +481,7 @@ create_facility_gap_chart <- function(facility_analysis) {
                    gap_sites, " of ", total_sites, " sites"),
       hovertemplate = "%{text}<extra></extra>",
       hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12)),
-      marker = list(color = '#F44336')  # Red for gaps
+      marker = list(color = status_colors["needs_treatment"])
     ) %>%
     layout(
       title = list(text = "Inspection Gap Analysis by Facility", font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),

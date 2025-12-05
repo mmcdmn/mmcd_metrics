@@ -36,7 +36,11 @@ create_main_ui <- function() {
         menuItem("Inspection Gaps", tabName = "gaps", icon = icon("search")),
         menuItem("Wet Analysis", tabName = "analytics", icon = icon("tint")),
         menuItem("Larvae Threshold", tabName = "larvae", icon = icon("bug"))
-      )
+      ),
+      hr(),
+      selectInput("color_theme", "Color Theme:",
+                  choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                  selected = "MMCD")
     ),
     dashboardBody(
       # Use universal CSS from db_helpers for consistent text sizing

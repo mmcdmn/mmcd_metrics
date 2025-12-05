@@ -872,6 +872,81 @@ get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
   return(foreman_colors)
 }
 
+# Get theme-aware foreman colors based on facility colors
+# This version accepts a theme parameter and generates foreman colors as variations
+# of their facility's base color from the specified theme
+get_themed_foreman_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
+  foremen <- get_foremen_lookup()
+  if (nrow(foremen) == 0) return(c())
+  
+  # Get facility colors with the specified theme
+  facility_colors <- get_facility_base_colors(theme = theme)
+  foreman_colors <- character(nrow(foremen))
+  
+  # For each facility, create color variations for its foremen
+  for (facility in unique(foremen$facility)) {
+    facility_foremen <- foremen[foremen$facility == facility, ]
+    n_foremen <- nrow(facility_foremen)
+    
+    # Get base color for this facility from the theme
+    base_color <- facility_colors[facility]
+    if (is.na(base_color)) next
+    
+    # Convert base color to HSV for manipulation
+    rgb_base <- col2rgb(base_color) / 255
+    hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
+    
+    # Generate variations of the base color
+    if (n_foremen == 1) {
+      # Single foreman gets the facility base color
+      foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
+    } else {
+      # Sort foremen by shortname for consistent ordering
+      facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
+      base_hue <- hsv_base[1]
+      
+      # Use a smaller hue range for better facility color grouping
+      hue_range <- 0.08  # ±8% variation around facility color
+      
+      # Create distinct but related colors for foremen in this facility
+      for (i in seq_len(n_foremen)) {
+        foreman_name <- facility_foremen$shortname[i]
+        
+        # Calculate hue offset based on position
+        if (n_foremen == 2) {
+          # For 2 foremen: one slightly lighter, one slightly darker
+          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
+        } else {
+          # For 3+ foremen: spread across the hue range
+          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
+        }
+        
+        # Calculate foreman hue (keep within facility color family)
+        foreman_hue <- (base_hue + hue_offset) %% 1
+        
+        # Vary saturation and brightness more distinctly
+        if (n_foremen <= 3) {
+          # For small groups, use more pronounced saturation/value differences
+          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
+          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
+        } else {
+          # For larger groups, use smaller but still distinct differences
+          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
+          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
+        }
+        
+        # Assign the color for this foreman
+        foreman_idx <- which(foremen$shortname == foreman_name)
+        foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
+      }
+    }
+  }
+  
+  # Create named vector
+  names(foreman_colors) <- foremen$shortname
+  return(foreman_colors)
+}
+
 # Common date range options
 get_date_range_choices <- function() {
   return(list(

@@ -20,6 +20,16 @@ ui <- create_main_ui()
 # Define server logic
 server <- function(input, output, session) {
   
+  # Reactive theme handling
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Set global theme option when changed
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
+  
   # Helper for null coalescing
   `%||%` <- function(x, y) if (is.null(x)) y else x
   
@@ -195,7 +205,7 @@ server <- function(input, output, session) {
         options = list(dom = 't', ordering = FALSE)
       )
     } else {
-      render_gap_table(gap_data())
+      render_gap_table(gap_data(), theme = current_theme())
     }
   })
   
@@ -308,7 +318,7 @@ server <- function(input, output, session) {
       )
     } else {
       data <- wet_analysis_data()
-      render_wet_frequency_table(data$wet_frequency)
+      render_wet_frequency_table(data$wet_frequency, theme = current_theme())
     }
   })
   
@@ -356,7 +366,7 @@ server <- function(input, output, session) {
         options = list(dom = 't', ordering = FALSE)
       )
     } else {
-      render_high_larvae_table(larvae_data())
+      render_high_larvae_table(larvae_data(), theme = current_theme())
     }
   })
   
@@ -367,7 +377,7 @@ server <- function(input, output, session) {
     if (input$analyze_wet == 0 || input$load_data == 0) return(NULL)
     wet_result <- wet_analysis_data()
     if (length(wet_result) == 0 || is.null(wet_result$wet_frequency) || nrow(wet_result$wet_frequency) == 0) return(NULL)
-    create_wet_frequency_chart(wet_result$wet_frequency)
+    create_wet_frequency_chart(wet_result$wet_frequency, theme = current_theme())
   })
   
   # Priority distribution chart  
@@ -379,21 +389,21 @@ server <- function(input, output, session) {
     # Get unique sites with priority info
     site_data <- comp_data %>%
       distinct(sitecode, priority, .keep_all = TRUE)
-    create_priority_chart(site_data)
+    create_priority_chart(site_data, theme = current_theme())
   })
   
   # Exceedance frequency chart
   output$exceedance_frequency_chart <- renderPlotly({
     if (input$analyze_larvae == 0 || input$load_data == 0) return(NULL)
     larvae_data_result <- larvae_data()
-    create_exceedance_frequency_chart(larvae_data_result)
+    create_exceedance_frequency_chart(larvae_data_result, theme = current_theme())
   })
   
   # Larvae distribution chart
   output$larvae_distribution_chart <- renderPlotly({
     if (input$analyze_larvae == 0 || input$load_data == 0) return(NULL)
     larvae_data_result <- larvae_data()
-    create_larvae_distribution_chart(larvae_data_result)
+    create_larvae_distribution_chart(larvae_data_result, theme = current_theme())
   })
   
   # Facility gap chart
@@ -408,7 +418,7 @@ server <- function(input, output, session) {
     facility_analysis <- get_facility_gap_analysis(comp_data, gap_data_result)
     
     # Create the chart
-    create_facility_gap_chart(facility_analysis)
+    create_facility_gap_chart(facility_analysis, theme = current_theme())
   })
   
   # Download handlers for CSV exports

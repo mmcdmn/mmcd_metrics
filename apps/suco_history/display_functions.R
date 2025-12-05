@@ -18,7 +18,7 @@ convert_zone_selection <- function(zone_input) {
 
 # Create SUCO map (consolidates map and current_map functionality)
 # Function to create SUCO map with flexible data source
-create_suco_map <- function(data, input, data_source = "all") {
+create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
   # Get marker size multiplier
   size_multiplier <- input$marker_size
   
@@ -53,7 +53,7 @@ create_suco_map <- function(data, input, data_source = "all") {
   # Create color palette based on field count or facility
   if (input$group_by == "facility") {
     # Get facility colors and lookup from db_helpers
-    facility_colors <- get_facility_base_colors()
+    facility_colors <- get_facility_base_colors(theme = theme)
     facilities <- get_facility_lookup()
     foremen_lookup <- get_foremen_lookup()  # Add foremen lookup for popups
     foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)  # Ensure string format
@@ -147,7 +147,7 @@ create_suco_map <- function(data, input, data_source = "all") {
     }
     
     # Get both colors and lookup exactly as documented
-    foreman_colors <- get_foreman_colors()
+    foreman_colors <- get_themed_foreman_colors(theme = theme)
     foremen_lookup <- get_foremen_lookup()
     
     # Create mapping from foreman NUMBER to facility-based colors (same logic as plot)
@@ -304,7 +304,7 @@ create_suco_map <- function(data, input, data_source = "all") {
 }
 
 # Create location plotly chart (consolidates location_plotly and current_location_plotly)
-create_location_plotly <- function(top_locations_data, data_source = "all", mode = "visits") {
+create_location_plotly <- function(top_locations_data, data_source = "all", mode = "visits", theme = "MMCD") {
   if (nrow(top_locations_data) == 0) {
     empty_plot <- plotly::plot_ly() %>%
       plotly::add_annotations(
@@ -353,6 +353,17 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
   top_locations_data$location <- factor(top_locations_data$location, 
                                        levels = location_totals$location)
   
+  # Determine viridis option based on theme
+  viridis_option <- switch(theme,
+    "MMCD" = "viridis",
+    "IBM" = "plasma",
+    "Wong" = "magma",
+    "Tol" = "cividis",
+    "Viridis" = "viridis",
+    "ColorBrewer" = "inferno",
+    "viridis"  # default
+  )
+  
   # Create stacked bar chart
   p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
                                      fill = date_numeric, 
@@ -362,7 +373,7 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
                                                  "Species Found:<br>",
                                                  gsub("<br>", "<br>", species_summary)))) +
     geom_bar(stat = "identity", position = "stack", na.rm = TRUE) +
-    scale_fill_viridis_c(option = "viridis", name = "Date") +
+    scale_fill_viridis_c(option = viridis_option, name = "Date") +
     coord_flip() +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +  # Better scale handling
     labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +
@@ -394,7 +405,7 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
 }
 
 # Create trend plot (consolidates trend plotting logic)
-create_trend_plot <- function(aggregated_data, aggregated_data_current, input, data_source = "all") {
+create_trend_plot <- function(aggregated_data, aggregated_data_current, input, data_source = "all", theme = "MMCD") {
   # Get aggregated data based on data source
   if (data_source == "current") {
     data <- aggregated_data_current()
@@ -463,10 +474,10 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   
   # Get color scales from db_helpers based on grouping
   custom_colors <- if(group_col == "facility") {
-    get_facility_base_colors()
+    get_facility_base_colors(theme = theme)
   } else if(group_col == "foreman") {
     # Get the foreman colors from db_helpers
-    foreman_colors <- get_foreman_colors()
+    foreman_colors <- get_themed_foreman_colors(theme = theme)
     foremen_lookup <- get_foremen_lookup()
     
     # Create mapping from foreman NUMBER to facility-based colors
@@ -510,14 +521,14 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   # Get colors based on grouping - simplified since zones are never shown separately
   if (group_col == "facility") {
     # Standard facility colors
-    custom_colors <- get_facility_base_colors()
+    custom_colors <- get_facility_base_colors(theme = theme)
     alpha_values <- NULL
   } else if (group_col == "foreman") {
     # Get foremen lookup for mapping emp_num to shortname
     foremen_lookup <- get_foremen_lookup()
     
     # Standard foreman colors - map from shortname to emp_num
-    foreman_colors <- get_foreman_colors()
+    foreman_colors <- get_themed_foreman_colors(theme = theme)
     emp_colors <- character(0)
     
     for (i in 1:nrow(foremen_lookup)) {

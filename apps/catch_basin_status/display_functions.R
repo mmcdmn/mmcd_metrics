@@ -4,7 +4,7 @@
 library(stringr)
 
 # Function to create status chart 
-create_status_chart <- function(data, group_by = "facility", expiring_filter = "all") {
+create_status_chart <- function(data, group_by = "facility", expiring_filter = "all", theme = "MMCD") {
   if (is.null(data) || nrow(data) == 0) {
     plot <- ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -12,8 +12,8 @@ create_status_chart <- function(data, group_by = "facility", expiring_filter = "
     return(plot)
   }
   
-  # Get status colors from db_helpers
-  status_colors <- get_status_colors()
+  # Get status colors from db_helpers with theme support
+  status_colors <- get_status_colors(theme = theme)
   
   # Prepare y variables for layered bars with status-based colors
   # Gray layer: ALL wet catch basins (total) - shows all untreated/expired

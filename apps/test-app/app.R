@@ -30,7 +30,7 @@ ui <- dashboardPage(
       ),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Facilities", tabName = "facilities", icon = icon("building")),
-      menuItem("Foremen", tabName = "foremen", icon = icon("users")),
+      menuItem("FOS", tabName = "fos", icon = icon("users")),
       menuItem("Status Colors", tabName = "status_colors", icon = icon("palette")),
       menuItem("Treatment Plan Colors", tabName = "treatment_colors", icon = icon("spray-can")),
       menuItem("Mosquito Species Colors", tabName = "mosquito_colors", icon = icon("bug")),
@@ -53,15 +53,15 @@ ui <- dashboardPage(
         )
       ),
       
-      # Foremen tab
-      tabItem(tabName = "Foreman",
+      # FOS tab
+      tabItem(tabName = "fos",
         fluidRow(
           box(
-            title = "Foreman Information",
+            title = "FOS (Field Operations Supervisors) Information",
             status = "primary",
             solidHeader = TRUE,
             width = 12,
-            DTOutput("foremanInfo")
+            DTOutput("fosInfo")
           )
         )
       ),
@@ -218,12 +218,12 @@ server <- function(input, output, session) {
     df
   }, escape = FALSE, options = list(pageLength = 10))
   
-  # Foreman Information (with colors)
-  output$foremanInfo <- renderDT({
+  # FOS Information (with colors)
+  output$fosInfo <- renderDT({
     foremen <- get_foremen_lookup()
     if (nrow(foremen) == 0) return(NULL)
     
-    colors <- get_foreman_colors()
+    colors <- get_themed_foreman_colors(theme = current_theme())
     
     df <- data.frame(
       "Emp Num" = foremen$emp_num,

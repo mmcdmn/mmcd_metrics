@@ -251,7 +251,21 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
                                            time_period = "monthly", chart_type = "line",
                                            display_metric = "need_treatment", 
                                            start_date = NULL, end_date = NULL,
-                                           combine_zones = FALSE, metric_type = "sites") {
+                                           combine_zones = FALSE, metric_type = "sites", theme = "MMCD",
+                                           facility_filter = "all", foreman_filter = "all") {
+  
+  # Get facility colors for chart
+  facility_colors <- get_facility_base_colors(theme = theme)
+  status_colors <- get_status_colors(theme = theme)
+  
+  # Get theme-aware foreman colors (based on facility colors with theme)
+  foreman_colors <- get_themed_foreman_colors(theme = theme)
+  
+  # Get facility lookup to map full names to short codes
+  facility_lookup <- get_facility_lookup()
+  
+  # Get foremen lookup to map fosarea (emp_num) to foreman names
+  foremen_lookup <- get_foremen_lookup()
   
   # Get historical data
   hist_data <- get_historical_cattail_data(
@@ -270,15 +284,20 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
            theme_void())
   }
   
-  # Create group labels for inspections and treatments
+  # Create group labels for inspections and treatments BEFORE filtering
   if (nrow(inspection_data) > 0) {
+    # Map full facility names to short codes and fosarea to foreman names
     inspection_data <- inspection_data %>%
+      left_join(facility_lookup %>% select(facility_full = full_name, facility_short = short_name), by = c("facility" = "facility_full")) %>%
+      left_join(foremen_lookup %>% select(fosarea_num = emp_num, foreman_name = shortname), by = c("fosarea" = "fosarea_num")) %>%
       mutate(
+        facility_short = if_else(is.na(facility_short), facility, facility_short),  # Fallback to full name if no match
+        foreman_name = if_else(is.na(foreman_name), paste("FOS", fosarea), foreman_name),  # Fallback if no match
         group_label = case_when(
-          group_by == "facility" & !combine_zones ~ paste(facility, "- Zone", zone),
-          group_by == "facility" & combine_zones ~ facility,
-          group_by == "foreman" & !combine_zones ~ paste("FOS", fosarea, "- Zone", zone),
-          group_by == "foreman" & combine_zones ~ paste("FOS", fosarea),
+          group_by == "facility" & !combine_zones ~ paste(facility_short, "- Zone", zone),
+          group_by == "facility" & combine_zones ~ facility_short,
+          group_by == "foreman" & !combine_zones ~ paste(foreman_name, "- Zone", zone),
+          group_by == "foreman" & combine_zones ~ foreman_name,
           group_by == "zone" ~ paste("Zone", zone),
           TRUE ~ "All"
         )
@@ -287,17 +306,42 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
   
   # Create group labels for treatments
   if (nrow(treatment_data) > 0) {
+    # Map full facility names to short codes and fosarea to foreman names
     treatment_data <- treatment_data %>%
+      left_join(facility_lookup %>% select(facility_full = full_name, facility_short = short_name), by = c("facility" = "facility_full")) %>%
+      left_join(foremen_lookup %>% select(fosarea_num = emp_num, foreman_name = shortname), by = c("fosarea" = "fosarea_num")) %>%
       mutate(
+        facility_short = if_else(is.na(facility_short), facility, facility_short),  # Fallback to full name if no match
+        foreman_name = if_else(is.na(foreman_name), paste("FOS", fosarea), foreman_name),  # Fallback if no match
         group_label = case_when(
-          group_by == "facility" & !combine_zones ~ paste(facility, "- Zone", zone),
-          group_by == "facility" & combine_zones ~ facility,
-          group_by == "foreman" & !combine_zones ~ paste("FOS", fosarea, "- Zone", zone),
-          group_by == "foreman" & combine_zones ~ paste("FOS", fosarea),
+          group_by == "facility" & !combine_zones ~ paste(facility_short, "- Zone", zone),
+          group_by == "facility" & combine_zones ~ facility_short,
+          group_by == "foreman" & !combine_zones ~ paste(foreman_name, "- Zone", zone),
+          group_by == "foreman" & combine_zones ~ foreman_name,
           group_by == "zone" ~ paste("Zone", zone),
           TRUE ~ "All"
         )
       )
+  }
+  
+  # Apply facility filter AFTER group_label is created
+  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+    if (nrow(inspection_data) > 0) {
+      inspection_data <- inspection_data %>% filter(facility_short %in% facility_filter)
+    }
+    if (nrow(treatment_data) > 0) {
+      treatment_data <- treatment_data %>% filter(facility_short %in% facility_filter)
+    }
+  }
+  
+  # Apply foreman filter AFTER group_label is created
+  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
+    if (nrow(inspection_data) > 0) {
+      inspection_data <- inspection_data %>% filter(foreman_name %in% foreman_filter)
+    }
+    if (nrow(treatment_data) > 0) {
+      treatment_data <- treatment_data %>% filter(foreman_name %in% foreman_filter)
+    }
   }
   
   # Aggregate data based on display metric
@@ -350,7 +394,7 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
         ungroup() %>%
         group_by(inspection_year, group_label) %>%
         summarise(
-          value = sum(acres, na.rm = TRUE),
+          value = sum(coalesce(treated_acres, 0), na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -440,22 +484,75 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
       )
   }
   
+  # Create appropriate color mapping based on group_by
+  if (group_by == "facility") {
+    # For facility grouping, ensure we have the right color keys
+    if (combine_zones) {
+      # When zones are combined, group_label is just the facility code (e.g., "N", "E")
+      color_mapping <- facility_colors
+    } else {
+      # When zones are NOT combined, group_label is "N - Zone 1", etc.
+      # We need to extract the facility code and create new color mapping
+      unique_labels <- unique(plot_data$group_label)
+      color_mapping <- setNames(
+        sapply(unique_labels, function(label) {
+          # Extract facility code (first part before " - Zone")
+          facility_code <- sub(" - Zone.*", "", label)
+          facility_colors[facility_code]
+        }),
+        unique_labels
+      )
+    }
+  } else if (group_by == "foreman") {
+    # For foreman grouping, use foreman_colors which already has foreman shortnames as keys
+    # If we have more unique foremen than colors, extend the palette
+    unique_labels <- unique(plot_data$group_label)
+    
+    if (length(unique_labels) <= length(foreman_colors)) {
+      # Use foreman_colors directly
+      color_mapping <- foreman_colors[unique_labels]
+    } else {
+      # Need to extend the palette - combine foreman, facility, and status colors
+      extended_palette <- c(
+        foreman_colors,
+        unname(status_colors),
+        unname(facility_colors)
+      )
+      color_mapping <- setNames(
+        extended_palette[seq_along(unique_labels)],
+        unique_labels
+      )
+    }
+  } else if (group_by == "zone") {
+    # For zones, create simple colors
+    color_mapping <- c(
+      "Zone 1" = unname(status_colors["active"]),
+      "Zone 2" = unname(status_colors["planned"])
+    )
+  } else {
+    # For "all" or other groupings
+    color_mapping <- c("All" = unname(status_colors["active"]))
+  }
+  
   # Create base plot
   if (chart_type == "bar") {
     # Grouped bar chart
     p <- ggplot(plot_data, aes(x = year_label, y = value, fill = group_label)) +
       geom_col(position = "dodge", alpha = 0.8) +
+      scale_fill_manual(values = color_mapping) +
       scale_x_discrete(name = "Inspection Year (Fall-Summer Season)")
   } else if (chart_type == "stacked") {
     # Stacked bar chart
     p <- ggplot(plot_data, aes(x = year_label, y = value, fill = group_label)) +
       geom_col(position = "stack", alpha = 0.8) +
+      scale_fill_manual(values = color_mapping) +
       scale_x_discrete(name = "Inspection Year (Fall-Summer Season)")
   } else {
     # Default to line chart
     p <- ggplot(plot_data, aes(x = time_group, y = value, color = group_label)) +
       geom_line(linewidth = 1.2) +
       geom_point(size = 2) +
+      scale_color_manual(values = color_mapping) +
       scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
       labs(x = "Inspection Year (Fall-Summer Season)")
   }

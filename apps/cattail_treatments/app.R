@@ -34,7 +34,23 @@ ui <- dashboardPage(
       id = "sidebar",
       menuItem("Progress", tabName = "progress", icon = icon("chart-line")),
       menuItem("Historical", tabName = "historical", icon = icon("chart-line")),
-      menuItem("Map", tabName = "map", icon = icon("map"))
+      menuItem("Map", tabName = "map", icon = icon("map")),
+      
+      # Theme selector
+      selectInput(
+        "color_theme",
+        "Color Theme:",
+        choices = c(
+          "MMCD (Default)" = "MMCD",
+          "IBM Design" = "IBM",
+          "Color-Blind Friendly" = "Wong",
+          "Scientific" = "Tol",
+          "Viridis" = "Viridis",
+          "ColorBrewer" = "ColorBrewer"
+        ),
+        selected = "MMCD"
+      ),
+      tags$small(style = "color: #999; padding-left: 15px;", "Changes chart colors")
     )
   ),
   
@@ -222,6 +238,16 @@ ui <- dashboardPage(
 
 # Define Server
 server <- function(input, output, session) {
+  
+  # Reactive theme value
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Update global theme option when theme changes
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
   
   # Reactive values
   values <- reactiveValues(
@@ -518,7 +544,7 @@ server <- function(input, output, session) {
 
     combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
-    create_current_progress_chart(sites_data, input$group_by, input$progress_chart_type, combine_zones, metric_type)
+    create_current_progress_chart(sites_data, input$group_by, input$progress_chart_type, combine_zones, metric_type, theme = current_theme())
   })
   
   # Charts that need implementation
@@ -596,7 +622,10 @@ server <- function(input, output, session) {
         start_date = start_date,
         end_date = end_date,
         combine_zones = input$zone_display %in% c("combined", "p1", "p2"),
-        metric_type = metric_type
+        metric_type = metric_type,
+        theme = current_theme(),
+        facility_filter = if("all" %in% input$facility_filter || is.null(input$facility_filter)) "all" else input$facility_filter,
+        foreman_filter = if("all" %in% input$foreman_filter || is.null(input$foreman_filter)) "all" else input$foreman_filter
       )
       
       incProgress(1.0, detail = "Done")
@@ -642,7 +671,7 @@ server <- function(input, output, session) {
     } else {
       data.frame()
     }
-    create_cattail_map(sites_data, treatments_data, input$basemap)
+    create_cattail_map(sites_data, treatments_data, input$basemap, theme = current_theme())
   })
   
   output$map_details_table <- renderDT({

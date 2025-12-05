@@ -183,20 +183,21 @@ SELECT DISTINCT
   trt.inspdate,
   COALESCE(mat.effect_days, 30) AS effect_days,
   loc.s_type,
-  loc.facility,
-  loc.foreman,
-  loc.zone
-FROM public.loc_cxstruct loc
-LEFT JOIN public.dblarv_insptrt_archive trt 
-  ON loc.sitecode = trt.sitecode 
-  AND trt.list_type = 'STR'
+  gis.facility,
+  gis.fosarea as foreman,
+  gis.zone,
+  EXTRACT(YEAR FROM trt.inspdate) as treatment_year
+FROM public.dblarv_insptrt_archive trt
 LEFT JOIN public.mattype_list_targetdose mat 
   ON trt.matcode = mat.matcode
-WHERE trt.inspdate >= DATE '[start_year]-01-01'
+LEFT JOIN public.loc_cxstruct loc
+  ON trt.sitecode = loc.sitecode
+LEFT JOIN public.gis_sectcode gis
+  ON loc.sectcode = gis.sectcode
+WHERE trt.list_type = 'STR'
+  AND trt.inspdate >= DATE '[start_year]-01-01'
   AND trt.inspdate < DATE '[end_year+1]-01-01'
-  AND trt.sitecode IS NOT NULL
   AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
-  AND loc.zone IN ([zone_filter])
   [... additional filters ...]
 
 -- Current data (same pattern)
@@ -204,10 +205,11 @@ WHERE trt.inspdate >= DATE '[start_year]-01-01'
 ```
 
 **Key Points**:
-- Join FROM `loc_cxstruct` to ensure structure was active at treatment time
+- Use `gis_sectcode` for facility, foreman (fosarea), and zone to ensure data consistency
 - Filter: `enddate > inspdate` ensures structure existed when treated
-- `DISTINCT` avoids counting duplicate treatments
+- `DISTINCT` prevents duplicate records from gis_sectcode join
 - Queries both archive and current tables, combines results
+- Extract `treatment_year` for yearly aggregation
 
 
 ### Removed priority filtering

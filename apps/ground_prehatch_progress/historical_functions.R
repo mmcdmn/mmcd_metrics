@@ -291,7 +291,8 @@ aggregate_historical_data <- function(data, group_by = "facility",
 create_historical_chart <- function(data, chart_type = "stacked_bar", 
                                   display_metric = "treatments",
                                   time_period = "yearly",
-                                  group_by = "facility") {
+                                  group_by = "facility",
+                                  theme = "MMCD") {
   
   if (nrow(data) == 0) {
     return(plotly_empty() %>% 
@@ -317,7 +318,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
   
   if (group_by == "facility") {
     # Facility colors are keyed by short_name
-    facility_colors <- get_facility_base_colors()
+    facility_colors <- get_facility_base_colors(theme = theme)
     
     # Extract facility short name from group_label (e.g., "East" or "East (P1)")
     for (label in unique(data$group_label)) {
@@ -341,7 +342,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
     }
   } else if (group_by == "foreman") {
     # Foreman colors are keyed by shortname
-    foreman_colors <- get_foreman_colors()
+    foreman_colors <- get_themed_foreman_colors(theme = theme)
     foremen_lookup <- get_foremen_lookup()
     
     # Extract foreman shortname from group_label (e.g., "Smith J" or "Smith J (P1)")
@@ -364,7 +365,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
   # Create chart
   if (chart_type == "line") {
     p <- plot_ly(data, x = ~time_period, y = ~value, color = ~group_label,
-                type = 'scatter', mode = 'lines+markers', colors = unname(colors)) %>%
+                type = 'scatter', mode = 'lines+markers', colors = colors) %>%
       layout(
         title = list(text = paste("Historical", metric_label), font = list(size = 20)),
         xaxis = list(title = list(text = time_label, font = list(size = 18)), 
@@ -376,7 +377,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
       )
   } else {
     p <- plot_ly(data, x = ~time_period, y = ~value, color = ~group_label,
-                type = 'bar', colors = unname(colors)) %>%
+                type = 'bar', colors = colors) %>%
       layout(
         title = list(text = paste("Historical", metric_label), font = list(size = 20)),
         xaxis = list(title = list(text = time_label, font = list(size = 18)), 

@@ -13,6 +13,7 @@ suppressPackageStartupMessages({
   library(tibble) # For deframe function
   library(scales) # For percentage and number formatting
   library(DT)     # For data tables
+  library(plotly) # For interactive plots
 })
 
 # Source the shared database helper functions
@@ -21,6 +22,7 @@ source("../../shared/db_helpers.R")
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")
+source("historical_functions.R")
 
 # Load environment variables from .env file
 env_paths <- c(
@@ -85,6 +87,11 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
+      actionButton("refresh", "Refresh Data", 
+                   icon = icon("refresh"),
+                   class = "btn-primary btn-lg",
+                   style = "width: 100%; margin-bottom: 20px;"),
+      
       sliderInput("expiring_days", "Days Until Expiration:",
                   min = 1, max = 30, value = 7, step = 1),
       
@@ -121,6 +128,15 @@ ui <- fluidPage(
       # we removed priority filter for now because data is incomplete
       # not all facilities have priorities for the structures
       
+      selectInput("color_theme", "Color Theme:",
+                  choices = c("MMCD" = "MMCD",
+                              "IBM Design" = "IBM",
+                              "Wong (Color Blind Safe)" = "Wong",
+                              "Tol (Color Blind Safe)" = "Tol",
+                              "Viridis" = "Viridis",
+                              "ColorBrewer Set2" = "ColorBrewer"),
+                  selected = "MMCD"),
+      
       helpText(tags$b("Structure Status:"),
                tags$br(),
                tags$ul(
@@ -129,16 +145,11 @@ ui <- fluidPage(
                  tags$li(tags$b("U:"), "Unknown - Status not determined")
                )),
       
-      actionButton("refresh", "Refresh Data", 
-                   icon = icon("refresh"),
-                   class = "btn-primary btn-lg",
-                   style = "width: 100%; margin-top: 20px;"),
-      
       # Help text for historical metrics (collapsible)
       hr(),
       div(id = "help-section",
         tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-               style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
+               style = "color: #17a2b8; text-decoration: none; font-size: 15px;",
                HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
         div(style = "display: none;",
           create_help_text()
@@ -160,47 +171,58 @@ ui <- fluidPage(
                  DT::dataTableOutput("currentStructureTable")
         ),
         tabPanel("Historical Trends",
+                 br(),
                  fluidRow(
                    column(3,
-                          selectInput("start_year", "Start Year:",
-                                      choices = seq(2010, 2025),
-                                      selected = 2024)
+                          radioButtons("hist_time_period", "Time Period:",
+                                      choices = c("Yearly" = "yearly", "Weekly" = "weekly"),
+                                      selected = "yearly")
                    ),
                    column(3,
-                          selectInput("end_year", "End Year:",
-                                      choices = seq(2010, 2025),
-                                      selected = 2025)
+                          conditionalPanel(
+                            condition = "input.hist_time_period == 'yearly' && input.hist_display_metric_yearly == 'proportion'",
+                            selectInput("hist_chart_type_prop", "Chart Type:",
+                                        choices = c("Grouped Bar" = "grouped_bar",
+                                                    "Line Chart" = "line",
+                                                    "Pie Chart" = "pie"),
+                                        selected = "grouped_bar")
+                          ),
+                          conditionalPanel(
+                            condition = "!(input.hist_time_period == 'yearly' && input.hist_display_metric_yearly == 'proportion')",
+                            selectInput("hist_chart_type_regular", "Chart Type:",
+                                        choices = c("Stacked Bar" = "stacked_bar",
+                                                    "Grouped Bar" = "grouped_bar",
+                                                    "Line Chart" = "line",
+                                                    "Area Chart" = "area"),
+                                        selected = "stacked_bar")
+                          )
                    ),
                    column(3,
-                          radioButtons("hist_display_metric", "Display Metric:",
-                                      choices = c("Proportion (%)" = "proportion",
-                                                  "Number of Structures" = "raw_numbers"),
-                                      selected = "proportion",
-                                      inline = TRUE)
+                          conditionalPanel(
+                            condition = "input.hist_time_period == 'yearly'",
+                            radioButtons("hist_display_metric_yearly", "Display Metric:",
+                                       choices = c("Total Treatments" = "treatments",
+                                                  "Unique Structures Treated" = "structures_count",
+                                                  "Proportion of Structures (%)" = "proportion"),
+                                       selected = "treatments",
+                                       inline = TRUE)
+                          ),
+                          conditionalPanel(
+                            condition = "input.hist_time_period == 'weekly'",
+                            radioButtons("hist_display_metric_weekly", "Display Metric:",
+                                       choices = c("Active Treatments" = "weekly_active_treatments"),
+                                       selected = "weekly_active_treatments",
+                                       inline = TRUE)
+                          )
                    ),
                    column(3,
-                          selectInput("hist_chart_type", "Chart Type:",
-                                      choices = c("Line Chart" = "line",
-                                                  "Area Chart" = "area",
-                                                  "Step Chart" = "step",
-                                                  "Stacked Bar" = "stacked_bar",
-                                                  "Grouped Bar" = "grouped_bar"),
-                                      selected = "line")
+                          sliderInput("hist_year_range", "Year Range:",
+                                     min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
+                                     value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
+                                     step = 1, sep = "")
                    )
                  ),
-                 fluidRow(
-                   column(6,
-                          checkboxGroupInput("hist_average_lines", "Show Average Lines:",
-                                            choices = c("5-Year Average" = "avg_5yr",
-                                                        "10-Year Average" = "avg_10yr"),
-                                            selected = NULL,
-                                            inline = TRUE)
-                   ),
-                   column(6,
-                          helpText(tags$small("Note: Average lines use all available historical data (5 or 10 years) regardless of selected date range"))
-                   )
-                 ),
-                 plotOutput("historicalGraph", height = "600px"),
+                 plotlyOutput("historicalGraph", height = "600px"),
                  br(),
                  fluidRow(
                    column(10, h4("Historical Treatment Data")),
@@ -216,6 +238,20 @@ ui <- fluidPage(
 )
 
 server <- function(input, output) {
+  
+  # =============================================================================
+  # THEME HANDLING
+  # =============================================================================
+  
+  # Reactive for current theme
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Update global option when theme changes
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
   
   # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
@@ -244,11 +280,37 @@ server <- function(input, output) {
       group_by = isolate(input$group_by),
       structure_type_filter = isolate(input$structure_type_filter),
       priority_filter = "all",  # Default value since priority filter was removed from UI
-      start_year = isolate(input$start_year),
-      end_year = isolate(input$end_year),
-      hist_display_metric = isolate(input$hist_display_metric),
-      hist_chart_type = isolate(input$hist_chart_type),
-      hist_average_lines = isolate(input$hist_average_lines)
+      # Historical inputs
+      hist_time_period = isolate(input$hist_time_period),
+      hist_display_metric = if (isolate(input$hist_time_period) == "yearly") {
+        if (!is.null(input$hist_display_metric_yearly)) {
+          isolate(input$hist_display_metric_yearly)
+        } else {
+          "treatments"
+        }
+      } else {
+        if (!is.null(input$hist_display_metric_weekly)) {
+          isolate(input$hist_display_metric_weekly)
+        } else {
+          "weekly_active_treatments"
+        }
+      },
+      hist_chart_type = if (isolate(input$hist_time_period) == "yearly" && 
+                             !is.null(isolate(input$hist_display_metric_yearly)) &&
+                             isolate(input$hist_display_metric_yearly) == "proportion") {
+        if (!is.null(input$hist_chart_type_prop)) {
+          isolate(input$hist_chart_type_prop)
+        } else {
+          "grouped_bar"
+        }
+      } else {
+        if (!is.null(input$hist_chart_type_regular)) {
+          isolate(input$hist_chart_type_regular)
+        } else {
+          "stacked_bar"
+        }
+      },
+      hist_year_range = isolate(input$hist_year_range)
     )
   })
   
@@ -288,15 +350,26 @@ server <- function(input, output) {
   historical_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    get_historical_structure_data(
-      inputs$start_year,
-      inputs$end_year,
-      inputs$facility_filter,
-      inputs$structure_type_filter,
-      inputs$priority_filter,
-      inputs$status_types,
-      inputs$zone_filter
-    )
+    withProgress(message = 'Loading historical data...', value = 0, {
+      incProgress(0.3, detail = "Querying database...")
+      
+      hist_data <- create_historical_struct_data(
+        start_year = inputs$hist_year_range[1],
+        end_year = inputs$hist_year_range[2],
+        hist_time_period = inputs$hist_time_period,
+        hist_display_metric = inputs$hist_display_metric,
+        hist_group_by = inputs$group_by,
+        hist_zone_display = if (inputs$combine_zones) "combined" else "show-both",
+        facility_filter = inputs$facility_filter,
+        zone_filter = inputs$zone_filter,
+        structure_type_filter = inputs$structure_type_filter,
+        status_types = inputs$status_types
+      )
+      
+      incProgress(0.7, detail = "Processing data...")
+      
+      return(hist_data)
+    })
   })
   
   # Aggregate current data
@@ -318,8 +391,13 @@ server <- function(input, output) {
   
   # Render current progress chart
   output$structureGraph <- renderPlot({
-    req(input$refresh)  # Only render after refresh button clicked
+    req(aggregated_current())  # Require data exists
     inputs <- refresh_inputs()
+    
+    # CRITICAL: Read theme to create reactive dependency
+    current_theme_value <- input$color_theme
+    
+    cat("Current progress chart rendering with theme:", current_theme_value, "\n")
     
     data <- aggregated_current()
     
@@ -329,32 +407,28 @@ server <- function(input, output) {
       inputs$facility_filter,
       inputs$status_types,
       inputs$zone_filter,
-      inputs$combine_zones
+      inputs$combine_zones,
+      theme = current_theme_value
     )
   })
   
   # Render historical trends chart
-  output$historicalGraph <- renderPlot({
-    req(input$refresh)  # Only render after refresh button clicked
+  output$historicalGraph <- renderPlotly({
+    req(historical_data())  # Require data exists
     inputs <- refresh_inputs()
     
-    hist_data <- historical_data()
+    # CRITICAL: Read theme to create reactive dependency
+    current_theme_value <- input$color_theme
     
-    create_historical_trends_chart(
-      hist_data$treatments,
-      hist_data$total_structures,
-      inputs$start_year,
-      inputs$end_year,
-      inputs$group_by,
-      inputs$facility_filter,
-      inputs$structure_type_filter,
-      inputs$priority_filter,
-      inputs$status_types,
-      inputs$zone_filter,
-      inputs$combine_zones,
-      inputs$hist_display_metric,
-      inputs$hist_chart_type,
-      inputs$hist_average_lines
+    cat("Historical chart rendering with theme:", current_theme_value, "\n")
+    
+    create_historical_struct_chart(
+      data = historical_data(),
+      hist_time_period = inputs$hist_time_period,
+      hist_display_metric = inputs$hist_display_metric,
+      hist_group_by = inputs$group_by,
+      chart_type = inputs$hist_chart_type,
+      theme = current_theme_value
     )
   })
   
@@ -396,11 +470,10 @@ server <- function(input, output) {
   
   # Historical structure data table
   output$historicalStructureTable <- DT::renderDataTable({
-    req(input$refresh)  # Only render after refresh button clicked
+    req(input$refresh)  # Require refresh button click
+    data <- historical_data()
     
-    hist_data <- historical_data()
-    
-    if (is.null(hist_data) || nrow(hist_data$treatments) == 0) {
+    if (is.null(data) || nrow(data) == 0) {
       return(DT::datatable(
         data.frame("No data available" = character(0)),
         options = list(pageLength = 15, scrollX = TRUE),
@@ -408,29 +481,20 @@ server <- function(input, output) {
       ))
     }
     
-    # Process historical data for table display
-    table_data <- hist_data$treatments %>%
-      mutate(
-        year = year(inspdate),
-        month = month(inspdate, label = TRUE)
-      ) %>%
-      arrange(desc(inspdate)) %>%
-      select(sitecode, facility, zone, year, month, inspdate, s_type, foreman) %>%
+    # Format the aggregated data for display
+    table_data <- data %>%
+      arrange(desc(time_period)) %>%
+      select(time_period, group_name, count) %>%
       rename(
-        "Sitecode" = sitecode,
-        "Facility" = facility,
-        "Zone" = zone,
-        "Year" = year,
-        "Month" = month,
-        "Treatment Date" = inspdate,
-        "Structure Type" = s_type,
-        "FOS" = foreman
+        "Time Period" = time_period,
+        "Group" = group_name,
+        "Count" = count
       )
     
     DT::datatable(
       table_data,
       options = list(
-        pageLength = 15,
+        pageLength = 25,
         scrollX = TRUE
       ),
       rownames = FALSE
@@ -459,18 +523,10 @@ server <- function(input, output) {
       paste0("structure_historical_data_", Sys.Date(), ".csv")
     },
     content = function(file) {
-      hist_data <- historical_data()
+      data <- historical_data()
       
-      if (!is.null(hist_data) && nrow(hist_data$treatments) > 0) {
-        # Process historical data for CSV export
-        table_data <- hist_data$treatments %>%
-          mutate(
-            year = year(inspdate),
-            month = month(inspdate, label = TRUE)
-          ) %>%
-          arrange(desc(inspdate))
-        
-        export_csv_safe(table_data, file)
+      if (!is.null(data) && nrow(data) > 0) {
+        export_csv_safe(data, file)
       } else {
         export_csv_safe(data.frame("No data available" = character(0)), file)
       }

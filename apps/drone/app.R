@@ -39,6 +39,16 @@ ui <- drone_ui()
 
 server <- function(input, output, session) {
   
+  # Reactive theme handling
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Set global theme option when changed
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
+  
   # Initialize UI options (facility and FOS choices) on app startup - NO DATA QUERIES
   observe({
     # Load facility choices from db_helpers
@@ -204,7 +214,8 @@ server <- function(input, output, session) {
       show_zones_separately = show_zones_separately,
       zone_filter = inputs$zone_filter,
       for_historical = FALSE,
-      sectcode_facility_mapping = sectcode_facility_mapping
+      sectcode_facility_mapping = sectcode_facility_mapping,
+      theme = current_theme()
     )
     
     # For zone-separated display, use modified colors to differentiate P1 vs P2
@@ -213,7 +224,7 @@ server <- function(input, output, session) {
       # Create zone-aware colors by adjusting brightness for P1 vs P2
       if (inputs$group_by == "facility") {
         # Get base facility colors
-        base_facility_colors <- get_facility_base_colors()
+        base_facility_colors <- get_facility_base_colors(theme = current_theme())
         
         # Create colors for P1 (normal) and P2 (darker)
         zone_colors <- character()
@@ -237,7 +248,7 @@ server <- function(input, output, session) {
         custom_colors <- zone_colors
       } else if (inputs$group_by == "foreman") {
         # Similar logic for foreman colors
-        base_foreman_colors <- get_foreman_colors()
+        base_foreman_colors <- get_themed_foreman_colors(theme = current_theme())
         foremen_lookup <- get_foremen_lookup()
         
         zone_colors <- character()
@@ -545,7 +556,8 @@ server <- function(input, output, session) {
       drone_types = c("Y", "M", "C"),
       facility_filter = inputs$facility_filter,
       foreman_filter = inputs$foreman_filter,
-      analysis_date = inputs$analysis_date
+      analysis_date = inputs$analysis_date,
+      theme = current_theme()
     ) +
       theme(
         axis.text.x = element_text(size = 14, face = "bold")
@@ -694,7 +706,8 @@ server <- function(input, output, session) {
         show_zones_separately = !inputs$combine_zones && length(inputs$zone_filter) > 1,
         zone_filter = inputs$zone_filter,
         for_historical = FALSE,
-        sectcode_facility_mapping = NULL
+        sectcode_facility_mapping = NULL,
+        theme = current_theme()
       )
     }
     

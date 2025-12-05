@@ -276,7 +276,7 @@ create_historical_cb_data <- function(start_year, end_year,
 }
 
 # Create historical chart
-create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar") {
+create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar", theme = "MMCD") {
   if (is.null(data) || nrow(data) == 0) {
     return(plot_ly() %>%
       layout(
@@ -300,10 +300,11 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
   # Get group colors if applicable
   group_colors <- NULL
   if (hist_group_by == "facility" && "facility" %in% names(data)) {
-    facility_colors <- get_facility_base_colors()
+    facility_colors <- get_facility_base_colors(theme = theme)
     group_colors <- facility_colors
   } else if (hist_group_by == "foreman" && "fosarea" %in% names(data)) {
-    foreman_colors <- get_foreman_colors()
+    # Use the new theme-aware foreman colors function
+    foreman_colors <- get_themed_foreman_colors(theme = theme)
     group_colors <- foreman_colors
   }
   
@@ -313,7 +314,7 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
     if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
                    type = 'bar',
-                   colors = unname(group_colors)) %>%
+                   colors = group_colors) %>%  # Keep names for proper matching
         layout(barmode = 'stack')
     } else {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
@@ -325,7 +326,7 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
     if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
                    type = 'bar',
-                   colors = unname(group_colors)) %>%
+                   colors = group_colors) %>%  # Keep names for proper matching
         layout(barmode = 'group')
     } else {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
@@ -337,7 +338,7 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
     if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
                    type = 'scatter', mode = 'lines', fill = 'tonexty',
-                   colors = unname(group_colors)) %>%
+                   colors = group_colors) %>%  # Keep names for proper matching
         layout(hovermode = 'x unified')
     } else {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
@@ -349,7 +350,7 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
     if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
                    type = 'scatter', mode = 'lines+markers',
-                   colors = unname(group_colors))
+                   colors = group_colors)  # Keep names for proper matching
     } else {
       p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
                    type = 'scatter', mode = 'lines+markers')

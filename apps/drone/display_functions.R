@@ -27,7 +27,7 @@ create_zone_groups <- function(data, group_col) {
 #' @return Named vector of colors or list with colors and alpha values
 get_visualization_colors <- function(group_by, data, show_zones_separately = FALSE, 
                                      zone_filter = NULL, for_historical = FALSE,
-                                     sectcode_facility_mapping = NULL) {
+                                     sectcode_facility_mapping = NULL, theme = "MMCD") {
   
   # For MMCD grouping, return no colors (will use default single color)
   if (group_by == "mmcd_all") {
@@ -39,24 +39,26 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
       # For HISTORICAL: Use zone-aware facility colors with alpha differentiation
       facility_result <- get_facility_base_colors(
         alpha_zones = zone_filter,
-        combined_groups = unique(data$combined_group)
+        combined_groups = unique(data$combined_group),
+        theme = theme
       )
       return(facility_result$colors)
     } else {
       # For CURRENT: Use standard facility colors (no zone differentiation)
-      return(get_facility_base_colors())
+      return(get_facility_base_colors(theme = theme))
     }
   } else if (group_by == "foreman") {
     if (show_zones_separately && for_historical) {
       # Get zone-aware foreman colors for historical
       foreman_result <- get_foreman_colors(
         alpha_zones = zone_filter,
-        combined_groups = unique(data$combined_group)
+        combined_groups = unique(data$combined_group),
+        theme = theme
       )
       return(foreman_result$colors)
     } else {
       # Standard foreman colors - map employee numbers to facility-based colors
-      foreman_colors <- get_foreman_colors()
+      foreman_colors <- get_themed_foreman_colors(theme = theme)
       foremen_lookup <- get_foremen_lookup()
       
       # Create mapping from foreman NUMBER to facility-based colors
@@ -79,7 +81,7 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
   } else if (group_by == "sectcode") {
     # For sectcode, use the provided sectcode-to-facility mapping
     if (!is.null(sectcode_facility_mapping) && nrow(sectcode_facility_mapping) > 0) {
-      facility_colors <- get_facility_base_colors()
+      facility_colors <- get_facility_base_colors(theme = theme)
       sectcode_colors <- character(0)
       
       # Map each sectcode to its facility's color
@@ -95,10 +97,10 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
       return(sectcode_colors)
     } else {
       # Fallback to facility colors
-      return(get_facility_base_colors())
+      return(get_facility_base_colors(theme = theme))
     }
   } else {
-    return(get_facility_base_colors())
+    return(get_facility_base_colors(theme = theme))
   }
 }
 
@@ -389,7 +391,8 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
 create_historical_plot <- function(zone_filter, combine_zones, zone_option, group_by, 
                                    hist_time_period, hist_chart_type, hist_display_metric,
                                    prehatch_only, hist_start_year, hist_end_year,
-                                   drone_types, facility_filter, foreman_filter, analysis_date) {
+                                   drone_types, facility_filter, foreman_filter, analysis_date,
+                                   theme = "MMCD") {
   
   # Load required libraries
   library(ggplot2)
@@ -445,11 +448,12 @@ create_historical_plot <- function(zone_filter, combine_zones, zone_option, grou
         data = temp_data, 
         show_zones_separately = TRUE,
         zone_filter = zone_filter,
-        for_historical = TRUE
+        for_historical = TRUE,
+        theme = theme
       )
     } else {
       # For combined facilities, get standard facility colors
-      colors <- get_facility_base_colors()
+      colors <- get_facility_base_colors(theme = theme)
       # Map display names to colors
       color_mapping <- character(0)
       for (display_name in unique(historical_data$group_label)) {
@@ -479,20 +483,12 @@ create_historical_plot <- function(zone_filter, combine_zones, zone_option, grou
         data = temp_data, 
         show_zones_separately = TRUE,
         zone_filter = zone_filter,
-        for_historical = TRUE
+        for_historical = TRUE,
+        theme = theme
       )
     } else {
-      # For combined foremen, map shortnames to facility colors
-      foremen_lookup <- get_foremen_lookup()
-      foreman_colors <- get_foreman_colors()
-      
-      color_mapping <- character(0)
-      for (display_name in unique(historical_data$group_label)) {
-        if (display_name %in% names(foreman_colors)) {
-          color_mapping[display_name] <- foreman_colors[display_name]
-        }
-      }
-      colors <- color_mapping
+      # For combined foremen, use themed foreman colors directly
+      colors <- get_themed_foreman_colors(theme = theme)
     }
   } else {
     # For MMCD or other groupings, use NULL (default colors)

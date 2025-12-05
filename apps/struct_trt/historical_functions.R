@@ -200,14 +200,23 @@ create_historical_struct_data <- function(start_year, end_year,
         mutate(time_period = as.character(treatment_year)) %>%
         group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
         summarise(count = n(), .groups = "drop")
-    } else {
-      # Count unique structures treated per year (structures_count)
+    } else if (hist_display_metric == "structures_count") {
+      # Count unique structures treated per year
       result <- treatments %>%
         mutate(time_period = as.character(treatment_year)) %>%
         group_by(time_period, facility, facility_full, zone, fosarea, foreman_name, sitecode) %>%
         summarise(.groups = "drop") %>%
         group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
         summarise(count = n(), .groups = "drop")
+    } else {
+      # proportion - Count treated structures, we'll calculate proportion AFTER getting totals
+      # DO NOT calculate proportion yet - just count treated structures per group
+      result <- treatments %>%
+        mutate(time_period = as.character(treatment_year)) %>%
+        group_by(time_period, facility, facility_full, zone, fosarea, foreman_name, sitecode) %>%
+        summarise(.groups = "drop") %>%
+        group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
+        summarise(treated_structures = n(), .groups = "drop")  # COUNT OF TREATED STRUCTURES
     }
   } else {
     # Weekly aggregation
@@ -246,35 +255,159 @@ create_historical_struct_data <- function(start_year, end_year,
   }
   
   # Apply grouping
+  # Determine column name based on metric type
+  value_col <- if (hist_display_metric == "proportion") "treated_structures" else "count"
+  
   if (hist_group_by == "facility") {
     if (show_zones_separately) {
       result <- result %>%
         group_by(time_period, facility, facility_full, zone) %>%
-        summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+        summarise(!!value_col := sum(!!sym(value_col), na.rm = TRUE), .groups = "drop") %>%
         mutate(group_name = paste0(facility_full, " P", zone))
     } else {
       result <- result %>%
         group_by(time_period, facility, facility_full) %>%
-        summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+        summarise(!!value_col := sum(!!sym(value_col), na.rm = TRUE), .groups = "drop") %>%
         mutate(group_name = facility_full)
     }
   } else if (hist_group_by == "foreman") {
     if (show_zones_separately) {
       result <- result %>%
         group_by(time_period, fosarea, foreman_name, zone) %>%
-        summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+        summarise(!!value_col := sum(!!sym(value_col), na.rm = TRUE), .groups = "drop") %>%
         mutate(group_name = paste0(foreman_name, " P", zone))
     } else {
       result <- result %>%
         group_by(time_period, fosarea, foreman_name) %>%
-        summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+        summarise(!!value_col := sum(!!sym(value_col), na.rm = TRUE), .groups = "drop") %>%
         mutate(group_name = foreman_name)
     }
   } else if (hist_group_by == "mmcd_all") {
     result <- result %>%
       group_by(time_period) %>%
-      summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+      summarise(!!value_col := sum(!!sym(value_col), na.rm = TRUE), .groups = "drop") %>%
       mutate(group_name = "MMCD")
+  }
+  
+  # NOW calculate proportion if that's the metric requested
+  if (hist_display_metric == "proportion") {
+    # Get total structures per group (using current active structures)
+    # IMPORTANT: Apply same filters as were used for treatments data
+    con <- get_db_connection()
+    
+    # Build filter conditions
+    facility_where <- ""
+    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
+      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
+      facility_where <- paste0("AND gis.facility IN (", facility_list, ")")
+    }
+    
+    zone_where <- ""
+    if (!is.null(zone_filter) && length(zone_filter) > 0) {
+      if (length(zone_filter) == 1) {
+        zone_where <- paste0("AND gis.zone = '", zone_filter, "'")
+      } else {
+        zone_where <- "AND gis.zone IN ('1', '2')"
+      }
+    }
+    
+    structure_type_where <- ""
+    if (!is.null(structure_type_filter) && length(structure_type_filter) > 0 && !"all" %in% structure_type_filter) {
+      if (length(structure_type_filter) == 1) {
+        structure_type_where <- get_structure_type_condition(structure_type_filter)
+      } else {
+        conditions <- sapply(structure_type_filter, get_structure_type_condition)
+        structure_type_where <- paste0("AND (", paste(gsub("^AND ", "", conditions), collapse = " OR "), ")")
+      }
+    }
+    
+    status_where <- ""
+    if (!is.null(status_types) && length(status_types) > 0) {
+      status_list <- paste0("'", status_types, "'", collapse = ", ")
+      status_where <- paste0("AND loc.status_udw IN (", status_list, ")")
+    }
+    
+    # Build query based on grouping
+    if (hist_group_by == "facility") {
+      if (show_zones_separately) {
+        query <- paste0("
+          SELECT 
+            gis.facility,
+            gis.zone,
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+          FROM loc_cxstruct loc
+          INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
+          WHERE 1=1
+          ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
+          GROUP BY gis.facility, gis.zone
+        ")
+        total_structures <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_structures, by = c("facility", "zone"))
+      } else {
+        query <- paste0("
+          SELECT 
+            gis.facility,
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+          FROM loc_cxstruct loc
+          INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
+          WHERE 1=1
+          ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
+          GROUP BY gis.facility
+        ")
+        total_structures <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_structures, by = "facility")
+      }
+    } else if (hist_group_by == "foreman") {
+      if (show_zones_separately) {
+        query <- paste0("
+          SELECT 
+            gis.fosarea,
+            gis.zone,
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+          FROM loc_cxstruct loc
+          INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
+          WHERE 1=1
+          ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
+          GROUP BY gis.fosarea, gis.zone
+        ")
+        total_structures <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_structures, by = c("fosarea", "zone"))
+      } else {
+        query <- paste0("
+          SELECT 
+            gis.fosarea,
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+          FROM loc_cxstruct loc
+          INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
+          WHERE 1=1
+          ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
+          GROUP BY gis.fosarea
+        ")
+        total_structures <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_structures, by = "fosarea")
+      }
+    } else if (hist_group_by == "mmcd_all") {
+      query <- paste0("
+        SELECT 
+          COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+        FROM loc_cxstruct loc
+        INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
+        WHERE 1=1
+        ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where
+      )
+      total_structures_count <- dbGetQuery(con, query)[[1]]
+      result <- result %>% mutate(total_structures = total_structures_count)
+    }
+    
+    # Calculate proportion as percentage
+    # treated_structures = count of structures that received treatment
+    # total_structures = count of ALL structures in that group (with filters applied)
+    result <- result %>%
+      mutate(
+        total_structures = ifelse(is.na(total_structures) | total_structures == 0, treated_structures, total_structures),
+        count = (treated_structures / total_structures) * 100  # Convert to percentage
+      ) %>%
+      select(-treated_structures, -total_structures)
   }
   
   return(result)
@@ -349,24 +482,57 @@ create_historical_struct_chart <- function(data,
   if (hist_time_period == "yearly") {
     y_title <- if (hist_display_metric == "treatments") {
       "Total Treatments"
-    } else {
+    } else if (hist_display_metric == "structures_count") {
       "Unique Structures Treated"
+    } else {
+      "Proportion of Structures Treated (%)"
     }
   } else {
-    y_title <- "Active Treatments"
+    y_title <- if (hist_display_metric == "proportion") {
+      "Proportion of Structures (%)"
+    } else {
+      "Active Treatments"
+    }
   }
   
   # Prepare x-axis title
   x_title <- if (hist_time_period == "yearly") "Year" else "Week"
   
-  # Create the plot based on chart type
-  p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-               colors = group_colors, type = "bar")
+  # VALIDATION: Block stacked bar for proportions
+  if (hist_display_metric == "proportion" && chart_type == "stacked_bar") {
+    chart_type <- "grouped_bar"  # Auto-switch to grouped bar
+  }
   
-  if (chart_type == "stacked_bar") {
-    p <- p %>% layout(barmode = "stack")
+  # Ensure colors are in correct format for Plotly (named vector matching group_name)
+  if (is.null(names(group_colors))) {
+    # If unnamed, try to match by position
+    group_names <- unique(data$group_name)
+    if (length(group_colors) >= length(group_names)) {
+      names(group_colors) <- group_names[seq_along(group_colors)]
+    }
+  }
+  
+  # Create the plot based on chart type
+  if (chart_type == "pie") {
+    # Pie chart - aggregate across all time periods for proportion view
+    pie_data <- data %>%
+      group_by(group_name) %>%
+      summarise(count = mean(count, na.rm = TRUE), .groups = "drop")  # Average proportion across years
+    
+    p <- plot_ly(pie_data, labels = ~group_name, values = ~count, 
+                 type = "pie",
+                 marker = list(colors = group_colors),
+                 textinfo = "label+percent",
+                 textfont = list(size = 16),
+                 hovertemplate = "%{label}<br>%{value:.1f}%<extra></extra>")
+  } else if (chart_type == "stacked_bar") {
+    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
+                 colors = group_colors, type = "bar") %>%
+      layout(barmode = "stack")
   } else if (chart_type == "grouped_bar") {
-    p <- p %>% layout(barmode = "group")
+    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
+                 colors = group_colors, type = "bar") %>%
+      layout(barmode = "group")
   } else if (chart_type == "line") {
     p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
                  colors = group_colors, type = "scatter", mode = "lines+markers")
@@ -377,34 +543,59 @@ create_historical_struct_chart <- function(data,
   }
   
   # Layout with larger fonts
-  p <- p %>%
-    layout(
-      title = list(
-        text = paste("Historical Structure Treatment Trends -", 
-                    if (hist_time_period == "yearly") "Yearly" else "Weekly"),
-        font = list(size = 20, family = "Arial, sans-serif")
-      ),
-      xaxis = list(
-        title = list(text = x_title, font = list(size = 18)),
-        tickfont = list(size = 16)
-      ),
-      yaxis = list(
-        title = list(text = y_title, font = list(size = 18)),
-        tickfont = list(size = 16)
-      ),
-      hovermode = "x unified",
-      legend = list(
-        title = list(text = "Group", font = list(size = 18)),
-        font = list(size = 16),
-        orientation = "v",
-        x = 1.02,
-        xanchor = "left",
-        y = 1,
-        yanchor = "top"
-      ),
-      font = list(size = 16, family = "Arial, sans-serif"),
-      margin = list(l = 80, r = 150, t = 80, b = 80)
-    )
+  if (chart_type == "pie") {
+    # Pie chart layout - no axes
+    p <- p %>%
+      layout(
+        title = list(
+          text = paste("Average Proportion of Structures Treated (",
+                      min(data$time_period), "-", max(data$time_period), ")"),
+          font = list(size = 20, family = "Arial, sans-serif")
+        ),
+        showlegend = TRUE,
+        legend = list(
+          font = list(size = 16),
+          orientation = "v",
+          x = 1.02,
+          xanchor = "left",
+          y = 1,
+          yanchor = "top"
+        ),
+        font = list(size = 16, family = "Arial, sans-serif"),
+        margin = list(l = 80, r = 150, t = 80, b = 80)
+      )
+  } else {
+    # Bar/line/area chart layout - with axes
+    p <- p %>%
+      layout(
+        title = list(
+          text = paste("Historical Structure Treatment Trends -", 
+                      if (hist_time_period == "yearly") "Yearly" else "Weekly"),
+          font = list(size = 20, family = "Arial, sans-serif")
+        ),
+        xaxis = list(
+          title = list(text = x_title, font = list(size = 18)),
+          tickfont = list(size = 16)
+        ),
+        yaxis = list(
+          title = list(text = y_title, font = list(size = 18)),
+          tickfont = list(size = 16),
+          ticksuffix = if (hist_display_metric == "proportion") "%" else ""
+        ),
+        hovermode = "x unified",
+        legend = list(
+          title = list(text = "Group", font = list(size = 18)),
+          font = list(size = 16),
+          orientation = "v",
+          x = 1.02,
+          xanchor = "left",
+          y = 1,
+          yanchor = "top"
+        ),
+        font = list(size = 16, family = "Arial, sans-serif"),
+        margin = list(l = 80, r = 150, t = 80, b = 80)
+      )
+  }
   
   return(p)
 }

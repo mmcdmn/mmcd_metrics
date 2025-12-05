@@ -179,19 +179,31 @@ ui <- fluidPage(
                                       selected = "yearly")
                    ),
                    column(3,
-                          selectInput("hist_chart_type", "Chart Type:",
-                                      choices = c("Stacked Bar" = "stacked_bar",
-                                                  "Grouped Bar" = "grouped_bar",
-                                                  "Line Chart" = "line",
-                                                  "Area Chart" = "area"),
-                                      selected = "stacked_bar")
+                          conditionalPanel(
+                            condition = "input.hist_time_period == 'yearly' && input.hist_display_metric_yearly == 'proportion'",
+                            selectInput("hist_chart_type_prop", "Chart Type:",
+                                        choices = c("Grouped Bar" = "grouped_bar",
+                                                    "Line Chart" = "line",
+                                                    "Pie Chart" = "pie"),
+                                        selected = "grouped_bar")
+                          ),
+                          conditionalPanel(
+                            condition = "!(input.hist_time_period == 'yearly' && input.hist_display_metric_yearly == 'proportion')",
+                            selectInput("hist_chart_type_regular", "Chart Type:",
+                                        choices = c("Stacked Bar" = "stacked_bar",
+                                                    "Grouped Bar" = "grouped_bar",
+                                                    "Line Chart" = "line",
+                                                    "Area Chart" = "area"),
+                                        selected = "stacked_bar")
+                          )
                    ),
                    column(3,
                           conditionalPanel(
                             condition = "input.hist_time_period == 'yearly'",
                             radioButtons("hist_display_metric_yearly", "Display Metric:",
                                        choices = c("Total Treatments" = "treatments",
-                                                  "Unique Structures Treated" = "structures_count"),
+                                                  "Unique Structures Treated" = "structures_count",
+                                                  "Proportion of Structures (%)" = "proportion"),
                                        selected = "treatments",
                                        inline = TRUE)
                           ),
@@ -283,7 +295,21 @@ server <- function(input, output) {
           "weekly_active_treatments"
         }
       },
-      hist_chart_type = isolate(input$hist_chart_type),
+      hist_chart_type = if (isolate(input$hist_time_period) == "yearly" && 
+                             !is.null(isolate(input$hist_display_metric_yearly)) &&
+                             isolate(input$hist_display_metric_yearly) == "proportion") {
+        if (!is.null(input$hist_chart_type_prop)) {
+          isolate(input$hist_chart_type_prop)
+        } else {
+          "grouped_bar"
+        }
+      } else {
+        if (!is.null(input$hist_chart_type_regular)) {
+          isolate(input$hist_chart_type_regular)
+        } else {
+          "stacked_bar"
+        }
+      },
       hist_year_range = isolate(input$hist_year_range)
     )
   })
@@ -365,8 +391,13 @@ server <- function(input, output) {
   
   # Render current progress chart
   output$structureGraph <- renderPlot({
-    req(input$refresh)  # Only render after refresh button clicked
+    req(aggregated_current())  # Require data exists
     inputs <- refresh_inputs()
+    
+    # CRITICAL: Read theme to create reactive dependency
+    current_theme_value <- input$color_theme
+    
+    cat("Current progress chart rendering with theme:", current_theme_value, "\n")
     
     data <- aggregated_current()
     
@@ -377,23 +408,27 @@ server <- function(input, output) {
       inputs$status_types,
       inputs$zone_filter,
       inputs$combine_zones,
-      theme = current_theme()
+      theme = current_theme_value
     )
   })
   
   # Render historical trends chart
   output$historicalGraph <- renderPlotly({
-    req(input$refresh)  # Require refresh button click
-    data <- historical_data()
+    req(historical_data())  # Require data exists
     inputs <- refresh_inputs()
     
+    # CRITICAL: Read theme to create reactive dependency
+    current_theme_value <- input$color_theme
+    
+    cat("Historical chart rendering with theme:", current_theme_value, "\n")
+    
     create_historical_struct_chart(
-      data = data,
+      data = historical_data(),
       hist_time_period = inputs$hist_time_period,
       hist_display_metric = inputs$hist_display_metric,
       hist_group_by = inputs$group_by,
       chart_type = inputs$hist_chart_type,
-      theme = current_theme()
+      theme = current_theme_value
     )
   })
   

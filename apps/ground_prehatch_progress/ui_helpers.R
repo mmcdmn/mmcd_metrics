@@ -33,7 +33,7 @@ create_filter_panel <- function() {
                      selected = "1,2",
                      inline = TRUE)
       ),
-      column(3,
+      column(2,
         radioButtons("group_by", "Group by:",
                     choices = c("All MMCD" = "mmcd_all",
                                "Facility" = "facility", 
@@ -41,6 +41,11 @@ create_filter_panel <- function() {
                                "Section" = "sectcode"),
                     selected = "mmcd_all",
                     inline = TRUE)
+      ),
+      column(2,
+        selectInput("color_theme", "Color Theme:",
+                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    selected = "MMCD")
       )
     ),
     

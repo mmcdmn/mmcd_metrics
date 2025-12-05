@@ -6,7 +6,7 @@ library(leaflet)  # For map functionality
 library(sf)       # For spatial data handling
 
 # Function to create progress chart 
-create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14, return_height_info = FALSE) {
+create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14, return_height_info = FALSE, theme = "MMCD") {
   if (nrow(data) == 0) {
     plot <- ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -27,7 +27,7 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
   }
   
   # Get status colors from db_helpers
-  status_colors <- get_status_colors()
+  status_colors <- get_status_colors(theme = theme)
 
   # Prepare y variables for layered bars 
   # Gray background: ALL prehatch sites (treated + expiring + expired + skipped + untreated)

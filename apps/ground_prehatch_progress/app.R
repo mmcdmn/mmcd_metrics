@@ -102,6 +102,16 @@ ui <- dashboardPage(
 
 server <- function(input, output, session) {
   
+  # Reactive theme handling
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Set global theme option when changed
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
+  
   # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
   # =============================================================================
@@ -383,7 +393,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only calculate after refresh button clicked
     inputs <- refresh_inputs()
     data <- aggregated_data()
-    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, return_height_info = TRUE)
+    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, return_height_info = TRUE, theme = current_theme())
   })
   
   # Render progress chart with dynamic height
@@ -468,7 +478,8 @@ server <- function(input, output, session) {
       chart_type = inputs$hist_chart_type,
       display_metric = inputs$hist_display_metric,
       time_period = inputs$hist_time_period,
-      group_by = inputs$group_by
+      group_by = inputs$group_by,
+      theme = current_theme()
     )
   })
   

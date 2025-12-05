@@ -223,7 +223,7 @@ server <- function(input, output, session) {
     foremen <- get_foremen_lookup()
     if (nrow(foremen) == 0) return(NULL)
     
-    colors <- get_foreman_colors()
+    colors <- get_themed_foreman_colors(theme = current_theme())
     
     df <- data.frame(
       "Emp Num" = foremen$emp_num,

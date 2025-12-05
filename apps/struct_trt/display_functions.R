@@ -2,15 +2,15 @@
 # Functions for creating charts and visualizations
 
 # Function to create current progress chart
-create_current_progress_chart <- function(data, group_by, facility_filter, status_types, zone_filter, combine_zones = FALSE) {
+create_current_progress_chart <- function(data, group_by, facility_filter, status_types, zone_filter, combine_zones = FALSE, theme = "MMCD") {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
            theme_void())
   }
   
-  # Get status colors from db_helpers
-  status_colors <- get_status_colors()
+  # Get status colors from db_helpers with theme
+  status_colors <- get_status_colors(theme = theme)
   
   # Prepare data for plotting with status-based colors
   data <- data %>%
@@ -56,7 +56,7 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
   p <- p +
     # Label total structures
     geom_text(aes(x = display_name, y = y_total, label = y_total), 
-              vjust = -0.5, size = 6, fontface = "bold") +
+              vjust = -0.5, size = 7, fontface = "bold") +
     coord_flip() +
     labs(
       title = sprintf("Structures with Active and Expiring Treatments (%s, Status: %s, %s)",
@@ -72,14 +72,14 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
     scale_y_continuous(limits = c(0, y_max)) +
     theme_minimal() +
     theme(
-      plot.title = element_text(face = "bold", size = 16),
+      plot.title = element_text(face = "bold", size = 20),
       axis.title = element_text(face = "bold", size = 18),
       axis.title.x = element_text(face = "bold", size = 20),
-      axis.text = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 18, face = "bold"),
       axis.text.x = element_text(size = 18, face = "bold"),
       panel.grid.minor = element_blank(),
       plot.margin = margin(20, 20, 20, 20),
-      legend.title = element_blank(),
+      legend.title = element_text(size = 18, face = "bold"),
       legend.text = element_text(size = 16),
       legend.position = "bottom"
     )
@@ -97,24 +97,29 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
     geom_point(
       data = legend_data,
       aes(x = -Inf, y = -Inf, fill = status),
-      shape = 21,
-      size = 10,
+      shape = 22,
+      size = 6,
       alpha = 1,
       inherit.aes = FALSE
     ) +
     scale_fill_manual(
-      name = NULL,
+      name = "Treatment Status",
       values = setNames(legend_data$color, legend_data$status),
       breaks = legend_data$status,
       limits = legend_data$status,
       drop = FALSE
-    )
+    ) +
+    guides(fill = guide_legend(
+      override.aes = list(size = 8, shape = 22),
+      title.position = "top",
+      title.hjust = 0.5
+    ))
   
   return(p)
 }
 
 # Function to create historical trends chart
-create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE, display_metric = "proportion", chart_type = "line", average_lines = NULL) {
+create_historical_trends_chart <- function(treatments_data, total_structures, start_year, end_year, group_by, facility_filter, structure_type_filter, priority_filter, status_types, zone_filter, combine_zones = FALSE, display_metric = "proportion", chart_type = "line", average_lines = NULL, theme = "MMCD") {
   if (nrow(treatments_data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No historical data available"), size = 6) +
@@ -594,7 +599,7 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
   custom_colors <- NULL
   if (group_col == "facility" && (length(parsed_zones) == 1 || combine_zones)) {
     # Single zone OR combined zones - use basic facility colors mapped to display names
-    facility_colors <- get_facility_base_colors()
+    facility_colors <- get_facility_base_colors(theme = theme)
     # Map facility short names to display names
     custom_colors <- character(0)
     for (i in 1:nrow(treatment_trends)) {
@@ -626,12 +631,13 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
     # Get zone-aware facility colors
     zone_result <- get_facility_base_colors(
       alpha_zones = parsed_zones,
-      combined_groups = unique(treatment_trends$display_name)
+      combined_groups = unique(treatment_trends$display_name),
+      theme = theme
     )
     custom_colors <- zone_result$colors
   } else if (group_col == "foreman" && length(parsed_zones) == 1) {
-    # Single zone - use basic foreman colors mapped to display names
-    foreman_colors <- get_foreman_colors()
+    # Single zone - use themed foreman colors mapped to display names
+    foreman_colors <- get_themed_foreman_colors(theme = theme)
     # Map foreman shortnames to display names directly
     custom_colors <- character(0)
     for (i in 1:nrow(treatment_trends)) {
@@ -642,10 +648,11 @@ create_historical_trends_chart <- function(treatments_data, total_structures, st
       }
     }
   } else if (group_col == "foreman" && length(parsed_zones) > 1) {
-    # Multiple zones - use zone-aware foreman colors
-    zone_result <- get_foreman_colors(
+    # Multiple zones - use zone-aware themed foreman colors
+    zone_result <- get_themed_foreman_colors(
       alpha_zones = parsed_zones,
-      combined_groups = unique(treatment_trends$display_name)
+      combined_groups = unique(treatment_trends$display_name),
+      theme = theme
     )
     custom_colors <- zone_result$colors
   }

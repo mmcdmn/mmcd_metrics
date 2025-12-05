@@ -62,6 +62,13 @@ ui <- fluidPage(
       
       hr(),
       
+      # Color theme selector
+      selectInput("color_theme", "Color Theme:",
+                  choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                  selected = "MMCD"),
+      
+      hr(),
+      
       # Group by selection
       h4("Analysis Options"),
       radioButtons("group_by", "Group By:",
@@ -190,6 +197,16 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
+  
+  # Reactive theme handling
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Set global theme option when changed
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
   # Reactive values to prevent infinite loops between date controls
   updating_date_range <- reactiveVal(FALSE)
   updating_year_range <- reactiveVal(FALSE)
@@ -308,21 +325,21 @@ server <- function(input, output, session) {
   output$trend_plot <- renderPlot({
     req(input$refresh)  # Only render after refresh button clicked
     inputs <- refresh_inputs()
-    create_trend_plot(aggregated_data, aggregated_data_current, inputs, "all")
+    create_trend_plot(aggregated_data, aggregated_data_current, inputs, "all", theme = current_theme())
   })
   
   # Generate current trend plot (for current data tab)
   output$current_trend_plot <- renderPlot({
     req(input$refresh)  # Only render after refresh button clicked
     inputs <- refresh_inputs()
-    create_trend_plot(aggregated_data, aggregated_data_current, inputs, "current")
+    create_trend_plot(aggregated_data, aggregated_data_current, inputs, "current", theme = current_theme())
   })
   
   # Generate map
   output$map <- renderLeaflet({
     req(input$refresh)  # Only render after refresh button clicked
     inputs <- refresh_inputs()
-    create_suco_map(spatial_data(), inputs, "all")
+    create_suco_map(spatial_data(), inputs, "all", theme = current_theme())
   })
 
 
@@ -363,7 +380,7 @@ server <- function(input, output, session) {
   output$location_plotly <- plotly::renderPlotly({
     data <- filtered_data()
     top_locations <- get_top_locations(data, input$top_locations_mode, input$species_filter)
-    create_location_plotly(top_locations, "all", input$top_locations_mode)
+    create_location_plotly(top_locations, "all", input$top_locations_mode, theme = current_theme())
   })
   
   # React to plotly click and update map and tab
@@ -430,7 +447,7 @@ server <- function(input, output, session) {
     # Create color palette based on field count or facility (SAME LOGIC AS MAIN MAP)
     if (input$group_by == "facility") {
       # Get facility colors and lookup from db_helpers
-      facility_colors <- get_facility_base_colors()
+      facility_colors <- get_facility_base_colors(theme = current_theme())
       facilities <- get_facility_lookup()
       foremen_lookup <- get_foremen_lookup()  # Add foremen lookup for popups
       foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)  # Ensure string format
@@ -523,7 +540,7 @@ server <- function(input, output, session) {
       }
       
       # Get both colors and lookup exactly as documented
-      foreman_colors <- get_foreman_colors()
+      foreman_colors <- get_themed_foreman_colors(theme = current_theme())
       foremen_lookup <- get_foremen_lookup()
       
       # Create mapping from foreman NUMBER to facility-based colors (same logic as plot)
@@ -715,7 +732,7 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     data <- filtered_data_current()
     top_locations <- get_top_locations(data, inputs$top_locations_mode, inputs$species_filter)
-    create_location_plotly(top_locations, "current", inputs$top_locations_mode)
+    create_location_plotly(top_locations, "current", inputs$top_locations_mode, theme = current_theme())
   })
   
   # Handle current location plot clicks

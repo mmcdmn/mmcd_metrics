@@ -11,7 +11,7 @@ library(tidyr)
 library(dplyr)
 
 # Function to create treatment progress chart
-create_treatment_progress_chart <- function(data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE) {
+create_treatment_progress_chart <- function(data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE, theme = "MMCD") {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -22,8 +22,8 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
   n_items <- nrow(data)
   dynamic_height <- max(400, n_items * 80)
   
-  # Get status colors from db_helpers
-  status_colors <- get_status_colors()
+  # Get status colors from db_helpers with theme support
+  status_colors <- get_status_colors(theme = theme)
   
   # Prepare data for chart - apply zone separation if needed
   chart_data <- data %>%
@@ -53,11 +53,11 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
                        labels = c("Active Treatments", "Inactive Treatments", "Untreated Sites", "Planned Treatments"))
     )
   
-  # Define colors for categories
+  # Define colors for categories using theme-aware colors
   category_colors <- c(
     "Active Treatments" = unname(status_colors["active"]),
     "Inactive Treatments" = unname(status_colors["expired"]),
-    "Untreated Sites" = "#95a5a6",
+    "Untreated Sites" = "gray70",  # Neutral gray for untreated
     "Planned Treatments" = unname(status_colors["planned"])
   )
   
@@ -68,10 +68,13 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
       group_by(display_name, category) %>%
       summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
     
+    # Get facility colors for line chart
+    facility_colors <- get_facility_base_colors(theme = theme)
+    
     p <- ggplot(line_data, aes(x = category, y = count, color = display_name, group = display_name)) +
       geom_line(linewidth = 1.2) +
       geom_point(size = 3) +
-      scale_color_brewer(palette = "Set2") +
+      scale_color_manual(values = facility_colors) +
       labs(
         title = "Cattail Treatment Progress",
         x = "Status Category",
@@ -237,26 +240,21 @@ create_efficacy_chart <- function(efficacy_data, treatments_data) {
 }
 
 # Function to create treatment planning calendar
-create_planning_calendar <- function(plans_data) {
+create_planning_calendar <- function(plans_data, theme = "MMCD") {
   if (nrow(plans_data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No planning data available"), size = 6) +
            theme_void())
   }
   
+  # Get status colors for plan statuses
+  status_colors <- get_status_colors(theme = theme)
+  
   # Prepare calendar data
   calendar_data <- plans_data %>%
     mutate(
       plan_date = as.Date(planned_date),
-      plan_week = floor_date(plan_date, "week"),
-      plan_status_color = case_when(
-        plan_status == "Overdue" ~ "#e74c3c",
-        plan_status == "Due This Week" ~ "#f39c12", 
-        plan_status == "Due This Month" ~ "#f1c40f",
-        plan_status == "Completed" ~ "#27ae60",
-        plan_status == "Cancelled" ~ "#95a5a6",
-        TRUE ~ "#3498db"
-      )
+      plan_week = floor_date(plan_date, "week")
     ) %>%
     group_by(plan_week, plan_status) %>%
     summarise(
@@ -265,9 +263,20 @@ create_planning_calendar <- function(plans_data) {
       .groups = "drop"
     )
   
+  # Define plan status colors using theme
+  plan_status_colors <- c(
+    "Overdue" = unname(status_colors["expired"]),
+    "Due This Week" = unname(status_colors["expiring"]),
+    "Due This Month" = unname(status_colors["planned"]),
+    "Completed" = unname(status_colors["active"]),
+    "Cancelled" = "gray70",
+    "On Schedule" = unname(status_colors["active"])
+  )
+  
   # Create calendar view
   p <- ggplot(calendar_data, aes(x = plan_week, y = planned_treatments, fill = plan_status)) +
     geom_col(alpha = 0.8) +
+    scale_fill_manual(values = plan_status_colors, na.value = "gray70") +
     labs(
       title = "Treatment Planning Calendar",
       x = "Week",
@@ -423,7 +432,7 @@ create_plans_table <- function(plans_data, foremen_lookup) {
 }
 
 # Function to create cattail treatments map
-create_cattail_map <- function(spatial_data, treatments_data, basemap = "carto") {
+create_cattail_map <- function(spatial_data, treatments_data, basemap = "carto", theme = "MMCD") {
   
   # Robust null/empty data checking
   if (is.null(spatial_data) || !inherits(spatial_data, "sf") || nrow(spatial_data) == 0) {
@@ -487,13 +496,13 @@ create_cattail_map <- function(spatial_data, treatments_data, basemap = "carto")
       )
   }
   
-  # Define colors for treatment status
-  status_colors <- get_status_colors()
+  # Define colors for treatment status using theme
+  status_colors <- get_status_colors(theme = theme)
   status_color_map <- c(
     "Active" = unname(status_colors["active"]),
-    "Recently Expired" = "#f39c12",
+    "Recently Expired" = unname(status_colors["expiring"]),
     "Expired" = unname(status_colors["expired"]),
-    "Long Expired" = "#c0392b",
+    "Long Expired" = unname(status_colors["expired"]),
     "No Treatment" = unname(status_colors["unknown"])
   )
   
@@ -501,7 +510,7 @@ create_cattail_map <- function(spatial_data, treatments_data, basemap = "carto")
   pal <- colorFactor(
     palette = status_color_map,
     domain = c("Active", "Recently Expired", "Expired", "Long Expired", "No Treatment"),
-    na.color = "#7f7f7f"
+    na.color = "gray70"
   )
   
   # Create popup content
@@ -745,10 +754,14 @@ create_treatment_methods_chart <- function(treatments_data) {
 }
 
 # Function to create current cattail progress chart
-create_current_progress_chart <- function(sites_data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE, metric_type = "sites") {
+create_current_progress_chart <- function(sites_data, group_by = "facility", chart_type = "stacked", combine_zones = TRUE, metric_type = "sites", theme = "MMCD") {
   if (is.null(sites_data) || nrow(sites_data) == 0) {
     return(ggplot() + geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) + theme_void())
   }
+  
+  # Get status colors and facility colors
+  status_colors <- get_status_colors(theme = theme)
+  facility_colors <- get_facility_base_colors(theme = theme)
   
   # Determine y-axis label based on metric type
   y_label <- if (metric_type == "acres") "Acres" else "Number of Sites"
@@ -787,7 +800,7 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
     p <- ggplot(progress_data, aes(x = status, y = count, color = group_name, group = group_name)) +
       geom_line(linewidth = 1.2) +
       geom_point(size = 3) +
-      scale_color_brewer(palette = "Set2") +
+      scale_color_manual(values = facility_colors) +
       labs(
         title = "Current Cattail Inspection Progress",
         x = "Status",
@@ -808,9 +821,9 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
     p <- ggplot(progress_data, aes(x = group_name, y = count, fill = status)) +
       geom_col(position = "dodge", width = 0.7) +
       scale_fill_manual(
-        values = c("Inspected (Under Threshold)" = "lightgrey", 
-                   "Need Treatment" = "firebrick",
-                   "Treated" = "forestgreen")
+        values = c("Inspected (Under Threshold)" = "gray70", 
+                   "Need Treatment" = unname(status_colors["planned"]),
+                   "Treated" = unname(status_colors["active"]))
       ) +
       labs(
         title = "Current Cattail Inspection Progress",
@@ -833,9 +846,9 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
     p <- ggplot(progress_data, aes(x = group_name, y = count, fill = status)) +
       geom_col(position = "stack", width = 0.7) +
       scale_fill_manual(
-        values = c("Inspected (Under Threshold)" = "lightgrey", 
-                   "Need Treatment" = "firebrick",
-                   "Treated" = "forestgreen")
+        values = c("Inspected (Under Threshold)" = "gray70", 
+                   "Need Treatment" = unname(status_colors["planned"]),
+                   "Treated" = unname(status_colors["active"]))
       ) +
       labs(
         title = "Current Cattail Inspection Progress",

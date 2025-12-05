@@ -90,15 +90,15 @@ get_progress_data <- function(year, goal_column, custom_today) {
 }
 
 # Create progress plot
-create_progress_plot <- function(data) {
+create_progress_plot <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 0.5, y = 0.5, label = "No data available"), size = 6) +
            theme_void())
   }
   
-  # Get colors from centralized db_helpers
-  status_colors <- get_status_colors()
+  # Get colors from centralized db_helpers with theme support
+  status_colors <- get_status_colors(theme = theme)
   
   p <- ggplot(data, aes(x = facility_display, y = count, fill = type, 
                         text = paste0(type, ": ", count, " sites"))) +

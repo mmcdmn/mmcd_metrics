@@ -257,7 +257,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
 }
 
 # Create historical progress plot
-create_historical_progress_plot <- function(data, hist_years, metric = "sites") {
+create_historical_progress_plot <- function(data, hist_years, metric = "sites", theme = "MMCD") {
   if (nrow(data) == 0) {
     return(ggplot() + 
            geom_text(aes(x = 0.5, y = 0.5, label = "No data available"), size = 6) +
@@ -290,7 +290,7 @@ create_historical_progress_plot <- function(data, hist_years, metric = "sites") 
   }
   
   # Get status colors for the comparison types
-  status_colors <- get_status_colors()
+  status_colors <- get_status_colors(theme = theme)
   
   # Create side-by-side bars for better comparison visibility
   ggplot(data, aes(x = x_label, y = value, fill = type)) +

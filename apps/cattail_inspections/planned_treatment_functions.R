@@ -91,7 +91,7 @@ ORDER BY a.facility, a.airgrnd_plan, a.sitecode
 }
 
 # Function to create treatment plan plot with pre-fetched data
-create_treatment_plan_plot_with_data <- function(data, facility_filter, plan_types_filter, view_type = "acres") {
+create_treatment_plan_plot_with_data <- function(data, facility_filter, plan_types_filter, view_type = "acres", theme = "MMCD") {
   # Filter based on selected facility
   if (facility_filter != "all") {
     data <- data %>% filter(facility == facility_filter)
@@ -132,7 +132,7 @@ create_treatment_plan_plot_with_data <- function(data, facility_filter, plan_typ
     
     # Plot summary data for all facilities
     # Get centralized colors for treatment plan types
-    plan_colors <- get_treatment_plan_colors(use_names = TRUE)
+    plan_colors <- get_treatment_plan_colors(use_names = TRUE, theme = theme)
     
     p <- ggplot(summary_data,
                 aes(x = plan_type, y = .data[[y_column]], fill = plan_type)) +
@@ -166,7 +166,7 @@ create_treatment_plan_plot_with_data <- function(data, facility_filter, plan_typ
   } else {
     # Plot data for a specific facility
     # Get centralized colors for treatment plan types
-    plan_colors <- get_treatment_plan_colors(use_names = TRUE)
+    plan_colors <- get_treatment_plan_colors(use_names = TRUE, theme = theme)
     
     # Get full facility name for display
     facility_lookup <- get_facility_lookup()
@@ -219,7 +219,7 @@ create_treatment_plan_plot_with_data <- function(data, facility_filter, plan_typ
 }
 
 # Function to create treatment plan plot (legacy wrapper)
-create_treatment_plan_plot <- function(facility_filter, plan_types_filter, view_type = "acres") {
+create_treatment_plan_plot <- function(facility_filter, plan_types_filter, view_type = "acres", theme = "MMCD") {
   data <- get_treatment_plan_data()
-  create_treatment_plan_plot_with_data(data, facility_filter, plan_types_filter, view_type)
+  create_treatment_plan_plot_with_data(data, facility_filter, plan_types_filter, view_type, theme)
 }

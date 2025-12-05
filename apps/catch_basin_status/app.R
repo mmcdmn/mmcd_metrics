@@ -97,6 +97,20 @@ ui <- dashboardPage(
 server <- function(input, output, session) {
   
   # =============================================================================
+  # THEME SUPPORT - Reactive theme handling
+  # =============================================================================
+  
+  # Reactive value for current theme
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  # Update global theme option when theme changes
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
+  
+  # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
   # =============================================================================
   
@@ -351,7 +365,7 @@ server <- function(input, output, session) {
     data <- processed_data()
     inputs <- refresh_inputs()
     
-    create_status_chart(data, inputs$group_by, inputs$expiring_filter)
+    create_status_chart(data, inputs$group_by, inputs$expiring_filter, theme = current_theme())
   })
   
   # Dynamic chart height
@@ -431,7 +445,8 @@ server <- function(input, output, session) {
       hist_time_period = inputs$hist_time_period,
       hist_display_metric = inputs$hist_display_metric,
       hist_group_by = inputs$group_by,
-      chart_type = inputs$hist_chart_type
+      chart_type = inputs$hist_chart_type,
+      theme = current_theme()
     )
   })
   

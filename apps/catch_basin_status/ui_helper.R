@@ -25,6 +25,17 @@ create_filter_panel <- function() {
                       options = list(placeholder = "Select FOS..."))
       ),
       column(3,
+        selectInput("color_theme", "Color Theme:",
+                   choices = c("MMCD (Default)" = "MMCD",
+                              "IBM Design" = "IBM",
+                              "Color-Blind Friendly" = "Wong",
+                              "Scientific" = "Tol",
+                              "Viridis" = "Viridis",
+                              "ColorBrewer" = "ColorBrewer"),
+                   selected = "MMCD"),
+        tags$small(style = "color: #666;", "Changes chart colors")
+      ),
+      column(3,
         radioButtons("zone_filter", "Zone Display:",
                      choices = c("P1 Only" = "1", 
                                 "P2 Only" = "2", 

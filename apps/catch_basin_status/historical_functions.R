@@ -276,7 +276,7 @@ create_historical_cb_data <- function(start_year, end_year,
 }
 
 # Create historical chart
-create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar") {
+create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar", theme = "MMCD") {
   if (is.null(data) || nrow(data) == 0) {
     return(plot_ly() %>%
       layout(
@@ -300,10 +300,10 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
   # Get group colors if applicable
   group_colors <- NULL
   if (hist_group_by == "facility" && "facility" %in% names(data)) {
-    facility_colors <- get_facility_base_colors()
+    facility_colors <- get_facility_base_colors(theme = theme)
     group_colors <- facility_colors
   } else if (hist_group_by == "foreman" && "fosarea" %in% names(data)) {
-    foreman_colors <- get_foreman_colors()
+    foreman_colors <- get_foreman_colors(theme = theme)
     group_colors <- foreman_colors
   }
   

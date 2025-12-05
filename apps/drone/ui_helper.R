@@ -12,6 +12,10 @@ drone_ui <- function() {
     # Sidebar with controls
     sidebarLayout(
       sidebarPanel(
+        # Refresh button at the top
+        actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;"),
+        hr(),
+        
         # Current Progress tab controls
         conditionalPanel(
           condition = "input.tabs == 'current'",
@@ -89,7 +93,11 @@ drone_ui <- function() {
                  max = Sys.Date(),
                  format = "yyyy-mm-dd"),
         
-        checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = FALSE),
+        selectInput("color_theme", "Color Theme:",
+                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    selected = "MMCD"),
+        
+        checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = TRUE),
         
         selectInput("zone_option", "Zone Display:",
                     choices = c("P1 Only" = "p1_only",
@@ -123,10 +131,6 @@ drone_ui <- function() {
                                   "All MMCD" = "mmcd_all"),
                       selected = "facility")
         ),
-        
-        # Refresh button
-        hr(),
-        actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;"),
         
         # Help text for historical metrics (collapsible)
         hr(),

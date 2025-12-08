@@ -444,6 +444,39 @@ get_foremen_lookup <- function() {
   })
 }
 
+# =============================================================================
+# VIRUS TARGET CONFIGURATION
+# =============================================================================
+
+# Get virus target choices for surveillance applications
+# These are the standardized virus targets used across MMCD mosquito testing
+get_virus_target_choices <- function(include_all = FALSE) {
+  choices <- c(
+    "West Nile Virus" = "WNV",
+    "La Crosse Encephalitis" = "LAC",
+    "Eastern Equine Encephalitis" = "EEE"
+  )
+  
+  if (include_all) {
+    choices <- c("All Viruses" = "all", choices)
+  }
+  
+  return(choices)
+}
+
+# Get virus target display names
+get_virus_target_names <- function() {
+  return(c(
+    "WNV" = "West Nile Virus",
+    "LAC" = "La Crosse Encephalitis",
+    "EEE" = "Eastern Equine Encephalitis"
+  ))
+}
+
+# =============================================================================
+# SPECIES LOOKUP FUNCTIONS
+# =============================================================================
+
 # Get species lookup table
 # Get available zones with P1/P2 options
 get_available_zones <- function(include_all = TRUE, include_combined = TRUE) {

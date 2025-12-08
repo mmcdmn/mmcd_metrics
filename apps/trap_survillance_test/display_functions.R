@@ -5,6 +5,260 @@ library(sf)
 library(viridis)
 library(scales)
 library(ggspatial)
+library(plotly)
+
+# Source color themes
+source("../../shared/color_themes.R")
+
+# Helper to safely get column value handling .x/.y suffixes
+get_col_safe <- function(df, col_name) {
+  if (col_name %in% names(df)) {
+    return(df[[col_name]])
+  } else if (paste0(col_name, ".x") %in% names(df)) {
+    return(df[[paste0(col_name, ".x")]])
+  } else if (paste0(col_name, ".y") %in% names(df)) {
+    return(df[[paste0(col_name, ".y")]])
+  } else {
+    return(rep(NA, nrow(df)))
+  }
+}
+
+# Create interactive Leaflet map with basemap and tooltips
+render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label = "selected species", metric_type = "popindex", color_theme = "MMCD") {
+  if (is.null(sections_sf) || nrow(sections_sf) == 0) {
+    return(leaflet() %>% 
+           addTiles() %>% 
+           setView(lng = -93.2, lat = 44.9, zoom = 9) %>%
+           addControl(html = "<div style='background:white;padding:10px;'>No data available</div>", 
+                     position = "topright"))
+  }
+  
+  # Determine metric column and label
+  if (metric_type == "mle") {
+    metric_col <- "mle"
+    metric_label <- "MLE (per 1000)"
+  } else if (metric_type == "vector_index") {
+    metric_col <- "vector_index_metric"
+    metric_label <- "Vector Index (N × P)"
+  } else {
+    metric_col <- "vector_index"
+    metric_label <- "Population Index"
+  }
+  
+  # Check if metric column exists
+  if (!metric_col %in% names(sections_sf)) {
+    return(leaflet() %>% 
+           addTiles() %>% 
+           setView(lng = -93.2, lat = 44.9, zoom = 9) %>%
+           addControl(html = sprintf("<div style='background:white;padding:10px;'>No %s data available</div>", metric_label), 
+                     position = "topright"))
+  }
+  
+  # Get selected color theme
+  theme_palette <- get_theme_palette(color_theme)
+  
+  # Create color palette using theme's sequential colors
+  # Use viridis-style for popindex, YlOrRd-style for MLE/Vector Index
+  metric_values <- sections_sf[[metric_col]]
+  
+  if (metric_type == "mle" || metric_type == "vector_index") {
+    # Use heat colors (YlOrRd) for MLE and Vector Index if available, otherwise fallback to sequential
+    color_pal <- if (!is.null(theme_palette$sequential_heat)) theme_palette$sequential_heat else theme_palette$sequential
+  } else {
+    # Use regular sequential colors (viridis-style) for population index
+    color_pal <- theme_palette$sequential
+  }
+  
+  pal <- colorNumeric(
+    palette = color_pal,
+    domain = metric_values,
+    na.color = "#808080"
+  )
+  
+  # Create popups with detailed information - use a separate vector
+  # Safely extract columns handling .x/.y suffixes from joins
+  sectcode <- get_col_safe(sections_sf, "sectcode")
+  facility <- get_col_safe(sections_sf, "facility")
+  metric_val <- sections_sf[[metric_col]]
+  
+  if (metric_type == "mle") {
+    mle_lower <- get_col_safe(sections_sf, "mle_lower")
+    mle_upper <- get_col_safe(sections_sf, "mle_upper")
+    num_pools <- get_col_safe(sections_sf, "num_pools")
+    num_positive <- get_col_safe(sections_sf, "num_positive")
+    total_tested <- get_col_safe(sections_sf, "total_tested")
+    pool_date <- get_col_safe(sections_sf, "nearest_pool_date")
+    
+    popup_text <- sprintf(
+      "<strong>Section: %s</strong><br/>Facility: %s<br/>MLE: <strong>%.2f</strong> per 1000<br/>95%% CI: (%.2f - %.2f)<br/><hr/>Based on %.0f traps at %.0f locations<br/>Nearest: %.0f meters<br/>Farthest: %.0f meters<br/><hr/>Total pools from these traps: %.0f<br/>Pools with positive results: %.0f<br/>Total mosquitoes tested: %.0f<br/>Most recent pool test: %s",
+      ifelse(is.na(sectcode), "Unknown", sectcode),
+      ifelse(is.na(facility) | facility == "", "Unknown", facility),
+      ifelse(is.na(metric_val), 0, metric_val),
+      ifelse(is.na(mle_lower), 0, mle_lower),
+      ifelse(is.na(mle_upper), 0, mle_upper),
+      ifelse(is.na(sections_sf$num_traps), 0, as.numeric(sections_sf$num_traps)),
+      ifelse(is.na(sections_sf$num_locations), 0, as.numeric(sections_sf$num_locations)),
+      ifelse(is.na(sections_sf$nearest_dist), 0, as.numeric(sections_sf$nearest_dist)),
+      ifelse(is.na(sections_sf$farthest_dist), 0, as.numeric(sections_sf$farthest_dist)),
+      ifelse(is.na(num_pools), 0, as.numeric(num_pools)),
+      ifelse(is.na(num_positive), 0, as.numeric(num_positive)),
+      ifelse(is.na(total_tested), 0, as.numeric(total_tested)),
+      ifelse(is.na(pool_date), "N/A", as.character(pool_date))
+    )
+  } else if (metric_type == "vector_index") {
+    # Vector Index combines both trap and pool data
+    N <- get_col_safe(sections_sf, "N")
+    P <- get_col_safe(sections_sf, "P")
+    mle <- get_col_safe(sections_sf, "mle")
+    nearest_trap_count <- get_col_safe(sections_sf, "nearest_trap_count")
+    num_pools <- get_col_safe(sections_sf, "num_pools")
+    num_positive <- get_col_safe(sections_sf, "num_positive")
+    total_tested <- get_col_safe(sections_sf, "total_tested")
+    last_inspection <- get_col_safe(sections_sf, "last_inspection")
+    pool_date <- get_col_safe(sections_sf, "nearest_pool_date")
+    
+    popup_text <- sprintf(
+      "<strong>Section: %s</strong><br/>Facility: %s<br/><strong>Vector Index: %.4f</strong><br/><hr/>N (avg mosquitoes/trap): %.2f<br/>P (infection rate): %.4f<br/>MLE: %.2f per 1000<br/><hr/>Traps: %.0f mosquitoes<br/>Pools: %.0f tested, %.0f positive<br/>Last inspection: %s<br/>Last pool: %s",
+      ifelse(is.na(sectcode), "Unknown", sectcode),
+      ifelse(is.na(facility) | facility == "", "Unknown", facility),
+      ifelse(is.na(metric_val), 0, metric_val),
+      ifelse(is.na(N), 0, N),
+      ifelse(is.na(P), 0, P),
+      ifelse(is.na(mle), 0, mle),
+      ifelse(is.na(nearest_trap_count), 0, nearest_trap_count),
+      ifelse(is.na(num_pools), 0, num_pools),
+      ifelse(is.na(num_positive), 0, num_positive),
+      ifelse(is.na(last_inspection), "N/A", as.character(last_inspection)),
+      ifelse(is.na(pool_date), "N/A", as.character(pool_date))
+    )
+  } else {
+    nearest_trap_count <- get_col_safe(sections_sf, "nearest_trap_count")
+    last_inspection <- get_col_safe(sections_sf, "last_inspection")
+    
+    popup_text <- sprintf(
+      "<strong>Section: %s</strong><br/>Facility: %s<br/>Population Index: <strong>%.2f</strong><br/>Nearest trap count: %d<br/>Last inspection: %s",
+      ifelse(is.na(sectcode), "Unknown", sectcode),
+      ifelse(is.na(facility) | facility == "", "Unknown", facility),
+      ifelse(is.na(metric_val), 0, metric_val),
+      ifelse(is.na(nearest_trap_count), 0, nearest_trap_count),
+      ifelse(is.na(last_inspection), "N/A", as.character(last_inspection))
+    )
+  }
+  
+  # Load background layers
+  bg_layers <- load_background_layers()
+  
+  # Create base map with OpenStreetMap tiles
+  m <- leaflet(sections_sf) %>%
+    addTiles(group = "OpenStreetMap") %>%
+    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    addProviderTiles("Esri.WorldImagery", group = "Satellite")
+  
+  # Add section polygons with color and popup
+  m <- m %>%
+    addPolygons(
+      fillColor = ~pal(get(metric_col)),
+      fillOpacity = 0.7,
+      color = "#444",
+      weight = 1,
+      popup = popup_text,
+      highlightOptions = highlightOptions(
+        weight = 3,
+        color = "#666",
+        fillOpacity = 0.9,
+        bringToFront = TRUE
+      ),
+      group = "Sections"
+    )
+  
+  # Add facility boundaries - use theme's primary color
+  if (!is.null(bg_layers$facilities)) {
+    facility_color <- if (length(theme_palette$primary) > 0) theme_palette$primary[1] else "#2c3e50"
+    m <- m %>%
+      addPolylines(
+        data = bg_layers$facilities,
+        color = facility_color,
+        weight = 2,
+        opacity = 0.8,
+        group = "Facilities"
+      )
+  }
+  
+  # Add county boundaries - bolder with theme's accent color
+  if (!is.null(bg_layers$counties)) {
+    # Use theme's red/accent color if available (4th color in primary palette typically)
+    county_color <- if (length(theme_palette$primary) >= 4) theme_palette$primary[4] else "#d62728"
+    m <- m %>%
+      addPolylines(
+        data = bg_layers$counties,
+        color = county_color,
+        weight = 3,
+        opacity = 0.8,
+        group = "Counties"
+      )
+  }
+  
+  # Add trap location markers
+  if (!is.null(trap_df) && nrow(trap_df) > 0) {
+    # Create trap popup text - check if MLE data is available
+    if ("mle" %in% names(trap_df)) {
+      # MLE trap markers - show detailed pool statistics
+      trap_popup <- sprintf(
+        "<strong>Trap: %s</strong><br/>Facility: %s<br/><hr/><strong>MLE: %.2f per 1000</strong><br/>95%% CI: (%.2f - %.2f)<br/><hr/>Total pools from this trap: %.0f<br/>Pools with positive results: %.0f<br/>Total mosquitoes tested: %.0f<br/>Inspection date: %s",
+        trap_df$sampnum_yr,
+        trap_df$facility,
+        as.numeric(trap_df$mle),
+        as.numeric(trap_df$mle_lower),
+        as.numeric(trap_df$mle_upper),
+        as.numeric(trap_df$num_pools),
+        as.numeric(trap_df$num_positive),
+        as.numeric(trap_df$total_mosquitoes),
+        as.character(trap_df$inspdate)
+      )
+    } else {
+      # Population index trap markers - show mosquito counts
+      trap_popup <- sprintf(
+        "<strong>Trap Location</strong><br/>Facility: %s<br/>Type: %s<br/>Count: %.0f<br/>Date: %s",
+        trap_df$facility,
+        trap_df$survtype,
+        as.numeric(trap_df$species_count),
+        trap_df$inspdate
+      )
+    }
+    
+    m <- m %>%
+      addCircleMarkers(
+        data = st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326),
+        radius = 4,
+        color = "#000000",
+        fillColor = "#FFD700",  # Gold color for visibility
+        fillOpacity = 0.8,
+        weight = 1,
+        popup = trap_popup,
+        group = "Trap Locations"
+      )
+  }
+  
+  # Add legend
+  m <- m %>%
+    addLegend(
+      position = "bottomright",
+      pal = pal,
+      values = ~get(metric_col),
+      title = metric_label,
+      opacity = 0.7
+    )
+  
+  # Add layer control
+  m <- m %>%
+    addLayersControl(
+      baseGroups = c("OpenStreetMap", "CartoDB Light", "Satellite"),
+      overlayGroups = c("Sections", "Trap Locations", "Facilities", "Counties"),
+      options = layersControlOptions(collapsed = FALSE)
+    )
+  
+  return(m)
+}
 
 # Load background layers for static maps
 load_background_layers <- function() {
@@ -49,216 +303,4 @@ load_background_layers <- function() {
   }
   
   return(layers)
-}
-
-# Create interactive SF-based map with OpenStreetMap background
-render_vector_map_sf <- function(sections_sf, trap_df = NULL, species_label = "selected species") {
-  # Better error handling for empty/null data
-  if (is.null(sections_sf)) {
-    message("ERROR: sections_sf is NULL")
-    return(ggplot() + 
-           theme_void() + 
-           geom_text(aes(x = 0.5, y = 0.5, label = "No section data available.\nCheck your filters and date selection."),
-                    size = 6, color = "red") +
-           theme(plot.title = element_text(hjust = 0.5)) +
-           labs(title = "No Data Available"))
-  }
-  
-  if (nrow(sections_sf) == 0) {
-    message("ERROR: sections_sf has 0 rows")
-    return(ggplot() + 
-           theme_void() + 
-           geom_text(aes(x = 0.5, y = 0.5, label = "No sections found with current filters.\nTry:\n- More recent date\n- Different facility\n- 'All' species"),
-                    size = 5, color = "red") +
-           theme(plot.title = element_text(hjust = 0.5)) +
-           labs(title = "No Data Available"))
-  }
-  
-  # Check if geometry column exists
-  if (!"geometry" %in% names(sections_sf)) {
-    message("ERROR: no geometry column in sections_sf")
-    message("Columns:", paste(names(sections_sf), collapse=", "))
-    return(ggplot() + 
-           theme_void() + 
-           geom_text(aes(x = 0.5, y = 0.5, label = "Error: Missing geometry data"),
-                    size = 6, color = "red"))
-  }
-  
-  # Log what we're rendering
-  message(sprintf("Rendering map with %d sections and %d traps", 
-                 nrow(sections_sf), 
-                 if(is.null(trap_df)) 0 else nrow(trap_df)))
-  message(sprintf("Bounding box: %s", paste(round(st_bbox(sections_sf), 2), collapse=", ")))
-  message(sprintf("Population index range: %.2f to %.2f", 
-                 min(sections_sf$vector_index, na.rm=TRUE),
-                 max(sections_sf$vector_index, na.rm=TRUE)))
-
-  # Load background layers - simplified for debugging
-  bg_layers <- load_background_layers()
-  
-  # Get bounding box for sections to set map extent
-  bbox <- st_bbox(sections_sf)
-  
-  # Create base plot and explicitly set coordinates first so tiles know the extent
-  p <- ggplot() +
-    coord_sf(xlim = c(bbox["xmin"], bbox["xmax"]),
-             ylim = c(bbox["ymin"], bbox["ymax"]),
-             crs = st_crs(4326),
-             expand = FALSE)
-  
-  # Add basemap tiles - commented out due to missing prettymapr dependency
-  # Use annotation_map_tile if ggspatial and prettymapr are installed
-  # p <- p + annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
-  
-  # Then add sections with population index coloring
-  if (!is.null(sections_sf$vector_index)) {
-    p <- p + geom_sf(data = sections_sf, 
-                     aes(fill = vector_index), 
-                     color = "gray40",  # Less prominent borders
-                     size = 0.05,       # Thinner lines
-                     alpha = 0.8,       # Much more transparent to see basemap
-                     inherit.aes = FALSE) +  # Don't inherit coord_sf
-             scale_fill_viridis_c(name = "Population\nIndex", 
-                                option = "plasma", 
-                                na.value = "lightgray",
-                                trans = "sqrt",
-                                labels = number_format(accuracy = 0.1))
-  } else {
-    p <- p + geom_sf(data = sections_sf, 
-                     fill = "transparent", 
-                     color = "black", 
-                     size = 0.1, 
-                     alpha = 0.55,
-                     inherit.aes = FALSE)
-  }
-  
-  # Add background county lines for context (very light)
-  if (!is.null(bg_layers$counties)) {
-    p <- p + geom_sf(data = bg_layers$counties, 
-                     fill = "transparent", 
-                     color = "gray80", 
-                     size = 0.2, 
-                     alpha = 0.3)
-  }
-  
-  # Add facility boundaries for reference (very subtle)
-  if (!is.null(bg_layers$facilities)) {
-    p <- p + geom_sf(data = bg_layers$facilities, 
-                     fill = "transparent", 
-                     color = "gray40", 
-                     size = 0.3, 
-                     linetype = "dashed",
-                     alpha = 0.6)
-  }
-  
-  # Add traps if provided
-  if (!is.null(trap_df) && nrow(trap_df) > 0) {
-    traps_sf <- st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326)
-    
-    # Map survtype to colors and labels
-    trap_colors <- c("Elevated CO2" = "#2166ac", "Gravid Trap" = "#762a83", "CO2 Overnight" = "#5aae61")
-    trap_type_map <- c("4" = "Elevated CO2", "5" = "Gravid Trap", "6" = "CO2 Overnight")
-    
-    # Add trap type labels
-    traps_sf$trap_label <- trap_type_map[as.character(traps_sf$survtype)]
-    
-    p <- p + geom_sf(data = traps_sf, 
-                     aes(color = trap_label, size = species_count), 
-                     alpha = 0.9,  # Keep traps highly visible
-                     stroke = 1) +
-             scale_color_manual(name = "Trap Type", 
-                              values = trap_colors) +
-             scale_size_continuous(name = paste(species_label, "\nCount"), 
-                                 range = c(2, 5),  # Larger for better visibility
-                                 guide = guide_legend(override.aes = list(alpha = 1)))
-  }
-  
-  # Style the map
-  p <- p + 
-    theme_void() +
-    theme(
-      legend.position = "right",
-      legend.box = "vertical",
-      legend.background = element_rect(fill = "white", color = "gray"),
-      legend.margin = margin(5, 5, 5, 5),
-      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5, size = 12),
-      plot.margin = margin(5, 5, 5, 5),
-      axis.text = element_text(size = 8),
-      axis.title = element_text(size = 9)
-    ) +
-    labs(
-      title = "Mosquito Population Index by Section (Live Data)",
-      subtitle = paste("Based on", species_label, "- Updates on Refresh"),
-      caption = paste("Analysis Date:", Sys.Date(), "| Click refresh to update data"),
-      x = "Longitude", 
-      y = "Latitude"
-    ) +
-    
-    # Add scale bar and north arrow
-    annotation_scale(location = "bl", width_hint = 0.2) +
-    annotation_north_arrow(location = "tr", which_north = "true", 
-                          pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
-                          style = north_arrow_fancy_orienteering)
-  
-  return(p)
-}
-
-# Original leaflet function (keep for compatibility)
-render_vector_map <- function(section_df, trap_df = NULL, species_label = "selected species") {
-  if (is.null(section_df) || nrow(section_df) == 0) {
-    return(leaflet() %>% addTiles() %>% setView(lng = -93.2, lat = 44.9, zoom = 9))
-  }
-
-  # Color palette for sections
-  pal <- colorNumeric("YlOrRd", domain = section_df$vector_index, na.color = "#f0f0f0")
-  
-  # Start map with sections
-  m <- leaflet() %>% 
-    addTiles() %>%
-    addCircleMarkers(data = section_df,
-                     lng = ~lon, lat = ~lat,
-                     radius = ~pmax(4, log1p(vector_index) * 4),
-                     color = ~pal(vector_index), 
-                     fillOpacity = 0.7,
-                     stroke = TRUE,
-                     weight = 1,
-                     group = "Sections",
-                     popup = ~paste0("<strong>Section: ", sectcode, "</strong><br/>",
-                                   "Population Index: ", round(vector_index, 2), "<br/>",
-                                   "Nearest Trap Total: ", nearest_trap_count, "<br/>",
-                                   "Last Inspection: ", last_inspection)) %>%
-    addLegend(position = "bottomright", pal = pal, values = section_df$vector_index, title = "Population Index")
-  
-  # Add traps if provided
-  if (!is.null(trap_df) && nrow(trap_df) > 0) {
-    # Add species label column to trap_df for popup
-    trap_df$species_label <- species_label
-    
-    # Map survtype codes to names
-    trap_type_names <- c("4" = "Elevated CO2", "5" = "Gravid Trap", "6" = "CO2 Overnight")
-    trap_df$survtype_name <- trap_type_names[as.character(trap_df$survtype)]
-    
-    m <- m %>%
-      addCircleMarkers(data = trap_df,
-                       lng = ~lon, lat = ~lat,
-                       radius = 3,
-                       color = "#2166ac",
-                       fillColor = "#2166ac",
-                       fillOpacity = 0.6,
-                       stroke = TRUE,
-                       weight = 1,
-                       group = "Traps",
-                       popup = ~paste0("<strong>Trap: ", ainspecnum, "</strong><br/>",
-                                     "Facility: ", facility, "<br/>",
-                                     "Type: ", survtype_name, "<br/>",
-                                     "Inspection Date: ", inspdate, "<br/>",
-                                     species_label, " Count: ", species_count)) %>%
-      addLayersControl(
-        overlayGroups = c("Sections", "Traps"),
-        options = layersControlOptions(collapsed = FALSE)
-      )
-  }
-  
-  return(m)
 }

@@ -11,7 +11,7 @@ suppressPackageStartupMessages({
 })
 
 # Get historical air sites data including archive tables
-get_historical_air_sites_data <- function(analysis_date = Sys.Date(), start_year = NULL, end_year = NULL, 
+get_historical_air_sites_data <- function(analysis_date = Sys.Date(), start_date = NULL, end_date = NULL, 
                                          facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, 
                                          larvae_threshold = 2, bti_effect_days_override = NULL) {
   # Call the main data function with archive flag
@@ -23,23 +23,23 @@ get_historical_air_sites_data <- function(analysis_date = Sys.Date(), start_year
     larvae_threshold = larvae_threshold,
     bti_effect_days_override = bti_effect_days_override,
     include_archive = TRUE,
-    start_year = start_year,
-    end_year = end_year
+    start_date = start_date,
+    end_date = end_date
   )
 }
 
 # Get comprehensive historical data in a single optimized query
 # Returns both inspection summary and treatment volume data
-get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL,
+get_comprehensive_historical_data <- function(start_date = NULL, end_date = NULL,
                                             facility_filter = NULL, priority_filter = NULL, 
                                             zone_filter = NULL, larvae_threshold = 2) {
   
-  # Determine year range
-  if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y")) - 4
-  if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
+  # Determine date range
+  if (is.null(start_date)) start_date <- Sys.Date() - (365 * 4)
+  if (is.null(end_date)) end_date <- Sys.Date()
   
   # Debug logging
-  cat("Comprehensive historical data - Start Year:", start_year, "End Year:", end_year, "\n")
+  cat("Comprehensive historical data - Start Date:", as.character(start_date), "End Date:", as.character(end_date), "\n")
   cat("Filters - Facility:", ifelse(is.null(facility_filter), "ALL", paste(facility_filter, collapse=",")), 
       "Priority:", ifelse(is.null(priority_filter), "ALL", paste(priority_filter, collapse=",")), 
       "Zone:", ifelse(is.null(zone_filter) || zone_filter == "All", "ALL", zone_filter), "\n")
@@ -105,7 +105,7 @@ get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL
           -- CRITICAL: Only include sites that were active during the inspection date
           AND (b.startdate IS NULL OR b.startdate <= i.inspdate)
           AND (b.enddate IS NULL OR b.enddate > i.inspdate)
-          AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d
+          AND i.inspdate BETWEEN '%s' AND '%s'
           %s
           %s
           %s
@@ -134,7 +134,7 @@ get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL
           -- CRITICAL: Only include sites that were active during the inspection date
           AND (b.startdate IS NULL OR b.startdate <= i.inspdate)
           AND (b.enddate IS NULL OR b.enddate > i.inspdate)
-          AND EXTRACT(YEAR FROM i.inspdate) BETWEEN %d AND %d
+          AND i.inspdate BETWEEN '%s' AND '%s'
           %s
           %s
           %s
@@ -163,7 +163,7 @@ get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL
           -- CRITICAL: Only include sites that were active during the treatment date
           AND (b.startdate IS NULL OR b.startdate <= t.inspdate)
           AND (b.enddate IS NULL OR b.enddate > t.inspdate)
-          AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
+          AND t.inspdate BETWEEN '%s' AND '%s'
           %s
           %s
           %s
@@ -192,7 +192,7 @@ get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL
           -- CRITICAL: Only include sites that were active during the treatment date
           AND (b.startdate IS NULL OR b.startdate <= t.inspdate)
           AND (b.enddate IS NULL OR b.enddate > t.inspdate)
-          AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
+          AND t.inspdate BETWEEN '%s' AND '%s'
           %s
           %s
           %s
@@ -286,10 +286,10 @@ get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL
       FROM treatment_volume_summary
       
       ORDER BY dataset_type, sitecode, inspdate
-    ", start_year, end_year, facility_condition, priority_condition, zone_condition,
-       start_year, end_year, facility_condition, priority_condition, zone_condition,
-       start_year, end_year, facility_condition, priority_condition, zone_condition,
-       start_year, end_year, facility_condition, priority_condition, zone_condition,
+    ", as.character(start_date), as.character(end_date), facility_condition, priority_condition, zone_condition,
+       as.character(start_date), as.character(end_date), facility_condition, priority_condition, zone_condition,
+       as.character(start_date), as.character(end_date), facility_condition, priority_condition, zone_condition,
+       as.character(start_date), as.character(end_date), facility_condition, priority_condition, zone_condition,
        larvae_threshold)
     
     cat("Executing comprehensive historical query...\n")
@@ -365,17 +365,17 @@ get_comprehensive_historical_data <- function(start_year = NULL, end_year = NULL
   })
 }
   
-# Optimized wrapper functions using the comprehensive data source
+# Legacy wrapper functions - kept for backwards compatibility but updated to use date parameters
 
 # Get simplified historical air sites inspection summary
-get_historical_inspection_summary <- function(start_year = NULL, end_year = NULL, 
+get_historical_inspection_summary <- function(start_date = NULL, end_date = NULL, 
                                             facility_filter = NULL, priority_filter = NULL, 
                                             zone_filter = NULL, larvae_threshold = 2) {
   
   # Use comprehensive function and return just the inspection summary
   comprehensive_data <- get_comprehensive_historical_data(
-    start_year = start_year,
-    end_year = end_year,
+    start_date = start_date,
+    end_date = end_date,
     facility_filter = facility_filter,
     priority_filter = priority_filter,
     zone_filter = zone_filter,
@@ -385,16 +385,16 @@ get_historical_inspection_summary <- function(start_year = NULL, end_year = NULL
   return(comprehensive_data$inspection_summary)
 }
 
-# Get historical treatment volume data (now includes priority filter)
-get_historical_treatment_volumes <- function(start_year = NULL, end_year = NULL, 
+# Get historical treatment volume data
+get_historical_treatment_volumes <- function(start_date = NULL, end_date = NULL, 
                                            facility_filter = NULL, priority_filter = NULL, zone_filter = NULL) {
   
   # Use comprehensive function and return just the treatment volumes
   comprehensive_data <- get_comprehensive_historical_data(
-    start_year = start_year,
-    end_year = end_year,
+    start_date = start_date,
+    end_date = end_date,
     facility_filter = facility_filter,
-    priority_filter = priority_filter,  # Now includes priority filter!
+    priority_filter = priority_filter,
     zone_filter = zone_filter,
     larvae_threshold = 2  # Default threshold for consistency
   )
@@ -410,19 +410,25 @@ create_weekly_treatment_summary <- function(volume_data) {
       year = integer(0),
       week_of_year = integer(0),
       treatment_operations = integer(0),
+      treatment_sites = integer(0),
       treatment_acres = numeric(0),
       inspection_operations = integer(0),
+      inspection_sites = integer(0),
       inspection_acres = numeric(0)
     ))
   }
   
-  # Aggregate by week
+  # Aggregate by week - need raw data with sitecode to count unique sites
+  # Since volume_data is already aggregated by date, we need to sum operations and acres
+  # For sites, we'll use operations as a proxy (each operation typically = 1 site visit)
   weekly_summary <- volume_data %>%
     group_by(week_start_date, year, week_of_year) %>%
     summarise(
       treatment_operations = sum(total_operations[operation_type == 'treatment'], na.rm = TRUE),
+      treatment_sites = sum(total_operations[operation_type == 'treatment'], na.rm = TRUE),  # Proxy: operations ≈ sites
       treatment_acres = sum(total_acres[operation_type == 'treatment'], na.rm = TRUE),
       inspection_operations = sum(total_operations[operation_type == 'inspection'], na.rm = TRUE),
+      inspection_sites = sum(total_operations[operation_type == 'inspection'], na.rm = TRUE),  # Proxy: operations ≈ sites
       inspection_acres = sum(total_acres[operation_type == 'inspection'], na.rm = TRUE),
       .groups = 'drop'
     ) %>%
@@ -437,8 +443,10 @@ create_yearly_treatment_summary <- function(volume_data) {
     return(data.frame(
       year = integer(0),
       treatment_operations = integer(0),
+      treatment_sites = integer(0),
       treatment_acres = numeric(0),
       inspection_operations = integer(0),
+      inspection_sites = integer(0),
       inspection_acres = numeric(0)
     ))
   }
@@ -448,8 +456,10 @@ create_yearly_treatment_summary <- function(volume_data) {
     group_by(year) %>%
     summarise(
       treatment_operations = sum(total_operations[operation_type == 'treatment'], na.rm = TRUE),
+      treatment_sites = sum(total_operations[operation_type == 'treatment'], na.rm = TRUE),  # Proxy: operations ≈ sites
       treatment_acres = sum(total_acres[operation_type == 'treatment'], na.rm = TRUE),
       inspection_operations = sum(total_operations[operation_type == 'inspection'], na.rm = TRUE),
+      inspection_sites = sum(total_operations[operation_type == 'inspection'], na.rm = TRUE),  # Proxy: operations ≈ sites
       inspection_acres = sum(total_acres[operation_type == 'inspection'], na.rm = TRUE),
       .groups = 'drop'
     ) %>%
@@ -459,7 +469,7 @@ create_yearly_treatment_summary <- function(volume_data) {
 }
 
 # Create treatment volume chart
-create_treatment_volume_chart <- function(volume_data, time_period = "weekly", theme = "MMCD") {
+create_treatment_volume_chart <- function(volume_data, time_period = "weekly", chart_type = "line", metric_type = "sites", theme = "MMCD") {
   if (nrow(volume_data) == 0) {
     return(plot_ly() %>%
       add_annotations(
@@ -496,53 +506,105 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly", t
   inspection_color <- as.character(status_colors[["completed"]])
   acres_color <- as.character(status_colors[["needs_treatment"]])
   
-  # Create dual-axis chart: bars for operations, line for acres
-  p <- plot_ly(chart_data) %>%
-    
-    # Add bar chart for treatment operations
-    add_bars(
-      x = x_var,
-      y = ~treatment_operations,
-      name = "Treatments",
-      marker = list(color = treatment_color),
-      hovertemplate = paste0(
-        "<b>%{x}</b><br>",
-        "Treatments: %{y}<br>",
-        "Treatment Acres: ", round(chart_data$treatment_acres, 1), "<br>",
-        "<extra></extra>"
+  # Determine which metric to display (sites or acres for primary axis)
+  if (metric_type == "acres") {
+    treatment_y <- ~treatment_acres
+    inspection_y <- ~inspection_acres
+    y_title <- "Acres"
+    treatment_hover_label <- "Treatment Acres"
+    inspection_hover_label <- "Inspection Acres"
+  } else {
+    treatment_y <- ~treatment_sites
+    inspection_y <- ~inspection_sites
+    y_title <- "Number of Sites"
+    treatment_hover_label <- "Treatment Sites"
+    inspection_hover_label <- "Inspection Sites"
+  }
+  
+  # Create chart based on type
+  if (chart_type == "line") {
+    # Line chart
+    p <- plot_ly(chart_data) %>%
+      add_lines(
+        x = x_var,
+        y = treatment_y,
+        name = "Treatments",
+        line = list(color = treatment_color, width = 3),
+        marker = list(color = treatment_color, size = 6),
+        hovertemplate = paste0(
+          "<b>%{x}</b><br>",
+          treatment_hover_label, ": %{y}<br>",
+          "<extra></extra>"
+        )
+      ) %>%
+      add_lines(
+        x = x_var,
+        y = inspection_y,
+        name = "Inspections",
+        line = list(color = inspection_color, width = 3),
+        marker = list(color = inspection_color, size = 6),
+        hovertemplate = paste0(
+          "<b>%{x}</b><br>",
+          inspection_hover_label, ": %{y}<br>",
+          "<extra></extra>"
+        )
       )
-    ) %>%
-    
-    # Add bar chart for inspection operations
-    add_bars(
-      x = x_var,
-      y = ~inspection_operations,
-      name = "Inspections",
-      marker = list(color = inspection_color),
-      hovertemplate = paste0(
-        "<b>%{x}</b><br>",
-        "Inspections: %{y}<br>",
-        "Inspection Acres: ", round(chart_data$inspection_acres, 1), "<br>",
-        "<extra></extra>"
+  } else if (chart_type == "bar") {
+    # Grouped bar chart
+    p <- plot_ly(chart_data) %>%
+      add_bars(
+        x = x_var,
+        y = treatment_y,
+        name = "Treatments",
+        marker = list(color = treatment_color),
+        hovertemplate = paste0(
+          "<b>%{x}</b><br>",
+          treatment_hover_label, ": %{y}<br>",
+          "<extra></extra>"
+        )
+      ) %>%
+      add_bars(
+        x = x_var,
+        y = inspection_y,
+        name = "Inspections",
+        marker = list(color = inspection_color),
+        hovertemplate = paste0(
+          "<b>%{x}</b><br>",
+          inspection_hover_label, ": %{y}<br>",
+          "<extra></extra>"
+        )
       )
-    ) %>%
-    
-    # Add line chart for treatment acres
-    add_lines(
-      x = x_var,
-      y = ~treatment_acres,
-      yaxis = "y2",
-      name = "Treatment Acres",
-      line = list(color = acres_color, width = 3),
-      marker = list(color = acres_color, size = 6),
-      hovertemplate = paste0(
-        "<b>%{x}</b><br>",
-        "Treatment Acres: %{y}<br>",
-        "<extra></extra>"
+  } else {
+    # Stacked bar chart
+    p <- plot_ly(chart_data) %>%
+      add_bars(
+        x = x_var,
+        y = treatment_y,
+        name = "Treatments",
+        marker = list(color = treatment_color),
+        hovertemplate = paste0(
+          "<b>%{x}</b><br>",
+          treatment_hover_label, ": %{y}<br>",
+          "<extra></extra>"
+        )
+      ) %>%
+      add_bars(
+        x = x_var,
+        y = inspection_y,
+        name = "Inspections",
+        marker = list(color = inspection_color),
+        hovertemplate = paste0(
+          "<b>%{x}</b><br>",
+          inspection_hover_label, ": %{y}<br>",
+          "<extra></extra>"
+        )
       )
-    ) %>%
-    
-    # Configure layout with dual y-axes
+  }
+  
+  # Configure layout
+  barmode_setting <- if(chart_type == "stacked") "stack" else "group"
+  
+  p <- p %>%
     layout(
       title = list(
         text = paste0("Treatment and Inspection Volume (", stringr::str_to_title(time_period), ")"),
@@ -554,17 +616,8 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly", t
         tickangle = if(time_period == "weekly" && nrow(chart_data) > 8) -45 else 0
       ),
       yaxis = list(
-        title = list(text = "Number of Operations", font = list(size = 18)),
-        tickfont = list(size = 16),
-        side = "left",
-        color = inspection_color
-      ),
-      yaxis2 = list(
-        title = list(text = "Acres Treated", font = list(size = 18)),
-        tickfont = list(size = 16),
-        side = "right",
-        overlaying = "y",
-        color = acres_color
+        title = list(text = y_title, font = list(size = 18)),
+        tickfont = list(size = 16)
       ),
       hovermode = "x unified",
       legend = list(
@@ -574,8 +627,8 @@ create_treatment_volume_chart <- function(volume_data, time_period = "weekly", t
         borderwidth = 1,
         font = list(size = 16)
       ),
-      margin = list(t = 60, r = 80, b = 60, l = 60),
-      barmode = 'group'
+      margin = list(t = 60, r = 60, b = 60, l = 60),
+      barmode = barmode_setting
     )
   
   return(p)

@@ -410,6 +410,11 @@ get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
   })
 }
 
+# Alias function for consistency with some apps
+get_treatment_material_choices <- function(include_all = TRUE, filter_type = NULL) {
+  return(get_material_choices(include_all = include_all, filter_type = filter_type))
+}
+
 # Get foremen (field supervisors) lookup table
 get_foremen_lookup <- function() {
   con <- get_db_connection()
@@ -438,6 +443,39 @@ get_foremen_lookup <- function() {
     return(data.frame())
   })
 }
+
+# =============================================================================
+# VIRUS TARGET CONFIGURATION
+# =============================================================================
+
+# Get virus target choices for surveillance applications
+# These are the standardized virus targets used across MMCD mosquito testing
+get_virus_target_choices <- function(include_all = FALSE) {
+  choices <- c(
+    "West Nile Virus" = "WNV",
+    "La Crosse Encephalitis" = "LAC",
+    "Eastern Equine Encephalitis" = "EEE"
+  )
+  
+  if (include_all) {
+    choices <- c("All Viruses" = "all", choices)
+  }
+  
+  return(choices)
+}
+
+# Get virus target display names
+get_virus_target_names <- function() {
+  return(c(
+    "WNV" = "West Nile Virus",
+    "LAC" = "La Crosse Encephalitis",
+    "EEE" = "Eastern Equine Encephalitis"
+  ))
+}
+
+# =============================================================================
+# SPECIES LOOKUP FUNCTIONS
+# =============================================================================
 
 # Get species lookup table
 # Get available zones with P1/P2 options
@@ -617,6 +655,45 @@ get_enhanced_species_mapping <- function(format_style = "display", include_code 
   }
   
   return(species_map)
+}
+
+#' Get Species Choices for Shiny Select Input
+#' 
+#' Returns a named vector of species codes suitable for use in Shiny selectInput/selectizeInput.
+#' The names are formatted display names (e.g., "Aedes albopictus (52)") and values are species codes.
+#' 
+#' @param include_all Logical. If TRUE, includes "All" as the first option.
+#' 
+#' @return Named character vector where names are display names and values are species codes
+#' 
+#' @examples
+#' choices <- get_species_choices()
+#' # Returns: c("Aedes albopictus (52)" = "52", "Culex pipiens (5)" = "5", ...)
+#' 
+#' choices_with_all <- get_species_choices(include_all = TRUE)
+#' # Returns: c("All Species" = "all", "Aedes albopictus (52)" = "52", ...)
+get_species_choices <- function(include_all = TRUE) {
+  # Get species mapping with display format and codes
+  species_map <- get_enhanced_species_mapping(format_style = "display", include_code = TRUE)
+  
+  if (length(species_map) == 0) {
+    warning("No species data available from database")
+    return(if (include_all) c("All Species" = "all") else character(0))
+  }
+  
+  # species_map is returned as: names=codes, values=display_names
+  # We need to flip it for Shiny: names=display_names, values=codes
+  choices <- setNames(names(species_map), species_map)
+  
+  # Sort alphabetically by display name
+  choices <- choices[order(names(choices))]
+  
+  # Add "All" option if requested
+  if (include_all) {
+    choices <- c("All Species" = "all", choices)
+  }
+  
+  return(choices)
 }
 
 # Internal helper function to generate visually distinct colors

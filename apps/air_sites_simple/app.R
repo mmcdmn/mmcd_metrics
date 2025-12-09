@@ -79,7 +79,7 @@ ui <- dashboardPage(
             ),
             fluidRow(
               column(3,
-                numericInput("larvae_threshold", "dip count at least:",
+                numericInput("larvae_threshold", "Larvae Threshold:",
                   value = 2,
                   min = 0,
                   max = 10,
@@ -243,6 +243,13 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
+                radioButtons("process_metric_type", "Display Metric:",
+                  choices = c("Number of Sites" = "sites", "Acres" = "acres"),
+                  selected = "sites",
+                  inline = TRUE
+                )
+              ),
+              column(3,
                 selectizeInput("process_material_filter", "Treatment Materials:",
                   choices = c("Loading..." = "LOADING"),
                   selected = "LOADING",
@@ -360,7 +367,8 @@ ui <- dashboardPage(
       # Historical Analysis Tab
       tabItem(tabName = "historical",
         fluidRow(
-          box(title = "Historical Inspection Analysis", status = "primary", solidHeader = TRUE, width = 12,
+          box(title = tags$span(style = "font-size: 18px; font-weight: bold;", "Historical Inspection Analysis"), 
+              status = "primary", solidHeader = TRUE, width = 12,
             fluidRow(
               column(3,
                 selectizeInput("hist_facility_filter", "Facilities:",
@@ -391,6 +399,13 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
+                radioButtons("hist_metric_type", "Display Metric:",
+                  choices = c("Number of Sites" = "sites", "Acres" = "acres"),
+                  selected = "sites",
+                  inline = TRUE
+                )
+              ),
+              column(3,
                 selectInput("hist_color_theme", "Color Theme:",
                   choices = c("MMCD (Default)" = "MMCD",
                              "IBM Design" = "IBM",
@@ -404,23 +419,29 @@ ui <- dashboardPage(
               )
             ),
             fluidRow(
-              column(6,
+              column(3,
                 div(
-                  numericInput("hist_start_year", "Start Year:", 
-                              value = as.numeric(format(Sys.Date(), "%Y")) - 4, 
-                              min = as.numeric(format(Sys.Date(), "%Y")) - 10, 
-                              max = as.numeric(format(Sys.Date(), "%Y")), 
-                              step = 1),
-                  numericInput("hist_end_year", "End Year:", 
-                              value = as.numeric(format(Sys.Date(), "%Y")), 
-                              min = as.numeric(format(Sys.Date(), "%Y")) - 10, 
-                              max = as.numeric(format(Sys.Date(), "%Y")), 
-                              step = 1)
+                  dateInput("hist_start_date", "Start Date:", 
+                           value = Sys.Date() - (365 * 4),
+                           max = Sys.Date()),
+                  dateInput("hist_end_date", "End Date:", 
+                           value = Sys.Date(),
+                           max = Sys.Date())
                 )
+              ),
+              column(3,
+                selectInput("hist_chart_type", "Chart Type:",
+                           choices = list(
+                             "Line Chart" = "line",
+                             "Grouped Bar Chart" = "bar",
+                             "Stacked Bar Chart" = "stacked"
+                           ),
+                           selected = "line")
               ),
               column(6,
                 div(style = "margin-top: 25px;",
-                  actionButton("refresh_historical_data", "Refresh Historical Data", class = "btn-primary btn-lg", 
+                  actionButton("refresh_historical_data", "Refresh Historical Data", 
+                             class = "btn-primary btn-lg", 
                              style = "width: 100%;")
                 )
               )
@@ -430,7 +451,7 @@ ui <- dashboardPage(
                 div(style = "padding-top: 10px; text-align: center;",
                   tags$small(
                     tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
-                    " This analysis shows inspection history and treatment volumes for each air site over the selected year range."
+                    " This analysis shows inspection history and treatment volumes for each air site over the selected date range."
                   )
                 )
               )
@@ -474,7 +495,8 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          box(title = "Treatment Volume Trends", status = "primary", solidHeader = TRUE, width = 8,
+          box(title = tags$span(style = "font-size: 18px; font-weight: bold;", "Treatment Volume Trends"), 
+              status = "primary", solidHeader = TRUE, width = 8,
             fluidRow(
               column(12,
                 radioButtons("volume_time_period", "Time Period:",
@@ -486,13 +508,15 @@ ui <- dashboardPage(
             ),
             plotlyOutput("treatment_volume_chart", height = "400px")
           ),
-          box(title = "Red Bug Detection Over Time", status = "info", solidHeader = TRUE, width = 4,
+          box(title = tags$span(style = "font-size: 18px; font-weight: bold;", "Red Bug Detection Over Time"), 
+              status = "info", solidHeader = TRUE, width = 4,
             plotlyOutput("red_bug_trend_chart", height = "400px")
           )
         ),
         
         fluidRow(
-          box(title = "Site Inspection History", status = "success", solidHeader = TRUE, width = 6,
+          box(title = tags$span(style = "font-size: 18px; font-weight: bold;", "Site Inspection History"), 
+              status = "success", solidHeader = TRUE, width = 6,
             div(style = "text-align: center; padding-bottom: 10px;",
               tags$small("Red Bug Ratio = (Red Bug Inspections ÷ Total Inspections) × 100%")
             ),
@@ -981,12 +1005,14 @@ server <- function(input, output, session) {
   # Process metrics value boxes
   output$sites_receiving_treatment <- renderValueBox({
     data <- process_data()
-    if (input$refresh_process_data == 0) return(valueBox(0, "Active Treatments", icon = icon("check-circle"), color = "green"))
+    metric_type <- input$process_metric_type
+    subtitle_text <- if (metric_type == "acres") "Active Treatment (Acres)" else "Active Treatments"
+    if (input$refresh_process_data == 0) return(valueBox(0, subtitle_text, icon = icon("check-circle"), color = "green"))
     
-    metrics <- create_treatment_efficiency_metrics(data)
+    metrics <- create_treatment_efficiency_metrics(data, metric_type = metric_type)
     valueBox(
       value = metrics$sites_receiving_treatment,
-      subtitle = "Active Treatments",
+      subtitle = subtitle_text,
       icon = icon("check-circle"),
       color = "green"
     )
@@ -994,9 +1020,10 @@ server <- function(input, output, session) {
   
   output$treatment_efficiency <- renderValueBox({
     data <- process_data()
+    metric_type <- input$process_metric_type
     if (input$refresh_process_data == 0) return(valueBox("0%", "Treatment completion", icon = icon("percent"), color = "blue"))
     
-    metrics <- create_treatment_efficiency_metrics(data)
+    metrics <- create_treatment_efficiency_metrics(data, metric_type = metric_type)
     valueBox(
       value = metrics$treatment_efficiency,
       subtitle = "Treatment completion",
@@ -1007,9 +1034,10 @@ server <- function(input, output, session) {
   
   output$treatment_rate <- renderValueBox({
     data <- process_data()
+    metric_type <- input$process_metric_type
     if (input$refresh_process_data == 0) return(valueBox("0%", "% Need Treatment", icon = icon("exclamation-triangle"), color = "yellow"))
     
-    metrics <- create_treatment_efficiency_metrics(data)
+    metrics <- create_treatment_efficiency_metrics(data, metric_type = metric_type)
     valueBox(
       value = metrics$treatment_rate,
       subtitle = "% Need Treatment",
@@ -1020,9 +1048,10 @@ server <- function(input, output, session) {
   
   output$inspection_coverage <- renderValueBox({
     data <- process_data()
+    metric_type <- input$process_metric_type
     if (input$refresh_process_data == 0) return(valueBox("0%", "Inspection Coverage", icon = icon("search"), color = "purple"))
     
-    metrics <- create_treatment_efficiency_metrics(data)
+    metrics <- create_treatment_efficiency_metrics(data, metric_type = metric_type)
     valueBox(
       value = metrics$inspection_coverage,
       subtitle = "Inspection Coverage",
@@ -1062,6 +1091,7 @@ server <- function(input, output, session) {
   # Treatment flow chart
   output$treatment_flow_chart <- renderPlotly({
     data <- process_chart_data()  # Use filtered data for chart
+    metric_type <- input$process_metric_type
     if (input$refresh_process_data == 0 || nrow(data) == 0) {
       return(plot_ly() %>%
         add_annotations(
@@ -1072,17 +1102,18 @@ server <- function(input, output, session) {
         ))
     }
     
-    create_treatment_flow_chart(data, theme = current_theme())
+    create_treatment_flow_chart(data, metric_type = metric_type, theme = current_theme())
   })
   
   # Process summary table
   output$process_summary_table <- DT::renderDataTable({
     data <- process_data()
+    metric_type <- input$process_metric_type
     if (input$refresh_process_data == 0 || nrow(data) == 0) {
       return(DT::datatable(data.frame(), options = list(pageLength = 10)))
     }
     
-    summary_data <- create_treatment_process_summary(data)
+    summary_data <- create_treatment_process_summary(data, metric_type = metric_type)
     
     DT::datatable(
       summary_data,
@@ -1185,17 +1216,35 @@ server <- function(input, output, session) {
     updateNumericInput(session, "larvae_threshold", value = input$hist_larvae_threshold)
   })
   
+  # Synchronize metric type between tabs (Status, Pipeline Snapshot, Historical Analysis)
+  observeEvent(input$metric_type, {
+    updateRadioButtons(session, "hist_metric_type", selected = input$metric_type)
+    updateRadioButtons(session, "process_metric_type", selected = input$metric_type)
+  })
+  
+  observeEvent(input$hist_metric_type, {
+    updateRadioButtons(session, "metric_type", selected = input$hist_metric_type)
+    updateRadioButtons(session, "process_metric_type", selected = input$hist_metric_type)
+  })
+  
+  observeEvent(input$process_metric_type, {
+    updateRadioButtons(session, "metric_type", selected = input$process_metric_type)
+    updateRadioButtons(session, "hist_metric_type", selected = input$process_metric_type)
+  })
+  
   # Reactive data for historical analysis - OPTIMIZED: Single comprehensive query
   comprehensive_historical_data <- eventReactive(input$refresh_historical_data, {
-    cat("Historical refresh button clicked - Getting comprehensive data\n")
-    get_comprehensive_historical_data(
-      start_year = input$hist_start_year,
-      end_year = input$hist_end_year,
-      facility_filter = input$hist_facility_filter,
-      priority_filter = input$hist_priority_filter,
-      zone_filter = input$hist_zone_filter,
-      larvae_threshold = input$hist_larvae_threshold
-    )
+    withProgress(message = "Loading historical data...", value = 0.5, {
+      cat("Historical refresh button clicked - Getting comprehensive data\n")
+      get_comprehensive_historical_data(
+        start_date = input$hist_start_date,
+        end_date = input$hist_end_date,
+        facility_filter = input$hist_facility_filter,
+        priority_filter = input$hist_priority_filter,
+        zone_filter = input$hist_zone_filter,
+        larvae_threshold = input$hist_larvae_threshold
+      )
+    })
   })
   
   # Extract inspection summary from comprehensive data
@@ -1363,7 +1412,8 @@ server <- function(input, output, session) {
         ))
     }
     
-    create_treatment_volume_chart(data, input$volume_time_period, theme = current_theme())
+    create_treatment_volume_chart(data, input$volume_time_period, chart_type = input$hist_chart_type, 
+                                 metric_type = input$hist_metric_type, theme = current_theme())
   })
   
   # Red bug trend chart
@@ -1396,7 +1446,7 @@ server <- function(input, output, session) {
           }
         })
       ) %>%
-      filter(!is.na(primary_year) & primary_year >= input$hist_start_year) %>%
+      filter(!is.na(primary_year) & as.Date(paste0(primary_year, "-01-01")) >= input$hist_start_date) %>%
       group_by(facility, primary_year) %>%
       summarise(
         sites = n(),

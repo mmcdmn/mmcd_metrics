@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trap Surveillance Vector Index - Technical Notes</title>
+    <title>Trap Surveillance Test App - Technical Documentation</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -110,495 +110,439 @@
 </head>
 <body>
     <div class="container">
-<h1>Trap Surveillance Vector Index - Technical Notes</h1>
+<h1>Trap Surveillance Test App - Technical Documentation</h1>
 
 <h2>Overview</h2>
-<p>This app calculates a <strong>Vector Index</strong> for each section using a k-Nearest Neighbors (k-NN) inverse-distance weighted algorithm based on trap surveillance data.</p>
+
+<p>This Shiny application analyzes mosquito surveillance data to estimate virus infection risk across geographic sections. It implements <strong>trap-based Maximum Likelihood Estimation (MLE)</strong> with <strong>k-nearest neighbor distance-weighted averaging (k-NN DWA)</strong> for spatial interpolation.</p>
+
+<hr>
 
 <h2>Data Sources</h2>
 
-<h3>Tables Used</h3>
-<ul>
-<li><strong><code>dbadult<em>insp</em>current</code></strong> - Current adult mosquito trap inspection records</li>
-<ul>
-<li>Contains trap locations (x, y coordinates), inspection dates, facility, survey type</li>
-<li>Multiple inspections per trap location over time</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>dbadult<em>species</em>current</code></strong> - Species counts for each trap inspection</li>
-<ul>
-<li>Links to inspections via <code>ainspecnum</code></li>
-<li>Contains species code (<code>spp</code>) and count (<code>cnt</code>)</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>lookup_specieslist</code></strong> - Species lookup table</li>
-<ul>
-<li>Maps species codes to genus/species names</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>gis_sectcode</code></strong> - Section geometry polygons</li>
-<ul>
-<li>Stored in EPSG:26915 (UTM Zone 15N)</li>
-<li>Converted to EPSG:4326 (WGS84 lat/lon) for display</li>
-</ul>
-</ul>
-
-<h2>Trap Types (Survey Types)</h2>
-<p>The app filters for specific trap types using the <code>survtype</code> column:</p>
-<ul>
-<li><strong>4</strong> - Elevated CO2</li>
-<li><strong>5</strong> - Gravid Trap  </li>
-<li><strong>6</strong> - CO2 Overnight</li>
-</ul>
-
-<p>Note: <code>survtype</code> is stored as <code>character varying</code> in the database, not integer.</p>
-
-<h2>SQL Query Logic</h2>
-
-<h3>Step 1: Rank Trap Inspections</h3>
-<pre><code class="sql">
-WITH ranked_traps AS (
-  SELECT t.ainspecnum, t.facility, t.x, t.y, t.survtype, t.inspdate,
-         ROW_NUMBER() OVER (PARTITION BY t.x, t.y, t.facility ORDER BY t.inspdate DESC) as rn
-  FROM public.dbadult_insp_current t
-  WHERE t.inspdate::date &lt;= [analysis_date]
-    AND t.x IS NOT NULL AND t.y IS NOT NULL
-    AND t.survtype IN ('4','5','6')
-    [AND t.facility IN (...)]  -- optional facility filter
-)
-</code></pre>
-<p><strong>Purpose</strong>: Since traps are inspected multiple times per year, we use <code>ROW_NUMBER()</code> partitioned by location (<code>x, y, facility</code>) and ordered by <code>inspdate DESC</code> to identify the most recent inspection at each unique trap location.</p>
-
-<h3>Step 2: Get Latest Traps Only</h3>
-<pre><code class="sql">
-latest_traps AS (
-  SELECT ainspecnum, facility, x, y, survtype, inspdate
-  FROM ranked_traps
-  WHERE rn = 1
-)
-</code></pre>
-<p><strong>Purpose</strong>: Filter to only the most recent inspection per location (<code>rn = 1</code>).</p>
-
-<h3>Step 3: Join Species Counts</h3>
-<pre><code class="sql">
-SELECT lt.ainspecnum, lt.facility, lt.x as lon, lt.y as lat, lt.survtype, lt.inspdate::date as inspdate,
-       COALESCE(SUM(s.cnt), 0) as species_count
-FROM latest_traps lt
-LEFT JOIN public.dbadult_species_current s ON lt.ainspecnum = s.ainspecnum
-  [AND s.spp IN (...)]  -- optional species filter
-GROUP BY lt.ainspecnum, lt.facility, lt.x, lt.y, lt.survtype, lt.inspdate
-</code></pre>
-<p><strong>Purpose</strong>: </p>
-<ul>
-<li>Join species counts to each trap</li>
-<li>If species filter is active, only count selected species</li>
-<li><code>COALESCE(SUM(s.cnt), 0)</code> ensures traps with no species get count = 0</li>
-<li>GROUP BY required because LEFT JOIN can return multiple rows per trap (one per species)</li>
-</ul>
-
-<p><strong>Result</strong>: One row per unique trap location with:</p>
-<ul>
-<li>Most recent inspection date</li>
-<li>Species count (filtered by selected species if applicable)</li>
-<li>No duplicate locations</li>
-</ul>
-
-<h2>Vector Index Calculation</h2>
-
-<h3>Algorithm: k-Nearest Neighbors with Inverse Distance Weighting</h3>
-
-<p>For each section, we:</p>
+<h3>Database Tables</h3>
 
 <ol>
-<li><strong>Find k nearest traps</strong> - Default k=4 (user adjustable 1-10)</li>
+<li><strong><code>dbvirus<em>pool</em>test</code></strong>: Virus test results for individual pools</li>
 <ul>
-<li>Calculate distance from section centroid to all trap locations</li>
-<li>Sort by distance and take top k traps</li>
+<li>Fields: <code>poolnum</code>, <code>result</code> (Pos/Neg), <code>date</code>, <code>target</code> (WNV, etc.), <code>method</code></li>
 </ul>
 </ul>
 
 <ol>
-<li><strong>Calculate inverse distance weights</strong></li>
-</ul>
-<p>   ```r</p>
-<p>   weights = 1 / distance</p>
-<p>   ```</p>
+<li><strong><code>dbvirus_pool</code></strong>: Pool composition metadata</li>
 <ul>
-<li>Closer traps have higher weights</li>
-<li>If distance = 0 (trap exactly on section centroid), set to 1e-6 to avoid division by zero</li>
+<li>Fields: <code>poolnum</code>, <code>sampnum<em>yr</code>, <code>spp</em>code</code>, <code>count</code> (mosquitoes per pool)</li>
 </ul>
 </ul>
 
 <ol>
-<li><strong>Compute weighted average</strong></li>
-</ul>
-<p>   ```r</p>
-<p>   vector<em>index = sum(weights * species</em>counts) / sum(weights)</p>
-<p>   ```</p>
+<li><strong><code>dbadult<em>insp</em>current</code></strong>: Trap inspection data</li>
 <ul>
-<li>Multiply each trap's species count by its weight</li>
-<li>Divide by sum of weights to normalize</li>
+<li>Fields: <code>sampnum_yr</code>, <code>inspdate</code>, <code>survtype</code> (trap type), <code>count</code> (mosquitoes)</li>
 </ul>
 </ul>
 
-<h3>Example Calculation</h3>
-<p>Section with k=4 nearest traps:</p>
+<ol>
+<li><strong><code>loc_mondaynight</code></strong>: Trap location coordinates</li>
 <ul>
-<li>Trap 1: 24km away, 106 mosquitoes → weight = 1/24057 = 0.000042</li>
-<li>Trap 2: 24km away, 76 mosquitoes → weight = 0.000042</li>
-<li>Trap 3: 24km away, 1 mosquito → weight = 0.000042</li>
-<li>Trap 4: 24km away, 90 mosquitoes → weight = 0.000042</li>
+<li>Fields: <code>sampnum_yr</code>, <code>facility</code>, <code>geometry</code> (spatial point)</li>
 </ul>
+</ul>
+
+<ol>
+<li><strong><code>loc_sect</code></strong>: Section boundary polygons</li>
+<ul>
+<li>Fields: <code>section</code> (ID), <code>geometry</code> (spatial polygon)</li>
+</ul>
+</ul>
+
+<h3>Data Relationships</h3>
 
 <pre><code class="">
-vector_index = (0.000042 * 106 + 0.000042 * 76 + 0.000042 * 1 + 0.000042 * 90) / (0.000042 * 4)
-             = 0.011466 / 0.000168
-             = 68.25
+Pool Test → Pool → Trap Inspection → Trap Location
+   (result)   (species)   (count)        (coordinates)
 </code></pre>
 
-<h2>Metrics Explained</h2>
+<h3>Unified SQL Query </h3>
 
-<h3>Vector Index</h3>
-<p><strong>Definition</strong>: A distance-weighted estimate of mosquito abundance for each section based on nearby trap counts.</p>
+<p><strong>Function</strong>: <code>fetch<em>unified</em>surveillance_data()</code>  </p>
+<p>The app uses a <strong>unified SQL query</strong> with Common Table Expressions (CTEs) to fetch all trap and pool data in one database round trip:</p>
+
+<pre><code class="sql">
+WITH 
+-- CTE 1: Latest trap inspections per unique physical location
+latest_traps AS (
+  SELECT DISTINCT ON (t.x, t.y, t.facility)
+    t.ainspecnum, t.facility, t.x, t.y, t.survtype, t.inspdate,
+    COALESCE(SUM(s.cnt), 0) as species_count
+  FROM public.dbadult_insp_current t
+  LEFT JOIN public.dbadult_species_current s 
+    ON t.ainspecnum = s.ainspecnum
+    AND s.spp IN (...)  -- Species filter
+  WHERE t.inspdate::date &lt;= :analysis_date
+    AND t.x IS NOT NULL AND t.y IS NOT NULL
+    AND t.survtype IN (...)  -- Trap type filter (4, 5, 6)
+    AND t.facility IN (...)  -- Facility filter
+  GROUP BY t.ainspecnum, t.facility, t.x, t.y, t.survtype, t.inspdate
+  ORDER BY t.x, t.y, t.facility, t.inspdate DESC
+),
+
+-- CTE 2: Virus pool tests with trap location coordinates
+virus_pools AS (
+  SELECT 
+    t.id AS test_id, t.poolnum, t.result, t.date AS testdate,
+    t.target, p.spp_code, p.count,
+    ST_X(ST_Transform(
+      CASE WHEN c.network_type IS NOT NULL 
+           THEN l.geom 
+           ELSE c.geometry 
+      END, 4326)) as lon,
+    ST_Y(ST_Transform(...)) as lat,
+    c.facility
+  FROM dbvirus_pool_test t
+  LEFT JOIN dbvirus_pool p ON p.poolnum = t.poolnum
+  LEFT JOIN dbadult_insp_current c ON c.sampnum_yr = p.sampnum_yr
+  LEFT JOIN (
+    SELECT a.loc_code, n.geom 
+    FROM loc_mondaynight_active a 
+    LEFT JOIN loc_mondaynight n ON n.loc_code = a.loc_code
+    WHERE a.enddate IS NULL
+  ) l ON l.loc_code = c.loc_code
+  WHERE t.date &gt;= :analysis_date - INTERVAL ':lookback_days days'
+    AND t.date &lt;= :analysis_date
+    AND t.target = :virus_target  -- WNV, LAC, EEE
+    AND c.survtype IN (...)  -- Trap type filter
+    AND c.facility IN (...)  -- Facility filter
+    AND p.spp_code IN (...)  -- Species filter
+)
+
+-- Union: Return unified result set
+SELECT 'trap' as data_type, ... FROM latest_traps
+UNION ALL
+SELECT 'pool' as data_type, ... FROM virus_pools
+WHERE lon IS NOT NULL AND lat IS NOT NULL;
+</code></pre>
+
+
+
+<h2>Methodology</h2>
+
+<h3>Two-Stage Trap-Based MLE Calculation</h3>
+
+<h4>Stage 1: Per-Trap MLE Calculation</h4>
+
+<p><strong>Purpose</strong>: Calculate a single MLE for each trap using all pools tested at that trap</p>
+
+<p><strong>Filters Applied</strong>:</p>
+<ul>
+<li><strong>Date Range</strong>: Last 90 days from analysis date</li>
+<li><strong>Virus Target</strong>: WNV, LAC, or EEE (user selectable)</li>
+<li><strong>Species</strong>: User-selected species codes (or all)</li>
+<li><strong>Trap Types</strong>: User-selected trap types (4=Elevated CO2, 5=Gravid, 6=CO2 Overnight)</li>
+</ul>
+
+<p><strong>Process</strong>:</p>
+<ol>
+<li>Query all pool tests matching filters</li>
+<li>Join with trap inspection data to filter by <code>survtype</code> (trap type)</li>
+<li>Group pools by <code>sampnum_yr</code> (trap ID)</li>
+<li>For each trap:</li>
+<ul>
+<li>Extract pool test results: <code>x</code> = binary vector (1=Pos, 0=Neg)</li>
+<li>Extract pool sizes: <code>m</code> = mosquitoes per pool</li>
+<li>Call <code>PooledInfRate::pooledBin()</code> directly</li>
+<li>Calculate MLE with 95% confidence interval</li>
+<li>Result: One MLE per trap with metadata (num<em>pools, num</em>positive, total_mosquitoes)</li>
+</ul>
+</ul>
+
+<p><strong>Example</strong>:</p>
+<pre><code class="">
+Trap 25-91099 (Elevated CO2, Culex pipiens):
+  - Pool 1: 50 mosquitoes, Negative
+  - Pool 2: 45 mosquitoes, Negative
+  - Pool 3: 52 mosquitoes, Negative
+  - Pool 4: 48 mosquitoes, Negative
+  
+→ MLE = 0 per 1000 (CI: 0.00 - 298.67)
+</code></pre>
+
+<h4>Stage 2: k-NN Distance-Weighted Averaging for Sections</h4>
+
+<p><strong>Purpose</strong>: Assign infection rate estimates to sections using nearby trap data</p>
+
+<p><strong>Process</strong>:</p>
+<ol>
+<li>Calculate centroid for each section polygon</li>
+<li>For each section centroid:</li>
+<ul>
+<li>Find k nearest trap locations (default k=4)</li>
+<li>Calculate geodesic distance (great circle) to each trap</li>
+<li>Apply inverse distance squared weighting: <code>weight = 1 / distance²</code></li>
+<li>Normalize weights to sum to 1</li>
+<li>Calculate section MLE as weighted average: <code>Σ(trap_MLE × weight)</code></li>
+<li>Aggregate statistics:</li>
+<li>Count unique trap locations used</li>
+<li>Sum total pools from all traps</li>
+<li>Sum positive pools from all traps</li>
+<li>Track nearest and farthest distances</li>
+<li>Result: Section-level MLE estimates with spatial smoothing and metadata</li>
+</ul>
+</ul>
+
+<p><strong>Important</strong>: The section's pool counts represent the <strong>sum of all pools from the k nearest traps</strong>, not individual pool tests at that section location.</p>
+
+<p><strong>Trap Grouping Options</strong> (to prevent duplicate distance bug):</p>
+
+<p><strong>Option 1: By Location (Recommended)</strong></p>
+<ul>
+<li>Groups traps by unique (lon, lat) coordinates first</li>
+<li>Finds k nearest LOCATIONS (not individual traps)</li>
+<li>Uses ALL traps at those k locations in the calculation</li>
+<li>Assigns same distance to all traps at same physical location</li>
+<li><strong>Why</strong>: Prevents selecting 4 traps all at same coordinates</li>
+<li><strong>Result</strong>: Proper geographic diversity in k-NN selection</li>
+</ul>
+
+<p><strong>Option 2: By Individual Trap</strong></p>
+<ul>
+<li>Original behavior (for comparison)</li>
+<li>Finds k nearest individual traps</li>
+<li>May select multiple traps at same physical location</li>
+<li><strong>Issue</strong>: Can result in identical nearest/farthest distances</li>
+</ul>
+
+<p><strong>Example</strong>:</p>
+<pre><code class="">
+Section 123 (centroid at -92.80, 45.25):
+  By Location mode:
+    Location A (-92.81, 45.24) @ 1200m → Traps: 25-91099 (4 pools), 25-91100 (3 pools)
+    Location B (-92.79, 45.26) @ 1500m → Traps: 25-91101 (5 pools)
+    Location C (-92.82, 45.23) @ 1800m → Traps: 25-91102 (4 pools)
+  
+  Section statistics:
+    - Traps used: 4
+    - Unique locations: 3
+    - Total pools: 16 (sum from all 4 traps)
+    - Positive pools: 2 (sum from all 4 traps)
+  
+  Weighted average MLE:
+    Section MLE = (MLE_A × 0.45) + (MLE_B × 0.30) + (MLE_C × 0.25)
+</code></pre>
+
+<h3>Distance Weighting Formula</h3>
+
+<pre><code class="r">
+# Inverse distance squared
+weights &lt;- 1 / (distances^2)
+
+# Normalize to sum to 1
+weights &lt;- weights / sum(weights)
+
+# Weighted average
+section_mle &lt;- sum(trap_mles * weights)
+</code></pre>
+<hr>
+
+<h2>Metrics</h2>
+
+<h3>1. Population Index (N)</h3>
+
+<p><strong>Definition</strong>: Estimated mosquito abundance per section</p>
+
+<p><strong>Calculation</strong>:</p>
+<ul>
+<li>Sum mosquito counts from trap inspections</li>
+<li>Group by trap location (sampnum_yr)</li>
+<li>Apply k-NN DWA to assign counts to sections</li>
+</ul>
+
+<p><strong>Interpretation</strong>: Higher values = more mosquitoes present</p>
+
+<p><strong>Use case</strong>: Identify areas with high mosquito populations</p>
+
+<hr>
+
+<h3>2. Maximum Likelihood Estimate (MLE)</h3>
+
+<p><strong>Definition</strong>: Estimated virus infection rate per 1,000 mosquitoes</p>
+
+<p><strong>Package</strong>: PooledInfRate (CDC - https://github.com/CDCgov/PooledInfRate)</p>
+
+<p><strong>Available Methods</strong>:</p>
+
+<p>| Method | Description | When to Use |</p>
+<p>|--------|-------------|-------------|</p>
+<p>| <strong>Firth</strong> | Bias-corrected MLE | <strong>Default</strong> - Best for small samples |</p>
+<p>| <strong>Gart</strong> | Score-based method | Classic pooled testing estimator |</p>
+<p>| <strong>MLE</strong> | Standard maximum likelihood | Large samples only |</p>
+<p>| <strong>MIR</strong> | Minimum infection rate | Simple ratio: positives/total |</p>
+
+<p><strong>Scale</strong>: Default 1,000 (results per 1,000 mosquitoes)</p>
 
 <p><strong>Interpretation</strong>:</p>
 <ul>
-<li>Higher values = More mosquitoes in nearby traps (weighted by proximity)</li>
-<li>Lower values = Fewer mosquitoes or far from active traps</li>
-<li>Value of 0 = No mosquitoes in k nearest traps</li>
+<li>MLE = 5.2 → "Estimated 5.2 infected mosquitoes per 1,000"</li>
+<li>95% CI = (2.1 - 12.8) → "True rate likely between 2.1 and 12.8 per 1,000"</li>
+<li>MLE = 0 (CI: 0 - 298.67) → "No positives, but could be as high as 298 per 1,000"</li>
 </ul>
 
-<p><strong>Use Case</strong>: Provides a spatial interpolation of mosquito activity across sections, even those without traps, based on nearby trap surveillance data.</p>
+<p><strong>Note</strong>: "95% CI" is the confidence LEVEL, not a percentage result</p>
+<ul>
+<li>It means: "We are 95% confident the true rate is in this range"</li>
+<li>Wider intervals = more uncertainty (fewer pools tested)</li>
+<li>Narrower intervals = more precision (more data)</li>
+</ul>
 
-<h3>Nearest Trap Total</h3>
-<p><strong>Definition</strong>: Simple sum of species counts from the k nearest traps (unweighted).</p>
+<hr>
 
+<h3>3. Vector Index (VI)</h3>
+
+<p><strong>Definition</strong>: Combined risk metric = Population × Infection Rate</p>
+
+<p><strong>Formula</strong>: </p>
 <pre><code class="r">
-nearest_trap_count = sum(species_counts from k nearest traps)
+VI = N × (MLE / 1000)
 </code></pre>
 
-<p><strong>Purpose</strong>: </p>
-<ul>
-<li>Provides context for the vector index</li>
-<li>Shows the raw total count contributing to the calculation</li>
-<li>Helps identify if high vector index is due to a few high-count traps or many moderate-count traps</li>
-</ul>
-
-<p><strong>Example</strong>: If k=4 and nearest trap counts are [106, 76, 1, 90], then <code>nearest<em>trap</em>total = 273</code></p>
-
-<h2>Spatial Operations &amp; sf Package Implementation</h2>
-
-<h3>SF (Simple Features) Package Overview</h3>
-<p>The app extensively uses the <code>sf</code> package for spatial operations, which provides standardized access to simple features. This includes reading shapefiles, coordinate transformations, spatial queries, and geometric operations.</p>
-
-<h3>Shapefile Loading &amp; Layer Management</h3>
-
-<h4>Primary Spatial Data Sources</h4>
+<p><strong>Calculation</strong>:</p>
 <ol>
-<li><strong>Section Boundaries</strong> - The core spatial layer containing section polygons</li>
-<li><strong>Background Layers</strong> - Supporting geographic context (facilities, counties, zones)</li>
-<li><strong>Point Data</strong> - Trap locations converted from coordinates to spatial features</li>
+<li>Calculate Population Index (N) using k-NN DWA</li>
+<li>Calculate MLE (P) using trap-based k-NN DWA</li>
+<li>Multiply at section level: VI = N × P</li>
 </ul>
 
-<h4>Load Section Geometries Function (<code>load<em>section</em>geometries()</code>)</h4>
-<pre><code class="r">
-# Hierarchical loading strategy for section boundaries
-1. Try GeoPackage (.gpkg) format first: "shared/Q_to_R/data/sections_boundaries.gpkg"
-2. Fallback to Shapefile (.shp): "shared/Q_to_R/data/sections_boundaries.shp"  
-3. Final fallback to database query with PostGIS geometry extraction
+<p><strong>Interpretation</strong>:</p>
+<ul>
+<li>Units: "Estimated infected mosquitoes per section"</li>
+<li>Higher VI = More mosquitoes AND higher infection rate</li>
+<li>Better risk indicator than either metric alone</li>
+</ul>
+
+<p><strong>Example</strong>:</p>
+<pre><code class="">
+Section A: N=500 mosquitoes, MLE=10 per 1000
+  VI = 500 × (10/1000) = 5 infected mosquitoes
+  
+Section B: N=100 mosquitoes, MLE=50 per 1000
+  VI = 100 × (50/1000) = 5 infected mosquitoes
+  
+→ Same risk despite different abundance/infection patterns
 </code></pre>
 
-<p><strong>sf Operations Applied:</strong></p>
-<ul>
-<li><code>st_read()</code> - Read spatial data from files or database</li>
-<li><code>st<em>is</em>longlat()</code> - Check if CRS is geographic (lat/lon)</li>
-<li><code>st_transform(4326)</code> - Ensure consistent WGS84 coordinate system</li>
-<li><code>st<em>make</em>valid()</code> - Clean up any invalid polygon geometries</li>
-</ul>
+<hr>
+<h2>File Structure</h2>
 
-<h4>Background Layer Loading (<code>load<em>background</em>layers()</code>)</h4>
-<p>The app dynamically loads multiple background layers from shared directories:</p>
+<h3>Core Files</h3>
 
-<p><strong>Layer Hierarchy:</strong></p>
+<p>| File | Lines | Purpose |</p>
+<p>|------|-------|---------|</p>
+<p>| <code>app.R</code> | 181 | Shiny server logic, reactive data pipeline |</p>
+<p>| <code>ui_helper.R</code> | 181 | UI layout, input controls, help text |</p>
+<p>| <code>data_functions.R</code> | 342 | Database queries, Population Index, Vector Index |</p>
+<p>| <code>display_functions.R</code> | 638 | Leaflet map rendering, popups, themes |</p>
+<p>| <code>mle<em>trap</em>based.R</code> | 359 | Two-stage trap-based MLE calculation |</p>
+<p>| <code>mle_functions.R</code> | 164 | PooledInfRate wrapper, format normalization |</p>
+
+<h3>Shared Resources</h3>
+
+<p>| File | Purpose |</p>
+<p>|------|---------|</p>
+<p>| <code>../shared/db_helpers.R</code> | Database connection management |</p>
+<p>| <code>../shared/color_themes.R</code> | Color palette definitions |</p>
+
+<hr>
+
+<h2>References</h2>
+
+<h3>Scientific Literature</h3>
+
 <ol>
-<li><strong>Facilities</strong> - Administrative boundaries for mosquito control districts</li>
+<li><strong>Firth D (1993)</strong>. "Bias reduction of maximum likelihood estimates." <em>Biometrika</em> 80(1):27-38.</li>
 <ul>
-<li>Primary: <code>shared/Q<em>to</em>R/data/facility_boundaries.shp</code></li>
-<li>Fallback: <code>mosquito<em>surveillance</em>map/shp/FacilityArea_4326.shp</code></li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>Zones</strong> - P1/P2 zone boundaries  </li>
-<ul>
-<li>Primary: <code>shared/Q<em>to</em>R/data/zone_boundaries.shp</code></li>
-<li>Fallback: <code>mosquito<em>surveillance</em>map/shp/P1zonebdry_4326.shp</code></li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>Counties</strong> - Administrative context</li>
-<ul>
-<li>Source: <code>mosquito<em>surveillance</em>map/shp/Counties_4326.shp</code></li>
-</ul>
-</ul>
-
-<p><strong>Purpose</strong>: Provides geographic context and reference layers without querying the database repeatedly.</p>
-
-<h3>Coordinate Systems &amp; Transformations</h3>
-<ol>
-<li><strong>Database Storage</strong>: </li>
-<ul>
-<li>Traps: EPSG:4326 (WGS84 lat/lon) stored as x, y</li>
-<li>Sections: EPSG:26915 (UTM Zone 15N) in PostGIS <code>the_geom</code> column</li>
+<li>Bias-corrected MLE method (default)</li>
 </ul>
 </ul>
 
 <ol>
-<li><strong>sf Transformation Pipeline</strong>: </li>
-</ul>
-<p>   ```r</p>
-<p>   # Step 1: Convert coordinates to sf objects</p>
-<p>   traps<em>sf &lt;- st</em>as_sf(traps, coords = c("lon", "lat"), crs = 4326)</p>
-<p>   sects<em>sf &lt;- st</em>as_sf(sects, coords = c("lon", "lat"), crs = 4326)</p>
-
-<p>   # Step 2: Transform to projected CRS for accurate distance calculation</p>
-<p>   traps<em>m &lt;- st</em>transform(traps_sf, 3857)  # Web Mercator meters</p>
-<p>   sects<em>m &lt;- st</em>transform(sects_sf, 3857)  # Web Mercator meters</p>
-
-<p>   # Step 3: Use st_distance() for precise meter-based calculations</p>
-<p>   dists &lt;- as.numeric(st<em>distance(sect</em>row, traps_m))</p>
-<p>   ```</p>
-
-<ol>
-<li><strong>Display Preparation</strong>: </li>
+<li><strong>Gart JJ (1991)</strong>. "An application of score methodology: Confidence intervals and tests of fit for one-hit curves." <em>Biometrics</em> 47(1):173-182.</li>
 <ul>
-<li>All layers transformed back to EPSG:4326 for map rendering</li>
-<li>Consistent CRS ensures proper overlay of all spatial elements</li>
-</ul>
-</ul>
-
-<h3>SF-Based Map Rendering</h3>
-
-<h4>Static Map with ggplot2 + ggspatial (<code>render<em>vector</em>map_sf()</code>)</h4>
-<p>The app creates publication-quality static maps using <code>ggplot2</code> with <code>ggspatial</code> for basemap tiles:</p>
-
-<p><strong>Layer Rendering Order (back to front):</strong></p>
-<pre><code class="r">
-1. Basemap Tiles (ggspatial)
-   annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0)
-
-2. County Boundaries (context)
-   geom_sf(data = bg_layers$counties, color = "gray80", alpha = 0.3)
-
-3. Facility Boundaries (reference)  
-   geom_sf(data = bg_layers$facilities, color = "gray40", linetype = "dashed")
-
-4. Section Polygons (main data)
-   geom_sf(data = sections_sf, aes(fill = vector_index), alpha = 0.8)
-
-5. Trap Points (overlay data)
-   geom_sf(data = traps_sf, aes(color = trap_label, size = species_count))
-</code></pre>
-
-<p><strong>sf-Specific Features:</strong></p>
-<ul>
-<li><code>geom_sf()</code> automatically handles spatial geometries (polygons, points, lines)</li>
-<li><code>coord_sf()</code> sets map projection and extent based on bounding box</li>
-<li><code>st_bbox()</code> calculates extent from actual geometry bounds</li>
-<li><code>inherit.aes = FALSE</code> prevents coordinate conflicts between layers</li>
-</ul>
-
-<h4>Dynamic Basemap Integration</h4>
-<pre><code class="r">
-# ggspatial provides seamless OSM tile integration
-annotation_map_tile(type = "cartolight", zoomin = 2, alpha = 1.0, progress = "none", quiet = TRUE)
-</code></pre>
-<ul>
-<li>Downloads tiles automatically based on plot extent</li>
-<li><code>zoomin = 2</code> requests higher resolution tiles for detail</li>
-<li><code>type = "cartolight"</code> provides clean, minimal basemap styling</li>
-</ul>
-
-<h4>Interactive Map with Leaflet (<code>render<em>vector</em>map()</code>)</h4>
-<p>Traditional Leaflet implementation for comparison:</p>
-<ul>
-<li>Point-based representation using <code>addCircleMarkers()</code></li>
-<li>Manual popup construction with HTML formatting</li>
-<li>Layer control for toggling sections vs traps</li>
-<li>Less detailed than sf-based approach but more interactive</li>
-</ul>
-
-<h3>Spatial Data Processing Pipeline</h3>
-
-<h4>Point-to-SF Conversion</h4>
-<pre><code class="r">
-# Convert tabular coordinates to spatial features
-traps_sf &lt;- st_as_sf(trap_df, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
-
-# remove = FALSE preserves original lon/lat columns alongside geometry
-# Essential for maintaining data table compatibility
-</code></pre>
-
-<h4>Geometry Operations</h4>
-<pre><code class="r">
-# Centroid calculation for KNN
-sections_centroids &lt;- suppressWarnings(st_centroid(sections_sf))
-
-# Extract coordinates for tabular operations
-coords &lt;- st_coordinates(sections_centroids)
-lon &lt;- coords[,1]
-lat &lt;- coords[,2]
-
-# Drop geometry when converting back to data.frame
-st_drop_geometry(sections_centroids)
-</code></pre>
-
-<h4>Distance-Based Spatial Analysis</h4>
-<pre><code class="r">
-# Vectorized distance calculation between all sections and traps
-dists &lt;- as.numeric(st_distance(sect_row, traps_m))
-
-# Find k-nearest neighbors using R sorting (faster than spatial index)
-k_idx &lt;- order(dists)[1:k_actual]
-</code></pre>
-
-<h3>Why Transform for Distance?</h3>
-<p>Lat/lon coordinates are angular (degrees), not linear. Direct Euclidean distance in lat/lon is inaccurate. The sf package handles this by:</p>
-<ol>
-<li><strong>EPSG:4326</strong> - Geographic coordinates for storage/display</li>
-<li><strong>EPSG:3857</strong> - Projected coordinates for accurate meter-based calculations  </li>
-<li><strong>st_distance()</strong> - Proper geodesic calculations accounting for Earth's curvature</li>
-</ul>
-
-<h3>Performance Optimizations with sf</h3>
-
-<h4>File Format Preference</h4>
-<ol>
-<li><strong>GeoPackage (.gpkg)</strong> - Faster loading, better compression, single-file format</li>
-<li><strong>Shapefile (.shp)</strong> - Traditional format, multiple files (.shp, .shx, .dbf, .prj)</li>
-<li><strong>PostGIS query</strong> - Database fallback when files unavailable</li>
-</ul>
-
-<h4>Memory Management</h4>
-<ul>
-<li><code>quiet = TRUE</code> suppresses verbose sf output</li>
-<li><code>st<em>make</em>valid()</code> cleans geometries once during loading</li>
-<li>Background layers loaded once and cached in function scope</li>
-<li>Geometry operations vectorized using sf's compiled C++ backends</li>
-</ul>
-
-<h4>Spatial Indexing</h4>
-<ul>
-<li>sf automatically builds spatial indexes for large datasets</li>
-<li><code>st_distance()</code> leverages GEOS library for optimized calculations</li>
-<li>R-side processing faster than multiple database calls for this use case</li>
-</ul>
-
-<h2>Data Type Issues &amp; Solutions</h2>
-
-<h3>Integer64 Problem</h3>
-<p>PostgreSQL's <code>SUM()</code> on integer columns returns <code>integer64</code> type in R. When multiplying very small decimals (weights like 0.000042) by integer64 values, precision loss can occur.</p>
-
-<p><strong>Solution</strong>: Convert to numeric before calculation</p>
-<pre><code class="r">
-counts &lt;- as.numeric(traps_m$species_count[k_idx])
-</code></pre>
-
-<h3>Species Code Handling</h3>
-<p>Species codes (<code>sppcode</code>) are numeric but stored as integers in the database. When building SQL IN clauses, they must NOT be quoted:</p>
-<pre><code class="sql">
--- Correct
-WHERE s.spp IN (1, 2, 3)
-
--- Incorrect (causes type mismatch)
-WHERE s.spp IN ('1', '2', '3')
-</code></pre>
-
-<h2>Performance Optimizations</h2>
-
-<ol>
-<li><strong>Single Query Strategy</strong>: Fetch all traps with species counts in one query rather than:</li>
-<ul>
-<li>Query 1: Get traps</li>
-<li>Query 2: Get species counts</li>
-<li>R join operation</li>
+<li>Score-based pooled testing estimator</li>
 </ul>
 </ul>
 
 <ol>
-<li><strong>Filter Early</strong>: Apply facility and species filters in SQL before returning data to R</li>
-</ul>
-
-<ol>
-<li><strong>R-side Spatial Operations</strong>: </li>
+<li><strong>Walter SD et al. (1980)</strong>. "Estimation of infection rates in populations of organisms using pools of variable size." <em>American Journal of Epidemiology</em> 112(1):124-128.</li>
 <ul>
-<li>After fetching data, all distance calculations happen in R using vectorized sf operations</li>
-<li>Much faster than making 3000+ distance queries to PostgreSQL</li>
+<li>Theory of pooled testing for infection estimation</li>
 </ul>
 </ul>
 
-<ol>
-<li><strong>Efficient Ranking</strong>: <code>ROW_NUMBER()</code> window function is more efficient than <code>DISTINCT ON</code> for getting latest records</li>
-</ul>
-
-<h2>User Controls</h2>
+<h3>Software</h3>
 
 <ul>
-<li><strong>Analysis Date</strong>: Only include traps inspected on or before this date</li>
-<li><strong>Species Filter</strong>: Select specific species or "All Species" to include all</li>
-<li><strong>Trap Types</strong>: Multi-select checkbox for survtypes 4, 5, 6</li>
-<li><strong>k (Neighbors)</strong>: Number of nearest traps to consider (1-10, default 4)</li>
-<li><strong>Facility Filter</strong>: Filter traps by facility (E, N, Sj, Sr, Wm, Wp, or All)</li>
-<li><strong>Refresh Data Button</strong>: Data loads only when clicked (prevents accidental heavy queries)</li>
-</ul>
-
-<h2>Map Layers</h2>
-
-<h3>Sections Layer (Yellow-Orange-Red)</h3>
+<li><strong>PooledInfRate Package</strong>: https://github.com/CDCgov/PooledInfRate</li>
 <ul>
-<li>Circle size based on <code>log1p(vector_index) * 4</code> - larger for higher indices</li>
-<li>Color intensity from yellow (low) to red (high) based on vector index value</li>
-<li>Popup shows: Section code, Vector Index, Nearest Trap Total</li>
+<li>CDC-maintained R package for pooled infection rate estimation</li>
+<li>Methods: Firth, Gart, MLE, MIR</li>
+</ul>
 </ul>
 
-<h3>Traps Layer (Blue)</h3>
 <ul>
-<li>Small blue circles (radius = 3)</li>
-<li>Popup shows: Trap ID, Facility, Trap Type, Inspection Date, Species Count</li>
-<li>Species count reflects current filter (e.g., if filtering for Culex pipiens, only shows that species count)</li>
-</ul>
-
-<h3>Layer Control</h3>
-<p>Toggle sections and traps on/off independently</p>
-
-<h2>Testing</h2>
-
-<p>Run <code>test-sql.R</code> to validate:</p>
+<li><strong>k-NN Distance Weighting</strong>: Standard geostatistical interpolation</li>
 <ul>
-<li>SQL query returns expected number of rows</li>
-<li>Check for duplicate locations</li>
-<li>Verify distance calculations work correctly</li>
-<li>Review species count distribution</li>
+<li>Inverse Distance Weighting (IDW)</li>
+<li>Commonly used in spatial analysis and GIS</li>
 </ul>
+</ul>
+
 
 <h2>Future Enhancements</h2>
 
-<p>Potential improvements:</p>
+<h3>Potential Improvements</h3>
+
+<ol>
+<li><strong>Temporal Analysis</strong>: </li>
 <ul>
-<li>Add date range filter (instead of single date)</li>
-<li>Export results to CSV</li>
-<li>Cache species counts for faster reload</li>
-<li>Display section polygons instead of centroids</li>
-<li>Add time-series animation showing vector index over time</li>
-<li>Include trap density as additional metric</li>
+<li>Time series plots of MLE over weeks/months</li>
+<li>Animated maps showing risk evolution</li>
 </ul>
+</ul>
+
+<ol>
+<li><strong>Statistical Testing</strong>:</li>
+<ul>
+<li>Compare MLEs between sections (significance tests)</li>
+<li>Hotspot detection (spatial clustering)</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Predictive Models</strong>:</li>
+<ul>
+<li>Machine learning to predict high-risk areas</li>
+<li>Incorporate weather/environmental data</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Export Features</strong>:</li>
+<ul>
+<li>Download section MLE estimates as CSV</li>
+<li>Export map as PDF for reports</li>
+</ul>
+</ul>
+
+<ol>
+<li><strong>Performance Optimization</strong>:</li>
+<ul>
+<li>Cache trap MLE calculations</li>
+<li>Parallel processing for section k-NN</li>
+</ul>
+</ul>
+
+<hr>
     </div>
 </body>
 </html>

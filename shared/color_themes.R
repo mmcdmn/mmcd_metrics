@@ -51,8 +51,10 @@ get_theme_palette <- function(theme = "MMCD") {
         needs_treatment = "#FF0000", # Pure red for needs treatment
         unknown = "#A9A9A9"         # Dark gray for unknown status
       ),
-      sequential = c("#f7fbff", "#deebf7", "#c6dbef", "#9ecae1", "#6baed6", 
-                     "#4292c6", "#2171b5", "#08519c", "#08306b"),
+      sequential = c("#440154", "#482878", "#3E4A89", "#31688E", "#26828E", 
+                     "#1F9E89", "#35B779", "#6DCD59", "#B4DE2C", "#FDE724"),  # viridis
+      sequential_heat = c("#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c",
+                          "#fc4e2a", "#e31a1c", "#bd0026", "#800026"),  # YlOrRd
       diverging = c("#d73027", "#f46d43", "#fdae61", "#fee090", "#ffffbf",
                     "#e0f3f8", "#abd9e9", "#74add1", "#4575b4")
     ),

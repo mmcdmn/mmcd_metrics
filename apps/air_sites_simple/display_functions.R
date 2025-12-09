@@ -135,11 +135,12 @@ create_site_details_panel <- function(site_data) {
 }
 
 # Create treatment process summary with value boxes
-create_treatment_process_summary <- function(data) {
+create_treatment_process_summary <- function(data, metric_type = "sites") {
   if (nrow(data) == 0) {
+    metric_label <- if (metric_type == "acres") "Total Acres" else "Total Sites"
     return(data.frame(
       Facility = character(0),
-      `Total Sites` = numeric(0),
+      Total = numeric(0),
       `Unknown` = numeric(0),
       `Needs Treatment` = numeric(0),
       `Active Treatment` = numeric(0),
@@ -149,44 +150,79 @@ create_treatment_process_summary <- function(data) {
     ))
   }
   
-  # Group by facility and calculate status counts
-  process_summary <- data %>%
-    group_by(facility) %>%
-    summarise(
-      total_sites = n(),
-      unknown = sum(site_status == "Unknown", na.rm = TRUE),
-      needs_treatment = sum(site_status == "Needs Treatment", na.rm = TRUE),
-      active_treatment = sum(site_status == "Active Treatment", na.rm = TRUE),
-      inspected = sum(site_status == "Inspected", na.rm = TRUE),
-      .groups = 'drop'
-    ) %>%
-    mutate(
-      # Calculate treatment rate: active treatments / (needs treatment + active treatment)
-      treatment_rate = ifelse(
-        (needs_treatment + active_treatment) > 0,
-        round((active_treatment / (needs_treatment + active_treatment)) * 100, 1),
-        0
-      ),
-      treatment_rate_display = paste0(treatment_rate, "%")
+  if (metric_type == "acres") {
+    # Acres-based summary
+    process_summary <- data %>%
+      group_by(facility) %>%
+      summarise(
+        total_acres = sum(acres, na.rm = TRUE),
+        unknown = sum(acres[site_status == "Unknown"], na.rm = TRUE),
+        needs_treatment = sum(acres[site_status == "Needs Treatment"], na.rm = TRUE),
+        active_treatment = sum(acres[site_status == "Active Treatment"], na.rm = TRUE),
+        inspected = sum(acres[site_status == "Inspected"], na.rm = TRUE),
+        .groups = 'drop'
+      ) %>%
+      mutate(
+        # Calculate treatment rate: active treatment acres / (needs treatment + active treatment)
+        treatment_rate = ifelse(
+          (needs_treatment + active_treatment) > 0,
+          round((active_treatment / (needs_treatment + active_treatment)) * 100, 1),
+          0
+        ),
+        treatment_rate_display = paste0(treatment_rate, "%")
+      )
+    
+    # Map facility short names to full names
+    process_summary <- map_facility_names(process_summary, "facility")
+    
+    # Rename columns for display
+    process_summary_display <- process_summary %>%
+      select(facility_display, total_acres, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
+    
+    colnames(process_summary_display) <- c(
+      "Facility", "Total Acres", "Not Insp", "Insp", "Needs Treatment", 
+      "Active Treatment", "Treatment Rate"
     )
-  
-  # Map facility short names to full names
-  process_summary <- map_facility_names(process_summary, "facility")
-  
-  # Rename columns for display (reorder to match status order)
-  process_summary_display <- process_summary %>%
-    select(facility_display, total_sites, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
-  
-  colnames(process_summary_display) <- c(
-    "Facility", "Total Sites", "Not Insp", "Insp", "Needs Treatment", 
-    "Active Treatment", "Treatment Rate"
-  )
+  } else {
+    # Sites-based summary (original logic)
+    process_summary <- data %>%
+      group_by(facility) %>%
+      summarise(
+        total_sites = n(),
+        unknown = sum(site_status == "Unknown", na.rm = TRUE),
+        needs_treatment = sum(site_status == "Needs Treatment", na.rm = TRUE),
+        active_treatment = sum(site_status == "Active Treatment", na.rm = TRUE),
+        inspected = sum(site_status == "Inspected", na.rm = TRUE),
+        .groups = 'drop'
+      ) %>%
+      mutate(
+        # Calculate treatment rate: active treatments / (needs treatment + active treatment)
+        treatment_rate = ifelse(
+          (needs_treatment + active_treatment) > 0,
+          round((active_treatment / (needs_treatment + active_treatment)) * 100, 1),
+          0
+        ),
+        treatment_rate_display = paste0(treatment_rate, "%")
+      )
+    
+    # Map facility short names to full names
+    process_summary <- map_facility_names(process_summary, "facility")
+    
+    # Rename columns for display
+    process_summary_display <- process_summary %>%
+      select(facility_display, total_sites, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
+    
+    colnames(process_summary_display) <- c(
+      "Facility", "Total Sites", "Not Insp", "Insp", "Needs Treatment", 
+      "Active Treatment", "Treatment Rate"
+    )
+  }
   
   return(process_summary_display)
 }
 
 # Create treatment flow chart
-create_treatment_flow_chart <- function(data, theme = "MMCD") {
+create_treatment_flow_chart <- function(data, metric_type = "sites", theme = "MMCD") {
   if (nrow(data) == 0) {
     return(plot_ly() %>%
       add_annotations(
@@ -197,11 +233,22 @@ create_treatment_flow_chart <- function(data, theme = "MMCD") {
       ))
   }
   
-  # Create facility-level summary
-  facility_summary <- data %>%
-    group_by(facility, site_status) %>%
-    summarise(count = n(), .groups = 'drop') %>%
-    tidyr::pivot_wider(names_from = site_status, values_from = count, values_fill = 0)
+  # Create facility-level summary based on metric type
+  if (metric_type == "acres") {
+    # Acres-based summary
+    facility_summary <- data %>%
+      group_by(facility, site_status) %>%
+      summarise(acres = sum(acres, na.rm = TRUE), .groups = 'drop') %>%
+      tidyr::pivot_wider(names_from = site_status, values_from = acres, values_fill = 0)
+    y_title <- "Acres"
+  } else {
+    # Sites-based summary
+    facility_summary <- data %>%
+      group_by(facility, site_status) %>%
+      summarise(count = n(), .groups = 'drop') %>%
+      tidyr::pivot_wider(names_from = site_status, values_from = count, values_fill = 0)
+    y_title <- "Number of Sites"
+  }
   
   # Map facility short names to full names
   facility_summary <- map_facility_names(facility_summary, "facility")
@@ -237,7 +284,7 @@ create_treatment_flow_chart <- function(data, theme = "MMCD") {
     layout(
       title = list(text = "Treatment Process Flow by Facility", font = list(size = 20)),
       xaxis = list(title = list(text = "Facility", font = list(size = 18)), tickfont = list(size = 16)),
-      yaxis = list(title = list(text = "Number of Sites", font = list(size = 18)), tickfont = list(size = 16)),
+      yaxis = list(title = list(text = y_title, font = list(size = 18)), tickfont = list(size = 16)),
       barmode = 'stack',
       showlegend = TRUE,
       legend = list(font = list(size = 16))

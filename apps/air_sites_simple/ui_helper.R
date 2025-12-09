@@ -7,8 +7,7 @@ get_available_zones <- function() {
     query <- "
       SELECT DISTINCT g.zone 
       FROM loc_breeding_sites b
-      LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
-        OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+      LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
       WHERE g.zone IS NOT NULL 
         AND b.air_gnd = 'A'
         AND (b.enddate IS NULL OR b.enddate > CURRENT_DATE)

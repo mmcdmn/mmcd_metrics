@@ -23,6 +23,9 @@ RUN R -e "install.packages(c( \
 # Install additional visualization packages for SF mapping
 RUN R -e "install.packages(c('viridis', 'gridExtra', 'ggspatial', 'rosm', 'prettymapr'), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
+# Install PooledInfRate for MLE calculations (trap_survillance_test app)
+RUN R -e "install.packages('remotes', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/'); remotes::install_github('CDCgov/PooledInfRate')"
+
 # Install tidyr separately to ensure it's available
 RUN R -e "install.packages(c('tidyr'), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 

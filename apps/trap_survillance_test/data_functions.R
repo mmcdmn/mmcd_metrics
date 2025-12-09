@@ -21,9 +21,16 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   # Build filters
   trap_type_filter <- paste(sprintf("'%s'", trap_types), collapse = ",")
   
-  species_filter <- ""
+  # FIX: species_codes are already numeric sppcode IDs (36, 38, etc.) from get_species_choices()
+  species_filter_traps <- ""
+  species_filter_pools <- ""
   if (length(species_codes) > 0 && !("all" %in% tolower(species_codes))) {
-    species_filter <- sprintf("AND s.spp IN (%s)", paste(species_codes, collapse = ","))
+    # Convert to numeric and build IN clause
+    species_ids <- paste(as.integer(species_codes), collapse = ",")
+    species_filter_traps <- sprintf("AND s.spp IN (%s)", species_ids)
+    # dbvirus_pool.spp_code is TEXT, so we need to quote the values
+    species_ids_quoted <- paste(sprintf("'%s'", as.integer(species_codes)), collapse = ",")
+    species_filter_pools <- sprintf("AND p.spp_code IN (%s)", species_ids_quoted)
   }
   
   facility_filter_sql <- ""
@@ -57,6 +64,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
         t.result, 
         t.date AS testdate, 
         t.target,
+        p.sampnum_yr,
         p.spp_code, 
         p.count,
         ST_X(ST_Transform(
@@ -86,16 +94,16 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
     -- Return combined results
     SELECT 'trap' as data_type, ainspecnum as id, facility, x as lon, y as lat, 
            survtype as type, inspdate as date, species_count as value, 
-           NULL as result, NULL as poolnum
+           NULL as result, NULL as poolnum, NULL as sampnum_yr
     FROM latest_traps
     
     UNION ALL
     
-    SELECT 'pool' as data_type, test_id::text as id, facility, lon, lat,
-           target as type, testdate as date, count as value, result, poolnum
+    SELECT 'pool' as data_type, poolnum::text as id, facility, lon, lat,
+           target as type, testdate as date, count as value, result, poolnum, sampnum_yr
     FROM virus_pools
     WHERE lon IS NOT NULL AND lat IS NOT NULL",
-    species_filter,
+    species_filter_traps,
     as.character(analysis_date),
     trap_type_filter,
     facility_filter_sql,
@@ -105,7 +113,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
     virus_target,
     trap_type_filter,
     facility_filter_sql,
-    species_filter
+    species_filter_pools
   )
   
   # Execute unified query
@@ -464,6 +472,10 @@ compute_section_vector_index_metric <- function(species_codes = "all",
            num_pools, num_positive, total_tested, 
            nearest_pool_date)
   
+  message(sprintf("DEBUG: MLE data has %d sections", nrow(mle_data)))
+  message(sprintf("DEBUG: Sections with MLE > 0: %d", sum(mle_data$mle > 0, na.rm = TRUE)))
+  message(sprintf("DEBUG: Sections with positive pools: %d", sum(mle_data$num_positive > 0, na.rm = TRUE)))
+  
   # Get ONLY the population-specific columns from popindex_results
   # NOTE: popindex also has num_pools/num_positive/total_tested columns but they are 
   # garbage values (NAs or wrong data) since popindex doesn't use pool data!
@@ -471,10 +483,18 @@ compute_section_vector_index_metric <- function(species_codes = "all",
   popindex_data <- st_drop_geometry(popindex_results$sections_sf) %>%
     select(sectcode, N = vector_index, nearest_trap_count, last_inspection)
   
+  message(sprintf("DEBUG: Population data has %d sections", nrow(popindex_data)))
+  message(sprintf("DEBUG: Sections with N > 0: %d", sum(popindex_data$N > 0, na.rm = TRUE)))
+  
   # Combine the two datasets - popindex has N, mle_data has pool stats
-  # Use inner_join since we only want sections that have BOTH valid N and valid MLE
-  combined_data <- popindex_data %>%
-    inner_join(mle_data, by = "sectcode")
+  # Use LEFT JOIN to keep ALL MLE sections, even if they don't have population data
+  # This way, sections with pools but no traps still get included in Vector Index
+  combined_data <- mle_data %>%
+    left_join(popindex_data, by = "sectcode")
+  
+  message(sprintf("DEBUG: After join, combined data has %d sections", nrow(combined_data)))
+  message(sprintf("DEBUG: Sections in combined with MLE > 0: %d", sum(combined_data$mle > 0, na.rm = TRUE)))
+  message(sprintf("DEBUG: Sections in combined with N > 0: %d", sum(combined_data$N > 0, na.rm = TRUE)))
   
   # STEP 4: Calculate Vector Index = N × P
   if (!is.null(progress)) {
@@ -483,6 +503,7 @@ compute_section_vector_index_metric <- function(species_codes = "all",
   
   combined_data <- combined_data %>%
     mutate(
+      N = ifelse(is.na(N), 0, N),  # If no population data, set N = 0
       P = ifelse(!is.na(mle), mle / scale, 0),
       vector_index_metric = N * P,
       last_pool_date = nearest_pool_date

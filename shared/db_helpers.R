@@ -657,6 +657,45 @@ get_enhanced_species_mapping <- function(format_style = "display", include_code 
   return(species_map)
 }
 
+#' Get Species Choices for Shiny Select Input
+#' 
+#' Returns a named vector of species codes suitable for use in Shiny selectInput/selectizeInput.
+#' The names are formatted display names (e.g., "Aedes albopictus (52)") and values are species codes.
+#' 
+#' @param include_all Logical. If TRUE, includes "All" as the first option.
+#' 
+#' @return Named character vector where names are display names and values are species codes
+#' 
+#' @examples
+#' choices <- get_species_choices()
+#' # Returns: c("Aedes albopictus (52)" = "52", "Culex pipiens (5)" = "5", ...)
+#' 
+#' choices_with_all <- get_species_choices(include_all = TRUE)
+#' # Returns: c("All Species" = "all", "Aedes albopictus (52)" = "52", ...)
+get_species_choices <- function(include_all = TRUE) {
+  # Get species mapping with display format and codes
+  species_map <- get_enhanced_species_mapping(format_style = "display", include_code = TRUE)
+  
+  if (length(species_map) == 0) {
+    warning("No species data available from database")
+    return(if (include_all) c("All Species" = "all") else character(0))
+  }
+  
+  # species_map is returned as: names=codes, values=display_names
+  # We need to flip it for Shiny: names=display_names, values=codes
+  choices <- setNames(names(species_map), species_map)
+  
+  # Sort alphabetically by display name
+  choices <- choices[order(names(choices))]
+  
+  # Add "All" option if requested
+  if (include_all) {
+    choices <- c("All Species" = "all", choices)
+  }
+  
+  return(choices)
+}
+
 # Internal helper function to generate visually distinct colors
 # This function creates a set of unique colors that are visually distinct from each other
 # Now supports theme-based color generation

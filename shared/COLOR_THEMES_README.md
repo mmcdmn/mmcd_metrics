@@ -129,7 +129,7 @@ Each theme provides:
 10 distinct colors for categorical data (facilities, categories, etc.)
 
 ### Facilities
-Specific colors for each MMCD facility (AP, BD, BL, MT, NM, SH, SP, WB)
+Specific colors for each MMCD facility (Sr, N, E, etc)
 
 ### Status Colors
 Colors for status indicators:

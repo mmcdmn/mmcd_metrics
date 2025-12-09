@@ -107,6 +107,18 @@
             text-decoration: underline;
         }
     </style>
+    <!-- KaTeX for LaTeX math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+        onload="renderMathInElement(document.body, {
+          delimiters: [
+            {left: '$$', right: '$$', display: true},
+            {left: '$', right: '$', display: false},
+            {left: '\\[', right: '\\]', display: true},
+            {left: '\\(', right: '\\)', display: false}
+          ]
+        });"></script>
 </head>
 <body>
     <div class="container">
@@ -192,7 +204,7 @@ latest_traps AS (
 virus_pools AS (
   SELECT 
     t.id AS test_id, t.poolnum, t.result, t.date AS testdate,
-    t.target, p.spp_code, p.count,
+    t.target, p.sampnum_yr, p.spp_code, p.count,
     ST_X(ST_Transform(
       CASE WHEN c.network_type IS NOT NULL 
            THEN l.geom 
@@ -217,10 +229,10 @@ virus_pools AS (
     AND p.spp_code IN (...)  -- Species filter
 )
 
--- Union: Return unified result set
-SELECT 'trap' as data_type, ... FROM latest_traps
+-- Union: Return unified result set with sampnum_yr for pool grouping
+SELECT 'trap' as data_type, ainspecnum as id, ..., NULL as sampnum_yr FROM latest_traps
 UNION ALL
-SELECT 'pool' as data_type, ... FROM virus_pools
+SELECT 'pool' as data_type, poolnum::text as id, ..., sampnum_yr FROM virus_pools
 WHERE lon IS NOT NULL AND lat IS NOT NULL;
 </code></pre>
 
@@ -270,7 +282,54 @@ Trap 25-91099 (Elevated CO2, Culex pipiens):
 
 <h4>Stage 2: k-NN Distance-Weighted Averaging for Sections</h4>
 
-<p><strong>Purpose</strong>: Assign infection rate estimates to sections using nearby trap data</p>
+<p><strong>Purpose</strong>: Assign infection rate estimates to sections using spatially-weighted interpolation from nearby trap MLEs</p>
+
+<p><strong>Mathematical Formulation</strong>:</p>
+
+<p>For each section $s$ with centroid location $\mathbf{c}_s$:</p>
+
+<ol>
+<li><strong>Identify k-Nearest Traps</strong>: Find the set of $k$ nearest trap locations $\\{\mathbf{t}_1, \mathbf{t}_2, \ldots, \mathbf{t}_k\\}$</li>
+</ul>
+
+<ol>
+<li><strong>Calculate Distances</strong>: Compute geodesic distances</li>
+</ul>
+
+<p>   $$d_i = \text{distance}(\mathbf{c}_s, \mathbf{t}_i) \quad \text{for } i = 1, 2, \ldots, k$$</p>
+
+<ol>
+<li><strong>Inverse Distance Weighting</strong>: Calculate weights using inverse distance squared</li>
+</ul>
+
+<p>   $$w_i = \frac{1}{d_i^2}$$</p>
+
+<ol>
+<li><strong>Normalize Weights</strong>: Ensure weights sum to unity</li>
+</ul>
+
+<p>   $$\hat{w}_i = \frac{w_i}{\sum_{j=1}^{k} w_j}$$</p>
+
+<ol>
+<li><strong>Weighted Average MLE</strong>: Compute section MLE as weighted mean</li>
+</ul>
+
+<p>   $$\text{MLE}_s = \sum_{i=1}^{k} \hat{w}_i \cdot \text{MLE}_{\mathbf{t}_i}$$</p>
+
+<p>   where $\text{MLE}_{\mathbf{t}_i}$ is the trap-level MLE calculated in Stage 1.</p>
+
+<p><strong>Vector Index Calculation</strong>:</p>
+
+<p>The Vector Index for section $s$ combines population density and infection probability:</p>
+
+<p>$$\text{VI}_s = N_s \times P_s$$</p>
+
+<p>where:</p>
+
+<ul>
+<li>$N_s$ = Population Index (k-NN inverse-distance-weighted average of trap mosquito counts)</li>
+<li>$P_s = \frac{\text{MLE}_s}{1000}$ (infection probability scaled per 1000 mosquitoes)</li>
+</ul>
 
 <p><strong>Process</strong>:</p>
 <ol>
@@ -331,7 +390,7 @@ Section 123 (centroid at -92.80, 45.25):
     Section MLE = (MLE_A × 0.45) + (MLE_B × 0.30) + (MLE_C × 0.25)
 </code></pre>
 
-<h3>Distance Weighting Formula</h3>
+<h3>Distance Weighting Implementation</h3>
 
 <pre><code class="r">
 # Inverse distance squared

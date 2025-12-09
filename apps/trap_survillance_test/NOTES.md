@@ -60,7 +60,7 @@ latest_traps AS (
 virus_pools AS (
   SELECT 
     t.id AS test_id, t.poolnum, t.result, t.date AS testdate,
-    t.target, p.spp_code, p.count,
+    t.target, p.sampnum_yr, p.spp_code, p.count,
     ST_X(ST_Transform(
       CASE WHEN c.network_type IS NOT NULL 
            THEN l.geom 
@@ -85,10 +85,10 @@ virus_pools AS (
     AND p.spp_code IN (...)  -- Species filter
 )
 
--- Union: Return unified result set
-SELECT 'trap' as data_type, ... FROM latest_traps
+-- Union: Return unified result set with sampnum_yr for pool grouping
+SELECT 'trap' as data_type, ainspecnum as id, ..., NULL as sampnum_yr FROM latest_traps
 UNION ALL
-SELECT 'pool' as data_type, ... FROM virus_pools
+SELECT 'pool' as data_type, poolnum::text as id, ..., sampnum_yr FROM virus_pools
 WHERE lon IS NOT NULL AND lat IS NOT NULL;
 ```
 
@@ -132,7 +132,42 @@ Trap 25-91099 (Elevated CO2, Culex pipiens):
 
 #### Stage 2: k-NN Distance-Weighted Averaging for Sections
 
-**Purpose**: Assign infection rate estimates to sections using nearby trap data
+**Purpose**: Assign infection rate estimates to sections using spatially-weighted interpolation from nearby trap MLEs
+
+**Mathematical Formulation**:
+
+For each section $s$ with centroid location $\mathbf{c}_s$:
+
+1. **Identify k-Nearest Traps**: Find the set of $k$ nearest trap locations $\\{\mathbf{t}_1, \mathbf{t}_2, \ldots, \mathbf{t}_k\\}$
+
+2. **Calculate Distances**: Compute geodesic distances
+   
+   $$d_i = \text{distance}(\mathbf{c}_s, \mathbf{t}_i) \quad \text{for } i = 1, 2, \ldots, k$$
+
+3. **Inverse Distance Weighting**: Calculate weights using inverse distance squared
+   
+   $$w_i = \frac{1}{d_i^2}$$
+
+4. **Normalize Weights**: Ensure weights sum to unity
+   
+   $$\hat{w}_i = \frac{w_i}{\sum_{j=1}^{k} w_j}$$
+
+5. **Weighted Average MLE**: Compute section MLE as weighted mean
+   
+   $$\text{MLE}_s = \sum_{i=1}^{k} \hat{w}_i \cdot \text{MLE}_{\mathbf{t}_i}$$
+
+   where $\text{MLE}_{\mathbf{t}_i}$ is the trap-level MLE calculated in Stage 1.
+
+**Vector Index Calculation**:
+
+The Vector Index for section $s$ combines population density and infection probability:
+
+$$\text{VI}_s = N_s \times P_s$$
+
+where:
+
+- $N_s$ = Population Index (k-NN inverse-distance-weighted average of trap mosquito counts)
+- $P_s = \frac{\text{MLE}_s}{1000}$ (infection probability scaled per 1000 mosquitoes)
 
 **Process**:
 1. Calculate centroid for each section polygon
@@ -185,7 +220,7 @@ Section 123 (centroid at -92.80, 45.25):
     Section MLE = (MLE_A × 0.45) + (MLE_B × 0.30) + (MLE_C × 0.25)
 ```
 
-### Distance Weighting Formula
+### Distance Weighting Implementation
 
 ```r
 # Inverse distance squared

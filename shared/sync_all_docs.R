@@ -204,6 +204,30 @@ convert_markdown_to_html <- function(md_lines) {
 
 # Process inline formatting (bold, italic, code, links)
 process_inline_formatting <- function(text) {
+  # Protect math expressions by replacing them with placeholders
+  math_inline <- list()
+  math_display <- list()
+  
+  # Extract and protect display math ($$...$$)
+  counter <- 0
+  while (grepl("\\$\\$[^$]+\\$\\$", text)) {
+    counter <- counter + 1
+    match <- regmatches(text, regexpr("\\$\\$[^$]+\\$\\$", text))
+    placeholder <- sprintf("XDISPLAYMATHX%dX", counter)
+    math_display[[placeholder]] <- match
+    text <- sub("\\$\\$[^$]+\\$\\$", placeholder, text)
+  }
+  
+  # Extract and protect inline math ($...$) - must exclude $$
+  counter <- 0
+  while (grepl("(?<!\\$)\\$(?!\\$)[^$]+\\$(?!\\$)", text, perl = TRUE)) {
+    counter <- counter + 1
+    match <- regmatches(text, regexpr("(?<!\\$)\\$(?!\\$)[^$]+\\$(?!\\$)", text, perl = TRUE))
+    placeholder <- sprintf("XINLINEMATHX%dX", counter)
+    math_inline[[placeholder]] <- match
+    text <- sub("(?<!\\$)\\$(?!\\$)[^$]+\\$(?!\\$)", placeholder, text, perl = TRUE)
+  }
+  
   # Escape HTML first
   text <- gsub("&", "&amp;", text)
   text <- gsub("<", "&lt;", text)
@@ -222,6 +246,14 @@ process_inline_formatting <- function(text) {
   
   # Handle links [text](url)
   text <- gsub("\\[([^\\]]+)\\]\\(([^\\)]+)\\)", "<a href=\"\\2\">\\1</a>", text)
+  
+  # Restore math expressions
+  for (placeholder in names(math_display)) {
+    text <- gsub(placeholder, math_display[[placeholder]], text, fixed = TRUE)
+  }
+  for (placeholder in names(math_inline)) {
+    text <- gsub(placeholder, math_inline[[placeholder]], text, fixed = TRUE)
+  }
   
   return(text)
 }
@@ -348,6 +380,18 @@ build_complete_html <- function(html_body, page_title) {
     "            text-decoration: underline;",
     "        }",
     "    </style>",
+    "    <!-- KaTeX for LaTeX math rendering -->",
+    "    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css\" integrity=\"sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV\" crossorigin=\"anonymous\">",
+    "    <script defer src=\"https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js\" integrity=\"sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8\" crossorigin=\"anonymous\"></script>",
+    "    <script defer src=\"https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js\" integrity=\"sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05\" crossorigin=\"anonymous\"",
+    "        onload=\"renderMathInElement(document.body, {",
+    "          delimiters: [",
+    "            {left: '$$', right: '$$', display: true},",
+    "            {left: '$', right: '$', display: false},",
+    "            {left: '\\\\[', right: '\\\\]', display: true},",
+    "            {left: '\\\\(', right: '\\\\)', display: false}",
+    "          ]",
+    "        });\"></script>",
     "</head>",
     "<body>",
     "    <div class=\"container\">",

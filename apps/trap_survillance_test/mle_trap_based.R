@@ -17,24 +17,33 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
       return(list(sections = data.frame(), trap_mles = data.frame(), sections_sf = NULL))
     }
     
+    message("DEBUG MLE: Pre-fetched pool data has ", nrow(pool_data), " pools")
+    message("DEBUG MLE: Positive pools in pre-fetched data: ", sum(pool_data$result == "Pos", na.rm = TRUE))
+    
     # Transform unified format to trap-aggregated format
+    # CRITICAL: Match the PostgreSQL array format that the database query returns
     trap_pools <- pool_data %>%
-      group_by(id) %>%  # id is sampnum_yr in pool data
+      group_by(sampnum_yr) %>%  # Group by sampnum_yr (trap inspection ID)
       summarise(
-        sampnum_yr = first(id),
+        sampnum_yr = first(sampnum_yr),
         facility = first(facility),
         lon = first(lon),
         lat = first(lat),
         inspdate = first(date),
-        results = list(result),
-        pool_sizes = list(value),
-        poolnums = list(poolnum),
+        # FIX: Convert to PostgreSQL array format "{val1,val2,val3}" to match database query
+        results = paste0("{", paste(result, collapse = ","), "}"),
+        pool_sizes = paste0("{", paste(value, collapse = ","), "}"),
+        poolnums = paste0("{", paste(poolnum, collapse = ","), "}"),
         num_pools = n(),
         last_test_date = max(date),
         .groups = "drop"
       )
     
     message("Transformed ", nrow(pool_data), " pool records into ", nrow(trap_pools), " trap records")
+    
+    # DEBUG: Check how many have positive results
+    traps_with_pos <- sum(grepl("Pos", trap_pools$results))
+    message("DEBUG MLE: Trap records with positive pools: ", traps_with_pos)
     
   } else {
     # Original database query logic
@@ -134,6 +143,15 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
     # Convert results to binary (1=Pos, 0=Neg)
     x_binary <- ifelse(results == "Pos", 1, 0)
     
+    # DEBUG: Check first positive trap
+    if (i == 1 && any(grepl("Pos", trap_row$results))) {
+      message("\nDEBUG TRAP 1 (should have positive):")
+      message("  Raw results: '", trap_row$results, "'")
+      message("  Parsed results: ", paste(results, collapse = ", "))
+      message("  x_binary: ", paste(x_binary, collapse = ", "))
+      message("  Sum positive: ", sum(x_binary))
+    }
+    
     # Remove invalid entries
     valid_idx <- !is.na(pool_sizes) & pool_sizes > 0 & !is.na(x_binary)
     if (sum(valid_idx) == 0) return(NULL)
@@ -180,7 +198,8 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
         stringsAsFactors = FALSE
       )
     }, error = function(e) {
-      message("Error calculating MLE for trap ", trap_row$sampnum_yr, ": ", e$message)
+      # Log ALL errors with trap ID
+      cat(sprintf("\n✗ ERROR for trap %s: %s\n", trap_row$sampnum_yr, e$message))
       return(NULL)
     })
   })
@@ -196,6 +215,8 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
   }
   
   message("Calculated MLE for ", nrow(trap_mle_df), " traps")
+  message("DEBUG MLE: Traps with MLE > 0: ", sum(trap_mle_df$mle > 0, na.rm = TRUE))
+  message("DEBUG MLE: Traps with positive pools: ", sum(trap_mle_df$num_positive > 0, na.rm = TRUE))
   
   # Load section geometries
   sections_sf <- load_section_geometries()

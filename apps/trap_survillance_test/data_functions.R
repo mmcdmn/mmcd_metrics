@@ -308,16 +308,22 @@ compute_all_surveillance_metrics <- function(species_codes = "all",
                                             virus_target = "WNV", 
                                             pt_method = "firth", 
                                             scale = 1000,
-                                            metric_type = "all") {
+                                            metric_type = "all",
+                                            prefetched_data = NULL) {  # NEW: Accept pre-fetched data
   
-  # Step 1: Fetch ALL data in one query
-  surveillance_data <- fetch_unified_surveillance_data(
-    analysis_date = analysis_date,
-    species_codes = species_codes,
-    facility_filter = facility_filter,
-    trap_types = trap_types,
-    virus_target = virus_target
-  )
+  # Step 1: Fetch ALL data in one query (unless already provided)
+  if (!is.null(prefetched_data)) {
+    message("Using pre-fetched surveillance data")
+    surveillance_data <- prefetched_data
+  } else {
+    surveillance_data <- fetch_unified_surveillance_data(
+      analysis_date = analysis_date,
+      species_codes = species_codes,
+      facility_filter = facility_filter,
+      trap_types = trap_types,
+      virus_target = virus_target
+    )
+  }
   
   if (is.null(surveillance_data)) {
     return(list(sections = data.frame(), sections_sf = NULL, traps = data.frame(), pools = data.frame()))
@@ -378,11 +384,23 @@ compute_section_vector_index_metric <- function(species_codes = "all",
   #   N = Population Index (k-NN IDW of trap counts)
   #   P = MLE / 1000 (trap-based MLE with k-NN DWA)
   
+  # OPTIMIZATION: Fetch surveillance data ONCE and pass to both functions
+  if (!is.null(progress)) {
+    progress$set(0.03, detail = "3%: Fetching unified surveillance data...")
+  }
+  
+  surveillance_data <- fetch_unified_surveillance_data(
+    species_codes = species_codes,
+    analysis_date = analysis_date,
+    facility_filter = facility_filter,
+    trap_types = trap_types
+  )
+  
   if (!is.null(progress)) {
     progress$set(0.05, detail = "Stage 1a: Calculating trap-based MLEs...")
   }
   
-  # STEP 1: Get trap-based MLE results (same as MLE metric)
+  # STEP 1: Get trap-based MLE results using pre-fetched data
   # Create sub-progress updater for MLE (0.05 to 0.45 = 40% of total)
   mle_progress <- if (!is.null(progress)) {
     list(set = function(value, detail) {
@@ -401,7 +419,8 @@ compute_section_vector_index_metric <- function(species_codes = "all",
     pt_method = pt_method,
     scale = scale,
     group_by = group_by,
-    progress = mle_progress
+    progress = mle_progress,
+    prefetched_data = surveillance_data  # NEW: Pass pre-fetched data
   )
   
   if (is.null(mle_results) || is.null(mle_results$sections_sf)) {
@@ -409,16 +428,17 @@ compute_section_vector_index_metric <- function(species_codes = "all",
   }
   
   if (!is.null(progress)) {
-    progress$set(0.50, detail = "50%: Fetching trap count data...")
+    progress$set(0.50, detail = "50%: Computing population index from pre-fetched data...")
   }
   
-  # STEP 2: Get population index results
+  # STEP 2: Get population index results using pre-fetched data
   popindex_results <- compute_section_vector_index(
     species_codes = species_codes,
     analysis_date = analysis_date,
     k = k,
     facility_filter = facility_filter,
-    trap_types = trap_types
+    trap_types = trap_types,
+    prefetched_data = surveillance_data  # NEW: Pass pre-fetched data
   )
   
   if (!is.null(progress)) {
@@ -503,19 +523,39 @@ compute_section_vector_index <- function(species_codes = "all",
                                          analysis_date = Sys.Date(),
                                          k = 4,
                                          facility_filter = NULL,
-                                         trap_types = c("4", "5", "6")) {
-  # Population Index only needs trap count data (N)
-  result <- compute_all_surveillance_metrics(
-    species_codes = species_codes,
-    analysis_date = analysis_date,
-    k = k,
-    facility_filter = facility_filter,
-    trap_types = trap_types,
-    virus_target = "WNV",  # Not used for popindex but required parameter
-    pt_method = "firth",   # Not used for popindex but required parameter
-    scale = 1000,          # Not used for popindex but required parameter
-    metric_type = "popindex"
-  )
+                                         trap_types = c("4", "5", "6"),
+                                         prefetched_data = NULL) {  # NEW: Accept pre-fetched data
+  
+  if (!is.null(prefetched_data)) {
+    # Use pre-fetched data instead of querying database again
+    message("Using pre-fetched data for population index (skipping redundant query)")
+    
+    result <- compute_all_surveillance_metrics(
+      species_codes = species_codes,
+      analysis_date = analysis_date,
+      k = k,
+      facility_filter = facility_filter,
+      trap_types = trap_types,
+      virus_target = "WNV",
+      pt_method = "firth",
+      scale = 1000,
+      metric_type = "popindex",
+      prefetched_data = prefetched_data  # Pass through pre-fetched data
+    )
+  } else {
+    # Original behavior - fetch data inside function
+    result <- compute_all_surveillance_metrics(
+      species_codes = species_codes,
+      analysis_date = analysis_date,
+      k = k,
+      facility_filter = facility_filter,
+      trap_types = trap_types,
+      virus_target = "WNV",
+      pt_method = "firth",
+      scale = 1000,
+      metric_type = "popindex"
+    )
+  }
   
   return(result)
 }

@@ -48,15 +48,15 @@ trap_ui <- function() {
                 selectInput("virus_target", "Virus Target:",
                            choices = get_virus_target_choices(),
                            selected = "WNV"),
+                helpText("Select which virus to test for in surveillance data"),
                 sliderInput("lookback_days", "Historical Data (days):",
                            min = 30, max = 180, value = 90, step = 10,
                            post = " days"),
-                helpText("Select which virus to test for in surveillance data"),
                 selectInput("trap_grouping", "Trap Grouping:", 
                            choices = c("By Location (recommended)" = "location",
                                      "By Individual Trap" = "individual"),
                            selected = "location"),
-                helpText("By Location: Groups traps at same coordinates (prevents duplicate distance issue)")
+                helpText("By Location: Groups traps at same coordinates (same trap)")
               ),
               numericInput("k_neighbors_sf", "k (nearest neighbors):", value = 4, min = 1, max = 10, step = 1),
               hr(),
@@ -160,17 +160,6 @@ trap_ui <- function() {
                 "  N = Population Index (avg mosquitoes/trap)",
                 br(),
                 "  P = MLE / 1000 (infection rate as proportion)"
-              ),
-              p(style="margin-top:10px;",
-                strong("Example:"), "Section 700101W:",
-                br(),
-                "N = 9584.15 mosquitoes/trap",
-                br(),
-                "MLE = 12.16 per 1000",
-                br(),
-                "P = 12.16 / 1000 = 0.01216",
-                br(),
-                "VI = 9584.15 × 0.01216 = ", strong("116.51")
               ),
               p(style="margin-top:10px;",
                 em("Reference: Dallas County Mosquito Surveillance 2013 WNV Guide")

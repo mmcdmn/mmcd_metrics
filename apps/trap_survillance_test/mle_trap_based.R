@@ -4,75 +4,110 @@
 compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Date(), k = 4, 
                                             trap_types = c("4", "5", "6"),
                                             virus_target = "WNV", pt_method = "firth", scale = 1000,
-                                            group_by = "location", progress = NULL) {
-  con <- get_db_connection()
-  if (is.null(con)) return(data.frame())
-  on.exit(dbDisconnect(con))
+                                            group_by = "location", progress = NULL, 
+                                            prefetched_data = NULL) {  
+  
+  # If data already fetched, use it instead of querying database
+  if (!is.null(prefetched_data)) {
+    message("Using pre-fetched surveillance data (skipping database query)")
+    pool_data <- prefetched_data$pools
+    
+    if (is.null(pool_data) || nrow(pool_data) == 0) {
+      message("No pool data in pre-fetched data")
+      return(list(sections = data.frame(), trap_mles = data.frame(), sections_sf = NULL))
+    }
+    
+    # Transform unified format to trap-aggregated format
+    trap_pools <- pool_data %>%
+      group_by(id) %>%  # id is sampnum_yr in pool data
+      summarise(
+        sampnum_yr = first(id),
+        facility = first(facility),
+        lon = first(lon),
+        lat = first(lat),
+        inspdate = first(date),
+        results = list(result),
+        pool_sizes = list(value),
+        poolnums = list(poolnum),
+        num_pools = n(),
+        last_test_date = max(date),
+        .groups = "drop"
+      )
+    
+    message("Transformed ", nrow(pool_data), " pool records into ", nrow(trap_pools), " trap records")
+    
+  } else {
+    # Original database query logic
+    con <- get_db_connection()
+    if (is.null(con)) return(data.frame())
+    on.exit(dbDisconnect(con))
 
-  # Handle species filtering - ensure all codes are character strings
-  species_sql <- ""
-  if (!("all" %in% tolower(species_codes))) {
-    # Force conversion to character and wrap in quotes
-    species_codes_char <- as.character(species_codes)
-    species_filter <- paste(sprintf("'%s'", species_codes_char), collapse = ",")
-    species_sql <- sprintf("AND p.spp_code IN (%s)", species_filter)
+    # Handle species filtering - ensure all codes are character strings
+    species_sql <- ""
+    if (!("all" %in% tolower(species_codes))) {
+      # Force conversion to character and wrap in quotes
+      species_codes_char <- as.character(species_codes)
+      species_filter <- paste(sprintf("'%s'", species_codes_char), collapse = ",")
+      species_sql <- sprintf("AND p.spp_code IN (%s)", species_filter)
+    }
+    
+    message("Species SQL filter: ", species_sql)
+    
+    trap_types_sql <- paste(sprintf("'%s'", trap_types), collapse = ",")
+    
+    # Query to get virus test data grouped by trap (sampnum_yr)
+    # Filter by trap types (survtype) to match surveillance parameters
+    virus_q <- sprintf(
+      "SELECT 
+        pl.sampnum_yr,
+        g.facility,
+        ST_X(ST_Transform(g.geometry, 4326)) as lon, 
+        ST_Y(ST_Transform(g.geometry, 4326)) as lat,
+        g.inspdate,
+        ARRAY_AGG(pl.result ORDER BY pl.poolnum) as results,
+        ARRAY_AGG(pl.count ORDER BY pl.poolnum) as pool_sizes,
+        ARRAY_AGG(pl.poolnum ORDER BY pl.poolnum) as poolnums,
+        ARRAY_AGG(pl.spp_code ORDER BY pl.poolnum) as species,
+        COUNT(*) as num_pools,
+        MAX(pl.testdate) as last_test_date
+       FROM 
+       (SELECT t.id AS test_id, t.poolnum, result, t.date AS testdate, status, method, target, 
+               p.sampnum_yr, p.spp_code, p.count
+        FROM dbvirus_pool_test t
+        LEFT JOIN dbvirus_pool p ON p.poolnum = t.poolnum
+        WHERE t.date >= '%s'::date - INTERVAL '90 days'
+          AND t.date <= '%s'::date
+          AND t.target = '%s'
+          %s
+       ) pl
+       LEFT JOIN (
+         SELECT ainspecnum, sitecode, address1, sampnum_yr, c.loc_code, network_type, 
+                c.facility, survtype, inspdate, 
+                CASE WHEN c.network_type IS NOT NULL THEN l.geom
+                     ELSE c.geometry END AS geometry
+         FROM dbadult_insp_current c
+         LEFT JOIN 
+         (SELECT a.loc_code, n.geom 
+          FROM loc_mondaynight_active a 
+          LEFT JOIN loc_mondaynight n ON n.loc_code = a.loc_code
+          WHERE a.enddate IS NULL ORDER BY a.loc_code) l ON l.loc_code = c.loc_code
+         WHERE c.survtype IN (%s)
+       ) g ON g.sampnum_yr = pl.sampnum_yr
+       WHERE g.geometry IS NOT NULL
+       GROUP BY pl.sampnum_yr, g.facility, g.geometry, g.inspdate
+       HAVING COUNT(*) > 0",
+      as.character(analysis_date),
+      as.character(analysis_date),
+      virus_target,
+      species_sql,
+      trap_types_sql
+    )
+    
+    trap_pools <- dbGetQuery(con, virus_q)
+    
+    message("Trap-level pool query returned ", nrow(trap_pools), " traps with pools")
   }
   
-  message("Species SQL filter: ", species_sql)
-  
-  trap_types_sql <- paste(sprintf("'%s'", trap_types), collapse = ",")
-  
-  # Query to get virus test data grouped by trap (sampnum_yr)
-  # Filter by trap types (survtype) to match surveillance parameters
-  virus_q <- sprintf(
-    "SELECT 
-      pl.sampnum_yr,
-      g.facility,
-      ST_X(ST_Transform(g.geometry, 4326)) as lon, 
-      ST_Y(ST_Transform(g.geometry, 4326)) as lat,
-      g.inspdate,
-      ARRAY_AGG(pl.result ORDER BY pl.poolnum) as results,
-      ARRAY_AGG(pl.count ORDER BY pl.poolnum) as pool_sizes,
-      ARRAY_AGG(pl.poolnum ORDER BY pl.poolnum) as poolnums,
-      ARRAY_AGG(pl.spp_code ORDER BY pl.poolnum) as species,
-      COUNT(*) as num_pools,
-      MAX(pl.testdate) as last_test_date
-     FROM 
-     (SELECT t.id AS test_id, t.poolnum, result, t.date AS testdate, status, method, target, 
-             p.sampnum_yr, p.spp_code, p.count
-      FROM dbvirus_pool_test t
-      LEFT JOIN dbvirus_pool p ON p.poolnum = t.poolnum
-      WHERE t.date >= '%s'::date - INTERVAL '90 days'
-        AND t.date <= '%s'::date
-        AND t.target = '%s'
-        %s
-     ) pl
-     LEFT JOIN (
-       SELECT ainspecnum, sitecode, address1, sampnum_yr, c.loc_code, network_type, 
-              c.facility, survtype, inspdate, 
-              CASE WHEN c.network_type IS NOT NULL THEN l.geom
-                   ELSE c.geometry END AS geometry
-       FROM dbadult_insp_current c
-       LEFT JOIN 
-       (SELECT a.loc_code, n.geom 
-        FROM loc_mondaynight_active a 
-        LEFT JOIN loc_mondaynight n ON n.loc_code = a.loc_code
-        WHERE a.enddate IS NULL ORDER BY a.loc_code) l ON l.loc_code = c.loc_code
-       WHERE c.survtype IN (%s)
-     ) g ON g.sampnum_yr = pl.sampnum_yr
-     WHERE g.geometry IS NOT NULL
-     GROUP BY pl.sampnum_yr, g.facility, g.geometry, g.inspdate
-     HAVING COUNT(*) > 0",
-    as.character(analysis_date),
-    as.character(analysis_date),
-    virus_target,
-    species_sql,
-    trap_types_sql
-  )
-  
-  trap_pools <- dbGetQuery(con, virus_q)
-  
-  message("Trap-level pool query returned ", nrow(trap_pools), " traps with pools")
   if (nrow(trap_pools) == 0) {
     message("No trap-level pool data found")
     return(list(sections = data.frame(), trap_mles = data.frame(), sections_sf = NULL))
@@ -197,7 +232,7 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
   total_sections <- nrow(sects_m)
   
   if (group_by == "location") {
-    # GROUP BY LOCATION: Prevents duplicate distance bug
+    # GROUP BY LOCATION
     # Multiple traps can have same coordinates (different species tested at same location)
     trap_locations <- trap_mle_df %>%
       group_by(lon, lat) %>%

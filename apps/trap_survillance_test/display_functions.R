@@ -90,7 +90,7 @@ render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label
     pool_date <- get_col_safe(sections_sf, "nearest_pool_date")
     
     popup_text <- sprintf(
-      "<strong>Section: %s</strong><br/>Facility: %s<br/>MLE: <strong>%.2f</strong> per 1000<br/>95%% CI: (%.2f - %.2f)<br/><hr/>Based on %.0f traps at %.0f locations<br/>Nearest: %.0f meters<br/>Farthest: %.0f meters<br/><hr/>Total pools from these traps: %.0f<br/>Pools with positive results: %.0f<br/>Total mosquitoes tested: %.0f<br/>Most recent pool test: %s",
+      "<strong>Section: %s</strong><br/>Facility: %s<br/>MLE: <strong>%.2f</strong> per 1000<br/>95%% CI: (%.2f - %.2f)<br/><hr/>Based on %.0f pools at %.0f locations<br/>Nearest: %.0f meters<br/>Farthest: %.0f meters<br/><hr/>Total pools from these traps: %.0f<br/>Pools with positive results: %.0f<br/>Total mosquitoes tested: %.0f<br/>Most recent pool test: %s",
       ifelse(is.na(sectcode), "Unknown", sectcode),
       ifelse(is.na(facility) | facility == "", "Unknown", facility),
       ifelse(is.na(metric_val), 0, metric_val),

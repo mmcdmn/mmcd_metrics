@@ -426,7 +426,7 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
 # Material filter function is now provided by db_helpers.R
 # Use get_material_choices() instead of get_treatment_materials()
 
-create_treatment_efficiency_metrics <- function(data) {
+create_treatment_efficiency_metrics <- function(data, metric_type = "sites") {
   if (nrow(data) == 0) {
     return(list(
       total_sites_needing_action = 0,
@@ -436,46 +436,88 @@ create_treatment_efficiency_metrics <- function(data) {
     ))
   }
   
-  # Calculate efficiency metrics
-  total_sites <- nrow(data)
-  sites_needing_treatment <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
-  sites_receiving_treatment <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
-  sites_inspected <- sum(data$site_status == "Inspected", na.rm = TRUE)
-  sites_in_lab <- sum(data$site_status == "Needs ID", na.rm = TRUE)
-  sites_unknown <- sum(data$site_status == "Unknown", na.rm = TRUE)
-  
-  # Sites that have been inspected, in lab, or treated
-  sites_with_action <- sites_inspected + sites_in_lab + sites_needing_treatment + sites_receiving_treatment
-  
-  # Treatment efficiency: active treatments / (needs treatment + active treatment)
-  sites_requiring_treatment <- sites_needing_treatment + sites_receiving_treatment
-  treatment_efficiency <- if (sites_requiring_treatment > 0) {
-    round((sites_receiving_treatment / sites_requiring_treatment) * 100, 1)
+  # Calculate efficiency metrics based on metric type (sites or acres)
+  if (metric_type == "acres") {
+    # Acres-based calculations
+    total_acres <- sum(data$acres, na.rm = TRUE)
+    acres_needing_treatment <- sum(data$acres[data$site_status == "Needs Treatment"], na.rm = TRUE)
+    acres_receiving_treatment <- sum(data$acres[data$site_status == "Active Treatment"], na.rm = TRUE)
+    acres_inspected <- sum(data$acres[data$site_status == "Inspected"], na.rm = TRUE)
+    acres_in_lab <- sum(data$acres[data$site_status == "Needs ID"], na.rm = TRUE)
+    
+    # Acres that have been inspected, in lab, or treated
+    acres_with_action <- acres_inspected + acres_in_lab + acres_needing_treatment + acres_receiving_treatment
+    
+    # Treatment efficiency: active treatment acres / (needs treatment + active treatment)
+    acres_requiring_treatment <- acres_needing_treatment + acres_receiving_treatment
+    treatment_efficiency <- if (acres_requiring_treatment > 0) {
+      round((acres_receiving_treatment / acres_requiring_treatment) * 100, 1)
+    } else {
+      0
+    }
+    
+    # Treatment rate: needs treatment / (needs treatment + active treatment) - shows % still needing treatment
+    treatment_rate <- if (acres_requiring_treatment > 0) {
+      round((acres_needing_treatment / acres_requiring_treatment) * 100, 1)
+    } else {
+      0
+    }
+    
+    # Inspection coverage: (inspected + in lab + needs treatment + active treatment) / total acres
+    inspection_coverage <- if (total_acres > 0) {
+      round((acres_with_action / total_acres) * 100, 1)
+    } else {
+      0
+    }
+    
+    return(list(
+      total_sites_needing_action = round(acres_requiring_treatment, 1),
+      sites_receiving_treatment = round(acres_receiving_treatment, 1),
+      treatment_efficiency = paste0(treatment_efficiency, "%"),
+      treatment_rate = paste0(treatment_rate, "%"),
+      inspection_coverage = paste0(inspection_coverage, "%")
+    ))
   } else {
-    0
+    # Sites-based calculations (original logic)
+    total_sites <- nrow(data)
+    sites_needing_treatment <- sum(data$site_status == "Needs Treatment", na.rm = TRUE)
+    sites_receiving_treatment <- sum(data$site_status == "Active Treatment", na.rm = TRUE)
+    sites_inspected <- sum(data$site_status == "Inspected", na.rm = TRUE)
+    sites_in_lab <- sum(data$site_status == "Needs ID", na.rm = TRUE)
+    
+    # Sites that have been inspected, in lab, or treated
+    sites_with_action <- sites_inspected + sites_in_lab + sites_needing_treatment + sites_receiving_treatment
+    
+    # Treatment efficiency: active treatments / (needs treatment + active treatment)
+    sites_requiring_treatment <- sites_needing_treatment + sites_receiving_treatment
+    treatment_efficiency <- if (sites_requiring_treatment > 0) {
+      round((sites_receiving_treatment / sites_requiring_treatment) * 100, 1)
+    } else {
+      0
+    }
+    
+    # Treatment rate: needs treatment / (needs treatment + active treatment) - shows % still needing treatment
+    treatment_rate <- if (sites_requiring_treatment > 0) {
+      round((sites_needing_treatment / sites_requiring_treatment) * 100, 1)
+    } else {
+      0
+    }
+    
+    # Inspection coverage: (inspected + in lab + needs treatment + active treatment) / total sites
+    inspection_coverage <- if (total_sites > 0) {
+      round((sites_with_action / total_sites) * 100, 1)
+    } else {
+      0
+    }
+    
+    return(list(
+      total_sites_needing_action = sites_requiring_treatment,
+      sites_receiving_treatment = sites_receiving_treatment,
+      treatment_efficiency = paste0(treatment_efficiency, "%"),
+      treatment_rate = paste0(treatment_rate, "%"),
+      inspection_coverage = paste0(inspection_coverage, "%")
+    ))
   }
-  
-  # Treatment rate: needs treatment / (needs treatment + active treatment) - shows % still needing treatment
-  treatment_rate <- if (sites_requiring_treatment > 0) {
-    round((sites_needing_treatment / sites_requiring_treatment) * 100, 1)
-  } else {
-    0
-  }
-  
-  # Inspection coverage: (inspected + in lab + needs treatment + active treatment) / total sites
-  inspection_coverage <- if (total_sites > 0) {
-    round((sites_with_action / total_sites) * 100, 1)
-  } else {
-    0
-  }
-  
-  return(list(
-    total_sites_needing_action = sites_requiring_treatment,
-    sites_receiving_treatment = sites_receiving_treatment,
-    treatment_efficiency = paste0(treatment_efficiency, "%"),
-    treatment_rate = paste0(treatment_rate, "%"),
-    inspection_coverage = paste0(inspection_coverage, "%")
-  ))
 }
 
 

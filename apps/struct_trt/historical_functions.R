@@ -37,9 +37,7 @@ load_historical_struct_data <- function(start_year, end_year,
     
     foreman_where <- ""
     if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-      # Format emp_num values as 4-digit strings to match gis_sectcode.fosarea format
-      foreman_codes_formatted <- sprintf("%04d", as.numeric(foreman_filter))
-      foreman_list <- paste0("'", foreman_codes_formatted, "'", collapse = ", ")
+      foreman_list <- paste0("'", foreman_filter, "'", collapse = ", ")
       foreman_where <- paste0("AND gis.fosarea IN (", foreman_list, ")")
     }
     

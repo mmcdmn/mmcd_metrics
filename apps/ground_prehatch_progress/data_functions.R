@@ -296,10 +296,9 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
     data <- data %>% filter(facility %in% facility_filter)
   }
   
-  # Filter by foreman (using fosarea which contains emp_num)
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !("all" %in% foreman_filter)) {
-    # foreman_filter now contains emp_num values from the UI choices
-    data <- data %>% filter(fosarea %in% foreman_filter)
+  # Filter by foreman
+  if (!is.null(foreman_filter) && !("all" %in% foreman_filter)) {
+    data <- data %>% filter(foreman %in% foreman_filter)
   }
   
   return(data)

@@ -301,13 +301,11 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
   group_colors <- NULL
   if (hist_group_by == "facility" && "facility" %in% names(data)) {
     facility_colors <- get_facility_base_colors(theme = theme)
-    # Use unname to avoid color scale matching issues
-    group_colors <- unname(facility_colors)
+    group_colors <- facility_colors
   } else if (hist_group_by == "foreman" && "fosarea" %in% names(data)) {
     # Use the new theme-aware foreman colors function
     foreman_colors <- get_themed_foreman_colors(theme = theme)
-    # Use unname to avoid color scale matching issues
-    group_colors <- unname(foreman_colors)
+    group_colors <- foreman_colors
   }
   
   # Create plotly chart based on chart_type

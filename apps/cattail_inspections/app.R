@@ -29,6 +29,43 @@ source("historical_functions.R")
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
+  
+  # Add custom CSS for collapsible sidebar
+  tags$head(
+    tags$style(HTML("
+      .sidebar-toggle {
+        position: fixed;
+        top: 60px;
+        left: 10px;
+        z-index: 1000;
+        background-color: #3c8dbc;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 18px;
+      }
+      .sidebar-toggle:hover {
+        background-color: #357ca5;
+      }
+      .sidebar-collapsed {
+        display: none !important;
+      }
+      /* Adjust tabs to avoid overlap with button */
+      .nav-tabs {
+        margin-left: 60px;
+      }
+    "))
+  ),
+  
+  # Add toggle button
+  tags$button(
+    class = "sidebar-toggle",
+    onclick = "$('.col-sm-4').toggleClass('sidebar-collapsed');",
+    HTML("&#9776;")
+  ),
+  
   titlePanel("Cattail Inspection Progress and Treatment Planning"),
   
   tabsetPanel(
@@ -121,12 +158,11 @@ ui <- fluidPage(
             step = 1
           ),
           
-          selectizeInput(
+          selectInput(
             "hist_facility_filter",
             "Filter Sites by Facility:",
             choices = get_facility_choices(),
-            selected = "all",
-            multiple = TRUE
+            selected = "all"
           ),
           
           radioButtons(

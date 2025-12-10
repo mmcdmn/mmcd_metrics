@@ -46,6 +46,43 @@ for (path in env_paths) {
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
+  
+  # Add custom CSS for sidebar toggle and positioning
+  tags$head(
+    tags$style(HTML("
+      .sidebar-toggle {
+        position: fixed;
+        top: 60px;
+        left: 10px;
+        z-index: 1000;
+        background-color: #3c8dbc;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 18px;
+      }
+      .sidebar-toggle:hover {
+        background-color: #357ca5;
+      }
+      .sidebar-collapsed {
+        display: none !important;
+      }
+      /* Move tabs to the right to avoid overlap with sidebar toggle button */
+      .nav-tabs {
+        margin-left: 50px;
+      }
+    "))
+  ),
+  
+  # Sidebar toggle button
+  tags$button(
+    class = "sidebar-toggle",
+    onclick = "$('.col-sm-4').toggleClass('sidebar-collapsed');",
+    HTML("&#9776;")
+  ),
+  
   # Application title
   titlePanel("SUCO Analysis Dashboard"),
 
@@ -96,15 +133,20 @@ ui <- fluidPage(
                   choices = c("P1 + P2" = "all", "P1" = "1", "P2" = "2"),
                   selected = "all"),
       
-      # Filter by facility (multi-select)
-      selectizeInput("facility_filter", "Facility:",
+      # Filter by facility (single-select)
+      selectInput("facility_filter", "Facility:",
                   choices = c("All"),  # Will be populated from get_facility_lookup()
-                  selected = "All", multiple = TRUE),
+                  selected = "All"),
       
       # Filter by foreman (multi-select, populated dynamically)
       selectizeInput("foreman_filter", "FOS:",
-                  choices = c("All"),
-                  selected = "All", multiple = TRUE),
+                  choices = c("Loading..." = "LOADING"),
+                  selected = NULL,
+                  multiple = TRUE,
+                  options = list(
+                    placeholder = "Select FOS (empty = all)",
+                    plugins = list('remove_button')
+                  )),
       
       # Add species filter to sidebarPanel
       selectInput("species_filter", "Species:", choices = c("All"), selected = "All"),
@@ -232,20 +274,31 @@ server <- function(input, output, session) {
   # Date shortcut handlers - behavior depends on active tab
   # Initialize facility choices from db_helpers
   observe({
-    facilities <- get_facility_lookup()
-    # Create named vector with full names as labels and short names as values
-    facility_choices <- c("All" = "All")
-    facility_choices <- c(
-      facility_choices,
-      setNames(facilities$short_name, facilities$full_name)
-    )
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices)
+    facility_choices <- get_facility_choices()
+    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
   })
   
-  # Initialize FOS choices from db_helpers
+  # Update FOS choices based on facility selection (like drone app)
   observe({
-    foreman_choices <- get_foreman_choices(include_all = TRUE)
-    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
+    selected_facility <- input$facility_filter
+    foremen_lookup <- get_foremen_lookup()
+    foreman_choices <- c("All" = "all")
+    if (!is.null(selected_facility) && selected_facility != "all" && nrow(foremen_lookup) > 0) {
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == selected_facility, ]
+      if (nrow(filtered_foremen) > 0) {
+        foreman_choices <- c(
+          foreman_choices,
+          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        )
+      }
+    } else if (nrow(foremen_lookup) > 0) {
+      foreman_choices <- c(
+        foreman_choices,
+        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      )
+    }
+    # Start empty, where empty means all
+    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = NULL)
   })
   
   # Initialize species choices from db_helpers

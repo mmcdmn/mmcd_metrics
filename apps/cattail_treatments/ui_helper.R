@@ -54,11 +54,10 @@ create_metric_toggle <- function() {
 
 # Function to create facility filter UI 
 create_facility_filter <- function() {
-  selectizeInput("facility_filter", "Facility:",
-                 choices = c("All" = "all"),
-                 selected = "all",
-                 multiple = TRUE,
-                 width = "100%")
+  selectInput("facility_filter", "Facility:",
+              choices = c("All" = "all"),
+              selected = "all",
+              width = "100%")
 }
 
 # Function to create foreman filter UI (populated dynamically from database)

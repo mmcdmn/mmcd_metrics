@@ -6,6 +6,43 @@ drone_ui <- function() {
   fluidPage(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
+    
+    # Add custom CSS for collapsible sidebar
+    tags$head(
+      tags$style(HTML("
+        .sidebar-toggle {
+          position: fixed;
+          top: 60px;
+          left: 10px;
+          z-index: 1000;
+          background-color: #3c8dbc;
+          color: white;
+          border: none;
+          padding: 10px 15px;
+          cursor: pointer;
+          border-radius: 4px;
+          font-size: 18px;
+        }
+        .sidebar-toggle:hover {
+          background-color: #357ca5;
+        }
+        .sidebar-collapsed {
+          display: none !important;
+        }
+          /* Move tabs to the right to avoid overlap with sidebar toggle button */
+          .nav-tabs {
+            margin-left: 50px;
+          }
+      "))
+    ),
+    
+    # Add toggle button
+    tags$button(
+      class = "sidebar-toggle",
+      onclick = "$('.col-sm-4').toggleClass('sidebar-collapsed');",
+      HTML("&#9776;")
+    ),
+    
     # Application title
     titlePanel("Drone Sites with Active and Expiring Treatments"),
     
@@ -106,31 +143,26 @@ drone_ui <- function() {
                                 "P1+P2 Combined" = "p1_p2_combined"),
                     selected = "p1_p2_combined"),
         
-        selectizeInput("facility_filter", "Facility:",
-                      choices = NULL, multiple = TRUE),
+        selectInput("facility_filter", "Facility:",
+                    choices = NULL),
         
         selectizeInput("foreman_filter", "FOS:",
-                      choices = NULL, multiple = TRUE),
-        
-        # Group by controls (dynamic based on tab)
-        conditionalPanel(
-          condition = "input.tabs == 'current'",
-          selectInput("group_by", "Group By:",
-                      choices = c("Facility" = "facility",
-                                  "FOS" = "foreman",
-                                  "Section" = "sectcode",
-                                  "All MMCD" = "mmcd_all"),
-                      selected = "facility")
+                      choices = c("Loading..." = "LOADING"),
+                      selected = NULL,
+                      multiple = TRUE,
+                      options = list(
+                        placeholder = "Select FOS (empty = all)",
+                        plugins = list('remove_button')
+                      )
         ),
         
-        conditionalPanel(
-          condition = "input.tabs == 'historical' || input.tabs == 'site_stats'",
-          selectInput("group_by", "Group By:",
-                      choices = c("Facility" = "facility",
-                                  "FOS" = "foreman",
-                                  "All MMCD" = "mmcd_all"),
-                      selected = "facility")
-        ),
+        # Group by controls (single input, choices updated in server)
+        selectInput("group_by", "Group By:",
+                    choices = c("Facility" = "facility",
+                                "FOS" = "foreman",
+                                "Section" = "sectcode",
+                                "All MMCD" = "mmcd_all"),
+                    selected = "facility"),
         
         # Help text for historical metrics (collapsible)
         hr(),

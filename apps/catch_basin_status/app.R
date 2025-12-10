@@ -126,12 +126,18 @@ server <- function(input, output, session) {
       zone_value  # Single zone
     }
     
+    # Handle empty foreman_filter (NULL or empty vector should be treated as NULL)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- NULL
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
@@ -168,12 +174,18 @@ server <- function(input, output, session) {
       }
     }
     
+    # Handle empty foreman_filter (NULL or empty vector should be treated as NULL)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- NULL
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       hist_time_period = hist_time_period_val,
       hist_display_metric = hist_display_metric_val,
@@ -190,35 +202,37 @@ server <- function(input, output, session) {
   observe({
     tryCatch({
       facility_choices <- get_facility_choices()
-      # Filter to only N, E, MO, Sr, Sj, Wm, Wp as specified in query
       facilities <- get_facility_lookup()
       if (!is.null(facilities) && nrow(facilities) > 0) {
-        facilities <- facilities %>%
-          filter(short_name %in% c("N", "E", "MO", "Sr", "Sj", "Wm", "Wp"))
         facility_choices <- c("All" = "all", setNames(facilities$short_name, facilities$full_name))
       }
-      updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+      updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
     }, error = function(e) {
       warning(paste("Error initializing facility choices:", e$message))
-      updateSelectizeInput(session, "facility_filter", choices = c("All" = "all"), selected = "all")
+      updateSelectInput(session, "facility_filter", choices = c("All" = "all"), selected = "all")
     })
   })
   
-  # Initialize foreman choices from db_helpers - runs immediately on app load
+  # Update foreman choices based on selected facility
   observe({
+    req(input$facility_filter)
     tryCatch({
       foremen_lookup <- get_foremen_lookup()
-      foremen_choices <- c("All" = "all")
+      foremen_choices <- c()  # Remove "All" option
       if (!is.null(foremen_lookup) && nrow(foremen_lookup) > 0) {
-        foremen_choices <- c(
-          foremen_choices,
-          setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
-        )
+        if (input$facility_filter != "all") {
+          filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility_filter, ]
+        } else {
+          filtered_foremen <- foremen_lookup
+        }
+        if (nrow(filtered_foremen) > 0) {
+          foremen_choices <- setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        }
       }
-      updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+      updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = NULL)
     }, error = function(e) {
       warning(paste("Error initializing foreman choices:", e$message))
-      updateSelectizeInput(session, "foreman_filter", choices = c("All" = "all"), selected = "all")
+      updateSelectizeInput(session, "foreman_filter", choices = c(), selected = NULL)
     })
   })
   

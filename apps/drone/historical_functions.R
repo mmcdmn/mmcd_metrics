@@ -34,12 +34,9 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   }
   
   if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-    # Convert foreman names to emp_nums
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    drone_sites <- drone_sites %>% filter(foreman %in% selected_emp_nums)
-    drone_treatments <- drone_treatments %>% filter(foreman %in% selected_emp_nums)
+    # foreman_filter already contains emp_num values from the UI choices
+    drone_sites <- drone_sites %>% filter(foreman %in% foreman_filter)
+    drone_treatments <- drone_treatments %>% filter(foreman %in% foreman_filter)
   }
   
   # Apply prehatch filter
@@ -272,11 +269,9 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   
   # Apply foreman/FOS filter
   if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !("all" %in% foreman_filter)) {
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    drone_treatments <- drone_treatments %>% filter(foreman %in% selected_emp_nums)
-    drone_sites <- drone_sites %>% filter(foreman %in% selected_emp_nums)
+    # foreman_filter already contains emp_num values from the UI choices
+    drone_treatments <- drone_treatments %>% filter(foreman %in% foreman_filter)
+    drone_sites <- drone_sites %>% filter(foreman %in% foreman_filter)
   }
   
   # Apply prehatch filter

@@ -2,7 +2,6 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
-  library(shinydashboard)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -14,6 +13,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("data_functions.R")
@@ -21,75 +21,187 @@ source("display_functions.R")
 source("ui_helper.R")
 source("historical_functions.R")
 
-ui <- dashboardPage(
-  dashboardHeader(title = "Catch Basin Status"),
+ui <- fluidPage(
+  # Use universal CSS from db_helpers for consistent text sizing
+  get_universal_text_css(),
   
-  dashboardSidebar(
-    sidebarMenu(
-      id = "sidebar_tabs",
-      menuItem("Status Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table")),
-      menuItem("Historical Analysis", tabName = "historical", icon = icon("history"))
-    )
+  # Add custom CSS for sidebar toggle and positioning
+  tags$head(
+    tags$style(HTML("
+      .sidebar-toggle {
+        position: fixed;
+        top: 60px;
+        left: 10px;
+        z-index: 1000;
+        background-color: #3c8dbc;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 18px;
+      }
+      .sidebar-toggle:hover {
+        background-color: #357ca5;
+      }
+      .sidebar-collapsed {
+        display: none !important;
+      }
+      /* Adjust main content when sidebar is hidden */
+      .col-sm-9 {
+        transition: width 0.3s;
+      }
+      .sidebar-collapsed ~ .col-sm-9 {
+        width: 100%;
+      }
+      /* Move tabs to the right to avoid overlap with sidebar toggle button */
+      .nav-tabs {
+        margin-left: 50px;
+      }
+      /* Ensure stat boxes are responsive and don't get cut off */
+      .col-sm-2 {
+        min-width: 160px;
+        overflow: hidden;
+      }
+      /* Responsive columns - adjust on smaller screens */
+      @media (max-width: 1200px) {
+        .col-sm-2 {
+          flex: 0 0 calc(50% - 10px);
+          max-width: calc(50% - 10px);
+        }
+      }
+      @media (max-width: 768px) {
+        .col-sm-2 {
+          flex: 0 0 100%;
+          max-width: 100%;
+        }
+      }
+    "))
   ),
   
-  dashboardBody(
-    # Use universal CSS from db_helpers for consistent text sizing
-    get_universal_text_css(),
-    
-    # Filter panel - always visible
-    create_filter_panel(),
-    
-    # Help text (collapsible)
-    div(id = "help-section",
-      tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-             style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-             HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-      div(style = "display: none;",
-        create_help_text()
-      )
+  # Sidebar toggle button
+  tags$button(
+    class = "sidebar-toggle",
+    onclick = "$('.col-sm-3').toggleClass('sidebar-collapsed');",
+    HTML("&#9776;")
+  ),
+  
+  # Application title
+  titlePanel("Catch Basin Status Dashboard"),
+  
+  # Sidebar with controls
+  sidebarLayout(
+    sidebarPanel(
+      # Refresh button at top
+      actionButton("refresh", "Refresh Data", 
+                   icon = icon("refresh"),
+                   class = "btn-primary btn-lg",
+                   style = "width: 100%;"),
+      p(style = "text-align: center; margin-top: 10px; font-size: 0.9em; color: #666;",
+        "Click refresh to get data for selected filters"),
+      
+      hr(),
+      
+      # Color theme selector - dynamically populated from available themes
+      selectInput("color_theme", "Color Theme:",
+                  choices = get_available_themes(),
+                  selected = "MMCD"),
+      
+      hr(),
+      
+      # Analysis Options
+      h4("Analysis Options"),
+      radioButtons("group_by", "Group by:",
+                   choices = c("All MMCD" = "mmcd_all",
+                              "Facility" = "facility", 
+                              "FOS" = "foreman",
+                              "Section" = "sectcode"),
+                   selected = "facility"),
+      
+      hr(),
+      
+      # Filters section
+      h4("Filters"),
+      
+      # Zone filter
+      radioButtons("zone_filter", "Zone Display:",
+                   choices = c("P1 Only" = "1", 
+                              "P2 Only" = "2", 
+                              "P1 and P2 Separate" = "1,2", 
+                              "Combined P1+P2" = "combined"),
+                   selected = "1,2"),
+      
+      hr(),
+      
+      # Facility filter (single-select)
+      selectInput("facility_filter", "Facility:",
+                  choices = c("All" = "all"),
+                  selected = "all"),
+      
+      # FOS filter (multi-select)
+      selectizeInput("foreman_filter", "FOS:",
+                    choices = c("Loading..." = "LOADING"),
+                    selected = NULL,
+                    multiple = TRUE,
+                    options = list(
+                      placeholder = "Select FOS (empty = all)",
+                      plugins = list('remove_button')
+                    )),
+      
+      hr(),
+      
+      # Date and expiring options
+      h4("Site Options"),
+      dateInput("custom_today", "Pretend Today is:",
+               value = Sys.Date(), 
+               format = "yyyy-mm-dd"),
+      
+      sliderInput("expiring_days", "Days Until Expiring:",
+                 min = 1, max = 60, value = 14, step = 1),
+      
+      radioButtons("expiring_filter", "Site Filter:",
+                  choices = c("All Sites" = "all",
+                             "Expiring Only" = "expiring", 
+                             "Expiring + Expired" = "expiring_expired"),
+                  selected = "all"),
+      
+      width = 3
     ),
     
-    tabItems(
-      # Overview tab
-      tabItem(tabName = "overview",
-        br(),
-        
-        # Summary statistics
-        div(
-          h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
-          create_overview_value_boxes()
+    # Main panel with tabs
+    mainPanel(
+      tabsetPanel(id = "main_tabset",
+        tabPanel("Status Overview",
+          br(),
+          # Summary statistics - uses create_catch_basin_overview_boxes() from stat_box_helpers
+          div(
+            h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
+            create_catch_basin_overview_boxes()
+          ),
+          br(),
+          # Status chart
+          create_status_chart_box()
         ),
         
-        br(),
+        tabPanel("Detailed View",
+          br(),
+          # Details table
+          create_details_table_box()
+        ),
         
-        # Status chart
-        create_status_chart_box()
+        tabPanel("Historical Analysis",
+          br(),
+          # Historical filters
+          create_historical_filter_panel(),
+          # Historical chart
+          create_historical_chart_box(),
+          br(),
+          # Historical details table
+          create_historical_details_table_box()
+        )
       ),
       
-      # Details tab  
-      tabItem(tabName = "details",
-        br(),
-        
-        # Details table
-        create_details_table_box()
-      ),
-      
-      # Historical tab
-      tabItem(tabName = "historical",
-        br(),
-        
-        # Historical filters
-        create_historical_filter_panel(),
-        
-        # Historical chart
-        create_historical_chart_box(),
-        
-        br(),
-        
-        # Historical details table
-        create_historical_details_table_box()
-      )
+      width = 9
     )
   )
 )
@@ -282,10 +394,12 @@ server <- function(input, output, session) {
   # =============================================================================
   # OVERVIEW TAB - Value boxes and charts
   # =============================================================================
+  # SUMMARY STATISTICS - Custom colored boxes based on theme
+  # =============================================================================
   
-  # Summary value boxes
-  output$total_wet_cb <- renderValueBox({
+  output$stat_wet_cb <- renderUI({
     data <- catch_basin_data()
+    colors <- get_status_colors(theme = current_theme())
     
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
@@ -293,16 +407,17 @@ server <- function(input, output, session) {
       total <- sum(data$wet_cb_count, na.rm = TRUE)
     }
     
-    valueBox(
-      format(total, big.mark = ","),
-      "Total Wet Catch Basins",
-      icon = icon("tint"),
-      color = "blue"
+    create_stat_box(
+      title = "Total Wet Catch Basins",
+      value = format(total, big.mark = ","),
+      bg_color = colors[["completed"]],  # Use completed/blue color from db_helpers
+      icon = icon("tint")
     )
   })
   
-  output$total_treated <- renderValueBox({
+  output$stat_treated <- renderUI({
     data <- catch_basin_data()
+    colors <- get_status_colors(theme = current_theme())
     
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
@@ -310,16 +425,17 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_activetrt, na.rm = TRUE)
     }
     
-    valueBox(
-      format(total, big.mark = ","),
-      "Wet CB with Active Treatment",
-      icon = icon("check-circle"),
-      color = "green"
+    create_stat_box(
+      title = "Active Treatment",
+      value = format(total, big.mark = ","),
+      bg_color = colors[["active"]],  # Use active/green color from db_helpers
+      icon = icon("check-circle")
     )
   })
   
-  output$percent_treated <- renderValueBox({
+  output$stat_percent <- renderUI({
     data <- catch_basin_data()
+    colors <- get_status_colors(theme = current_theme())
     
     if (is.null(data) || nrow(data) == 0) {
       pct <- 0
@@ -329,16 +445,17 @@ server <- function(input, output, session) {
       pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
     }
     
-    valueBox(
-      paste0(round(pct, 1), "%"),
-      "Treatment Coverage",
-      icon = icon("percent"),
-      color = if (pct >= 75) "green" else if (pct >= 50) "yellow" else "red"
+    create_stat_box(
+      title = "Coverage %",
+      value = paste0(round(pct, 1), "%"),
+      bg_color = colors[["active"]],  # Use active/green color from db_helpers
+      icon = icon("percent")
     )
   })
   
-  output$total_expiring <- renderValueBox({
+  output$stat_expiring <- renderUI({
     data <- catch_basin_data()
+    colors <- get_status_colors(theme = current_theme())
     
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
@@ -346,16 +463,17 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_expiring, na.rm = TRUE)
     }
     
-    valueBox(
-      format(total, big.mark = ","),
-      "Expiring",
-      icon = icon("clock"),
-      color = "orange"
+    create_stat_box(
+      title = "Expiring",
+      value = format(total, big.mark = ","),
+      bg_color = colors[["planned"]],  # Use planned/orange color from db_helpers
+      icon = icon("clock")
     )
   })
   
-  output$total_expired <- renderValueBox({
+  output$stat_expired <- renderUI({
     data <- catch_basin_data()
+    colors <- get_status_colors(theme = current_theme())
     
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
@@ -363,16 +481,34 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_expired, na.rm = TRUE)
     }
     
-    valueBox(
-      format(total, big.mark = ","),
-      "Expired",
-      icon = icon("times-circle"),
-      color = "red"
+    create_stat_box(
+      title = "Expired",
+      value = format(total, big.mark = ","),
+      bg_color = colors[["needs_treatment"]],  # Use needs_treatment/red color from db_helpers
+      icon = icon("times-circle")
     )
   })
   
-  # DUPLICATE OUTPUTS REMOVED - these were causing the app to crash!
-  # output$total_expiring and output$total_expired were defined twice
+  output$stat_needs_treatment <- renderUI({
+    data <- catch_basin_data()
+    colors <- get_status_colors(theme = current_theme())
+    
+    if (is.null(data) || nrow(data) == 0) {
+      total <- 0
+    } else {
+      # Needs treatment = total - treated
+      total_wet <- sum(data$wet_cb_count, na.rm = TRUE)
+      total_treated <- sum(data$count_wet_activetrt, na.rm = TRUE)
+      total <- total_wet - total_treated
+    }
+    
+    create_stat_box(
+      title = "Needs Treatment",
+      value = format(total, big.mark = ","),
+      bg_color = colors[["needs_action"]],  # Use needs_action color from db_helpers
+      icon = icon("exclamation-circle")
+    )
+  })
   
   # Status chart
   output$status_chart <- renderPlotly({

@@ -27,12 +27,7 @@ create_filter_panel <- function() {
       ),
       column(3,
         selectInput("color_theme", "Color Theme:",
-                   choices = c("MMCD (Default)" = "MMCD",
-                              "IBM Design" = "IBM",
-                              "Color-Blind Friendly" = "Wong",
-                              "Scientific" = "Tol",
-                              "Viridis" = "Viridis",
-                              "ColorBrewer" = "ColorBrewer"),
+                   choices = get_available_themes(),
                    selected = "MMCD"),
         tags$small(style = "color: #666;", "Changes chart colors")
       ),
@@ -126,18 +121,7 @@ create_help_text <- function() {
   )
 }
 
-# Create value boxes container for overview tab
-create_overview_value_boxes <- function() {
-  fluidRow(
-    column(3, valueBoxOutput("total_wet_cb", width = 12)),
-    column(3, valueBoxOutput("total_treated", width = 12)),
-    column(2, valueBoxOutput("percent_treated", width = 12)),
-    column(2, valueBoxOutput("total_expiring", width = 12)),
-    column(2, valueBoxOutput("total_expired", width = 12))
-  )
-}
 
-# Create status chart box
 create_status_chart_box <- function() {
   box(
     title = "Catch Basin Status by Group",

@@ -25,69 +25,14 @@ ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
   
-  # Add custom CSS for sidebar toggle and positioning
-  tags$head(
-    tags$style(HTML("
-      .sidebar-toggle {
-        position: fixed;
-        top: 60px;
-        left: 10px;
-        z-index: 1000;
-        background-color: #3c8dbc;
-        color: white;
-        border: none;
-        padding: 10px 15px;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 18px;
-      }
-      .sidebar-toggle:hover {
-        background-color: #357ca5;
-      }
-      .sidebar-collapsed {
-        display: none !important;
-      }
-      /* Adjust main content when sidebar is hidden */
-      .col-sm-9 {
-        transition: width 0.3s;
-      }
-      .sidebar-collapsed ~ .col-sm-9 {
-        width: 100%;
-      }
-      /* Move tabs to the right to avoid overlap with sidebar toggle button */
-      .nav-tabs {
-        margin-left: 50px;
-      }
-      /* Ensure stat boxes are responsive and don't get cut off */
-      .col-sm-2 {
-        min-width: 160px;
-        overflow: hidden;
-      }
-      /* Responsive columns - adjust on smaller screens */
-      @media (max-width: 1200px) {
-        .col-sm-2 {
-          flex: 0 0 calc(50% - 10px);
-          max-width: calc(50% - 10px);
-        }
-      }
-      @media (max-width: 768px) {
-        .col-sm-2 {
-          flex: 0 0 100%;
-          max-width: 100%;
-        }
-      }
-    "))
-  ),
-  
-  # Sidebar toggle button
-  tags$button(
-    class = "sidebar-toggle",
-    onclick = "$('.col-sm-3').toggleClass('sidebar-collapsed');",
-    HTML("&#9776;")
-  ),
+  # Use catch basin specific CSS from ui_helper
+  get_catch_basin_page_css(),
   
   # Application title
   titlePanel("Catch Basin Status Dashboard"),
+  
+  # Sidebar toggle button
+  create_sidebar_toggle_button(),
   
   # Sidebar with controls
   sidebarLayout(

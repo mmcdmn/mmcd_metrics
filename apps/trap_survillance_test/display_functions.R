@@ -200,6 +200,14 @@ render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label
   
   # Add trap location markers
   if (!is.null(trap_df) && nrow(trap_df) > 0) {
+    # Debug: Check trap data
+    message("DEBUG DISPLAY: trap_df has ", nrow(trap_df), " rows")
+    message("DEBUG DISPLAY: trap_df columns: ", paste(names(trap_df), collapse = ", "))
+    if ("mle" %in% names(trap_df)) {
+      message("DEBUG DISPLAY: Traps with MLE > 0: ", sum(trap_df$mle > 0, na.rm = TRUE))
+      message("DEBUG DISPLAY: Sample MLE values: ", paste(head(trap_df$mle, 5), collapse = ", "))
+    }
+    
     # Create trap popup text - check if MLE data is available
     if ("mle" %in% names(trap_df)) {
       # MLE trap markers - show detailed pool statistics
@@ -207,9 +215,9 @@ render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label
         "<strong>Trap: %s</strong><br/>Facility: %s<br/><hr/><strong>MLE: %.2f per 1000</strong><br/>95%% CI: (%.2f - %.2f)<br/><hr/>Total pools from this trap: %.0f<br/>Pools with positive results: %.0f<br/>Total mosquitoes tested: %.0f<br/>Inspection date: %s",
         trap_df$sampnum_yr,
         trap_df$facility,
-        as.numeric(trap_df$mle),
-        as.numeric(trap_df$mle_lower),
-        as.numeric(trap_df$mle_upper),
+        ifelse(is.na(trap_df$mle), 0, as.numeric(trap_df$mle)),
+        ifelse(is.na(trap_df$mle_lower), 0, as.numeric(trap_df$mle_lower)),
+        ifelse(is.na(trap_df$mle_upper), 0, as.numeric(trap_df$mle_upper)),
         as.numeric(trap_df$num_pools),
         as.numeric(trap_df$num_positive),
         as.numeric(trap_df$total_mosquitoes),

@@ -1671,3 +1671,88 @@ get_universal_text_css <- function(base_increase = 4) {
     ")))
   )
 }
+
+# =============================================================================
+# THEME HELPERS - Get available themes 
+# =============================================================================
+
+#' Get Available Color Themes
+#'
+#' Returns a named vector of available color themes for use in Shiny selectInput.
+#' Dynamically pulls theme names from color_themes.R if available.
+#'
+#' @return Named character vector where names are display labels and values are theme codes
+#' 
+#' @examples
+#' \dontrun{
+#' get_available_themes()
+#' # Returns: c("MMCD (Default)" = "MMCD", "IBM Design" = "IBM", ...)
+#' 
+#' # Use in selectInput:
+#' selectInput("theme", "Color Theme:", 
+#'            choices = get_available_themes(),
+#'            selected = "MMCD")
+#' }
+#'
+#' @export
+get_available_themes <- function() {
+  # Try to get themes from color_themes.R via get_theme_palette function
+  if (exists("get_available_themes", mode = "function", where = globalenv()) &&
+      !identical(get_available_themes, sys.function())) {
+    # get_available_themes from color_themes.R exists and it's not this function
+    tryCatch({
+      # Call the version from color_themes.R
+      return(get("get_available_themes", envir = globalenv())())
+    }, error = function(e) {
+      # Fall through to defaults
+    })
+  }
+  
+  # If color_themes.R isn't loaded, try to dynamically detect available themes
+  # by checking if get_theme_palette is available
+  if (exists("get_theme_palette", mode = "function", inherits = TRUE)) {
+    tryCatch({
+      # Try each known theme to see which ones work
+      known_themes <- c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer")
+      available <- c()
+      
+      for (theme in known_themes) {
+        palette <- tryCatch(
+          get_theme_palette(theme),
+          error = function(e) NULL
+        )
+        if (!is.null(palette)) {
+          available <- c(available, theme)
+        }
+      }
+      
+      if (length(available) > 0) {
+        # Build display labels - names are display labels, values are theme codes
+        labels <- c(
+          "MMCD (Default)" = "MMCD",
+          "IBM Design" = "IBM",
+          "Color-Blind Friendly" = "Wong",
+          "Scientific" = "Tol",
+          "Viridis" = "Viridis",
+          "ColorBrewer" = "ColorBrewer"
+        )
+        
+        # Return only available themes with proper labels (display name = theme code)
+        return(labels[labels %in% available])
+      }
+    }, error = function(e) {
+      # Fall through to hardcoded defaults
+    })
+  }
+  
+  # Fallback to hardcoded defaults if nothing else works
+  c(
+    "MMCD (Default)" = "MMCD",
+    "IBM Design" = "IBM",
+    "Color-Blind Friendly" = "Wong",
+    "Scientific" = "Tol",
+    "Viridis" = "Viridis",
+    "ColorBrewer" = "ColorBrewer"
+  )
+}
+

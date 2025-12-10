@@ -11,18 +11,19 @@ create_filter_panel <- function() {
     
     fluidRow(
       column(3,
-        selectizeInput("facility_filter", "Facility:",
-                      choices = c("All" = "all"),
-                      selected = "all", 
-                      multiple = TRUE,
-                      options = list(placeholder = "Select facilities..."))
+        selectInput("facility_filter", "Facility:",
+                    choices = c("All" = "all"),
+                    selected = "all")
       ),
       column(3,
         selectizeInput("foreman_filter", "FOS:",
-                      choices = c("All" = "all"),
-                      selected = "all",
+                      choices = c("Loading..." = "LOADING"),
+                      selected = NULL,
                       multiple = TRUE,
-                      options = list(placeholder = "Select FOS..."))
+                      options = list(
+                        placeholder = "Select FOS (empty = all)",
+                        plugins = list('remove_button')
+                      ))
       ),
       column(3,
         radioButtons("zone_filter", "Zone Display:",

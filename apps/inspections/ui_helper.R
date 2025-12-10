@@ -123,14 +123,19 @@ create_main_ui <- function() {
               selected = "A")
           ),
           column(2,
-            selectizeInput("facility", "Facility:", 
+            selectInput("facility", "Facility:", 
               choices = get_facility_display_choices(), 
-              selected = "all", multiple = TRUE)
+              selected = "all")
           ),
           column(2,
             selectizeInput("fosarea", "FOS Area:", 
-              choices = get_fosarea_display_choices(), 
-              selected = "all", multiple = TRUE)
+              choices = c("Loading..." = "LOADING"),
+              selected = NULL,
+              multiple = TRUE,
+              options = list(
+                placeholder = "Select FOS (empty = all)",
+                plugins = list('remove_button')
+              ))
           ),
           column(3,
             radioButtons("zone", "Zone Display:",

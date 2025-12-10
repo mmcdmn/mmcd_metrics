@@ -20,6 +20,40 @@ ui <- create_main_ui()
 # Define server logic
 server <- function(input, output, session) {
   
+  # Initialize facility choices on app startup
+  observe({
+    facility_choices <- get_facility_display_choices()
+    updateSelectInput(session, "facility", choices = facility_choices, selected = "all")
+  })
+
+  # Dynamically update FOS choices based on selected facility
+  observe({
+    selected_facility <- input$facility
+    foremen_lookup <- get_foremen_lookup()
+    foreman_choices <- c("All" = "all")
+    
+    if (!is.null(selected_facility) && selected_facility != "all" && nrow(foremen_lookup) > 0) {
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == selected_facility, ]
+      if (nrow(filtered_foremen) > 0) {
+        # Create display names with facility info
+        display_names <- paste0(filtered_foremen$shortname, " (", filtered_foremen$facility, ")")
+        foreman_choices <- c(
+          foreman_choices,
+          setNames(filtered_foremen$shortname, display_names)
+        )
+      }
+    } else if (nrow(foremen_lookup) > 0) {
+      # Show all foremen with facility info
+      display_names <- paste0(foremen_lookup$shortname, " (", foremen_lookup$facility, ")")
+      foreman_choices <- c(
+        foreman_choices,
+        setNames(foremen_lookup$shortname, display_names)
+      )
+    }
+    # Start empty, where empty means all
+    updateSelectizeInput(session, "fosarea", choices = foreman_choices, selected = NULL)
+  })
+  
   # Reactive theme handling
   current_theme <- reactive({
     input$color_theme

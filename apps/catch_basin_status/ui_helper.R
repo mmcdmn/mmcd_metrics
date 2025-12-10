@@ -1,6 +1,71 @@
 # UI helper functions for Catch Basin Status app
 # These functions create reusable UI components and improve code organization
 
+# Get CSS styles for catch basin dashboard layout
+get_catch_basin_page_css <- function() {
+  tags$head(
+    tags$style(HTML("
+      .sidebar-toggle {
+        position: fixed;
+        top: 60px;
+        left: 10px;
+        z-index: 1000;
+        background-color: #3c8dbc;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 18px;
+      }
+      .sidebar-toggle:hover {
+        background-color: #357ca5;
+      }
+      .sidebar-collapsed {
+        display: none !important;
+      }
+      /* Adjust main content when sidebar is hidden */
+      .col-sm-9 {
+        transition: width 0.3s;
+      }
+      .sidebar-collapsed ~ .col-sm-9 {
+        width: 100%;
+      }
+      /* Move tabs to the right to avoid overlap with sidebar toggle button */
+      .nav-tabs {
+        margin-left: 50px;
+      }
+      /* Ensure stat boxes are responsive and don't get cut off */
+      .col-sm-2 {
+        min-width: 160px;
+        overflow: hidden;
+      }
+      /* Responsive columns - adjust on smaller screens */
+      @media (max-width: 1200px) {
+        .col-sm-2 {
+          flex: 0 0 calc(50% - 10px);
+          max-width: calc(50% - 10px);
+        }
+      }
+      @media (max-width: 768px) {
+        .col-sm-2 {
+          flex: 0 0 100%;
+          max-width: 100%;
+        }
+      }
+    "))
+  )
+}
+
+# Create the sidebar toggle button for mobile/responsive layout
+create_sidebar_toggle_button <- function() {
+  tags$button(
+    class = "sidebar-toggle",
+    onclick = "$('.col-sm-3').toggleClass('sidebar-collapsed');",
+    HTML("&#9776;")  # Hamburger menu icon
+  )
+}
+
 # Create the main filter panel for dashboard layout
 create_filter_panel <- function() {
   box(
@@ -11,27 +76,23 @@ create_filter_panel <- function() {
     
     fluidRow(
       column(3,
-        selectizeInput("facility_filter", "Facility:",
-                      choices = c("All" = "all"),
-                      selected = "all", 
-                      multiple = TRUE,
-                      options = list(placeholder = "Select facilities..."))
+        selectInput("facility_filter", "Facility:",
+                    choices = c("All" = "all"),
+                    selected = "all")
       ),
       column(3,
         selectizeInput("foreman_filter", "FOS:",
-                      choices = c("All" = "all"),
-                      selected = "all",
+                      choices = c("Loading..." = "LOADING"),
+                      selected = NULL,
                       multiple = TRUE,
-                      options = list(placeholder = "Select FOS..."))
+                      options = list(
+                        placeholder = "Select FOS (empty = all)",
+                        plugins = list('remove_button')
+                      ))
       ),
       column(3,
         selectInput("color_theme", "Color Theme:",
-                   choices = c("MMCD (Default)" = "MMCD",
-                              "IBM Design" = "IBM",
-                              "Color-Blind Friendly" = "Wong",
-                              "Scientific" = "Tol",
-                              "Viridis" = "Viridis",
-                              "ColorBrewer" = "ColorBrewer"),
+                   choices = get_available_themes(),
                    selected = "MMCD"),
         tags$small(style = "color: #666;", "Changes chart colors")
       ),
@@ -125,47 +186,29 @@ create_help_text <- function() {
   )
 }
 
-# Create value boxes container for overview tab
-create_overview_value_boxes <- function() {
-  fluidRow(
-    column(3, valueBoxOutput("total_wet_cb", width = 12)),
-    column(3, valueBoxOutput("total_treated", width = 12)),
-    column(2, valueBoxOutput("percent_treated", width = 12)),
-    column(2, valueBoxOutput("total_expiring", width = 12)),
-    column(2, valueBoxOutput("total_expired", width = 12))
-  )
-}
 
-# Create status chart box
 create_status_chart_box <- function() {
-  box(
-    title = "Catch Basin Status by Group",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
+  div(
+    style = "border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-bottom: 20px; background-color: #f5f5f5;",
+    h4("Catch Basin Status by Group", style = "color: #3c8dbc; margin-top: 0;"),
     uiOutput("chart_ui")
   )
 }
 
 # Create details table box
 create_details_table_box <- function() {
-  box(
-    title = "Detailed Catch Basin Status Data",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
+  div(
+    style = "border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-bottom: 20px; background-color: #f5f5f5;",
+    h4("Detailed Catch Basin Status Data", style = "color: #3c8dbc; margin-top: 0;"),
     DTOutput("details_table")
   )
 }
 
 # Historical tab UI components
 create_historical_filter_panel <- function() {
-  box(
-    title = "Historical Analysis Filters",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
-    collapsible = TRUE,
+  div(
+    style = "border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-bottom: 20px; background-color: #f5f5f5;",
+    h4("Historical Analysis Filters", style = "color: #3c8dbc; margin-top: 0;"),
     
     fluidRow(
       column(3,
@@ -216,21 +259,17 @@ create_historical_filter_panel <- function() {
 }
 
 create_historical_chart_box <- function() {
-  box(
-    title = "Historical Trends",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
+  div(
+    style = "border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-bottom: 20px; background-color: #f5f5f5;",
+    h4("Historical Trends", style = "color: #3c8dbc; margin-top: 0;"),
     plotlyOutput("historical_chart", height = "500px")
   )
 }
 
 create_historical_details_table_box <- function() {
-  box(
-    title = "Historical Data Table",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
+  div(
+    style = "border: 1px solid #ddd; border-radius: 4px; padding: 15px; margin-bottom: 20px; background-color: #f5f5f5;",
+    h4("Historical Data Table", style = "color: #3c8dbc; margin-top: 0;"),
     DTOutput("historical_table")
   )
 }

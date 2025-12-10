@@ -180,21 +180,31 @@ server <- function(input, output, session) {
   # Initialize facility choices from db_helpers - runs immediately on app load
   observe({
     facility_choices <- get_facility_choices()
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
   })
-  
-  # Initialize foreman choices from db_helpers - runs immediately on app load
+
+  # Dynamically update foreman choices based on selected facility
   observe({
+    selected_facility <- input$facility_filter
     foremen_lookup <- get_foremen_lookup()
-    foremen_choices <- c("All" = "all")
-    foremen_choices <- c(
-      foremen_choices,
-      setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
-    )
-    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
-  })
-  
-  # Update chart type default when zone filter changes to P1 and P2 separate
+    foreman_choices <- c("All" = "all")
+    if (!is.null(selected_facility) && selected_facility != "all" && nrow(foremen_lookup) > 0) {
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == selected_facility, ]
+      if (nrow(filtered_foremen) > 0) {
+        foreman_choices <- c(
+          foreman_choices,
+          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        )
+      }
+    } else if (nrow(foremen_lookup) > 0) {
+      foreman_choices <- c(
+        foreman_choices,
+        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      )
+    }
+    # Start empty, where empty means all
+    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = NULL)
+  })  # Update chart type default when zone filter changes to P1 and P2 separate
   observeEvent(input$zone_filter, {
     # Only update if on historical tab and switching to P1 and P2 separate
     if (input$sidebar_tabs == "historical" && input$zone_filter == "1,2") {

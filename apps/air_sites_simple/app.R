@@ -57,17 +57,17 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
-                selectInput("facility_filter", "Facility:",
+                selectizeInput("facility_filter", "Facilities:",
                   choices = c("Loading..." = "LOADING"),
-                  selected = "LOADING"
+                  selected = "LOADING",
+                  multiple = TRUE
                 )
               ),
               column(3,
                 selectizeInput("priority_filter", "Priorities:",
                   choices = c("Loading..." = "LOADING"),
-                  selected = NULL,
-                  multiple = TRUE,
-                  options = list(placeholder = 'Select priorities (optional)')
+                  selected = "LOADING",
+                  multiple = TRUE
                 )
               ),
               column(3,
@@ -220,9 +220,10 @@ ui <- dashboardPage(
                 )
               ),
               column(3,
-                selectInput("process_facility_filter", "Facility:",
+                selectizeInput("process_facility_filter", "Facilities:",
                   choices = c("Loading..." = "LOADING"),
-                  selected = "LOADING"
+                  selected = "LOADING",
+                  multiple = TRUE
                 )
               ),
               column(3,
@@ -370,9 +371,10 @@ ui <- dashboardPage(
               status = "primary", solidHeader = TRUE, width = 12,
             fluidRow(
               column(3,
-                selectInput("hist_facility_filter", "Facility:",
+                selectizeInput("hist_facility_filter", "Facilities:",
                   choices = c("Loading..." = "LOADING"),
-                  selected = "LOADING"
+                  selected = "LOADING",
+                  multiple = TRUE
                 )
               ),
               column(3,
@@ -577,7 +579,8 @@ server <- function(input, output, session) {
   }
   
   # Load priority choices (static, load once)
-  priority_choices <- get_priority_choices(include_all = FALSE)
+  priority_choices_raw <- get_priority_choices(include_all = FALSE)
+  priority_choices <- c("All Priorities" = "all", priority_choices_raw)
   
   # Load zone choices (static, load once)
   zone_choices <- get_available_zones()
@@ -592,18 +595,18 @@ server <- function(input, output, session) {
   
   # Update all filter inputs ONCE on startup
   observe({
-    # Update facility filters - start with "all"
-    updateSelectInput(session, "facility_filter", 
+    # Update facility filters - start empty
+    updateSelectizeInput(session, "facility_filter", 
                         choices = facility_choices,
-                        selected = "all")
-    updateSelectInput(session, "process_facility_filter", 
+                        selected = NULL)
+    updateSelectizeInput(session, "process_facility_filter", 
                         choices = facility_choices,
-                        selected = "all")
+                        selected = NULL)
     
     # Update priority filter - start empty
     updateSelectizeInput(session, "priority_filter", 
-              choices = priority_choices,
-              selected = NULL)
+                        choices = priority_choices,
+                        selected = NULL)
     
     # Update zone filter
     updateRadioButtons(session, "zone_filter", 
@@ -719,18 +722,18 @@ server <- function(input, output, session) {
   
   # Synchronize facility filters between Status and Process tabs
   observeEvent(input$facility_filter, {
-    updateSelectInput(session, "process_facility_filter", selected = input$facility_filter)
-    updateSelectInput(session, "hist_facility_filter", selected = input$facility_filter)
+    updateSelectizeInput(session, "process_facility_filter", selected = input$facility_filter)
+    updateSelectizeInput(session, "hist_facility_filter", selected = input$facility_filter)
   })
   
   observeEvent(input$process_facility_filter, {
-    updateSelectInput(session, "facility_filter", selected = input$process_facility_filter)
-    updateSelectInput(session, "hist_facility_filter", selected = input$process_facility_filter)
+    updateSelectizeInput(session, "facility_filter", selected = input$process_facility_filter)
+    updateSelectizeInput(session, "hist_facility_filter", selected = input$process_facility_filter)
   })
   
   observeEvent(input$hist_facility_filter, {
-    updateSelectInput(session, "facility_filter", selected = input$hist_facility_filter)
-    updateSelectInput(session, "process_facility_filter", selected = input$hist_facility_filter)
+    updateSelectizeInput(session, "facility_filter", selected = input$hist_facility_filter)
+    updateSelectizeInput(session, "process_facility_filter", selected = input$hist_facility_filter)
   })
   
   # ============ AIR SITE STATUS TAB LOGIC ============
@@ -1181,17 +1184,17 @@ server <- function(input, output, session) {
       facility_lookup <- get_facility_lookup()
       if (nrow(facility_lookup) > 0) {
         facility_choices_hist <- c("All Facilities" = "all", setNames(facility_lookup$short_name, facility_lookup$full_name))
-        updateSelectInput(session, "hist_facility_filter", 
+        updateSelectizeInput(session, "hist_facility_filter", 
                             choices = facility_choices_hist,
-                            selected = "all")
+                            selected = NULL)
       }
       
       # Load priority choices for historical tab
       priority_choices_hist <- get_priority_choices(include_all = FALSE)
       priority_choices_hist <- priority_choices_hist[names(priority_choices_hist) != "All Priorities"]
       updateSelectizeInput(session, "hist_priority_filter", 
-              choices = priority_choices_hist,
-              selected = NULL)
+                          choices = priority_choices_hist,
+                          selected = priority_choices_hist)
       
       # Load zone choices for historical tab
       zone_choices_hist <- get_available_zones()

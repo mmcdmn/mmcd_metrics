@@ -83,43 +83,6 @@ create_help_text <- function() {
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
-  
-  # Add custom CSS for collapsible sidebar
-  tags$head(
-    tags$style(HTML("
-      .sidebar-toggle {
-        position: fixed;
-        top: 60px;
-        left: 10px;
-        z-index: 1000;
-        background-color: #3c8dbc;
-        color: white;
-        border: none;
-        padding: 10px 15px;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 18px;
-      }
-      .sidebar-toggle:hover {
-        background-color: #357ca5;
-      }
-      .sidebar-collapsed {
-        display: none !important;
-      }
-      /* Move tabs to the right to avoid overlap with sidebar toggle button */
-      .nav-tabs {
-        margin-left: 50px;
-      }
-    "))
-  ),
-  
-  # Add toggle button
-  tags$button(
-    class = "sidebar-toggle",
-    onclick = "$('.col-sm-4').toggleClass('sidebar-collapsed');",
-    HTML("&#9776;")
-  ),
-  
   titlePanel("Structures with Active and Expiring Treatments"),
   
   sidebarLayout(
@@ -142,18 +105,9 @@ ui <- fluidPage(
                                      "Unknown (U)" = "U"),
                          selected = c("D", "W", "U")),
       
-      selectInput("facility_filter", "Facility:",
-                  choices = get_facility_choices(),
-                  selected = "all"),
-      
-      selectizeInput("foreman_filter", "FOS:",
-                    choices = c("Loading..." = "LOADING"),
-                    selected = NULL,
-                    multiple = TRUE,
-                    options = list(
-                      placeholder = "Select FOS (empty = all)",
-                      plugins = list('remove_button')
-                    )),
+      selectizeInput("facility_filter", "Facility:",
+                    choices = get_facility_choices(),
+                    selected = "all", multiple = TRUE),
       
       selectInput("group_by", "Group by:",
                   choices = c("Facility" = "facility",
@@ -283,36 +237,7 @@ ui <- fluidPage(
   )
 )
 
-server <- function(input, output, session) {
-  
-  # Initialize facility choices on app startup
-  observe({
-    facility_choices <- get_facility_choices()
-    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
-  })
-
-  # Dynamically update foreman choices based on selected facility
-  observe({
-    selected_facility <- input$facility_filter
-    foremen_lookup <- get_foremen_lookup()
-    foreman_choices <- c("All" = "all")
-    if (!is.null(selected_facility) && selected_facility != "all" && nrow(foremen_lookup) > 0) {
-      filtered_foremen <- foremen_lookup[foremen_lookup$facility == selected_facility, ]
-      if (nrow(filtered_foremen) > 0) {
-        foreman_choices <- c(
-          foreman_choices,
-          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
-        )
-      }
-    } else if (nrow(foremen_lookup) > 0) {
-      foreman_choices <- c(
-        foreman_choices,
-        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
-      )
-    }
-    # Start empty, where empty means all
-    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = NULL)
-  })
+server <- function(input, output) {
   
   # =============================================================================
   # THEME HANDLING
@@ -352,7 +277,6 @@ server <- function(input, output, session) {
       custom_today = isolate(input$custom_today),
       status_types = isolate(input$status_types),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
       group_by = isolate(input$group_by),
       structure_type_filter = isolate(input$structure_type_filter),
       priority_filter = "all",  # Default value since priority filter was removed from UI
@@ -402,8 +326,7 @@ server <- function(input, output, session) {
         inputs$structure_type_filter,
         inputs$priority_filter,
         inputs$status_types,
-        inputs$zone_filter,
-        inputs$foreman_filter
+        inputs$zone_filter
       )
     })
   })
@@ -418,8 +341,7 @@ server <- function(input, output, session) {
         inputs$structure_type_filter,
         inputs$priority_filter,
         inputs$status_types,
-        inputs$zone_filter,
-        inputs$foreman_filter
+        inputs$zone_filter
       )
     })
   })
@@ -439,7 +361,6 @@ server <- function(input, output, session) {
         hist_group_by = inputs$group_by,
         hist_zone_display = if (inputs$combine_zones) "combined" else "show-both",
         facility_filter = inputs$facility_filter,
-        foreman_filter = inputs$foreman_filter,
         zone_filter = inputs$zone_filter,
         structure_type_filter = inputs$structure_type_filter,
         status_types = inputs$status_types

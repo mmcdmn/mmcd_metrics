@@ -6,6 +6,9 @@ This Shiny app tracks air-treated mosquito breeding sites across three perspecti
 2. **Map** - Interactive map showing air sites with color-coded status markers based on recent inspections and treatments
 3. **Historical Analysis** - Multi-year inspection summary with red bug detection ratios and treatment metrics
 
+## Needs major refactoring of app.R
+ - app.R has about 1,700 lines of code. all this needs to be moved to UI_helper. This is left as tech debt for now
+
 ## Data Sources
 
 ### Core Database Tables and Columns

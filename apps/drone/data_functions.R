@@ -148,9 +148,12 @@ apply_data_filters <- function(data, facility_filter = NULL,
   
   # Apply foreman/FOS filter
   if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !("all" %in% foreman_filter)) {
-    # foreman_filter already contains emp_num values from the UI choices
-    drone_sites <- drone_sites %>% filter(foreman %in% foreman_filter)
-    drone_treatments <- drone_treatments %>% filter(foreman %in% foreman_filter)
+    # Convert shortnames to employee numbers for filtering
+    foremen_lookup <- get_foremen_lookup()
+    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
+    
+    drone_sites <- drone_sites %>% filter(foreman %in% selected_emp_nums)
+    drone_treatments <- drone_treatments %>% filter(foreman %in% selected_emp_nums)
   }
   
   # Apply prehatch filter
@@ -274,8 +277,11 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
   
   if (!is.null(foreman_filter) && length(foreman_filter) > 0 && 
       !("all" %in% foreman_filter)) {
-    # foreman_filter already contains emp_num values from the UI choices
-    result <- result %>% filter(foreman %in% foreman_filter)
+    # Convert shortnames to employee numbers for filtering
+    foremen_lookup <- get_foremen_lookup()
+    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
+    
+    result <- result %>% filter(foreman %in% selected_emp_nums)
   }
   
   if (!is.null(prehatch_only) && prehatch_only) {

@@ -265,7 +265,7 @@ server <- function(input, output, session) {
     if (length(basic_choices$facilities) > 0) {
       facility_choices <- c("All" = "all")
       facility_choices <- c(facility_choices, setNames(basic_choices$facility_codes, basic_choices$facilities))
-      updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
+      updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
     }
   })
   

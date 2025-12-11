@@ -35,15 +35,11 @@ format_inspection_gaps <- function(data) {
         is.na(last_numdip) ~ "-",
         TRUE ~ as.character(last_numdip)
       ),
-      `Sample Status` = case_when(
-        is.na(sample_status) ~ "No Sample",
-        TRUE ~ sample_status
-      ),
       `Days Since` = days_since_inspection,  # Keep numeric for coloring
       `Status` = inspection_status
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Drone Site`, `Last Inspection`, `Dip Count`, `Sample Status`, `Days Since`, `Status`)
+           `Drone Site`, `Last Inspection`, `Dip Count`, `Days Since`, `Status`)
 }
 
 # Render the inspection gap table
@@ -65,7 +61,7 @@ render_gap_table <- function(data, theme = "MMCD") {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(10, 'desc')),  # Sort by Days Since descending (now column 10)
+      order = list(list(9, 'desc')),  # Sort by Days Since descending 
       initComplete = JS(
         "function(settings, json) {",
         "$(this.api().table().container()).find('table').css('font-size', '14px');",
@@ -81,13 +77,6 @@ render_gap_table <- function(data, theme = "MMCD") {
     backgroundColor = DT::styleEqual(
       c('Never Inspected', 'Inspection Gap'),
       c('#ffebee', status_colors['planned'])  # Use status orange for planned/pending
-    )
-  ) %>%
-  DT::formatStyle(
-    'Sample Status',
-    backgroundColor = DT::styleEqual(
-      c('Needs ID', 'Red Bugs', 'Blue Bugs', 'No Sample'),
-      c('#fff3cd', '#ffebee', '#e3f2fd', '#f5f5f5')  # Yellow for Needs ID, red for Red Bugs, blue for Blue Bugs, gray for No Sample
     )
   ) %>%
   DT::formatStyle(
@@ -200,17 +189,20 @@ format_high_larvae_data <- function(data) {
       `Total Inspections` = total_inspections,
       `Exceedances` = threshold_exceedances,
       `Exceedance Frequency` = exceedance_frequency / 100,  # Convert to decimal for formatPercentage
+      `Max Dip Count` = format(max_dip_count, big.mark = ","),
       `Avg Dip Count` = avg_dip_count,
-      `Total Samples` = total_samples,
-      `Red Bugs` = samples_red_bugs,
-      `Blue Bugs` = samples_blue_bugs,
-      `Needs ID` = samples_needs_id,
-      `Red Bug %` = red_bug_frequency / 100,  # Convert to decimal for formatPercentage
-      `Blue Bug %` = blue_bug_frequency / 100  # Convert to decimal for formatPercentage
+      `First High Date` = case_when(
+        is.na(first_high_date) | is.infinite(first_high_date) ~ "-",
+        TRUE ~ format(as.Date(first_high_date), "%Y-%m-%d")
+      ),
+      `Last High Date` = case_when(
+        is.na(last_high_date) | is.infinite(last_high_date) ~ "-",
+        TRUE ~ format(as.Date(last_high_date), "%Y-%m-%d")
+      )
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
            `Acres`, `Years with Data`, `Total Inspections`, `Exceedances`, `Exceedance Frequency`, 
-           `Avg Dip Count`, `Total Samples`, `Red Bugs`, `Red Bug %`, `Blue Bugs`, `Blue Bug %`, `Needs ID`)
+           `Max Dip Count`, `Avg Dip Count`, `First High Date`, `Last High Date`)
 }
 
 # Render high larvae table
@@ -232,7 +224,7 @@ render_high_larvae_table <- function(data, theme = "MMCD") {
       pageLength = 25, 
       autoWidth = TRUE, 
       scrollX = TRUE,
-      order = list(list(10, 'desc')),  # Sort by Exceedance Frequency descending
+      order = list(list(8, 'desc')),  # Sort by Exceedance Frequency descending
       initComplete = JS(
         "function(settings, json) {",
         "$(this.api().table().container()).find('table').css('font-size', '14px');",
@@ -257,30 +249,7 @@ render_high_larvae_table <- function(data, theme = "MMCD") {
       values = c("#e3f2fd", "#bbdefb", "#90caf9", "#64b5f6", "#ff8a65", "#ff6f00")  # 6 values - light blue to orange
     )
   ) %>%
-  DT::formatStyle(
-    'Red Bug %',
-    backgroundColor = DT::styleInterval(
-      cuts = c(0.01, 0.10, 0.25, 0.50, 0.75),  # Decimal cuts for percentage values
-      values = c("#ffffff", "#ffebee", "#ffcdd2", "#ef9a9a", "#e57373", "#ef5350")  # 6 values - white to red
-    )
-  ) %>%
-  DT::formatStyle(
-    'Blue Bug %',
-    backgroundColor = DT::styleInterval(
-      cuts = c(0.01, 0.10, 0.25, 0.50, 0.75),  # Decimal cuts for percentage values
-      values = c("#ffffff", "#e3f2fd", "#bbdefb", "#90caf9", "#64b5f6", "#42a5f5")  # 6 values - white to blue
-    )
-  ) %>%
-  DT::formatStyle(
-    'Needs ID',
-    backgroundColor = DT::styleInterval(
-      cuts = c(1, 5, 10),  # Raw count cuts
-      values = c("#ffffff", "#fff9c4", "#fff59d", "#ffee58")  # 4 values - white to yellow
-    )
-  ) %>%
-  DT::formatPercentage('Exceedance Frequency', digits = 1) %>%
-  DT::formatPercentage('Red Bug %', digits = 1) %>%
-  DT::formatPercentage('Blue Bug %', digits = 1)
+  DT::formatPercentage('Exceedance Frequency', digits = 1)
 }
 
 # =============================================================================

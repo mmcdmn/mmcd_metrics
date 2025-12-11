@@ -35,6 +35,9 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
   unique_statuses <- unique(data$site_status)
   legend_colors <- status_colors[unique_statuses]
   
+  # Replace "Unknown" with "Not Insp" for legend display
+  legend_labels <- ifelse(unique_statuses == "Unknown", "Not Insp", unique_statuses)
+  
   # Create map
   map <- leaflet(data) %>%
     addTiles() %>%
@@ -63,7 +66,7 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
     addLegend(
       position = "bottomright",
       colors = legend_colors,
-      labels = unique_statuses,
+      labels = legend_labels,
       title = "Site Status"
     )
   

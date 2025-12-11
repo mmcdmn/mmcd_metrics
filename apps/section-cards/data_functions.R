@@ -4,29 +4,43 @@
 #' Get filter options from database (lightweight query)
 #' 
 #' Retrieves unique values for filter dropdowns without loading full dataset
+#' Uses db_helpers functions for facility and FOS lookups
 #' 
-#' @return A list with facility and fosarea choices
+#' @param facility_filter Optional facility filter to cascade to FOS and sections
+#' @param fosarea_filter Optional FOS area filter to cascade to sections  
+#' @return A list with facility, section, and fosarea choices
 #' @export
-get_filter_options <- function() {
+get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
   con <- get_db_connection()
   on.exit(dbDisconnect(con), add = TRUE)
   
-  query <- "
+  # Build filter conditions
+  where_conditions <- "b.enddate IS NULL AND g.facility IS NOT NULL AND g.sectcode IS NOT NULL AND g.fosarea IS NOT NULL"
+  
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
+  }
+  
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
     SELECT DISTINCT
       g.facility,
+      g.sectcode as section,
       g.fosarea
     FROM public.loc_breeding_sites b
     LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
-    WHERE b.enddate IS NULL
-      AND g.facility IS NOT NULL
-      AND g.fosarea IS NOT NULL
-    ORDER BY g.facility, g.fosarea
-  "
+    WHERE ", where_conditions, "
+    ORDER BY g.facility, g.sectcode, g.fosarea
+  ")
   
   data <- dbGetQuery(con, query)
   
   return(list(
     facilities = sort(unique(data$facility)),
+    sections = sort(unique(data$section)),
     fosarea_list = sort(unique(data$fosarea))
   ))
 }

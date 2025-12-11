@@ -9,6 +9,59 @@ create_field_selector <- function() {
     h4("Card Configuration"),
     
     wellPanel(
+      h5("Filters"),
+      selectInput(
+        "filter_facility",
+        "Facility:",
+        choices = c("All Facilities" = "all"),
+        selected = "all"
+      ),
+      selectInput(
+        "filter_zone",
+        "Zone:",
+        choices = c("All" = "all", "Zone 1" = "1", "Zone 2" = "2"),
+        selected = "all"
+      ),
+      selectInput(
+        "filter_fosarea",
+        "FOS Area:",
+        choices = c("All FOS Areas" = "all"),
+        selected = "all"
+      ),
+      selectInput(
+        "filter_section",
+        "Section:",
+        choices = c("All Sections" = "all"),
+        selected = "all"
+      ),
+      checkboxInput(
+        "split_by_section",
+        "Split by section (each section on separate pages)",
+        value = FALSE
+      ),
+      selectInput(
+        "filter_air_gnd",
+        "Air/Ground:",
+        choices = c("All" = "all", "Air" = "A", "Ground" = "G"),
+        selected = "all"
+      ),
+      selectInput(
+        "filter_drone",
+        "Drone Sites:",
+        choices = c("All" = "all", "Include Drone" = "include", "Exclude Drone" = "exclude", "Drone Only" = "only"),
+        selected = "all"
+      ),
+      selectInput(
+        "filter_priority",
+        "Priority:",
+        choices = c("All" = "all", "RED" = "RED", "YELLOW" = "YELLOW", "GREEN" = "GREEN", "BLUE" = "BLUE", "ORANGE" = "ORANGE", "PURPLE" = "PURPLE"),
+        selected = "all"
+      )
+    ),
+    
+    hr(),
+    
+    wellPanel(
       h5("Title Section Fields"),
       p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
       checkboxGroupInput(
@@ -24,27 +77,14 @@ create_field_selector <- function() {
           "Section" = "section",
           "Remarks" = "remarks"
         ),
-        selected = c("priority", "acres", "section")
+        selected = c("priority", "acres", "type", "remarks")
       )
     ),
     
     wellPanel(
       h5("Data Table Columns"),
-      p(class = "help-block", "Select columns for the data entry table (empty rows for manual entry)"),
-      checkboxGroupInput(
-        "table_fields",
-        NULL,
-        choices = list(
-          "Date" = "date",
-          "Wet %" = "wet_pct",
-          "Emp #" = "emp_num",
-          "#/Dip" = "num_dip",
-          "Sample Number" = "sample_num",
-          "Amt" = "amt",
-          "Mat" = "mat"
-        ),
-        selected = c("date", "wet_pct", "emp_num", "num_dip")
-      ),
+      p(class = "help-block", "Select columns and reorder them using the buttons"),
+      uiOutput("column_order_ui"),
       
       br(),
       
@@ -55,48 +95,6 @@ create_field_selector <- function() {
         min = 1,
         max = 20,
         step = 1
-      )
-    ),
-    
-    hr(),
-    
-    wellPanel(
-      h5("Filters"),
-      selectInput(
-        "filter_facility",
-        "Facility:",
-        choices = c("All" = "all"),
-        selected = "all"
-      ),
-      selectInput(
-        "filter_air_gnd",
-        "Air/Ground:",
-        choices = c("All" = "all", "Air" = "A", "Ground" = "G"),
-        selected = "all"
-      ),
-      selectInput(
-        "filter_drone",
-        "Drone Sites:",
-        choices = c("All" = "all", "Include Drone" = "include", "Exclude Drone" = "exclude", "Drone Only" = "only"),
-        selected = "all"
-      ),
-      selectInput(
-        "filter_zone",
-        "Zone:",
-        choices = c("All" = "all", "Zone 1" = "1", "Zone 2" = "2"),
-        selected = "all"
-      ),
-      selectInput(
-        "filter_fosarea",
-        "FOS Area:",
-        choices = c("All" = "all"),
-        selected = "all"
-      ),
-      selectInput(
-        "filter_priority",
-        "Priority:",
-        choices = c("All" = "all", "RED" = "RED", "YELLOW" = "YELLOW", "GREEN" = "GREEN", "BLUE" = "BLUE", "ORANGE" = "ORANGE", "PURPLE" = "PURPLE"),
-        selected = "all"
       )
     )
   )

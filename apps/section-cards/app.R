@@ -131,32 +131,171 @@ server <- function(input, output, session) {
   # Reactive values
   cards_data <- reactiveVal(NULL)
   
-  # Load ONLY filter options on startup (lightweight query)
+  # Load facility choices on startup using db_helpers
   observe({
     tryCatch({
-      filter_opts <- get_filter_options()
+      # Get facility choices with full names for display
+      facility_lookup <- get_facility_lookup()
+      facility_choices <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+      facility_choices <- c("All Facilities" = "all", facility_choices)
       
-      # Update facility filter choices
       updateSelectInput(
         session,
         "filter_facility",
-        choices = c("All" = "all", setNames(filter_opts$facilities, filter_opts$facilities))
-      )
-      
-      # Update FOS area filter choices
-      updateSelectInput(
-        session,
-        "filter_fosarea",
-        choices = c("All" = "all", setNames(filter_opts$fosarea_list, filter_opts$fosarea_list))
+        choices = facility_choices
       )
       
     }, error = function(e) {
       showNotification(
-        paste("Error loading filter options:", e$message),
+        paste("Error loading facility options:", e$message),
         type = "error",
         duration = NULL
       )
     })
+  })
+  
+  # Update FOS and Section filters when facility changes (cascading)
+  observeEvent(input$filter_facility, {
+    tryCatch({
+      # Get foreman lookup  
+      fos_lookup <- get_foremen_lookup()
+      
+      # Filter FOS by selected facility
+      if (input$filter_facility != "all") {
+        fos_lookup <- fos_lookup %>% filter(facility == input$filter_facility)
+      }
+      
+      # Create FOS choices with full names
+      fos_choices <- setNames(sprintf("%04d", as.numeric(fos_lookup$emp_num)), fos_lookup$shortname)
+      fos_choices <- c("All FOS Areas" = "all", fos_choices)
+      
+      updateSelectInput(
+        session,
+        "filter_fosarea",
+        choices = fos_choices
+      )
+      
+      # Update sections based on facility
+      filter_opts <- get_filter_options(
+        facility_filter = input$filter_facility,
+        fosarea_filter = NULL
+      )
+      
+      updateSelectInput(
+        session,
+        "filter_section",
+        choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
+      )
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error updating filters:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
+  # Update Section filter when FOS area changes (cascading)
+  observeEvent(input$filter_fosarea, {
+    tryCatch({
+      # Update sections based on facility AND fosarea
+      filter_opts <- get_filter_options(
+        facility_filter = input$filter_facility,
+        fosarea_filter = input$filter_fosarea
+      )
+      
+      updateSelectInput(
+        session,
+        "filter_section",
+        choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
+      )
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error updating section filter:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
+  # Column ordering system
+  column_choices <- reactiveVal(list(
+    list(id = "date", label = "Date", selected = TRUE),
+    list(id = "wet_pct", label = "Wet %", selected = TRUE),
+    list(id = "emp_num", label = "Emp #", selected = TRUE),
+    list(id = "num_dip", label = "#/Dip", selected = TRUE),
+    list(id = "sample_num", label = "Sample #", selected = FALSE),
+    list(id = "amt", label = "Amt", selected = FALSE),
+    list(id = "mat", label = "Mat", selected = FALSE)
+  ))
+  
+  # Render column ordering UI
+  output$column_order_ui <- renderUI({
+    cols <- column_choices()
+    
+    tags$div(
+      style = "max-height: 300px; overflow-y: auto;",
+      lapply(seq_along(cols), function(i) {
+        col <- cols[[i]]
+        tags$div(
+          style = "display: flex; align-items: center; margin-bottom: 5px; padding: 5px; border: 1px solid #ddd; border-radius: 3px;",
+          checkboxInput(
+            paste0("col_check_", col$id),
+            NULL,
+            value = col$selected,
+            width = "30px"
+          ),
+          tags$span(col$label, style = "flex-grow: 1; padding-left: 5px;"),
+          actionButton(
+            paste0("col_up_", col$id),
+            "↑",
+            style = "padding: 2px 8px; margin-right: 2px;",
+            onclick = sprintf("Shiny.setInputValue('move_col_up', '%s', {priority: 'event'})", col$id)
+          ),
+          actionButton(
+            paste0("col_down_", col$id),
+            "↓",
+            style = "padding: 2px 8px;",
+            onclick = sprintf("Shiny.setInputValue('move_col_down', '%s', {priority: 'event'})", col$id)
+          )
+        )
+      })
+    )
+  })
+  
+  # Update column selected state
+  observe({
+    cols <- column_choices()
+    for (i in seq_along(cols)) {
+      col <- cols[[i]]
+      check_val <- input[[paste0("col_check_", col$id)]]
+      if (!is.null(check_val) && check_val != col$selected) {
+        cols[[i]]$selected <- check_val
+        column_choices(cols)
+      }
+    }
+  })
+  
+  # Move column up
+  observeEvent(input$move_col_up, {
+    cols <- column_choices()
+    col_id <- input$move_col_up
+    idx <- which(sapply(cols, function(x) x$id == col_id))
+    if (length(idx) > 0 && idx > 1) {
+      cols[c(idx-1, idx)] <- cols[c(idx, idx-1)]
+      column_choices(cols)
+    }
+  })
+  
+  # Move column down
+  observeEvent(input$move_col_down, {
+    cols <- column_choices()
+    col_id <- input$move_col_down
+    idx <- which(sapply(cols, function(x) x$id == col_id))
+    if (length(idx) > 0 && idx < length(cols)) {
+      cols[c(idx, idx+1)] <- cols[c(idx+1, idx)]
+      column_choices(cols)
+    }
   })
   
   # Generate cards when button is clicked
@@ -201,6 +340,11 @@ server <- function(input, output, session) {
     # Apply facility filter
     if (input$filter_facility != "all") {
       filtered <- filtered %>% filter(facility == input$filter_facility)
+    }
+    
+    # Apply section filter
+    if (input$filter_section != "all") {
+      filtered <- filtered %>% filter(section == input$filter_section)
     }
     
     # Apply air/ground filter
@@ -265,7 +409,11 @@ server <- function(input, output, session) {
     # Ensure sitecode is always in title fields
     title_fields <- c("sitecode", input$title_fields)
     
-    if (length(input$table_fields) == 0) {
+    # Get table fields from column ordering system (in order, selected only)
+    cols <- column_choices()
+    table_fields <- sapply(cols[sapply(cols, function(x) x$selected)], function(x) x$id)
+    
+    if (length(table_fields) == 0) {
       showNotification(
         "Please select at least one table column.",
         type = "warning"
@@ -277,8 +425,9 @@ server <- function(input, output, session) {
     cards_html <- generate_section_cards_html(
       filtered,
       title_fields,
-      input$table_fields,
-      input$num_rows
+      table_fields,
+      input$num_rows,
+      input$split_by_section
     )
     
     # Render the cards
@@ -306,6 +455,9 @@ server <- function(input, output, session) {
       
       if (input$filter_facility != "all") {
         filtered <- filtered %>% filter(facility == input$filter_facility)
+      }
+      if (input$filter_section != "all") {
+        filtered <- filtered %>% filter(section == input$filter_section)
       }
       if (input$filter_air_gnd != "all") {
         filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)

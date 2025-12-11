@@ -10,8 +10,17 @@
 #' @param title_fields Vector of field names to display in title section
 #' @param table_fields Vector of field names to display in table
 #' @param num_rows Number of empty rows to include in each card table
+#' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE) {
+  
+  # Map facility codes to full names using db_helpers
+  facility_lookup <- get_facility_lookup()
+  facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
+  
+  # Map FOS codes to names using db_helpers
+  fos_lookup <- get_foremen_lookup()
+  fos_map <- setNames(fos_lookup$shortname, sprintf("%04d", as.numeric(fos_lookup$emp_num)))
   
   # Define field labels for display
   field_labels <- list(
@@ -99,6 +108,29 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       font-size: 10px;
     }
     
+    .info-item.remarks {
+      font-size: 12px;
+      grid-column: 1 / -1;
+      margin-top: 3px;
+    }
+    
+    .info-item.special-label {
+      font-size: 9px;
+      padding: 2px 4px;
+      background: #d0d0d0;
+      border-radius: 3px;
+      display: inline-block;
+    }
+    
+    .priority-green { background: #90EE90; padding: 2px 6px; border-radius: 3px; }
+    .priority-red { background: #FFB6C1; padding: 2px 6px; border-radius: 3px; }
+    .priority-yellow { background: #FFFFE0; padding: 2px 6px; border-radius: 3px; }
+    .priority-blue { background: #ADD8E6; padding: 2px 6px; border-radius: 3px; }
+    .priority-orange { background: #FFD580; padding: 2px 6px; border-radius: 3px; }
+    .priority-purple { background: #E6D5FF; padding: 2px 6px; border-radius: 3px; }
+    
+    .special-field { background: #FFE4B5; padding: 2px 6px; border-radius: 3px; font-weight: bold; }
+    
     .info-label {
       font-weight: bold;
       color: #555;
@@ -142,68 +174,166 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   <div class="cards-container">
   '
   
-  # Group cards into pages of 6
-  cards_per_page <- 6
-  num_pages <- ceiling(nrow(data) / cards_per_page)
-  
-  for (page in 1:num_pages) {
-    start_idx <- (page - 1) * cards_per_page + 1
-    end_idx <- min(page * cards_per_page, nrow(data))
+  # If split by section, group data by section first
+  if (split_by_section && "section" %in% names(data)) {
+    # Sort by section
+    data <- data[order(data$section), ]
+    sections <- unique(data$section)
     
-    html <- paste0(html, '<div class="card-page', 
-                   ifelse(page < num_pages, ' page-break', ''), '">\n')
-    
-    for (i in start_idx:end_idx) {
-      row <- data[i, ]
+    # Process each section separately
+    for (sect_idx in seq_along(sections)) {
+      sect <- sections[sect_idx]
+      sect_data <- data[data$section == sect, ]
       
-      # Card header with title and selected info fields
-      html <- paste0(html, '  <div class="section-card">\n')
-      html <- paste0(html, '    <div class="card-header">\n')
-      html <- paste0(html, '      <div class="card-title">', row$sitecode, '</div>\n')
-      html <- paste0(html, '      <div class="card-info">\n')
+      # Group cards into pages of 6 for this section
+      cards_per_page <- 6
+      num_pages <- ceiling(nrow(sect_data) / cards_per_page)
       
-      for (field in title_fields) {
-        if (field != "sitecode" && field %in% names(row)) {
-          value <- if(is.na(row[[field]])) "" else as.character(row[[field]])
-          label <- field_labels[[field]]
-          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
-                        label, ':</span> ', value, '</div>\n')
+      for (page in 1:num_pages) {
+        start_idx <- (page - 1) * cards_per_page + 1
+        end_idx <- min(page * cards_per_page, nrow(sect_data))
+        
+        # Add page break after each section (except last)
+        is_last_section <- (sect_idx == length(sections))
+        is_last_page <- (page == num_pages)
+        add_page_break <- !(is_last_section && is_last_page)
+        
+        html <- paste0(html, '<div class="card-page', 
+                       ifelse(add_page_break, ' page-break', ''), '">\n')
+        
+        for (i in start_idx:end_idx) {
+          html <- paste0(html, generate_card_html(sect_data[i, ], title_fields, table_fields, num_rows, 
+                                    field_labels, facility_map, fos_map))
         }
+        
+        html <- paste0(html, '</div>\n')
       }
-      
-      html <- paste0(html, '      </div>\n')
-      html <- paste0(html, '    </div>\n')
-      
-      # Data table with empty rows for manual entry
-      html <- paste0(html, '    <table class="card-table">\n')
-      html <- paste0(html, '      <thead><tr>\n')
-      
-      for (field in table_fields) {
-        label <- field_labels[[field]]
-        html <- paste0(html, '        <th>', label, '</th>\n')
-      }
-      
-      html <- paste0(html, '      </tr></thead>\n')
-      html <- paste0(html, '      <tbody>\n')
-      
-      # Add empty rows for data entry
-      for (j in 1:num_rows) {
-        html <- paste0(html, '        <tr>\n')
-        for (field in table_fields) {
-          html <- paste0(html, '          <td></td>\n')
-        }
-        html <- paste0(html, '        </tr>\n')
-      }
-      
-      html <- paste0(html, '      </tbody>\n')
-      html <- paste0(html, '    </table>\n')
-      html <- paste0(html, '  </div>\n')
     }
     
-    html <- paste0(html, '</div>\n')
+  } else {
+    # Normal mode: group cards into pages of 6 without section splits
+    cards_per_page <- 6
+    num_pages <- ceiling(nrow(data) / cards_per_page)
+    
+    for (page in 1:num_pages) {
+      start_idx <- (page - 1) * cards_per_page + 1
+      end_idx <- min(page * cards_per_page, nrow(data))
+      
+      html <- paste0(html, '<div class="card-page', 
+                     ifelse(page < num_pages, ' page-break', ''), '">\n')
+      
+      for (i in start_idx:end_idx) {
+        html <- paste0(html, generate_card_html(data[i, ], title_fields, table_fields, num_rows, 
+                                  field_labels, facility_map, fos_map))
+      }
+      
+      html <- paste0(html, '</div>\n')
+    }
   }
   
   html <- paste0(html, '</div>')
+  
+  return(html)
+}
+
+#' Generate HTML for a single card
+#' 
+#' Helper function to generate the HTML for one section card
+#' 
+#' @param row Single row data frame with site information
+#' @param title_fields Vector of field names for title section
+#' @param table_fields Vector of field names for data table
+#' @param num_rows Number of empty rows in table
+#' @param field_labels Named list of field display labels
+#' @param facility_map Named vector mapping facility codes to names
+#' @param fos_map Named vector mapping FOS codes to names
+#' @return HTML string for one card
+generate_card_html <- function(row, title_fields, table_fields, num_rows, 
+                               field_labels, facility_map, fos_map) {
+  html <- ''
+  
+  # Card header with title and selected info fields
+  html <- paste0(html, '  <div class="section-card">\n')
+  html <- paste0(html, '    <div class="card-header">\n')
+  html <- paste0(html, '      <div class="card-title">', row$sitecode, '</div>\n')
+  html <- paste0(html, '      <div class="card-info">\n')
+  
+  for (field in title_fields) {
+    if (field != "sitecode" && field %in% names(row)) {
+      value <- if(is.na(row[[field]])) "" else as.character(row[[field]])
+      
+      # Map facility code to full name
+      if (field == "facility" && value %in% names(facility_map)) {
+        value <- facility_map[value]
+      }
+      
+      # Map FOS code to name
+      if (field == "fosarea" && value %in% names(fos_map)) {
+        value <- fos_map[value]
+      }
+      
+      label <- field_labels[[field]]
+      
+      # Special handling for culex and spr_aedes - only show if Y or not null/empty
+      if (field == "culex" || field == "spr_aedes") {
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          # Show just the label as special field with color
+          html <- paste0(html, '        <div class="info-item"><span class="special-field">',
+                        label, '</span></div>\n')
+        }
+        # If not Y, don't show anything
+      } else if (field == "prehatch") {
+        # Prehatch with color coding
+        if (!is.na(value) && value != "") {
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="special-field">', value, '</span></div>\n')
+        }
+      } else if (field == "priority") {
+        # Priority with color coding based on value
+        if (!is.na(value) && value != "") {
+          priority_class <- paste0("priority-", tolower(value))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="', priority_class, '">', value, '</span></div>\n')
+        }
+      } else if (field == "remarks") {
+        # Remarks get special styling - larger and full width
+        html <- paste0(html, '        <div class="info-item remarks"><span class="info-label">',
+                      label, ':</span> ', value, '</div>\n')
+      } else {
+        # Normal display for other fields
+        html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                      label, ':</span> ', value, '</div>\n')
+      }
+    }
+  }
+  
+  html <- paste0(html, '      </div>\n')
+  html <- paste0(html, '    </div>\n')
+  
+  # Data table with empty rows for manual entry
+  html <- paste0(html, '    <table class="card-table">\n')
+  html <- paste0(html, '      <thead><tr>\n')
+  
+  for (field in table_fields) {
+    label <- field_labels[[field]]
+    html <- paste0(html, '        <th>', label, '</th>\n')
+  }
+  
+  html <- paste0(html, '      </tr></thead>\n')
+  html <- paste0(html, '      <tbody>\n')
+  
+  # Add empty rows for data entry
+  for (j in 1:num_rows) {
+    html <- paste0(html, '        <tr>\n')
+    for (field in table_fields) {
+      html <- paste0(html, '          <td></td>\n')
+    }
+    html <- paste0(html, '        </tr>\n')
+  }
+  
+  html <- paste0(html, '      </tbody>\n')
+  html <- paste0(html, '    </table>\n')
+  html <- paste0(html, '  </div>\n')
   
   return(html)
 }

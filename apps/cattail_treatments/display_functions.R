@@ -802,7 +802,7 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
       geom_point(size = 3) +
       scale_color_manual(values = facility_colors) +
       labs(
-        title = "Current Cattail Progress",
+        title = "Current Cattail Inspection Progress",
         x = "Status",
         y = y_label,
         color = stringr::str_to_title(group_by)
@@ -826,7 +826,7 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
                    "Treated" = unname(status_colors["active"]))
       ) +
       labs(
-        title = "Current Cattail Progress",
+        title = "Current Cattail Inspection Progress",
         x = stringr::str_to_title(group_by),
         y = y_label,
         fill = "Status"
@@ -851,7 +851,7 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
                    "Treated" = unname(status_colors["active"]))
       ) +
       labs(
-        title = "Current Cattail Progress",
+        title = "Current Cattail Inspection Progress",
         x = stringr::str_to_title(group_by),
         y = y_label,
         fill = "Status"

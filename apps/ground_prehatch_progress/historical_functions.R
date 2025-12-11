@@ -53,9 +53,12 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   }
   
   if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-    # foreman_filter now contains emp_num values from the UI choices
-    ground_sites <- ground_sites %>% filter(fosarea %in% foreman_filter)
-    ground_treatments <- ground_treatments %>% filter(fosarea %in% foreman_filter)
+    # Convert foreman names to emp_nums
+    foremen_lookup <- get_foremen_lookup()
+    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
+    
+    ground_sites <- ground_sites %>% filter(fosarea %in% selected_emp_nums)
+    ground_treatments <- ground_treatments %>% filter(fosarea %in% selected_emp_nums)
   }
   
   # Determine if zones should be shown separately

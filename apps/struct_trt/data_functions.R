@@ -49,32 +49,8 @@ get_status_condition <- function(status_types) {
   }
 }
 
-# Function to construct foreman condition for SQL
-get_foreman_condition <- function(foreman_filter) {
-  if (is.null(foreman_filter) || length(foreman_filter) == 0 || "all" %in% foreman_filter) {
-    return("") # No foreman filter or "all" selected
-  } else {
-    # Format emp_num values as 4-digit strings to match gis_sectcode.fosarea format
-    foreman_codes_formatted <- sprintf("%04d", as.numeric(foreman_filter))
-    foreman_list <- paste0("'", foreman_codes_formatted, "'", collapse = ", ")
-    return(sprintf("AND gis.fosarea IN (%s)", foreman_list))
-  }
-}
-
-# Function to construct foreman condition for SQL
-get_foreman_condition <- function(foreman_filter) {
-  if (is.null(foreman_filter) || length(foreman_filter) == 0 || "all" %in% foreman_filter) {
-    return("")
-  } else {
-    # Format emp_num values as 4-digit strings to match gis_sectcode.fosarea format
-    foreman_codes_formatted <- sprintf("%04d", as.numeric(foreman_filter))
-    foreman_list <- paste0("'", foreman_codes_formatted, "'", collapse = ", ")
-    return(sprintf("AND gis.fosarea IN (%s)", foreman_list))
-  }
-}
-
 # Helper function for total structures query conditions
-get_facility_condition_total <- function(facility_filter, structure_type_filter, priority_filter, status_types, foreman_filter = "all") {
+get_facility_condition_total <- function(facility_filter, structure_type_filter, priority_filter, status_types) {
   conditions <- character(0)
   
   # Facility condition - use gis.facility for consistency with fosarea
@@ -109,18 +85,11 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
     conditions <- c(conditions, sprintf("AND loc.status_udw IN (%s)", status_list))
   }
   
-  # Foreman condition
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !("all" %in% foreman_filter)) {
-    foreman_codes_formatted <- sprintf("%04d", as.numeric(foreman_filter))
-    foreman_list <- paste0("'", foreman_codes_formatted, "'", collapse = ", ")
-    conditions <- c(conditions, sprintf("AND gis.fosarea IN (%s)", foreman_list))
-  }
-  
   return(paste(conditions, collapse = " "))
 }
 
 # Function to get current structure treatment data
-get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days = 7, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2"), foreman_filter = "all") {
+get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days = 7, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -148,13 +117,11 @@ WHERE trt.list_type = 'STR'
 %s
 %s
 %s
-%s
 ",
       get_facility_condition(facility_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
-      get_status_condition(status_types),
-      get_foreman_condition(foreman_filter)
+      get_status_condition(status_types)
     )
     
     current_data <- dbGetQuery(con, query)
@@ -169,7 +136,7 @@ WHERE 1=1
 AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",
-      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types, foreman_filter)
+      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
     total_structures <- as.integer(dbGetQuery(con, query_total)$total_structures)
@@ -204,7 +171,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 }
 
 # Function to get historical structure treatment data
-get_historical_structure_data <- function(start_year = 2023, end_year = 2025, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2"), foreman_filter = "all") {
+get_historical_structure_data <- function(start_year = 2023, end_year = 2025, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -241,7 +208,6 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
 %s
 %s
 %s
-%s
 ",
       as.numeric(start_year),
       as.numeric(end_year) + 1,
@@ -249,8 +215,7 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
       get_facility_condition(facility_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
-      get_status_condition(status_types),
-      get_foreman_condition(foreman_filter)
+      get_status_condition(status_types)
     )
     
     archive_data <- dbGetQuery(con, query_archive)
@@ -280,7 +245,6 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
 %s
 %s
 %s
-%s
 ",
       as.numeric(start_year),
       as.numeric(end_year) + 1,
@@ -288,8 +252,7 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
       get_facility_condition(facility_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
-      get_status_condition(status_types),
-      get_foreman_condition(foreman_filter)
+      get_status_condition(status_types)
     )
     
     current_data <- dbGetQuery(con, query_current)
@@ -297,14 +260,14 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
     # Get total structures (active structures only)
     query_total_structures <- sprintf(
       "
-SELECT COUNT(DISTINCT loc.sitecode)::bigint AS total_structures
+SELECT COUNT(DISTINCT loc.sitecode) AS total_structures
 FROM loc_cxstruct loc
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE 1=1
 AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",
-      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types, foreman_filter)
+      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
     total_structures <- as.numeric(dbGetQuery(con, query_total_structures)$total_structures)
@@ -328,7 +291,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 }
 
 # Function to get all structures for total counts
-get_all_structures <- function(facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2"), foreman_filter = "all") {
+get_all_structures <- function(facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -349,7 +312,7 @@ LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
 ",
-      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types, foreman_filter)
+      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
     structures <- dbGetQuery(con, query)

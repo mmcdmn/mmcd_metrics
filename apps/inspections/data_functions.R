@@ -97,7 +97,7 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
       ""
     }
     
-    # SINGLE COMPREHENSIVE QUERY - gets ALL data we need including sample data
+    # SINGLE COMPREHENSIVE QUERY - gets ALL data we need
     qry <- sprintf("
     WITH filtered_sites AS (
       SELECT 
@@ -125,23 +125,6 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
         SELECT sitecode, inspdate FROM dblarv_insptrt_archive WHERE inspdate IS NOT NULL
       ) all_inspections
       GROUP BY sitecode
-    ),
-    combined_samples AS (
-      SELECT 
-        sampnum_yr,
-        redblue,
-        missing,
-        form_type
-      FROM dblarv_sample_current
-      WHERE missing = FALSE OR missing IS NULL
-      UNION ALL
-      SELECT 
-        sampnum_yr,
-        redblue,
-        missing,
-        form_type
-      FROM dblarv_sample_archive
-      WHERE missing = FALSE OR missing IS NULL
     )
     SELECT 
       fs.sitecode,
@@ -157,20 +140,16 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
       i.inspdate,
       i.action,
       i.numdip,
-      i.wet,
-      i.sampnum_yr,
-      cs.redblue,
-      cs.missing
+      i.wet
     FROM filtered_sites fs
     LEFT JOIN site_years sy ON fs.sitecode = sy.sitecode
     LEFT JOIN (
-      SELECT sitecode, inspdate, action, numdip, wet, sampnum_yr
+      SELECT sitecode, inspdate, action, numdip, wet
       FROM dblarv_insptrt_current
       UNION ALL
-      SELECT sitecode, inspdate, action, numdip, wet, sampnum_yr
+      SELECT sitecode, inspdate, action, numdip, wet
       FROM dblarv_insptrt_archive
     ) i ON fs.sitecode = i.sitecode
-    LEFT JOIN combined_samples cs ON i.sampnum_yr = cs.sampnum_yr
     ORDER BY fs.sitecode, i.inspdate DESC
     ", where_clause)
     
@@ -220,24 +199,9 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
             years_with_data = ifelse(is.na(years_with_data), "No spring data", years_with_data)
           ) %>%
           left_join(spring_inspections %>%
-                   select(sitecode, inspdate, action, numdip, wet, sampnum_yr, redblue, missing), 
+                   select(sitecode, inspdate, action, numdip, wet), 
                    by = "sitecode")
       }
-    }
-    
-    # Add sample status column
-    if (nrow(result) > 0) {
-      result <- result %>%
-        mutate(
-          sample_status = case_when(
-            is.na(sampnum_yr) | sampnum_yr == "" ~ "No Sample",
-            !is.na(missing) & missing == TRUE ~ "Missing Sample",
-            is.na(redblue) | redblue == "" ~ "Needs ID",
-            redblue == "R" ~ "Red Bugs",
-            redblue == "B" ~ "Blue Bugs",
-            TRUE ~ "Unknown"
-          )
-        )
     }
     
     return(result)
@@ -267,7 +231,7 @@ get_total_sites_count_from_data <- function(comprehensive_data, air_gnd_filter =
   }
 }
 
-# Get sites over larvae threshold from comprehensive data - with action filtering and sample tracking
+# Get sites over larvae threshold from comprehensive data - with action filtering
 get_high_larvae_sites_from_data <- function(comprehensive_data, threshold = 2, years_back = 5, air_gnd_filter = "both") {
   if (nrow(comprehensive_data) == 0) return(data.frame())
   
@@ -285,35 +249,33 @@ get_high_larvae_sites_from_data <- function(comprehensive_data, threshold = 2, y
       filter(air_gnd == air_gnd_filter)
   }
   
-  # Find sites with high larvae counts - show frequency AND sample status patterns
+  # Find sites with high larvae counts - show frequency, not just max
   high_larvae_sites <- filtered_data %>%
     group_by(sitecode, facility, fosarea, zone, air_gnd, priority, acres, years_with_data, prehatch) %>%
     summarise(
       total_inspections = n(),
       threshold_exceedances = sum(numdip >= threshold, na.rm = TRUE),
+      max_dip_count = max(numdip, na.rm = TRUE),
       avg_dip_count = round(mean(numdip, na.rm = TRUE), 1),
-      # Sample status tracking
-      total_samples = sum(!is.na(sampnum_yr) & sampnum_yr != "", na.rm = TRUE),
-      samples_needs_id = sum(sample_status == "Needs ID", na.rm = TRUE),
-      samples_red_bugs = sum(sample_status == "Red Bugs", na.rm = TRUE),
-      samples_blue_bugs = sum(sample_status == "Blue Bugs", na.rm = TRUE),
+      last_high_date = ifelse(
+        any(numdip >= threshold, na.rm = TRUE),
+        max(inspdate[numdip >= threshold], na.rm = TRUE),
+        NA_real_
+      ),
+      first_high_date = ifelse(
+        any(numdip >= threshold, na.rm = TRUE),
+        min(inspdate[numdip >= threshold], na.rm = TRUE),
+        NA_real_
+      ),
       .groups = 'drop'
     ) %>%
     filter(threshold_exceedances > 0) %>%
     mutate(
       exceedance_frequency = round(100.0 * threshold_exceedances / total_inspections, 1),
-      # Calculate percentages for red/blue bug frequency
-      red_bug_frequency = ifelse(total_samples > 0, 
-                                  round(100.0 * samples_red_bugs / total_samples, 1), 
-                                  0),
-      blue_bug_frequency = ifelse(total_samples > 0, 
-                                   round(100.0 * samples_blue_bugs / total_samples, 1), 
-                                   0),
-      needs_id_frequency = ifelse(total_samples > 0, 
-                                   round(100.0 * samples_needs_id / total_samples, 1), 
-                                   0)
+      last_high_date = as.Date(last_high_date, origin = "1970-01-01"),
+      first_high_date = as.Date(first_high_date, origin = "1970-01-01")
     ) %>%
-    arrange(desc(exceedance_frequency), desc(threshold_exceedances), desc(red_bug_frequency))
+    arrange(desc(exceedance_frequency), desc(threshold_exceedances), desc(max_dip_count))
   
   return(high_larvae_sites)
 }
@@ -435,7 +397,7 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
   
   gap_cutoff <- ref_date - years(years_gap)
   
-  # Get the most recent inspection per site - apply action filtering and capture sample status
+  # Get the most recent inspection per site - apply action filtering
   site_inspections <- comprehensive_data %>%
     filter(!is.na(inspdate),
            action %in% c('1','2','4') | (action == '3' & wet == '0')) %>%  # Action filtering for gaps
@@ -453,7 +415,6 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
     mutate(
       last_inspection_date = as.Date('1900-01-01'),
       numdip = NA_real_,
-      sample_status = "No Sample",
       days_since_inspection = 999999,
       inspection_status = "Never Inspected"
     )
@@ -471,7 +432,7 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
     ) %>%
     filter(inspdate < gap_cutoff) %>%
     select(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, years_with_data, prehatch,
-           last_inspection_date, last_numdip, sample_status, days_since_inspection, inspection_status) %>%
+           last_inspection_date, last_numdip, days_since_inspection, inspection_status) %>%
     bind_rows(never_inspected) %>%
     arrange(last_inspection_date, sitecode)
   

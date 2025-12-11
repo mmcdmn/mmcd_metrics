@@ -56,7 +56,7 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
         "Acres: ", acres, "<br/>",
         "Status: ", site_status, "<br/>",
         "Last Inspection: ", last_inspection_date_display, "<br/>",
-        "Larvae Count: ", ifelse(is.na(last_larvae_count), "N/A", last_larvae_count), "<br/>",
+        "last Dip Count: ", ifelse(is.na(last_larvae_count), "N/A", last_larvae_count), "<br/>",
         "Lab Status: ", lab_status_display, "<br/>",
         "Last Treatment: ", last_treatment_date_display, "<br/>",
         "Material Used: ", ifelse(is.na(last_treatment_material), "None", last_treatment_material)

@@ -1,0 +1,88 @@
+# data_functions.R
+# Data processing functions for sections-cards DEMO
+
+#' Get filter options from database (lightweight query)
+#' 
+#' Retrieves unique values for filter dropdowns without loading full dataset
+#' Uses db_helpers functions for facility and FOS lookups
+#' 
+#' @param facility_filter Optional facility filter to cascade to FOS and sections
+#' @param fosarea_filter Optional FOS area filter to cascade to sections  
+#' @return A list with facility, section, and fosarea choices
+#' @export
+get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
+  con <- get_db_connection()
+  on.exit(dbDisconnect(con), add = TRUE)
+  
+  # Build filter conditions
+  where_conditions <- "b.enddate IS NULL AND g.facility IS NOT NULL AND g.sectcode IS NOT NULL AND g.fosarea IS NOT NULL"
+  
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
+  }
+  
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
+    SELECT DISTINCT
+      g.facility,
+      g.sectcode as section,
+      g.fosarea
+    FROM public.loc_breeding_sites b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    WHERE ", where_conditions, "
+    ORDER BY g.facility, g.sectcode, g.fosarea
+  ")
+  
+  data <- dbGetQuery(con, query)
+  
+  return(list(
+    facilities = sort(unique(data$facility)),
+    sections = sort(unique(data$section)),
+    fosarea_list = sort(unique(data$fosarea))
+  ))
+}
+
+#' Get breeding sites data with section information
+#' 
+#' This function retrieves breeding site data and joins with section (gis_sectcode)
+#' information using the correct JOIN logic to avoid ambiguous matches.
+#' 
+#' @return A data frame with breeding site and section information
+#' @export
+get_breeding_sites_with_sections <- function() {
+  con <- get_db_connection()
+  on.exit(dbDisconnect(con), add = TRUE)
+  
+  query <- "
+    SELECT 
+      b.sitecode,
+      b.priority,
+      b.acres,
+      b.type,
+      b.air_gnd,
+      b.culex,
+      b.spr_aedes,
+      b.prehatch,
+      b.remarks,
+      b.drone,
+      b.facility as site_facility,
+      g.sectcode as section,
+      g.zone,
+      g.facility,
+      g.fosarea
+    FROM public.loc_breeding_sites b
+    -- CRITICAL: Use exact sectcode match to avoid ambiguous joins
+    -- This matches the first 7 characters of sitecode with sectcode
+    -- Example: sitecode '191819-045' -> left(sitecode,7) = '191819-' matches sectcode '191819-'
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    WHERE b.enddate IS NULL
+    ORDER BY b.sitecode
+  "
+  
+  data <- dbGetQuery(con, query)
+  
+  return(data)
+}

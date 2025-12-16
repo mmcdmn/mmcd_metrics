@@ -106,8 +106,8 @@ drone_ui <- function() {
                                 "P1+P2 Combined" = "p1_p2_combined"),
                     selected = "p1_p2_combined"),
         
-        selectizeInput("facility_filter", "Facility:",
-                      choices = NULL, multiple = TRUE),
+        selectInput("facility_filter", "Facility:",
+                      choices = NULL),
         
         selectizeInput("foreman_filter", "FOS:",
                       choices = NULL, multiple = TRUE),

@@ -123,9 +123,9 @@ create_main_ui <- function() {
               selected = "A")
           ),
           column(2,
-            selectizeInput("facility", "Facility:", 
+            selectInput("facility", "Facility:", 
               choices = get_facility_display_choices(), 
-              selected = "all", multiple = TRUE)
+              selected = "all")
           ),
           column(2,
             selectizeInput("fosarea", "FOS Area:", 

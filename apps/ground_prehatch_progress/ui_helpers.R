@@ -11,11 +11,9 @@ create_filter_panel <- function() {
     
     fluidRow(
       column(3,
-        selectizeInput("facility_filter", "Facility:",
-                      choices = c("All" = "all"),
-                      selected = "all", 
-                      multiple = TRUE,
-                      options = list(placeholder = "Select facilities..."))
+        selectInput("facility_filter", "Facility:",
+                      choices = c("All Facilities" = "all"),
+                      selected = "all")
       ),
       column(3,
         selectizeInput("foreman_filter", "FOS:",
@@ -333,11 +331,9 @@ create_historical_filter_panel <- function() {
     
     fluidRow(
       column(3,
-        selectizeInput("hist_facility_filter", "Facility:",
-                      choices = c("All" = "all"),
-                      selected = "all", 
-                      multiple = TRUE,
-                      options = list(placeholder = "Select facilities..."))
+        selectInput("hist_facility_filter", "Facility:",
+                      choices = c("All Facilities" = "all"),
+                      selected = "all")
       ),
       column(3,
         selectizeInput("hist_foreman_filter", "FOS:",

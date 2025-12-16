@@ -4,7 +4,6 @@ suppressPackageStartupMessages({
   library(shiny)
   library(shinydashboard)
   library(shinyWidgets)
-  library(shinyjs)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -53,8 +52,6 @@ ui <- dashboardPage(
   dashboardBody(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
-    
-    useShinyjs(),
     
     tags$head(
       tags$style(HTML("

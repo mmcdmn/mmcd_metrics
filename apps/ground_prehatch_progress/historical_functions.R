@@ -382,6 +382,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
         yaxis = list(title = list(text = metric_label, font = list(size = 18)), 
                     tickfont = list(size = 16)),
         legend = list(font = list(size = 16)),
+        showlegend = TRUE,  # Always show legend even for single group
         font = list(size = 16)
       )
   } else {
@@ -394,6 +395,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
         yaxis = list(title = list(text = metric_label, font = list(size = 18)), 
                     tickfont = list(size = 16)),
         legend = list(font = list(size = 16)),
+        showlegend = TRUE,  # Always show legend even for single group
         font = list(size = 16),
         barmode = if(chart_type == "grouped_bar") 'group' else 'stack'
       )

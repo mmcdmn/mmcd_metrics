@@ -327,10 +327,10 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
   # Apply facility filter AFTER group_label is created
   if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
     if (nrow(inspection_data) > 0) {
-      inspection_data <- inspection_data %>% filter(facility_short %in% facility_filter)
+      inspection_data <- inspection_data %>% filter(facility %in% facility_filter)
     }
     if (nrow(treatment_data) > 0) {
-      treatment_data <- treatment_data %>% filter(facility_short %in% facility_filter)
+      treatment_data <- treatment_data %>% filter(facility %in% facility_filter)
     }
   }
   
@@ -475,16 +475,7 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
            theme_void())
   }
   
-  # For bar charts, convert time_group to character year for better display
-  if (chart_type %in% c("bar", "stacked")) {
-    plot_data <- plot_data %>%
-      mutate(
-        year_label = format(time_group, "%Y"),
-        time_group_char = as.character(year(time_group))
-      )
-  }
-  
-  # Create appropriate color mapping based on group_by
+  # Create appropriate color mapping based on group_by BEFORE changing labels
   if (group_by == "facility") {
     # For facility grouping, ensure we have the right color keys
     if (combine_zones) {
@@ -532,6 +523,69 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
   } else {
     # For "all" or other groupings
     color_mapping <- c("All" = unname(status_colors["active"]))
+  }
+  
+  # NOW replace short codes with full names in group_label for DISPLAY
+  # AND update color_mapping keys to match
+  if (group_by == "facility") {
+    facility_lookup <- get_facility_lookup()
+    if (nrow(facility_lookup) > 0) {
+      fac_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
+      
+      # Create new color mapping with full names as keys
+      new_color_mapping <- setNames(
+        sapply(names(color_mapping), function(old_key) {
+          color_mapping[old_key]
+        }),
+        sapply(names(color_mapping), function(old_key) {
+          # Extract facility short code
+          facility_code <- sub(" - Zone.*", "", old_key)
+          if (facility_code %in% names(fac_map)) {
+            full_name <- fac_map[facility_code]
+            # If key has " - Zone X", append it
+            if (grepl(" - Zone", old_key)) {
+              zone_part <- sub(".*( - Zone \\d+).*", "\\1", old_key)
+              paste0(full_name, zone_part)
+            } else {
+              full_name
+            }
+          } else {
+            old_key
+          }
+        })
+      )
+      color_mapping <- new_color_mapping
+      
+      # Update group_label in data
+      plot_data <- plot_data %>%
+        mutate(
+          group_label = sapply(group_label, function(label) {
+            # Extract facility short code
+            facility_code <- sub(" - Zone.*", "", label)
+            if (facility_code %in% names(fac_map)) {
+              full_name <- fac_map[facility_code]
+              # If label has " - Zone X", append it
+              if (grepl(" - Zone", label)) {
+                zone_part <- sub(".*( - Zone \\d+).*", "\\1", label)
+                paste0(full_name, zone_part)
+              } else {
+                full_name
+              }
+            } else {
+              label
+            }
+          })
+        )
+    }
+  }
+  
+  # For bar charts, convert time_group to character year for better display
+  if (chart_type %in% c("bar", "stacked")) {
+    plot_data <- plot_data %>%
+      mutate(
+        year_label = format(time_group, "%Y"),
+        time_group_char = as.character(year(time_group))
+      )
   }
   
   # Create base plot

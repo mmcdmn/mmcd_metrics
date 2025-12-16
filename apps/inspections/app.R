@@ -1,7 +1,6 @@
 # Inspections App - Site Inspection Coverage Gaps and Analytics
 
 library(shiny)
-library(shinydashboard)
 library(DT)
 library(dplyr)
 library(lubridate)
@@ -264,8 +263,8 @@ server <- function(input, output, session) {
       
       stats <- get_summary_stats_from_data(comp_data, air_gnd_filter, input$years_back %||% 5)
       
-      # Total active sites value box - use wet analysis data
-      output$total_active_sites <- renderValueBox({
+      # Total active sites stat box - use wet analysis data
+      output$total_active_sites_box <- renderUI({
         if (input$analyze_wet == 0) {
           total_sites <- 0
         } else {
@@ -279,16 +278,20 @@ server <- function(input, output, session) {
           total_sites <- wet_comp_data
         }
         
-        valueBox(
+        # Get theme-based colors
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = format(total_sites, big.mark = ","),
-          subtitle = "Sites Analyzed",
-          icon = icon("map-marker"),
-          color = "blue"
+          title = "Sites Analyzed",
+          bg_color = unname(status_colors["active"]),
+          text_color = "#ffffff",
+          icon = icon("map-marker")
         )
       })
       
-      # Overall wet percentage value box
-      output$overall_wet_percentage <- renderValueBox({
+      # Overall wet percentage stat box
+      output$overall_wet_percentage_box <- renderUI({
         if (input$analyze_wet == 0) {
           wet_pct <- 0
         } else {
@@ -301,32 +304,42 @@ server <- function(input, output, session) {
           }
         }
         
-        valueBox(
+        # Get theme-based colors
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = paste0(wet_pct, "%"),
-          subtitle = "Average Wet Frequency",
-          icon = icon("percentage"),
-          color = "green"
+          title = "Average Wet Frequency",
+          bg_color = unname(status_colors["completed"]),
+          text_color = "#ffffff",
+          icon = icon("percentage")
         )
       })
     } else {
       output$total_sites_count <- renderText("-")
       
-      # Default value boxes when no data
-      output$total_active_sites <- renderValueBox({
-        valueBox(
+      # Default stat boxes when no data
+      output$total_active_sites_box <- renderUI({
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = "-",
-          subtitle = "Sites Analyzed",
-          icon = icon("map-marker"),
-          color = "light-blue"
+          title = "Sites Analyzed",
+          bg_color = unname(status_colors["unknown"]),
+          text_color = "#ffffff",
+          icon = icon("map-marker")
         )
       })
       
-      output$overall_wet_percentage <- renderValueBox({
-        valueBox(
+      output$overall_wet_percentage_box <- renderUI({
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = "-",
-          subtitle = "Average Wet Frequency",
-          icon = icon("droplet"),
-          color = "light-blue"
+          title = "Average Wet Frequency",
+          bg_color = unname(status_colors["unknown"]),
+          text_color = "#ffffff",
+          icon = icon("percentage")
         )
       })
     }

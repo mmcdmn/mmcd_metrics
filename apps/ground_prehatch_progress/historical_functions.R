@@ -15,6 +15,15 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
                                   hist_group_by, hist_zone_display, 
                                   facility_filter = NULL, zone_filter = NULL, foreman_filter = NULL) {
   
+  # Add NULL/default checks for all parameters
+  if (is.null(hist_time_period)) hist_time_period <- "yearly"
+  if (is.null(hist_display_metric)) hist_display_metric <- "treatments"
+  if (is.null(hist_group_by)) hist_group_by <- "mmcd_all"
+  if (is.null(hist_zone_display)) hist_zone_display <- "combined"
+  if (is.null(zone_filter)) zone_filter <- c("1", "2")
+  if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y"))
+  if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
+  
   # Normalize metric names (UI sends "weekly_active_sites", we use "active_sites" internally)
   hist_display_metric <- gsub("weekly_", "", hist_display_metric)
   
@@ -53,16 +62,16 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   }
   
   if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-    # Convert foreman names to emp_nums
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    ground_sites <- ground_sites %>% filter(fosarea %in% selected_emp_nums)
-    ground_treatments <- ground_treatments %>% filter(fosarea %in% selected_emp_nums)
+    # foreman_filter is already emp_nums, no need to convert
+    ground_sites <- ground_sites %>% filter(fosarea %in% foreman_filter)
+    ground_treatments <- ground_treatments %>% filter(fosarea %in% foreman_filter)
   }
   
   # Determine if zones should be shown separately
-  show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
+  show_zones_separately <- !is.null(hist_zone_display) && 
+                           hist_zone_display == "show-both" && 
+                           !is.null(zone_filter) && 
+                           length(zone_filter) > 1
   
   # Special logic for weekly active treatments (active sites and active acres)
   if (hist_time_period == "weekly" && hist_display_metric %in% c("active_sites", "active_acres")) {

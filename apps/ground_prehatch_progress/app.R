@@ -180,7 +180,7 @@ server <- function(input, output, session) {
   # Initialize facility choices from db_helpers - runs immediately on app load
   observe({
     facility_choices <- get_facility_choices()
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
   })
   
   # Initialize foreman choices from db_helpers - runs immediately on app load
@@ -191,6 +191,32 @@ server <- function(input, output, session) {
       foremen_choices,
       setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
     )
+    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+  })
+  
+  # Update FOS choices when facility changes
+  observeEvent(input$facility_filter, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility_filter == "all") {
+      # Show all FOS when "All Facilities" is selected
+      foremen_choices <- c("All" = "all")
+      foremen_choices <- c(
+        foremen_choices,
+        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      )
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility_filter, ]
+      foremen_choices <- c("All" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        foremen_choices <- c(
+          foremen_choices,
+          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        )
+      }
+    }
+    
     updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
   

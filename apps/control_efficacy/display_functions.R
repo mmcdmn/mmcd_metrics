@@ -320,6 +320,10 @@ create_dip_changes_chart <- function(site_details, theme = "MMCD") {
     return(ggplotly(p))
   }
   
+  # Check if we have enough data for boxplot (need at least 2 sites)
+  num_sites <- length(unique(plot_data$sitecode))
+  show_boxplot <- num_sites >= 2
+  
   # Reshape for pre/post comparison (dumbbell plot needs long format)
   plot_df <- plot_data %>%
     select(sitecode, facility, pre_treatment_dips, post_treatment_dips, 
@@ -344,33 +348,44 @@ create_dip_changes_chart <- function(site_details, theme = "MMCD") {
       )
     )
   
-  # Calculate quartiles for smart y-axis limiting
-  q1_pre <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.25, na.rm = TRUE)
-  q3_pre <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.75, na.rm = TRUE)
-  iqr_pre <- q3_pre - q1_pre
-  
-  q1_post <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.25, na.rm = TRUE)
-  q3_post <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.75, na.rm = TRUE)
-  iqr_post <- q3_post - q1_post
-  
-  # Use the higher Q3 and IQR for upper limit
-  y_top <- max(q3_pre, q3_post, na.rm = TRUE)
-  iqr_top <- max(iqr_pre, iqr_post, na.rm = TRUE)
-  y_lim_top <- ceiling(y_top + max(0.25 * iqr_top, 2))
+  # Calculate quartiles for smart y-axis limiting (only if enough data)
+  if (show_boxplot) {
+    q1_pre <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.25, na.rm = TRUE)
+    q3_pre <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.75, na.rm = TRUE)
+    iqr_pre <- q3_pre - q1_pre
+    
+    q1_post <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.25, na.rm = TRUE)
+    q3_post <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.75, na.rm = TRUE)
+    iqr_post <- q3_post - q1_post
+    
+    # Use the higher Q3 and IQR for upper limit
+    y_top <- max(q3_pre, q3_post, na.rm = TRUE)
+    iqr_top <- max(iqr_pre, iqr_post, na.rm = TRUE)
+    y_lim_top <- ceiling(y_top + max(0.25 * iqr_top, 2))
+  } else {
+    # For single site, just use the max value plus some padding
+    y_lim_top <- ceiling(max(plot_df$dip, na.rm = TRUE) * 1.2 + 2)
+  }
   
   # Get theme colors
   status_colors <- get_status_colors(theme = theme)
   
-  # Create dumbbell plot with boxplot overlay
-  p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode)) +
-    # Boxplot overlay (nudged to the left, no outliers shown)
-    geom_boxplot(aes(group = type), 
-                 color = "gray40", 
-                 fill = NA, 
-                 width = 0.3, 
-                 position = position_nudge(x = -0.30),
-                 outlier.shape = NA,
-                 coef = Inf) +
+  # Create base plot
+  p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode))
+  
+  # Add boxplot only if we have enough data
+  if (show_boxplot) {
+    p <- p + geom_boxplot(aes(group = type), 
+                          color = "gray40", 
+                          fill = NA, 
+                          width = 0.3, 
+                          position = position_nudge(x = -0.30),
+                          outlier.shape = NA,
+                          coef = Inf)
+  }
+  
+  # Add connecting lines and points
+  p <- p +
     # Connecting lines (colored by days to checkback)
     geom_line(aes(color = days_to_checkback), 
               alpha = 0.5, 
@@ -387,7 +402,8 @@ create_dip_changes_chart <- function(site_details, theme = "MMCD") {
     ) +
     scale_y_continuous(limits = c(-2, y_lim_top), oob = scales::oob_keep) +
     labs(
-      title = "Dip Count Change: Pre-Treatment vs First Checkback",
+      title = paste0("Dip Count Change: Pre-Treatment vs First Checkback", 
+                     if(!show_boxplot) " (Single Site)" else ""),
       x = "",
       y = "Dip Count"
     ) +

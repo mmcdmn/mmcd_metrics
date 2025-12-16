@@ -33,6 +33,29 @@ server <- function(input, output, session) {
   # Helper for null coalescing
   `%||%` <- function(x, y) if (is.null(x)) y else x
   
+  # Update FOS choices when facility changes
+  observeEvent(input$facility, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility == "all") {
+      # Show all FOS when "All Facilities" is selected
+      fosarea_choices <- get_fosarea_display_choices()
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility, ]
+      fosarea_choices <- c("All FOS" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        display_names <- paste0(filtered_foremen$shortname, " (", filtered_foremen$facility, ")")
+        fosarea_choices <- c(
+          fosarea_choices,
+          setNames(filtered_foremen$shortname, display_names)
+        )
+      }
+    }
+    
+    updateSelectizeInput(session, "fosarea", choices = fosarea_choices, selected = "all")
+  })
+  
   # ============= SINGLE UNIFIED DATA RETRIEVAL =============
   # Single reactive data source that loads ALL inspection data with shared filters
   comprehensive_data <- eventReactive(input$load_data, {

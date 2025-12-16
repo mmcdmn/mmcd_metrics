@@ -602,7 +602,14 @@ server <- function(input, output, session) {
         )
       ),
       rownames = FALSE
-    )
+    ) %>%
+      formatStyle(
+        "Completion Rate (%)",
+        backgroundColor = styleInterval(
+          c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+          c("#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837")
+        )
+      )
   })
   
   # Brood Status Table (legacy output for backward compatibility)
@@ -636,8 +643,8 @@ server <- function(input, output, session) {
       formatStyle(
         "Completion Rate (%)",
         backgroundColor = styleInterval(
-          c(50, 80), 
-          c("#f8d7da", "#fff3cd", "#d4edda")
+          c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+          c("#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837")
         )
       )
   })
@@ -651,6 +658,13 @@ server <- function(input, output, session) {
     }
     
     display_data <- details %>%
+      mutate(
+        `% Reduction` = ifelse(
+          is.na(pre_treatment_dips) | is.na(post_treatment_dips) | pre_treatment_dips == 0,
+          NA,
+          round(((pre_treatment_dips - post_treatment_dips) / pre_treatment_dips) * 100, 1)
+        )
+      ) %>%
       select(
         Site = sitecode,
         Facility = facility,
@@ -660,6 +674,7 @@ server <- function(input, output, session) {
         `Days to Checkback` = days_to_checkback,
         `Pre Dips` = pre_treatment_dips,
         `Post Dips` = post_treatment_dips,
+        `% Reduction`,
         Acres = acres
       )
     
@@ -669,7 +684,14 @@ server <- function(input, output, session) {
         scrollX = TRUE
       ),
       rownames = FALSE
-    )
+    ) %>%
+      formatStyle(
+        "% Reduction",
+        backgroundColor = styleInterval(
+          c(-50, 0, 25, 50, 75, 90, 95),
+          c("#67001f", "#d73027", "#f46d43", "#fee08b", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850")
+        )
+      )
   })
   
   # Reactive value to track filter state for dip changes chart

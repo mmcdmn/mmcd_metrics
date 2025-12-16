@@ -49,6 +49,39 @@ get_status_condition <- function(status_types) {
   }
 }
 
+# Function to construct foreman (FOS) filter condition for SQL
+get_foreman_condition <- function(foreman_filter) {
+  if (is.null(foreman_filter) || ("all" %in% foreman_filter) || length(foreman_filter) == 0) {
+    return("") # No filtering
+  } else {
+    # Map shortnames to emp_num using employee_list
+    # foreman_filter contains shortnames, but gis.fosarea contains emp_num
+    # We need to query to get emp_num for the selected shortnames
+    con <- get_db_connection()
+    if (is.null(con)) return("")
+    
+    tryCatch({
+      shortname_list <- paste0("'", paste(foreman_filter, collapse = "','"), "'")
+      emp_nums <- dbGetQuery(con, sprintf("
+        SELECT emp_num 
+        FROM employee_list 
+        WHERE shortname IN (%s)
+      ", shortname_list))
+      dbDisconnect(con)
+      
+      if (nrow(emp_nums) > 0) {
+        emp_num_list <- paste0("'", paste(emp_nums$emp_num, collapse = "','"), "'")
+        return(sprintf("AND gis.fosarea IN (%s)", emp_num_list))
+      } else {
+        return("")
+      }
+    }, error = function(e) {
+      if (!is.null(con)) dbDisconnect(con)
+      return("")
+    })
+  }
+}
+
 # Helper function for total structures query conditions
 get_facility_condition_total <- function(facility_filter, structure_type_filter, priority_filter, status_types) {
   conditions <- character(0)
@@ -89,7 +122,7 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
 }
 
 # Function to get current structure treatment data
-get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days = 7, facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
+get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days = 7, facility_filter = "all", foreman_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -117,8 +150,10 @@ WHERE trt.list_type = 'STR'
 %s
 %s
 %s
+%s
 ",
       get_facility_condition(facility_filter),
+      get_foreman_condition(foreman_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
       get_status_condition(status_types)
@@ -291,7 +326,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 }
 
 # Function to get all structures for total counts
-get_all_structures <- function(facility_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
+get_all_structures <- function(facility_filter = "all", foreman_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -311,8 +346,16 @@ FROM public.loc_cxstruct loc
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
 %s
+%s
+%s
+%s
+%s
 ",
-      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
+      get_facility_condition(facility_filter),
+      get_foreman_condition(foreman_filter),
+      get_structure_type_condition(structure_type_filter),
+      get_priority_condition(priority_filter),
+      get_status_condition(status_types)
     )
     
     structures <- dbGetQuery(con, query)

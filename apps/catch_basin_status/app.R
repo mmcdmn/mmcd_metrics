@@ -2,7 +2,6 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
-  library(shinydashboard)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -21,78 +20,15 @@ source("display_functions.R")
 source("ui_helper.R")
 source("historical_functions.R")
 
-ui <- dashboardPage(
-  dashboardHeader(title = "Catch Basin Status"),
-  
-  dashboardSidebar(
-    sidebarMenu(
-      id = "sidebar_tabs",
-      menuItem("Status Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table")),
-      menuItem("Historical Analysis", tabName = "historical", icon = icon("history"))
-    )
-  ),
-  
-  dashboardBody(
-    # Use universal CSS from db_helpers for consistent text sizing
-    get_universal_text_css(),
-    
-    # Filter panel - always visible
-    create_filter_panel(),
-    
-    # Help text (collapsible)
-    div(id = "help-section",
-      tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-             style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-             HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-      div(style = "display: none;",
-        create_help_text()
-      )
-    ),
-    
-    tabItems(
-      # Overview tab
-      tabItem(tabName = "overview",
-        br(),
-        
-        # Summary statistics
-        div(
-          h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
-          create_overview_value_boxes()
-        ),
-        
-        br(),
-        
-        # Status chart
-        create_status_chart_box()
-      ),
-      
-      # Details tab  
-      tabItem(tabName = "details",
-        br(),
-        
-        # Details table
-        create_details_table_box()
-      ),
-      
-      # Historical tab
-      tabItem(tabName = "historical",
-        br(),
-        
-        # Historical filters
-        create_historical_filter_panel(),
-        
-        # Historical chart
-        create_historical_chart_box(),
-        
-        br(),
-        
-        # Historical details table
-        create_historical_details_table_box()
-      )
-    )
-  )
-)
+# =============================================================================
+# USER INTERFACE
+# =============================================================================
+
+ui <- catch_basin_ui()
+
+# =============================================================================
+# SERVER LOGIC
+# =============================================================================
 
 server <- function(input, output, session) {
   
@@ -126,12 +62,18 @@ server <- function(input, output, session) {
       zone_value  # Single zone
     }
     
+    # Safely handle foreman_filter (can be NULL or empty with multiple=TRUE)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- "all"
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
@@ -195,12 +137,12 @@ server <- function(input, output, session) {
       if (!is.null(facilities) && nrow(facilities) > 0) {
         facilities <- facilities %>%
           filter(short_name %in% c("N", "E", "MO", "Sr", "Sj", "Wm", "Wp"))
-        facility_choices <- c("All" = "all", setNames(facilities$short_name, facilities$full_name))
+        facility_choices <- c("All Facilities" = "all", setNames(facilities$short_name, facilities$full_name))
       }
-      updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+      updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
     }, error = function(e) {
       warning(paste("Error initializing facility choices:", e$message))
-      updateSelectizeInput(session, "facility_filter", choices = c("All" = "all"), selected = "all")
+      updateSelectInput(session, "facility_filter", choices = c("All Facilities" = "all"), selected = "all")
     })
   })
   
@@ -220,6 +162,32 @@ server <- function(input, output, session) {
       warning(paste("Error initializing foreman choices:", e$message))
       updateSelectizeInput(session, "foreman_filter", choices = c("All" = "all"), selected = "all")
     })
+  })
+  
+  # Update FOS choices when facility changes
+  observeEvent(input$facility_filter, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility_filter == "all") {
+      # Show all FOS when "All Facilities" is selected
+      foremen_choices <- c("All" = "all")
+      foremen_choices <- c(
+        foremen_choices,
+        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      )
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility_filter, ]
+      foremen_choices <- c("All" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        foremen_choices <- c(
+          foremen_choices,
+          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        )
+      }
+    }
+    
+    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
   
   # =============================================================================
@@ -269,8 +237,8 @@ server <- function(input, output, session) {
   # OVERVIEW TAB - Value boxes and charts
   # =============================================================================
   
-  # Summary value boxes
-  output$total_wet_cb <- renderValueBox({
+  # Summary metric boxes
+  output$total_wet_cb <- renderUI({
     data <- catch_basin_data()
     
     if (is.null(data) || nrow(data) == 0) {
@@ -279,15 +247,15 @@ server <- function(input, output, session) {
       total <- sum(data$wet_cb_count, na.rm = TRUE)
     }
     
-    valueBox(
+    create_metric_box(
       format(total, big.mark = ","),
       "Total Wet Catch Basins",
-      icon = icon("tint"),
-      color = "blue"
+      "tint",
+      "#3c8dbc"
     )
   })
   
-  output$total_treated <- renderValueBox({
+  output$total_treated <- renderUI({
     data <- catch_basin_data()
     
     if (is.null(data) || nrow(data) == 0) {
@@ -296,15 +264,15 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_activetrt, na.rm = TRUE)
     }
     
-    valueBox(
+    create_metric_box(
       format(total, big.mark = ","),
       "Wet CB with Active Treatment",
-      icon = icon("check-circle"),
-      color = "green"
+      "check-circle",
+      "#00a65a"
     )
   })
   
-  output$percent_treated <- renderValueBox({
+  output$percent_treated <- renderUI({
     data <- catch_basin_data()
     
     if (is.null(data) || nrow(data) == 0) {
@@ -315,15 +283,17 @@ server <- function(input, output, session) {
       pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
     }
     
-    valueBox(
+    color <- if (pct >= 75) "#00a65a" else if (pct >= 50) "#f39c12" else "#dd4b39"
+    
+    create_metric_box(
       paste0(round(pct, 1), "%"),
       "Treatment Coverage",
-      icon = icon("percent"),
-      color = if (pct >= 75) "green" else if (pct >= 50) "yellow" else "red"
+      "percent",
+      color
     )
   })
   
-  output$total_expiring <- renderValueBox({
+  output$total_expiring <- renderUI({
     data <- catch_basin_data()
     
     if (is.null(data) || nrow(data) == 0) {
@@ -332,15 +302,15 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_expiring, na.rm = TRUE)
     }
     
-    valueBox(
+    create_metric_box(
       format(total, big.mark = ","),
       "Expiring",
-      icon = icon("clock"),
-      color = "orange"
+      "clock",
+      "#f39c12"
     )
   })
   
-  output$total_expired <- renderValueBox({
+  output$total_expired <- renderUI({
     data <- catch_basin_data()
     
     if (is.null(data) || nrow(data) == 0) {
@@ -349,11 +319,11 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_expired, na.rm = TRUE)
     }
     
-    valueBox(
+    create_metric_box(
       format(total, big.mark = ","),
       "Expired",
-      icon = icon("times-circle"),
-      color = "red"
+      "times-circle",
+      "#dd4b39"
     )
   })
   

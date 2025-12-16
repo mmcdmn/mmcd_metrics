@@ -37,8 +37,20 @@ load_historical_struct_data <- function(start_year, end_year,
     
     foreman_where <- ""
     if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-      foreman_list <- paste0("'", foreman_filter, "'", collapse = ", ")
-      foreman_where <- paste0("AND gis.fosarea IN (", foreman_list, ")")
+      # Convert shortnames to emp_num (foreman_filter contains shortnames, but gis.fosarea contains emp_num)
+      shortname_list <- paste0("'", paste(foreman_filter, collapse = "','"), "'")
+      emp_nums_query <- sprintf("
+        SELECT emp_num 
+        FROM employee_list 
+        WHERE shortname IN (%s)
+      ", shortname_list)
+      
+      emp_nums <- dbGetQuery(con, emp_nums_query)
+      
+      if (nrow(emp_nums) > 0) {
+        emp_num_list <- paste0("'", paste(emp_nums$emp_num, collapse = "','"), "'")
+        foreman_where <- paste0("AND gis.fosarea IN (", emp_num_list, ")")
+      }
     }
     
     structure_type_where <- ""

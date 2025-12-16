@@ -2,7 +2,6 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
-  library(shinydashboard)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -21,84 +20,15 @@ source("display_functions.R")
 source("ui_helpers.R")
 source("historical_functions.R")
 
-ui <- dashboardPage(
-  dashboardHeader(title = "Ground Prehatch Treatment Progress"),
-  
-  dashboardSidebar(
-    sidebarMenu(
-      id = "sidebar_tabs",
-      menuItem("Progress Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table")),
-      menuItem("Historical Analysis", tabName = "historical", icon = icon("history"))
-    )
-  ),
-  
-  dashboardBody(
-    # Use universal CSS from db_helpers for consistent text sizing
-    get_universal_text_css(),
-    
-    # Filter panel - always visible
-    create_filter_panel(),
-    
-    # Help text (collapsible)
-    div(id = "help-section",
-      tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-             style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-             HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-      div(style = "display: none;",
-        create_help_text()
-      )
-    ),
-    
-    tabItems(
-      # Overview tab
-      tabItem(tabName = "overview",
-        br(),
-        
-        # Section info panel
-        create_section_info_panel(),
-        
-        # Summary statistics
-        div(
-          h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
-          create_overview_value_boxes()
-        ),
-        
-        br(),
-        
-        # Progress chart
-        create_progress_chart_box()
-      ),
-      
-      # Details tab  
-      tabItem(tabName = "details",
-        br(),
-        
-        # Section info panel
-        create_section_info_panel(),
-        
-        # Details table
-        create_details_table_box()
-      ),
-      
-      # Historical Analysis tab
-      tabItem(tabName = "historical",
-        br(),
-        
-        # Section info panel
-        create_section_info_panel(),
-        
-        # Historical chart
-        create_historical_chart_box(),
-        
-        br(),
-        
-        # Historical details table
-        create_historical_details_table_box()
-      )
-    )
-  )
-)
+# =============================================================================
+# USER INTERFACE
+# =============================================================================
+
+ui <- ground_prehatch_ui()
+
+# =============================================================================
+# SERVER LOGIC
+# =============================================================================
 
 server <- function(input, output, session) {
   
@@ -128,12 +58,18 @@ server <- function(input, output, session) {
       zone_value  # Single zone
     }
     
+    # Safely handle foreman_filter (can be NULL or empty with multiple=TRUE)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- "all"
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
@@ -163,12 +99,18 @@ server <- function(input, output, session) {
       zone_value  # Single zone
     }
     
+    # Safely handle foreman_filter (can be NULL or empty with multiple=TRUE)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- "all"
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       hist_time_period = isolate(input$hist_time_period),
       hist_display_metric = isolate(input$hist_display_metric),
@@ -223,7 +165,7 @@ server <- function(input, output, session) {
   # Update chart type default when zone filter changes to P1 and P2 separate
   observeEvent(input$zone_filter, {
     # Only update if on historical tab and switching to P1 and P2 separate
-    if (input$sidebar_tabs == "historical" && input$zone_filter == "1,2") {
+    if (input$tabs == "historical" && input$zone_filter == "1,2") {
       # Default to grouped_bar but user can still change it
       updateSelectInput(session, "hist_chart_type", selected = "grouped_bar")
     }
@@ -309,108 +251,76 @@ server <- function(input, output, session) {
     create_value_boxes(data)
   })
   
-  # Render value boxes using colors from db_helpers
-  output$total_sites <- renderValueBox({
+  # Render metric boxes
+  output$prehatch_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
-      value = data$total_ground,
-      subtitle = "Total Ground Sites",
-      icon = icon("map-marker"),
-      color = shiny_colors["completed"]
-    )
-  })
-  
-  output$prehatch_sites <- renderValueBox({
-    req(input$refresh)  # Only render after refresh button clicked
-    
-    data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    create_metric_box(
       value = data$total_prehatch,
       subtitle = "Prehatch Sites",
-      icon = icon("egg"),
-      color = shiny_colors["planned"]
+      icon_name = "egg",
+      color = "#f39c12"  # planned color
     )
   })
   
-  output$treated_sites <- renderValueBox({
+  output$treated_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    create_metric_box(
       value = data$total_active,
       subtitle = "Active Sites",
-      icon = icon("check-circle"),
-      color = shiny_colors["active"]
+      icon_name = "check-circle",
+      color = "#00a65a"  # active color (green)
     )
   })
   
-  output$sites_expiring <- renderValueBox({
+  output$sites_expiring <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    create_metric_box(
       value = data$total_expiring,
       subtitle = "Sites Expiring",
-      icon = icon("exclamation-triangle"),
-      color = shiny_colors["needs_action"]
+      icon_name = "exclamation-triangle",
+      color = "#f39c12"  # needs_action color (orange)
     )
   })
   
-  output$expired_sites <- renderValueBox({
+  output$expired_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    create_metric_box(
       value = data$total_expired,
       subtitle = "Expired Sites",
-      icon = icon("clock"),
-      color = shiny_colors["somthing_else"]
+      icon_name = "clock",
+      color = "#3c8dbc"  # info color (blue)
     )
   })
   
-  output$skipped_sites <- renderValueBox({
+  output$skipped_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    create_metric_box(
       value = data$total_skipped,
       subtitle = "Skipped Sites",
-      icon = icon("ban"),
-      color = shiny_colors["needs_treatment"]
+      icon_name = "ban",
+      color = "#dd4b39"  # needs_treatment color (red)
     )
   })
   
-  output$treated_pct <- renderValueBox({
+  output$treated_pct <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    create_metric_box(
       value = paste0(data$treated_pct, "%"),
       subtitle = "Treated %",
-      icon = icon("percent"),
-      color = shiny_colors["active"]
-    )
-  })
-  
-  output$expiring_pct <- renderValueBox({
-    req(input$refresh)  # Only render after refresh button clicked
-    
-    data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
-      value = paste0(data$expiring_pct, "%"),
-      subtitle = "Expiring %",
-      icon = icon("clock"),
-      color = shiny_colors["needs_action"]
+      icon_name = "percent",
+      color = "#00a65a"  # active color (green)
     )
   })
   

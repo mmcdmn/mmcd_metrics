@@ -479,18 +479,37 @@ server <- function(input, output, session) {
     # Determine zone display mode from zone_filter_raw
     hist_zone_display <- if(inputs$zone_filter_raw == "1,2") "show-both" else "combined"
     
-    # Call create_historical_data directly
-    create_historical_data(
-      start_year = inputs$hist_year_range[1],
-      end_year = inputs$hist_year_range[2],
-      hist_time_period = inputs$hist_time_period,
-      hist_display_metric = inputs$hist_display_metric,
-      hist_group_by = inputs$group_by,
-      hist_zone_display = hist_zone_display,
-      facility_filter = inputs$facility_filter,
-      zone_filter = inputs$zone_filter,
-      foreman_filter = inputs$foreman_filter
-    )
+    # Call create_historical_data with progress indicators
+    withProgress(message = "Loading historical data...", value = 0, {
+      incProgress(0.1, detail = "Connecting to database...")
+      Sys.sleep(0.1)  # Brief pause for user to see progress
+      
+      incProgress(0.2, detail = "Loading ground site data...")
+      Sys.sleep(0.1)
+      
+      incProgress(0.3, detail = "Loading treatment records...")
+      Sys.sleep(0.1)
+      
+      incProgress(0.2, detail = "Applying filters...")
+      Sys.sleep(0.1)
+      
+      incProgress(0.1, detail = "Aggregating data...")
+      
+      result <- create_historical_data(
+        start_year = inputs$hist_year_range[1],
+        end_year = inputs$hist_year_range[2],
+        hist_time_period = inputs$hist_time_period,
+        hist_display_metric = inputs$hist_display_metric,
+        hist_group_by = inputs$group_by,
+        hist_zone_display = hist_zone_display,
+        facility_filter = inputs$facility_filter,
+        zone_filter = inputs$zone_filter,
+        foreman_filter = inputs$foreman_filter
+      )
+      
+      incProgress(0.1, detail = "Finalizing...")
+      result
+    })
   })
   
   # Render historical chart

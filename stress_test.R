@@ -16,7 +16,7 @@ RAMP_UP_STEP <- 5  # Add this many workers each round
 TEST_DURATION_SEC <- 30  # How long each load level runs
 REQUEST_DELAY_MS <- 100  # Delay between requests per worker
 
-# Test endpoints - main apps that are likely to be used
+# Test endpoints 
 ENDPOINTS <- list(
   list(path = "/suco_history/", name = "SUCO History", weight = 3),
   list(path = "/cattail_treatments/", name = "Cattail Treatments", weight = 2),
@@ -175,12 +175,12 @@ run_load_test <- function(num_workers, duration_sec, endpoints) {
     
     # Check if we should stop (too many failures)
     if (success_rate < 50) {
-      cat("\n⚠️  WARNING: Success rate below 50%. Consider stopping test.\n")
+      cat("\n WARNING: Success rate below 50%. Consider stopping test.\n")
       return(list(results = combined_results, should_stop = TRUE))
     }
     
     if (p95_response_time > 10000) {  # 10 seconds
-      cat("\n⚠️  WARNING: 95th percentile response time exceeds 10s. Severe degradation.\n")
+      cat("\n WARNING: 95th percentile response time exceeds 10s. Severe degradation.\n")
       return(list(results = combined_results, should_stop = TRUE))
     }
     
@@ -194,7 +194,7 @@ run_load_test <- function(num_workers, duration_sec, endpoints) {
 # Main stress test execution
 run_stress_test <- function() {
   cat("╔════════════════════════════════════════════════════════╗\n")
-  cat("║   MMCD Metrics Application Stress Test                ║\n")
+  cat("║   MMCD Metrics Application Stress Test                 ║\n")
   cat("║   Target: https://metrics.mmcd.org                     ║\n")
   cat("╚════════════════════════════════════════════════════════╝\n\n")
   
@@ -235,13 +235,13 @@ run_stress_test <- function() {
     }
     
     if (test_result$should_stop) {
-      cat("\n🛑 Stopping test due to performance degradation or high failure rate\n")
+      cat("\n Stopping test due to performance degradation or high failure rate\n")
       break
     }
     
     # Cooldown between test levels
     if (num_workers < MAX_WORKERS) {
-      cat(sprintf("\n⏸️  Cooldown for 5 seconds before next level...\n"))
+      cat(sprintf("\n  Cooldown for 5 seconds before next level...\n"))
       Sys.sleep(5)
     }
     
@@ -256,7 +256,7 @@ run_stress_test <- function() {
     timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
     results_file <- paste0("stress_test_results_", timestamp, ".csv")
     write.csv(final_results, results_file, row.names = FALSE)
-    cat(sprintf("\n💾 Results saved to: %s\n", results_file))
+    cat(sprintf("\n Results saved to: %s\n", results_file))
     
     # Generate summary report
     generate_summary_report(final_results, timestamp)
@@ -342,7 +342,7 @@ generate_summary_report <- function(results, timestamp) {
   cat("\n═══════════════════════════════════════════════════════════\n")
   sink()
   
-  cat(sprintf("📄 Report saved to: %s\n", report_file))
+  cat(sprintf(" Report saved to: %s\n", report_file))
 }
 
 # Generate visualization plots
@@ -394,18 +394,18 @@ generate_plots <- function(results, timestamp) {
   plot_file_3 <- paste0("plot_endpoint_comparison_", timestamp, ".png")
   ggsave(plot_file_3, p3, width = 10, height = 8, dpi = 300)
   
-  cat(sprintf("📊 Plots saved:\n"))
+  cat(sprintf(" Plots saved:\n"))
   cat(sprintf("   - %s\n", plot_file_1))
   cat(sprintf("   - %s\n", plot_file_2))
   cat(sprintf("   - %s\n", plot_file_3))
 }
 
 # Run the stress test
-cat("\n⚠️  WARNING: This will generate significant load on the production server.\n")
+cat("\n  WARNING: This will generate significant load on the production server.\n")
 cat("Make sure you have permission to run this test.\n\n")
 cat("Press ENTER to continue or Ctrl+C to cancel...\n")
 readline()
 
 results <- run_stress_test()
 
-cat("\n✅ Stress test complete!\n")
+cat("\n Stress test complete!\n")

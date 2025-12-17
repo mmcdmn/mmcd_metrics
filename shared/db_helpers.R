@@ -15,48 +15,16 @@ suppressPackageStartupMessages({
 })
 
 # Source color themes - try multiple paths to find color_themes.R
-source_color_themes <- function() {
-  # Get the directory where db_helpers.R is located
-  this_file <- tryCatch({
-    # Method 1: If sourced normally
-    if (exists("ofile", where = sys.frame(1))) {
-      dirname(sys.frame(1)$ofile)
-    } else {
-      NULL
-    }
-  }, error = function(e) NULL)
-  
-  # Possible paths to color_themes.R (relative to where apps typically run)
-  possible_paths <- c(
-    if (!is.null(this_file)) file.path(this_file, "color_themes.R"),
-    "shared/color_themes.R",                   # From app root (most common)
-    "../../shared/color_themes.R",             # From apps/*/
-    "color_themes.R",                          # Same directory as db_helpers
-    "../shared/color_themes.R",                # From one level up
-    "../../../shared/color_themes.R",          # From deeper nesting
-    file.path(getwd(), "shared/color_themes.R"), # Absolute from working dir
-    file.path(dirname(getwd()), "shared/color_themes.R") # Parent dir
-  )
-  
-  # Try each path
-  for (path in possible_paths) {
-    if (!is.null(path) && file.exists(path)) {
-      tryCatch({
-        source(path, local = FALSE)
-        return(TRUE)
-      }, error = function(e) {
-        # Continue to next path
-      })
-    }
-  }
-  
-  return(FALSE)
-}
-
-# Attempt to source color themes
-if (!source_color_themes()) {
-  message("Note: color_themes.R not found. Using default MMCD colors only.")
-}
+# Source color themes directly (will attempt from multiple paths)
+tryCatch({
+  source("color_themes.R", local = FALSE)
+}, error = function(e) {
+  tryCatch({
+    source("../../shared/color_themes.R", local = FALSE)
+  }, error = function(e) {
+    message("Note: color_themes.R not found. Using default MMCD colors only.")
+  })
+})
 
 # =============================================================================
 # LOAD CONNECTION POOL MODULE
@@ -204,17 +172,7 @@ safe_disconnect <- function(con) {
   })
 }
 
-# Alternative: Get pool directly (recommended for new code)
-# This is just a convenience wrapper that checks if pooling is available
-get_db_pool <- function() {
-  if (exists("get_pool", mode = "function")) {
-    return(get_pool())
-  } else {
-    warning("Connection pooling not available. Using traditional connection.")
-    warning("To enable pooling, ensure db_pool.R is sourced before db_helpers.R")
-    return(get_db_connection())
-  }
-}
+
 
 # Facility lookup functions
 get_facility_lookup <- function() {
@@ -517,13 +475,7 @@ get_virus_target_choices <- function(include_all = FALSE) {
 }
 
 # Get virus target display names
-get_virus_target_names <- function() {
-  return(c(
-    "WNV" = "West Nile Virus",
-    "LAC" = "La Crosse Encephalitis",
-    "EEE" = "Eastern Equine Encephalitis"
-  ))
-}
+
 
 # =============================================================================
 # SPECIES LOOKUP FUNCTIONS
@@ -1077,24 +1029,9 @@ get_themed_foreman_colors <- function(theme = getOption("mmcd.color.theme", "MMC
 }
 
 # Common date range options
-get_date_range_choices <- function() {
-  return(list(
-    "Last 7 days" = 7,
-    "Last 14 days" = 14,
-    "Last 30 days" = 30,
-    "Last 60 days" = 60,
-    "Last 90 days" = 90,
-    "Current year" = as.numeric(Sys.Date() - as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")))
-  ))
-}
 
-# Format date for display
-format_display_date <- function(date_col) {
-  ifelse(is.na(date_col) | date_col == "", 
-         "None", 
-         tryCatch(format(as.Date(date_col), "%m/%d/%y"), 
-                error = function(e) as.character(date_col)))
-}
+
+
 
 # Core status colors - single source of truth for all status indicators
 # Now supports theme-based colors
@@ -1220,25 +1157,7 @@ get_mosquito_species_colors <- function() {
 }
 
 # Get shape mappings for mosquito species (ggplot shape numbers)
-get_mosquito_species_shapes <- function() {
-  return(list(
-    "Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_summers = 1, Cq_perturbans_42 = 1,
-    Total_Cx_vectors = 1, Cx_erraticus_32 = 15, Cx_pipiens_33 = 15, Cx_restuans_34 = 15,
-    Cx_salinarius_35 = 15, Cx_tarsalis_36 = 15, Cx_territans_37 = 15, "Cx_restuans/pipiens_372" = 15,
-    Cx_unknown_371 = 15, An_barberi_27 = 4, An_earlei_28 = 4, An_punctipennis_29 = 4,
-    An_quadrimaculatus_30 = 4, An_walkeri_31 = 4, sp311an_un = 4, Total_Anopheles = 4,
-    sp01_abser = 19, sp03_aurif = 19, sp04_euedes = 19, sp05_campest = 19, sp08_commun = 19,
-    sp09_diant = 19, sp118abpun = 19, sp11_excru = 19, sp12_fitch = 19, sp13_flave = 19,
-    sp14_imple = 19, sp15_intrud = 19, sp17_pioni = 19, sp18_punct = 19, sp19_ripar = 19,
-    sp20_spenc = 19, sp22_stimu = 19, sp23_provo = 19, Ae_cinereus_7 = 19, Ae_triseriatus_24 = 19,
-    Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
-    sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
-    sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-    Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-    Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
-    Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
-  ))
-}
+
 
 # Treatment Plan Type Colors
 # Dynamic function to get treatment plan types and assign consistent colors
@@ -1428,41 +1347,6 @@ get_treatment_plan_choices <- function(include_all = FALSE) {
 # Centralized color management with optional zone differentiation support.
 # All color functions support optional alpha_zones parameter for P1/P2 zones.
 
-#' Apply Zone Differentiation to ggplot
-#' 
-#' Helper function to add zone alpha scaling to plots when using zone-aware colors.
-#' Use this with the zone-aware results from get_facility_base_colors() or get_foreman_colors().
-#' 
-#' @param plot ggplot object
-#' @param alpha_values Named vector of alpha values (from color function result$alpha_values)
-#' @param representative_color Optional hex color for legend display (if NULL, uses gray)
-#' @return Modified ggplot object with zone alpha scale and legend
-#' @export
-add_zone_alpha_to_plot <- function(plot, alpha_values, representative_color = NULL) {
-  if (is.null(alpha_values)) {
-    return(plot)
-  }
-  
-  # Choose representative fill for legend
-  rep_fill <- ifelse(is.null(representative_color), "#4169E1", representative_color)
-  
-  plot <- plot +
-    ggplot2::scale_alpha_manual(
-      name = "Zone",
-      values = alpha_values,
-      labels = c("1" = "P1 (Solid)", "2" = "P2 (Faded)"),
-      drop = FALSE
-    ) +
-    ggplot2::guides(alpha = ggplot2::guide_legend(
-      override.aes = list(
-        fill = rep(rep_fill, length.out = length(alpha_values)),
-        alpha = unname(alpha_values)
-      )
-    ))
-  
-  return(plot)
-}
-
 # =============================================================================
 # CSV EXPORT HELPER FUNCTIONS
 # =============================================================================
@@ -1473,50 +1357,6 @@ add_zone_alpha_to_plot <- function(plot, alpha_values, representative_color = NU
 #' line breaks, quotes, and other problematic characters in text fields.
 #' 
 #' @param data Data frame to clean
-#' @param remove_line_breaks Logical. If TRUE, converts line breaks to spaces
-#' @param collapse_whitespace Logical. If TRUE, collapses multiple spaces to single spaces
-#' @param trim_whitespace Logical. If TRUE, trims leading/trailing whitespace
-#' @param handle_na Logical. If TRUE, converts NA values to empty strings
-#' 
-#' @return Cleaned data frame ready for CSV export
-#' @export
-clean_data_for_csv <- function(data, 
-                               remove_line_breaks = TRUE,
-                               collapse_whitespace = TRUE, 
-                               trim_whitespace = TRUE,
-                               handle_na = TRUE) {
-  
-  if (is.null(data) || nrow(data) == 0) {
-    return(data)
-  }
-  
-  # Clean character columns
-  char_cols <- sapply(data, is.character)
-  
-  if (any(char_cols)) {
-    data[char_cols] <- lapply(data[char_cols], function(x) {
-      if (remove_line_breaks) {
-        # Replace line breaks with spaces - use proper regex escaping
-        x <- gsub("\\r\\n|\\r|\\n", " ", x)
-      }
-      
-      if (collapse_whitespace) {
-        # Remove extra whitespace - use proper regex escaping
-        x <- gsub("\\s+", " ", x)
-      }
-      
-      if (trim_whitespace) {
-        # Trim whitespace
-        x <- trimws(x)
-      }
-      
-      return(x)
-    })
-  }
-  
-  return(data)
-}
-
 #' Export Data to CSV with Error Handling
 #' 
 #' This function provides a robust way to export data to CSV with proper

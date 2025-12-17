@@ -29,7 +29,6 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
   basemap <- switch(input$basemap,
                     "osm" = providers$OpenStreetMap,
                     "carto" = providers$CartoDB.Positron,
-                    "terrain" = providers$Stamen.Terrain,
                     "satellite" = providers$Esri.WorldImagery,
                     providers$CartoDB.Positron)
   

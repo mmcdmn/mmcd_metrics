@@ -323,8 +323,7 @@ create_filter_panel <- function() {
         column(6,
           selectInput("map_basemap", "Base Map:",
                       choices = c("Streets" = "carto",
-                                  "Satellite" = "satellite", 
-                                  "Terrain" = "terrain",
+                                  "Satellite" = "satellite",
                                   "OpenStreetMap" = "osm"),
                       selected = "carto")
         ),

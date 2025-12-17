@@ -13,8 +13,10 @@ This Shiny app tracks ground prehatch mosquito breeding sites across four perspe
 
 #### Primary Treatment Tables
 - **`public.dblarv_insptrt_current`** - Active larval treatment records
-  - **Key Columns**: `sitecode`, `facility`, `inspdate`, `matcode`, `foreman`, `action`, `airgrnd_plan`, `amts`
+  - **Key Columns**: `sitecode`, `facility`, `inspdate`, `matcode`, `foreman`, `action`, `airgrnd_plan`, `amts`, `wet`
   - **Prehatch Filter**: JOIN with `loc_breeding_sites` WHERE `prehatch = true`
+  - **Action Code '2'**: Ground inspection (used to detect dry sites after treatment for skipped status)
+  - **Wet Field**: `'0'` = dry, `'1'` = wet (used with action='2' to identify skipped treatments)
   - **Missing Columns**: Does NOT contain `zone`, `enddate`, `prehatch` - must join for these
   - **Data Quality**: Contains ongoing treatments, some may be planned vs executed
   
@@ -137,6 +139,7 @@ Display current status of prehatch sites with active, expiring, and expired trea
    - Get latest treatment per prehatch site
    - Calculate treatment status based on end date vs analysis date
    - Join with effectiveness data for duration calculation
+   - Check for post-treatment dry inspections (action='2', wet='0') to detect skipped status
 
 3. Aggregate via `aggregate_ground_prehatch_data()`:
    - Group by selected dimension (facility, FOS, section, or all MMCD)
@@ -146,6 +149,7 @@ Display current status of prehatch sites with active, expiring, and expired trea
      - `ph_treated_cnt`: Sites with active treatments
      - `ph_expiring_cnt`: Sites with expiring treatments (within X days)
      - `ph_expired_cnt`: Sites with expired treatments
+     - `ph_skipped_cnt`: Sites inspected dry after treatment (skipped status)
 
 ### Visualization
 - **Layered bar chart** with three layers per group (same as drone app):
@@ -520,6 +524,26 @@ prehatch_treatments <- prehatch_treatments %>%
 prehatch_treatments <- prehatch_treatments %>%
   mutate(
     is_expired = treatment_end_date < analysis_date
+  )
+```
+
+**Skipped Status Calculation (Special Case):**
+```r
+# Detect sites that were inspected and found dry after treatment
+# Logic: If there's a ground inspection (action='2') with wet='0' after the treatment date,
+# the site is marked as "skipped" instead of expired
+prehatch_treatments <- prehatch_treatments %>%
+  mutate(
+    prehatch_status = case_when(
+      # If site was inspected dry after treatment, mark as skipped
+      !is.na(last_inspection_date) & inspection_action == '2' & 
+        inspection_wet == '0' & last_inspection_date > inspdate ~ "skipped",
+      # Otherwise use regular status
+      is_expired ~ "expired",
+      is_expiring ~ "expiring",
+      is_active ~ "treated",
+      TRUE ~ "unknown"
+    )
   )
 ```
 

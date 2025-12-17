@@ -539,8 +539,6 @@ create_cattail_map <- function(spatial_data, treatments_data, basemap = "carto",
   # Choose base tiles
   if (basemap == "satellite") {
     tiles <- "Esri.WorldImagery"
-  } else if (basemap == "terrain") {
-    tiles <- "Esri.WorldTopoMap"
   } else if (basemap == "osm") {
     tiles <- "OpenStreetMap"
   } else {

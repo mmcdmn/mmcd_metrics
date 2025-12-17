@@ -198,6 +198,38 @@ render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label
       )
   }
   
+  # Add Vector Index Areas (2025) - distinct areas for surveillance
+  if (!is.null(bg_layers$vector_index_areas)) {
+    # Use purple/violet color for vector index areas
+    vector_index_color <- "#9467bd"  # Purple from standard color palette
+    
+    # Create popup labels with area names and section counts
+    popup_text <- sprintf(
+      "<strong>Vector Index Area: %s</strong><br/>Sections: %d<br/>Total Area: %.2f sq mi",
+      bg_layers$vector_index_areas$VIareaA,
+      bg_layers$vector_index_areas$num_sections,
+      bg_layers$vector_index_areas$total_area
+    )
+    
+    m <- m %>%
+      addPolygons(
+        data = bg_layers$vector_index_areas,
+        color = vector_index_color,
+        weight = 3,
+        opacity = 0.9,
+        fillColor = vector_index_color,
+        fillOpacity = 0.15,
+        popup = popup_text,
+        highlightOptions = highlightOptions(
+          weight = 4,
+          color = vector_index_color,
+          fillOpacity = 0.3,
+          bringToFront = FALSE
+        ),
+        group = "Vector Index Areas"
+      )
+  }
+  
   # Add trap location markers
   if (!is.null(trap_df) && nrow(trap_df) > 0) {
     # Create trap popup text - check if MLE data is available
@@ -253,7 +285,7 @@ render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label
   m <- m %>%
     addLayersControl(
       baseGroups = c("OpenStreetMap", "CartoDB Light", "Satellite"),
-      overlayGroups = c("Sections", "Trap Locations", "Facilities", "Counties"),
+      overlayGroups = c("Sections", "Trap Locations", "Facilities", "Counties", "Vector Index Areas"),
       options = layersControlOptions(collapsed = FALSE)
     )
   
@@ -299,6 +331,32 @@ load_background_layers <- function() {
     zones_path <- file.path(mosquito_map_path, "P1zonebdry_4326.shp")
     if (file.exists(zones_path)) {
       layers$zones <- st_read(zones_path, quiet = TRUE)
+    }
+  }
+  
+  # Load Vector Index Areas (2025) - these are in UTM, need conversion to WGS84
+  vector_index_areas_path <- file.path(q_to_r_path, "VectorIndexAreasA2025.shp")
+  if (file.exists(vector_index_areas_path)) {
+    layers$vector_index_areas <- st_read(vector_index_areas_path, quiet = TRUE)
+    # Convert from UTM to WGS84 (EPSG:4326) for leaflet
+    if (st_crs(layers$vector_index_areas)$epsg != 4326) {
+      layers$vector_index_areas <- st_transform(layers$vector_index_areas, 4326)
+    }
+    # Dissolve individual sections into area groups by VIareaA attribute
+    if ("VIareaA" %in% names(layers$vector_index_areas)) {
+      # Fix invalid geometries before dissolving
+      layers$vector_index_areas <- st_make_valid(layers$vector_index_areas)
+      # Temporarily disable s2 for union operation to avoid strict geometry checks
+      old_use_s2 <- sf_use_s2()
+      sf_use_s2(FALSE)
+      layers$vector_index_areas <- layers$vector_index_areas %>%
+        group_by(VIareaA) %>%
+        summarize(
+          num_sections = n(),
+          total_area = sum(AREA, na.rm = TRUE),
+          .groups = "drop"
+        )
+      sf_use_s2(old_use_s2)  # Restore previous s2 setting
     }
   }
   

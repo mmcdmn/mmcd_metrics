@@ -18,6 +18,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("ui_helper.R")
@@ -271,6 +272,82 @@ server <- function(input, output, session) {
       inputs$group_by,
       inputs$zone_filter,
       inputs$combine_zones
+    )
+  })
+  
+  # Create value boxes for summary statistics
+  value_boxes <- reactive({
+    req(input$refresh)
+    data <- aggregated_current()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(list(
+        total_structures = 0,
+        active_structures = 0,
+        expiring_structures = 0,
+        active_pct = 0
+      ))
+    }
+    
+    total <- sum(data$total_structures, na.rm = TRUE)
+    active <- sum(data$active_structures, na.rm = TRUE)
+    expiring <- sum(data$expiring_structures, na.rm = TRUE)
+    active_pct <- if (total > 0) round(100 * active / total, 1) else 0
+    
+    list(
+      total_structures = total,
+      active_structures = active,
+      expiring_structures = expiring,
+      active_pct = active_pct
+    )
+  })
+  
+  # Render stat boxes
+  output$total_structures_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(data$total_structures, big.mark = ","),
+      title = "Total Structures",
+      bg_color = status_colors["unknown"],
+      icon = icon("building")
+    )
+  })
+  
+  output$active_structures_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(data$active_structures, big.mark = ","),
+      title = "Active Treatments",
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
+    )
+  })
+  
+  output$expiring_structures_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(data$expiring_structures, big.mark = ","),
+      title = "Expiring Soon",
+      bg_color = status_colors["planned"],
+      icon = icon("clock")
+    )
+  })
+  
+  output$active_pct_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = paste0(data$active_pct, "%"),
+      title = "Active %",
+      bg_color = status_colors["active"],
+      icon = icon("percent")
     )
   })
   

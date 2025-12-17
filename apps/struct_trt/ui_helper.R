@@ -187,6 +187,14 @@ struct_trt_ui <- function() {
       mainPanel(
         tabsetPanel(id = "tabs",
           tabPanel("Current Progress", value = "current",
+                   br(),
+                   fluidRow(
+                     column(3, uiOutput("total_structures_box")),
+                     column(3, uiOutput("active_structures_box")),
+                     column(3, uiOutput("expiring_structures_box")),
+                     column(3, uiOutput("active_pct_box"))
+                   ),
+                   br(),
                    plotOutput("structureGraph", height = "800px"),
                    br(),
                    fluidRow(

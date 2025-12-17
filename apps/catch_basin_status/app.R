@@ -13,6 +13,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("data_functions.R")
@@ -247,11 +248,12 @@ server <- function(input, output, session) {
       total <- sum(data$wet_cb_count, na.rm = TRUE)
     }
     
-    create_metric_box(
-      format(total, big.mark = ","),
-      "Total Wet Catch Basins",
-      "tint",
-      "#3c8dbc"
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(total, big.mark = ","),
+      title = "Total Wet Catch Basins",
+      bg_color = status_colors["completed"],
+      icon = icon("tint")
     )
   })
   
@@ -264,16 +266,18 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_activetrt, na.rm = TRUE)
     }
     
-    create_metric_box(
-      format(total, big.mark = ","),
-      "Wet CB with Active Treatment",
-      "check-circle",
-      "#00a65a"
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(total, big.mark = ","),
+      title = "Wet CB with Active Treatment",
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
     )
   })
   
   output$percent_treated <- renderUI({
     data <- catch_basin_data()
+    status_colors <- get_status_colors(theme = current_theme())
     
     if (is.null(data) || nrow(data) == 0) {
       pct <- 0
@@ -283,13 +287,20 @@ server <- function(input, output, session) {
       pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
     }
     
-    color <- if (pct >= 75) "#00a65a" else if (pct >= 50) "#f39c12" else "#dd4b39"
+    # Use theme-aware colors based on coverage percentage
+    color <- if (pct >= 75) {
+      status_colors["active"]          # Green for good coverage
+    } else if (pct >= 50) {
+      status_colors["needs_action"]    # Orange for medium coverage
+    } else {
+      status_colors["needs_treatment"] # Red for poor coverage
+    }
     
-    create_metric_box(
-      paste0(round(pct, 1), "%"),
-      "Treatment Coverage",
-      "percent",
-      color
+    create_stat_box(
+      value = paste0(round(pct, 1), "%"),
+      title = "Treatment Coverage",
+      bg_color = color,
+      icon = icon("percent")
     )
   })
   
@@ -302,11 +313,12 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_expiring, na.rm = TRUE)
     }
     
-    create_metric_box(
-      format(total, big.mark = ","),
-      "Expiring",
-      "clock",
-      "#f39c12"
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(total, big.mark = ","),
+      title = "Expiring",
+      bg_color = status_colors["planned"],
+      icon = icon("clock")
     )
   })
   
@@ -319,11 +331,12 @@ server <- function(input, output, session) {
       total <- sum(data$count_wet_expired, na.rm = TRUE)
     }
     
-    create_metric_box(
-      format(total, big.mark = ","),
-      "Expired",
-      "times-circle",
-      "#dd4b39"
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(total, big.mark = ","),
+      title = "Expired",
+      bg_color = status_colors["unknown"],
+      icon = icon("times-circle")
     )
   })
   

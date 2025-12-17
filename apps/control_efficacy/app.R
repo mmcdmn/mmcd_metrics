@@ -14,6 +14,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("ui_helper.R")
@@ -246,11 +247,12 @@ server <- function(input, output, session) {
     status <- checkback_status_progress()
     total <- if (!is.null(status)) sum(status$checkbacks_needed, na.rm = TRUE) else 0
     
-    create_metric_box(
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
+    create_stat_box(
       value = total,
-      subtitle = "Total Checkbacks Needed",
-      icon_name = "clipboard-list",
-      color = "#3c8dbc"  # blue
+      title = "Total Checkbacks Needed",
+      bg_color = status_colors["unknown"],
+      icon = icon("clipboard-list")
     )
   })
   
@@ -258,32 +260,41 @@ server <- function(input, output, session) {
     status <- checkback_status_progress()
     completed <- if (!is.null(status)) sum(status$checkbacks_completed, na.rm = TRUE) else 0
     
-    create_metric_box(
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
+    create_stat_box(
       value = completed,
-      subtitle = "Total Checkbacks Completed",
-      icon_name = "check-circle",
-      color = "#00a65a"  # green
+      title = "Total Checkbacks Completed",
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
     )
   })
   
   output$overall_completion_rate <- renderUI({
     status <- checkback_status_progress()
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
     
     if (!is.null(status)) {
       needed <- sum(status$checkbacks_needed, na.rm = TRUE)
       completed <- sum(status$checkbacks_completed, na.rm = TRUE)
       rate <- if (needed > 0) round(completed / needed * 100, 1) else 0
-      color <- if (rate >= 80) "#00a65a" else if (rate >= 50) "#f39c12" else "#dd4b39"
+      # Use theme-aware colors based on completion rate
+      color <- if (rate >= 80) {
+        status_colors["active"]          # Green for good completion
+      } else if (rate >= 50) {
+        status_colors["needs_action"]    # Orange for medium completion
+      } else {
+        status_colors["needs_treatment"] # Red for poor completion
+      }
     } else {
       rate <- 0
-      color <- "#dd4b39"
+      color <- status_colors["needs_treatment"]
     }
     
-    create_metric_box(
+    create_stat_box(
       value = paste0(rate, "%"),
-      subtitle = "Overall Completion Rate",
-      icon_name = "percentage",
-      color = color
+      title = "Overall Completion Rate",
+      bg_color = color,
+      icon = icon("percentage")
     )
   })
   
@@ -291,11 +302,12 @@ server <- function(input, output, session) {
     status <- checkback_status_progress()
     avg <- if (!is.null(status)) round(mean(status$avg_days_to_checkback, na.rm = TRUE), 1) else 0
     
-    create_metric_box(
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
+    create_stat_box(
       value = avg,
-      subtitle = "Avg Days to Checkback",
-      icon_name = "calendar-day",
-      color = "#605ca8"  # purple
+      title = "Avg Days to Checkback",
+      bg_color = status_colors["planned"],
+      icon = icon("calendar-day")
     )
   })
   

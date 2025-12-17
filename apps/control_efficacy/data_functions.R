@@ -68,7 +68,7 @@ load_treatment_data <- function(start_date, end_date, facility_filter = "all", m
     
     query <- paste(queries, collapse = " UNION ALL ")
     treatments <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (!is.null(treatments) && nrow(treatments) > 0) {
       treatments$inspdate <- as.Date(treatments$inspdate)
@@ -92,7 +92,7 @@ load_treatment_data <- function(start_date, end_date, facility_filter = "all", m
     cat("Error loading treatment data: ", e$message, "\n", file = stderr())
     message("Error loading treatment data: ", e$message)
     if (exists("con") && !is.null(con)) {
-      try(dbDisconnect(con), silent = TRUE)
+      try(safe_disconnect(con), silent = TRUE)
     }
     return(NULL)
   })
@@ -160,7 +160,7 @@ load_checkback_data <- function(treated_sites, start_date, end_date) {
     
     query <- paste(queries, collapse = " UNION ALL ")
     checkbacks <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(checkbacks) > 0) {
       checkbacks$inspdate <- as.Date(checkbacks$inspdate)
@@ -172,7 +172,7 @@ load_checkback_data <- function(treated_sites, start_date, end_date) {
   }, error = function(e) {
     message("Error loading checkback data: ", e$message)
     if (exists("con") && !is.null(con)) {
-      try(dbDisconnect(con), silent = TRUE)
+      try(safe_disconnect(con), silent = TRUE)
     }
     return(NULL)
   })
@@ -240,7 +240,7 @@ load_species_data_for_checkbacks <- function(checkbacks, start_date, end_date) {
     
     query <- paste(queries, collapse = " UNION ALL ")
     species_data <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (!is.null(species_data) && nrow(species_data) > 0) {
       # Aggregate species for each sample
@@ -301,7 +301,7 @@ load_species_data_for_checkbacks <- function(checkbacks, start_date, end_date) {
   }, error = function(e) {
     message("Error loading species data: ", e$message)
     if (exists("con") && !is.null(con)) {
-      try(dbDisconnect(con), silent = TRUE)
+      try(safe_disconnect(con), silent = TRUE)
     }
     return(NULL)
   })

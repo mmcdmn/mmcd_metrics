@@ -49,7 +49,7 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
     # Original database query logic
     con <- get_db_connection()
     if (is.null(con)) return(data.frame())
-    on.exit(dbDisconnect(con))
+    on.exit(safe_disconnect(con))
 
     # Handle species filtering - ensure all codes are character strings
     species_sql <- ""

@@ -227,7 +227,7 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
   
   current_result <- dbGetQuery(con, query_current)
   
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   # Convert to numeric to avoid integer64 issues
   if (nrow(historical_result) > 0) {
@@ -524,7 +524,7 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
   }
   
   result <- dbGetQuery(con, query)
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   if (nrow(result) == 0) {
     return(data.frame())

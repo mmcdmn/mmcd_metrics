@@ -14,10 +14,10 @@ get_available_zones <- function() {
       ORDER BY g.zone
     "
     result <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     return(result$zone)
   }, error = function(e) {
-    if (exists("con") && !is.null(con)) dbDisconnect(con)
+    if (exists("con") && !is.null(con)) safe_disconnect(con)
     return(character(0))
   })
 }

@@ -126,7 +126,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
        expiring_days, custom_today, custom_today, foreman_where, zone_where)
     
     data <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Ensure numeric types (should be handled by query, but double-check)
     data$wet_cb_count <- as.integer(data$wet_cb_count)
@@ -165,7 +165,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
   }, error = function(e) {
     warning(paste("Error loading catch basin data:", e$message))
     if (exists("con") && !is.null(con)) {
-      dbDisconnect(con)
+      safe_disconnect(con)
     }
     return(data.frame())
   })

@@ -118,7 +118,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     
     ground_treatments <- dbGetQuery(con, treatments_query)
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Convert data types
     if (nrow(ground_sites) > 0) {
@@ -134,7 +134,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     
   }, error = function(e) {
     warning(paste("Error loading raw data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
     return(list(ground_sites = data.frame(), ground_treatments = data.frame()))
   })
 }

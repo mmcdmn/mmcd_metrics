@@ -58,6 +58,39 @@ if (!source_color_themes()) {
   message("Note: color_themes.R not found. Using default MMCD colors only.")
 }
 
+# =============================================================================
+# LOAD CONNECTION POOL MODULE
+# =============================================================================
+# Source the connection pooling module for improved performance
+# This provides get_pool() which maintains persistent database connections
+tryCatch({
+  # Try to source from same directory
+  source_paths <- c(
+    file.path(dirname(sys.frame(1)$ofile %||% ""), "db_pool.R"),
+    "shared/db_pool.R",
+    "../../shared/db_pool.R",
+    "db_pool.R",
+    "../shared/db_pool.R"
+  )
+  
+  pool_loaded <- FALSE
+  for (path in source_paths) {
+    if (!is.null(path) && file.exists(path)) {
+      source(path, local = FALSE)
+      pool_loaded <- TRUE
+      break
+    }
+  }
+  
+  if (!pool_loaded) {
+    message("Note: db_pool.R not found. Connection pooling not available.")
+    message("      Using traditional connections (create/disconnect per query)")
+  }
+}, error = function(e) {
+  message("Note: Could not load db_pool.R - ", e$message)
+  message("      Using traditional connections")
+})
+
 # Set default color theme to MMCD if not already set
 #########################################################
 ## HERE IS WHERE WE SET THE COLOR THEME
@@ -94,8 +127,8 @@ load_env_vars <- function() {
   }
   
   # Environment variables might already be set (Docker)
-  required_vars <- c("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", 
-                     "POSTGRES_USER", "POSTGRES_PASSWORD")
+  required_vars <- c("DB_HOST", "DB_PORT", "DB_NAME", 
+                     "DB_USER", "DB_PASSWORD")
   
   if (!env_loaded && !all(sapply(required_vars, function(var) Sys.getenv(var) != ""))) {
     warning("Could not load environment variables from .env file and required variables are not set")
@@ -105,9 +138,33 @@ load_env_vars <- function() {
   return(TRUE)
 }
 
+# =============================================================================
+# DATABASE CONNECTION FUNCTIONS
+# =============================================================================
+
 # Centralized database connection function
+# NOW WITH CONNECTION POOLING SUPPORT!
+# 
+# If db_pool.R is loaded, this function will use the connection pool
+# for better performance. Otherwise, falls back to traditional connections.
+# 
+# Usage:
+#   conn <- get_db_connection()
+#   data <- dbGetQuery(conn, "SELECT ...")
+#   dbDisconnect(conn)  # Optional with pooling (no-op), required without
+#
+# For best performance, update your code to use get_pool() directly:
+#   conn <- get_pool()
+#   data <- dbGetQuery(conn, "SELECT ...")
+#   # No disconnect needed!
 get_db_connection <- function() {
-  # Load environment variables
+  # Check if connection pool is available (from db_pool.R)
+  if (exists("get_pool", mode = "function")) {
+    # Use connection pool - much faster!
+    return(get_pool())
+  }
+  
+  # Fallback to traditional connection if pool not available
   if (!load_env_vars()) {
     warning("Failed to load environment variables")
     return(NULL)
@@ -116,11 +173,11 @@ get_db_connection <- function() {
   tryCatch({
     con <- dbConnect(
       RPostgres::Postgres(),
-      host = Sys.getenv("POSTGRES_HOST"),
-      port = as.numeric(Sys.getenv("POSTGRES_PORT")),
-      dbname = Sys.getenv("POSTGRES_DB"),
-      user = Sys.getenv("POSTGRES_USER"),
-      password = Sys.getenv("POSTGRES_PASSWORD")
+      host = Sys.getenv("DB_HOST"),
+      port = as.numeric(Sys.getenv("DB_PORT")),
+      dbname = Sys.getenv("DB_NAME"),
+      user = Sys.getenv("DB_USER"),
+      password = Sys.getenv("DB_PASSWORD")
     )
     return(con)
   }, error = function(e) {
@@ -129,39 +186,34 @@ get_db_connection <- function() {
   })
 }
 
-# Database connection function
-get_db_connection <- function() {
+# Safe disconnect function - only disconnects traditional connections, not pools
+safe_disconnect <- function(con) {
+  if (is.null(con)) return(invisible(NULL))
+  
+  # Check if this is a pool object - if so, don't disconnect
+  if (inherits(con, "Pool")) {
+    return(invisible(NULL))
+  }
+  
+  # For traditional connections, disconnect normally
   tryCatch({
-    # Load environment variables
-    load_env_vars()
-    
-    # Database configuration using environment variables
-    db_host <- Sys.getenv("DB_HOST")
-    db_port <- Sys.getenv("DB_PORT")
-    db_user <- Sys.getenv("DB_USER")
-    db_password <- Sys.getenv("DB_PASSWORD")
-    db_name <- Sys.getenv("DB_NAME")
-    
-    # Check if all required environment variables are set
-    if (any(c(db_host, db_port, db_user, db_password, db_name) == "")) {
-      warning("Missing required database environment variables")
-      return(NULL)
-    }
-    
-    con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = db_name,
-      host = db_host,
-      port = as.numeric(db_port),
-      user = db_user,
-      password = db_password
-    )
-    
-    return(con)
+    dbDisconnect(con)
   }, error = function(e) {
-    warning(paste("Database connection failed:", e$message))
-    return(NULL)
+    # Silently ignore disconnect errors
+    invisible(NULL)
   })
+}
+
+# Alternative: Get pool directly (recommended for new code)
+# This is just a convenience wrapper that checks if pooling is available
+get_db_pool <- function() {
+  if (exists("get_pool", mode = "function")) {
+    return(get_pool())
+  } else {
+    warning("Connection pooling not available. Using traditional connection.")
+    warning("To enable pooling, ensure db_pool.R is sourced before db_helpers.R")
+    return(get_db_connection())
+  }
 }
 
 # Facility lookup functions
@@ -180,12 +232,12 @@ get_facility_lookup <- function() {
       ORDER BY abbrv
     ")
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     return(facilities)
     
   }, error = function(e) {
     warning(paste("Error loading facility lookup:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     return(data.frame())
   })
 }
@@ -275,7 +327,7 @@ get_spring_date_thresholds <- function() {
     "
     
     result <- dbGetQuery(con, qry)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(result) > 0) {
       result$date_start <- as.Date(result$date_start)
@@ -285,7 +337,7 @@ get_spring_date_thresholds <- function() {
     
   }, error = function(e) {
     warning(paste("Error in get_spring_date_thresholds:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     return(data.frame())
   })
 }
@@ -309,7 +361,7 @@ get_structure_type_choices <- function(include_all = TRUE) {
         ORDER BY code ASC
       ")
       
-      dbDisconnect(con)
+      safe_disconnect(con)
       
       if (nrow(structure_types) > 0) {
         # Create named vector with full names as labels and codes as values
@@ -324,7 +376,7 @@ get_structure_type_choices <- function(include_all = TRUE) {
       
     }, error = function(e) {
       warning(paste("Error loading structure types:", e$message))
-      if (!is.null(con)) dbDisconnect(con)
+      safe_disconnect(con)
       # Fallback to hardcoded values
       choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
                    "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
@@ -380,7 +432,7 @@ get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
     
     materials <- dbGetQuery(con, query)
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(materials) == 0) {
       if (is.null(filter_type) && include_all) {
@@ -401,7 +453,7 @@ get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
     
   }, error = function(e) {
     warning(paste("Error loading material choices:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     if (is.null(filter_type) && include_all) {
       return(c("All Materials" = "all"))
     } else {
@@ -434,12 +486,12 @@ get_foremen_lookup <- function() {
       ORDER BY facility, shortname
     ")
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     return(foremen)
     
   }, error = function(e) {
     warning(paste("Error loading foremen lookup:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     return(data.frame())
   })
 }
@@ -506,12 +558,12 @@ get_species_lookup <- function() {
       ORDER BY genus, species
     ")
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     return(species_lookup)
     
   }, error = function(e) {
     warning(paste("Error loading species lookup:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     return(data.frame())
   })
 }
@@ -1244,12 +1296,12 @@ get_treatment_plan_types <- function() {
       ORDER BY sort_order
     ")
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     return(plan_types)
     
   }, error = function(e) {
     warning(paste("Error loading treatment plan types:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     
     # Return default mapping if query fails
     return(data.frame(

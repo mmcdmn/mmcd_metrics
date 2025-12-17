@@ -96,7 +96,9 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
                  "<b>Species Found:</b><br>", species_summary)
-        }
+        },
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
     
     # Create color palette function
@@ -119,9 +121,9 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
       addCircleMarkers(
         radius = ~marker_size,
         color = "black",
-        weight = 1.5,
+        weight = ~marker_weight,
         fillColor = ~pal(facility),
-        fillOpacity = 0.8,
+        fillOpacity = ~marker_fill_opacity,
         popup = ~popup_text
       ) %>%
       addLegend(
@@ -130,6 +132,22 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
         colors = facility_colors,
         labels = legend_labels,
         opacity = 0.8
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #1f77b4; border: 2px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
       )
   } else if (input$group_by == "foreman") {
     # Filter out records with NA foreman before processing
@@ -232,7 +250,9 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
                  "<b>Species Found:</b><br>", species_summary)
-        }
+        },
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
     
     # Create map with foreman coloring
@@ -247,9 +267,9 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
       addCircleMarkers(
         radius = ~marker_size,
         color = "black",
-        weight = 1.5,
+        weight = ~marker_weight,
         fillColor = ~pal(foreman),
-        fillOpacity = 0.8,
+        fillOpacity = ~marker_fill_opacity,
         popup = ~popup_text_foreman
       ) %>%
       addLegend(
@@ -269,9 +289,32 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
           ordered_labels
         },
         opacity = 0.8
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #1f77b4; border: 2px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
       )
   } else {
     # For MMCD (All) case, use a single color
+    # Add marker styling for zero counts
+    data <- data %>%
+      mutate(
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
+      )
+    
     leaflet(data) %>%
       addProviderTiles(basemap) %>%
       fitBounds(
@@ -283,9 +326,9 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
       addCircleMarkers(
         radius = ~marker_size,
         color = "black",
-        weight = 1.5,
+        weight = ~marker_weight,
         fillColor = "#1f77b4", # Standard blue color
-        fillOpacity = 0.8,
+        fillOpacity = ~marker_fill_opacity,
         popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
                         "<b>Facility:</b> ", facility, "<br>",
                         "<b>Foreman:</b> ", foreman, "<br>",
@@ -299,6 +342,22 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
         colors = "#1f77b4",
         labels = "All",
         opacity = 0.8
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #1f77b4; border: 2px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
       )
   }
 }

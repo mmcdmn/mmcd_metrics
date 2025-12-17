@@ -197,11 +197,16 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
       tot_ground = n(),  
       not_prehatch_sites = 0, 
       prehatch_sites_cnt = n(),  # All prehatch sites
+      prehatch_acres = sum(acres, na.rm = TRUE),  # Total prehatch acres
       drone_sites_cnt = 0, 
       ph_treated_cnt = sum(prehatch_status == "treated", na.rm = TRUE),
+      ph_treated_acres = sum(ifelse(prehatch_status == "treated", acres, 0), na.rm = TRUE),
       ph_expiring_cnt = sum(prehatch_status == "expiring", na.rm = TRUE),
+      ph_expiring_acres = sum(ifelse(prehatch_status == "expiring", acres, 0), na.rm = TRUE),
       ph_expired_cnt = sum(prehatch_status %in% c("expired", NA), na.rm = TRUE),
+      ph_expired_acres = sum(ifelse(prehatch_status %in% c("expired", NA), acres, 0), na.rm = TRUE),
       ph_skipped_cnt = sum(prehatch_status == "skipped", na.rm = TRUE),
+      ph_skipped_acres = sum(ifelse(prehatch_status == "skipped", acres, 0), na.rm = TRUE),
       ph_untreated_cnt = sum(is.na(prehatch_status), na.rm = TRUE),
       .groups = "drop"
     )
@@ -367,11 +372,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           tot_ground = sum(tot_ground, na.rm = TRUE),
           not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
           prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
           drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
           ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -385,11 +395,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           tot_ground = sum(tot_ground, na.rm = TRUE),
           not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
           prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
           drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
           ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -406,11 +421,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
         tot_ground = sum(tot_ground, na.rm = TRUE),
         not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
         prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+        prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
         drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
         ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+        ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
         ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+        ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
         ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+        ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
         ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+        ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(
@@ -426,11 +446,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           tot_ground = sum(tot_ground, na.rm = TRUE),
           not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
           prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
           drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
           ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -446,11 +471,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           tot_ground = sum(tot_ground, na.rm = TRUE),
           not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
           prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
           drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
           ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -471,11 +501,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           tot_ground = sum(tot_ground, na.rm = TRUE),
           not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
           prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
           drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
           ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -495,11 +530,16 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           tot_ground = sum(tot_ground, na.rm = TRUE),
           not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
           prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
           drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
           ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
           ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
           ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
           ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(

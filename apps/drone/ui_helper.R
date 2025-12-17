@@ -150,6 +150,13 @@ drone_ui <- function() {
           id = "tabs",
           tabPanel("Current Progress", value = "current", 
                    br(),
+                   fluidRow(
+                     column(3, uiOutput("total_drone_sites")),
+                     column(3, uiOutput("active_sites_box")),
+                     column(3, uiOutput("expiring_sites_box")),
+                     column(3, uiOutput("active_pct_box"))
+                   ),
+                   br(),
                    textOutput("currentDescription"),
                    br(),
                    plotOutput("currentPlot", height = "auto"),

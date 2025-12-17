@@ -17,6 +17,7 @@ suppressPackageStartupMessages({
 
 # Source shared helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("ui_helper.R")
@@ -194,6 +195,67 @@ server <- function(input, output, session) {
   # Access processed data from raw_data result
   processed_data <- reactive({
     raw_data()$processed
+  })
+  
+  # Create value boxes for current progress
+  value_boxes <- reactive({
+    req(input$refresh)
+    result <- processed_data()
+    data <- result$data
+    display_metric <- isolate(input$current_display_metric)
+    create_value_boxes(data, display_metric = display_metric)
+  })
+  
+  # Render stat boxes
+  output$total_drone_sites <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$current_display_metric == "treated_acres") "Total Treated Acres" else "Total Drone Sites"
+    create_stat_box(
+      value = data$total_value,
+      title = metric_label,
+      bg_color = status_colors["completed"],
+      icon = icon("helicopter")
+    )
+  })
+  
+  output$active_sites_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$current_display_metric == "treated_acres") "Active Acres" else "Active Sites"
+    create_stat_box(
+      value = data$active_value,
+      title = metric_label,
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
+    )
+  })
+  
+  output$expiring_sites_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$current_display_metric == "treated_acres") "Expiring Acres" else "Expiring Sites"
+    create_stat_box(
+      value = data$expiring_value,
+      title = metric_label,
+      bg_color = status_colors["planned"],
+      icon = icon("exclamation-triangle")
+    )
+  })
+  
+  output$active_pct_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = paste0(data$active_pct, "%"),
+      title = "Active %",
+      bg_color = status_colors["active"],
+      icon = icon("percent")
+    )
   })
   
   # Current progress plot

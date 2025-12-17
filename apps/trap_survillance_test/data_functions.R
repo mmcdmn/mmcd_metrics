@@ -16,7 +16,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   
   con <- get_db_connection()
   if (is.null(con)) return(NULL)
-  on.exit(dbDisconnect(con))
+  on.exit(safe_disconnect(con))
   
   # Build filters
   trap_type_filter <- paste(sprintf("'%s'", trap_types), collapse = ",")

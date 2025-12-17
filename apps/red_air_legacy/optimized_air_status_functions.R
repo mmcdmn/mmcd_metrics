@@ -247,13 +247,13 @@ get_air_sites_data <- function(analysis_date, lookback_period, rain_threshold, t
     )
     
     result <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     return(result)
     
   }, error = function(e) {
     if (exists("con") && !is.null(con)) {
-      dbDisconnect(con)
+      safe_disconnect(con)
     }
     warning(paste("Error getting air sites data:", e$message))
     return(data.frame())

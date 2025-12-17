@@ -41,7 +41,7 @@ get_available_species <- function(date_range = NULL) {
     sucos <- dbGetQuery(con, sucos_query)
     
     if (nrow(sucos) == 0) {
-      dbDisconnect(con)
+      safe_disconnect(con)
       return(character(0))
     }
     
@@ -60,7 +60,7 @@ get_available_species <- function(date_range = NULL) {
     ", ainspecnums, ainspecnums)
     
     species_data <- dbGetQuery(con, species_query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Use enhanced species mapping from db_helpers
     species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
@@ -83,7 +83,7 @@ get_available_species <- function(date_range = NULL) {
     return(species_names)
     
   }, error = function(e) {
-    if (!is.null(con)) dbDisconnect(con)
+    safe_disconnect(con)
     return(character(0))
   })
 }
@@ -145,7 +145,7 @@ WHERE ainspecnum IS NOT NULL
     # Get species lookup
     species_lookup <- get_species_lookup()
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(current_data) == 0) {
       return(data.frame())
@@ -304,7 +304,7 @@ WHERE ainspecnum IS NOT NULL
     species_lookup <- get_species_lookup()
 
     # Close connection
-    dbDisconnect(con)
+    safe_disconnect(con)
 
     # Combine current and archive data
     all_data <- bind_rows(

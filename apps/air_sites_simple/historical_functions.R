@@ -361,7 +361,7 @@ get_comprehensive_historical_data <- function(start_date = NULL, end_date = NULL
       treatment_volumes = data.frame()
     ))
   }, finally = {
-    dbDisconnect(con)
+    safe_disconnect(con)
   })
 }
   

@@ -62,7 +62,7 @@ mosquito0NAS <- convert_integer64_columns(mosquito0NAS)
 
 mosquito0 <- na.omit(mosquito0NAS)
 
-dbDisconnect(con)
+safe_disconnect(con)
 #mosquito0 <- vroom::vroom("Mosquito0Test.csv")
 
 #mosquito1 <- mosquito0 %>% 

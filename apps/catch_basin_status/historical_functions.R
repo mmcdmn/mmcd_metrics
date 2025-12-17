@@ -108,7 +108,7 @@ load_historical_cb_data <- function(start_year, end_year,
       data <- dbGetQuery(con, current_query)
     }
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Map facility and foreman names
     facilities <- get_facility_lookup()
@@ -140,7 +140,7 @@ load_historical_cb_data <- function(start_year, end_year,
   }, error = function(e) {
     warning(paste("Error loading historical catch basin data:", e$message))
     if (exists("con") && !is.null(con)) {
-      dbDisconnect(con)
+      safe_disconnect(con)
     }
     return(data.frame())
   })

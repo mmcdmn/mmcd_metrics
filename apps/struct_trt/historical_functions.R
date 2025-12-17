@@ -166,7 +166,7 @@ load_historical_struct_data <- function(start_year, end_year,
     warning(paste("Error loading historical structure data:", e$message))
     return(data.frame())
   }, finally = {
-    dbDisconnect(con)
+    safe_disconnect(con)
   })
 }
 

@@ -10,7 +10,7 @@ get_site_choices <- function() {
   con <- get_db_connection()
   if (is.null(con)) return(list(facility = NULL, fosarea = NULL, zone = NULL))
   df <- dbGetQuery(con, "SELECT DISTINCT facility, fosarea, zone FROM gis_sectcode ORDER BY facility, fosarea, zone")
-  dbDisconnect(con)
+  safe_disconnect(con)
   list(
     facility = sort(unique(df$facility)),
     fosarea = sort(unique(df$fosarea)),
@@ -154,7 +154,7 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
     ", where_clause)
     
     result <- dbGetQuery(con, qry)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Convert dates
     if (nrow(result) > 0 && "inspdate" %in% names(result)) {
@@ -208,7 +208,7 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
     
   }, error = function(e) {
     warning(paste("Error in get_all_inspection_data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
     return(data.frame())
   })
 }

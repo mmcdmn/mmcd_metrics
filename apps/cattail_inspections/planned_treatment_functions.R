@@ -19,7 +19,7 @@ ORDER BY a.airgrnd_plan, a.facility
 "
   
   result <- dbGetQuery(con, query)
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   # Ensure we have all treatment plan types represented with clear names
   result$plan_type <- factor(
@@ -72,7 +72,7 @@ ORDER BY a.facility, a.airgrnd_plan, a.sitecode
 ", facility_clause, plan_types_clause)
   
   result <- dbGetQuery(con, query)
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   # Add plan type names
   result$plan_name <- factor(

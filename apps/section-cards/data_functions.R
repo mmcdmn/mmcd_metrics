@@ -12,7 +12,7 @@
 #' @export
 get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
   con <- get_db_connection()
-  on.exit(dbDisconnect(con), add = TRUE)
+  on.exit(safe_disconnect(con), add = TRUE)
   
   # Build filter conditions
   where_conditions <- "b.enddate IS NULL AND g.facility IS NOT NULL AND g.sectcode IS NOT NULL AND g.fosarea IS NOT NULL"
@@ -54,7 +54,7 @@ get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
 #' @export
 get_breeding_sites_with_sections <- function() {
   con <- get_db_connection()
-  on.exit(dbDisconnect(con), add = TRUE)
+  on.exit(safe_disconnect(con), add = TRUE)
   
   query <- "
     SELECT 

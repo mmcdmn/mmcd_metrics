@@ -14,7 +14,7 @@ get_available_zones <- function() {
     "
     
     result <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(result) > 0) {
       zones <- result$zone
@@ -26,7 +26,7 @@ get_available_zones <- function() {
     
   }, error = function(e) {
     if (exists("con") && !is.null(con)) {
-      dbDisconnect(con)
+      safe_disconnect(con)
     }
     warning(paste("Error getting zones:", e$message))
     return(c("1", "2"))

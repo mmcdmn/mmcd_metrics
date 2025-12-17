@@ -230,7 +230,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
     cat("Error in get_air_sites_data_enhanced:", e$message, "\n")
     return(data.frame())
   }, finally = {
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
   })
 }
 

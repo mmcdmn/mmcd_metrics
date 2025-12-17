@@ -149,7 +149,7 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
       include_archive          # $3
     ))
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Create the state column - all sites are inspected, just need treatment_status
     cattail_sites <- cattail_sites %>%
@@ -206,7 +206,7 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
     
   }, error = function(e) {
     warning(paste("Error loading cattail data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
     return(NULL)
   })
 }
@@ -306,7 +306,7 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
     
     # Execute query with analysis_date parameter to filter out future treatments
     treatments <- dbGetQuery(con, treatments_query, list(analysis_date))
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(treatments) == 0) {
       return(data.frame())
@@ -341,7 +341,7 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
     
   }, error = function(e) {
     warning(paste("Error loading cattail treatments:", e$message))
-    if (exists("con") && !is.null(con)) dbDisconnect(con)
+    if (exists("con") && !is.null(con)) safe_disconnect(con)
     return(data.frame())
   })
 }

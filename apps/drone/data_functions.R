@@ -91,7 +91,7 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
     treatments <- bind_rows(treatments, archive_treatments)
   }
   
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   # Process the data
   # Identify drone sites with treatments  
@@ -258,7 +258,7 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
   ", start_year, end_year, as.character(analysis_date), start_year, end_year, as.character(analysis_date))
   
   result <- dbGetQuery(con, query)
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   if (nrow(result) == 0) {
     return(data.frame())

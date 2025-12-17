@@ -67,7 +67,7 @@ get_foreman_condition <- function(foreman_filter) {
         FROM employee_list 
         WHERE shortname IN (%s)
       ", shortname_list))
-      dbDisconnect(con)
+      safe_disconnect(con)
       
       if (nrow(emp_nums) > 0) {
         emp_num_list <- paste0("'", paste(emp_nums$emp_num, collapse = "','"), "'")
@@ -76,7 +76,7 @@ get_foreman_condition <- function(foreman_filter) {
         return("")
       }
     }, error = function(e) {
-      if (!is.null(con)) dbDisconnect(con)
+      if (!is.null(con)) safe_disconnect(con)
       return("")
     })
   }
@@ -175,7 +175,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     )
     
     total_structures <- as.integer(dbGetQuery(con, query_total)$total_structures)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Process the data
     if (nrow(current_data) > 0) {
@@ -200,7 +200,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     
   }, error = function(e) {
     warning(paste("Error loading current structure data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
     return(list(treatments = data.frame(), total_structures = 0))
   })
 }
@@ -306,7 +306,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     )
     
     total_structures <- as.numeric(dbGetQuery(con, query_total_structures)$total_structures)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Combine and process data
     combined_data <- bind_rows(archive_data, current_data) %>%
@@ -320,7 +320,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     
   }, error = function(e) {
     warning(paste("Error loading historical structure data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
     return(list(treatments = data.frame(), total_structures = 0))
   })
 }
@@ -359,7 +359,7 @@ WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     )
     
     structures <- dbGetQuery(con, query)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Filter by zone and map facility names
     if (nrow(structures) > 0) {
@@ -372,7 +372,7 @@ WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     
   }, error = function(e) {
     warning(paste("Error loading structures:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
     return(data.frame())
   })
 }

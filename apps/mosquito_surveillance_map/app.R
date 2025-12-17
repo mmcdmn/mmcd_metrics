@@ -59,7 +59,7 @@ dfmap$mosqcount <- as.numeric(dfmap$mosqcount)
 
 dfmapMISS <- dbReadTable(con, "dbadult_mapdata_forr_missing")
 
-dbDisconnect(con)
+safe_disconnect(con)
 
 dfmap4326 = dfmap %>%
   st_as_sf(coords = c("long", "lat"), crs=4326)

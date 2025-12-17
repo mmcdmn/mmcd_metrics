@@ -53,7 +53,7 @@ get_progress_data <- function(year, goal_column, custom_today) {
   goals <- dbGetQuery(con, "SELECT facility, p1_totsitecount, p2_totsitecount FROM public.cattail_pctcomplete_base") %>%
     mutate(facility = trimws(facility))
   
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   # Determine which zone to use based on goal_column
   selected_zone <- ifelse(goal_column == "p1_totsitecount", "1", "2")
@@ -177,7 +177,7 @@ get_progress_sites_detail <- function(year, goal_column, custom_today) {
   )
   
   result <- dbGetQuery(con, query_detail)
-  dbDisconnect(con)
+  safe_disconnect(con)
   
   if (nrow(result) > 0) {
     result <- result %>%

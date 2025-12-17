@@ -181,7 +181,7 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
     # Execute queries
     inspection_data <- dbGetQuery(con, inspection_query, list(start_date, end_date))
     treatment_data <- dbGetQuery(con, treatment_query, list(start_date, end_date))
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Add facility mapping to both datasets
     facility_lookup <- get_facility_lookup()
@@ -241,7 +241,7 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
     
   }, error = function(e) {
     warning(paste("Error loading historical cattail data:", e$message))
-    if (exists("con") && !is.null(con)) dbDisconnect(con)
+    if (exists("con") && !is.null(con)) safe_disconnect(con)
     return(list(inspections = data.frame(), treatments = data.frame()))
   })
 }

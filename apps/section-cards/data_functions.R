@@ -68,6 +68,7 @@ get_breeding_sites_with_sections <- function() {
       b.prehatch,
       b.remarks,
       b.drone,
+      b.sample,
       b.facility as site_facility,
       g.sectcode as section,
       g.zone,

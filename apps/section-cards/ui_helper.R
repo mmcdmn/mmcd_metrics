@@ -74,6 +74,7 @@ create_field_selector <- function() {
           "Culex" = "culex",
           "Spring Aedes" = "spr_aedes",
           "Prehatch" = "prehatch",
+          "Sample Site" = "sample",
           "Section" = "section",
           "Remarks" = "remarks"
         ),

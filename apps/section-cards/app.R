@@ -54,7 +54,7 @@ ui <- fluidPage(
     "))
   ),
   
-  titlePanel("Sections Cards DEMO"),
+  titlePanel("Section Cards DEMO (by Alex Dyakin)"),
   
   sidebarLayout(
     sidebarPanel(

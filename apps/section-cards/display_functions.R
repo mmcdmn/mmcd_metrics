@@ -32,6 +32,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     culex = "Culex",
     spr_aedes = "Spring Aedes",
     prehatch = "Prehatch",
+    sample = "Sample Site",
     remarks = "Remarks",
     drone = "Drone",
     section = "Section",
@@ -61,6 +62,12 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       }
       .no-print {
         display: none !important;
+      }
+      /* Force colors to print */
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
       }
     }
     
@@ -122,14 +129,101 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       display: inline-block;
     }
     
-    .priority-green { background: #90EE90; padding: 2px 6px; border-radius: 3px; }
-    .priority-red { background: #FFB6C1; padding: 2px 6px; border-radius: 3px; }
-    .priority-yellow { background: #FFFFE0; padding: 2px 6px; border-radius: 3px; }
-    .priority-blue { background: #ADD8E6; padding: 2px 6px; border-radius: 3px; }
-    .priority-orange { background: #FFD580; padding: 2px 6px; border-radius: 3px; }
-    .priority-purple { background: #E6D5FF; padding: 2px 6px; border-radius: 3px; }
+    .priority-green { 
+      background-color: #90EE90 !important; 
+      background: #90EE90 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .priority-red { 
+      background-color: #FFB6C1 !important; 
+      background: #FFB6C1 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .priority-yellow { 
+      background-color: #FFFFE0 !important; 
+      background: #FFFFE0 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .priority-blue { 
+      background-color: #ADD8E6 !important; 
+      background: #ADD8E6 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .priority-orange { 
+      background-color: #FFD580 !important; 
+      background: #FFD580 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .priority-purple { 
+      background-color: #E6D5FF !important; 
+      background: #E6D5FF !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
     
-    .special-field { background: #FFE4B5; padding: 2px 6px; border-radius: 3px; font-weight: bold; }
+    .culex-field { 
+      background-color: #32CD32 !important; /* Changed to a different green */
+      background: #32CD32 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .sample-field { 
+      background-color: #FFB6C1 !important; 
+      background: #FFB6C1 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .spring-aedes-field { 
+      background-color: #FFD580 !important; 
+      background: #FFD580 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .prehatch-field { 
+      background-color: #ADD8E6 !important; 
+      background: #ADD8E6 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
     
     .info-label {
       font-weight: bold;
@@ -275,18 +369,31 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
       label <- field_labels[[field]]
       
       # Special handling for culex and spr_aedes - only show if Y or not null/empty
-      if (field == "culex" || field == "spr_aedes") {
+      if (field == "culex") {
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
-          # Show just the label as special field with color
-          html <- paste0(html, '        <div class="info-item"><span class="special-field">',
+          # Show culex label with green background
+          html <- paste0(html, '        <div class="info-item"><span class="culex-field">',
+                        label, '</span></div>\n')
+        }
+      } else if (field == "spr_aedes") {
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          # Show spring aedes label with orange background
+          html <- paste0(html, '        <div class="info-item"><span class="spring-aedes-field">',
+                        label, '</span></div>\n')
+        }
+        # If not Y, don't show anything
+      } else if (field == "sample") {
+        # Sample site - only show if Y with pink background
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          html <- paste0(html, '        <div class="info-item"><span class="sample-field">',
                         label, '</span></div>\n')
         }
         # If not Y, don't show anything
       } else if (field == "prehatch") {
-        # Prehatch with color coding
+        # Prehatch with blue background
         if (!is.na(value) && value != "") {
           html <- paste0(html, '        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="special-field">', value, '</span></div>\n')
+                        label, ':</span> <span class="prehatch-field">', value, '</span></div>\n')
         }
       } else if (field == "priority") {
         # Priority with color coding based on value

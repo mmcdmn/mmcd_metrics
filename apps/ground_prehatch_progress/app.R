@@ -13,6 +13,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("data_functions.R")
@@ -248,7 +249,8 @@ server <- function(input, output, session) {
     req(input$refresh)  # Require refresh button click
     
     data <- aggregated_data()
-    create_value_boxes(data)
+    display_metric <- isolate(input$display_metric)
+    create_value_boxes(data, display_metric = display_metric)
   })
   
   # Render metric boxes
@@ -256,11 +258,13 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    create_metric_box(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Prehatch Acres" else "Prehatch Sites"
+    create_stat_box(
       value = data$total_prehatch,
-      subtitle = "Prehatch Sites",
-      icon_name = "egg",
-      color = "#f39c12"  # planned color
+      title = metric_label,
+      bg_color = status_colors["completed"],
+      icon = icon("egg")
     )
   })
   
@@ -268,11 +272,13 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    create_metric_box(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Active Acres" else "Active Sites"
+    create_stat_box(
       value = data$total_active,
-      subtitle = "Active Sites",
-      icon_name = "check-circle",
-      color = "#00a65a"  # active color (green)
+      title = metric_label,
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
     )
   })
   
@@ -280,11 +286,13 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    create_metric_box(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Acres Expiring" else "Sites Expiring"
+    create_stat_box(
       value = data$total_expiring,
-      subtitle = "Sites Expiring",
-      icon_name = "exclamation-triangle",
-      color = "#f39c12"  # needs_action color (orange)
+      title = metric_label,
+      bg_color = status_colors["planned"],
+      icon = icon("exclamation-triangle")
     )
   })
   
@@ -292,11 +300,13 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    create_metric_box(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Expired Acres" else "Expired Sites"
+    create_stat_box(
       value = data$total_expired,
-      subtitle = "Expired Sites",
-      icon_name = "clock",
-      color = "#3c8dbc"  # info color (blue)
+      title = metric_label,
+      bg_color = status_colors["unknown"],
+      icon = icon("clock")
     )
   })
   
@@ -304,11 +314,13 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    create_metric_box(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Skipped Acres" else "Skipped Sites"
+    create_stat_box(
       value = data$total_skipped,
-      subtitle = "Skipped Sites",
-      icon_name = "ban",
-      color = "#dd4b39"  # needs_treatment color (red)
+      title = metric_label,
+      bg_color = status_colors["needs_treatment"],
+      icon = icon("ban")
     )
   })
   
@@ -316,11 +328,12 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    create_metric_box(
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
       value = paste0(data$treated_pct, "%"),
-      subtitle = "Treated %",
-      icon_name = "percent",
-      color = "#00a65a"  # active color (green)
+      title = "Treated %",
+      bg_color = status_colors["active"],
+      icon = icon("percent")
     )
   })
   
@@ -329,7 +342,9 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only calculate after refresh button clicked
     inputs <- refresh_inputs()
     data <- aggregated_data()
-    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, return_height_info = TRUE, theme = current_theme())
+    display_metric <- isolate(input$display_metric)
+    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, 
+                         return_height_info = TRUE, theme = current_theme(), display_metric = display_metric)
   })
   
   # Render progress chart with dynamic height

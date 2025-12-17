@@ -107,6 +107,54 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
 #' Process current progress data for visualization
 #' @param drone_sites Data frame of drone sites
 #' @param drone_treatments Data frame of drone treatments
+#' Create value boxes for current progress metrics
+#' @param data Processed current data
+#' @param display_metric "sites" or "treated_acres"
+#' @return List with value box metrics
+create_value_boxes <- function(data, display_metric = "sites") {
+  if (display_metric == "treated_acres") {
+    # Calculate totals for acres
+    total_sites <- sum(data$total_sites, na.rm = TRUE)
+    total_acres <- sum(data$total_treated_acres, na.rm = TRUE)
+    active_acres <- sum(data$active_acres, na.rm = TRUE)
+    expiring_acres <- sum(data$expiring_acres, na.rm = TRUE)
+    
+    # Calculate percentages
+    active_pct <- if (total_acres > 0) round(100 * active_acres / total_acres, 1) else 0
+    expiring_pct <- if (active_acres > 0) round(100 * expiring_acres / active_acres, 1) else 0
+    
+    return(list(
+      total_sites = total_sites,
+      total_value = round(total_acres, 1),
+      active_value = round(active_acres, 1),
+      expiring_value = round(expiring_acres, 1),
+      active_pct = active_pct,
+      expiring_pct = expiring_pct
+    ))
+  } else {
+    # Calculate totals for sites
+    total_sites <- sum(data$total_sites, na.rm = TRUE)
+    active_sites <- sum(data$active_sites, na.rm = TRUE)
+    expiring_sites <- sum(data$expiring_sites, na.rm = TRUE)
+    
+    # Calculate percentages
+    active_pct <- if (total_sites > 0) round(100 * active_sites / total_sites, 1) else 0
+    expiring_pct <- if (active_sites > 0) round(100 * expiring_sites / active_sites, 1) else 0
+    
+    return(list(
+      total_sites = total_sites,
+      total_value = total_sites,
+      active_value = active_sites,
+      expiring_value = expiring_sites,
+      active_pct = active_pct,
+      expiring_pct = expiring_pct
+    ))
+  }
+}
+
+#' Process current data to calculate aggregated statistics
+#' @param drone_sites Data frame of all drone sites
+#' @param drone_treatments Data frame of all drone treatments
 #' @param zone_filter Vector of selected zones
 #' @param combine_zones Boolean whether to combine P1+P2 into single group
 #' @param expiring_days Number of days for expiring window

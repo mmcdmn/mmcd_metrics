@@ -20,6 +20,11 @@ ground_prehatch_ui <- function() {
         # Current Progress and Detailed View tab controls
         conditionalPanel(
           condition = "input.tabs == 'overview' || input.tabs == 'details'",
+          radioButtons("display_metric", "Display Metric:",
+                      choices = c("Sites" = "sites",
+                                  "Acres" = "acres"),
+                      selected = "sites"),
+          
           dateInput("custom_today", "Pretend Today is:",
                    value = Sys.Date(), 
                    max = Sys.Date(),

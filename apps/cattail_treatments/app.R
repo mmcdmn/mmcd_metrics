@@ -14,6 +14,7 @@ library(sf)
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("data_functions.R")
@@ -152,7 +153,9 @@ server <- function(input, output, session) {
   # Value box outputs for Progress tab
   
   output$active_treatments_box <- renderUI({
+    req(input$refresh_data)
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    status_colors <- get_status_colors(theme = current_theme())
     
     if (metric_type == "acres") {
       # Calculate acres needing treatment from aggregated data
@@ -161,24 +164,26 @@ server <- function(input, output, session) {
       } else {
         0
       }
-      create_metric_box(
+      create_stat_box(
         value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
-        subtitle = "Acres Need Treatment",
-        icon = "exclamation-triangle",
-        color = "danger"
+        title = "Acres Need Treatment",
+        bg_color = status_colors["planned"],
+        icon = "exclamation-triangle"
       )
     } else {
-      create_metric_box(
-        value = cattail_values()$sites_need_treatment,
-        subtitle = "Sites Need Treatment",
-        icon = "exclamation-triangle",
-        color = "danger"
+      create_stat_box(
+        value = format(cattail_values()$sites_need_treatment, big.mark = ","),
+        title = "Sites Need Treatment",
+        bg_color = status_colors["planned"],
+        icon = "exclamation-triangle"
       )
     }
   })
   
   output$treatment_coverage_box <- renderUI({
+    req(input$refresh_data)
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    status_colors <- get_status_colors(theme = current_theme())
     
     if (metric_type == "acres") {
       # Calculate % acres treated
@@ -193,44 +198,48 @@ server <- function(input, output, session) {
       } else {
         0
       }
-      create_metric_box(
-        value = paste0(pct_val, "% Treated"),
-        subtitle = "% Acres Treated",
-        icon = "chart-line",
-        color = "success"
+      create_stat_box(
+        value = paste0(pct_val, "%"),
+        title = "% Acres Treated",
+        bg_color = status_colors["active"],
+        icon = "percent"
       )
     } else {
-      create_metric_box(
-        value = paste0(cattail_values()$percent_treated, "% Treated"),
-        subtitle = "% Sites Treated",
-        icon = "chart-line",
-        color = "success"
+      create_stat_box(
+        value = paste0(cattail_values()$percent_treated, "%"),
+        title = "% Sites Treated",
+        bg_color = status_colors["active"],
+        icon = "percent"
       )
     }
   })
   
   output$sites_inspected_box <- renderUI({
+    req(input$refresh_data)
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    status_colors <- get_status_colors(theme = current_theme())
     
     if (metric_type == "acres") {
-      create_metric_box(
+      create_stat_box(
         value = format(cattail_values()$total_acres, big.mark = ",", nsmall = 1),
-        subtitle = "Total Acres Inspected",
-        icon = "clipboard-check",
-        color = "info"
+        title = "Total Acres Inspected",
+        bg_color = status_colors["completed"],
+        icon = "clipboard-check"
       )
     } else {
-      create_metric_box(
-        value = cattail_values()$sites_inspected,
-        subtitle = "Total Sites Inspected",
-        icon = "clipboard-check",
-        color = "info"
+      create_stat_box(
+        value = format(cattail_values()$sites_inspected, big.mark = ","),
+        title = "Total Sites Inspected",
+        bg_color = status_colors["completed"],
+        icon = "clipboard-check"
       )
     }
   })
   
   output$under_threshold_box <- renderUI({
+    req(input$refresh_data)
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    status_colors <- get_status_colors(theme = current_theme())
     
     if (metric_type == "acres") {
       # Calculate acres under threshold from aggregated data
@@ -239,24 +248,26 @@ server <- function(input, output, session) {
       } else {
         0
       }
-      create_metric_box(
+      create_stat_box(
         value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
-        subtitle = "Acres Under Threshold",
-        icon = "check-circle",
-        color = "primary"
+        title = "Acres Under Threshold",
+        bg_color = status_colors["unknonwn"],
+        icon = "check-circle"
       )
     } else {
-      create_metric_box(
-        value = cattail_values()$sites_under_threshold,
-        subtitle = "Sites Under Threshold",
-        icon = "check-circle",
-        color = "primary"
+      create_stat_box(
+        value = format(cattail_values()$sites_under_threshold, big.mark = ","),
+        title = "Sites Under Threshold",
+        bg_color = status_colors["unknown"],
+        icon = "check-circle"
       )
     }
   })
   
   output$treated_sites_box <- renderUI({
+    req(input$refresh_data)
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
+    status_colors <- get_status_colors(theme = current_theme())
     
     if (metric_type == "acres") {
       # Calculate acres treated from aggregated data
@@ -265,70 +276,100 @@ server <- function(input, output, session) {
       } else {
         0
       }
-      create_metric_box(
+      create_stat_box(
         value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
-        subtitle = "Acres Treated",
-        icon = "check-double",
-        color = "success"
+        title = "Acres Treated",
+        bg_color = status_colors["active"],
+        icon = "check-double"
       )
     } else {
-      create_metric_box(
-        value = cattail_values()$sites_treated,
-        subtitle = "Sites Treated",
-        icon = "check-double",
-        color = "success"
+      create_stat_box(
+        value = format(cattail_values()$sites_treated, big.mark = ","),
+        title = "Sites Treated",
+        bg_color = status_colors["active"],
+        icon = "check-double"
       )
     }
   })
   
   output$upcoming_plans_box <- renderUI({
-    create_metric_box(
-      value = cattail_values()$upcoming_plans,
-      subtitle = "Upcoming Plans",
-      icon = "calendar-check",
-      color = "warning"
+    req(input$refresh_data)
+    status_colors <- get_status_colors(theme = current_theme())
+    # Calculate upcoming plans from filtered data
+    plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
+    upcoming_plans <- if (nrow(plans_data) > 0) {
+      sum(plans_data$plan_status %in% c("Due This Week", "Due This Month"), na.rm = TRUE)
+    } else {
+      0
+    }
+    
+    create_stat_box(
+      value = format(upcoming_plans, big.mark = ","),
+      title = "Upcoming Plans",
+      bg_color = status_colors["planned"],
+      icon = "calendar-check"
     )
   })
   
   output$total_plans_box <- renderUI({
-    create_metric_box(
-      value = cattail_values()$total_plans,
-      subtitle = "Total Plans",
-      icon = "list-alt",
-      color = "info"
+    req(input$refresh_data)
+    status_colors <- get_status_colors(theme = current_theme())
+    # Calculate total plans from filtered data
+    plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
+    total_plans <- nrow(plans_data)
+    
+    create_stat_box(
+      value = format(total_plans, big.mark = ","),
+      title = "Total Plans",
+      bg_color = status_colors["unknown"],
+      icon = "list-alt"
     )
   })
   
   output$overdue_plans_box <- renderUI({
-    create_metric_box(
-      value = cattail_values()$overdue_plans,
-      subtitle = "Overdue Plans",
-      icon = "exclamation-triangle",
-      color = "danger"
+    req(input$refresh_data)
+    status_colors <- get_status_colors(theme = current_theme())
+    # Calculate overdue plans from filtered data
+    plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
+    overdue_plans <- if (nrow(plans_data) > 0) {
+      sum(plans_data$plan_status == "Overdue", na.rm = TRUE)
+    } else {
+      0
+    }
+    
+    create_stat_box(
+      value = format(overdue_plans, big.mark = ","),
+      title = "Overdue Plans",
+      bg_color = status_colors["needs_treatment"],
+      icon = "exclamation-triangle"
     )
   })
   
   output$upcoming_week_box <- renderUI({
+    req(input$refresh_data)
+    status_colors <- get_status_colors(theme = current_theme())
     plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
     upcoming_week <- if (nrow(plans_data) > 0) sum(plans_data$plan_status == "Due This Week", na.rm = TRUE) else 0
     
-    create_metric_box(
-      value = upcoming_week,
-      subtitle = "Due This Week",
-      icon = "clock",
-      color = "warning"
+    create_stat_box(
+      value = format(upcoming_week, big.mark = ","),
+      title = "Due This Week",
+      bg_color = status_colors["planned"],
+      icon = "clock"
     )
   })
   
   output$upcoming_month_box <- renderUI({
+    req(input$refresh_data)
+    status_colors <- get_status_colors(theme = current_theme())
     plans_data <- if (!is.null(values$filtered_data)) values$filtered_data$treatment_plans else data.frame()
     upcoming_month <- if (nrow(plans_data) > 0) sum(plans_data$plan_status == "Due This Month", na.rm = TRUE) else 0
     
-    create_metric_box(
-      value = upcoming_month,
-      subtitle = "Due This Month",
-      icon = "calendar",
-      color = "warning"
+    create_stat_box(
+      value = format(upcoming_month, big.mark = ","),
+      title = "Due This Month",
+      bg_color = status_colors["planned"],
+      icon = "calendar"
     )
   })
   

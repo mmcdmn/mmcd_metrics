@@ -7,9 +7,19 @@
 #' @param title The title/label for the value box
 #' @param bg_color Background color (hex code)
 #' @param text_color Text color (hex code, default white)
-#' @param icon Shiny icon for the value box
+#' @param icon Icon name (without "fa-" prefix) or Shiny icon object
 #' @return A Shiny value box UI element
 create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon = NULL) {
+  # Convert icon name to icon object if it's a string
+  icon_element <- NULL
+  if (!is.null(icon)) {
+    if (is.character(icon)) {
+      icon_element <- shiny::icon(icon)
+    } else {
+      icon_element <- icon
+    }
+  }
+  
   # Create a custom styled div that mimics a shinydashboard value box
   div(
     style = paste0(
@@ -34,10 +44,10 @@ create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon
         title
       )
     ),
-    if (!is.null(icon)) {
+    if (!is.null(icon_element)) {
       div(
         style = "font-size: 36px; opacity: 0.8;",
-        icon
+        icon_element
       )
     }
   )

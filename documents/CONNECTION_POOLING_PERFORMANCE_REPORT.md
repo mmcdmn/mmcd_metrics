@@ -135,7 +135,7 @@ The production stress test shows response times are not significantly improved d
 | **Failure Count** | 171 | 133 | -22% |  **Significant** |
 | **50-User Success** | 98.2% | 100% | +1.8% |  **Important** |
 | **Avg Response Time** | 756ms | 797ms | +5% |  Marginal |
-| **95th Percentile** | 1853ms | 1910ms | +3% | ⚠️ Marginal |
+| **95th Percentile** | 1853ms | 1910ms | +3% |  Marginal |
 | **Database Connections** | Unlimited | 15/app | -95% |  **Critical** |
 | **Connection Overhead** | ~450ms | ~50ms | -81% |  **Major** |
 

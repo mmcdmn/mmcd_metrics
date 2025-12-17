@@ -39,7 +39,7 @@ dbDisconnect(con)
 - ✅ **Backward compatible** - All existing apps automatically benefit (no code changes required!)
 - ✅ **20-40% faster** initial loads
 - ✅ **Prevents connection exhaustion** under load
-- ✅ **Auto-reconnection** if connections drop
+-  **Auto-reconnection** if connections drop
 
 **Status**: Ready to use! Run `source("shared/test_connection_pool.R")` to verify.
 
@@ -59,7 +59,7 @@ dbDisconnect(con)
 
 ---
 
-### 2. **Shared Code Opportunities** 💡
+### 2. **Shared Code Opportunities** 
 
 #### Common Data Processing Patterns
 
@@ -106,25 +106,38 @@ is_overdue <- treatment_end_date < analysis_date
 
 ---
 
-### 3. **Unused Functions** 🗑️
+### 3. **Unused Functions** ✅ IMPLEMENTED
 
-#### In db_helpers.R (1674 lines)
+#### In db_helpers.R
 
-Potentially unused functions (need to verify):
+**Status**: Cleanup complete!
 
-1. `get_mosquito_species_shapes()` - Only defines shapes, never called
-2. `get_shiny_colors()` - Hardcoded colors, theme system not using it
-3. `get_spring_date_thresholds()` - Called in 0 apps
-4. `add_zone_alpha_to_plot()` - Defined but complex, rarely used correctly
+**Functions Removed** (8 total):
+1. ✅ `source_color_themes()` - Internal helper, replaced with direct source() calls  
+2. ✅ `get_db_pool()` - Superseded by `get_pool()` in db_pool.R
+3. ✅ `get_virus_target_names()` - Never called, `get_virus_target_choices()` used instead
+4. ✅ `get_species_code_map()` - Superseded by `get_enhanced_species_mapping()`
+5. ✅ `get_date_range_choices()` - Unused, apps use custom date pickers
+6. ✅ `format_display_date()` - Never implemented/used
+7. ✅ `get_mosquito_species_shapes()` - Never called
+8. ✅ `clean_data_for_csv()` - Unused, apps handle CSV directly
 
-**Recommendation**: 
-- Grep all apps for usage
-- Move rarely-used functions to separate file
-- Remove truly unused functions
+**Impact**:
+- **207 lines removed** (12% reduction)
+- **8 functions removed** (from 41 → 33 functions)
+- **Cleaner codebase** with less maintenance burden
+- **File size**: 1,726 lines → 1,519 lines
+
+**Kept Functions** (Verified as Used):
+- `get_spring_date_thresholds()` - Used in inspections app ✓
+- `get_structure_type_choices()` - Used in catch_basin_status ✓
+- `get_virus_target_choices()` - Used for trap surveillance ✓
+- `get_shiny_colors()` - Used in test-app ✓
+- All other functions verified in active use
 
 ---
 
-### 4. **Database Query Inefficiencies** 🐌
+### 4. **Database Query Inefficiencies** 
 
 #### Issue A: N+1 Query Pattern
 **Found in**: suco_history display_functions.R
@@ -168,7 +181,7 @@ SELECT ... FROM dblarv_insptrt_archive ...
 
 ---
 
-### 5. **UI/Display Optimization** 🎨
+### 5. **UI/Display Optimization** 
 
 #### Issue: Repeated Theme Function Calls
 Every plot recreation calls:
@@ -192,7 +205,7 @@ popup_text = paste0("<b>Date:</b> ", inspdate, "<br>",
 
 ---
 
-### 6. **File Organization** 📁
+### 6. **File Organization** 
 
 #### shared/ folder
 **Current**: All helpers in single 1674-line db_helpers.R
@@ -209,7 +222,7 @@ shared/
 
 ---
 
-### 7. **Missing Opportunities** ✨
+### 7. **Missing Opportunities** 
 
 #### Common UI Components Not Shared
 - Date range pickers (every app has own CSS)
@@ -230,7 +243,7 @@ shared/
 
 ---
 
-## 📊 Impact Estimates
+## Impact Estimates
 
 ### High Priority (Immediate Impact)
 1. **Lookup caching**: 30-50% reduction in DB queries
@@ -248,7 +261,7 @@ shared/
 
 ---
 
-## 🎯 Recommended Actions
+##  Recommended Actions
 
 ### Phase 1: Quick Wins (1-2 days)
 1. Add lookup caching to db_helpers.R
@@ -270,7 +283,7 @@ shared/
 
 ---
 
-## 🔧 Code Examples for Improvements
+##  Code Examples for Improvements
 
 ### 1. Cached Lookups Pattern
 
@@ -342,7 +355,7 @@ calculate_treatment_status <- function(inspdate, effect_days,
 
 ---
 
-## 📈 Performance Baseline Recommendations
+##  Performance Baseline Recommendations
 
 Before optimizing, establish baselines:
 
@@ -356,10 +369,4 @@ Before optimizing, establish baselines:
 
 ---
 
-## Next Steps
 
-1. ✅ Review this analysis
-2. ⬜ Run stress test (see separate script)
-3. ⬜ Profile top 3 slowest apps with profvis
-4. ⬜ Prioritize fixes based on test results
-5. ⬜ Implement Phase 1 improvements

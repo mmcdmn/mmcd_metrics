@@ -82,7 +82,7 @@ cattail_treatments_ui <- function() {
           condition = "input.tabs == 'map'",
           radioButtons("basemap", "Base Map:",
                       choices = c("Street" = "carto", "Satellite" = "satellite",
-                                  "Terrain" = "terrain", "OpenStreetMap" = "osm"),
+                                  "OpenStreetMap" = "osm"),
                       selected = "carto")
         ),
         

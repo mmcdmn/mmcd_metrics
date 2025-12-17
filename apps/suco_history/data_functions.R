@@ -123,11 +123,7 @@ FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
   AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
@@ -247,11 +243,7 @@ FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
   AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
@@ -273,11 +265,7 @@ FROM public.dbadult_insp_archive s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
   AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)

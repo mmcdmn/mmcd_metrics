@@ -52,8 +52,7 @@ get_air_sites_data <- function(analysis_date, lookback_period, rain_threshold, t
           ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
           ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
         FROM loc_breeding_sites b
-        LEFT JOIN public.gis_sectcode g ON LEFT(b.sitecode, 6) || '-' = g.sectcode
-          OR LEFT(b.sitecode, 6) || 'N' = g.sectcode
+        LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
         WHERE (b.enddate IS NULL OR b.enddate > '%s')
           AND b.air_gnd = 'A'
           AND b.geom IS NOT NULL

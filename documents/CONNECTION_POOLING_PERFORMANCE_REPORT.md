@@ -1,6 +1,8 @@
 # Connection Pooling Performance Report
 **MMCD Metrics Dashboard - Database Optimization**
 
+ **[View Detailed Performance Graphs (PDF)](before%20and%20after%20data%20pooling%20tests.pdf)** - Before and after comparison with visual metrics
+
 ## Executive Summary
 This report documents the performance improvements achieved by implementing database connection pooling across all 18+ MMCD Metrics applications.
 

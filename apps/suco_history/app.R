@@ -131,7 +131,6 @@ ui <- fluidPage(
         selectInput("basemap", "Base Map:",
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
-                                "Terrain" = "terrain",
                                 "Esri Satellite" = "satellite"),
                     selected = "carto")
       )
@@ -429,7 +428,6 @@ server <- function(input, output, session) {
     basemap <- switch(inputs$basemap,
                       "osm" = providers$OpenStreetMap,
                       "carto" = providers$CartoDB.Positron,
-                      "terrain" = providers$Stamen.Terrain,
                       "satellite" = providers$Esri.WorldImagery,
                       providers$CartoDB.Positron)
     

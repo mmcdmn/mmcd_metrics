@@ -654,8 +654,6 @@ create_ground_map <- function(spatial_data, basemap = "carto", site_filter = "al
   # Choose base tiles
   if (basemap == "satellite") {
     tiles <- "Esri.WorldImagery"
-  } else if (basemap == "terrain") {
-    tiles <- "Esri.WorldTopoMap"  
   } else if (basemap == "osm") {
     tiles <- "OpenStreetMap"
   } else {

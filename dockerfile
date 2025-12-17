@@ -29,6 +29,9 @@ RUN R -e "install.packages('remotes', lib='/usr/local/lib/R/site-library', repos
 # Install tidyr separately to ensure it's available
 RUN R -e "install.packages(c('tidyr'), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
+# Install pool package for database connection pooling
+RUN R -e "install.packages('pool', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
 # Copy app files and config to correct locations
 COPY apps /srv/shiny-server/apps
 COPY shared /srv/shiny-server/shared

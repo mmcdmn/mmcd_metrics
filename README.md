@@ -7,27 +7,6 @@
 A comprehensive analytics platform for the Metropolitan Mosquito Control District, providing interactive dashboards for mosquito surveillance, treatment analysis, and operational metrics.
 
 
-## Important Bug Fixes
-
-### **Zone Assignment Fix (November 2025)**
-**CRITICAL FIX**: Corrected ambiguous JOIN logic in `apps/drone/data_functions.R` that was causing incorrect zone assignments.
-
-**Problem**: Sites were showing wrong zones due to broad pattern matching in SQL JOINs. For example:
-- Site `191819-045` was incorrectly showing zone 2 instead of zone 1
-- Root cause: JOIN matched both `191819-` (zone 1) and `191819E` (zone 2) sectcodes
-
-**Solution**: Changed from broad OR-based pattern matching to precise sectcode matching:
-```sql
--- OLD (incorrect - would match multiple sectcodes)
-LEFT JOIN public.gis_sectcode g ON LEFT(sitecode, 6) || '-' = g.sectcode
-  OR LEFT(sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(sitecode, 6) || 'W' = g.sectcode
-
--- NEW (correct - exact match only)  
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
-```
-
 
 
 ## Table of Contents
@@ -848,102 +827,6 @@ cp .env.example .env
 docker run -p 3838:3838 --env-file .env mmcd-dashboard
 ```
 
-### **CRITICAL DEPLOYMENT NOTE**
-**Always copy `index.html` to Shiny Server after making changes!**
-
-Shiny Server serves files from `/srv/shiny-server/`, not from your development directory. Any changes to `apps/index.html` in your workspace will NOT be visible until you copy them:
-
-```bash
-# This command is REQUIRED after ANY change to index.html
-sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
-```
-
-**When to run this command:**
-- After adding new applications to the dashboard
-- After updating application descriptions or links  
-- After changing any HTML/CSS in the landing page
-- After modifying button links or layout
-
-**Why this is necessary:**
-- The development files are in `$MMCD_WORKSPACE/apps/`
-- Shiny Server serves files from `/srv/shiny-server/`
-- These are separate directories - changes in one don't automatically appear in the other
-
-## Troubleshooting
-
-### Common Issues and Solutions
-
-#### Application Not Loading
-```bash
-# Check if Shiny Server is running
-sudo systemctl status shiny-server
-
-# Check application logs
-sudo tail -f /var/log/shiny-server/*.log
-
-# Verify file permissions
-ls -la /srv/shiny-server/
-```
-
-#### R Package Installation Errors
-```bash
-# For sf package compilation issues
-sudo apt install -y libgdal-dev libudunits2-dev libproj-dev
-
-# For database connectivity issues
-sudo apt install -y libpq-dev
-
-# For text rendering issues
-sudo apt install -y libfontconfig1-dev libfreetype-dev
-```
-
-#### Database Connection Issues
-```bash
-# Test database connectivity (using environment variables)
-R -e "
-if (file.exists('.env')) readRenviron('.env');
-library(DBI); library(RPostgreSQL);
-con <- dbConnect(PostgreSQL(), 
-  host=Sys.getenv('DB_HOST'), 
-  dbname=Sys.getenv('DB_NAME'), 
-  user=Sys.getenv('DB_USER'), 
-  password=Sys.getenv('DB_PASSWORD')); 
-dbListTables(con); dbDisconnect(con)"
-
-# If database connection fails, check network connectivity
-ping your-database-host.com
-
-# For development/testing without database access, you can modify app.R files to use sample data
-# instead of live database connections
-```
-
-#### Button Click Issues on Dashboard
-If application buttons on the main dashboard don't respond when clicked:
-
-1. **Check if index.html changes were deployed**: 
-   ```bash
-   # ALWAYS run this after changing index.html
-   sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
-   ```
-
-2. **Browser pop-up blocking**: If links have `target="_blank"`, browsers may block pop-ups
-   - Remove `target="_blank"` from links in index.html
-   - Or allow pop-ups for localhost in browser settings
-
-3. **Check browser console for JavaScript errors**: Press F12 and look for errors in Console tab
-
-4. **Verify application availability**: Test individual app URLs directly (e.g., `http://localhost:3838/test-app/`)
-
-5. **Check Shiny Server logs**: `sudo tail -f /var/log/shiny-server.log`
-
-6. **Common causes**:
-   - Database connectivity issues (applications timeout during initialization)
-   - Missing R packages for the shiny user
-   - Network firewall blocking database connections
-   - Applications taking too long to load due to large datasets
-   - Outdated index.html in Shiny Server directory
-
-7. **Test with the Test Application**: The test app should always work since it doesn't require database connectivity
 
 #### Network Connectivity for Database Access
 The MMCD applications require access to your database server on port 5432. If you're experiencing connection timeouts:
@@ -963,4 +846,25 @@ sudo ufw status
 # One line remove all used ports and run new
 ```bash
 docker stop mmcd-dashboard && docker rm mmcd-dashboard && cd /home/alex/Documents/mmcd/mmcd_metrics && docker build -t mmcd-dashboard . 2>&1 | tail -2 && docker run -d --name mmcd-dashboard -p 3838:3838 -e DB_HOST=rds-readonly.mmcd.org -e DB_PORT=5432 -e DB_USER=mmcd_read -e DB_PASSWORD=mmcd2012 -e DB_NAME=mmcd_data mmcd-dashboard
+```
+
+## Important Bug Fixes
+
+### **Zone Assignment Fix (November 2025)**
+**CRITICAL FIX**: Corrected ambiguous JOIN logic in `apps/drone/data_functions.R` that was causing incorrect zone assignments.
+
+**Problem**: Sites were showing wrong zones due to broad pattern matching in SQL JOINs. For example:
+- Site `191819-045` was incorrectly showing zone 2 instead of zone 1
+- Root cause: JOIN matched both `191819-` (zone 1) and `191819E` (zone 2) sectcodes
+
+**Solution**: Changed from broad OR-based pattern matching to precise sectcode matching:
+```sql
+-- OLD (incorrect - would match multiple sectcodes)
+LEFT JOIN public.gis_sectcode g ON LEFT(sitecode, 6) || '-' = g.sectcode
+  OR LEFT(sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(sitecode, 6) || 'W' = g.sectcode
+
+-- NEW (correct - exact match only)  
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
 ```

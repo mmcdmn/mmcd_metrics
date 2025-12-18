@@ -197,16 +197,16 @@
 <li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
 <li>Fields: <code>sectcode</code>, <code>facility</code>, <code>fosarea</code>, <code>zone</code></li>
 <li><strong>Fallback</strong> for facility if harborage doesn't have data</li>
-<li>Join pattern:</li>
+<li><strong>Join pattern</strong> (FIXED November 2025):</li>
 </ul>
 </ul>
 <p>    ```sql</p>
-<p>    LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode</p>
-<p>      OR LEFT(s.sitecode, 6) || 'N' = g.sectcode</p>
-<p>      OR LEFT(s.sitecode, 6) || 'S' = g.sectcode</p>
-<p>      OR LEFT(s.sitecode, 6) || 'E' = g.sectcode</p>
-<p>      OR LEFT(s.sitecode, 6) || 'W' = g.sectcode</p>
+<p>    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)</p>
 <p>    ```</p>
+<ul>
+<li><strong>Note</strong>: Uses precise 7-character sectcode match to avoid ambiguous zone assignments</li>
+</ul>
+</ul>
 
 <ul>
 <li><strong><code>lookup_specieslist</code></strong> - Species name lookup</li>
@@ -257,11 +257,7 @@ FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate &gt;= h.startdate 
   AND (h.enddate IS NULL OR s.inspdate &lt;= h.enddate)
-LEFT JOIN public.gis_sectcode g ON LEFT(s.sitecode, 6) || '-' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'S' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(s.sitecode, 6) || 'W' = g.sectcode
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
   AND s.inspdate BETWEEN [start_date] AND [end_date]
 </code></pre>

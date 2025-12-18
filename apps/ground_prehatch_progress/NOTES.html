@@ -141,8 +141,10 @@
 <ul>
 <li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval treatment records</li>
 <ul>
-<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code>, <code>amts</code></li>
+<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code>, <code>amts</code>, <code>wet</code></li>
 <li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = true</code></li>
+<li><strong>Action Code '2'</strong>: Ground inspection (used to detect dry sites after treatment for skipped status)</li>
+<li><strong>Wet Field</strong>: <code>'0'</code> = dry, <code>'1'</code> = wet (used with action='2' to identify skipped treatments)</li>
 <li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code> - must join for these</li>
 <li><strong>Data Quality</strong>: Contains ongoing treatments, some may be planned vs executed</li>
 </ul>
@@ -311,6 +313,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
 <li>Get latest treatment per prehatch site</li>
 <li>Calculate treatment status based on end date vs analysis date</li>
 <li>Join with effectiveness data for duration calculation</li>
+<li>Check for post-treatment dry inspections (action='2', wet='0') to detect skipped status</li>
 </ul>
 </ul>
 
@@ -325,6 +328,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
 <li><code>ph<em>treated</em>cnt</code>: Sites with active treatments</li>
 <li><code>ph<em>expiring</em>cnt</code>: Sites with expiring treatments (within X days)</li>
 <li><code>ph<em>expired</em>cnt</code>: Sites with expired treatments</li>
+<li><code>ph<em>skipped</em>cnt</code>: Sites inspected dry after treatment (skipped status)</li>
 </ul>
 </ul>
 </ul>
@@ -786,6 +790,26 @@ prehatch_treatments &lt;- prehatch_treatments %&gt;%
 prehatch_treatments &lt;- prehatch_treatments %&gt;%
   mutate(
     is_expired = treatment_end_date &lt; analysis_date
+  )
+</code></pre>
+
+<p><strong>Skipped Status Calculation (Special Case):</strong></p>
+<pre><code class="r">
+# Detect sites that were inspected and found dry after treatment
+# Logic: If there's a ground inspection (action='2') with wet='0' after the treatment date,
+# the site is marked as "skipped" instead of expired
+prehatch_treatments &lt;- prehatch_treatments %&gt;%
+  mutate(
+    prehatch_status = case_when(
+      # If site was inspected dry after treatment, mark as skipped
+      !is.na(last_inspection_date) &amp; inspection_action == '2' &amp; 
+        inspection_wet == '0' &amp; last_inspection_date &gt; inspdate ~ "skipped",
+      # Otherwise use regular status
+      is_expired ~ "expired",
+      is_expiring ~ "expiring",
+      is_active ~ "treated",
+      TRUE ~ "unknown"
+    )
   )
 </code></pre>
 

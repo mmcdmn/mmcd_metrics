@@ -352,39 +352,39 @@ Trap 25-91099 (Elevated CO2, Culex pipiens):
 
 <p><strong>Important</strong>: The section's pool counts represent the <strong>sum of all pools from the k nearest traps</strong>, not individual pool tests at that section location.</p>
 
-<p><strong>Trap Grouping Options</strong> (to prevent duplicate distance bug):</p>
+<p><strong>Pool Grouping Options</strong> (to prevent duplicate distance bug):</p>
 
-<p><strong>Option 1: By pool (Recommended)</strong></p>
+<p><strong>Option 1: By Trap Location (Recommended)</strong></p>
 <ul>
-<li>Groups traps by unique (lon, lat) coordinates first</li>
-<li>Finds k nearest LOCATIONS (not individual traps)</li>
-<li>Uses ALL traps at those k locations in the calculation</li>
-<li>Assigns same distance to all traps at same physical location</li>
-<li><strong>Why</strong>: Prevents selecting 4 traps all at same coordinates</li>
+<li>Groups pools by unique trap location (lon, lat) coordinates first</li>
+<li>Finds k nearest trap LOCATIONS (not individual pools)</li>
+<li>Uses ALL pools from those k trap locations in the calculation</li>
+<li>Assigns same distance to all pools from same physical trap</li>
+<li><strong>Why</strong>: Prevents selecting 4 pools all from same trap coordinates</li>
 <li><strong>Result</strong>: Proper geographic diversity in k-NN selection</li>
 </ul>
 
-<p><strong>Option 2: By Individual Trap</strong></p>
+<p><strong>Option 2: By Individual Pool</strong></p>
 <ul>
 <li>Original behavior (for comparison)</li>
-<li>Finds k nearest individual traps</li>
-<li>May select multiple traps at same physical location</li>
+<li>Finds k nearest individual pool tests (sampnum_yr)</li>
+<li>May select multiple pool tests from same physical trap</li>
 <li><strong>Issue</strong>: Can result in identical nearest/farthest distances</li>
 </ul>
 
 <p><strong>Example</strong>:</p>
 <pre><code class="">
 Section 123 (centroid at -92.80, 45.25):
-  By Location mode:
-    Location A (-92.81, 45.24) @ 1200m → Traps: 25-91099 (4 pools), 25-91100 (3 pools)
-    Location B (-92.79, 45.26) @ 1500m → Traps: 25-91101 (5 pools)
-    Location C (-92.82, 45.23) @ 1800m → Traps: 25-91102 (4 pools)
+  By Trap Location mode:
+    Location A (-92.81, 45.24) @ 1200m → Pools: 25-91099 (4 pools), 25-91100 (3 pools)
+    Location B (-92.79, 45.26) @ 1500m → Pools: 25-91101 (5 pools)
+    Location C (-92.82, 45.23) @ 1800m → Pools: 25-91102 (4 pools)
   
   Section statistics:
-    - Traps used: 4
-    - Unique locations: 3
-    - Total pools: 16 (sum from all 4 traps)
-    - Positive pools: 2 (sum from all 4 traps)
+    - Pools used: 4 (individual pool tests)
+    - Unique trap locations: 3
+    - Total pools: 16 (sum from all 4 pool tests)
+    - Positive pools: 2 (sum from all 4 pool tests)
   
   Weighted average MLE:
     Section MLE = (MLE_A × 0.45) + (MLE_B × 0.30) + (MLE_C × 0.25)
@@ -413,7 +413,7 @@ section_mle &lt;- sum(trap_mles * weights)
 <p><strong>Calculation</strong>:</p>
 <ul>
 <li>Sum mosquito counts from trap inspections</li>
-<li>Group by trap location (sampnum_yr)</li>
+<li>Group by pool/inspection (sampnum_yr)</li>
 <li>Apply k-NN DWA to assign counts to sections</li>
 </ul>
 

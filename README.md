@@ -536,6 +536,7 @@ You can run any Shiny app directly using R without Docker or Shiny Server. This 
 
 #### Windows Setup
 
+#**NOTE:** Has not actualy worked yet but theoretically it can
 **Step 1: Install R**
 
 Download and install R from [CRAN](https://cran.r-project.org/bin/windows/base/):

@@ -40,7 +40,6 @@ server <- function(input, output, session) {
     anopheles_codes <- species_choices[grepl("^Anopheles ", names(species_choices))]
     updateSelectizeInput(session, "species_sf", selected = anopheles_codes)
   })
-  
   observeEvent(input$select_all_species, {
     species_choices <- get_species_choices()
     # Select all codes (the values, not the names)

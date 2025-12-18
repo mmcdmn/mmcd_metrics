@@ -12,8 +12,9 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
 ## Table of Contents
 
 - [Documentation Resources](#documentation-resources)
+- [Common Filter & Grouping Options](#common-filter--grouping-options)
 - [Architecture](#architecture)
-- [Centralized Helpers Module](#centralized-helpers-module-shareddb_helpersr)
+- [Centralized Shared Resources](#centralized-shared-resources-shared)
 - [Applications](#applications)
   - [Inspections Coverage](#inspections-coverage) - [Notes](apps/inspections/NOTES.md)
   - [Ground Prehatch Progress](#ground-prehatch-progress) - [Notes](apps/ground_prehatch_progress/NOTES.md)
@@ -36,10 +37,22 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
   - [Shiny Server Setup](#shiny-server-setup)
   - [Running Apps Individually with R (Without Docker)](#running-apps-individually-with-r-without-docker)
   - [Production Deployment](#production-deployment)
+- [Git Workflow for Contributors](#git-workflow-for-contributors)
+  - [Getting Started - Cloning the Repository](#getting-started---cloning-the-repository)
+  - [Branch Strategy](#branch-strategy)
+  - [Basic Git Commands](#basic-git-commands)
+  - [Typical Workflow for Making Changes](#typical-workflow-for-making-changes)
+  - [Common Scenarios](#common-scenarios)
+  - [Best Practices](#best-practices)
+  - [Handling Merge Conflicts](#handling-merge-conflicts)
+- [Important Bug Fixes](#important-bug-fixes)
 
 ## Documentation Resources
 
 Comprehensive technical documentation and performance reports:
+
+### Database & Schema
+- **[Database Schema Reference](documents/DATABASE_SCHEMA_REFERENCE.md)** - Comprehensive guide to all database tables, columns, relationships, and common join patterns used across applications
 
 ### Performance & Optimization
 - **[Connection Pooling Performance Report](documents/CONNECTION_POOLING_PERFORMANCE_REPORT.md)** - Before/after analysis of database connection pooling implementation showing 22% reduction in errors and improved reliability
@@ -53,6 +66,32 @@ Comprehensive technical documentation and performance reports:
 ### Development Resources
 - **[Shared Resources README](shared/README.md)** - Documentation for shared utilities, database helpers, geospatial data extraction (Q_to_R), and documentation sync system
 - **[User Feedback Backlog](documents/USER_FEEDBACK_BACKLOG.md)** - Feature requests and improvements from user feedback
+
+## Common Filter & Grouping Options
+
+Apps share consistent filter and grouping controls for unified user experience:
+
+**Standard Filters (used when appropriate for each app):**
+- **Facility** - Filter by facility location (Sr, Sj, N, E, MO, etc)
+- **FOS Area** - Filter by Field Operations Supervisor (foreman) assignment
+- **Zone** - P1 only, P2 only, P1+P2 separate, or Combined P1+P2
+- **Priority** - Filter by site priority level (RED, YELLOW, BLUE, GREEN, PURPLE)
+- **Treatment Type** - Air, Ground, or Drone (note: drone can be subcategorized as ground or air depending on application)
+- **Pretend Today Is** - Simulate a different analysis date to see what status/progress would have been on that date (useful for testing, historical analysis, or planning)
+- **Days Until Expiring** - For treatment progress apps, set threshold for sites approaching treatment expiration
+- **Color Theme** - Choose from 6 themes (MMCD default, IBM, Wong, Tol, Viridis, ColorBrewer) - changes all charts and maps
+
+**Display Metric Options:**
+- **Sites vs Acres** - Toggle between count of sites or total acres for all visualizations and summaries
+
+**Group By Options:**
+- **All MMCD** - Show aggregate data across entire district
+- **Facility** - Group results by facility
+- **FOS** - Group results by Field Operations Supervisor
+- **Section** - Group results by geographic section (available in some apps)
+
+**How "Pretend Today Is" Works:** This date control allows you to run the analysis as if today were a different date. For example, setting it to a past date shows what the status would have looked like then, while setting it to a future date can help with planning. All status calculations, expiration logic, and "days until expiring" filters use this date instead of the actual current date.
+NOTE: "Pretend Today Is" will only work if the query includes the same join with the archive as it does with the current
 
 ## Architecture
 
@@ -194,7 +233,28 @@ mmcd_metrics/
 └── shiny-server.conf            # Shiny Server configuration
 ```
 
+## Centralized Shared Resources (`shared/`)
 
+All apps source `shared/db_helpers.R` which provides centralized utilities and automatically loads all other shared modules.
+
+**Core Files:**
+- **`db_helpers.R`** - Central hub: database connections, facility/FOS lookups, date thresholds, priority choices
+- **`color_themes.R`** - **ALL colors in ALL apps come from ONE location!** Change colors here to update everywhere. Supports 6 themes: MMCD (default), IBM, Wong, Tol, Viridis, ColorBrewer. See [Color Themes Configuration](documents/COLOR_THEMES_README.md)
+- **`db_pool.R`** - Connection pooling for 22% fewer errors and 81% faster queries. See [Performance Report](documents/CONNECTION_POOLING_PERFORMANCE_REPORT.md)
+- **`stat_box_helpers.R`** - Reusable UI components for consistent value boxes
+
+**Usage in apps:**
+```r
+source("../../shared/db_helpers.R")  # Loads all shared modules
+conn <- get_pool()                    # Get connection pool
+palette <- get_theme_palette()        # Get current theme colors
+```
+
+**Additional Resources:**
+- **`assets/`** - Shared icons and images for landing pages
+- **`Q_to_R/`** - Geospatial data extraction scripts (PostgreSQL to shapefiles)
+
+See [Shared Resources README](shared/README.md) for complete documentation.
 
 
 ## Applications
@@ -209,10 +269,10 @@ mmcd_metrics/
   - **`display_functions.R`**: Visualization and chart generation
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - Filter by air/ground, FOS area, facility, and zone
-  - Identify sites with no inspection in the last X years
-  - Uses both current and archive records
-  - Coverage metrics and site status tracking
+  - **Site Analytics**: Total sites, wet frequency analysis, and summary statistics
+  - **Larvae Threshold Analysis**: Sites exceeding larvae counts with frequency tracking
+  - **Coverage Gaps**: Identify sites with inspection gaps or never inspected
+  - Uses both current and archive records for complete history
 
 ### Ground Prehatch Progress
 - **Path**: `/ground_prehatch_progress/`
@@ -225,20 +285,15 @@ mmcd_metrics/
   - **`historical_functions.R`**: Historical trend analysis functions
   - **`ui_helpers.R`**: UI component functions and reusable interface elements
 - **Features**:
-  - **Clean persistent filter panel**: All controls stay visible when switching between tabs
-  - **Responsive design**: Modern layout with gradient headers and improved spacing
-  - **Progress Overview Tab**: Real-time progress tracking with summary value boxes
-  - **Detailed View Tab**: Comprehensive site details table with download functionality
-  - **Modular UI components**: Reusable UI functions in ui_helpers.R for maintainable code
-  - Performance metrics and completion rate analysis (powered by `data_functions.R`)
-  - Interactive visualizations and progress charts (powered by `display_functions.R`)
-  - Facility-level performance comparisons with P1/P2 zone support
-  - Treatment timeline analysis and goal tracking with date simulation
-  - Consistent color schemes from centralized `db_helpers.R`
+  - **Progress Overview Tab**: Sites with active/expiring treatments aggregated by facility, FOS, or section
+  - **Detailed View Tab**: Individual site details with treatment status and download
+  - **Map Tab**: Interactive map with color-coded treatment status markers
+  - **Historical Analysis Tab**: Multi-year trends (sites, treatments, or acres by year/week)
+  - Prehatch-specific filtering with dry site detection
 
 ### Air Sites Simple
 - **Path**: `/air_sites_simple/`
-- **Purpose**: Monitor air site status, rainfall impact, and treatment pipeline
+- **Purpose**: Monitor air site status and treatment pipeline (no rainfall tracking)
 - **Documentation**: [Technical Notes](apps/air_sites_simple/NOTES.md)
 - **Modular Structure**:
   - **`app.R`**: Main application logic with tabbed interface
@@ -247,12 +302,11 @@ mmcd_metrics/
   - **`historical_functions.R`**: Historical trend analysis functions
   - **`ui_helper.R`**: UI component functions and reusable interface elements
 - **Features**:
-  - Interactive map showing site status with color-coded dots (powered by `air_status_functions.R`)
-  - Rainfall tracking and analysis
-  - Treatment lifecycle management: Needs Inspection → Under Threshold → Needs Treatment → Active Treatment
-  - Real-time status summary chart
-  - Detailed site information table
-  - **Uses centralized colors from `db_helpers.R`**: Changing colors in db_helpers automatically updates the map, chart, and table
+  - Interactive map with color-coded site status dots
+  - Treatment lifecycle: Needs Inspection → Under Threshold → Needs Treatment → Active Treatment
+  - BTI material effect days tracking
+  - Larvae threshold monitoring
+  - Red bug detection tracking
 
 ### Drone Treatment
 - **Path**: `/drone/`
@@ -265,12 +319,11 @@ mmcd_metrics/
   - **`display_functions.R`**: Visualization and chart generation
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - **Progress Tab**: Real-time tracking of drone-based treatment operations
-  - **Historical Tab**: Historical trend analysis with percentage and count views (powered by `historical_functions.R`)
-  - Active treatment area monitoring and coverage analysis
-  - Facility, FOS, zone, and section grouping options
-  - Interactive date range selection and customizable time periods
-  - Modular external function files for maintainable code
+  - **Current Progress Tab**: Active treatments and expiring treatments summary
+  - **Map Tab**: Leaflet map with color-coded markers and popup details
+  - **Historical Trends Tab**: Multi-year trends analyzing sites, treatments, or acres treated
+  - **Site Statistics Tab**: Average site size, largest sites, smallest sites analysis
+  - Prehatch toggle filter for seasonal analysis
 
 ### Air Treatment Checkbacks
 - **Path**: `/control_efficacy/`
@@ -283,12 +336,11 @@ mmcd_metrics/
   - **`checkback_functions.R`**: Checkback analysis and efficacy calculations
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - Air treatment campaign identification (multi-day treatments grouped)
-  - Configurable checkback requirements (percentage or fixed number)
-  - Checkback completion rate tracking by facility
-  - Treatment-to-checkback timing analysis
-  - Dip count change visualization (pre vs post treatment)
-  - Site-level treatment and checkback details
+  - **Checkback Progress Tab**: Brood completion progress and outstanding checkbacks tracking
+  - **Status Tables Tab**: Brood status overview and detailed checkback results with larvae counts
+  - **Control Efficacy Tab**: Pre-treatment vs post-treatment dip count efficacy analysis
+  - Species composition in checkback samples
+  - Treatment-to-checkback timing validation
 
 ### Catch Basin Status
 - **Path**: `/catch_basin_status/`
@@ -301,15 +353,15 @@ mmcd_metrics/
   - **`historical_functions.R`**: Historical trend analysis functions
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - Track active treatments on wet catch basins
-  - Treatment coverage percentages by facility
-  - Summary statistics and detailed breakdowns
-  - Facility and foreman filtering
-  - Historical trend analysis
+  - **Status Overview Tab**: High-level summary metrics and treatment status charts
+  - **Detailed View Tab**: Granular site-by-site breakdown with last treatment dates
+  - **Historical Analysis Tab**: Multi-year treatment trends and patterns
+  - Focus on wet catch basins only (status_udw = 'W')
+  - Treatment expiration tracking with days until expiring filter
 
 ### Structural Treatment
 - **Path**: `/struct_trt/`
-- **Purpose**: Comprehensive structural treatment tracking with current progress and historical analysis
+- **Purpose**: Comprehensive structure treatment tracking with current progress and historical analysis
 - **Documentation**: [Technical Notes](apps/struct_trt/NOTES.md)
 - **Modular Structure**:
   - **`app.R`**: Main application logic with dual-tab interface
@@ -318,13 +370,11 @@ mmcd_metrics/
   - **`historical_functions.R`**: Historical trend analysis functions
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - **Progress Tab**: Monitor current structural treatment activities (powered by `data_functions.R`)
-  - **History Tab**: Historical analysis of structure treatment activities (powered by `display_functions.R`)
-  - Proportion of structures under treatment tracking
-  - Customizable treatment duration settings and real-time calculations
-  - Historical time series and breakdowns by facility, type, and priority
-  - Date simulation ("pretend today is") functionality
-  - Snapshot and priority breakdowns for comprehensive analysis
+  - **Progress Tab**: Real-time active structure treatment monitoring
+  - **History Tab**: Multi-year historical trends and patterns
+  - Customizable treatment effect_days parameter for expiration calculations
+  - Structure type categorization and filtering
+  - Proportion of structures under active treatment tracking
 
 ### SUCO History
 - **Path**: `/suco_history/`
@@ -336,12 +386,11 @@ mmcd_metrics/
   - **`display_functions.R`**: Interactive maps with leaflet, trend charts, and plotly visualizations
   - **`ui_helpers.R`**: UI component functions and interface helpers
 - **Features**:
-  - Interactive maps with leaflet and custom marker sizing
-  - Facility and foreman filtering with consistent colors from `db_helpers.R`
-  - Temporal trend analysis (weekly/monthly with epidemiological weeks)
-  - Top locations identification with species-based analysis
-  - Spatial data visualization with P1/P2 zone support
-  - Species filtering and detailed popup information
+  - **Graph Tab**: Time series visualization of SUCO trends over time
+  - **Map Tab**: Spatial distribution with dynamic marker sizing based on counts
+  - **Summary Table Tab**: Aggregated statistics grouped by facility or FOS
+  - **Detailed Samples Tab**: Raw SUCO inspection records with full details
+  - **Top Locations Tab**: Rankings by visit frequency or species 
 
 ### Mosquito Surveillance Map
 - **Path**: `/mosquito_surveillance_map/`
@@ -373,12 +422,11 @@ mmcd_metrics/
   - **`progress_functions.R`**: Progress tracking functions
   - **`ui_helper.R`**: UI component functions and interface helpers
 - **Features**:
-  - Real-time inspection progress tracking
-  - Site assessment and status monitoring
-  - Facility and zone filtering
-  - Historical inspection trend analysis
-  - Interactive maps showing inspection status
-  - Progress metrics and completion rates
+  - Progress tracking against goals with historical comparison
+  - Single inspection per site counting (most recent only)
+  - Site count goals by facility (p1_totsitecount, p2_totsitecount)
+  - Wet/dry site status and larvae dip count tracking
+  - Action code '9' filtering for cattail inspections only
 
 ### Cattail Treatments
 - **Path**: `/cattail_treatments/`
@@ -391,15 +439,13 @@ mmcd_metrics/
   - **`historical_functions.R`**: Historical analysis with DOY-based inspection year calculation (Fall-Summer seasonal cycles)
   - **`ui_helper.R`**: UI component functions and reusable interface elements
 - **Features**:
-  - **Progress Tab**: Current treatment status with 3 chart types and zone separation
-  - **Historical Tab**: Multi-year trends using DOY-based inspection years (Fall Year N + Summer Year N+1)
-  - **Inspection Year Logic**: DOY 244-365 (Fall) and DOY 135-213 (Summer) seasonal definitions
-  - Multiple display metrics: Sites Treated (as of Aug 1), % Treated, Sites Need Treatment
-  - Chart type options: Line charts, grouped bar charts, stacked bar charts
-  - Zone filtering: P1/P2 separate or combined display
-  - Facility and foreman grouping options
-  - Treatment effectiveness tracking
-  - Consistent color schemes from centralized `db_helpers.R`
+  - **Progress Tab**: Current treatment status with 3 chart types
+  - **Historical Tab**: Multi-year trends using DOY-based inspection years
+  - **Inspection Year Logic**: Fall (DOY 244-365) + Summer (DOY 135-213) seasonal cycles
+  - Multiple display metrics: Sites Treated, % Treated, Sites Need Treatment
+  - Chart type options: Line, grouped bar, stacked bar
+  - Action '9' inspections + Action '3'/'A' treatments
+  - Cattail material code filtering
 
 ### Trap Surveillance Test
 - **Path**: `/trap_survillance_test/`
@@ -412,11 +458,12 @@ mmcd_metrics/
   - **`mle_trap_based.R`**: MLE calculation functions using PooledInfRate package
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - k-nearest neighbor spatial averaging for section-level metrics
-  - Population index, MLE, and Vector Index calculations
-  - Interactive leaflet map with section polygons and trap markers
-  - Species filtering and trap type selection
-  - Distance-weighted averaging for spatial analysis
+  - **Trap-based MLE**: Maximum Likelihood Estimation for virus infection risk
+  - **k-NN Distance-Weighted Averaging**: Spatial interpolation across sections
+  - Population Index, MLE, and Vector Index calculations using PooledInfRate package
+  - Interactive leaflet map with section polygons, trap markers, and Vector Index Areas
+  - Unified SQL query with CTEs for optimal performance
+  - Species filtering for targeted analysis
 
 ### Section Cards DEMO
 - **Path**: `/section-cards/`
@@ -428,10 +475,11 @@ mmcd_metrics/
   - **`display_functions.R`**: Card generation and layout functions
   - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - Printable site cards for field work
-  - Customizable card layouts and field selection
-  - Filtering by facility, zone, FOS, and section
-  - Print-optimized formatting
+  - **Printable Field Cards**: 6 cards per page optimized for standard printing
+  - **Configurable Content**: Select which site fields to display in header vs table
+  - **Section Grouping**: Option to group cards by section (prevents mixing on pages)
+  - **Download as HTML**: Export standalone file for printing
+  - Active sites only (enddate IS NULL)
 
 ### Test Application
 - **Path**: `/test-app/`
@@ -812,6 +860,230 @@ docker run -p 3838:3838 --env-file .env mmcd-dashboard
 ```bash
 docker stop mmcd-dashboard && docker rm mmcd-dashboard && cd /home/alex/Documents/mmcd/mmcd_metrics && docker build -t mmcd-dashboard . 2>&1 | tail -2 && docker run -d --name mmcd-dashboard -p 3838:3838 -e DB_HOST=rds-readonly.mmcd.org -e DB_PORT=5432 -e DB_USER=mmcd_read -e DB_PASSWORD=mmcd2012 -e DB_NAME=mmcd_data mmcd-dashboard
 ```
+
+## Git Workflow for Contributors
+
+**Repository**: [https://github.com/mmcdmn/mmcd_metrics](https://github.com/mmcdmn/mmcd_metrics)
+
+> **Access Required**: You must have repository access rights to push changes. Contact the administrator if you need access.
+
+### Getting Started - Cloning the Repository
+
+If you're starting fresh, clone the repository and checkout the dev branch:
+
+```bash
+# Clone the repository
+git clone https://github.com/mmcdmn/mmcd_metrics.git
+
+# Navigate into the project
+cd mmcd_metrics
+
+# Switch to dev branch (where you'll do your work)
+git checkout dev
+
+# Verify you're on dev branch
+git branch
+```
+
+### Branch Strategy
+
+This repository uses a two-branch workflow:
+
+- **`dev`** - Development branch for testing and review
+  - All contributors should push their changes here first
+  - Used for testing new features and bug fixes
+  - Safe environment for experimentation
+
+- **`main`** - Production branch deployed to AWS
+  - Protected branch
+  - Automatically deployed to AWS App Runner for production use
+  - Only stable, tested code should be merged here
+  - **Merging to main is done via GitHub Pull Request, not locally**
+
+### Basic Git Commands
+
+#### Check Current Status
+See what files you've changed and current branch:
+```bash
+git status
+```
+
+#### Switch Between Branches
+```bash
+# Switch to dev branch (where you should work)
+git checkout dev
+
+# Switch to main branch (to review production code)
+git checkout main
+
+# Create and switch to a new feature branch
+git checkout -b feature-name
+```
+
+#### Stage Your Changes
+Add files you want to commit:
+```bash
+# Add specific file
+git add path/to/file.R
+
+# Add all changed files in a directory
+git add apps/my-app/
+
+# Add all changed files (use carefully!)
+git add .
+```
+
+#### Commit Your Changes
+Save your changes with a descriptive message:
+```bash
+git commit -m "Brief description of what you changed"
+
+# Example commit messages:
+git commit -m "Fix zone assignment bug in drone app"
+git commit -m "Add archive data support to trap surveillance"
+git commit -m "Update README with Git workflow instructions"
+```
+
+#### Push to Remote Repository
+```bash
+# Push your changes to dev branch
+git push origin dev
+
+# Push changes to a feature branch
+git push origin feature-name
+```
+
+### Typical Workflow for Making Changes
+
+1. **Start on dev branch**
+   ```bash
+   git checkout dev
+   git pull origin dev  # Get latest changes
+   ```
+
+2. **Make your changes**
+   - Edit files in your preferred editor
+   - Test your changes locally
+
+3. **Stage and commit**
+   ```bash
+   git status                    # See what changed
+   git add apps/my-app/app.R     # Stage your files
+   git commit -m "Description of changes"
+   ```
+
+4. **Push to dev**
+   ```bash
+   git push origin dev
+   ```
+
+5. **Test on dev environment**
+   - Verify your changes work as expected
+   - Have others review if needed
+
+6. **Merge to main (when ready for production)**
+   
+   **Merging is done on GitHub, not locally:**
+   
+   a. Go to the repository on GitHub: [https://github.com/mmcdmn/mmcd_metrics](https://github.com/mmcdmn/mmcd_metrics)
+   
+   b. Click "Pull requests" tab
+   
+   c. Click "New pull request"
+   
+   d. Set base branch to `main` and compare branch to `dev`
+   
+   e. Review the changes, add a description
+   
+   f. Click "Create pull request"
+   
+   g. Wait for review/approval (if required)
+   
+   h. Click "Merge pull request" to deploy to production
+   
+   i. Once merged, the changes automatically deploy to AWS App Runner
+
+### Common Scenarios
+
+#### Pulling Latest Changes
+Before starting work, always pull the latest code:
+```bash
+git fetch
+git checkout dev
+git pull origin dev
+```
+
+#### Viewing Your Changes
+See what you've modified:
+```bash
+git status                    # Files changed
+git diff                      # See line-by-line changes
+git diff apps/my-app/app.R   # Changes in specific file
+```
+
+#### Undoing Changes
+If you made a mistake:
+```bash
+# Discard changes to a specific file
+git checkout -- path/to/file.R
+
+# Discard all uncommitted changes (careful!)
+git reset --hard
+```
+
+#### Viewing Commit History
+```bash
+git log                       # Full history
+git log --oneline             # Compact view
+git log --graph --oneline     # Visual branch history
+```
+
+### Best Practices
+
+1. **Always work on `dev` first** - Never push directly to `main`
+2. **Pull before you push** - Get latest changes to avoid conflicts
+3. **Commit often** - Small, focused commits are easier to review
+4. **Write clear commit messages** - Future you will thank present you
+5. **Test before merging to main** - Production should always be stable
+6. **Communicate with team** - Let others know about major changes
+
+### Handling Merge Conflicts
+
+If Git can't automatically merge your changes:
+
+1. **Identify conflicted files**
+   ```bash
+   git status
+   ```
+
+2. **Open conflicted files** - Look for conflict markers:
+   ```
+   <<<<<<< HEAD
+   Your changes
+   =======
+   Someone else's changes
+   >>>>>>> branch-name
+   ```
+
+3. **Resolve conflicts** - Edit files to keep the correct code
+
+4. **Mark as resolved and commit**
+   ```bash
+   git add conflicted-file.R
+   git commit -m "Resolve merge conflicts"
+   ```
+
+### Getting Help
+
+```bash
+git help                     # General help
+git help commit             # Help for specific command
+git status                  # Shows current state and helpful hints
+```
+
+For more information, see the [Git documentation](https://git-scm.com/doc) or contact a team member with Git experience.
+
+---
 
 ## Important Bug Fixes
 

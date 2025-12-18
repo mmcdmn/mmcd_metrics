@@ -142,9 +142,9 @@
 <li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval treatment records</li>
 <ul>
 <li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code>, <code>amts</code>, <code>wet</code></li>
-<li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = true</code></li>
-<li><strong>Action Code '2'</strong>: Ground inspection (used to detect dry sites after treatment for skipped status)</li>
-<li><strong>Wet Field</strong>: <code>'0'</code> = dry, <code>'1'</code> = wet (used with action='2' to identify skipped treatments)</li>
+<li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = 'prehatch'</code></li>
+<li><strong>Action Code '2'</strong>: Ground inspection only (used to detect dry sites after treatment for skipped status)</li>
+<li><strong>Wet Field</strong>: Numeric value (as text) for water depth, or <code>'A'</code> for flooded (used with action='2' to identify skipped treatments)</li>
 <li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code> - must join for these</li>
 <li><strong>Data Quality</strong>: Contains ongoing treatments, some may be planned vs executed</li>
 </ul>
@@ -154,7 +154,7 @@
 <li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval treatment records  </li>
 <ul>
 <li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>amts</code></li>
-<li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = true</code></li>
+<li><strong>Prehatch Filter</strong>: JOIN with <code>loc<em>breeding</em>sites</code> WHERE <code>prehatch = 'prehatch'</code></li>
 <li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code>, <code>airgrnd_plan</code> - must join for these</li>
 <li><strong>Data Quality</strong>: Historical closed treatments, generally more reliable than current</li>
 </ul>
@@ -169,13 +169,13 @@
 <li><code>sitecode</code>, <code>facility</code> (composite key)</li>
 <li><code>acres</code> (site capacity, not treated acres)</li>
 <li><code>enddate</code> (<strong>CRITICAL</strong>: NULL = active site, NOT NULL = closed site)</li>
-<li><code>prehatch</code> (boolean: <strong>TRUE = prehatch site</strong>, FALSE = standard site)</li>
-<li><code>drone</code> (values: 'Y', 'M', 'C' for drone-capable sites)</li>
+<li><code>prehatch</code> (text: <strong>'prehatch'</strong> = prehatch site, 'briquet' or NULL = standard site)</li>
+<li><code>drone</code> (values: 'Y', 'M', 'N', or NULL for drone eligibility)</li>
 <li><code>air_gnd</code> (alternate treatment designation)</li>
 <li><code>geom</code> (PostGIS geometry data for mapping, UTM projection)</li>
 </ul>
 <li><strong>Critical Join Logic</strong>: <strong>MUST filter <code>enddate IS NULL</code></strong> or risk including closed sites</li>
-<li><strong>Prehatch Logic</strong>: <strong>MUST filter <code>prehatch = true</code></strong> for prehatch-only analysis</li>
+<li><strong>Prehatch Logic</strong>: <strong>MUST filter <code>prehatch = 'prehatch'</code></strong> for prehatch-only analysis</li>
 <li><strong>Data Quality</strong>: Multiple rows per sitecode possible with different enddates</li>
 <li><strong>Usage</strong>: Source of truth for site characteristics, active status, and spatial coordinates</li>
 <li><strong>Spatial Data</strong>: Geometry stored in UTM projection, requires <code>ST_Transform(geom, 4326)</code> for web mapping</li>
@@ -228,7 +228,7 @@ LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num
   AND e.emp_type = 'FieldSuper' AND e.active = true
 LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
 WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
-  AND b.prehatch = true                                  -- Prehatch sites only
+  AND b.prehatch = 'prehatch'                            -- Prehatch sites only
 </code></pre>
 
 <p><strong>Note</strong>: See "SQL Queries Reference" section below for complete, up-to-date query implementations.</p>
@@ -275,7 +275,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
 
 <p><strong>Prehatch Site Identification:</strong></p>
 <ul>
-<li><strong>Primary Filter</strong>: <code>loc<em>breeding</em>sites.prehatch = true</code></li>
+<li><strong>Primary Filter</strong>: <code>loc<em>breeding</em>sites.prehatch = 'prehatch'</code> (or IN ('PREHATCH','BRIQUET') - case insensitive)</li>
 <li><strong>Definition</strong>: Sites designated for pre-hatch larval mosquito treatment</li>
 <li><strong>Treatment Timing</strong>: Typically treated earlier in season before mosquito emergence</li>
 <li><strong>Operational Context</strong>: May expire intentionally due to seasonal factors (drying, weather)</li>
@@ -301,7 +301,7 @@ WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
 <ol>
 <li>Query prehatch sites via <code>get<em>ground</em>prehatch_data()</code>:</li>
 <ul>
-<li>Filter for active prehatch sites (<code>prehatch = true</code>, <code>enddate IS NULL</code>)</li>
+<li>Filter for active prehatch sites (<code>prehatch = 'prehatch'</code>, <code>enddate IS NULL</code>)</li>
 <li>Join with zone and FOS assignments</li>
 <li>Return one record per site with characteristics</li>
 </ul>
@@ -656,14 +656,15 @@ ground_prehatch_progress/
 <p><strong>Prehatch Sites Calculation:</strong></p>
 <pre><code class="r">
 # Count UNIQUE prehatch sites (not treatments)
+# Note: prehatch column from database is text ('prehatch', 'briquet', or NULL)
 prehatch_sites &lt;- ground_sites %&gt;%
-  filter(prehatch == TRUE) %&gt;%
+  filter(prehatch == 'prehatch') %&gt;%  # Text comparison, not boolean
   group_by(!!sym(group_col)) %&gt;%
   summarize(prehatch_sites_cnt = n(), .groups = "drop")  # n() counts rows = sites
 
 # For zone separation
 prehatch_sites &lt;- ground_sites %&gt;%
-  filter(prehatch == TRUE) %&gt;%
+  filter(prehatch == 'prehatch') %&gt;%  # Text comparison
   group_by(combined_group, zone) %&gt;%
   summarize(prehatch_sites_cnt = n(), .groups = "drop")
 </code></pre>
@@ -672,7 +673,7 @@ prehatch_sites &lt;- ground_sites %&gt;%
 <pre><code class="r">
 # Sum acres from SITE records (loc_breeding_sites.acres)
 prehatch_acres &lt;- ground_sites %&gt;%
-  filter(prehatch == TRUE) %&gt;%
+  filter(prehatch == 'prehatch') %&gt;%  # Text comparison
   group_by(!!sym(group_col)) %&gt;%
   summarize(total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
 </code></pre>
@@ -859,14 +860,14 @@ JOIN (
     AND b.air_gnd='G'
     AND b.prehatch IN ('PREHATCH','BRIQUET')
 ) a ON c.sitecode = a.sitecode
-JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
 ORDER BY c.inspdate DESC, c.sitecode
 </code></pre>
 
 <p><strong>Key Points</strong>:</p>
 <ul>
 <li><strong>INNER JOINS</strong>: Uses INNER JOINs to ensure only treatments on valid ground prehatch sites</li>
-<li><strong>Material Filter</strong>: <code>WHERE prehatch IS TRUE</code> in mattype<em>list</em>targetdose ensures prehatch materials only</li>
+<li><strong>Material Filter</strong>: <code>WHERE prehatch = 'prehatch'</code> in mattype<em>list</em>targetdose ensures prehatch materials only</li>
 <li><strong>Ground Sites Only</strong>: Subquery filters for <code>air_gnd='G'</code> and prehatch types</li>
 <li><strong>Date Range</strong>: Filters treatments within analysis year range</li>
 </ul>
@@ -889,7 +890,7 @@ JOIN (
     AND b.air_gnd='G'
     AND b.prehatch IN ('PREHATCH','BRIQUET')
 ) a ON c.sitecode = a.sitecode
-JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
 
 UNION ALL
 
@@ -906,7 +907,7 @@ JOIN (
     AND b.air_gnd='G'
     AND b.prehatch IN ('PREHATCH','BRIQUET')
 ) a ON c.sitecode = a.sitecode
-JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
 
 ORDER BY inspdate DESC, sitecode
 </code></pre>
@@ -958,7 +959,7 @@ LEFT JOIN (
            c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
     FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate&gt;'%s-01-01' AND inspdate &lt;= '%s') c
     JOIN activesites_g a ON c.sitecode = a.sitecode
-    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
     ORDER BY a.sitecode, c.inspdate DESC, c.insptime DESC
   ) s_grd
   ORDER BY sitecode
@@ -1012,7 +1013,7 @@ LEFT JOIN (
            c.matcode, c.inspdate, p.effect_days, p.days_retrt_early
     FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate&gt;'2024-01-01' AND inspdate &lt;= '2024-11-19') c
     JOIN activesites_g a ON c.sitecode = a.sitecode
-    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+    JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
     ORDER BY a.sitecode, c.inspdate DESC, c.insptime DESC
   ) s_grd
   ORDER BY sitecode
@@ -1041,7 +1042,7 @@ SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
 FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate&gt;='%d-01-01' AND inspdate &lt;= '%d-12-31') c
 JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
 JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
 WHERE (b.enddate IS NULL OR b.enddate&gt;'%d-05-01')
   AND b.air_gnd='G'
   AND b.prehatch IN ('PREHATCH','BRIQUET')
@@ -1054,7 +1055,7 @@ SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
 FROM (SELECT * FROM dblarv_insptrt_archive WHERE inspdate&gt;='%d-01-01' AND inspdate &lt;= '%d-12-31') c
 JOIN loc_breeding_sites b ON c.sitecode = b.sitecode
 JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
+JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch = 'prehatch') p USING (matcode)
 WHERE (b.enddate IS NULL OR b.enddate&gt;'%d-05-01')
   AND b.air_gnd='G'
   AND b.prehatch IN ('PREHATCH','BRIQUET')

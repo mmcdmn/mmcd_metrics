@@ -203,14 +203,14 @@ server <- function(input, output, session) {
     
     withProgress(message = "Loading structure treatment data...", value = 0.5, {
       get_current_structure_data(
-        inputs$custom_today,
-        inputs$expiring_days,
-        inputs$facility_filter,
-        inputs$foreman_filter,
-        inputs$structure_type_filter,
-        inputs$priority_filter,
-        inputs$status_types,
-        inputs$zone_filter
+        analysis_date = inputs$custom_today,
+        expiring_days = inputs$expiring_days,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        structure_type_filter = inputs$structure_type_filter,
+        priority_filter = inputs$priority_filter,
+        status_types = inputs$status_types,
+        zone_filter = inputs$zone_filter
       )
     })
   })

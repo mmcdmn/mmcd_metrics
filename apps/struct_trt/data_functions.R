@@ -122,7 +122,7 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
 }
 
 # Function to get current structure treatment data
-get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days = 7, facility_filter = "all", foreman_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
+get_current_structure_data <- function(analysis_date = Sys.Date(), expiring_days = 7, facility_filter = "all", foreman_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -183,7 +183,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
         mutate(
           inspdate = as.Date(inspdate),
           enddate = inspdate + effect_days,
-          days_since_treatment = as.numeric(custom_today - inspdate),
+          days_since_treatment = as.numeric(analysis_date - inspdate),
           is_active = days_since_treatment <= effect_days,
           is_expiring = days_since_treatment > (effect_days - expiring_days) & days_since_treatment <= effect_days
         ) %>%
@@ -550,6 +550,14 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
     
     combined_data$group_name <- combined_data[[group_col]]
   }
+  
+  # Add standardized column names for cross-app consistency
+  combined_data <- combined_data %>%
+    mutate(
+      total_count = total_structures,
+      active_count = active_structures,
+      expiring_count = expiring_structures
+    )
   
   return(combined_data)
 }

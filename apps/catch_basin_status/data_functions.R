@@ -2,9 +2,16 @@
 # Functions for fetching and processing catch basin status data
 # Note: db_helpers.R is sourced by app.R before this file
 
+# Standard column names used across all apps:
+# - total_count: Total items in this group
+# - active_count: Items with active treatment (includes expiring)
+# - expiring_count: Items expiring within expiring_days
+# - expired_count: Items with expired treatment
+# - display_name: Human-readable group name
+
 # Load catch basin status data
 load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all", 
-                                   zone_filter = c("1", "2"), custom_today = Sys.Date(),
+                                   zone_filter = c("1", "2"), analysis_date = Sys.Date(),
                                    expiring_days = 14) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
@@ -123,7 +130,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
     
     ORDER BY o.facility, o.zone, o.fosarea, o.sectcode
     ", facility_clause, foreman_where, zone_where, foreman_where, zone_where, 
-       expiring_days, custom_today, custom_today, foreman_where, zone_where)
+       expiring_days, analysis_date, analysis_date, foreman_where, zone_where)
     
     data <- dbGetQuery(con, query)
     safe_disconnect(con)
@@ -133,6 +140,12 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
     data$count_wet_activetrt <- as.integer(data$count_wet_activetrt)
     data$count_wet_expiring <- as.integer(data$count_wet_expiring)
     data$count_wet_expired <- as.integer(data$count_wet_expired)
+    
+    # Add standardized column names (aliases for consistent API)
+    data$total_count <- data$wet_cb_count
+    data$active_count <- data$count_wet_activetrt
+    data$expiring_count <- data$count_wet_expiring
+    data$expired_count <- data$count_wet_expired
     
     # Map facility short names to full names using db_helpers
     facilities <- get_facility_lookup()
@@ -171,7 +184,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
   })
 }
 
-# Process catch basin data for display
+# Process catch basin data for display - aggregates by group_by with standard column names
 process_catch_basin_data <- function(data, group_by = "facility", combine_zones = FALSE, expiring_filter = "all") {
   if (is.null(data) || nrow(data) == 0) {
     return(data.frame())
@@ -310,7 +323,12 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       pct_treated = ifelse(wet_cb_count > 0, 
                           (count_wet_activetrt / wet_cb_count) * 100, 
                           0),
-      untreated_count = wet_cb_count - count_wet_activetrt
+      untreated_count = wet_cb_count - count_wet_activetrt,
+      # Add standardized column names
+      total_count = wet_cb_count,
+      active_count = count_wet_activetrt,
+      expiring_count = count_wet_expiring,
+      expired_count = count_wet_expired
     )
   
   # Remove rows with no data

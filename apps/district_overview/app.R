@@ -99,7 +99,7 @@ server <- function(input, output, session) {
       cb_data <- tryCatch({
         result <- load_catch_basin_overview(
           zone_filter = inputs$zone_filter,
-          custom_today = inputs$custom_today,
+          analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           separate_zones = inputs$separate_zones
         )
@@ -133,7 +133,7 @@ server <- function(input, output, session) {
       ground_data <- tryCatch({
         result <- load_ground_prehatch_overview(
           zone_filter = inputs$zone_filter,
-          simulation_date = inputs$custom_today,
+          analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           separate_zones = inputs$separate_zones
         )
@@ -150,7 +150,7 @@ server <- function(input, output, session) {
       struct_data <- tryCatch({
         result <- load_structure_overview(
           zone_filter = inputs$zone_filter,
-          custom_today = inputs$custom_today,
+          analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           separate_zones = inputs$separate_zones
         )

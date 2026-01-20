@@ -76,7 +76,7 @@ server <- function(input, output, session) {
       facility_filter = isolate(input$facility_filter),
       foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
-      custom_today = isolate(input$custom_today),
+      analysis_date = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
       expiring_filter = isolate(input$expiring_filter)
     )
@@ -204,7 +204,7 @@ server <- function(input, output, session) {
         facility_filter = inputs$facility_filter,
         foreman_filter = inputs$foreman_filter,
         zone_filter = inputs$zone_filter,
-        custom_today = inputs$custom_today,
+        analysis_date = inputs$analysis_date,
         expiring_days = inputs$expiring_days
       )
     })

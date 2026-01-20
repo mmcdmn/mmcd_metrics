@@ -425,6 +425,14 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     }
   }
   
+  # Add standardized column names for cross-app consistency
+  combined_data <- combined_data %>%
+    mutate(
+      total_count = total_sites,
+      active_count = active_sites,
+      expiring_count = expiring_sites
+    )
+  
   return(list(
     data = combined_data,
     sectcode_facility_mapping = sectcode_facility_mapping

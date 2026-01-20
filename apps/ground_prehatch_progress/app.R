@@ -177,10 +177,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
     withProgress(message = "Loading ground prehatch data...", value = 0.5, {
-      get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+      get_ground_prehatch_data(inputs$zone_filter, analysis_date, inputs$expiring_days)
     })
   })
   
@@ -189,10 +189,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
     withProgress(message = "Loading site details...", value = 0.5, {
-      get_site_details_data(inputs$expiring_days, simulation_date)
+      get_site_details_data(inputs$expiring_days, analysis_date)
     })
   })
   

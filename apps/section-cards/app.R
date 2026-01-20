@@ -105,6 +105,18 @@ ui <- fluidPage(
           padding: 0 !important;
         }
       }
+    ")),
+    
+    # JavaScript for scroll position
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('restoreScroll', function(message) {
+        setTimeout(function() {
+          var element = document.getElementById('column_order_ui');
+          if (element) {
+            element.scrollTop = message.position;
+          }
+        }, 100);
+      });
     "))
   ),
 
@@ -333,8 +345,8 @@ server <- function(input, output, session) {
     }
     if (changed) {
       column_choices(cols)
-      # Restore scroll position after checkbox changes
-      runjs(sprintf("setTimeout(function() { $('#column_order_ui').scrollTop(%d); }, 100);", scroll_position()))
+      # Restore scroll position after checkbox changes using JavaScript injection
+      session$sendCustomMessage("restoreScroll", list(position = scroll_position()))
     }
   })
   
@@ -352,7 +364,7 @@ server <- function(input, output, session) {
       cols[c(idx-1, idx)] <- cols[c(idx, idx-1)]
       column_choices(cols)
       # Restore scroll position after a brief delay
-      runjs(sprintf("setTimeout(function() { $('#column_order_ui').scrollTop(%d); }, 50);", scroll_position()))
+      session$sendCustomMessage("restoreScroll", list(position = scroll_position()))
     }
   })
   
@@ -365,7 +377,7 @@ server <- function(input, output, session) {
       cols[c(idx, idx+1)] <- cols[c(idx+1, idx)]
       column_choices(cols)
       # Restore scroll position after a brief delay
-      runjs(sprintf("setTimeout(function() { $('#column_order_ui').scrollTop(%d); }, 50);", scroll_position()))
+      session$sendCustomMessage("restoreScroll", list(position = scroll_position()))
     }
   })
   

@@ -111,8 +111,7 @@ ui <- fluidPage(
       }
     "))
   ),
-  
-  titlePanel("Section Cards DEMO (by Alex Dyakin)"),
+
   
   sidebarLayout(
     sidebarPanel(
@@ -140,10 +139,8 @@ ui <- fluidPage(
         class = "help-block",
         style = "margin-top: 10px; font-size: 12px;",
         HTML("<strong>How to Print/Save as PDF:</strong><br/>
-             1. Click 'Generate Cards' to create the cards<br/>
-             2. Use the browser's print function (Ctrl+P / Cmd+P)<br/>
-             3. Select 'Save as PDF' as the destination<br/>
-             4. Or download HTML file and open in browser to print<br/>
+             <strong>Option 1 - Quick Print:</strong> Click 'Generate Cards' then use browser print (Ctrl+P / Cmd+P)<br/>
+             <strong>Option 2 - Download First:</strong> Use 'Download as HTML' button (shows progress), then open file and print<br/>
              <br/>
              <em>The layout is optimized for Letter size paper with 6 cards per page.</em>")
       )
@@ -513,6 +510,20 @@ server <- function(input, output, session) {
     content = function(file) {
       req(cards_data())
       
+      # Show progress modal
+      showModal(modalDialog(
+        div(
+          class = "loading-overlay",
+          div(class = "loading-spinner"),
+          div(class = "loading-text", "Preparing download, please wait...")
+        ),
+        footer = NULL,
+        easyClose = FALSE
+      ))
+      
+      # Small delay to show progress indicator
+      Sys.sleep(0.5)
+      
       # Apply same filters as generate cards
       filtered <- cards_data()
       
@@ -542,6 +553,51 @@ server <- function(input, output, session) {
       
       title_fields <- c("sitecode", input$title_fields)
       
+      # Get table fields from column ordering system (same as main generation)
+      cols <- column_choices()
+      table_fields <- sapply(cols[sapply(cols, function(x) x$selected)], function(x) x$id)
+      
+      if (length(table_fields) == 0) {
+        removeModal()
+        showNotification(
+          "Please select at least one table column.",
+          type = "warning"
+        )
+        return()
+      }
+      
+      # Update progress
+      showModal(modalDialog(
+        div(
+          class = "loading-overlay",
+          div(class = "loading-spinner"),
+          div(class = "loading-text", "Generating HTML content...")
+        ),
+        footer = NULL,
+        easyClose = FALSE
+      ))
+      
+      # Generate HTML with progress tracking
+      html_cards <- generate_section_cards_html(
+        filtered,
+        title_fields,
+        table_fields,
+        input$num_rows,
+        input$split_by_section,
+        input$split_by_priority
+      )
+      
+      # Update progress
+      showModal(modalDialog(
+        div(
+          class = "loading-overlay",
+          div(class = "loading-spinner"),
+          div(class = "loading-text", "Creating download file...")
+        ),
+        footer = NULL,
+        easyClose = FALSE
+      ))
+      
       # Create complete HTML document
       html_content <- paste0(
         '<!DOCTYPE html>
@@ -551,25 +607,17 @@ server <- function(input, output, session) {
   <title>Section Cards - ', format(Sys.Date(), "%Y-%m-%d"), '</title>
 </head>
 <body>
-  <h1 style="text-align: center; font-family: Arial;">MMCD Section Cards</h1>
-  <p style="text-align: center; font-family: Arial; color: #666;">
-    Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M"), '
-  </p>
   ',
-        generate_section_cards_html(
-          filtered,
-          title_fields,
-          input$table_fields,
-          input$num_rows,
-          input$split_by_section,
-          input$split_by_priority
-        ),
+        html_cards,
         '
 </body>
 </html>'
       )
       
       writeLines(html_content, file)
+      
+      # Remove progress modal
+      removeModal()
       
       showNotification(
         "HTML file downloaded. Open in browser and use Ctrl+P to print or save as PDF.",

@@ -252,6 +252,28 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       font-size: 10px;
     }
     
+    .page-footer {
+      position: fixed;
+      bottom: 10px;
+      right: 20px;
+      font-size: 8px;
+      color: #999;
+      font-style: italic;
+      z-index: 1000;
+    }
+    
+    @media print {
+      .page-footer {
+        position: fixed;
+        bottom: 0.5in;
+        right: 0.5in;
+        font-size: 8pt;
+        color: #999 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+    
     @media screen {
       .cards-container {
         padding: 20px;
@@ -359,6 +381,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   }
   
   html <- paste0(html, '</div>')
+  html <- paste0(html, '<div class="page-footer">Section Cards by Alex Dyakin</div>')
   
   return(html)
 }

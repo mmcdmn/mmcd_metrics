@@ -245,11 +245,27 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       text-align: center;
     }
     
+    .card-table th.col-odd {
+      background: #f0f0f0;
+    }
+    
+    .card-table th.col-even {
+      background: #e8e8e8;
+    }
+    
     .card-table td {
       border: 1px solid #333;
       padding: 4px;
       height: 25px;
       font-size: 10px;
+    }
+    
+    .card-table td.col-odd {
+      background: #fafafa;
+    }
+    
+    .card-table td.col-even {
+      background: #f0f0f0;
     }
     
     .page-footer {
@@ -477,9 +493,11 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   html <- paste0(html, '    <table class="card-table">\n')
   html <- paste0(html, '      <thead><tr>\n')
   
-  for (field in table_fields) {
+  for (i in seq_along(table_fields)) {
+    field <- table_fields[i]
     label <- field_labels[[field]]
-    html <- paste0(html, '        <th>', label, '</th>\n')
+    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+    html <- paste0(html, '        <th class="', col_class, '">', label, '</th>\n')
   }
   
   html <- paste0(html, '      </tr></thead>\n')
@@ -488,8 +506,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   # Add empty rows for data entry
   for (j in 1:num_rows) {
     html <- paste0(html, '        <tr>\n')
-    for (field in table_fields) {
-      html <- paste0(html, '          <td></td>\n')
+    for (i in seq_along(table_fields)) {
+      col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+      html <- paste0(html, '          <td class="', col_class, '"></td>\n')
     }
     html <- paste0(html, '        </tr>\n')
   }

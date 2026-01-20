@@ -96,15 +96,13 @@ ui <- fluidPage(
                   choices = c("P1 + P2" = "all", "P1" = "1", "P2" = "2"),
                   selected = "all"),
       
-      # Filter by facility (multi-select)
-      selectizeInput("facility_filter", "Facility:",
-                  choices = c("All"),  # Will be populated from get_facility_lookup()
-                  selected = "All", multiple = TRUE),
+      # Filter by facility (single-select)
+      selectInput("facility_filter", "Facility:",
+                  choices = NULL),
       
-      # Filter by foreman (multi-select, populated dynamically)
+      # Filter by foreman (multi-select, populated dynamically based on facility)
       selectizeInput("foreman_filter", "FOS:",
-                  choices = c("All"),
-                  selected = "All", multiple = TRUE),
+                  choices = NULL, multiple = TRUE),
       
       # Add species filter to sidebarPanel
       selectInput("species_filter", "Species:", choices = c("All"), selected = "All"),
@@ -228,23 +226,47 @@ server <- function(input, output, session) {
     )
   })
   
-  # Date shortcut handlers - behavior depends on active tab
-  # Initialize facility choices from db_helpers
+  # Initialize facility choices from db_helpers - runs immediately on app load
   observe({
-    facilities <- get_facility_lookup()
-    # Create named vector with full names as labels and short names as values
-    facility_choices <- c("All" = "All")
-    facility_choices <- c(
-      facility_choices,
-      setNames(facilities$short_name, facilities$full_name)
-    )
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices)
+    facility_choices <- get_facility_choices()
+    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
   })
   
-  # Initialize FOS choices from db_helpers
+  # Initialize foreman choices from db_helpers - runs immediately on app load
   observe({
-    foreman_choices <- get_foreman_choices(include_all = TRUE)
-    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
+    foremen_lookup <- get_foremen_lookup()
+    foremen_choices <- c("All" = "all")
+    foremen_choices <- c(
+      foremen_choices,
+      setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+    )
+    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+  })
+  
+  # Update FOS choices when facility changes
+  observeEvent(input$facility_filter, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility_filter == "all") {
+      # Show all FOS when "All Facilities" is selected
+      foremen_choices <- c("All" = "all")
+      foremen_choices <- c(
+        foremen_choices,
+        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      )
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility_filter, ]
+      foremen_choices <- c("All" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        foremen_choices <- c(
+          foremen_choices,
+          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        )
+      }
+    }
+    
+    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
   
   # Initialize species choices from db_helpers
@@ -277,17 +299,13 @@ server <- function(input, output, session) {
   # Filter data based on user selections
   filtered_data <- reactive({
     data <- suco_data()
-    # Convert zone selection to the format expected by filter_suco_data
-    zones <- convert_zone_selection(input$zone_filter)
-    filter_suco_data(data, input$facility_filter, input$foreman_filter, zones, input$date_range, input$species_filter)
+    filter_suco_data(data, input$facility_filter, input$foreman_filter, input$zone_filter, input$date_range, input$species_filter)
   })
   
   # Filter current data based on user selections
   filtered_data_current <- reactive({
     data <- suco_data_current()
-    # Convert zone selection to the format expected by filter_suco_data
-    zones <- convert_zone_selection(input$zone_filter)
-    filter_suco_data(data, input$facility_filter, input$foreman_filter, zones, input$date_range, input$species_filter)
+    filter_suco_data(data, input$facility_filter, input$foreman_filter, input$zone_filter, input$date_range, input$species_filter)
   })
   
   # Process spatial data for mapping
@@ -307,8 +325,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Require refresh button click
     inputs <- refresh_inputs()
     data <- filtered_data()
-    zones <- convert_zone_selection(inputs$zone_filter)
-    aggregate_suco_data(data, inputs$group_by, zones)
+    aggregate_suco_data(data, inputs$group_by, inputs$zone_filter)
   })
   
   # Aggregate current data by selected time interval and grouping
@@ -316,8 +333,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Require refresh button click
     inputs <- refresh_inputs()
     data <- filtered_data_current()
-    zones <- convert_zone_selection(inputs$zone_filter)
-    aggregate_suco_data(data, inputs$group_by, zones)
+    aggregate_suco_data(data, inputs$group_by, inputs$zone_filter)
   })
   
   # Generate trend plot

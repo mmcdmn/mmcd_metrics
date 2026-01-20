@@ -39,6 +39,11 @@ create_field_selector <- function() {
         "Split by section (each section on separate pages)",
         value = FALSE
       ),
+      checkboxInput(
+        "split_by_priority",
+        "Split by priority (each priority on separate pages)",
+        value = FALSE
+      ),
       selectInput(
         "filter_air_gnd",
         "Air/Ground:",

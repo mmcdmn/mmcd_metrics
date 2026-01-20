@@ -385,22 +385,27 @@ WHERE ainspecnum IS NOT NULL
 
 # Filter SUCO data based on UI inputs
 filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter, date_range, species_filter = "All") {
+  # Return empty data frame if input is empty or NULL
+  if (is.null(data) || nrow(data) == 0) {
+    return(data.frame())
+  }
+  
   filtered_data <- data
   
   # Apply zone filter
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+  if (!is.null(zone_filter) && length(zone_filter) > 0 && zone_filter != "all" && "zone" %in% names(filtered_data)) {
     filtered_data <- filtered_data %>%
       filter(zone %in% zone_filter)
   }
   
-  # Apply facility filter
-  if (!is.null(facility_filter) && !("All" %in% facility_filter)) {
+  # Apply facility filter (single-select)
+  if (!is.null(facility_filter) && facility_filter != "all" && "facility" %in% names(filtered_data)) {
     filtered_data <- filtered_data %>%
-      filter(facility %in% facility_filter)
+      filter(facility == facility_filter)
   }
   
   # Apply foreman filter  
-  if (!is.null(foreman_filter) && !("all" %in% tolower(foreman_filter))) {
+  if (!is.null(foreman_filter) && !("all" %in% tolower(foreman_filter)) && "foreman" %in% names(filtered_data)) {
     # Convert shortnames to emp_nums for filtering
     foremen_lookup <- get_foremen_lookup()
     
@@ -418,7 +423,7 @@ filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter,
   }
   
   # Apply species filter - check if species appears in species_summary
-  if (!is.null(species_filter) && species_filter != "All") {
+  if (!is.null(species_filter) && species_filter != "All" && "species_summary" %in% names(filtered_data)) {
     filtered_data <- filtered_data %>%
       filter(grepl(species_filter, species_summary, fixed = TRUE))
   }

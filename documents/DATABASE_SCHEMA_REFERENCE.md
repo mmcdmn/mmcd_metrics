@@ -43,7 +43,7 @@ The database contains the following tables (organized by category):
 
 **Location Tables**:
 - `loc_breeding_sites` - Breeding site locations (AIR, cattail, ground, etc.)
-- `loc_cxstruct` - Structural breeding sites (not catch basins)
+- `loc_cxstruct` - Structure breeding sites (not catch basins)
 - `loc_harborage` - Adult mosquito harborage sites (SUCO locations)
 - `loc_catchbasin` - Catch basin locations
 - `loc_mondaynight` / `loc_mondaynight_active` - Monday night trap network

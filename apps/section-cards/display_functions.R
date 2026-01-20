@@ -11,8 +11,9 @@
 #' @param table_fields Vector of field names to display in table
 #' @param num_rows Number of empty rows to include in each card table
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
+#' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -268,35 +269,67 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   <div class="cards-container">
   '
   
-  # If split by section, group data by section first
-  if (split_by_section && "section" %in% names(data)) {
-    # Sort by section
-    data <- data[order(data$section), ]
-    sections <- unique(data$section)
+  # Handle splitting by section and/or priority
+  if (split_by_section || split_by_priority) {
+    # Determine grouping columns
+    grouping_cols <- c()
+    if (split_by_section && "section" %in% names(data)) {
+      grouping_cols <- c(grouping_cols, "section")
+    }
+    if (split_by_priority && "priority" %in% names(data)) {
+      grouping_cols <- c(grouping_cols, "priority")
+    }
     
-    # Process each section separately
-    for (sect_idx in seq_along(sections)) {
-      sect <- sections[sect_idx]
-      sect_data <- data[data$section == sect, ]
+    # Sort by grouping columns
+    if (length(grouping_cols) > 0) {
+      data <- data[do.call(order, data[grouping_cols]), ]
       
-      # Group cards into pages of 6 for this section
+      # Create grouping combinations
+      if (length(grouping_cols) == 1) {
+        groups <- unique(data[[grouping_cols[1]]])
+        group_data_list <- lapply(groups, function(g) {
+          data[data[[grouping_cols[1]]] == g, ]
+        })
+        group_names <- groups
+      } else {
+        # Multiple grouping columns - create combination groups
+        data$temp_group <- do.call(paste, c(data[grouping_cols], sep = "_"))
+        groups <- unique(data$temp_group)
+        group_data_list <- lapply(groups, function(g) {
+          subset_data <- data[data$temp_group == g, ]
+          subset_data$temp_group <- NULL
+          subset_data
+        })
+        group_names <- groups
+      }
+    } else {
+      # No valid grouping columns, treat as normal mode
+      group_data_list <- list(data)
+      group_names <- "all"
+    }
+    
+    # Process each group separately
+    for (grp_idx in seq_along(group_data_list)) {
+      grp_data <- group_data_list[[grp_idx]]
+      
+      # Group cards into pages of 6 for this group
       cards_per_page <- 6
-      num_pages <- ceiling(nrow(sect_data) / cards_per_page)
+      num_pages <- ceiling(nrow(grp_data) / cards_per_page)
       
       for (page in 1:num_pages) {
         start_idx <- (page - 1) * cards_per_page + 1
-        end_idx <- min(page * cards_per_page, nrow(sect_data))
+        end_idx <- min(page * cards_per_page, nrow(grp_data))
         
-        # Add page break after each section (except last)
-        is_last_section <- (sect_idx == length(sections))
+        # Add page break after each group (except last)
+        is_last_group <- (grp_idx == length(group_data_list))
         is_last_page <- (page == num_pages)
-        add_page_break <- !(is_last_section && is_last_page)
+        add_page_break <- !(is_last_group && is_last_page)
         
         html <- paste0(html, '<div class="card-page', 
                        ifelse(add_page_break, ' page-break', ''), '">\n')
         
         for (i in start_idx:end_idx) {
-          html <- paste0(html, generate_card_html(sect_data[i, ], title_fields, table_fields, num_rows, 
+          html <- paste0(html, generate_card_html(grp_data[i, ], title_fields, table_fields, num_rows, 
                                     field_labels, facility_map, fos_map))
         }
         

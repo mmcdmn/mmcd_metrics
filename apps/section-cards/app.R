@@ -3,6 +3,7 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
+  library(shinyjs)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -32,14 +33,71 @@ load_env_vars()
 
 ui <- fluidPage(
   
+  # Initialize shinyjs
+  useShinyjs(),
+  
   # Custom CSS for print button and layout
   tags$head(
     tags$style(HTML("
+      body, p, div, span, td, th, label, .help-block {
+        font-size: 16px !important;
+      }
+      h1 { font-size: 32px !important; }
+      h2 { font-size: 28px !important; }
+      h3 { font-size: 24px !important; }
+      h4 { font-size: 20px !important; }
+      .btn { font-size: 16px !important; }
       .print-button {
         position: sticky;
         top: 10px;
         z-index: 1000;
         margin-bottom: 20px;
+      }
+      .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.9);
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 40px;
+        box-sizing: border-box;
+      }
+      .modal-dialog {
+        max-width: none !important;
+        margin: 0 !important;
+        height: 100vh !important;
+        width: 100vw !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      .modal-content {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      .loading-spinner {
+        border: 8px solid #f3f3f3;
+        border-top: 8px solid #3498db;
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .loading-text {
+        margin-top: 20px;
+        font-size: 18px !important;
+        color: #333;
       }
       @media print {
         .sidebar, .print-button, .no-print {
@@ -224,9 +282,9 @@ server <- function(input, output, session) {
     list(id = "wet_pct", label = "Wet %", selected = TRUE),
     list(id = "emp_num", label = "Emp #", selected = TRUE),
     list(id = "num_dip", label = "#/Dip", selected = TRUE),
-    list(id = "sample_num", label = "Sample #", selected = FALSE),
-    list(id = "amt", label = "Amt", selected = FALSE),
-    list(id = "mat", label = "Mat", selected = FALSE)
+    list(id = "sample_num", label = "Sample #", selected = TRUE),
+    list(id = "amt", label = "Amt", selected = TRUE),
+    list(id = "mat", label = "Mat", selected = TRUE)
   ))
   
   # Render column ordering UI
@@ -234,7 +292,9 @@ server <- function(input, output, session) {
     cols <- column_choices()
     
     tags$div(
+      id = "column_order_ui",
       style = "max-height: 300px; overflow-y: auto;",
+      onscroll = "Shiny.setInputValue('column_scroll_position', this.scrollTop);",
       lapply(seq_along(cols), function(i) {
         col <- cols[[i]]
         tags$div(
@@ -263,17 +323,31 @@ server <- function(input, output, session) {
     )
   })
   
+  # Store scroll position
+  scroll_position <- reactiveVal(0)
+  
   # Update column selected state
   observe({
     cols <- column_choices()
+    changed <- FALSE
     for (i in seq_along(cols)) {
       col <- cols[[i]]
       check_val <- input[[paste0("col_check_", col$id)]]
       if (!is.null(check_val) && check_val != col$selected) {
         cols[[i]]$selected <- check_val
-        column_choices(cols)
+        changed <- TRUE
       }
     }
+    if (changed) {
+      column_choices(cols)
+      # Restore scroll position after checkbox changes
+      runjs(sprintf("setTimeout(function() { $('#column_order_ui').scrollTop(%d); }, 100);", scroll_position()))
+    }
+  })
+  
+  # Capture scroll position before changes
+  observeEvent(input$column_scroll_position, {
+    scroll_position(input$column_scroll_position)
   })
   
   # Move column up
@@ -284,6 +358,8 @@ server <- function(input, output, session) {
     if (length(idx) > 0 && idx > 1) {
       cols[c(idx-1, idx)] <- cols[c(idx, idx-1)]
       column_choices(cols)
+      # Restore scroll position after a brief delay
+      runjs(sprintf("setTimeout(function() { $('#column_order_ui').scrollTop(%d); }, 50);", scroll_position()))
     }
   })
   
@@ -295,35 +371,32 @@ server <- function(input, output, session) {
     if (length(idx) > 0 && idx < length(cols)) {
       cols[c(idx, idx+1)] <- cols[c(idx+1, idx)]
       column_choices(cols)
+      # Restore scroll position after a brief delay
+      runjs(sprintf("setTimeout(function() { $('#column_order_ui').scrollTop(%d); }, 50);", scroll_position()))
     }
   })
   
   # Generate cards when button is clicked
   observeEvent(input$generate_cards, {
     
-    # Show loading notification
-    loading_id <- showNotification(
-      "Loading breeding sites data...",
-      duration = NULL,
-      closeButton = FALSE,
-      type = "message"
-    )
+    # Show loading overlay
+    showModal(modalDialog(
+      div(
+        class = "loading-overlay",
+        div(class = "loading-spinner"),
+        div(class = "loading-text", "Generating section cards, please wait...")
+      ),
+      footer = NULL,
+      easyClose = FALSE
+    ))
     
     # Load full dataset only when Generate Cards is clicked
     tryCatch({
       data <- get_breeding_sites_with_sections()
       cards_data(data)
       
-      removeNotification(loading_id)
-      
-      showNotification(
-        paste("Loaded", nrow(data), "breeding sites"),
-        duration = 2,
-        type = "message"
-      )
-      
     }, error = function(e) {
-      removeNotification(loading_id)
+      removeModal()
       showNotification(
         paste("Error loading data:", e$message),
         type = "error",
@@ -377,21 +450,7 @@ server <- function(input, output, session) {
     }
     
     if (nrow(filtered) == 0) {
-      showNotification(
-        "No sites match the selected filters.",
-        type = "warning"
-      )
-      output$section_cards <- renderUI({
-        div(
-          style = "text-align: center; padding: 50px;",
-          h4("No sites match the selected filters"),
-          p("Try adjusting your filter settings")
-        )
-      })
-      return()
-    }
-    
-    if (nrow(filtered) == 0) {
+      removeModal()
       showNotification(
         "No sites match the selected filters.",
         type = "warning"
@@ -427,13 +486,17 @@ server <- function(input, output, session) {
       title_fields,
       table_fields,
       input$num_rows,
-      input$split_by_section
+      input$split_by_section,
+      input$split_by_priority
     )
     
     # Render the cards
     output$section_cards <- renderUI({
       HTML(cards_html)
     })
+    
+    # Remove loading overlay
+    removeModal()
     
     showNotification(
       paste("Generated", nrow(filtered), "section cards"),
@@ -497,7 +560,9 @@ server <- function(input, output, session) {
           filtered,
           title_fields,
           input$table_fields,
-          input$num_rows
+          input$num_rows,
+          input$split_by_section,
+          input$split_by_priority
         ),
         '
 </body>

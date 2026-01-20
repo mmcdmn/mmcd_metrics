@@ -146,7 +146,7 @@ The database contains the following tables (organized by category):
 **Important Notes**:
 - **Missing zone/facility data**: Not all records have `zone` or `facility`. Always join with `gis_sectcode` for complete coverage.
 - **Cattail operations**: Use `action = '9'` for inspections, `action IN ('3', 'A')` for treatments
-- **Prehatch treatments**: Join with `mattype_list_targetdose` where `prehatch = 'prehatch'`
+- **Prehatch treatments**: Join with `mattype_list_targetdose` where `prehatch = 'prehatch'` or where `prehatch = 'briquet'`
 
 ---
 

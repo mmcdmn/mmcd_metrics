@@ -3,7 +3,6 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
-  library(shinyjs)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -32,9 +31,6 @@ load_env_vars()
 # =============================================================================
 
 ui <- fluidPage(
-  
-  # Initialize shinyjs
-  useShinyjs(),
   
   # Custom CSS for print button and layout
   tags$head(

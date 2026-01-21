@@ -1,17 +1,7 @@
 # Ground Prehatch Treatment Progress
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(DT)
-  library(plotly)
-  library(tidyr)
-})
 
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 

@@ -1,21 +1,7 @@
 # drone site Status App
 
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(lubridate)
-  library(DT)
-  library(leaflet)
-  library(sf)
-  library(RColorBrewer)
-})
-
-# Source shared helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 

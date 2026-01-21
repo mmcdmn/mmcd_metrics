@@ -1,22 +1,7 @@
 # struct status App
 
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(lubridate)
-  library(rlang)
-  library(purrr)  # For map_dfr function
-  library(tibble) # For deframe function
-  library(scales) # For percentage and number formatting
-  library(DT)     # For data tables
-  library(plotly) # For interactive plots
-})
-
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 

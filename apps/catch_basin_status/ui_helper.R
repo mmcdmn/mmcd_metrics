@@ -373,7 +373,7 @@ create_historical_filter_panel <- function() {
           condition = "input.hist_time_period == 'yearly'",
           radioButtons("hist_display_metric_yearly", "Display Metric:",
                      choices = c("Total Treatments" = "treatments",
-                                "Unique Wet CB Treated" = "wet_cb_count"),
+                                "Unique Wet CB Treated" = "total_count"),
                      selected = "treatments",
                      inline = TRUE)
         ),

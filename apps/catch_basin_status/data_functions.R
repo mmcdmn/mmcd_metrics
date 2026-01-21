@@ -47,10 +47,10 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
            o.zone,
            o.fosarea,
            o.sectcode,
-           COALESCE(wet.wet_cb_count, 0)::integer AS wet_cb_count,
-           COALESCE(t.count_wet_activetrt, 0)::integer AS count_wet_activetrt,
-           COALESCE(t.count_wet_expiring, 0)::integer AS count_wet_expiring,
-           COALESCE(t.count_wet_expired, 0)::integer AS count_wet_expired
+           COALESCE(wet.total_count, 0)::integer AS total_count,
+           COALESCE(t.active_count, 0)::integer AS active_count,
+           COALESCE(t.expiring_count, 0)::integer AS expiring_count,
+           COALESCE(t.expired_count, 0)::integer AS expired_count
     FROM (SELECT DISTINCT g.abbrv AS facility, sc.zone, sc.fosarea, sc.sectcode 
           FROM gis_facility g
           CROSS JOIN gis_sectcode sc
@@ -62,7 +62,7 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
     LEFT JOIN 
     (SELECT loc_catchbasin.facility,
             left(loc_catchbasin.sitecode,7) as sectcode,
-            count(*) AS wet_cb_count
+            count(*) AS total_count
      FROM loc_catchbasin
      LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode,7)=sc.sectcode
      WHERE loc_catchbasin.enddate IS NULL 
@@ -77,9 +77,9 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
     (
       SELECT cbstat.facility,
              cbstat.sectcode,
-             count(*) FILTER (WHERE cbstat.active_status IN ('treated','expiring')) AS count_wet_activetrt,
-             count(*) FILTER (WHERE cbstat.active_status = 'expiring') AS count_wet_expiring,
-             count(*) FILTER (WHERE cbstat.active_status = 'expired') AS count_wet_expired
+             count(*) FILTER (WHERE cbstat.active_status IN ('treated','expiring')) AS active_count,
+             count(*) FILTER (WHERE cbstat.active_status = 'expiring') AS expiring_count,
+             count(*) FILTER (WHERE cbstat.active_status = 'expired') AS expired_count
       FROM 		  
       -- Recreating catchbasin_status to include Facility
       ( SELECT s_tcb.gid,
@@ -135,17 +135,11 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
     data <- dbGetQuery(con, query)
     safe_disconnect(con)
     
-    # Ensure numeric types (should be handled by query, but double-check)
-    data$wet_cb_count <- as.integer(data$wet_cb_count)
-    data$count_wet_activetrt <- as.integer(data$count_wet_activetrt)
-    data$count_wet_expiring <- as.integer(data$count_wet_expiring)
-    data$count_wet_expired <- as.integer(data$count_wet_expired)
-    
-    # Add standardized column names (aliases for consistent API)
-    data$total_count <- data$wet_cb_count
-    data$active_count <- data$count_wet_activetrt
-    data$expiring_count <- data$count_wet_expiring
-    data$expired_count <- data$count_wet_expired
+    # Ensure numeric types
+    data$total_count <- as.integer(data$total_count)
+    data$active_count <- as.integer(data$active_count)
+    data$expiring_count <- as.integer(data$expiring_count)
+    data$expired_count <- as.integer(data$expired_count)
     
     # Map facility short names to full names using db_helpers
     facilities <- get_facility_lookup()
@@ -194,11 +188,11 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
   if (expiring_filter == "expiring") {
     # Keep only sites that are expiring
     data <- data %>%
-      filter(count_wet_expiring > 0)
+      filter(expiring_count > 0)
   } else if (expiring_filter == "expiring_expired") {
     # Keep only sites that are expiring or expired
     data <- data %>%
-      filter(count_wet_expiring > 0 | count_wet_expired > 0)
+      filter(expiring_count > 0 | expired_count > 0)
   }
   
   # Apply grouping
@@ -208,10 +202,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       summarise(
         display_name = "All MMCD",
         group_name = "mmcd_all",
-        wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-        count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-        count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-        count_wet_expired = sum(count_wet_expired, na.rm = TRUE)
+        total_count = sum(total_count, na.rm = TRUE),
+        active_count = sum(active_count, na.rm = TRUE),
+        expiring_count = sum(expiring_count, na.rm = TRUE),
+        expired_count = sum(expired_count, na.rm = TRUE)
       )
   } else if (group_by == "facility") {
     # Group by facility (and optionally zone)
@@ -220,10 +214,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       processed <- data %>%
         group_by(facility, facility_full) %>%
         summarise(
-          wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-          count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-          count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-          count_wet_expired = sum(count_wet_expired, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
+          expired_count = sum(expired_count, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -235,10 +229,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       processed <- data %>%
         group_by(facility, facility_full, zone) %>%
         summarise(
-          wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-          count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-          count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-          count_wet_expired = sum(count_wet_expired, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
+          expired_count = sum(expired_count, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -252,10 +246,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       processed <- data %>%
         group_by(fosarea, foreman_name) %>%
         summarise(
-          wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-          count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-          count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-          count_wet_expired = sum(count_wet_expired, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
+          expired_count = sum(expired_count, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -266,10 +260,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       processed <- data %>%
         group_by(fosarea, foreman_name, zone) %>%
         summarise(
-          wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-          count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-          count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-          count_wet_expired = sum(count_wet_expired, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
+          expired_count = sum(expired_count, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -283,10 +277,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       processed <- data %>%
         group_by(sectcode) %>%
         summarise(
-          wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-          count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-          count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-          count_wet_expired = sum(count_wet_expired, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
+          expired_count = sum(expired_count, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -297,10 +291,10 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
       processed <- data %>%
         group_by(sectcode, zone) %>%
         summarise(
-          wet_cb_count = sum(wet_cb_count, na.rm = TRUE),
-          count_wet_activetrt = sum(count_wet_activetrt, na.rm = TRUE),
-          count_wet_expiring = sum(count_wet_expiring, na.rm = TRUE),
-          count_wet_expired = sum(count_wet_expired, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
+          expired_count = sum(expired_count, na.rm = TRUE),
           .groups = "drop"
         ) %>%
         mutate(
@@ -320,20 +314,15 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
   # Add calculated fields
   processed <- processed %>%
     mutate(
-      pct_treated = ifelse(wet_cb_count > 0, 
-                          (count_wet_activetrt / wet_cb_count) * 100, 
+      pct_treated = ifelse(total_count > 0, 
+                          (active_count / total_count) * 100, 
                           0),
-      untreated_count = wet_cb_count - count_wet_activetrt,
-      # Add standardized column names
-      total_count = wet_cb_count,
-      active_count = count_wet_activetrt,
-      expiring_count = count_wet_expiring,
-      expired_count = count_wet_expired
+      untreated_count = total_count - active_count
     )
   
   # Remove rows with no data
   processed <- processed %>%
-    filter(wet_cb_count > 0 | count_wet_activetrt > 0)
+    filter(total_count > 0 | active_count > 0)
   
   return(processed)
 }

@@ -245,7 +245,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$wet_cb_count, na.rm = TRUE)
+      total <- sum(data$total_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -263,7 +263,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$count_wet_activetrt, na.rm = TRUE)
+      total <- sum(data$active_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -282,8 +282,8 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       pct <- 0
     } else {
-      total_wet <- sum(data$wet_cb_count, na.rm = TRUE)
-      total_treated <- sum(data$count_wet_activetrt, na.rm = TRUE)
+      total_wet <- sum(data$total_count, na.rm = TRUE)
+      total_treated <- sum(data$active_count, na.rm = TRUE)
       pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
     }
     
@@ -310,7 +310,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$count_wet_expiring, na.rm = TRUE)
+      total <- sum(data$expiring_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -328,7 +328,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$count_wet_expired, na.rm = TRUE)
+      total <- sum(data$expired_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())

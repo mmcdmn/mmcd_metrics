@@ -99,9 +99,13 @@ server <- function(input, output, session) {
   # THEME HANDLING
   # =============================================================================
   
-  # Use shared theme utilities
-  current_theme <- create_theme_reactive(input)
-  observe_theme_changes(input)
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
   
   # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
@@ -370,7 +374,8 @@ server <- function(input, output, session) {
       hist_display_metric = inputs$hist_display_metric,
       hist_group_by = inputs$group_by,
       chart_type = inputs$hist_chart_type,
-      theme = current_theme_value
+      theme = current_theme_value,
+      show_zones_separately = !inputs$combine_zones
     )
   })
   

@@ -15,6 +15,7 @@ library(sf)
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
+source("../../shared/server_utilities.R")
 
 # Source external function files
 source("data_functions.R")

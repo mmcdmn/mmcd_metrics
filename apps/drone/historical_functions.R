@@ -145,7 +145,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
             facility_map[facility],
             facility
           ),
-          group_label = paste0(facility_display, " (P", zone, ")")
+          group_label = paste0(facility_display, " P", zone)
         )
       grouped_data <- data_source %>%
         group_by(group_label, time_period)
@@ -161,13 +161,13 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
             foreman_map[as.character(foreman)],
             paste("FOS", foreman)
           ),
-          group_label = paste0(foreman_name, " (P", zone, ")")
+          group_label = paste0(foreman_name, " P", zone)
         )
       grouped_data <- data_source %>%
         group_by(group_label, time_period)
     } else if (hist_group_by == "mmcd_all") {
       data_source <- data_source %>%
-        mutate(group_label = paste0("All MMCD (P", zone, ")"))
+        mutate(group_label = paste0("All MMCD P", zone))
       grouped_data <- data_source %>%
         group_by(group_label, time_period)
     } else {
@@ -360,10 +360,10 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   if (show_zones_separately) {
     if (group_by == "mmcd_all") {
       data_source <- data_source %>%
-        mutate(combined_group = paste0(mmcd_all, " (P", zone, ")"))
+        mutate(combined_group = paste0(mmcd_all, " P", zone))
     } else {
       data_source <- data_source %>%
-        mutate(combined_group = paste0(!!sym(group_col), " (P", zone, ")"))
+        mutate(combined_group = paste0(!!sym(group_col), " P", zone))
     }
     group_var <- sym("combined_group")
   } else {

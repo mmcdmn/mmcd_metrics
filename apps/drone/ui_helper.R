@@ -183,7 +183,7 @@ drone_ui <- function() {
                    DT::dataTableOutput("mapDataTable")
           ),
           tabPanel("Historical Trends", value = "historical", 
-                   plotOutput("historicalPlot", height = "auto"),
+                   plotlyOutput("historicalPlot", height = "900px"),
                    br(),
                    fluidRow(
                      column(10, h4("Historical Data")),

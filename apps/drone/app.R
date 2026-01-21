@@ -27,9 +27,14 @@ ui <- drone_ui()
 
 server <- function(input, output, session) {
   
-  # Use shared theme utilities
-  current_theme <- create_theme_reactive(input)
-  observe_theme_changes(input)
+  # Theme handling
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
   
   # Initialize UI options (facility and FOS choices) on app startup - NO DATA QUERIES
   observe({
@@ -603,12 +608,12 @@ server <- function(input, output, session) {
     }
   })
   
-  # Historical plot output - uses external function
-  output$historicalPlot <- renderPlot({
+  # Historical plot output - uses shared create_trend_chart
+  output$historicalPlot <- renderPlotly({
     req(input$refresh)  # Only render after refresh button is clicked
     inputs <- refresh_inputs()
     
-    p <- create_historical_plot(
+    create_historical_plot(
       zone_filter = inputs$zone_filter,
       combine_zones = inputs$combine_zones,
       zone_option = inputs$zone_option,
@@ -624,12 +629,8 @@ server <- function(input, output, session) {
       foreman_filter = inputs$foreman_filter,
       analysis_date = inputs$analysis_date,
       theme = current_theme()
-    ) +
-      theme(
-        axis.text.x = element_text(size = 14, face = "bold")
-      )
-    print(p)
-  }, height = 900)
+    )
+  })
   
   # Historical data table
   output$historicalDataTable <- DT::renderDataTable({

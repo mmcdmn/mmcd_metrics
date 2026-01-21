@@ -24,9 +24,14 @@ ui <- ground_prehatch_ui()
 
 server <- function(input, output, session) {
   
-  # Use shared theme utilities
-  current_theme <- create_theme_reactive(input)
-  observe_theme_changes(input)
+  # Theme handling
+  current_theme <- reactive({
+    input$color_theme
+  })
+  
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  })
   
   # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked
@@ -434,7 +439,8 @@ server <- function(input, output, session) {
       display_metric = inputs$hist_display_metric,
       time_period = inputs$hist_time_period,
       group_by = inputs$group_by,
-      theme = current_theme()
+      theme = current_theme(),
+      show_zones_separately = !inputs$combine_zones
     )
   })
   

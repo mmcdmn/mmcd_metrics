@@ -418,12 +418,10 @@ create_historical_struct_data <- function(start_year, end_year,
     }
     
     # Calculate proportion as percentage
-    # treated_structures = count of structures that received treatment
-    # total_count = count of ALL structures in that group (with filters applied)
     result <- result %>%
       mutate(
         total_count = ifelse(is.na(total_count) | total_count == 0, treated_structures, total_count),
-        count = (treated_structures / total_count) * 100  # Convert to percentage
+        count = (treated_structures / total_count) * 100
       ) %>%
       select(-treated_structures, -total_count)
   }
@@ -431,179 +429,45 @@ create_historical_struct_data <- function(start_year, end_year,
   return(result)
 }
 
-# Create Plotly historical chart for structure treatments
-create_historical_struct_chart <- function(data, 
-                                           hist_time_period, 
-                                           hist_display_metric, 
-                                           hist_group_by, 
-                                           chart_type = "stacked_bar",
-                                           theme = "MMCD") {
-  
+# Create historical chart for structure treatments
+create_historical_struct_chart <- function(data, hist_time_period, hist_display_metric, 
+                                           hist_group_by, chart_type = "stacked_bar",
+                                           theme = "MMCD", show_zones_separately = FALSE) {
   if (is.null(data) || nrow(data) == 0) {
-    # Return empty plot with message
-    return(plot_ly() %>%
-             add_text(x = 0.5, y = 0.5, text = "No historical data available", 
-                     textfont = list(size = 16)) %>%
-             layout(xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)))
+    return(plotly_empty() %>% layout(title = "No historical data available"))
   }
   
-  # Determine colors based on group_by
-  if (hist_group_by == "facility") {
-    # Check if we have zones in the data
-    if (any(grepl(" P[12]$", data$group_name))) {
-      # Zone-aware colors needed
-      zones <- unique(sub(".* P([12])$", "\\1", data$group_name[grepl(" P[12]$", data$group_name)]))
-      group_colors <- get_facility_base_colors(
-        alpha_zones = zones,
-        combined_groups = unique(data$group_name),
-        theme = theme
-      )
-      if (is.list(group_colors)) group_colors <- group_colors$colors
-      # Filter to only include colors for groups actually present in data
-      group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
-    } else {
-      # Simple facility colors - use shared utility function
-      group_colors <- map_facility_display_names_to_colors(unique(data$group_name), theme)
-    }
+  # Get colors based on grouping
+  colors <- if (hist_group_by == "facility") {
+    map_facility_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   } else if (hist_group_by == "foreman") {
-    # Check if we have zones in the data
-    if (any(grepl(" P[12]$", data$group_name))) {
-      # Zone-aware foreman colors
-      zones <- unique(sub(".* P([12])$", "\\1", data$group_name[grepl(" P[12]$", data$group_name)]))
-      group_colors <- get_foreman_colors(
-        alpha_zones = zones,
-        combined_groups = unique(data$group_name)
-      )
-      if (is.list(group_colors)) group_colors <- group_colors$colors
-      # Filter to only include colors for groups actually present in data
-      group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
-    } else {
-      # Simple foreman colors - use shared utility function
-      group_colors <- map_foreman_display_names_to_colors(unique(data$group_name), theme)
-    }
+    map_foreman_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   } else {
-    # mmcd_all - use single color
-    group_colors <- c("MMCD" = get_facility_base_colors(theme = theme)["N"])
+    c("MMCD" = get_facility_base_colors(theme = theme)["N"])
   }
   
-  # Prepare y-axis title based on metric
-  if (hist_time_period == "yearly") {
-    y_title <- if (hist_display_metric == "treatments") {
-      "Total Treatments"
-    } else if (hist_display_metric == "structures_count") {
-      "Unique Structures Treated"
-    } else {
-      "Proportion of Structures Treated (%)"
-    }
+  # Build labels
+  y_title <- if (hist_time_period == "yearly") {
+    switch(hist_display_metric, "treatments" = "Total Treatments", 
+           "structures_count" = "Unique Structures Treated", "Proportion (%)")
   } else {
-    y_title <- if (hist_display_metric == "proportion") {
-      "Proportion of Structures (%)"
-    } else {
-      "Active Treatments"
-    }
+    if (hist_display_metric == "proportion") "Proportion (%)" else "Active Treatments"
   }
-  
-  # Prepare x-axis title
   x_title <- if (hist_time_period == "yearly") "Year" else "Week"
+  chart_title <- paste("Historical Structure Treatments -", if (hist_time_period == "yearly") "Yearly" else "Weekly")
   
-  # VALIDATION: Block stacked bar for proportions
-  if (hist_display_metric == "proportion" && chart_type == "stacked_bar") {
-    chart_type <- "grouped_bar"  # Auto-switch to grouped bar
-  }
+  # Block stacked bar for proportions
+  if (hist_display_metric == "proportion" && chart_type == "stacked_bar") chart_type <- "grouped_bar"
   
-  # Ensure colors are in correct format for Plotly (named vector matching group_name)
-  if (is.null(names(group_colors))) {
-    # If unnamed, try to match by position
-    group_names <- unique(data$group_name)
-    if (length(group_colors) >= length(group_names)) {
-      names(group_colors) <- group_names[seq_along(group_colors)]
-    }
-  }
-  
-  # Create the plot based on chart type
+  # Handle pie chart separately (unique to struct_trt)
   if (chart_type == "pie") {
-    # Pie chart - aggregate across all time periods for proportion view
-    pie_data <- data %>%
-      group_by(group_name) %>%
-      summarise(count = mean(count, na.rm = TRUE), .groups = "drop")  # Average proportion across years
-    
-    p <- plot_ly(pie_data, labels = ~group_name, values = ~count, 
-                 type = "pie",
-                 marker = list(colors = group_colors),
-                 textinfo = "label+percent",
-                 textfont = list(size = 16),
-                 hovertemplate = "%{label}<br>%{value:.1f}%<extra></extra>")
-  } else if (chart_type == "stacked_bar") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "bar") %>%
-      layout(barmode = "stack")
-  } else if (chart_type == "grouped_bar") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "bar") %>%
-      layout(barmode = "group")
-  } else if (chart_type == "line") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "scatter", mode = "lines+markers")
-  } else if (chart_type == "area") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "scatter", mode = "lines", 
-                 fill = "tonexty", stackgroup = "one")
+    pie_data <- data %>% group_by(group_name) %>% summarise(count = mean(count, na.rm = TRUE), .groups = "drop")
+    return(plot_ly(pie_data, labels = ~group_name, values = ~count, type = "pie",
+                   marker = list(colors = colors), textinfo = "label+percent", textfont = list(size = 16)) %>%
+      layout(title = list(text = paste("Avg Proportion (", min(data$time_period), "-", max(data$time_period), ")"), 
+                         font = list(size = 20)), legend = list(font = list(size = 16)), font = list(size = 16)))
   }
   
-  # Layout with larger fonts
-  if (chart_type == "pie") {
-    # Pie chart layout - no axes
-    p <- p %>%
-      layout(
-        title = list(
-          text = paste("Average Proportion of Structures Treated (",
-                      min(data$time_period), "-", max(data$time_period), ")"),
-          font = list(size = 20, family = "Arial, sans-serif")
-        ),
-        showlegend = TRUE,
-        legend = list(
-          font = list(size = 16),
-          orientation = "v",
-          x = 1.02,
-          xanchor = "left",
-          y = 1,
-          yanchor = "top"
-        ),
-        font = list(size = 16, family = "Arial, sans-serif"),
-        margin = list(l = 80, r = 150, t = 80, b = 80)
-      )
-  } else {
-    # Bar/line/area chart layout - with axes
-    p <- p %>%
-      layout(
-        title = list(
-          text = paste("Historical Structure Treatment Trends -", 
-                      if (hist_time_period == "yearly") "Yearly" else "Weekly"),
-          font = list(size = 20, family = "Arial, sans-serif")
-        ),
-        xaxis = list(
-          title = list(text = x_title, font = list(size = 18)),
-          tickfont = list(size = 16)
-        ),
-        yaxis = list(
-          title = list(text = y_title, font = list(size = 18)),
-          tickfont = list(size = 16),
-          ticksuffix = if (hist_display_metric == "proportion") "%" else ""
-        ),
-        hovermode = "x unified",
-        legend = list(
-          title = list(text = "Group", font = list(size = 18)),
-          font = list(size = 16),
-          orientation = "v",
-          x = 1.02,
-          xanchor = "left",
-          y = 1,
-          yanchor = "top"
-        ),
-        font = list(size = 16, family = "Arial, sans-serif"),
-        margin = list(l = 80, r = 150, t = 80, b = 80)
-      )
-  }
-  
-  return(p)
+  # Use shared chart function for other types
+  create_trend_chart(data, chart_type, chart_title, x_title, y_title, colors)
 }

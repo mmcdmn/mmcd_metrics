@@ -176,7 +176,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
             facility_map[facility],
             facility
           ),
-          group_label = paste0(facility_display, " (P", zone, ")")
+          group_label = paste0(facility_display, " P", zone)
         )
       grouped_data <- data_source %>%
         group_by(group_label, time_period)
@@ -192,13 +192,13 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
             foreman_map[as.character(fosarea)],
             paste("FOS", fosarea)
           ),
-          group_label = paste0(foreman_name, " (P", zone, ")")
+          group_label = paste0(foreman_name, " P", zone)
         )
       grouped_data <- data_source %>%
         group_by(group_label, time_period)
     } else if (hist_group_by == "mmcd_all") {
       data_source <- data_source %>%
-        mutate(group_label = paste0("All MMCD (P", zone, ")"))
+        mutate(group_label = paste0("All MMCD P", zone))
       grouped_data <- data_source %>%
         group_by(group_label, time_period)
     } else {
@@ -301,14 +301,14 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
                                   display_metric = "treatments",
                                   time_period = "yearly",
                                   group_by = "facility",
-                                  theme = "MMCD") {
+                                  theme = "MMCD",
+                                  show_zones_separately = FALSE) {
   
   if (nrow(data) == 0) {
-    return(plotly_empty() %>% 
-           layout(title = "No data available for the selected filters"))
+    return(plotly_empty() %>% layout(title = "No data available"))
   }
   
-  # Create metric label
+  # Build labels
   metric_label <- switch(display_metric,
     "treatments" = "Number of Treatments",
     "sites" = "Number of Sites Treated",
@@ -319,52 +319,20 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
     "weekly_active_acres" = "Active Site Acres",
     "treatments"
   )
-  
   time_label <- if (time_period == "weekly") "Week" else "Year"
+  chart_title <- paste("Historical", metric_label)
   
-  # Get colors based on grouping - use shared utility functions
-  colors <- character()
-  
-  if (group_by == "facility") {
-    colors <- map_facility_display_names_to_colors(unique(data$group_label), theme)
+  # Get colors
+  colors <- if (group_by == "facility") {
+    map_facility_display_names_to_colors(unique(data$group_label), theme, handle_zones = show_zones_separately)
   } else if (group_by == "foreman") {
-    colors <- map_foreman_display_names_to_colors(unique(data$group_label), theme)
+    map_foreman_display_names_to_colors(unique(data$group_label), theme, handle_zones = show_zones_separately)
   } else {
-    # For "mmcd_all" or other groupings, use default color
-    colors <- setNames(rep(get_status_colors(theme = theme)["completed"], length(unique(data$group_label))), unique(data$group_label))
+    setNames(rep(get_status_colors(theme = theme)["completed"], length(unique(data$group_label))), unique(data$group_label))
   }
   
-  # Create chart
-  if (chart_type == "line") {
-    p <- plot_ly(data, x = ~time_period, y = ~value, color = ~group_label,
-                type = 'scatter', mode = 'lines+markers', colors = colors) %>%
-      layout(
-        title = list(text = paste("Historical", metric_label), font = list(size = 20)),
-        xaxis = list(title = list(text = time_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        yaxis = list(title = list(text = metric_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        legend = list(font = list(size = 16)),
-        showlegend = TRUE,  # Always show legend even for single group
-        font = list(size = 16)
-      )
-  } else {
-    p <- plot_ly(data, x = ~time_period, y = ~value, color = ~group_label,
-                type = 'bar', colors = colors) %>%
-      layout(
-        title = list(text = paste("Historical", metric_label), font = list(size = 20)),
-        xaxis = list(title = list(text = time_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        yaxis = list(title = list(text = metric_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        legend = list(font = list(size = 16)),
-        showlegend = TRUE,  # Always show legend even for single group
-        font = list(size = 16),
-        barmode = if(chart_type == "grouped_bar") 'group' else 'stack'
-      )
-  }
-  
-  return(p)
+  # Use shared chart function
+  create_trend_chart(data, chart_type, chart_title, time_label, metric_label, colors)
 }
 
 # Create historical details table

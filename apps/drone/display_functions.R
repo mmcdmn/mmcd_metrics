@@ -1,21 +1,15 @@
 # Display functions for drone app - handles all visualization and plot creation
 
 #' Create zone-separated combined groups for display
-#' @param data Data frame with grouping column and zone
-#' @param group_col Column name for grouping
-#' @return Data frame with combined_group and zone keys added
+#' Standard zone format: "Name P1" (no parentheses)
 create_zone_groups <- function(data, group_col) {
   if (group_col == "facility") {
-    # Map facility names BEFORE creating combined_group
     data <- data %>% map_facility_names(facility_col = "facility")
-    # Use facility_display for combined_group display, keep facility for color mapping
-    data$combined_group <- paste0(data$facility_display, " (P", data$zone, ")")
-    data$facility_zone_key <- paste0(data$facility, " (P", data$zone, ")")
+    data$combined_group <- paste0(data$facility_display, " P", data$zone)
+    data$facility_zone_key <- paste0(data$facility, " P", data$zone)
   } else {
-    # For other groupings, use the raw column values
-    data$combined_group <- paste0(data[[group_col]], " (P", data$zone, ")")
+    data$combined_group <- paste0(data[[group_col]], " P", data$zone)
   }
-  
   return(data)
 }
 
@@ -436,18 +430,14 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
 # HISTORICAL VISUALIZATION FUNCTIONS
 # =============================================================================
 
-#' Create historical trend plot using consolidated data functions
+#' Create historical trend plot using shared create_trend_chart function
 create_historical_plot <- function(zone_filter, combine_zones, zone_option, group_by, 
                                    hist_time_period, hist_chart_type, hist_display_metric,
                                    prehatch_only, hist_start_year, hist_end_year,
                                    drone_types, facility_filter, foreman_filter, analysis_date,
                                    theme = "MMCD") {
   
-  # Load required libraries
-  library(ggplot2)
-  library(stringr)
-  
-  # Get historical data using new simplified function
+  # Get historical data using simplified function
   historical_data <- create_historical_data(
     start_year = hist_start_year,
     end_year = hist_end_year,
@@ -462,186 +452,35 @@ create_historical_plot <- function(zone_filter, combine_zones, zone_option, grou
   )
   
   if (is.null(historical_data) || nrow(historical_data) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0.5, y = 0.5, label = "No data available for selected criteria"), 
-                     size = 6, hjust = 0.5) +
-           theme_void())
+    return(plotly_empty() %>% layout(title = "No data available for selected criteria"))
   }
   
-  # Create descriptive title based on time period and metric
+  # Create descriptive title
   chart_title <- if (hist_time_period == "weekly" && hist_display_metric != "treatments") {
     paste("Historical", stringr::str_to_title(hist_display_metric), "with Active Treatment by Week")
   } else {
     paste("Historical", stringr::str_to_title(hist_display_metric), "by", stringr::str_to_title(group_by))
   }
   
-  # Get colors based on grouping type (same logic as current progress)
+  # Get colors using shared utility functions
   show_zones_separately <- !combine_zones && length(zone_filter) > 1
   
-  # Create a mapping from display names back to facility codes for color mapping
   if (group_by == "facility") {
-    facilities <- get_facility_lookup()
-    facility_map <- setNames(facilities$short_name, facilities$full_name)
-    
-    if (show_zones_separately) {
-      # For zone-separated facilities, extract facility name and get color
-      # Create a temporary data frame with the structure expected by get_visualization_colors
-      temp_data <- data.frame(
-        facility = gsub(" \\(P[12]\\)", "", historical_data$group_label),
-        zone = as.numeric(gsub(".*\\(P([12])\\)", "\\1", historical_data$group_label)),
-        combined_group = historical_data$group_label,
-        stringsAsFactors = FALSE
-      )
-      colors <- get_visualization_colors(
-        group_by = "facility", 
-        data = temp_data, 
-        show_zones_separately = TRUE,
-        zone_filter = zone_filter,
-        for_historical = TRUE,
-        theme = theme
-      )
-    } else {
-      # For combined facilities, use shared utility function
-      colors <- map_facility_display_names_to_colors(unique(historical_data$group_label), theme)
-    }
+    colors <- map_facility_display_names_to_colors(unique(historical_data$group_label), theme, handle_zones = show_zones_separately)
   } else if (group_by == "foreman") {
-    if (show_zones_separately) {
-      # For zone-separated foremen, create proper data structure
-      foremen_lookup <- get_foremen_lookup()
-      foreman_reverse_map <- setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
-      
-      temp_data <- data.frame(
-        foreman = as.numeric(foreman_reverse_map[gsub(" \\(P[12]\\)", "", historical_data$group_label)]),
-        zone = as.numeric(gsub(".*\\(P([12])\\)", "\\1", historical_data$group_label)),
-        combined_group = historical_data$group_label,
-        stringsAsFactors = FALSE
-      )
-      colors <- get_visualization_colors(
-        group_by = "foreman", 
-        data = temp_data, 
-        show_zones_separately = TRUE,
-        zone_filter = zone_filter,
-        for_historical = TRUE,
-        theme = theme
-      )
-    } else {
-      # For combined foremen, use themed foreman colors directly
-      colors <- get_themed_foreman_colors(theme = theme)
-    }
+    colors <- map_foreman_display_names_to_colors(unique(historical_data$group_label), theme, handle_zones = show_zones_separately)
   } else {
-    # For MMCD or other groupings, use NULL (default colors)
-    colors <- NULL
+    group_labels <- unique(historical_data$group_label)
+    colors <- setNames(rep(get_status_colors(theme = theme)["completed"], length(group_labels)), group_labels)
   }
   
-  # Create the plot based on chart type
-  if (hist_chart_type == "bar" || hist_chart_type == "stacked_bar" || hist_chart_type == "grouped_bar") {
-    p <- ggplot(historical_data, aes(x = as.factor(time_period), y = value, fill = group_label)) +
-      geom_col(position = if(hist_chart_type == "grouped_bar") "dodge" else "stack", alpha = 0.8) +
-      labs(
-        title = chart_title,
-        x = "Time Period",
-        y = paste(stringr::str_to_title(hist_display_metric)),
-        fill = stringr::str_to_title(group_by)
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 18),
-        axis.title = element_text(face = "bold", size = 14),
-        axis.text = element_text(size = 13),
-        legend.title = element_text(face = "bold", size = 12),
-        legend.text = element_text(size = 11),
-        legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1)
-      )
-    
-    # Apply custom colors if available
-    if (!is.null(colors) && length(colors) > 0) {
-      p <- p + scale_fill_manual(values = colors, na.value = "grey50")
-    }
-    
-  } else if (hist_chart_type == "area") {
-    p <- ggplot(historical_data, aes(x = as.numeric(as.factor(time_period)), y = value, fill = group_label)) +
-      geom_area(alpha = 0.7, position = "stack") +
-      scale_x_continuous(breaks = seq_along(unique(historical_data$time_period)), 
-                        labels = unique(historical_data$time_period)) +
-      labs(
-        title = chart_title,
-        x = "Time Period",
-        y = paste(stringr::str_to_title(hist_display_metric)),
-        fill = stringr::str_to_title(group_by)
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 18),
-        axis.title = element_text(face = "bold", size = 14),
-        axis.text = element_text(size = 13),
-        legend.title = element_text(face = "bold", size = 12),
-        legend.text = element_text(size = 11),
-        legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1)
-      )
-    
-    # Apply custom colors if available
-    if (!is.null(colors) && length(colors) > 0) {
-      p <- p + scale_fill_manual(values = colors, na.value = "grey50")
-    }
-    
-  } else if (hist_chart_type == "step") {
-    p <- ggplot(historical_data, aes(x = as.numeric(as.factor(time_period)), y = value, color = group_label, group = group_label)) +
-      geom_step(linewidth = 1.2) +
-      geom_point(size = 3) +
-      scale_x_continuous(breaks = seq_along(unique(historical_data$time_period)), 
-                        labels = unique(historical_data$time_period)) +
-      labs(
-        title = chart_title,
-        x = "Time Period",
-        y = paste(stringr::str_to_title(hist_display_metric)),
-        color = stringr::str_to_title(group_by)
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 18),
-        axis.title = element_text(face = "bold", size = 14),
-        axis.text = element_text(size = 13),
-        legend.title = element_text(face = "bold", size = 12),
-        legend.text = element_text(size = 11),
-        legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1)
-      )
-    
-    # Apply custom colors if available
-    if (!is.null(colors) && length(colors) > 0) {
-      p <- p + scale_color_manual(values = colors, na.value = "grey50")
-    }
-    
-  } else { # line chart
-    p <- ggplot(historical_data, aes(x = as.numeric(as.factor(time_period)), y = value, color = group_label, group = group_label)) +
-      geom_line(linewidth = 1.2) +
-      geom_point(size = 3) +
-      scale_x_continuous(breaks = seq_along(unique(historical_data$time_period)), 
-                        labels = unique(historical_data$time_period)) +
-      labs(
-        title = chart_title,
-        x = "Time Period", 
-        y = paste(stringr::str_to_title(hist_display_metric)),
-        color = stringr::str_to_title(group_by)
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 18),
-        axis.title = element_text(face = "bold", size = 14),
-        axis.text = element_text(size = 13),
-        legend.title = element_text(face = "bold", size = 12),
-        legend.text = element_text(size = 11),
-        legend.position = "bottom",
-        axis.text.x = element_text(angle = 45, hjust = 1)
-      )
-    
-    # Apply custom colors if available
-    if (!is.null(colors) && length(colors) > 0) {
-      p <- p + scale_color_manual(values = colors, na.value = "grey50")
-    }
-  }
-  
-  return(p)
+  # Use shared chart function - handles stacked_bar, grouped_bar, line, area, step
+  create_trend_chart(
+    data = historical_data,
+    chart_type = hist_chart_type,
+    title = chart_title,
+    x_label = "Time Period",
+    y_label = stringr::str_to_title(hist_display_metric),
+    colors = colors
+  )
 }

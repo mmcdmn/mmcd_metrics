@@ -403,7 +403,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           .groups = "drop"
         ) %>%
         mutate(
-          display_name = paste0("MMCD (P", zone, ")"),
+          display_name = paste0("MMCD P", zone),
           group_name = "MMCD"
         )
     } else {
@@ -478,7 +478,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
         ) %>%
         mutate(
           facility_display = map_facility_names(data.frame(facility = facility))$facility_display,
-          display_name = paste0(facility_display, " (P", zone, ")"),
+          display_name = paste0(facility_display, " P", zone),
           group_name = facility
         )
     } else {
@@ -536,9 +536,9 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
             matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
             if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
           }),
-          display_name = paste0(foreman_name, " (P", zone, ")"),
+          display_name = paste0(foreman_name, " P", zone),
           group_name = foreman,
-          combined_group = paste0(foreman, " (P", zone, ")")
+          combined_group = paste0(foreman, " P", zone)
         )
     } else {
       # Group by foreman only

@@ -264,106 +264,31 @@ create_historical_cb_data <- function(start_year, end_year,
   return(result)
 }
 
-# Create historical chart
-create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar", theme = "MMCD") {
+# Create historical chart - uses shared create_trend_chart
+create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar", theme = "MMCD", show_zones_separately = FALSE) {
   if (is.null(data) || nrow(data) == 0) {
-    return(plot_ly() %>%
-      layout(
-        title = "No historical data available",
-        xaxis = list(title = "Time Period"),
-        yaxis = list(title = "Count")
-      ))
+    return(plotly_empty() %>% layout(title = "No historical data available"))
   }
   
-  # Determine chart title
+  # Build labels
   metric_label <- case_when(
     hist_display_metric %in% c("treatments", "weekly_active_treatments") ~ "Treatments",
     hist_display_metric %in% c("total_count", "weekly_active_wet_cb") ~ "Wet Catch Basins",
     TRUE ~ "Count"
   )
-  
   period_label <- ifelse(hist_time_period == "yearly", "Year", "Week")
-  
   chart_title <- paste("Historical Catch Basin", metric_label, "by", period_label)
   
-  # Get group colors if applicable - use shared utility functions
-  group_colors <- NULL
+  # Get colors based on grouping
+  colors <- NULL
   if (hist_group_by == "facility" && "group_name" %in% names(data)) {
-    actual_facilities <- unique(data$group_name)
-    group_colors <- map_facility_display_names_to_colors(actual_facilities, theme)
+    colors <- map_facility_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   } else if (hist_group_by == "foreman" && "group_name" %in% names(data)) {
-    actual_foremen <- unique(data$group_name)
-    group_colors <- map_foreman_display_names_to_colors(actual_foremen, theme)
+    colors <- map_foreman_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   }
   
-  # Create plotly chart based on chart_type
-  if (chart_type == "stacked_bar") {
-    # Stacked bar chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar',
-                   colors = group_colors) %>%  # Keep names for proper matching
-        layout(barmode = 'stack')
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar') %>%
-        layout(barmode = 'stack')
-    }
-  } else if (chart_type == "grouped_bar") {
-    # Grouped bar chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar',
-                   colors = group_colors) %>%  # Keep names for proper matching
-        layout(barmode = 'group')
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar') %>%
-        layout(barmode = 'group')
-    }
-  } else if (chart_type == "area") {
-    # Area chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines', fill = 'tonexty',
-                   colors = group_colors) %>%  # Keep names for proper matching
-        layout(hovermode = 'x unified')
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines', fill = 'tonexty') %>%
-        layout(hovermode = 'x unified')
-    }
-  } else {
-    # Default: Line chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines+markers',
-                   colors = group_colors)  # Keep names for proper matching
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines+markers')
-    }
-  }
-  
-  p <- p %>%
-    layout(
-      title = list(text = chart_title, font = list(size = 20)),
-      xaxis = list(
-        title = list(text = period_label, font = list(size = 18)),
-        tickfont = list(size = 16)
-      ),
-      yaxis = list(
-        title = list(text = metric_label, font = list(size = 18)),
-        tickfont = list(size = 16)
-      ),
-      legend = list(
-        font = list(size = 16)
-      ),
-      hovermode = "closest",
-      font = list(size = 16)
-    )
-  
-  return(p)
+  # Use shared chart function
+  create_trend_chart(data, chart_type, chart_title, period_label, metric_label, colors)
 }
 
 # Format historical data table

@@ -16,6 +16,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/server_utilities.R")
 
 # Source the planned treatment functions
 source("planned_treatment_functions.R")
@@ -174,7 +175,7 @@ ui <- fluidPage(
         ),
         mainPanel(
           h4("Historical Progress Comparison", style = "font-weight: bold; margin-top: 20px;"),
-          plotOutput("historicalProgressPlot", height = "500px"),
+          plotlyOutput("historicalProgressPlot", height = "500px"),
           hr(),
           h4("Site Inspection Details", style = "font-weight: bold; margin-top: 20px;"),
           div(style = "margin-bottom: 10px;",
@@ -388,8 +389,8 @@ server <- function(input, output) {
     })
   })
   
-  # Historical progress plot - overlaid bars like drone app
-  output$historicalProgressPlot <- renderPlot({
+  # Historical progress plot - uses shared create_trend_chart
+  output$historicalProgressPlot <- renderPlotly({
     data <- historical_progress_data()
     create_historical_progress_plot(data, input$hist_years, input$hist_metric, theme = current_theme_historical())
   })

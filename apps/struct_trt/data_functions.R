@@ -401,10 +401,10 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   
   # Create combined group for zone display
   if (length(zone_filter) > 1 && !combine_zones) {
-    # Show zones separately (e.g., "North (P1)", "North (P2)")
-    structures$combined_group <- paste0(structures[[group_col]], " (P", structures$zone, ")")
+    # Show zones separately using standardized format: "Name P1"
+    structures$combined_group <- paste0(structures[[group_col]], " P", structures$zone)
     if (nrow(treatments) > 0) {
-      treatments$combined_group <- paste0(treatments[[group_col]], " (P", treatments$zone, ")")
+      treatments$combined_group <- paste0(treatments[[group_col]], " P", treatments$zone)
     }
   }
   
@@ -489,18 +489,18 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
       # For foreman, convert employee numbers to shortnames with zones
       foremen_lookup <- get_foremen_lookup()
       combined_data$display_name <- sapply(combined_data$combined_group, function(cg) {
-        # Extract emp_num and zone from combined_group like "0203 (P1)"
-        parts <- strsplit(cg, " \\(P")[[1]]
-        emp_num <- parts[1]
-        zone_part <- if(length(parts) > 1) paste0(" (P", parts[2]) else ""
+        # Extract emp_num and zone from combined_group like "0203 P1"
+        base_name <- sub(" P[12]$", "", cg)
+        zone_match <- regmatches(cg, regexpr(" P[12]$", cg))
+        zone_part <- if(length(zone_match) > 0) zone_match else ""
         
         # Look up shortname
-        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(emp_num)))
+        matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(base_name)))
         if(length(matches) > 0) {
           shortname <- foremen_lookup$shortname[matches[1]]
           return(paste0(shortname, zone_part))
         } else {
-          return(paste0("FOS #", emp_num, zone_part))
+          return(paste0("FOS #", base_name, zone_part))
         }
       })
     } else if (group_col == "facility") {
@@ -509,14 +509,14 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
       facility_map <- setNames(facilities$full_name, facilities$short_name)
       
       combined_data$display_name <- sapply(combined_data$combined_group, function(cg) {
-        # Extract facility and zone from combined_group like "Sr (P2)"
-        parts <- strsplit(cg, " \\(P")[[1]]
-        facility_short <- parts[1]
-        zone_part <- if(length(parts) > 1) paste0(" (P", parts[2]) else ""
+        # Extract facility and zone from combined_group like "Sr P2"
+        base_name <- sub(" P[12]$", "", cg)
+        zone_match <- regmatches(cg, regexpr(" P[12]$", cg))
+        zone_part <- if(length(zone_match) > 0) zone_match else ""
         
         # Map facility name
-        if (facility_short %in% names(facility_map)) {
-          facility_long <- facility_map[facility_short]
+        if (base_name %in% names(facility_map)) {
+          facility_long <- facility_map[base_name]
           return(paste0(facility_long, zone_part))
         } else {
           return(cg)  # fallback to original if no mapping found

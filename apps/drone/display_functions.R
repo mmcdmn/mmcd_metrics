@@ -114,7 +114,7 @@ get_visualization_colors <- function(group_by, data, show_zones_separately = FAL
 create_value_boxes <- function(data, display_metric = "sites") {
   if (display_metric == "treated_acres") {
     # Calculate totals for acres
-    total_sites <- sum(data$total_sites, na.rm = TRUE)
+    total_count_var <- sum(data$total_count, na.rm = TRUE)
     total_acres <- sum(data$total_treated_acres, na.rm = TRUE)
     active_acres <- sum(data$active_acres, na.rm = TRUE)
     expiring_acres <- sum(data$expiring_acres, na.rm = TRUE)
@@ -124,7 +124,7 @@ create_value_boxes <- function(data, display_metric = "sites") {
     expiring_pct <- if (active_acres > 0) round(100 * expiring_acres / active_acres, 1) else 0
     
     return(list(
-      total_sites = total_sites,
+      total_count = total_count_var,
       total_value = round(total_acres, 1),
       active_value = round(active_acres, 1),
       expiring_value = round(expiring_acres, 1),
@@ -133,19 +133,19 @@ create_value_boxes <- function(data, display_metric = "sites") {
     ))
   } else {
     # Calculate totals for sites
-    total_sites <- sum(data$total_sites, na.rm = TRUE)
-    active_sites <- sum(data$active_sites, na.rm = TRUE)
-    expiring_sites <- sum(data$expiring_sites, na.rm = TRUE)
+    total_count_var <- sum(data$total_count, na.rm = TRUE)
+    active_count_var <- sum(data$active_count, na.rm = TRUE)
+    expiring_count_var <- sum(data$expiring_count, na.rm = TRUE)
     
     # Calculate percentages
-    active_pct <- if (total_sites > 0) round(100 * active_sites / total_sites, 1) else 0
-    expiring_pct <- if (active_sites > 0) round(100 * expiring_sites / active_sites, 1) else 0
+    active_pct <- if (total_count_var > 0) round(100 * active_count_var / total_count_var, 1) else 0
+    expiring_pct <- if (active_count_var > 0) round(100 * expiring_count_var / active_count_var, 1) else 0
     
     return(list(
-      total_sites = total_sites,
-      total_value = total_sites,
-      active_value = active_sites,
-      expiring_value = expiring_sites,
+      total_count = total_count_var,
+      total_value = total_count_var,
+      active_value = active_count_var,
+      expiring_value = expiring_count_var,
       active_pct = active_pct,
       expiring_pct = expiring_pct
     ))
@@ -244,10 +244,10 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
   safe_aggregate_treatments <- function(treatments, group_cols, filter_col = NULL) {
     if (nrow(treatments) == 0) {
       # Create empty result with proper column structure
-      result_cols <- c(group_cols, "active_sites", "active_acres")
+      result_cols <- c(group_cols, "active_count", "active_acres")
       if (!is.null(filter_col)) {
         # For expiring treatments, use expiring column names
-        result_cols <- c(group_cols, "expiring_sites", "expiring_acres")
+        result_cols <- c(group_cols, "expiring_count", "expiring_acres")
       }
       empty_result <- setNames(data.frame(matrix(nrow = 0, ncol = length(result_cols))), result_cols)
       # Set proper column types
@@ -255,10 +255,10 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
         empty_result[[col]] <- character(0)
       }
       if (!is.null(filter_col)) {
-        empty_result$expiring_sites <- numeric(0)
+        empty_result$expiring_count <- numeric(0)
         empty_result$expiring_acres <- numeric(0)
       } else {
-        empty_result$active_sites <- numeric(0)
+        empty_result$active_count <- numeric(0)
         empty_result$active_acres <- numeric(0)
       }
       return(empty_result)
@@ -269,21 +269,21 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
       treatments <- treatments %>% filter(!!sym(filter_col))
       treatments %>%
         group_by(across(all_of(group_cols))) %>%
-        summarize(expiring_sites = n_distinct(sitecode), expiring_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+        summarize(expiring_count = n_distinct(sitecode), expiring_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     } else {
       treatments %>%
         filter(is_active) %>%
         group_by(across(all_of(group_cols))) %>%
-        summarize(active_sites = n_distinct(sitecode), active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
+        summarize(active_count = n_distinct(sitecode), active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     }
   }
 
   # Aggregate data by grouping
   if (show_zones_separately) {
     # P1 and P2 separate bars
-    total_sites <- drone_sites %>%
+    total_count <- drone_sites %>%
       group_by(combined_group, zone) %>%
-      summarize(total_sites = n(), .groups = "drop")
+      summarize(total_count = n(), .groups = "drop")
     
     # Calculate actual treated acres from treatments
     treated_acres_summary <- drone_treatments %>%
@@ -294,9 +294,9 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"), "is_expiring")
   } else if (combine_zones && group_col != "mmcd_all") {
     # P1+P2 combined but not MMCD - combine by group but not by zone
-    total_sites <- drone_sites %>%
+    total_count <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
-      summarize(total_sites = n(), .groups = "drop")
+      summarize(total_count = n(), .groups = "drop")
     
     # Calculate actual treated acres from treatments  
     treated_acres_summary <- drone_treatments %>%
@@ -307,9 +307,9 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
   } else {
     # Single zone or MMCD all grouping
-    total_sites <- drone_sites %>%
+    total_count <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
-      summarize(total_sites = n(), .groups = "drop")
+      summarize(total_count = n(), .groups = "drop")
     
     # Calculate actual treated acres from treatments
     treated_acres_summary <- drone_treatments %>%
@@ -323,13 +323,13 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
   # Combine all data
   if (show_zones_separately) {
     # P1 and P2 separate
-    combined_data <- total_sites %>%
+    combined_data <- total_count %>%
       left_join(treated_acres_summary, by = c("combined_group", "zone")) %>%
       left_join(active_treatments, by = c("combined_group", "zone")) %>%
       left_join(expiring_treatments, by = c("combined_group", "zone"))
   } else {
     # P1+P2 combined OR single zone OR MMCD grouping
-    combined_data <- total_sites %>%
+    combined_data <- total_count %>%
       left_join(treated_acres_summary, by = group_col) %>%
       left_join(active_treatments, by = group_col) %>%
       left_join(expiring_treatments, by = group_col)
@@ -338,9 +338,9 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
   # Fill missing values and round acres
   combined_data <- combined_data %>%
     mutate(
-      active_sites = ifelse(is.na(active_sites), 0, active_sites),
+      active_count = ifelse(is.na(active_count), 0, active_count),
       active_acres = ifelse(is.na(active_acres), 0, round(active_acres, 2)),
-      expiring_sites = ifelse(is.na(expiring_sites), 0, expiring_sites),
+      expiring_count = ifelse(is.na(expiring_count), 0, expiring_count),
       expiring_acres = ifelse(is.na(expiring_acres), 0, round(expiring_acres, 2)),
       total_treated_acres = ifelse(is.na(total_treated_acres), 0, round(total_treated_acres, 2))
     )
@@ -425,14 +425,7 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     }
   }
   
-  # Add standardized column names for cross-app consistency
-  combined_data <- combined_data %>%
-    mutate(
-      total_count = total_sites,
-      active_count = active_sites,
-      expiring_count = expiring_sites
-    )
-  
+  # Data already uses standardized column names (total_count, active_count, expiring_count)
   return(list(
     data = combined_data,
     sectcode_facility_mapping = sectcode_facility_mapping

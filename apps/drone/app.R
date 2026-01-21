@@ -108,7 +108,7 @@ server <- function(input, output, session) {
     if (input$hist_time_period == "yearly") {
       updateRadioButtons(session, "hist_display_metric", selected = "sites")
     } else if (input$hist_time_period == "weekly") {
-      updateRadioButtons(session, "hist_display_metric", selected = "active_sites")
+      updateRadioButtons(session, "hist_display_metric", selected = "active_count")
     }
   })
   
@@ -220,7 +220,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$active_sites_box <- renderUI({
+  output$active_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
@@ -233,7 +233,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$expiring_sites_box <- renderUI({
+  output$expiring_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
@@ -386,9 +386,9 @@ server <- function(input, output, session) {
     
     # Add y variables based on metric
     if (inputs$current_display_metric == "sites") {
-      data$y_total <- data$total_sites
-      data$y_active <- data$active_sites
-      data$y_expiring <- data$expiring_sites
+      data$y_total <- data$total_count
+      data$y_active <- data$active_count
+      data$y_expiring <- data$expiring_count
     } else {  # treated_acres
       data$y_total <- data$total_treated_acres
       data$y_active <- data$active_acres

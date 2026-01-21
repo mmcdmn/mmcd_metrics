@@ -52,7 +52,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
   
   # Special logic for weekly active treatments (active sites and active acres)
-  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_sites", "active_acres")) {
+  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_count", "active_acres")) {
     # Generate all weeks in the range
     all_weeks <- seq.Date(start_date, end_date, by = "week")
     week_data <- data.frame()
@@ -223,7 +223,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   } else if (hist_display_metric == "treatment_acres") {
     summary_data <- grouped_data %>%
       summarize(value = sum(treated_acres, na.rm = TRUE), .groups = "drop")
-  } else if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
+  } else if (hist_display_metric == "sites" || hist_display_metric == "active_count") {
     summary_data <- grouped_data %>%
       summarize(value = n_distinct(sitecode), .groups = "drop")
   } else if (hist_display_metric == "site_acres" || hist_display_metric == "acres" || hist_display_metric == "active_acres") {
@@ -308,7 +308,7 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   }
   
   # Use SITES for acres calculations, treatments for counts/dates
-  if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
+  if (hist_display_metric == "sites" || hist_display_metric == "active_count") {
     data_source <- drone_sites
     metric_col <- "sitecode"
     use_distinct <- TRUE
@@ -376,7 +376,7 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   }
   
   # Aggregate based on metric type
-  if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
+  if (hist_display_metric == "sites" || hist_display_metric == "active_count") {
     result <- data_source %>%
       group_by(!!group_var, time_period) %>%
       summarise(count = n_distinct(!!sym(metric_col)), .groups = 'drop')

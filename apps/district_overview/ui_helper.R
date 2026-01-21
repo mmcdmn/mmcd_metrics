@@ -191,7 +191,7 @@ district_overview_ui <- function() {
         ),
         column(2,
           sliderInput("expiring_days", "Expiring Window (days):",
-                     min = 1, max = 30, value = 14, step = 1)
+                     min = 1, max = 30, value = 3, step = 1)
         ),
         column(2,
           selectInput("zone_filter", "Zone:",
@@ -246,7 +246,7 @@ district_overview_ui <- function() {
                     HTML("<b>Filters Applied:</b><br>
                           • Drone types: Y, M, C<br>
                           • All facilities, all foremen<br>
-                          • Prehatch only: NO<br>
+                          • Prehatch only: YES<br>
                           • Zone filter from dropdown"))
             ),
             plotlyOutput("drone_chart", height = "300px")
@@ -279,7 +279,7 @@ district_overview_ui <- function() {
                 div(id = "struct_filters", class = "filter-tooltip",
                     HTML("<b>Filters Applied:</b><br>
                           • Structure types: All<br>
-                          • Status: D, W, U (Dry, Wet, Unknown)<br>
+                          • Status: W, U (Wet, Unknown)<br>
                           • Priority: All<br>
                           • Zone filter from dropdown"))
             ),

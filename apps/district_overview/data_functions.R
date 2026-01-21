@@ -182,7 +182,7 @@ load_drone_overview <- function(zone_filter = c("1", "2"),
       data = raw,
       facility_filter = "all",
       foreman_filter = "all",
-      prehatch_only = FALSE
+      prehatch_only = TRUE
     )
   }, error = function(e) {
     cat("Drone: apply_data_filters error:", e$message, "\n")
@@ -323,7 +323,7 @@ load_structure_overview <- function(zone_filter = c("1", "2"),
       foreman_filter = "all",
       structure_type_filter = "all",
       priority_filter = "all",
-      status_types = c("D", "W", "U"),
+      status_types = c("W", "U"),
       zone_filter = zone_filter
     )
   }, error = function(e) {
@@ -347,7 +347,7 @@ load_structure_overview <- function(zone_filter = c("1", "2"),
       foreman_filter = "all",
       structure_type_filter = "all",
       priority_filter = "all",
-      status_types = c("D", "W", "U"),
+      status_types = c("W", "U"),
       zone_filter = zone_filter
     )
   }, error = function(e) {

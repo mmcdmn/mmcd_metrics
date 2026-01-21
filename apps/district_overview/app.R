@@ -321,7 +321,7 @@ server <- function(input, output, session) {
           h4("Drone Sites"),
           p(class = "stat-value", paste0(drone_stats$pct, "%")),
           p(class = "stat-label", paste0(format(drone_stats$active, big.mark = ","), " / ", 
-                                         format(drone_stats$total, big.mark = ","), " active"))
+                                         format(drone_stats$total, big.mark = ","), " treated"))
         )
       ),
       column(3,

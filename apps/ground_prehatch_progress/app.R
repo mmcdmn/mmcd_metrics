@@ -18,7 +18,7 @@ source("../../shared/stat_box_helpers.R")
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")
-source("ui_helpers.R")
+source("ui_helper.R")
 source("historical_functions.R")
 
 # =============================================================================
@@ -83,7 +83,7 @@ server <- function(input, output, session) {
     if (input$hist_time_period == "yearly") {
       updateRadioButtons(session, "hist_display_metric", selected = "sites")
     } else if (input$hist_time_period == "weekly") {
-      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_sites")
+      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_count")
     }
   })
   

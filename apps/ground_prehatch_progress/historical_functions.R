@@ -24,7 +24,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y"))
   if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
   
-  # Normalize metric names (UI sends "weekly_active_sites", we use "active_sites" internally)
+  # Normalize metric names (UI sends "weekly_active_count", we use "active_count" internally)
   hist_display_metric <- gsub("weekly_", "", hist_display_metric)
   
   # Set date range
@@ -74,7 +74,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
                            length(zone_filter) > 1
   
   # Special logic for weekly active treatments (active sites and active acres)
-  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_sites", "active_acres")) {
+  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_count", "active_acres")) {
     # Generate all weeks in the range
     all_weeks <- seq.Date(start_date, end_date, by = "week")
     week_data <- data.frame()
@@ -249,7 +249,7 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   if (hist_display_metric == "treatments") {
     summary_data <- grouped_data %>%
       summarize(value = n(), .groups = "drop")
-  } else if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
+  } else if (hist_display_metric == "sites" || hist_display_metric == "active_count") {
     summary_data <- grouped_data %>%
       summarize(value = n_distinct(sitecode), .groups = "drop")
   } else if (hist_display_metric == "treatment_acres") {
@@ -315,7 +315,7 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
     "acres" = "Site Acres (Unique Sites)",
     "site_acres" = "Site Acres (Unique Sites)",
     "treatment_acres" = "Treatment Acres (Total)",
-    "weekly_active_sites" = "Number of Active Sites",
+    "weekly_active_count" = "Number of Active Sites",
     "weekly_active_acres" = "Active Site Acres",
     "treatments"
   )

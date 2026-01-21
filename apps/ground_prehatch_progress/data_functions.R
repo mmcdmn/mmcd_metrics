@@ -338,11 +338,11 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
   if (expiring_filter != "all" && !is.null(site_details)) {
     if (expiring_filter == "expiring") {
       # Show only expiring sites
-      expiring_sites <- site_details %>% filter(prehatch_status == "expiring")
+      expiring_count_data <- site_details %>% filter(prehatch_status == "expiring")
       
-      if (nrow(expiring_sites) > 0) {
+      if (nrow(expiring_count_data) > 0) {
         # Filter data to only sections that have expiring sites
-        expiring_sections <- unique(expiring_sites$sectcode)
+        expiring_sections <- unique(expiring_count_data$sectcode)
         data <- data %>% filter(sectcode %in% expiring_sections)
         
         # Zero out all counts except expiring

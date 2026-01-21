@@ -69,9 +69,9 @@ ground_prehatch_ui <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                        choices = c("Active Sites" = "weekly_active_sites",
+                        choices = c("Active Sites" = "weekly_active_count",
                                    "Active Acres" = "weekly_active_acres"),
-                        selected = "weekly_active_sites")
+                        selected = "weekly_active_count")
           ),
           
           sliderInput("hist_year_range", "Year Range:",
@@ -290,9 +290,9 @@ create_filter_panel <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                        choices = c("Active Sites" = "weekly_active_sites",
+                        choices = c("Active Sites" = "weekly_active_count",
                                    "Active Acres" = "weekly_active_acres"),
-                        selected = "weekly_active_sites",
+                        selected = "weekly_active_count",
                         inline = TRUE)
           )
         ),
@@ -569,9 +569,9 @@ create_historical_filter_panel <- function() {
         conditionalPanel(
           condition = "input.hist_time_period == 'weekly'",
           radioButtons("hist_display_metric", "Display Metric:",
-                      choices = c("Active Sites" = "weekly_active_sites",
+                      choices = c("Active Sites" = "weekly_active_count",
                                  "Active Site Acres" = "weekly_active_acres"),
-                      selected = "weekly_active_sites",
+                      selected = "weekly_active_count",
                       inline = TRUE)
         )
       ),

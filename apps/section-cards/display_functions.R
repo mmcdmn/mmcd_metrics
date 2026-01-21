@@ -32,6 +32,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     air_gnd = "Air/Gnd",
     culex = "Culex",
     spr_aedes = "Spring Aedes",
+    perturbans = "Perturbans",
     prehatch = "Prehatch",
     sample = "Sample Site",
     remarks = "Remarks",
@@ -215,9 +216,20 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
+    .perturbans-field { 
+      background-color: #4169E1 !important; 
+      background: #4169E1 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      color: white !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
     .prehatch-field { 
-      background-color: #ADD8E6 !important; 
-      background: #ADD8E6 !important; 
+      background-color: #DDA0DD !important; 
+      background: #DDA0DD !important; 
       padding: 2px 6px; 
       border-radius: 3px; 
       font-weight: bold; 
@@ -245,11 +257,27 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       text-align: center;
     }
     
+    .card-table th.col-odd {
+      background: #f0f0f0;
+    }
+    
+    .card-table th.col-even {
+      background: #e8e8e8;
+    }
+    
     .card-table td {
       border: 1px solid #333;
       padding: 4px;
       height: 25px;
       font-size: 10px;
+    }
+    
+    .card-table td.col-odd {
+      background: #fafafa;
+    }
+    
+    .card-table td.col-even {
+      background: #f0f0f0;
     }
     
     .page-footer {
@@ -438,6 +466,13 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
                         label, '</span></div>\n')
         }
         # If not Y, don't show anything
+      } else if (field == "perturbans") {
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          # Show perturbans label with light blue background
+          html <- paste0(html, '        <div class="info-item"><span class="perturbans-field">',
+                        label, '</span></div>\n')
+        }
+        # If not Y, don't show anything
       } else if (field == "sample") {
         # Sample site - only show if Y with pink background
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
@@ -477,9 +512,11 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   html <- paste0(html, '    <table class="card-table">\n')
   html <- paste0(html, '      <thead><tr>\n')
   
-  for (field in table_fields) {
+  for (i in seq_along(table_fields)) {
+    field <- table_fields[i]
     label <- field_labels[[field]]
-    html <- paste0(html, '        <th>', label, '</th>\n')
+    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+    html <- paste0(html, '        <th class="', col_class, '">', label, '</th>\n')
   }
   
   html <- paste0(html, '      </tr></thead>\n')
@@ -488,8 +525,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   # Add empty rows for data entry
   for (j in 1:num_rows) {
     html <- paste0(html, '        <tr>\n')
-    for (field in table_fields) {
-      html <- paste0(html, '          <td></td>\n')
+    for (i in seq_along(table_fields)) {
+      col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+      html <- paste0(html, '          <td class="', col_class, '"></td>\n')
     }
     html <- paste0(html, '        </tr>\n')
   }

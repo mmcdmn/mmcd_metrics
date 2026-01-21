@@ -34,6 +34,12 @@ create_field_selector <- function() {
         choices = c("All Sections" = "all"),
         selected = "all"
       ),
+      selectInput(
+        "filter_towncode",
+        "Town Code (first 4 digits):",
+        choices = c("All Town Codes" = "all"),
+        selected = "all"
+      ),
       checkboxInput(
         "split_by_section",
         "Split by section (each section on separate pages)",
@@ -78,6 +84,7 @@ create_field_selector <- function() {
           "Type" = "type",
           "Culex" = "culex",
           "Spring Aedes" = "spr_aedes",
+          "Perturbans" = "perturbans",
           "Prehatch" = "prehatch",
           "Sample Site" = "sample",
           "Section" = "section",

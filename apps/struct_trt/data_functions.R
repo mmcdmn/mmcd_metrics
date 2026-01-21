@@ -130,7 +130,7 @@ get_current_structure_data <- function(custom_today = Sys.Date(), expiring_days 
     # Query for current structure treatments using gis_sectcode for zone, fosarea, and facility
     query <- sprintf(
       "
-SELECT 
+SELECT DISTINCT ON (trt.sitecode)
   trt.sitecode,
   trt.inspdate,
   gis.facility,
@@ -151,6 +151,7 @@ WHERE trt.list_type = 'STR'
 %s
 %s
 %s
+ORDER BY trt.sitecode, trt.inspdate DESC
 ",
       get_facility_condition(facility_filter),
       get_foreman_condition(foreman_filter),
@@ -221,7 +222,7 @@ get_historical_structure_data <- function(start_year = 2023, end_year = 2025, fa
     # Fetch archive data using gis_sectcode for zone, fosarea, and facility
     query_archive <- sprintf(
       "
-SELECT
+SELECT DISTINCT ON (trt.sitecode)
 trt.sitecode,
 trt.inspdate,
 COALESCE(mat.effect_days, 30) AS effect_days,
@@ -243,6 +244,7 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
 %s
 %s
 %s
+ORDER BY trt.sitecode, trt.inspdate DESC
 ",
       as.numeric(start_year),
       as.numeric(end_year) + 1,
@@ -258,7 +260,7 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
     # Fetch current data with structure info using gis_sectcode
     query_current <- sprintf(
       "
-SELECT
+SELECT DISTINCT ON (trt.sitecode)
 trt.sitecode,
 trt.inspdate,
 COALESCE(mat.effect_days, 30) AS effect_days,
@@ -280,6 +282,7 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
 %s
 %s
 %s
+ORDER BY trt.sitecode, trt.inspdate DESC
 ",
       as.numeric(start_year),
       as.numeric(end_year) + 1,

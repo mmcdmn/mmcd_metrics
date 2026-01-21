@@ -399,6 +399,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     all_structs <- all_structures()
+    current_treatments <- current_data()
     
     if (nrow(all_structs) == 0) {
       return(DT::datatable(
@@ -408,16 +409,41 @@ server <- function(input, output, session) {
       ))
     }
     
-    # Show structure data with better column names
+    # Calculate treatment status for each structure
+    treatment_status_data <- current_treatments$treatments
+    if (nrow(treatment_status_data) > 0) {
+      treatment_status_data <- treatment_status_data %>%
+        select(sitecode, is_active, is_expiring) %>%
+        mutate(
+          treatment_status = case_when(
+            is_active & is_expiring ~ "Expiring",
+            is_active ~ "Treated", 
+            TRUE ~ "Expired"
+          )
+        ) %>%
+        select(sitecode, treatment_status)
+    } else {
+      treatment_status_data <- data.frame(
+        sitecode = character(0),
+        treatment_status = character(0)
+      )
+    }
+    
+    # Join structures with treatment status
     display_data <- all_structs %>%
-      select(sitecode, facility, zone, s_type, foreman, status) %>%
+      left_join(treatment_status_data, by = "sitecode") %>%
+      mutate(
+        treatment_status = ifelse(is.na(treatment_status), "No Treatment", treatment_status)
+      ) %>%
+      select(sitecode, facility, zone, s_type, foreman, status, treatment_status) %>%
       rename(
         "Sitecode" = sitecode,
         "Facility" = facility,
         "Zone" = zone,
         "Structure Type" = s_type,
         "FOS" = foreman,
-        "Status" = status
+        "Wet/Dry" = status,
+        "Treatment Status" = treatment_status
       )
     
     DT::datatable(

@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install required R packages
 RUN R -e "install.packages(c( \
-  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
+  'shiny', 'shinydashboard', 'shinyWidgets', 'shinyjs', 'DBI', 'RPostgreSQL', 'RPostgres', \
   'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
   'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
   'classInt', 's2', \

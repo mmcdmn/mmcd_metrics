@@ -3,6 +3,7 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
+  library(shinyjs)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -31,6 +32,9 @@ load_env_vars()
 # =============================================================================
 
 ui <- fluidPage(
+  
+  # Initialize shinyjs
+  useShinyjs(),
   
   # Custom CSS for print button and layout
   tags$head(
@@ -109,13 +113,26 @@ ui <- fluidPage(
     
     # JavaScript for scroll position
     tags$script(HTML("
-      Shiny.addCustomMessageHandler('restoreScroll', function(message) {
-        setTimeout(function() {
-          var element = document.getElementById('column_order_ui');
-          if (element) {
-            element.scrollTop = message.position;
-          }
-        }, 100);
+      Shiny.addCustomMessageHandler('moveUp', function(message) {
+        var element = $('[id$=\"_' + message.id + '\"]').closest('div[style*=\"display: flex\"]');
+        var prev = element.prev();
+        if (prev.length) {
+          var container = $('#column_order_ui')[0];
+          var scroll = container.scrollTop;
+          element.insertBefore(prev);
+          container.scrollTop = scroll;
+        }
+      });
+      
+      Shiny.addCustomMessageHandler('moveDown', function(message) {
+        var element = $('[id$=\"_' + message.id + '\"]').closest('div[style*=\"display: flex\"]');
+        var next = element.next();
+        if (next.length) {
+          var container = $('#column_order_ui')[0];
+          var scroll = container.scrollTop;
+          element.insertAfter(next);
+          container.scrollTop = scroll;
+        }
       });
     "))
   ),
@@ -208,6 +225,13 @@ server <- function(input, output, session) {
         choices = facility_choices
       )
       
+      # Initialize town code choices as empty - will be populated when facility is selected
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = c("All Town Codes" = "all")
+      )
+      
     }, error = function(e) {
       showNotification(
         paste("Error loading facility options:", e$message),
@@ -250,6 +274,16 @@ server <- function(input, output, session) {
         choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
       )
       
+      # Update town codes based on selected facility
+      town_codes <- get_town_codes(facility_filter = input$filter_facility)
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = town_choices
+      )
+      
     }, error = function(e) {
       showNotification(
         paste("Error updating filters:", e$message),
@@ -273,6 +307,19 @@ server <- function(input, output, session) {
         choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
       )
       
+      # Update town codes based on selected facility and fosarea
+      town_codes <- get_town_codes(
+        facility_filter = input$filter_facility,
+        fosarea_filter = input$filter_fosarea
+      )
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = town_choices
+      )
+      
     }, error = function(e) {
       showNotification(
         paste("Error updating section filter:", e$message),
@@ -281,103 +328,117 @@ server <- function(input, output, session) {
     })
   })
   
-  # Column ordering system
-  column_choices <- reactiveVal(list(
-    list(id = "date", label = "Date", selected = TRUE),
-    list(id = "wet_pct", label = "Wet %", selected = TRUE),
-    list(id = "emp_num", label = "Emp #", selected = TRUE),
-    list(id = "num_dip", label = "#/Dip", selected = TRUE),
-    list(id = "sample_num", label = "Sample #", selected = TRUE),
-    list(id = "amt", label = "Amt", selected = TRUE),
-    list(id = "mat", label = "Mat", selected = TRUE)
+  # Track column order - this will change when up/down buttons are used
+  column_order <- reactiveVal(c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat"))
+  
+  # Store checkbox states to preserve during re-rendering
+  checkbox_states <- reactiveVal(list(
+    date = TRUE, wet_pct = TRUE, emp_num = TRUE, 
+    num_dip = TRUE, sample_num = TRUE, amt = TRUE, mat = TRUE
   ))
   
-  # Render column ordering UI
+  # Render column ordering UI - updates when order changes
   output$column_order_ui <- renderUI({
-    cols <- column_choices()
+    col_order <- column_order()
+    current_states <- checkbox_states()
+    col_labels <- list(
+      date = "Date", wet_pct = "Wet %", emp_num = "Emp #", 
+      num_dip = "#/Dip", sample_num = "Sample #", amt = "Amt", mat = "Mat"
+    )
     
     tags$div(
       id = "column_order_ui",
       style = "max-height: 300px; overflow-y: auto;",
-      onscroll = "Shiny.setInputValue('column_scroll_position', this.scrollTop);",
-      lapply(seq_along(cols), function(i) {
-        col <- cols[[i]]
+      lapply(seq_along(col_order), function(i) {
+        col_id <- col_order[[i]]
+        col_label <- col_labels[[col_id]]
+        # Alternating background colors
+        bg_color <- if (i %% 2 == 1) "#f8f9fa" else "#e9ecef"
+        
         tags$div(
-          style = "display: flex; align-items: center; margin-bottom: 5px; padding: 5px; border: 1px solid #ddd; border-radius: 3px;",
+          style = paste0("display: flex; align-items: center; margin-bottom: 2px; padding: 3px; ",
+                        "border: 1px solid #ddd; border-radius: 3px; background-color: ", bg_color, ";"),
           checkboxInput(
-            paste0("col_check_", col$id),
+            paste0("col_check_", col_id),
             NULL,
-            value = col$selected,
+            value = current_states[[col_id]],  # Use stored state
             width = "30px"
           ),
-          tags$span(col$label, style = "flex-grow: 1; padding-left: 5px;"),
+          tags$span(col_label, style = "flex-grow: 1; padding-left: 3px; font-weight: 500;"),
           actionButton(
-            paste0("col_up_", col$id),
+            paste0("col_up_", col_id),
             "↑",
-            style = "padding: 2px 8px; margin-right: 2px;",
-            onclick = sprintf("Shiny.setInputValue('move_col_up', '%s', {priority: 'event'})", col$id)
+            style = "padding: 1px 6px; margin-right: 2px; font-size: 12px;",
+            onclick = sprintf("Shiny.setInputValue('move_col_up', '%s', {priority: 'event'})", col_id)
           ),
           actionButton(
-            paste0("col_down_", col$id),
+            paste0("col_down_", col_id),
             "↓",
-            style = "padding: 2px 8px;",
-            onclick = sprintf("Shiny.setInputValue('move_col_down', '%s', {priority: 'event'})", col$id)
+            style = "padding: 1px 6px; font-size: 12px;",
+            onclick = sprintf("Shiny.setInputValue('move_col_down', '%s', {priority: 'event'})", col_id)
           )
         )
       })
     )
   })
   
-  # Store scroll position
-  scroll_position <- reactiveVal(0)
-  
-  # Update column selected state
-  observe({
-    cols <- column_choices()
-    changed <- FALSE
-    for (i in seq_along(cols)) {
-      col <- cols[[i]]
-      check_val <- input[[paste0("col_check_", col$id)]]
-      if (!is.null(check_val) && check_val != col$selected) {
-        cols[[i]]$selected <- check_val
-        changed <- TRUE
+  # Helper function to get current column selections in current order
+  get_selected_columns <- function() {
+    # Get current order
+    current_order <- column_order()
+    
+    # Read current checkbox values and return selected IDs in current order
+    selected_ids <- c()
+    for (col_id in current_order) {
+      checkbox_id <- paste0("col_check_", col_id)
+      if (isTruthy(input[[checkbox_id]])) {
+        selected_ids <- c(selected_ids, col_id)
       }
     }
-    if (changed) {
-      column_choices(cols)
-      # Restore scroll position after checkbox changes using JavaScript injection
-      session$sendCustomMessage("restoreScroll", list(position = scroll_position()))
+    return(selected_ids)
+  }
+  
+  # Update stored checkbox states when they change
+  observe({
+    current_states <- checkbox_states()
+    col_ids <- c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat")
+    
+    for (col_id in col_ids) {
+      checkbox_id <- paste0("col_check_", col_id)
+      if (!is.null(input[[checkbox_id]])) {
+        current_states[[col_id]] <- input[[checkbox_id]]
+      }
     }
+    checkbox_states(current_states)
   })
   
-  # Capture scroll position before changes
-  observeEvent(input$column_scroll_position, {
-    scroll_position(input$column_scroll_position)
-  })
-  
-  # Move column up
+  # Move column up - change actual order
   observeEvent(input$move_col_up, {
-    cols <- column_choices()
+    current_order <- column_order()
     col_id <- input$move_col_up
-    idx <- which(sapply(cols, function(x) x$id == col_id))
-    if (length(idx) > 0 && idx > 1) {
-      cols[c(idx-1, idx)] <- cols[c(idx, idx-1)]
-      column_choices(cols)
-      # Restore scroll position after a brief delay
-      session$sendCustomMessage("restoreScroll", list(position = scroll_position()))
+    col_index <- which(current_order == col_id)
+    
+    if (col_index > 1) {
+      # Swap with previous item
+      new_order <- current_order
+      new_order[col_index - 1] <- current_order[col_index]
+      new_order[col_index] <- current_order[col_index - 1]
+      column_order(new_order)
     }
   })
   
-  # Move column down
+  # Move column down - change actual order
   observeEvent(input$move_col_down, {
-    cols <- column_choices()
+    current_order <- column_order()
     col_id <- input$move_col_down
-    idx <- which(sapply(cols, function(x) x$id == col_id))
-    if (length(idx) > 0 && idx < length(cols)) {
-      cols[c(idx, idx+1)] <- cols[c(idx+1, idx)]
-      column_choices(cols)
-      # Restore scroll position after a brief delay
-      session$sendCustomMessage("restoreScroll", list(position = scroll_position()))
+    col_index <- which(current_order == col_id)
+    
+    if (col_index < length(current_order)) {
+      # Swap with next item
+      new_order <- current_order
+      new_order[col_index + 1] <- current_order[col_index]
+      new_order[col_index] <- current_order[col_index + 1]
+      column_order(new_order)
     }
   })
   
@@ -454,6 +515,11 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(priority == input$filter_priority)
     }
     
+    # Apply town code filter (first 4 digits of sitecode)
+    if (input$filter_towncode != "all") {
+      filtered <- filtered %>% filter(substr(sitecode, 1, 4) == input$filter_towncode)
+    }
+    
     if (nrow(filtered) == 0) {
       removeModal()
       showNotification(
@@ -474,8 +540,7 @@ server <- function(input, output, session) {
     title_fields <- c("sitecode", input$title_fields)
     
     # Get table fields from column ordering system (in order, selected only)
-    cols <- column_choices()
-    table_fields <- sapply(cols[sapply(cols, function(x) x$selected)], function(x) x$id)
+    table_fields <- get_selected_columns()
     
     if (length(table_fields) == 0) {
       showNotification(
@@ -558,12 +623,14 @@ server <- function(input, output, session) {
       if (input$filter_priority != "all") {
         filtered <- filtered %>% filter(priority == input$filter_priority)
       }
+      if (input$filter_towncode != "all") {
+        filtered <- filtered %>% filter(substr(sitecode, 1, 4) == input$filter_towncode)
+      }
       
       title_fields <- c("sitecode", input$title_fields)
       
       # Get table fields from column ordering system (same as main generation)
-      cols <- column_choices()
-      table_fields <- sapply(cols[sapply(cols, function(x) x$selected)], function(x) x$id)
+      table_fields <- get_selected_columns()
       
       if (length(table_fields) == 0) {
         removeModal()

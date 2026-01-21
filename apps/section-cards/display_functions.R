@@ -32,6 +32,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     air_gnd = "Air/Gnd",
     culex = "Culex",
     spr_aedes = "Spring Aedes",
+    perturbans = "Perturbans",
     prehatch = "Prehatch",
     sample = "Sample Site",
     remarks = "Remarks",
@@ -208,6 +209,16 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     .spring-aedes-field { 
       background-color: #FFD580 !important; 
       background: #FFD580 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .perturbans-field { 
+      background-color: #ADD8E6 !important; 
+      background: #ADD8E6 !important; 
       padding: 2px 6px; 
       border-radius: 3px; 
       font-weight: bold; 
@@ -451,6 +462,13 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
           # Show spring aedes label with orange background
           html <- paste0(html, '        <div class="info-item"><span class="spring-aedes-field">',
+                        label, '</span></div>\n')
+        }
+        # If not Y, don't show anything
+      } else if (field == "perturbans") {
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          # Show perturbans label with light blue background
+          html <- paste0(html, '        <div class="info-item"><span class="perturbans-field">',
                         label, '</span></div>\n')
         }
         # If not Y, don't show anything

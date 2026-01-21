@@ -45,6 +45,27 @@ get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
   ))
 }
 
+#' Get unique town codes from sitecodes
+#' 
+#' Extracts the first 4 digits from sitecodes to get unique town codes
+#' 
+#' @return A vector of unique town codes
+#' @export
+get_town_codes <- function() {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  
+  query <- "
+    SELECT DISTINCT left(sitecode, 4) as towncode
+    FROM public.loc_breeding_sites
+    WHERE enddate IS NULL AND sitecode IS NOT NULL AND length(sitecode) >= 4
+    ORDER BY left(sitecode, 4)
+  "
+  
+  data <- dbGetQuery(con, query)
+  return(data$towncode)
+}
+
 #' Get breeding sites data with section information
 #' 
 #' This function retrieves breeding site data and joins with section (gis_sectcode)
@@ -65,6 +86,7 @@ get_breeding_sites_with_sections <- function() {
       b.air_gnd,
       b.culex,
       b.spr_aedes,
+      b.coq_pert as perturbans,
       b.prehatch,
       b.remarks,
       b.drone,

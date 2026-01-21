@@ -225,6 +225,16 @@ server <- function(input, output, session) {
         choices = facility_choices
       )
       
+      # Load town code choices
+      town_codes <- get_town_codes()
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = town_choices
+      )
+      
     }, error = function(e) {
       showNotification(
         paste("Error loading facility options:", e$message),
@@ -485,6 +495,11 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(priority == input$filter_priority)
     }
     
+    # Apply town code filter (first 4 digits of sitecode)
+    if (input$filter_towncode != "all") {
+      filtered <- filtered %>% filter(substr(sitecode, 1, 4) == input$filter_towncode)
+    }
+    
     if (nrow(filtered) == 0) {
       removeModal()
       showNotification(
@@ -587,6 +602,9 @@ server <- function(input, output, session) {
       }
       if (input$filter_priority != "all") {
         filtered <- filtered %>% filter(priority == input$filter_priority)
+      }
+      if (input$filter_towncode != "all") {
+        filtered <- filtered %>% filter(substr(sitecode, 1, 4) == input$filter_towncode)
       }
       
       title_fields <- c("sitecode", input$title_fields)

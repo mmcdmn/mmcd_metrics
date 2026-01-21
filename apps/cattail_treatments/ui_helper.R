@@ -382,28 +382,28 @@ create_time_period_selector <- function() {
 create_cattail_value_boxes <- function(aggregated_data, treatments_data = NULL, plans_data = NULL) {
   if (nrow(aggregated_data) == 0) {
     return(list(
-      total_sites = 0, total_acres = 0, total_treatments = 0,
+      total_count = 0, total_acres = 0, total_treatments = 0,
       active_treatments = 0, treatment_coverage = 0, 
       acres_treated = 0
     ))
   }
   
   # Calculate totals
-  total_sites <- sum(aggregated_data$total_sites, na.rm = TRUE)
+  total_count <- sum(aggregated_data$total_count, na.rm = TRUE)
   total_acres <- sum(aggregated_data$total_acres, na.rm = TRUE)
   total_treatments <- sum(aggregated_data$treatments_applied, na.rm = TRUE)
   active_treatments <- sum(aggregated_data$active_treatments, na.rm = TRUE)
   acres_treated <- sum(aggregated_data$acres_treated, na.rm = TRUE)
   
   # Calculate coverage percentage
-  treatment_coverage <- if (total_sites > 0) {
-    round((total_treatments / total_sites) * 100, 1)
+  treatment_coverage <- if (total_count > 0) {
+    round((total_treatments / total_count) * 100, 1)
   } else {
     0
   }
   
   return(list(
-    total_sites = total_sites,
+    total_count = total_count,
     total_acres = total_acres,
     total_treatments = total_treatments,
     active_treatments = active_treatments,

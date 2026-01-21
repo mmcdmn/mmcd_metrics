@@ -418,7 +418,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
   # Calculate 3-state metrics using final_status
   total_summary <- data.frame(
     # Basic counts
-    total_sites = nrow(sites_data),
+    total_count = nrow(sites_data),
     total_acres = sum(sites_data$acres, na.rm = TRUE),
     
     # Inspection status
@@ -462,7 +462,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -493,7 +493,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, zone) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -524,7 +524,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, fosarea) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -545,7 +545,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -576,7 +576,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, zone) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -607,7 +607,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, fosarea) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics

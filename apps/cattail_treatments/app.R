@@ -129,7 +129,7 @@ server <- function(input, output, session) {
     req(input$refresh_data)  # Require refresh button click
     if (is.null(values$aggregated_data) || is.null(values$aggregated_data$total_summary)) {
       return(list(
-        total_sites = 0, total_acres = 0, sites_inspected = 0,
+        total_count = 0, total_acres = 0, sites_inspected = 0,
         sites_need_treatment = 0, sites_treated = 0, 
         percent_need_treatment = 0, percent_treated = 0
       ))

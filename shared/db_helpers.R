@@ -172,7 +172,42 @@ safe_disconnect <- function(con) {
   })
 }
 
-
+# Get year ranges from current and archive tables for historical data
+# This handles March transitions when data moves between tables
+get_historical_year_ranges <- function(con, current_table, archive_table, date_column = "inspdate") {
+  if (is.null(con)) {
+    return(list(current_years = c(), archive_years = c()))
+  }
+  
+  tryCatch({
+    # Get year ranges from each table to determine data availability
+    current_year_query <- sprintf("SELECT MIN(EXTRACT(YEAR FROM %s)) as min_year, MAX(EXTRACT(YEAR FROM %s)) as max_year FROM %s WHERE %s IS NOT NULL", 
+                                   date_column, date_column, current_table, date_column)
+    archive_year_query <- sprintf("SELECT MIN(EXTRACT(YEAR FROM %s)) as min_year, MAX(EXTRACT(YEAR FROM %s)) as max_year FROM %s WHERE %s IS NOT NULL", 
+                                   date_column, date_column, archive_table, date_column)
+    
+    current_year_range <- dbGetQuery(con, current_year_query)
+    archive_year_range <- dbGetQuery(con, archive_year_query)
+    
+    # Determine which years to get from which table based on actual data availability
+    current_years <- c()
+    archive_years <- c()
+    
+    if (!is.na(current_year_range$min_year) && !is.na(current_year_range$max_year)) {
+      current_years <- seq(current_year_range$min_year, current_year_range$max_year, 1)
+    }
+    
+    if (!is.na(archive_year_range$min_year) && !is.na(archive_year_range$max_year)) {
+      archive_years <- seq(archive_year_range$min_year, archive_year_range$max_year, 1)
+    }
+    
+    return(list(current_years = current_years, archive_years = archive_years))
+    
+  }, error = function(e) {
+    warning(paste("Error getting historical year ranges:", e$message))
+    return(list(current_years = c(), archive_years = c()))
+  })
+}
 
 # Facility lookup functions
 get_facility_lookup <- function() {

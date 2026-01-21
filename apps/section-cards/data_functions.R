@@ -45,22 +45,36 @@ get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
   ))
 }
 
-#' Get unique town codes from sitecodes
+#' Get unique town codes from gis_sectcode with optional filtering
 #' 
-#' Extracts the first 4 digits from sitecodes to get unique town codes
+#' Extracts the first 4 digits from sectcodes to get unique town codes
+#' Can be filtered by facility and/or fosarea for cascading dropdowns
 #' 
+#' @param facility_filter Optional facility filter
+#' @param fosarea_filter Optional FOS area filter  
 #' @return A vector of unique town codes
 #' @export
-get_town_codes <- function() {
+get_town_codes <- function(facility_filter = NULL, fosarea_filter = NULL) {
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
   
-  query <- "
-    SELECT DISTINCT left(sitecode, 4) as towncode
-    FROM public.loc_breeding_sites
-    WHERE enddate IS NULL AND sitecode IS NOT NULL AND length(sitecode) >= 4
-    ORDER BY left(sitecode, 4)
-  "
+  # Build filter conditions
+  where_conditions <- "sectcode IS NOT NULL"
+  
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND facility = '", facility_filter, "'")
+  }
+  
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
+    SELECT DISTINCT left(sectcode, 4) as towncode
+    FROM public.gis_sectcode
+    WHERE ", where_conditions, "
+    ORDER BY left(sectcode, 4)
+  ")
   
   data <- dbGetQuery(con, query)
   return(data$towncode)

@@ -217,18 +217,19 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       color-adjust: exact !important;
     }
     .perturbans-field { 
-      background-color: #ADD8E6 !important; 
-      background: #ADD8E6 !important; 
+      background-color: #4169E1 !important; 
+      background: #4169E1 !important; 
       padding: 2px 6px; 
       border-radius: 3px; 
       font-weight: bold; 
+      color: white !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
     .prehatch-field { 
-      background-color: #ADD8E6 !important; 
-      background: #ADD8E6 !important; 
+      background-color: #DDA0DD !important; 
+      background: #DDA0DD !important; 
       padding: 2px 6px; 
       border-radius: 3px; 
       font-weight: bold; 

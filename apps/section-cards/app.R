@@ -225,14 +225,11 @@ server <- function(input, output, session) {
         choices = facility_choices
       )
       
-      # Load town code choices
-      town_codes <- get_town_codes()
-      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
-      
+      # Initialize town code choices as empty - will be populated when facility is selected
       updateSelectInput(
         session,
         "filter_towncode",
-        choices = town_choices
+        choices = c("All Town Codes" = "all")
       )
       
     }, error = function(e) {
@@ -277,6 +274,16 @@ server <- function(input, output, session) {
         choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
       )
       
+      # Update town codes based on selected facility
+      town_codes <- get_town_codes(facility_filter = input$filter_facility)
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = town_choices
+      )
+      
     }, error = function(e) {
       showNotification(
         paste("Error updating filters:", e$message),
@@ -298,6 +305,19 @@ server <- function(input, output, session) {
         session,
         "filter_section",
         choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
+      )
+      
+      # Update town codes based on selected facility and fosarea
+      town_codes <- get_town_codes(
+        facility_filter = input$filter_facility,
+        fosarea_filter = input$filter_fosarea
+      )
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = town_choices
       )
       
     }, error = function(e) {

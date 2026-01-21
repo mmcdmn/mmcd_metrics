@@ -282,57 +282,57 @@ server <- function(input, output, session) {
     
     if (is.null(data) || nrow(data) == 0) {
       return(list(
-        total_structures = 0,
-        active_structures = 0,
-        expiring_structures = 0,
+        total_count = 0,
+        active_count = 0,
+        expiring_count = 0,
         active_pct = 0
       ))
     }
     
-    total <- sum(data$total_structures, na.rm = TRUE)
-    active <- sum(data$active_structures, na.rm = TRUE)
-    expiring <- sum(data$expiring_structures, na.rm = TRUE)
+    total <- sum(data$total_count, na.rm = TRUE)
+    active <- sum(data$active_count, na.rm = TRUE)
+    expiring <- sum(data$expiring_count, na.rm = TRUE)
     active_pct <- if (total > 0) round(100 * active / total, 1) else 0
     
     list(
-      total_structures = total,
-      active_structures = active,
-      expiring_structures = expiring,
+      total_count = total,
+      active_count = active,
+      expiring_count = expiring,
       active_pct = active_pct
     )
   })
   
   # Render stat boxes
-  output$total_structures_box <- renderUI({
+  output$total_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
     create_stat_box(
-      value = format(data$total_structures, big.mark = ","),
+      value = format(data$total_count, big.mark = ","),
       title = "Total Structures",
       bg_color = status_colors["unknown"],
       icon = icon("building")
     )
   })
   
-  output$active_structures_box <- renderUI({
+  output$active_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
     create_stat_box(
-      value = format(data$active_structures, big.mark = ","),
+      value = format(data$active_count, big.mark = ","),
       title = "Active Treatments",
       bg_color = status_colors["active"],
       icon = icon("check-circle")
     )
   })
   
-  output$expiring_structures_box <- renderUI({
+  output$expiring_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
     create_stat_box(
-      value = format(data$expiring_structures, big.mark = ","),
+      value = format(data$expiring_count, big.mark = ","),
       title = "Expiring Soon",
       bg_color = status_colors["planned"],
       icon = icon("clock")

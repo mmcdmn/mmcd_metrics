@@ -16,6 +16,11 @@ load_historical_struct_data <- function(start_year, end_year,
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
+  # Get dynamic year ranges to determine which tables to query
+  year_ranges <- get_historical_year_ranges(con, "dblarv_insptrt_current", "dblarv_insptrt_archive", "inspdate")
+  current_table_years <- year_ranges$current_years
+  archive_table_years <- year_ranges$archive_years
+  
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
   
   tryCatch({
@@ -79,71 +84,72 @@ load_historical_struct_data <- function(start_year, end_year,
       status_where <- paste0("AND loc.status_udw IN (", status_list, ")")
     }
     
-    # Query for CURRENT YEAR treatments
-    current_query <- sprintf("
-      SELECT DISTINCT
-        trt.sitecode,
-        trt.inspdate,
-        COALESCE(mat.effect_days, 30) AS effect_days,
-        loc.s_type,
-        loc.priority,
-        gis.facility,
-        gis.fosarea,
-        gis.zone,
-        EXTRACT(YEAR FROM trt.inspdate) as treatment_year
-      FROM public.dblarv_insptrt_current trt
-      LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
-      LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
-      LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-      WHERE EXTRACT(YEAR FROM trt.inspdate) = %d
-        AND trt.list_type = 'STR'
-        AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
-        %s
-        %s
-        %s
-        %s
-        %s
-    ", current_year, facility_where, zone_where, foreman_where, structure_type_where, status_where)
+    # Determine which years need current table vs archive table
+    current_years_needed <- intersect(start_year:end_year, current_table_years)
+    archive_years_needed <- intersect(start_year:end_year, archive_table_years)
     
-    # Query for ARCHIVE treatments
-    archive_query <- sprintf("
-      SELECT DISTINCT
-        trt.sitecode,
-        trt.inspdate,
-        COALESCE(mat.effect_days, 30) AS effect_days,
-        loc.s_type,
-        loc.priority,
-        gis.facility,
-        gis.fosarea,
-        gis.zone,
-        EXTRACT(YEAR FROM trt.inspdate) as treatment_year
-      FROM public.dblarv_insptrt_archive trt
-      LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
-      LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
-      LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-      WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
-        AND EXTRACT(YEAR FROM trt.inspdate) < %d
-        AND trt.list_type = 'STR'
-        AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
-        %s
-        %s
-        %s
-        %s
-        %s
-    ", start_year, end_year, current_year, facility_where, zone_where, foreman_where, structure_type_where, status_where)
+    all_data <- data.frame()
     
-    # Combine current and archive data
-    if (current_year >= start_year && current_year <= end_year) {
-      # Need both current and archive
+    # Query CURRENT table if needed
+    if (length(current_years_needed) > 0) {
+      current_query <- sprintf("
+        SELECT DISTINCT
+          trt.sitecode,
+          trt.inspdate,
+          COALESCE(mat.effect_days, 30) AS effect_days,
+          loc.s_type,
+          loc.priority,
+          gis.facility,
+          gis.fosarea,
+          gis.zone,
+          EXTRACT(YEAR FROM trt.inspdate) as treatment_year
+        FROM public.dblarv_insptrt_current trt
+        LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
+        LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+        LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+        WHERE EXTRACT(YEAR FROM trt.inspdate) IN (%s)
+          AND trt.list_type = 'STR'
+          AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
+          %s
+          %s
+          %s
+          %s
+          %s
+      ", paste(current_years_needed, collapse = ","), facility_where, zone_where, foreman_where, structure_type_where, status_where)
+      
       current_data <- dbGetQuery(con, current_query)
+      all_data <- bind_rows(all_data, current_data)
+    }
+    
+    # Query ARCHIVE table if needed
+    if (length(archive_years_needed) > 0) {
+      archive_query <- sprintf("
+        SELECT DISTINCT
+          trt.sitecode,
+          trt.inspdate,
+          COALESCE(mat.effect_days, 30) AS effect_days,
+          loc.s_type,
+          loc.priority,
+          gis.facility,
+          gis.fosarea,
+          gis.zone,
+          EXTRACT(YEAR FROM trt.inspdate) as treatment_year
+        FROM public.dblarv_insptrt_archive trt
+        LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
+        LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+        LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+        WHERE EXTRACT(YEAR FROM trt.inspdate) IN (%s)
+          AND trt.list_type = 'STR'
+          AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
+          %s
+          %s
+          %s
+          %s
+          %s
+      ", paste(archive_years_needed, collapse = ","), facility_where, zone_where, foreman_where, structure_type_where, status_where)
+      
       archive_data <- dbGetQuery(con, archive_query)
-      all_data <- bind_rows(archive_data, current_data)
-    } else if (current_year > end_year) {
-      # Only need archive
-      all_data <- dbGetQuery(con, archive_query)
-    } else {
-      # Only need current (edge case)
-      all_data <- dbGetQuery(con, current_query)
+      all_data <- bind_rows(all_data, archive_data)
     }
     
     # Add facility and foreman name lookups
@@ -346,28 +352,28 @@ create_historical_struct_data <- function(start_year, end_year,
           SELECT 
             gis.facility,
             gis.zone,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.facility, gis.zone
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = c("facility", "zone"))
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = c("facility", "zone"))
       } else {
         query <- paste0("
           SELECT 
             gis.facility,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.facility
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = "facility")
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = "facility")
       }
     } else if (hist_group_by == "foreman") {
       if (show_zones_separately) {
@@ -375,51 +381,51 @@ create_historical_struct_data <- function(start_year, end_year,
           SELECT 
             gis.fosarea,
             gis.zone,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.fosarea, gis.zone
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = c("fosarea", "zone"))
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = c("fosarea", "zone"))
       } else {
         query <- paste0("
           SELECT 
             gis.fosarea,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.fosarea
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = "fosarea")
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = "fosarea")
       }
     } else if (hist_group_by == "mmcd_all") {
       query <- paste0("
         SELECT 
-          COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+          COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
         FROM loc_cxstruct loc
         INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
         WHERE 1=1
         ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where
       )
-      total_structures_count <- dbGetQuery(con, query)[[1]]
-      result <- result %>% mutate(total_structures = total_structures_count)
+      total_count_result <- dbGetQuery(con, query)[[1]]
+      result <- result %>% mutate(total_count = total_count_result)
     }
     
     # Calculate proportion as percentage
     # treated_structures = count of structures that received treatment
-    # total_structures = count of ALL structures in that group (with filters applied)
+    # total_count = count of ALL structures in that group (with filters applied)
     result <- result %>%
       mutate(
-        total_structures = ifelse(is.na(total_structures) | total_structures == 0, treated_structures, total_structures),
-        count = (treated_structures / total_structures) * 100  # Convert to percentage
+        total_count = ifelse(is.na(total_count) | total_count == 0, treated_structures, total_count),
+        count = (treated_structures / total_count) * 100  # Convert to percentage
       ) %>%
-      select(-treated_structures, -total_structures)
+      select(-treated_structures, -total_count)
   }
   
   return(result)
@@ -453,6 +459,8 @@ create_historical_struct_chart <- function(data,
         theme = theme
       )
       if (is.list(group_colors)) group_colors <- group_colors$colors
+      # Filter to only include colors for groups actually present in data
+      group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
     } else {
       # Simple facility colors
       facility_colors <- get_facility_base_colors(theme = theme)
@@ -469,21 +477,26 @@ create_historical_struct_chart <- function(data,
         }),
         unique(data$group_name)
       )
+      # Filter to only include colors for groups actually present in data
+      group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
     }
   } else if (hist_group_by == "foreman") {
     # Check if we have zones in the data
     if (any(grepl(" P[12]$", data$group_name))) {
       # Zone-aware foreman colors
       zones <- unique(sub(".* P([12])$", "\\1", data$group_name[grepl(" P[12]$", data$group_name)]))
-      group_colors <- get_themed_foreman_colors(
+      group_colors <- get_foreman_colors(
         alpha_zones = zones,
-        combined_groups = unique(data$group_name),
-        theme = theme
+        combined_groups = unique(data$group_name)
       )
       if (is.list(group_colors)) group_colors <- group_colors$colors
+      # Filter to only include colors for groups actually present in data
+      group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
     } else {
       # Simple foreman colors
-      group_colors <- get_themed_foreman_colors(theme = theme)
+      all_foreman_colors <- get_themed_foreman_colors(theme = theme)
+      # Filter to only include colors for groups actually present in data
+      group_colors <- all_foreman_colors[names(all_foreman_colors) %in% unique(data$group_name)]
     }
   } else {
     # mmcd_all - use single color

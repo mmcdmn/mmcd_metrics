@@ -164,7 +164,7 @@ WHERE trt.list_type = 'STR'
     # Get total structures count
     query_total <- sprintf(
       "
-SELECT COUNT(DISTINCT loc.sitecode)::bigint AS total_structures
+SELECT COUNT(DISTINCT loc.sitecode)::bigint AS total_count
 FROM loc_cxstruct loc
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE 1=1
@@ -174,7 +174,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
-    total_structures <- as.integer(dbGetQuery(con, query_total)$total_structures)
+    total_count <- as.integer(dbGetQuery(con, query_total)$total_count)
     safe_disconnect(con)
     
     # Process the data
@@ -195,13 +195,13 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     
     return(list(
       treatments = current_data,
-      total_structures = total_structures
+      total_count = total_count
     ))
     
   }, error = function(e) {
     warning(paste("Error loading current structure data:", e$message))
     if (!is.null(con)) safe_disconnect(con)
-    return(list(treatments = data.frame(), total_structures = 0))
+    return(list(treatments = data.frame(), total_count = 0))
   })
 }
 
@@ -293,9 +293,9 @@ AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
     current_data <- dbGetQuery(con, query_current)
     
     # Get total structures (active structures only)
-    query_total_structures <- sprintf(
+    query_total_count <- sprintf(
       "
-SELECT COUNT(DISTINCT loc.sitecode) AS total_structures
+SELECT COUNT(DISTINCT loc.sitecode) AS total_count
 FROM loc_cxstruct loc
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE 1=1
@@ -305,7 +305,7 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
       get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
     )
     
-    total_structures <- as.numeric(dbGetQuery(con, query_total_structures)$total_structures)
+    total_count <- as.numeric(dbGetQuery(con, query_total_count)$total_count)
     safe_disconnect(con)
     
     # Combine and process data
@@ -315,13 +315,13 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     
     return(list(
       treatments = combined_data,
-      total_structures = total_structures
+      total_count = total_count
     ))
     
   }, error = function(e) {
     warning(paste("Error loading historical structure data:", e$message))
     if (!is.null(con)) safe_disconnect(con)
-    return(list(treatments = data.frame(), total_structures = 0))
+    return(list(treatments = data.frame(), total_count = 0))
   })
 }
 
@@ -411,30 +411,30 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   # Count total structures by group
   if (length(zone_filter) > 1 && !combine_zones) {
     # Separate zones - group by combined_group
-    total_structures <- structures %>%
+    total_count <- structures %>%
       group_by(combined_group) %>%
-      summarize(total_structures = n(), .groups = 'drop')
+      summarize(total_count = n(), .groups = 'drop')
   } else {
     # For single zone OR combined zones, group by main column
     if (group_col == "facility") {
-      total_structures <- structures %>%
+      total_count <- structures %>%
         group_by(!!sym(group_col)) %>%
         summarize(
-          total_structures = n(),
+          total_count = n(),
           facility_display = first(facility_display),
           .groups = 'drop'
         )
     } else if (group_col == "foreman") {
-      total_structures <- structures %>%
+      total_count <- structures %>%
         group_by(!!sym(group_col)) %>%
         summarize(
-          total_structures = n(),
+          total_count = n(),
           .groups = 'drop'
         )
     } else {
-      total_structures <- structures %>%
+      total_count <- structures %>%
         group_by(!!sym(group_col)) %>%
-        summarize(total_structures = n(), .groups = 'drop')
+        summarize(total_count = n(), .groups = 'drop')
     }
   }
   
@@ -442,45 +442,45 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   if (nrow(treatments) > 0) {
     if (length(zone_filter) > 1 && !combine_zones) {
       # Separate zones
-      active_structures <- treatments %>%
+      active_count <- treatments %>%
         filter(is_active == TRUE) %>%
         distinct(sitecode, combined_group) %>%
         group_by(combined_group) %>%
-        summarize(active_structures = n(), .groups = 'drop')
+        summarize(active_count = n(), .groups = 'drop')
       
-      expiring_structures <- treatments %>%
+      expiring_count <- treatments %>%
         filter(is_expiring == TRUE) %>%
         distinct(sitecode, combined_group) %>%
         group_by(combined_group) %>%
-        summarize(expiring_structures = n(), .groups = 'drop')
+        summarize(expiring_count = n(), .groups = 'drop')
     } else {
       # Single zone OR combined zones
-      active_structures <- treatments %>%
+      active_count <- treatments %>%
         filter(is_active == TRUE) %>%
         distinct(sitecode, !!sym(group_col)) %>%
         group_by(!!sym(group_col)) %>%
-        summarize(active_structures = n(), .groups = 'drop')
+        summarize(active_count = n(), .groups = 'drop')
       
-      expiring_structures <- treatments %>%
+      expiring_count <- treatments %>%
         filter(is_expiring == TRUE) %>%
         distinct(sitecode, !!sym(group_col)) %>%
         group_by(!!sym(group_col)) %>%
-        summarize(expiring_structures = n(), .groups = 'drop')
+        summarize(expiring_count = n(), .groups = 'drop')
     }
   } else {
-    active_structures <- data.frame()
-    expiring_structures <- data.frame()
+    active_count <- data.frame()
+    expiring_count <- data.frame()
   }
   
   # Combine all counts
   if (length(zone_filter) > 1 && !combine_zones) {
     # Separate zones - use combined_group
-    combined_data <- total_structures %>%
-      left_join(active_structures, by = "combined_group") %>%
-      left_join(expiring_structures, by = "combined_group") %>%
+    combined_data <- total_count %>%
+      left_join(active_count, by = "combined_group") %>%
+      left_join(expiring_count, by = "combined_group") %>%
       mutate(
-        active_structures = ifelse(is.na(active_structures), 0, active_structures),
-        expiring_structures = ifelse(is.na(expiring_structures), 0, expiring_structures),
+        active_count = ifelse(is.na(active_count), 0, active_count),
+        expiring_count = ifelse(is.na(expiring_count), 0, expiring_count),
         group_name = sapply(strsplit(combined_group, " \\(P"), function(x) x[1])
       )
     
@@ -527,12 +527,12 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
     }
   } else {
     join_col <- group_col
-    combined_data <- total_structures %>%
-      left_join(active_structures, by = join_col) %>%
-      left_join(expiring_structures, by = join_col) %>%
+    combined_data <- total_count %>%
+      left_join(active_count, by = join_col) %>%
+      left_join(expiring_count, by = join_col) %>%
       mutate(
-        active_structures = ifelse(is.na(active_structures), 0, active_structures),
-        expiring_structures = ifelse(is.na(expiring_structures), 0, expiring_structures)
+        active_count = ifelse(is.na(active_count), 0, active_count),
+        expiring_count = ifelse(is.na(expiring_count), 0, expiring_count)
       )
     
     # Add display names
@@ -550,14 +550,6 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
     
     combined_data$group_name <- combined_data[[group_col]]
   }
-  
-  # Add standardized column names for cross-app consistency
-  combined_data <- combined_data %>%
-    mutate(
-      total_count = total_structures,
-      active_count = active_structures,
-      expiring_count = expiring_structures
-    )
   
   return(combined_data)
 }

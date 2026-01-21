@@ -286,29 +286,14 @@ create_historical_cb_chart <- function(data, hist_time_period, hist_display_metr
   
   chart_title <- paste("Historical Catch Basin", metric_label, "by", period_label)
   
-  # Get group colors if applicable - FILTER colors to match actual data
+  # Get group colors if applicable - use shared utility functions
   group_colors <- NULL
   if (hist_group_by == "facility" && "group_name" %in% names(data)) {
-    facility_colors <- get_facility_base_colors(theme = theme)
-    # Only include colors for facilities that are actually in the data
     actual_facilities <- unique(data$group_name)
-    group_colors <- facility_colors[names(facility_colors) %in% actual_facilities]
-    
-    # If no matching colors found, let plotly handle it automatically
-    if (length(group_colors) == 0) {
-      group_colors <- NULL
-    }
+    group_colors <- map_facility_display_names_to_colors(actual_facilities, theme)
   } else if (hist_group_by == "foreman" && "group_name" %in% names(data)) {
-    # Use the new theme-aware foreman colors function
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    # Only include colors for foremen that are actually in the data  
     actual_foremen <- unique(data$group_name)
-    group_colors <- foreman_colors[names(foreman_colors) %in% actual_foremen]
-    
-    # If no matching colors found, let plotly handle it automatically
-    if (length(group_colors) == 0) {
-      group_colors <- NULL
-    }
+    group_colors <- map_foreman_display_names_to_colors(actual_foremen, theme)
   }
   
   # Create plotly chart based on chart_type

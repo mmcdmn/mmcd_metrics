@@ -52,4 +52,73 @@ observe_theme_changes <- function(input) {
   })
 }
 
+#' Map facility display names to theme colors
+#' @param display_names Vector of facility full names (e.g., "Brooklyn Center", "East")
+#' @param theme Color theme to use
+#' @return Named vector with display names as keys and theme colors as values
+map_facility_display_names_to_colors <- function(display_names, theme = "MMCD") {
+  if (length(display_names) == 0) return(character(0))
+  
+  facility_colors <- get_facility_base_colors(theme = theme)
+  facility_lookup <- get_facility_lookup()
+  color_mapping <- character(0)
+  
+  for (display_name in display_names) {
+    # Remove zone suffix if present (e.g., "East (P1)" -> "East")
+    base_name <- gsub(" \\(P[12]\\)$", "", display_name)
+    
+    # Find matching facility by full name
+    matching_facility <- facility_lookup[facility_lookup$full_name == base_name, ]
+    if (nrow(matching_facility) > 0) {
+      short_name <- matching_facility$short_name[1]
+      if (short_name %in% names(facility_colors)) {
+        color_mapping[display_name] <- facility_colors[short_name]
+      } else {
+        color_mapping[display_name] <- get_status_colors(theme = theme)["unknown"]
+      }
+    } else {
+      color_mapping[display_name] <- get_status_colors(theme = theme)["unknown"]
+    }
+  }
+  
+  return(color_mapping)
+}
+
+#' Map foreman display names to theme colors
+#' @param display_names Vector of foreman names (e.g., "Smith J", "Smith J P1")
+#' @param theme Color theme to use
+#' @return Named vector with display names as keys and theme colors as values
+map_foreman_display_names_to_colors <- function(display_names, theme = "MMCD") {
+  if (length(display_names) == 0) return(character(0))
+  
+  foreman_colors <- get_themed_foreman_colors(theme = theme)
+  foremen_lookup <- get_foremen_lookup()
+  color_mapping <- character(0)
+  
+  for (display_name in display_names) {
+    # Remove zone suffix if present (e.g., "Smith J P1" -> "Smith J")
+    base_name <- gsub(" P[12]$", "", display_name)
+    
+    # Find matching foreman by name patterns (flexible matching)
+    # Try exact match first, then partial match for lastname
+    matching_foreman <- foremen_lookup[
+      foremen_lookup$shortname == base_name |
+      grepl(paste0("^", gsub("\\s+.*", "", base_name)), foremen_lookup$shortname), 
+    ]
+    
+    if (nrow(matching_foreman) > 0) {
+      shortname <- matching_foreman$shortname[1]
+      if (shortname %in% names(foreman_colors)) {
+        color_mapping[display_name] <- foreman_colors[shortname]
+      } else {
+        color_mapping[display_name] <- get_status_colors(theme = theme)["completed"]
+      }
+    } else {
+      color_mapping[display_name] <- get_status_colors(theme = theme)["completed"]
+    }
+  }
+  
+  return(color_mapping)
+}
+
 cat(" Common server utilities loaded successfully\n")

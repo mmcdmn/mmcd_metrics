@@ -462,23 +462,8 @@ create_historical_struct_chart <- function(data,
       # Filter to only include colors for groups actually present in data
       group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
     } else {
-      # Simple facility colors
-      facility_colors <- get_facility_base_colors(theme = theme)
-      facility_lookup <- get_facility_lookup()
-      
-      group_colors <- setNames(
-        sapply(unique(data$group_name), function(gn) {
-          short_name <- facility_lookup$short_name[facility_lookup$full_name == gn]
-          if (length(short_name) > 0 && short_name %in% names(facility_colors)) {
-            facility_colors[short_name]
-          } else {
-            "#999999"
-          }
-        }),
-        unique(data$group_name)
-      )
-      # Filter to only include colors for groups actually present in data
-      group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
+      # Simple facility colors - use shared utility function
+      group_colors <- map_facility_display_names_to_colors(unique(data$group_name), theme)
     }
   } else if (hist_group_by == "foreman") {
     # Check if we have zones in the data
@@ -493,10 +478,8 @@ create_historical_struct_chart <- function(data,
       # Filter to only include colors for groups actually present in data
       group_colors <- group_colors[names(group_colors) %in% unique(data$group_name)]
     } else {
-      # Simple foreman colors
-      all_foreman_colors <- get_themed_foreman_colors(theme = theme)
-      # Filter to only include colors for groups actually present in data
-      group_colors <- all_foreman_colors[names(all_foreman_colors) %in% unique(data$group_name)]
+      # Simple foreman colors - use shared utility function
+      group_colors <- map_foreman_display_names_to_colors(unique(data$group_name), theme)
     }
   } else {
     # mmcd_all - use single color

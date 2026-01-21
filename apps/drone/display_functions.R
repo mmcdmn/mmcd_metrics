@@ -501,19 +501,8 @@ create_historical_plot <- function(zone_filter, combine_zones, zone_option, grou
         theme = theme
       )
     } else {
-      # For combined facilities, get standard facility colors
-      colors <- get_facility_base_colors(theme = theme)
-      # Map display names to colors
-      color_mapping <- character(0)
-      for (display_name in unique(historical_data$group_label)) {
-        if (display_name %in% names(facility_map)) {
-          facility_code <- facility_map[display_name]
-          if (facility_code %in% names(colors)) {
-            color_mapping[display_name] <- colors[facility_code]
-          }
-        }
-      }
-      colors <- color_mapping
+      # For combined facilities, use shared utility function
+      colors <- map_facility_display_names_to_colors(unique(historical_data$group_label), theme)
     }
   } else if (group_by == "foreman") {
     if (show_zones_separately) {

@@ -2,6 +2,7 @@
 
 # Load shared libraries and utilities
 source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 
@@ -23,15 +24,9 @@ ui <- ground_prehatch_ui()
 
 server <- function(input, output, session) {
   
-  # Reactive theme handling
-  current_theme <- reactive({
-    input$color_theme
-  })
-  
-  # Set global theme option when changed
-  observeEvent(input$color_theme, {
-    options(mmcd.color.theme = input$color_theme)
-  })
+  # Use shared theme utilities
+  current_theme <- create_theme_reactive(input)
+  observe_theme_changes(input)
   
   # =============================================================================
   # REFRESH BUTTON PATTERN - Capture all inputs when refresh clicked

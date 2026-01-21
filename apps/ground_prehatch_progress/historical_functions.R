@@ -322,53 +322,16 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
   
   time_label <- if (time_period == "weekly") "Week" else "Year"
   
-  # Get colors based on grouping
+  # Get colors based on grouping - use shared utility functions
   colors <- character()
   
   if (group_by == "facility") {
-    # Facility colors are keyed by short_name
-    facility_colors <- get_facility_base_colors(theme = theme)
-    
-    # Extract facility short name from group_label (e.g., "East" or "East (P1)")
-    for (label in unique(data$group_label)) {
-      # Remove zone suffix if present
-      base_name <- gsub(" \\(P[12]\\)$", "", label)
-      
-      # Try to find matching facility short_name
-      facilities <- get_facility_lookup()
-      matching_facility <- facilities[facilities$full_name == base_name, ]
-      
-      if (nrow(matching_facility) > 0) {
-        short_name <- matching_facility$short_name[1]
-        if (short_name %in% names(facility_colors)) {
-          colors[label] <- facility_colors[short_name]
-        } else {
-          colors[label] <- "#999999"  # Fallback
-        }
-      } else {
-        colors[label] <- "#999999"  # Fallback
-      }
-    }
+    colors <- map_facility_display_names_to_colors(unique(data$group_label), theme)
   } else if (group_by == "foreman") {
-    # Foreman colors are keyed by shortname
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Extract foreman shortname from group_label (e.g., "Smith J" or "Smith J (P1)")
-    for (label in unique(data$group_label)) {
-      # Remove zone suffix if present
-      base_name <- gsub(" \\(P[12]\\)$", "", label)
-      
-      # The group_label should already be the shortname from our earlier mapping
-      if (base_name %in% names(foreman_colors)) {
-        colors[label] <- foreman_colors[base_name]
-      } else {
-        colors[label] <- "#3498db"  # Fallback blue
-      }
-    }
+    colors <- map_foreman_display_names_to_colors(unique(data$group_label), theme)
   } else {
     # For "mmcd_all" or other groupings, use default color
-    colors <- setNames(rep("#3498db", length(unique(data$group_label))), unique(data$group_label))
+    colors <- setNames(rep(get_status_colors(theme = theme)["completed"], length(unique(data$group_label))), unique(data$group_label))
   }
   
   # Create chart

@@ -45,7 +45,7 @@ jobs:
           libpoppler-cpp-dev
     
     - name: Cache R packages
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ${{ env.R_LIBS_USER }}
         key: ${{ runner.os }}-R${{ matrix.r-version }}-${{ hashFiles('.github/R-version') }}
@@ -112,7 +112,7 @@ jobs:
       shell: Rscript {0}
       
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: failure()
       with:
         name: test-results-R${{ matrix.r-version }}

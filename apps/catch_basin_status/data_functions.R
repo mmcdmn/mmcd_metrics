@@ -17,19 +17,19 @@ load_catch_basin_data <- function(facility_filter = "all", foreman_filter = "all
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Build facility filter clause
+    # Build facility filter clause using shared helper
     facility_clause <- ""
-    if (!("all" %in% facility_filter) && length(facility_filter) > 0) {
-      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
+    if (is_valid_filter(facility_filter)) {
+      facility_list <- build_sql_in_list(facility_filter)
       facility_clause <- paste0("WHERE g.abbrv IN (", facility_list, ")")
     } else {
       facility_clause <- "WHERE g.abbrv IN ('N','E','MO','Sr','Sj','Wm','Wp')"
     }
     
-    # Build foreman filter
+    # Build foreman filter using shared helper
     foreman_where <- ""
-    if (!("all" %in% foreman_filter) && length(foreman_filter) > 0) {
-      foreman_list <- paste0("'", foreman_filter, "'", collapse = ", ")
+    if (is_valid_filter(foreman_filter)) {
+      foreman_list <- build_sql_in_list(foreman_filter)
       foreman_where <- paste0("AND sc.fosarea IN (", foreman_list, ")")
     }
     

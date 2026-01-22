@@ -139,6 +139,43 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
   })
 }
 
+#' Apply filters to ground prehatch data
+#' @param data List containing ground_sites and ground_treatments
+#' @param facility_filter Vector of selected facilities  
+#' @param foreman_filter Vector of selected foremen (emp_num values)
+#' @param zone_filter Vector of selected zones
+#' @return Filtered data list
+apply_data_filters <- function(data, facility_filter = NULL, 
+                               foreman_filter = NULL, zone_filter = NULL) {
+  
+  ground_sites <- data$ground_sites
+  ground_treatments <- data$ground_treatments
+  
+  # Apply facility filter using shared helper
+  if (is_valid_filter(facility_filter)) {
+    ground_sites <- ground_sites %>% filter(facility %in% facility_filter)
+    ground_treatments <- ground_treatments %>% filter(facility %in% facility_filter)
+  }
+  
+  # Apply zone filter (zones don't use "all" check)
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    ground_sites <- ground_sites %>% filter(zone %in% zone_filter)
+    ground_treatments <- ground_treatments %>% filter(zone %in% zone_filter)
+  }
+  
+  # Apply foreman/FOS filter using shared helper
+  # Note: foreman_filter is already emp_nums in this app, no conversion needed
+  if (is_valid_filter(foreman_filter)) {
+    ground_sites <- ground_sites %>% filter(fosarea %in% foreman_filter)
+    ground_treatments <- ground_treatments %>% filter(fosarea %in% foreman_filter)
+  }
+  
+  return(list(
+    ground_sites = ground_sites,
+    ground_treatments = ground_treatments
+  ))
+}
+
 # Function to get ground prehatch data from database
 # Uses load_raw_data as single source of truth and processes status like get_site_details_data
 # Standard column names added: total_count, active_count, expiring_count, expired_count
@@ -314,13 +351,13 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
     data <- data %>% filter(zone %in% zone_filter)
   }
   
-  # Filter by facility
-  if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
+  # Filter by facility using shared helper
+  if (is_valid_filter(facility_filter)) {
     data <- data %>% filter(facility %in% facility_filter)
   }
   
-  # Filter by foreman
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter)) {
+  # Filter by foreman using shared helper
+  if (is_valid_filter(foreman_filter)) {
     data <- data %>% filter(foreman %in% foreman_filter)
   }
   
@@ -635,14 +672,14 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
       filter(zone %in% zone_filter)
   }
   
-  # Apply facility filter
-  if (!is.null(facility_filter) && !"all" %in% facility_filter) {
+  # Apply facility filter using shared helper
+  if (is_valid_filter(facility_filter)) {
     raw_data$ground_sites <- raw_data$ground_sites %>% 
       filter(facility %in% facility_filter)
   }
   
-  # Apply foreman filter (using fosarea)
-  if (!is.null(foreman_filter) && !"all" %in% foreman_filter) {
+  # Apply foreman filter (using fosarea) using shared helper
+  if (is_valid_filter(foreman_filter)) {
     raw_data$ground_sites <- raw_data$ground_sites %>% 
       filter(fosarea %in% foreman_filter)
   }

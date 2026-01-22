@@ -86,9 +86,9 @@ get_foreman_condition <- function(foreman_filter) {
 get_facility_condition_total <- function(facility_filter, structure_type_filter, priority_filter, status_types) {
   conditions <- character(0)
   
-  # Facility condition - use gis.facility for consistency with fosarea
-  if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
-    facility_list <- paste0("'", paste(facility_filter, collapse = "','"), "'")
+  # Facility condition using shared helper
+  if (is_valid_filter(facility_filter)) {
+    facility_list <- build_sql_in_list(facility_filter)
     conditions <- c(conditions, sprintf("AND gis.facility IN (%s)", facility_list))
   }
   

@@ -8,16 +8,8 @@ library(dplyr)
 library(lubridate)
 library(sf)
 
-# Helper function for facility name mapping
-map_facility_names <- function(data, facility_column = "facility") {
-  facility_lookup <- get_facility_lookup()
-  if (nrow(facility_lookup) > 0) {
-    facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
-    matched_facilities <- facility_map[data[[facility_column]]]
-    data[[facility_column]] <- ifelse(!is.na(matched_facilities), matched_facilities, data[[facility_column]])
-  }
-  return(data)
-}
+# NOTE: map_facility_names is defined in shared/db_helpers.R
+# It creates a facility_display column with full names while keeping facility as short codes
 
 # Function to load raw cattail treatment data
 load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
@@ -163,20 +155,11 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
         final_status = treatment_status
       )
     
-    # Add facility mapping
+    # Add facility mapping - creates facility_display with full names, keeps facility as short codes
     cattail_sites <- map_facility_names(cattail_sites, "facility")
     
-    # Add facility_code column - map to actual short codes from lookup
-    facility_lookup <- get_facility_lookup()
-    facility_map <- setNames(facility_lookup$short_name, facility_lookup$full_name)
-    cattail_sites$facility_code <- ifelse(
-      cattail_sites$facility %in% names(facility_map),
-      facility_map[cattail_sites$facility],
-      cattail_sites$facility  # Keep as-is if not in lookup
-    )
-    
-    # Add facility_display for display function compatibility  
-    cattail_sites$facility_display <- cattail_sites$facility
+    # Add facility_code for filtering - same as short code facility
+    cattail_sites$facility_code <- cattail_sites$facility
     
     # Load treatment data for current year (filtered by analysis_date)
     current_year <- if (!is.null(end_year)) end_year else year(analysis_date)
@@ -642,13 +625,13 @@ filter_cattail_data <- function(raw_data, zone_filter = c("1", "2"), facility_fi
   
   sites_data <- raw_data$cattail_sites
   
-  # Apply zone filter
-  if (!is.null(zone_filter) && !"all" %in% zone_filter) {
+  # Apply zone filter using shared helper
+  if (is_valid_filter(zone_filter)) {
     sites_data <- sites_data %>% filter(zone %in% zone_filter)
   }
   
-  # Apply facility filter - use facility (short codes) for filtering
-  if (!"all" %in% facility_filter && !is.null(facility_filter)) {
+  # Apply facility filter using shared helper
+  if (is_valid_filter(facility_filter)) {
     # Use facility_code if it exists, otherwise use facility
     filter_col <- if("facility_code" %in% names(sites_data)) "facility_code" else "facility"
     sites_data <- sites_data %>% filter(.data[[filter_col]] %in% facility_filter)

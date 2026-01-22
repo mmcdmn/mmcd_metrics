@@ -324,8 +324,8 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
       )
   }
   
-  # Apply facility filter AFTER group_label is created
-  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+  # Apply facility filter AFTER group_label is created using shared helper
+  if (is_valid_filter(facility_filter)) {
     if (nrow(inspection_data) > 0) {
       inspection_data <- inspection_data %>% filter(facility %in% facility_filter)
     }
@@ -334,8 +334,8 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
     }
   }
   
-  # Apply foreman filter AFTER group_label is created
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
+  # Apply foreman filter AFTER group_label is created using shared helper
+  if (is_valid_filter(foreman_filter)) {
     if (nrow(inspection_data) > 0) {
       inspection_data <- inspection_data %>% filter(foreman_name %in% foreman_filter)
     }

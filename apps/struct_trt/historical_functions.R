@@ -24,26 +24,22 @@ load_historical_struct_data <- function(start_year, end_year,
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
   
   tryCatch({
-    # Build filters
-    facility_where <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
-      facility_where <- paste0("AND gis.facility IN (", facility_list, ")")
-    }
+    # Build filters using shared SQL helpers
+    facility_where <- build_sql_in_clause("gis.facility", facility_filter)
     
     zone_where <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       if (length(zone_filter) == 1) {
-        zone_where <- paste0("AND gis.zone = '", zone_filter, "'")
+        zone_where <- build_sql_equals_clause("gis.zone", zone_filter)
       } else {
-        zone_where <- "AND gis.zone IN ('1', '2')"
+        zone_where <- build_sql_in_clause("gis.zone", zone_filter)
       }
     }
     
     foreman_where <- ""
-    if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
+    if (is_valid_filter(foreman_filter)) {
       # Convert shortnames to emp_num (foreman_filter contains shortnames, but gis.fosarea contains emp_num)
-      shortname_list <- paste0("'", paste(foreman_filter, collapse = "','"), "'")
+      shortname_list <- build_sql_in_list(foreman_filter)
       emp_nums_query <- sprintf("
         SELECT emp_num 
         FROM employee_list 
@@ -53,13 +49,12 @@ load_historical_struct_data <- function(start_year, end_year,
       emp_nums <- dbGetQuery(con, emp_nums_query)
       
       if (nrow(emp_nums) > 0) {
-        emp_num_list <- paste0("'", paste(emp_nums$emp_num, collapse = "','"), "'")
-        foreman_where <- paste0("AND gis.fosarea IN (", emp_num_list, ")")
+        foreman_where <- build_sql_in_clause("gis.fosarea", emp_nums$emp_num)
       }
     }
     
     structure_type_where <- ""
-    if (!is.null(structure_type_filter) && length(structure_type_filter) > 0 && !"all" %in% structure_type_filter) {
+    if (is_valid_filter(structure_type_filter)) {
       # Use the same logic as data_functions.R
       if (length(structure_type_filter) == 1) {
         structure_type_where <- get_structure_type_condition(structure_type_filter)
@@ -78,11 +73,8 @@ load_historical_struct_data <- function(start_year, end_year,
       }
     }
     
-    status_where <- ""
-    if (!is.null(status_types) && length(status_types) > 0) {
-      status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-      status_where <- paste0("AND loc.status_udw IN (", status_list, ")")
-    }
+    # Status types don't use "all" check - always applied if provided
+    status_where <- build_sql_in_clause("loc.status_udw", status_types)
     
     # Determine which years need current table vs archive table
     current_years_needed <- intersect(start_year:end_year, current_table_years)
@@ -313,24 +305,20 @@ create_historical_struct_data <- function(start_year, end_year,
     # IMPORTANT: Apply same filters as were used for treatments data
     con <- get_db_connection()
     
-    # Build filter conditions
-    facility_where <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
-      facility_where <- paste0("AND gis.facility IN (", facility_list, ")")
-    }
+    # Build filter conditions using shared SQL helpers
+    facility_where <- build_sql_in_clause("gis.facility", facility_filter)
     
     zone_where <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       if (length(zone_filter) == 1) {
-        zone_where <- paste0("AND gis.zone = '", zone_filter, "'")
+        zone_where <- build_sql_equals_clause("gis.zone", zone_filter)
       } else {
-        zone_where <- "AND gis.zone IN ('1', '2')"
+        zone_where <- build_sql_in_clause("gis.zone", zone_filter)
       }
     }
     
     structure_type_where <- ""
-    if (!is.null(structure_type_filter) && length(structure_type_filter) > 0 && !"all" %in% structure_type_filter) {
+    if (is_valid_filter(structure_type_filter)) {
       if (length(structure_type_filter) == 1) {
         structure_type_where <- get_structure_type_condition(structure_type_filter)
       } else {
@@ -339,11 +327,8 @@ create_historical_struct_data <- function(start_year, end_year,
       }
     }
     
-    status_where <- ""
-    if (!is.null(status_types) && length(status_types) > 0) {
-      status_list <- paste0("'", status_types, "'", collapse = ", ")
-      status_where <- paste0("AND loc.status_udw IN (", status_list, ")")
-    }
+    # Status types don't use "all" check - always applied if provided
+    status_where <- build_sql_in_clause("loc.status_udw", status_types)
     
     # Build query based on grouping
     if (hist_group_by == "facility") {

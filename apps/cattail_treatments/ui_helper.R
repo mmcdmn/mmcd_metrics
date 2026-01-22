@@ -180,40 +180,6 @@ cattail_treatments_ui <- function() {
   )
 }
 
-#' Create a custom metric box (replacement for valueBox)
-#' @param value The main value to display
-#' @param subtitle The subtitle text
-#' @param icon The icon name (without "fa-" prefix)
-#' @param color The color theme ("primary", "success", "warning", "danger", "info")
-#' @return HTML div
-create_metric_box <- function(value, subtitle, icon = "chart-line", color = "primary") {
-  color_map <- list(
-    primary = "#3c8dbc",
-    success = "#00a65a",
-    warning = "#f39c12",
-    danger = "#dd4b39",
-    info = "#00c0ef"
-  )
-  
-  bg_color <- color_map[[color]] %||% color_map$primary
-  
-  div(
-    style = sprintf(
-      "background-color: %s; color: white; padding: 15px; border-radius: 3px; margin-bottom: 10px; min-height: 90px;",
-      bg_color
-    ),
-    div(
-      style = "font-size: 28px; font-weight: bold;",
-      value
-    ),
-    div(
-      style = "font-size: 14px; margin-top: 5px;",
-      icon(icon, style = "margin-right: 5px;"),
-      subtitle
-    )
-  )
-}
-
 # Function to create analysis date selector 
 create_analysis_date_selector <- function() {
   dateInput("analysis_date", "Pretend today is:",

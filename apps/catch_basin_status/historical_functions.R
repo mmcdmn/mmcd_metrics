@@ -18,9 +18,9 @@ load_historical_cb_data <- function(start_year, end_year,
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
   
   tryCatch({
-    # Build filters
+    # Build filters using shared SQL helpers
     facility_where <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
+    if (is_valid_filter(facility_filter)) {
       # Handle both facility codes ('E') and full names ('East')
       # Convert full names to codes if needed
       facility_lookup <- get_facility_lookup()
@@ -36,30 +36,24 @@ load_historical_cb_data <- function(start_year, end_year,
           }
         })
         
-        facility_list <- paste0("'", converted_filters, "'", collapse = ", ")
-        facility_where <- paste0("AND loc_catchbasin.facility IN (", facility_list, ")")
+        facility_where <- build_sql_in_clause("loc_catchbasin.facility", converted_filters)
         cat("DEBUG: Facility filter converted:", paste(facility_filter, "->", converted_filters, collapse = ", "), "\n")
       } else {
         # Fallback: assume they're already codes
-        facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
-        facility_where <- paste0("AND loc_catchbasin.facility IN (", facility_list, ")")
+        facility_where <- build_sql_in_clause("loc_catchbasin.facility", facility_filter)
       }
     }
     
     zone_where <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       if (length(zone_filter) == 1) {
-        zone_where <- paste0("AND sc.zone = '", zone_filter, "'")
+        zone_where <- build_sql_equals_clause("sc.zone", zone_filter)
       } else {
-        zone_where <- "AND sc.zone IN ('1', '2')"
+        zone_where <- build_sql_in_clause("sc.zone", zone_filter)
       }
     }
     
-    foreman_where <- ""
-    if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-      foreman_list <- paste0("'", foreman_filter, "'", collapse = ", ")
-      foreman_where <- paste0("AND sc.fosarea IN (", foreman_list, ")")
-    }
+    foreman_where <- build_sql_in_clause("sc.fosarea", foreman_filter)
     # Use shared function to determine which years are in which table
     # This handles March transitions when current data moves to archive
     year_ranges <- get_historical_year_ranges(con, "dblarv_insptrt_current", "dblarv_insptrt_archive", "inspdate")

@@ -22,31 +22,16 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   drone_treatments <- raw_data$drone_treatments %>%
     filter(inspdate >= start_date & inspdate <= end_date)
   
-  # Apply filters to both sites and treatments
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-    drone_sites <- drone_sites %>% filter(facility %in% facility_filter)
-    drone_treatments <- drone_treatments %>% filter(facility %in% facility_filter)
-  }
-  
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    drone_sites <- drone_sites %>% filter(zone %in% zone_filter)
-    drone_treatments <- drone_treatments %>% filter(zone %in% zone_filter)
-  }
-  
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-    # Convert foreman names to emp_nums
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    drone_sites <- drone_sites %>% filter(foreman %in% selected_emp_nums)
-    drone_treatments <- drone_treatments %>% filter(foreman %in% selected_emp_nums)
-  }
-  
-  # Apply prehatch filter
-  if (!is.null(prehatch_only) && prehatch_only) {
-    drone_sites <- drone_sites %>% filter(prehatch == 'PREHATCH')
-    drone_treatments <- drone_treatments %>% filter(prehatch == 'PREHATCH')
-  }
+  # Apply filters using shared function from data_functions.R
+  filtered_data <- apply_data_filters(
+    list(drone_sites = drone_sites, drone_treatments = drone_treatments),
+    facility_filter = facility_filter,
+    foreman_filter = foreman_filter,
+    zone_filter = zone_filter,
+    prehatch_only = prehatch_only
+  )
+  drone_sites <- filtered_data$drone_sites
+  drone_treatments <- filtered_data$drone_treatments
   
   # Determine if zones should be shown separately
   show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
@@ -130,108 +115,28 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
     return(data.frame())
   }
   
-  # Handle zone separation and grouping
-  if (show_zones_separately) {
-    # Create combined group labels with zones
-    if (hist_group_by == "facility" && "facility" %in% names(data_source)) {
-      # Map facility names first, then add zones
-      facilities <- get_facility_lookup()
-      facility_map <- setNames(facilities$full_name, facilities$short_name)
-      
-      data_source <- data_source %>%
-        mutate(
-          facility_display = ifelse(
-            facility %in% names(facility_map),
-            facility_map[facility],
-            facility
-          ),
-          group_label = paste0(facility_display, " P", zone)
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "foreman" && "foreman" %in% names(data_source)) {
-      # Map foreman numbers to names first, then add zone
-      foremen_lookup <- get_foremen_lookup()
-      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-      
-      data_source <- data_source %>%
-        mutate(
-          foreman_name = ifelse(
-            foreman %in% names(foreman_map),
-            foreman_map[as.character(foreman)],
-            paste("FOS", foreman)
-          ),
-          group_label = paste0(foreman_name, " P", zone)
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "mmcd_all") {
-      data_source <- data_source %>%
-        mutate(group_label = paste0("All MMCD P", zone))
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else {
-      # Fallback: if we can't group properly, return empty
-      return(data.frame())
-    }
-  } else {
-    # Standard grouping without zone separation
-    if (hist_group_by == "facility" && "facility" %in% names(data_source)) {
-      # Map facility names for display
-      facilities <- get_facility_lookup()
-      facility_map <- setNames(facilities$full_name, facilities$short_name)
-      
-      data_source <- data_source %>%
-        mutate(
-          group_label = ifelse(
-            facility %in% names(facility_map),
-            facility_map[facility],
-            facility
-          )
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "foreman" && "foreman" %in% names(data_source)) {
-      # Map foreman numbers to names for display
-      foremen_lookup <- get_foremen_lookup()
-      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-      
-      data_source <- data_source %>%
-        mutate(
-          group_label = ifelse(
-            foreman %in% names(foreman_map),
-            foreman_map[as.character(foreman)],
-            paste("FOS", foreman)
-          )
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "mmcd_all") {
-      data_source$group_label <- "All MMCD"
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else {
-      # Fallback: if we can't group properly, return empty
-      return(data.frame())
-    }
+  # Apply group labels using shared function
+  data_source <- apply_historical_group_labels(
+    data_source, 
+    group_by = hist_group_by, 
+    show_zones_separately = show_zones_separately,
+    foreman_col = "foreman"
+  )
+  
+  if (!"group_label" %in% names(data_source)) {
+    return(data.frame())
   }
   
-  # Summarize based on metric
-  if (hist_display_metric == "treatments") {
-    summary_data <- grouped_data %>%
-      summarize(value = n(), .groups = "drop")
-  } else if (hist_display_metric == "treatment_acres") {
-    summary_data <- grouped_data %>%
+  # Summarize using shared function (handles treatment_acres specially for drone)
+  if (hist_display_metric == "treatment_acres") {
+    # Drone uses treated_acres column
+    summary_data <- data_source %>%
+      group_by(group_label, time_period) %>%
       summarize(value = sum(treated_acres, na.rm = TRUE), .groups = "drop")
-  } else if (hist_display_metric == "sites" || hist_display_metric == "active_count") {
-    summary_data <- grouped_data %>%
-      summarize(value = n_distinct(sitecode), .groups = "drop")
-  } else if (hist_display_metric == "site_acres" || hist_display_metric == "acres" || hist_display_metric == "active_acres") {
-    summary_data <- grouped_data %>%
-      summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
+  } else {
+    summary_data <- summarize_historical_data(data_source, hist_display_metric)
   }
   
-  # Summary data already has group_label set from the grouping logic above
   return(summary_data)
 }
 
@@ -263,33 +168,16 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
     return(data.frame())
   }
   
-  # Apply filters to BOTH treatments and sites (to match current progress logic)
-  # Apply facility filter  
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% facility_filter)) {
-    drone_treatments <- drone_treatments %>% filter(facility %in% facility_filter)
-    drone_sites <- drone_sites %>% filter(facility %in% facility_filter)
-  }
-  
-  # Apply foreman/FOS filter
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !("all" %in% foreman_filter)) {
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    drone_treatments <- drone_treatments %>% filter(foreman %in% selected_emp_nums)
-    drone_sites <- drone_sites %>% filter(foreman %in% selected_emp_nums)
-  }
-  
-  # Apply prehatch filter
-  if (prehatch_only) {
-    drone_treatments <- drone_treatments %>% filter(prehatch == 'PREHATCH')
-    drone_sites <- drone_sites %>% filter(prehatch == 'PREHATCH')
-  }
-  
-  # Apply zone filter
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    drone_treatments <- drone_treatments %>% filter(zone %in% zone_filter)
-    drone_sites <- drone_sites %>% filter(zone %in% zone_filter)
-  }
+  # Apply filters using shared function from data_functions.R
+  filtered_data <- apply_data_filters(
+    list(drone_sites = drone_sites, drone_treatments = drone_treatments),
+    facility_filter = facility_filter,
+    foreman_filter = foreman_filter,
+    zone_filter = zone_filter,
+    prehatch_only = prehatch_only
+  )
+  drone_sites <- filtered_data$drone_sites
+  drone_treatments <- filtered_data$drone_treatments
   
   if (nrow(drone_treatments) == 0 || nrow(drone_sites) == 0) {
     return(data.frame())

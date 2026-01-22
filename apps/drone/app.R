@@ -578,12 +578,12 @@ server <- function(input, output, session) {
       TRUE ~ "as a chart"
     )
     
-    # Filter information
+    # Filter information using shared helper
     filter_parts <- c()
-    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+    if (is_valid_filter(inputs$facility_filter)) {
       filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
     }
-    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+    if (is_valid_filter(inputs$foreman_filter)) {
       filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
     }
     if (inputs$prehatch_only) {
@@ -887,12 +887,12 @@ server <- function(input, output, session) {
     req(input$refresh)
     inputs <- refresh_inputs()
     
-    # Filter information
+    # Filter information using shared helper
     filter_parts <- c()
-    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+    if (is_valid_filter(inputs$facility_filter)) {
       filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
     }
-    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+    if (is_valid_filter(inputs$foreman_filter)) {
       filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
     }
     if (inputs$prehatch_only) {

@@ -51,9 +51,9 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
     if (is.null(con)) return(data.frame())
     on.exit(safe_disconnect(con))
 
-    # Handle species filtering - ensure all codes are character strings
+    # Handle species filtering using shared helper
     species_sql <- ""
-    if (!("all" %in% tolower(species_codes))) {
+    if (is_valid_filter(species_codes)) {
       # Force conversion to character and wrap in quotes
       species_codes_char <- as.character(species_codes)
       species_filter <- paste(sprintf("'%s'", species_codes_char), collapse = ",")

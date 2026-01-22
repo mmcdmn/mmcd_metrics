@@ -722,8 +722,8 @@ server <- function(input, output, session) {
       data <- data[data$site_status == input$status_filter, ]
     }
     
-    # Apply material filter for active treatments
-    if (!is.null(input$material_filter) && length(input$material_filter) > 0 && !"all" %in% input$material_filter) {
+    # Apply material filter for active treatments using shared helper
+    if (is_valid_filter(input$material_filter)) {
       # Filter active treatments by material using matcode, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
                                (!is.na(data$matcode) & 
@@ -944,8 +944,8 @@ server <- function(input, output, session) {
       bti_effect_days_override = input$process_bti_effect_days_override
     )
     
-    # Apply material filter for active treatments
-    if (!is.null(input$process_material_filter) && length(input$process_material_filter) > 0 && !"all" %in% input$process_material_filter) {
+    # Apply material filter for active treatments using shared helper
+    if (is_valid_filter(input$process_material_filter)) {
       # Filter active treatments by material using matcode, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
                                (!is.na(data$matcode) & 

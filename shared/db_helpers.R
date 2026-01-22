@@ -186,6 +186,82 @@ safe_disconnect <- function(con) {
   })
 }
 
+# =============================================================================
+# SQL FILTER BUILDING HELPERS
+# =============================================================================
+# Standardized functions for building SQL WHERE clauses from filter inputs.
+# These replace the repetitive pattern of checking for NULL/"all" and building
+# IN clauses that was duplicated 30+ times across apps.
+
+#' Check if a filter should be applied (not null, not empty, not "all")
+#' @param filter_values Vector of filter values from user input
+#' @param case_sensitive If FALSE (default), checks for "all" case-insensitively
+#' @return TRUE if filter should be applied, FALSE otherwise
+is_valid_filter <- function(filter_values, case_sensitive = FALSE) {
+  if (is.null(filter_values) || length(filter_values) == 0) {
+    return(FALSE)
+  }
+  
+  # Check for "all" value (case-insensitive by default)
+  all_check <- if (case_sensitive) {
+    "all" %in% filter_values || "All" %in% filter_values
+  } else {
+    "all" %in% tolower(filter_values)
+  }
+  
+  return(!all_check)
+}
+
+#' Build a SQL IN clause from a vector of values
+#' @param values Vector of values to include in the IN clause
+#' @return String like "'val1', 'val2', 'val3'" ready for SQL IN ()
+build_sql_in_list <- function(values) {
+  if (is.null(values) || length(values) == 0) {
+    return("")
+  }
+  paste0("'", values, "'", collapse = ", ")
+}
+
+#' Build a complete SQL WHERE clause for a column IN filter
+#' @param column_name The SQL column name (e.g., "facility", "gis.facility")
+#' @param filter_values Vector of filter values
+#' @param prefix What to prepend (default "AND ") - use "" for first clause
+#' @return String like "AND facility IN ('E', 'W')" or "" if filter not valid
+build_sql_in_clause <- function(column_name, filter_values, prefix = "AND ") {
+  if (!is_valid_filter(filter_values)) {
+    return("")
+  }
+  
+  in_list <- build_sql_in_list(filter_values)
+  paste0(prefix, column_name, " IN (", in_list, ")")
+}
+
+#' Build SQL WHERE clause for a single value (equals)
+#' @param column_name The SQL column name
+#' @param value Single value to match
+#' @param prefix What to prepend (default "AND ")
+#' @return String like "AND zone = '1'" or "" if value is null
+build_sql_equals_clause <- function(column_name, value, prefix = "AND ") {
+  if (is.null(value) || length(value) == 0 || (is.character(value) && value == "")) {
+    return("")
+  }
+  paste0(prefix, column_name, " = '", value, "'")
+}
+
+#' Extract filter value from input, returning NULL if "all" is selected
+#' Useful for reactive filter processing
+#' @param input_value The raw input value (potentially containing "all")
+#' @return The filter values, or NULL if "all" was selected or empty
+normalize_filter_input <- function(input_value) {
+  if (is.null(input_value) || length(input_value) == 0) {
+    return(NULL)
+  }
+  if ("all" %in% tolower(input_value)) {
+    return(NULL)
+  }
+  return(input_value)
+}
+
 # Get year ranges from current and archive tables for historical data
 # This handles March transitions when data moves between tables
 get_historical_year_ranges <- function(con, current_table, archive_table, date_column = "inspdate") {
@@ -1592,4 +1668,99 @@ get_universal_text_css <- function(base_increase = 4) {
       }
     ")))
   )
+}
+
+#' Apply historical data grouping labels
+#'
+#' Adds group_label column to data based on grouping type and zone separation
+#' @param data Data frame with facility, foreman/fosarea, and zone columns
+#' @param group_by Grouping type: "facility", "foreman", or "mmcd_all"
+#' @param show_zones_separately Whether to add zone suffix to labels
+#' @param foreman_col Name of the foreman column (default "foreman", some apps use "fosarea")
+#' @return Data frame with group_label column added
+apply_historical_group_labels <- function(data, group_by, show_zones_separately = FALSE, foreman_col = "foreman") {
+  if (is.null(data) || nrow(data) == 0) {
+    return(data)
+  }
+  
+  # Get lookup tables
+  facilities <- get_facility_lookup()
+  facility_map <- setNames(facilities$full_name, facilities$short_name)
+  foremen_lookup <- get_foremen_lookup()
+  foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+  
+  # Build group labels based on grouping type
+  if (group_by == "facility" && "facility" %in% names(data)) {
+    data <- data %>%
+      mutate(
+        facility_display = ifelse(
+          facility %in% names(facility_map),
+          facility_map[facility],
+          facility
+        ),
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0(facility_display, " P", zone)
+        } else {
+          facility_display
+        }
+      )
+  } else if (group_by == "foreman" && foreman_col %in% names(data)) {
+    foreman_values <- data[[foreman_col]]
+    data <- data %>%
+      mutate(
+        foreman_name = ifelse(
+          foreman_values %in% names(foreman_map),
+          foreman_map[as.character(foreman_values)],
+          paste("FOS", foreman_values)
+        ),
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0(foreman_name, " P", zone)
+        } else {
+          foreman_name
+        }
+      )
+  } else if (group_by == "mmcd_all") {
+    data <- data %>%
+      mutate(
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0("All MMCD P", zone)
+        } else {
+          "All MMCD"
+        }
+      )
+  }
+  
+  return(data)
+}
+
+#' Summarize historical data by group and time period
+#'
+#' @param data Data frame with group_label and time_period columns
+#' @param metric Display metric: "treatments", "sites", "acres", "treatment_acres", "active_count", "active_acres"
+#' @return Summarized data frame with group_label, time_period, value columns
+summarize_historical_data <- function(data, metric) {
+  if (is.null(data) || nrow(data) == 0 || !"group_label" %in% names(data)) {
+    return(data.frame())
+  }
+  
+  grouped_data <- data %>%
+    group_by(group_label, time_period)
+  
+  if (metric == "treatments") {
+    summary_data <- grouped_data %>%
+      summarize(value = n(), .groups = "drop")
+  } else if (metric == "treatment_acres") {
+    summary_data <- grouped_data %>%
+      summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
+  } else if (metric %in% c("sites", "active_count")) {
+    summary_data <- grouped_data %>%
+      summarize(value = n_distinct(sitecode), .groups = "drop")
+  } else if (metric %in% c("site_acres", "acres", "active_acres")) {
+    summary_data <- grouped_data %>%
+      summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
+  } else {
+    summary_data <- data.frame()
+  }
+  
+  return(summary_data)
 }

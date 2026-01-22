@@ -24,11 +24,10 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
     group_by_zone <- TRUE
   }
   
-  # Build facility filter
+  # Build facility filter using shared helper
   facility_filter <- ""
-  if (!is.null(hist_facility_filter) && length(hist_facility_filter) > 0 && 
-      !("all" %in% hist_facility_filter)) {
-    facility_list <- paste0("'", hist_facility_filter, "'", collapse = ", ")
+  if (is_valid_filter(hist_facility_filter)) {
+    facility_list <- build_sql_in_list(hist_facility_filter)
     facility_filter <- sprintf("AND a.facility IN (%s)", facility_list)
   }
   
@@ -330,11 +329,10 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
     zone_condition <- "AND g.zone IN ('1', '2')"
   }
   
-  # Build facility filter
+  # Build facility filter using shared helper
   facility_filter <- ""
-  if (!is.null(hist_facility_filter) && length(hist_facility_filter) > 0 && 
-      !("all" %in% hist_facility_filter)) {
-    facility_list <- paste0("'", hist_facility_filter, "'", collapse = ", ")
+  if (is_valid_filter(hist_facility_filter)) {
+    facility_list <- build_sql_in_list(hist_facility_filter)
     facility_filter <- sprintf("AND a.facility IN (%s)", facility_list)
   }
   

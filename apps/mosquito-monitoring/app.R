@@ -15,6 +15,9 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
 })
 
+# Set application name for AWS RDS monitoring
+set_app_name("mosquito_monitoring")
+
 # Mosquito-specific database connection function with integer64 handling
 get_mosquito_db_connection <- function() {
   # First try the centralized connection (in case env vars are set for mosquito DB)

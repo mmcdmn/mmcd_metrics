@@ -24,11 +24,10 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
     group_by_zone <- TRUE
   }
   
-  # Build facility filter
+  # Build facility filter using shared helper
   facility_filter <- ""
-  if (!is.null(hist_facility_filter) && length(hist_facility_filter) > 0 && 
-      !("all" %in% hist_facility_filter)) {
-    facility_list <- paste0("'", hist_facility_filter, "'", collapse = ", ")
+  if (is_valid_filter(hist_facility_filter)) {
+    facility_list <- build_sql_in_list(hist_facility_filter)
     facility_filter <- sprintf("AND a.facility IN (%s)", facility_list)
   }
   
@@ -256,12 +255,10 @@ get_historical_progress_data <- function(hist_years, hist_zone, hist_facility_fi
   return(combined)
 }
 
-# Create historical progress plot
+# Create historical progress plot using shared create_trend_chart
 create_historical_progress_plot <- function(data, hist_years, metric = "sites", theme = "MMCD") {
   if (nrow(data) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0.5, y = 0.5, label = "No data available"), size = 6) +
-           theme_void())
+    return(plotly_empty() %>% layout(title = "No data available"))
   }
   
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
@@ -282,43 +279,35 @@ create_historical_progress_plot <- function(data, hist_years, metric = "sites", 
   
   # Create combined display label for x-axis
   if (has_zone) {
-    data$x_label <- paste0(data$facility_display, " - P", data$zone)
+    data$time_period <- paste0(data$facility_display, " P", data$zone)
     title_suffix <- "(P1 and P2 Separate)"
   } else {
-    data$x_label <- data$facility_display
+    data$time_period <- data$facility_display
     title_suffix <- ""
   }
   
+  # Map 'type' to 'group_label' for shared function
+  data$group_label <- data$type
+  
   # Get status colors for the comparison types
   status_colors <- get_status_colors(theme = theme)
+  colors <- c(
+    "Historical Baseline" = unname(status_colors["planned"]),
+    "Current Year" = unname(status_colors["active"])
+  )
   
-  # Create side-by-side bars for better comparison visibility
-  ggplot(data, aes(x = x_label, y = value, fill = type)) +
-    geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
-    scale_fill_manual(
-      values = c(
-        "Historical Baseline" = unname(status_colors["planned"]),
-        "Current Year" = unname(status_colors["active"])
-      ),
-      name = "Period"
-    ) +
-    labs(
-      title = sprintf("Cattail Inspections (%s): %d vs Previous %d Years %s", 
-                     metric_label, current_year, hist_years, title_suffix),
-      x = "Facility",
-      y = y_label
-    ) +
-    theme_minimal() +
-    theme(
-      axis.text.x = element_text(face = "bold", size = 14, angle = 45, hjust = 1),
-      axis.text.y = element_text(face = "bold", size = 14),
-      axis.title.x = element_text(face = "bold", size = 16),
-      axis.title.y = element_text(face = "bold", size = 16),
-      plot.title = element_text(face = "bold", size = 16),
-      legend.title = element_text(face = "bold", size = 14),
-      legend.text = element_text(face = "bold", size = 12),
-      legend.position = "top"
-    )
+  chart_title <- sprintf("Cattail Inspections (%s): %d vs Previous %d Years %s", 
+                        metric_label, current_year, hist_years, title_suffix)
+  
+  # Use shared chart function with grouped_bar
+  create_trend_chart(
+    data = data,
+    chart_type = "grouped_bar",
+    title = chart_title,
+    x_label = "Facility",
+    y_label = y_label,
+    colors = colors
+  )
 }
 
 # Get sites table data
@@ -340,11 +329,10 @@ get_sites_table_data <- function(hist_years, hist_zone, hist_facility_filter, si
     zone_condition <- "AND g.zone IN ('1', '2')"
   }
   
-  # Build facility filter
+  # Build facility filter using shared helper
   facility_filter <- ""
-  if (!is.null(hist_facility_filter) && length(hist_facility_filter) > 0 && 
-      !("all" %in% hist_facility_filter)) {
-    facility_list <- paste0("'", hist_facility_filter, "'", collapse = ", ")
+  if (is_valid_filter(hist_facility_filter)) {
+    facility_list <- build_sql_in_list(hist_facility_filter)
     facility_filter <- sprintf("AND a.facility IN (%s)", facility_list)
   }
   

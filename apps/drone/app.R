@@ -1,21 +1,8 @@
 # drone site Status App
 
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(lubridate)
-  library(DT)
-  library(leaflet)
-  library(sf)
-  library(RColorBrewer)
-})
-
-# Source shared helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 
@@ -24,6 +11,9 @@ source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("drone")
 
 # Load environment variables
 load_env_vars()
@@ -40,12 +30,11 @@ ui <- drone_ui()
 
 server <- function(input, output, session) {
   
-  # Reactive theme handling
+  # Theme handling
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Set global theme option when changed
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -108,7 +97,7 @@ server <- function(input, output, session) {
     if (input$hist_time_period == "yearly") {
       updateRadioButtons(session, "hist_display_metric", selected = "sites")
     } else if (input$hist_time_period == "weekly") {
-      updateRadioButtons(session, "hist_display_metric", selected = "active_sites")
+      updateRadioButtons(session, "hist_display_metric", selected = "active_count")
     }
   })
   
@@ -220,7 +209,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$active_sites_box <- renderUI({
+  output$active_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
@@ -233,7 +222,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$expiring_sites_box <- renderUI({
+  output$expiring_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
@@ -386,9 +375,9 @@ server <- function(input, output, session) {
     
     # Add y variables based on metric
     if (inputs$current_display_metric == "sites") {
-      data$y_total <- data$total_sites
-      data$y_active <- data$active_sites
-      data$y_expiring <- data$expiring_sites
+      data$y_total <- data$total_count
+      data$y_active <- data$active_count
+      data$y_expiring <- data$expiring_count
     } else {  # treated_acres
       data$y_total <- data$total_treated_acres
       data$y_active <- data$active_acres
@@ -592,12 +581,12 @@ server <- function(input, output, session) {
       TRUE ~ "as a chart"
     )
     
-    # Filter information
+    # Filter information using shared helper
     filter_parts <- c()
-    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+    if (is_valid_filter(inputs$facility_filter)) {
       filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
     }
-    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+    if (is_valid_filter(inputs$foreman_filter)) {
       filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
     }
     if (inputs$prehatch_only) {
@@ -622,12 +611,12 @@ server <- function(input, output, session) {
     }
   })
   
-  # Historical plot output - uses external function
-  output$historicalPlot <- renderPlot({
+  # Historical plot output - uses shared create_trend_chart
+  output$historicalPlot <- renderPlotly({
     req(input$refresh)  # Only render after refresh button is clicked
     inputs <- refresh_inputs()
     
-    p <- create_historical_plot(
+    create_historical_plot(
       zone_filter = inputs$zone_filter,
       combine_zones = inputs$combine_zones,
       zone_option = inputs$zone_option,
@@ -643,12 +632,8 @@ server <- function(input, output, session) {
       foreman_filter = inputs$foreman_filter,
       analysis_date = inputs$analysis_date,
       theme = current_theme()
-    ) +
-      theme(
-        axis.text.x = element_text(size = 14, face = "bold")
-      )
-    print(p)
-  }, height = 900)
+    )
+  })
   
   # Historical data table
   output$historicalDataTable <- DT::renderDataTable({
@@ -905,12 +890,12 @@ server <- function(input, output, session) {
     req(input$refresh)
     inputs <- refresh_inputs()
     
-    # Filter information
+    # Filter information using shared helper
     filter_parts <- c()
-    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+    if (is_valid_filter(inputs$facility_filter)) {
       filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
     }
-    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+    if (is_valid_filter(inputs$foreman_filter)) {
       filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
     }
     if (inputs$prehatch_only) {

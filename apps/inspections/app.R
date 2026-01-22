@@ -9,9 +9,13 @@ library(ggplot2)
 
 # Source shared database helpers and local functions
 source("../../shared/db_helpers.R")
+source("../../shared/server_utilities.R")
 source("data_functions.R")
 source("display_functions.R")
 source("ui_helper.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("inspections")
 
 # Define UI
 ui <- create_main_ui()

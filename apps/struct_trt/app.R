@@ -1,22 +1,8 @@
 # struct status App
 
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(lubridate)
-  library(rlang)
-  library(purrr)  # For map_dfr function
-  library(tibble) # For deframe function
-  library(scales) # For percentage and number formatting
-  library(DT)     # For data tables
-  library(plotly) # For interactive plots
-})
-
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 
@@ -25,6 +11,9 @@ source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("struct_trt")
 
 # Load environment variables from .env file
 env_paths <- c(
@@ -113,12 +102,10 @@ server <- function(input, output, session) {
   # THEME HANDLING
   # =============================================================================
   
-  # Reactive for current theme
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Update global option when theme changes
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -203,14 +190,14 @@ server <- function(input, output, session) {
     
     withProgress(message = "Loading structure treatment data...", value = 0.5, {
       get_current_structure_data(
-        inputs$custom_today,
-        inputs$expiring_days,
-        inputs$facility_filter,
-        inputs$foreman_filter,
-        inputs$structure_type_filter,
-        inputs$priority_filter,
-        inputs$status_types,
-        inputs$zone_filter
+        analysis_date = inputs$custom_today,
+        expiring_days = inputs$expiring_days,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        structure_type_filter = inputs$structure_type_filter,
+        priority_filter = inputs$priority_filter,
+        status_types = inputs$status_types,
+        zone_filter = inputs$zone_filter
       )
     })
   })
@@ -282,57 +269,57 @@ server <- function(input, output, session) {
     
     if (is.null(data) || nrow(data) == 0) {
       return(list(
-        total_structures = 0,
-        active_structures = 0,
-        expiring_structures = 0,
+        total_count = 0,
+        active_count = 0,
+        expiring_count = 0,
         active_pct = 0
       ))
     }
     
-    total <- sum(data$total_structures, na.rm = TRUE)
-    active <- sum(data$active_structures, na.rm = TRUE)
-    expiring <- sum(data$expiring_structures, na.rm = TRUE)
+    total <- sum(data$total_count, na.rm = TRUE)
+    active <- sum(data$active_count, na.rm = TRUE)
+    expiring <- sum(data$expiring_count, na.rm = TRUE)
     active_pct <- if (total > 0) round(100 * active / total, 1) else 0
     
     list(
-      total_structures = total,
-      active_structures = active,
-      expiring_structures = expiring,
+      total_count = total,
+      active_count = active,
+      expiring_count = expiring,
       active_pct = active_pct
     )
   })
   
   # Render stat boxes
-  output$total_structures_box <- renderUI({
+  output$total_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
     create_stat_box(
-      value = format(data$total_structures, big.mark = ","),
+      value = format(data$total_count, big.mark = ","),
       title = "Total Structures",
       bg_color = status_colors["unknown"],
       icon = icon("building")
     )
   })
   
-  output$active_structures_box <- renderUI({
+  output$active_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
     create_stat_box(
-      value = format(data$active_structures, big.mark = ","),
+      value = format(data$active_count, big.mark = ","),
       title = "Active Treatments",
       bg_color = status_colors["active"],
       icon = icon("check-circle")
     )
   })
   
-  output$expiring_structures_box <- renderUI({
+  output$expiring_count_box <- renderUI({
     req(input$refresh)
     data <- value_boxes()
     status_colors <- get_status_colors(theme = current_theme())
     create_stat_box(
-      value = format(data$expiring_structures, big.mark = ","),
+      value = format(data$expiring_count, big.mark = ","),
       title = "Expiring Soon",
       bg_color = status_colors["planned"],
       icon = icon("clock")
@@ -390,7 +377,8 @@ server <- function(input, output, session) {
       hist_display_metric = inputs$hist_display_metric,
       hist_group_by = inputs$group_by,
       chart_type = inputs$hist_chart_type,
-      theme = current_theme_value
+      theme = current_theme_value,
+      show_zones_separately = !inputs$combine_zones
     )
   })
   

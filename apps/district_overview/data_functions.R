@@ -85,10 +85,10 @@ struct_env <- local({
 #' @param zone_filter Zone filter ("1", "2", or c("1", "2"))
 #' @param separate_zones If TRUE, show P1 and P2 as separate bars
 load_catch_basin_overview <- function(zone_filter = c("1", "2"), 
-                                       custom_today = Sys.Date(), 
+                                       analysis_date = Sys.Date(), 
                                        expiring_days = 14,
                                        separate_zones = FALSE) {
-  cat("CB Overview: date =", as.character(custom_today), "zones =", paste(zone_filter, collapse=","), 
+  cat("CB Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","), 
       "separate =", separate_zones, "\n")
   
   # Call function from catch basin environment
@@ -97,7 +97,7 @@ load_catch_basin_overview <- function(zone_filter = c("1", "2"),
       facility_filter = "all",
       foreman_filter = "all",
       zone_filter = zone_filter,
-      custom_today = custom_today,
+      analysis_date = analysis_date,
       expiring_days = expiring_days
     )
   }, error = function(e) {
@@ -113,13 +113,14 @@ load_catch_basin_overview <- function(zone_filter = c("1", "2"),
   cat("CB: Got", nrow(data), "rows, aggregating by facility\n")
   
   # Aggregate by facility (and zone if separate)
+  # Use standardized column names from load_catch_basin_data
   if (separate_zones && length(zone_filter) == 2) {
     result <- data %>%
       group_by(facility, zone) %>%
       summarize(
-        total = sum(wet_cb_count, na.rm = TRUE),
-        active = sum(count_wet_activetrt, na.rm = TRUE),
-        expiring = sum(count_wet_expiring, na.rm = TRUE),
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(display_name = facility) %>%
@@ -130,9 +131,9 @@ load_catch_basin_overview <- function(zone_filter = c("1", "2"),
     result <- data %>%
       group_by(facility) %>%
       summarize(
-        total = sum(wet_cb_count, na.rm = TRUE),
-        active = sum(count_wet_activetrt, na.rm = TRUE),
-        expiring = sum(count_wet_expiring, na.rm = TRUE),
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(display_name = facility) %>%
@@ -181,7 +182,7 @@ load_drone_overview <- function(zone_filter = c("1", "2"),
       data = raw,
       facility_filter = "all",
       foreman_filter = "all",
-      prehatch_only = FALSE
+      prehatch_only = TRUE
     )
   }, error = function(e) {
     cat("Drone: apply_data_filters error:", e$message, "\n")
@@ -222,14 +223,15 @@ load_drone_overview <- function(zone_filter = c("1", "2"),
   cat("Drone: Processed", nrow(processed$data), "rows\n")
   
   # Return in standard format - drone already has proper display_name from process_current_data
+  # Use standardized column names from process_current_data
   result <- processed$data %>%
     transmute(
       facility = facility,
       zone = if ("zone" %in% names(processed$data)) zone else NA,
       display_name = display_name,
-      total = total_sites,
-      active = active_sites,
-      expiring = expiring_sites
+      total = total_count,
+      active = active_count,
+      expiring = expiring_count
     )
   
   # Apply consistent ordering
@@ -241,17 +243,17 @@ load_drone_overview <- function(zone_filter = c("1", "2"),
 #' Load ground prehatch overview using isolated environment
 #' @param separate_zones If TRUE, show P1 and P2 as separate bars
 load_ground_prehatch_overview <- function(zone_filter = c("1", "2"),
-                                           simulation_date = Sys.Date(),
+                                           analysis_date = Sys.Date(),
                                            expiring_days = 14,
                                            separate_zones = FALSE) {
-  cat("Ground Prehatch Overview: date =", as.character(simulation_date), "zones =", paste(zone_filter, collapse=","),
+  cat("Ground Prehatch Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","),
       "separate =", separate_zones, "\n")
   
   # Call function from ground prehatch environment
   data <- tryCatch({
     ground_prehatch_env$get_ground_prehatch_data(
       zone_filter = zone_filter,
-      simulation_date = simulation_date,
+      analysis_date = analysis_date,
       expiring_days = expiring_days
     )
   }, error = function(e) {
@@ -267,13 +269,14 @@ load_ground_prehatch_overview <- function(zone_filter = c("1", "2"),
   cat("Ground: Got", nrow(data), "rows, aggregating by facility\n")
   
   # Aggregate by facility (and zone if separate)
+  # Use standardized column names from get_ground_prehatch_data
   if (separate_zones && length(zone_filter) == 2 && "zone" %in% names(data)) {
     result <- data %>%
       group_by(facility, zone) %>%
       summarize(
-        total = sum(prehatch_sites_cnt, na.rm = TRUE),
-        active = sum(ph_treated_cnt, na.rm = TRUE) + sum(ph_expiring_cnt, na.rm = TRUE),
-        expiring = sum(ph_expiring_cnt, na.rm = TRUE),
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(display_name = facility) %>%
@@ -284,9 +287,9 @@ load_ground_prehatch_overview <- function(zone_filter = c("1", "2"),
     result <- data %>%
       group_by(facility) %>%
       summarize(
-        total = sum(prehatch_sites_cnt, na.rm = TRUE),
-        active = sum(ph_treated_cnt, na.rm = TRUE) + sum(ph_expiring_cnt, na.rm = TRUE),
-        expiring = sum(ph_expiring_cnt, na.rm = TRUE),
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(display_name = facility) %>%
@@ -303,33 +306,24 @@ load_ground_prehatch_overview <- function(zone_filter = c("1", "2"),
 
 
 #' Load structure overview using isolated environment
-#' MATCHES struct_trt app logic exactly:
-#' - Total = ALL structures from get_all_structures() (loc_cxstruct)
-#' - Active/Expiring = from treatments (dblarv_insptrt_current with is_active flag)
-#' 
-#' The struct_trt app calls:
-#' 1. all_structures() -> get_all_structures() -> queries loc_cxstruct (ALL structures)
-#' 2. current_data() -> get_current_structure_data() -> queries dblarv_insptrt_current (treatments only)
-#' 3. aggregate_structure_data(structures, treatments) -> combines them
+#' Uses struct_trt's aggregate_structure_data() for consistent aggregation logic
 #' 
 #' @param separate_zones If TRUE, show P1 and P2 as separate bars
 load_structure_overview <- function(zone_filter = c("1", "2"),
-                                     custom_today = Sys.Date(),
+                                     analysis_date = Sys.Date(),
                                      expiring_days = 7,
                                      separate_zones = FALSE) {
-  cat("Structure Overview: date =", as.character(custom_today), "zones =", paste(zone_filter, collapse=","),
+  cat("Structure Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","),
       "separate =", separate_zones, "\n")
   
-  # =========================================================================
-  # STEP 1: Get ALL structures (for total count) - matches struct_trt's all_structures()
-  # =========================================================================
+  # Get ALL structures - matches struct_trt's all_structures()
   all_structures <- tryCatch({
     struct_env$get_all_structures(
       facility_filter = "all",
       foreman_filter = "all",
       structure_type_filter = "all",
       priority_filter = "all",
-      status_types = c("D", "W", "U"),
+      status_types = c("W", "U"),
       zone_filter = zone_filter
     )
   }, error = function(e) {
@@ -344,18 +338,16 @@ load_structure_overview <- function(zone_filter = c("1", "2"),
   
   cat("Structure: Got", nrow(all_structures), "total structures\n")
   
-  # =========================================================================
-  # STEP 2: Get treatments (for active/expiring counts) - matches struct_trt's current_data()
-  # =========================================================================
+  # Get treatments - matches struct_trt's current_data()
   treatment_result <- tryCatch({
     struct_env$get_current_structure_data(
-      custom_today = custom_today,
+      analysis_date = analysis_date,
       expiring_days = expiring_days,
       facility_filter = "all",
       foreman_filter = "all",
       structure_type_filter = "all",
       priority_filter = "all",
-      status_types = c("D", "W", "U"),
+      status_types = c("W", "U"),
       zone_filter = zone_filter
     )
   }, error = function(e) {
@@ -368,84 +360,36 @@ load_structure_overview <- function(zone_filter = c("1", "2"),
   
   cat("Structure: Got", nrow(treatments), "treatment rows\n")
   
-  # =========================================================================
-  # STEP 3: Aggregate - TOTAL from all_structures, ACTIVE/EXPIRING from treatments
-  # This matches struct_trt's aggregate_structure_data() logic
-  # =========================================================================
+  # Use aggregate_structure_data with standardized column names
+  combine_zones_param <- !separate_zones
+  agg_data <- tryCatch({
+    struct_env$aggregate_structure_data(
+      structures = all_structures,
+      treatments = treatments,
+      group_by = "facility",
+      zone_filter = zone_filter,
+      combine_zones = combine_zones_param
+    )
+  }, error = function(e) {
+    cat("Structure: aggregate_structure_data error:", e$message, "\n")
+    return(data.frame())
+  })
   
-  if (separate_zones && length(zone_filter) == 2 && "zone" %in% names(all_structures)) {
-    # Count TOTAL structures by facility + zone (from all_structures)
-    total_counts <- all_structures %>%
-      group_by(facility, zone) %>%
-      summarize(total = n_distinct(sitecode), .groups = "drop")
-    
-    # Count active structures (DISTINCT sitecodes from treatments)
-    if (nrow(treatments) > 0 && "is_active" %in% names(treatments)) {
-      active_counts <- treatments %>%
-        filter(is_active == TRUE) %>%
-        distinct(sitecode, facility, zone) %>%
-        group_by(facility, zone) %>%
-        summarize(active = n(), .groups = "drop")
-      
-      expiring_counts <- treatments %>%
-        filter(is_expiring == TRUE) %>%
-        distinct(sitecode, facility, zone) %>%
-        group_by(facility, zone) %>%
-        summarize(expiring = n(), .groups = "drop")
-    } else {
-      active_counts <- data.frame(facility = character(), zone = character(), active = integer())
-      expiring_counts <- data.frame(facility = character(), zone = character(), expiring = integer())
-    }
-    
-    # Combine counts
-    agg_result <- total_counts %>%
-      left_join(active_counts, by = c("facility", "zone")) %>%
-      left_join(expiring_counts, by = c("facility", "zone")) %>%
-      mutate(
-        active = ifelse(is.na(active), 0, active),
-        expiring = ifelse(is.na(expiring), 0, expiring),
-        display_name = facility
-      ) %>%
-      map_facility_names(facility_col = "display_name") %>%
-      mutate(display_name = paste0(display_name_display, " (P", zone, ")")) %>%
-      select(-display_name_display)
-  } else {
-    # Count TOTAL structures by facility (from all_structures)
-    total_counts <- all_structures %>%
-      group_by(facility) %>%
-      summarize(total = n_distinct(sitecode), .groups = "drop")
-    
-    # Count active structures (DISTINCT sitecodes from treatments)
-    if (nrow(treatments) > 0 && "is_active" %in% names(treatments)) {
-      active_counts <- treatments %>%
-        filter(is_active == TRUE) %>%
-        distinct(sitecode, facility) %>%
-        group_by(facility) %>%
-        summarize(active = n(), .groups = "drop")
-      
-      expiring_counts <- treatments %>%
-        filter(is_expiring == TRUE) %>%
-        distinct(sitecode, facility) %>%
-        group_by(facility) %>%
-        summarize(expiring = n(), .groups = "drop")
-    } else {
-      active_counts <- data.frame(facility = character(), active = integer())
-      expiring_counts <- data.frame(facility = character(), expiring = integer())
-    }
-    
-    # Combine counts
-    agg_result <- total_counts %>%
-      left_join(active_counts, by = "facility") %>%
-      left_join(expiring_counts, by = "facility") %>%
-      mutate(
-        active = ifelse(is.na(active), 0, active),
-        expiring = ifelse(is.na(expiring), 0, expiring),
-        display_name = facility
-      ) %>%
-      map_facility_names(facility_col = "display_name") %>%
-      mutate(display_name = display_name_display) %>%
-      select(-display_name_display)
+  if (is.null(agg_data) || nrow(agg_data) == 0) {
+    cat("Structure: No aggregated data\n")
+    return(data.frame())
   }
+  
+  # Map to standard output format using standardized column names
+  agg_result <- agg_data %>%
+    transmute(
+      facility = if ("facility" %in% names(agg_data)) facility else NA,
+      zone = if ("zone" %in% names(agg_data)) zone else NA,
+      display_name = display_name,
+      total = total_count,
+      active = active_count,
+      expiring = expiring_count
+    )
   
   # Apply consistent ordering
   agg_result <- order_facilities(agg_result, separate_zones)

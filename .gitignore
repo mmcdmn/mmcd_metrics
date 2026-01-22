@@ -56,3 +56,9 @@ tmp/
 *.so
 *.o
 *.dll
+
+# Test output and temporary files
+tests/testthat/test-output/
+test-output/
+*.csv.tmp
+*_test.csv

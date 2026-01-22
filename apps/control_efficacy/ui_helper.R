@@ -165,18 +165,6 @@ control_efficacy_ui <- function() {
   )
 }
 
-# Create a custom metric box (replacement for valueBox)
-create_metric_box <- function(value, subtitle, icon_name, color = "#3c8dbc") {
-  div(
-    style = paste0("background-color: ", color, "; color: white; padding: 20px; border-radius: 5px; text-align: center; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"),
-    div(style = "font-size: 14px; margin-bottom: 5px;",
-        icon(icon_name, style = "margin-right: 5px;"),
-        subtitle
-    ),
-    div(style = "font-size: 32px; font-weight: bold;", value)
-  )
-}
-
 # DEPRECATED FUNCTIONS - kept for compatibility
 
 #' Create the main filter panel for control efficacy analysis

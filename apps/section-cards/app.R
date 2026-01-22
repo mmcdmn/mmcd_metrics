@@ -24,6 +24,9 @@ source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("section_cards")
+
 # Load environment variables
 load_env_vars()
 

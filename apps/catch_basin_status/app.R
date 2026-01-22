@@ -1,17 +1,8 @@
 # Catch Basin Status Dashboard
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(DT)
-  library(plotly)
-  library(tidyr)
-})
 
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 
@@ -20,6 +11,9 @@ source("data_functions.R")
 source("display_functions.R")
 source("ui_helper.R")
 source("historical_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("catch_basin_status")
 
 # =============================================================================
 # USER INTERFACE
@@ -34,15 +28,13 @@ ui <- catch_basin_ui()
 server <- function(input, output, session) {
   
   # =============================================================================
-  # THEME SUPPORT - Reactive theme handling
+  # THEME SUPPORT
   # =============================================================================
   
-  # Reactive value for current theme
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Update global theme option when theme changes
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -76,7 +68,7 @@ server <- function(input, output, session) {
       facility_filter = isolate(input$facility_filter),
       foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
-      custom_today = isolate(input$custom_today),
+      analysis_date = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
       expiring_filter = isolate(input$expiring_filter)
     )
@@ -204,7 +196,7 @@ server <- function(input, output, session) {
         facility_filter = inputs$facility_filter,
         foreman_filter = inputs$foreman_filter,
         zone_filter = inputs$zone_filter,
-        custom_today = inputs$custom_today,
+        analysis_date = inputs$analysis_date,
         expiring_days = inputs$expiring_days
       )
     })
@@ -245,7 +237,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$wet_cb_count, na.rm = TRUE)
+      total <- sum(data$total_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -263,7 +255,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$count_wet_activetrt, na.rm = TRUE)
+      total <- sum(data$active_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -282,8 +274,8 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       pct <- 0
     } else {
-      total_wet <- sum(data$wet_cb_count, na.rm = TRUE)
-      total_treated <- sum(data$count_wet_activetrt, na.rm = TRUE)
+      total_wet <- sum(data$total_count, na.rm = TRUE)
+      total_treated <- sum(data$active_count, na.rm = TRUE)
       pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
     }
     
@@ -310,7 +302,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$count_wet_expiring, na.rm = TRUE)
+      total <- sum(data$expiring_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -328,7 +320,7 @@ server <- function(input, output, session) {
     if (is.null(data) || nrow(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$count_wet_expired, na.rm = TRUE)
+      total <- sum(data$expired_count, na.rm = TRUE)
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -429,7 +421,8 @@ server <- function(input, output, session) {
       hist_display_metric = inputs$hist_display_metric,
       hist_group_by = inputs$group_by,
       chart_type = inputs$hist_chart_type,
-      theme = current_theme()
+      theme = current_theme(),
+      show_zones_separately = !inputs$combine_zones
     )
   })
   

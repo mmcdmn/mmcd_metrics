@@ -22,6 +22,9 @@ source("data_functions.R")
 source("checkback_functions.R")
 source("display_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("control_efficacy")
+
 # Suppress R CMD check notes for dplyr/ggplot2 NSE variables
 if (getRversion() >= "2.15.1") {
   utils::globalVariables(c(

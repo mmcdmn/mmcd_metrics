@@ -69,9 +69,9 @@ ground_prehatch_ui <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                        choices = c("Active Sites" = "weekly_active_sites",
+                        choices = c("Active Sites" = "weekly_active_count",
                                    "Active Acres" = "weekly_active_acres"),
-                        selected = "weekly_active_sites")
+                        selected = "weekly_active_count")
           ),
           
           sliderInput("hist_year_range", "Year Range:",
@@ -290,9 +290,9 @@ create_filter_panel <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                        choices = c("Active Sites" = "weekly_active_sites",
+                        choices = c("Active Sites" = "weekly_active_count",
                                    "Active Acres" = "weekly_active_acres"),
-                        selected = "weekly_active_sites",
+                        selected = "weekly_active_count",
                         inline = TRUE)
           )
         ),
@@ -346,18 +346,6 @@ create_overview_value_boxes <- function() {
     column(2, uiOutput("expired_sites")),
     column(2, uiOutput("skipped_sites")),
     column(2, uiOutput("treated_pct"))
-  )
-}
-
-# Create a custom metric box (replacement for valueBox)
-create_metric_box <- function(value, subtitle, icon_name, color = "#3c8dbc") {
-  div(
-    style = paste0("background-color: ", color, "; color: white; padding: 20px; border-radius: 5px; text-align: center; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"),
-    div(style = "font-size: 14px; margin-bottom: 5px;",
-        icon(icon_name, style = "margin-right: 5px;"),
-        subtitle
-    ),
-    div(style = "font-size: 32px; font-weight: bold;", value)
   )
 }
 
@@ -569,9 +557,9 @@ create_historical_filter_panel <- function() {
         conditionalPanel(
           condition = "input.hist_time_period == 'weekly'",
           radioButtons("hist_display_metric", "Display Metric:",
-                      choices = c("Active Sites" = "weekly_active_sites",
+                      choices = c("Active Sites" = "weekly_active_count",
                                  "Active Site Acres" = "weekly_active_acres"),
-                      selected = "weekly_active_sites",
+                      selected = "weekly_active_count",
                       inline = TRUE)
         )
       ),

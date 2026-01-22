@@ -27,6 +27,9 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
 })
 
+# Set application name for AWS RDS monitoring
+set_app_name("mosquito_surveillance_map")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(

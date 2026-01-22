@@ -24,7 +24,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   # FIX: species_codes are already numeric sppcode IDs (36, 38, etc.) from get_species_choices()
   species_filter_traps <- ""
   species_filter_pools <- ""
-  if (length(species_codes) > 0 && !("all" %in% tolower(species_codes))) {
+  if (is_valid_filter(species_codes)) {
     # Convert to numeric and build IN clause
     species_ids <- paste(as.integer(species_codes), collapse = ",")
     species_filter_traps <- sprintf("AND s.spp IN (%s)", species_ids)
@@ -34,7 +34,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   }
   
   facility_filter_sql <- ""
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% tolower(facility_filter))) {
+  if (is_valid_filter(facility_filter)) {
     facility_filter_sql <- sprintf("AND t.facility IN (%s)", paste(sprintf("'%s'", facility_filter), collapse = ","))
   }
   

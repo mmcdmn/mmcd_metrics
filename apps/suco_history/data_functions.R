@@ -404,8 +404,8 @@ filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter,
       filter(facility == facility_filter)
   }
   
-  # Apply foreman filter  
-  if (!is.null(foreman_filter) && !("all" %in% tolower(foreman_filter)) && "foreman" %in% names(filtered_data)) {
+  # Apply foreman filter using shared helper
+  if (is_valid_filter(foreman_filter) && "foreman" %in% names(filtered_data)) {
     # Convert shortnames to emp_nums for filtering
     foremen_lookup <- get_foremen_lookup()
     

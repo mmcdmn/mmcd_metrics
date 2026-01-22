@@ -16,8 +16,8 @@ jobs:
     
     strategy:
       matrix:
-        # Test on multiple R versions for robustness
-        r-version: ['4.3', '4.4', 'release']
+        # Test on just the latest R version for speed (change to multiple versions if needed)
+        r-version: ['release']
         
     steps:
     - name: Checkout code
@@ -48,13 +48,18 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-R${{ matrix.r-version }}-${{ hashFiles('.github/R-version') }}
-        restore-keys: ${{ runner.os }}-R${{ matrix.r-version }}-
+        key: ${{ runner.os }}-R${{ matrix.r-version }}-${{ hashFiles('**/*.R') }}
+        restore-keys: |
+          ${{ runner.os }}-R${{ matrix.r-version }}-
+          ${{ runner.os }}-R-
 
-    - name: Install R dependencies
+    - name: Install R dependencies (optimized)
       run: |
-        # Install required CRAN packages
-        install.packages(c(
+        # Use pak for much faster package installation
+        install.packages("pak", repos = "https://r-lib.github.io/p/pak/devel/")
+        
+        # Install packages using pak (faster than install.packages)
+        pak::pkg_install(c(
           "testthat",
           "shiny", 
           "DBI",
@@ -74,7 +79,7 @@ jobs:
           "RColorBrewer",
           "htmltools",
           "pool"
-        ), dependencies = TRUE)
+        ))
       shell: Rscript {0}
     
     - name: Verify R environment

@@ -46,7 +46,7 @@ cat("✓ htmltools loaded for tag rendering\n")
 TESTING_MODE_ISOLATED <- TRUE
 
 if (TESTING_MODE_ISOLATED) {
-  cat("🧪 Running in ISOLATED mode - no database connection required\n")
+  cat(" Running in ISOLATED mode - no database connection required\n")
   
   # Load stubs FIRST to override DB connection functions BEFORE any module loads
   source("tests/test_stubs.R")
@@ -121,35 +121,15 @@ shared_results <- test_dir(
 )
 
 # Run app tests if they exist
-if (dir.exists("tests/apps") && length(list.dirs("tests/apps", recursive = FALSE)) > 0) {
+app_results <- NULL
+if (dir.exists("tests/apps") && length(list.files("tests/apps", pattern = "^test-.*\\.R$")) > 0) {
   cat("\n=== Running App Tests ===\n\n")
   
-  app_dirs <- list.dirs("tests/apps", recursive = FALSE, full.names = TRUE)
-  for (app_dir in app_dirs) {
-    app_name <- basename(app_dir)
-    cat(paste0("\n--- Testing: ", app_name, " ---\n"))
-    
-    # Source app-specific functions if they exist
-    app_source_dir <- file.path("apps", app_name)
-    if (dir.exists(app_source_dir)) {
-      for (f in list.files(app_source_dir, pattern = "\\.R$", full.names = TRUE)) {
-        if (!grepl("app\\.R$", f)) {  # Don't source app.R, just helper functions
-          tryCatch({
-            source(f)
-          }, error = function(e) {
-            cat(paste0("  ⚠ Could not source: ", basename(f), "\n"))
-          })
-        }
-      }
-    }
-    
-    # Run tests for this app
-    test_dir(
-      app_dir,
-      reporter = "summary",
-      stop_on_failure = FALSE
-    )
-  }
+  app_results <- test_dir(
+    "tests/apps",
+    reporter = "summary",
+    stop_on_failure = FALSE
+  )
 }
 
 # =============================================================================
@@ -169,6 +149,16 @@ total_failed <- sum(results_df$failed)
 total_skipped <- sum(results_df$skipped)
 total_warnings <- sum(results_df$warning)
 
+# Add app results if they exist
+if (!is.null(app_results)) {
+  app_results_df <- as.data.frame(app_results)
+  total_tests <- total_tests + sum(app_results_df$passed) + sum(app_results_df$failed) + sum(app_results_df$skipped)
+  total_passed <- total_passed + sum(app_results_df$passed)
+  total_failed <- total_failed + sum(app_results_df$failed)
+  total_skipped <- total_skipped + sum(app_results_df$skipped)
+  total_warnings <- total_warnings + sum(app_results_df$warning)
+}
+
 cat(sprintf("|  Total Tests:    %4d                                                |\n", total_tests))
 cat(sprintf("|  [PASS] Passed:  %4d                                                |\n", total_passed))
 cat(sprintf("|  [FAIL] Failed:  %4d                                                |\n", total_failed))
@@ -177,9 +167,9 @@ cat(sprintf("|  [WARN] Warnings:%4d                                             
 cat("+----------------------------------------------------------------------+\n")
 
 if (total_failed == 0) {
-  cat("|  [PASS] ALL TESTS PASSED!                                          |\n")
+  cat("|  [PASS] ALL TESTS PASSED!                                           |\n")
 } else {
-  cat("|  [FAIL] SOME TESTS FAILED - See details above                      |\n")
+  cat("|  [FAIL] SOME TESTS FAILED - See details above                       |\n")
 }
 cat("+----------------------------------------------------------------------+\n")
 

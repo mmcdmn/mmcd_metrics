@@ -242,7 +242,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Require refresh button click
     
     data <- aggregated_data()
-    display_metric <- isolate(input$display_metric)
+    display_metric <- input$display_metric  # Not isolated - changes trigger update
     create_value_boxes(data, display_metric = display_metric)
   })
   
@@ -335,7 +335,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only calculate after refresh button clicked
     inputs <- refresh_inputs()
     data <- aggregated_data()
-    display_metric <- isolate(input$display_metric)
+    display_metric <- input$display_metric  # Not isolated - changes trigger update
     create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, 
                          return_height_info = TRUE, theme = current_theme(), display_metric = display_metric)
   })

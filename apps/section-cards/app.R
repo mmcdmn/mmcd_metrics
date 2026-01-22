@@ -262,18 +262,6 @@ server <- function(input, output, session) {
         choices = fos_choices
       )
       
-      # Update sections based on facility
-      filter_opts <- get_filter_options(
-        facility_filter = input$filter_facility,
-        fosarea_filter = NULL
-      )
-      
-      updateSelectInput(
-        session,
-        "filter_section",
-        choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
-      )
-      
       # Update town codes based on selected facility
       town_codes <- get_town_codes(facility_filter = input$filter_facility)
       town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
@@ -284,6 +272,19 @@ server <- function(input, output, session) {
         choices = town_choices
       )
       
+      # Update sections based on facility and current towncode
+      sections <- get_sections_by_towncode(
+        towncode_filter = input$filter_towncode,
+        facility_filter = input$filter_facility,
+        fosarea_filter = NULL
+      )
+      
+      updateSelectInput(
+        session,
+        "filter_section",
+        choices = c("All Sections" = "all", setNames(sections, sections))
+      )
+      
     }, error = function(e) {
       showNotification(
         paste("Error updating filters:", e$message),
@@ -292,21 +293,9 @@ server <- function(input, output, session) {
     })
   })
   
-  # Update Section filter when FOS area changes (cascading)
+  # Update Town Code and Section filters when FOS area changes (cascading)
   observeEvent(input$filter_fosarea, {
     tryCatch({
-      # Update sections based on facility AND fosarea
-      filter_opts <- get_filter_options(
-        facility_filter = input$filter_facility,
-        fosarea_filter = input$filter_fosarea
-      )
-      
-      updateSelectInput(
-        session,
-        "filter_section",
-        choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
-      )
-      
       # Update town codes based on selected facility and fosarea
       town_codes <- get_town_codes(
         facility_filter = input$filter_facility,
@@ -318,6 +307,43 @@ server <- function(input, output, session) {
         session,
         "filter_towncode",
         choices = town_choices
+      )
+      
+      # Update sections based on facility, fosarea, and current towncode
+      sections <- get_sections_by_towncode(
+        towncode_filter = input$filter_towncode,
+        facility_filter = input$filter_facility,
+        fosarea_filter = input$filter_fosarea
+      )
+      
+      updateSelectInput(
+        session,
+        "filter_section",
+        choices = c("All Sections" = "all", setNames(sections, sections))
+      )
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error updating section filter:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
+  # Update Section filter when town code changes (cascading)
+  observeEvent(input$filter_towncode, {
+    tryCatch({
+      # Update sections based on selected towncode, facility, and fosarea
+      sections <- get_sections_by_towncode(
+        towncode_filter = input$filter_towncode,
+        facility_filter = input$filter_facility,
+        fosarea_filter = input$filter_fosarea
+      )
+      
+      updateSelectInput(
+        session,
+        "filter_section",
+        choices = c("All Sections" = "all", setNames(sections, sections))
       )
       
     }, error = function(e) {

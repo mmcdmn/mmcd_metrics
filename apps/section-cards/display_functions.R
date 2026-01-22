@@ -34,6 +34,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     spr_aedes = "Spring Aedes",
     perturbans = "Perturbans",
     prehatch = "Prehatch",
+    prehatch_calc = "Prehatch Calculation",
     sample = "Sample Site",
     remarks = "Remarks",
     drone = "Drone",
@@ -233,6 +234,18 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       padding: 2px 6px; 
       border-radius: 3px; 
       font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .prehatch-calc-field { 
+      background-color: #E6F3FF !important;
+      background: #E6F3FF !important;
+      color: #333 !important;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      font-style: italic;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
@@ -437,8 +450,24 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   html <- paste0(html, '      <div class="card-info">\n')
   
   for (field in title_fields) {
-    if (field != "sitecode" && field %in% names(row)) {
-      value <- if(is.na(row[[field]])) "" else as.character(row[[field]])
+    if (field != "sitecode") {
+      # Special handling for computed fields that don't exist in the row data
+      if (field == "prehatch_calc") {
+        # Prehatch calculation - only show if this is a prehatch site and has acres
+        # Use same logic as prehatch field above - just check if prehatch value exists
+        prehatch_val <- row[["prehatch"]]
+        acres_val <- row[["acres"]]
+        if (!is.na(prehatch_val) && prehatch_val != "" && 
+            !is.na(acres_val) && !is.na(as.numeric(acres_val))) {
+          calculation <- round(as.numeric(acres_val) * 2.5, 2)
+          # Ensure minimum of 0.05
+          calculation <- max(calculation, 0.05)
+          display_text <- paste0("(acres X 2.5 = ", sprintf("%.2f", calculation), ")")
+          html <- paste0(html, '        <div class="info-item"><span class="prehatch-calc-field">', display_text, '</span></div>\n')
+        }
+      } else if (field %in% names(row)) {
+        # Handle regular database fields
+        value <- if(is.na(row[[field]])) "" else as.character(row[[field]])
       
       # Map facility code to full name
       if (field == "facility" && value %in% names(facility_map)) {
@@ -502,6 +531,7 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         html <- paste0(html, '        <div class="info-item"><span class="info-label">',
                       label, ':</span> ', value, '</div>\n')
       }
+      } # Close the else if (field %in% names(row)) block
     }
   }
   

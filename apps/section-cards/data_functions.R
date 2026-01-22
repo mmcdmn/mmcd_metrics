@@ -80,6 +80,43 @@ get_town_codes <- function(facility_filter = NULL, fosarea_filter = NULL) {
   return(data$towncode)
 }
 
+#' Get sections filtered by town code
+#' 
+#' @param towncode_filter Optional town code filter (first 4 digits)
+#' @param facility_filter Optional facility filter
+#' @param fosarea_filter Optional FOS area filter
+#' @return A vector of unique sections
+#' @export
+get_sections_by_towncode <- function(towncode_filter = NULL, facility_filter = NULL, fosarea_filter = NULL) {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  
+  # Build filter conditions
+  where_conditions <- "sectcode IS NOT NULL"
+  
+  if (!is.null(towncode_filter) && towncode_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND left(sectcode, 4) = '", towncode_filter, "'")
+  }
+  
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND facility = '", facility_filter, "'")
+  }
+  
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
+    SELECT DISTINCT sectcode
+    FROM public.gis_sectcode
+    WHERE ", where_conditions, "
+    ORDER BY sectcode
+  ")
+  
+  data <- dbGetQuery(con, query)
+  return(data$sectcode)
+}
+
 #' Get breeding sites data with section information
 #' 
 #' This function retrieves breeding site data and joins with section (gis_sectcode)

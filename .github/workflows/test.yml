@@ -78,7 +78,10 @@ jobs:
           "sf", 
           "RColorBrewer",
           "htmltools",
-          "pool"
+          "pool",
+          "shinyWidgets",
+          "shinydashboard",
+          "shinyjs"
         ))
       shell: Rscript {0}
     

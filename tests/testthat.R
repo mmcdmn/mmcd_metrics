@@ -167,9 +167,9 @@ cat(sprintf("|  [WARN] Warnings:%4d                                             
 cat("+----------------------------------------------------------------------+\n")
 
 if (total_failed == 0) {
-  cat("|  [PASS] ALL TESTS PASSED!                                          |\n")
+  cat("|  [PASS] ALL TESTS PASSED!                                           |\n")
 } else {
-  cat("|  [FAIL] SOME TESTS FAILED - See details above                      |\n")
+  cat("|  [FAIL] SOME TESTS FAILED - See details above                       |\n")
 }
 cat("+----------------------------------------------------------------------+\n")
 

@@ -65,10 +65,16 @@ create_status_stat_box <- function(value, title, status, icon = NULL, theme = "d
   # Get status colors for the theme
   colors <- get_status_colors(theme = theme)
   
-  # Get the background color for this status
-  bg_color <- colors[[status]]
+  # Safely get the background color for this status
+  # Use named vector access with fallback for unknown statuses
+  bg_color <- if (status %in% names(colors)) {
+    colors[[status]]
+  } else {
+    "#3c8dbc"  # Default blue fallback
+  }
+  
+  # Additional safety check
   if (is.null(bg_color) || length(bg_color) == 0 || is.na(bg_color)) {
-    # Fallback to a default color if status not found
     bg_color <- "#3c8dbc"  # Default blue
   }
   

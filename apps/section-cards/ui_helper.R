@@ -86,6 +86,7 @@ create_field_selector <- function() {
           "Spring Aedes" = "spr_aedes",
           "Perturbans" = "perturbans",
           "Prehatch" = "prehatch",
+          "Prehatch Calculation" = "prehatch_calc",
           "Sample Site" = "sample",
           "Section" = "section",
           "Remarks" = "remarks"

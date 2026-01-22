@@ -29,15 +29,15 @@ create_field_selector <- function() {
         selected = "all"
       ),
       selectInput(
-        "filter_section",
-        "Section:",
-        choices = c("All Sections" = "all"),
-        selected = "all"
-      ),
-      selectInput(
         "filter_towncode",
         "Town Code (first 4 digits):",
         choices = c("All Town Codes" = "all"),
+        selected = "all"
+      ),
+      selectInput(
+        "filter_section",
+        "Section:",
+        choices = c("All Sections" = "all"),
         selected = "all"
       ),
       checkboxInput(

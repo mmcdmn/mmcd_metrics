@@ -13,7 +13,7 @@
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -25,23 +25,33 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   
   # Define field labels for display
   field_labels <- list(
+    # Common fields
     sitecode = "Site Code",
     priority = "Priority",
+    culex = "Culex",
+    remarks = "Remarks",
+    section = "Section",
+    zone = "Zone",
+    facility = "Facility",
+    fosarea = "FOS Area",
+    
+    # Breeding site specific fields
     acres = "Acres",
     type = "Type",
     air_gnd = "Air/Gnd",
-    culex = "Culex",
     spr_aedes = "Spring Aedes",
     perturbans = "Perturbans",
     prehatch = "Prehatch",
     prehatch_calc = "Prehatch Calculation",
     sample = "Sample Site",
-    remarks = "Remarks",
     drone = "Drone",
-    section = "Section",
-    zone = "Zone",
-    facility = "Facility",
-    fosarea = "FOS Area",
+    
+    # Structure specific fields
+    s_type = "Type",
+    status_udw = "Status",
+    sqft = "Sq Ft",
+    chambers = "Chambers",
+    
     # Table fields (these will be empty columns for manual entry)
     date = "Date",
     wet_pct = "Wet %",
@@ -92,8 +102,31 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       background: white;
       font-family: Arial, sans-serif;
       font-size: 11px;
+      position: relative;
     }
     
+    .prehatch-overlay {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      text-align: right;
+      color: red !important;
+      font-weight: bold;
+      z-index: 10;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .prehatch-rate {
+      color: red !important;
+      font-size: 12px;
+    }
+    .prehatch-value {
+      color: red !important;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
     .card-header {
       background: #f0f0f0;
       border-bottom: 2px solid #333;
@@ -238,14 +271,68 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
-    .prehatch-calc-field { 
-      background-color: #E6F3FF !important;
-      background: #E6F3FF !important;
-      color: #333 !important;
+    .prehatch-overlay {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      text-align: right;
+      color: red !important;
+      font-weight: bold;
+      font-size: 14px;
+      z-index: 10;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .prehatch-rate {
+      color: red !important;
+      font-size: 12px;
+    }
+    .prehatch-value {
+      color: red !important;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    
+    /* Structure status colors */
+    .status-dry {
+      background-color: #F4A460 !important;
+      background: #F4A460 !important;
       padding: 2px 6px;
       border-radius: 3px;
       font-weight: bold;
-      font-style: italic;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .status-wet {
+      background-color: #4682B4 !important;
+      background: #4682B4 !important;
+      color: white !important;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .status-unknown {
+      background-color: #D3D3D3 !important;
+      background: #D3D3D3 !important;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .structure-type {
+      background-color: #9370DB !important;
+      background: #9370DB !important;
+      color: white !important;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
@@ -332,8 +419,8 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   <div class="cards-container">
   '
   
-  # Handle splitting by section and/or priority
-  if (split_by_section || split_by_priority) {
+  # Handle splitting by section, priority, and/or type
+  if (split_by_section || split_by_priority || split_by_type) {
     # Determine grouping columns
     grouping_cols <- c()
     if (split_by_section && "section" %in% names(data)) {
@@ -341,6 +428,9 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     }
     if (split_by_priority && "priority" %in% names(data)) {
       grouping_cols <- c(grouping_cols, "priority")
+    }
+    if (split_by_type && "s_type" %in% names(data)) {
+      grouping_cols <- c(grouping_cols, "s_type")
     }
     
     # Sort by grouping columns
@@ -443,6 +533,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
                                field_labels, facility_map, fos_map) {
   html <- ''
   
+  # Track if we need prehatch overlay (computed at end)
+  prehatch_overlay_value <- NULL
+  
   # Card header with title and selected info fields
   html <- paste0(html, '  <div class="section-card">\n')
   html <- paste0(html, '    <div class="card-header">\n')
@@ -453,8 +546,7 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
     if (field != "sitecode") {
       # Special handling for computed fields that don't exist in the row data
       if (field == "prehatch_calc") {
-        # Prehatch calculation - only show if this is a prehatch site and has acres
-        # Use same logic as prehatch field above - just check if prehatch value exists
+        # Prehatch calculation - calculate value for overlay display
         prehatch_val <- row[["prehatch"]]
         acres_val <- row[["acres"]]
         if (!is.na(prehatch_val) && prehatch_val != "" && 
@@ -462,9 +554,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
           calculation <- round(as.numeric(acres_val) * 2.5, 2)
           # Ensure minimum of 0.05
           calculation <- max(calculation, 0.05)
-          display_text <- paste0("(acres X 2.5 = ", sprintf("%.2f", calculation), ")")
-          html <- paste0(html, '        <div class="info-item"><span class="prehatch-calc-field">', display_text, '</span></div>\n')
+          prehatch_overlay_value <- sprintf("%.2f", calculation)
         }
+        # Don't add to header - will be displayed as overlay at bottom
       } else if (field %in% names(row)) {
         # Handle regular database fields
         value <- if(is.na(row[[field]])) "" else as.character(row[[field]])
@@ -515,6 +607,44 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
           html <- paste0(html, '        <div class="info-item"><span class="info-label">',
                         label, ':</span> <span class="prehatch-field">', value, '</span></div>\n')
         }
+      } else if (field == "status_udw") {
+        # Structure status (D/W/U) with color coding
+        if (!is.na(value) && value != "") {
+          status_label <- switch(toupper(value),
+            "D" = "Dry",
+            "W" = "Wet", 
+            "U" = "Unknown",
+            value
+          )
+          status_class <- switch(toupper(value),
+            "D" = "status-dry",
+            "W" = "status-wet",
+            "U" = "status-unknown",
+            ""
+          )
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="', status_class, '">', status_label, '</span></div>\n')
+        }
+      } else if (field == "s_type") {
+        # Structure type - display as uppercase
+        if (!is.na(value) && value != "") {
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="structure-type">', toupper(value), '</span></div>\n')
+        }
+      } else if (field == "sqft") {
+        # Square feet
+        if (!is.na(value) && value != "" && as.numeric(value) > 0) {
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> ', value, '</div>\n')
+        }
+      } else if (field == "chambers") {
+        # Chambers - only show for PR type structures and if value > 0
+        s_type_val <- row[["s_type"]]
+        if (!is.na(s_type_val) && grepl("PR", toupper(s_type_val)) && 
+            !is.na(value) && value != "" && as.numeric(value) > 0) {
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> ', value, '</div>\n')
+        }
       } else if (field == "priority") {
         # Priority with color coding based on value
         if (!is.na(value) && value != "") {
@@ -564,6 +694,15 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   
   html <- paste0(html, '      </tbody>\n')
   html <- paste0(html, '    </table>\n')
+  
+  # Add prehatch overlay if calculated
+  if (!is.null(prehatch_overlay_value)) {
+    html <- paste0(html, '    <div class="prehatch-overlay">\n')
+    html <- paste0(html, '      <div class="prehatch-rate">2.5/ac</div>\n')
+    html <- paste0(html, '      <div class="prehatch-value">', prehatch_overlay_value, '</div>\n')
+    html <- paste0(html, '    </div>\n')
+  }
+  
   html <- paste0(html, '  </div>\n')
   
   return(html)

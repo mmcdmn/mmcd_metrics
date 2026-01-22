@@ -9,6 +9,17 @@ create_field_selector <- function() {
     h4("Card Configuration"),
     
     wellPanel(
+      h5("Site Type"),
+      radioButtons(
+        "site_type",
+        NULL,
+        choices = c("Air/Ground Sites" = "breeding", "Structures" = "structures"),
+        selected = "breeding",
+        inline = TRUE
+      )
+    ),
+    
+    wellPanel(
       h5("Filters"),
       selectInput(
         "filter_facility",
@@ -50,18 +61,46 @@ create_field_selector <- function() {
         "Split by priority (each priority on separate pages)",
         value = FALSE
       ),
-      selectInput(
-        "filter_air_gnd",
-        "Air/Ground:",
-        choices = c("All" = "all", "Air" = "A", "Ground" = "G"),
-        selected = "all"
+      
+      # Air/Ground specific filters (shown when site_type == "breeding")
+      conditionalPanel(
+        condition = "input.site_type == 'breeding'",
+        selectInput(
+          "filter_air_gnd",
+          "Air/Ground:",
+          choices = c("All" = "all", "Air" = "A", "Ground" = "G"),
+          selected = "all"
+        ),
+        selectInput(
+          "filter_drone",
+          "Drone Sites:",
+          choices = c("All" = "all", "Include Drone" = "include", "Exclude Drone" = "exclude", "Drone Only" = "only"),
+          selected = "all"
+        )
       ),
-      selectInput(
-        "filter_drone",
-        "Drone Sites:",
-        choices = c("All" = "all", "Include Drone" = "include", "Exclude Drone" = "exclude", "Drone Only" = "only"),
-        selected = "all"
+      
+      # Structure specific filters (shown when site_type == "structures")
+      conditionalPanel(
+        condition = "input.site_type == 'structures'",
+        selectInput(
+          "filter_structure_type",
+          "Structure Type:",
+          choices = get_structure_type_choices(include_all = TRUE),
+          selected = "all"
+        ),
+        selectInput(
+          "filter_status_udw",
+          "Status:",
+          choices = c("All" = "all", "Dry" = "D", "Wet" = "W", "Unknown" = "U"),
+          selected = "all"
+        ),
+        checkboxInput(
+          "split_by_type",
+          "Split by Type (each type on separate page)",
+          value = FALSE
+        )
       ),
+      
       selectInput(
         "filter_priority",
         "Priority:",
@@ -72,28 +111,8 @@ create_field_selector <- function() {
     
     hr(),
     
-    wellPanel(
-      h5("Title Section Fields"),
-      p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
-      checkboxGroupInput(
-        "title_fields",
-        NULL,
-        choices = list(
-          "Priority" = "priority",
-          "Acres" = "acres",
-          "Type" = "type",
-          "Culex" = "culex",
-          "Spring Aedes" = "spr_aedes",
-          "Perturbans" = "perturbans",
-          "Prehatch" = "prehatch",
-          "Prehatch Calculation" = "prehatch_calc",
-          "Sample Site" = "sample",
-          "Section" = "section",
-          "Remarks" = "remarks"
-        ),
-        selected = c("priority", "acres", "type", "remarks")
-      )
-    ),
+    # Title fields section - conditionally rendered based on site type
+    uiOutput("title_fields_panel"),
     
     wellPanel(
       h5("Data Table Columns"),

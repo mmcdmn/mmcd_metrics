@@ -211,6 +211,72 @@ server <- function(input, output, session) {
   # Reactive values
   cards_data <- reactiveVal(NULL)
   
+  # Dynamic title fields panel based on site type
+  output$title_fields_panel <- renderUI({
+    site_type <- input$site_type
+    
+    if (is.null(site_type) || site_type == "breeding") {
+      # Air/Ground site fields
+      wellPanel(
+        h5("Title Section Fields"),
+        p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
+        checkboxGroupInput(
+          "title_fields",
+          NULL,
+          choices = list(
+            "Priority" = "priority",
+            "Acres" = "acres",
+            "Type" = "type",
+            "Culex" = "culex",
+            "Spring Aedes" = "spr_aedes",
+            "Perturbans" = "perturbans",
+            "Prehatch" = "prehatch",
+            "Prehatch Calculation" = "prehatch_calc",
+            "Sample Site" = "sample",
+            "Section" = "section",
+            "Remarks" = "remarks"
+          ),
+          selected = c("priority", "acres", "type", "remarks")
+        )
+      )
+    } else {
+      # Structure site fields
+      wellPanel(
+        h5("Title Section Fields"),
+        p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
+        checkboxGroupInput(
+          "title_fields",
+          NULL,
+          choices = list(
+            "Priority" = "priority",
+            "Structure Type" = "s_type",
+            "Status (D/W/U)" = "status_udw",
+            "Sq Ft" = "sqft",
+            "Culex" = "culex",
+            "Chambers (PR only)" = "chambers",
+            "Section" = "section",
+            "Remarks" = "remarks"
+          ),
+          selected = c("priority", "s_type", "status_udw", "sqft", "remarks")
+        )
+      )
+    }
+  })
+  
+  # Reset filters when site type changes
+  observeEvent(input$site_type, {
+    # Reset to defaults when switching site types
+    updateSelectInput(session, "filter_facility", selected = "all")
+    updateSelectInput(session, "filter_zone", selected = "all")
+    updateSelectInput(session, "filter_fosarea", selected = "all")
+    updateSelectInput(session, "filter_towncode", choices = c("All Town Codes" = "all"), selected = "all")
+    updateSelectInput(session, "filter_section", choices = c("All Sections" = "all"), selected = "all")
+    updateSelectInput(session, "filter_priority", selected = "all")
+    
+    # Clear generated cards when switching types
+    cards_data(NULL)
+  })
+  
   # Load facility choices on startup using db_helpers
   observe({
     tryCatch({
@@ -262,22 +328,27 @@ server <- function(input, output, session) {
         choices = fos_choices
       )
       
-      # Update town codes based on selected facility
-      town_codes <- get_town_codes(facility_filter = input$filter_facility)
+      # Use site type specific functions for town codes and sections
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        # Structure-specific cascading
+        town_codes <- get_structure_town_codes(facility_filter = input$filter_facility)
+        sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = NULL
+        )
+      } else {
+        # Breeding site cascading
+        town_codes <- get_town_codes(facility_filter = input$filter_facility)
+        sections <- get_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = NULL
+        )
+      }
+      
       town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
-      
-      updateSelectInput(
-        session,
-        "filter_towncode",
-        choices = town_choices
-      )
-      
-      # Update sections based on facility and current towncode
-      sections <- get_sections_by_towncode(
-        towncode_filter = input$filter_towncode,
-        facility_filter = input$filter_facility,
-        fosarea_filter = NULL
-      )
+      updateSelectInput(session, "filter_towncode", choices = town_choices)
       
       updateSelectInput(
         session,
@@ -296,25 +367,31 @@ server <- function(input, output, session) {
   # Update Town Code and Section filters when FOS area changes (cascading)
   observeEvent(input$filter_fosarea, {
     tryCatch({
-      # Update town codes based on selected facility and fosarea
-      town_codes <- get_town_codes(
-        facility_filter = input$filter_facility,
-        fosarea_filter = input$filter_fosarea
-      )
+      # Use site type specific functions
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        town_codes <- get_structure_town_codes(
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+        sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      } else {
+        town_codes <- get_town_codes(
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+        sections <- get_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      }
+      
       town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
-      
-      updateSelectInput(
-        session,
-        "filter_towncode",
-        choices = town_choices
-      )
-      
-      # Update sections based on facility, fosarea, and current towncode
-      sections <- get_sections_by_towncode(
-        towncode_filter = input$filter_towncode,
-        facility_filter = input$filter_facility,
-        fosarea_filter = input$filter_fosarea
-      )
+      updateSelectInput(session, "filter_towncode", choices = town_choices)
       
       updateSelectInput(
         session,
@@ -333,12 +410,20 @@ server <- function(input, output, session) {
   # Update Section filter when town code changes (cascading)
   observeEvent(input$filter_towncode, {
     tryCatch({
-      # Update sections based on selected towncode, facility, and fosarea
-      sections <- get_sections_by_towncode(
-        towncode_filter = input$filter_towncode,
-        facility_filter = input$filter_facility,
-        fosarea_filter = input$filter_fosarea
-      )
+      # Use site type specific functions
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      } else {
+        sections <- get_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      }
       
       updateSelectInput(
         session,
@@ -482,9 +567,13 @@ server <- function(input, output, session) {
       easyClose = FALSE
     ))
     
-    # Load full dataset only when Generate Cards is clicked
+    # Load data based on site type
     tryCatch({
-      data <- get_breeding_sites_with_sections()
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        data <- get_structures_with_sections()
+      } else {
+        data <- get_breeding_sites_with_sections()
+      }
       cards_data(data)
       
     }, error = function(e) {
@@ -512,18 +601,43 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(section == input$filter_section)
     }
     
-    # Apply air/ground filter
-    if (input$filter_air_gnd != "all") {
-      filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
-    }
-    
-    # Apply drone filter
-    if (input$filter_drone == "include") {
-      # All sites (no filter)
-    } else if (input$filter_drone == "exclude") {
-      filtered <- filtered %>% filter(is.na(drone) | drone == "")
-    } else if (input$filter_drone == "only") {
-      filtered <- filtered %>% filter(!is.na(drone) & drone != "")
+    # Site type specific filters
+    if (!is.null(input$site_type) && input$site_type == "structures") {
+      # Structure-specific filters
+      
+      # Apply structure type filter
+      if (!is.null(input$filter_structure_type) && input$filter_structure_type != "all") {
+        st <- toupper(input$filter_structure_type)
+        if (st == "CV") {
+          filtered <- filtered %>% filter(toupper(s_type) == "CV" | grepl("CV/", toupper(s_type)) | grepl("/CV", toupper(s_type)))
+        } else if (st == "PR") {
+          filtered <- filtered %>% filter(toupper(s_type) == "PR" | grepl("PR/", toupper(s_type)) | grepl("/PR", toupper(s_type)))
+        } else {
+          filtered <- filtered %>% filter(toupper(s_type) == st)
+        }
+      }
+      
+      # Apply status (D/W/U) filter
+      if (!is.null(input$filter_status_udw) && input$filter_status_udw != "all") {
+        filtered <- filtered %>% filter(status_udw == input$filter_status_udw)
+      }
+      
+    } else {
+      # Breeding site specific filters
+      
+      # Apply air/ground filter
+      if (input$filter_air_gnd != "all") {
+        filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
+      }
+      
+      # Apply drone filter
+      if (input$filter_drone == "include") {
+        # All sites (no filter)
+      } else if (input$filter_drone == "exclude") {
+        filtered <- filtered %>% filter(is.na(drone) | drone == "")
+      } else if (input$filter_drone == "only") {
+        filtered <- filtered %>% filter(!is.na(drone) & drone != "")
+      }
     }
     
     # Apply zone filter
@@ -577,13 +691,21 @@ server <- function(input, output, session) {
     }
     
     # Generate the HTML
+    # split_by_type only applies to structures
+    split_type <- if (!is.null(input$site_type) && input$site_type == "structures") {
+      isTRUE(input$split_by_type)
+    } else {
+      FALSE
+    }
+    
     cards_html <- generate_section_cards_html(
       filtered,
       title_fields,
       table_fields,
       input$num_rows,
       input$split_by_section,
-      input$split_by_priority
+      input$split_by_priority,
+      split_type
     )
     
     # Render the cards
@@ -632,14 +754,35 @@ server <- function(input, output, session) {
       if (input$filter_section != "all") {
         filtered <- filtered %>% filter(section == input$filter_section)
       }
-      if (input$filter_air_gnd != "all") {
-        filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
+      
+      # Site type specific filters
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        # Structure-specific filters
+        if (!is.null(input$filter_structure_type) && input$filter_structure_type != "all") {
+          st <- toupper(input$filter_structure_type)
+          if (st == "CV") {
+            filtered <- filtered %>% filter(toupper(s_type) == "CV" | grepl("CV/", toupper(s_type)) | grepl("/CV", toupper(s_type)))
+          } else if (st == "PR") {
+            filtered <- filtered %>% filter(toupper(s_type) == "PR" | grepl("PR/", toupper(s_type)) | grepl("/PR", toupper(s_type)))
+          } else {
+            filtered <- filtered %>% filter(toupper(s_type) == st)
+          }
+        }
+        if (!is.null(input$filter_status_udw) && input$filter_status_udw != "all") {
+          filtered <- filtered %>% filter(status_udw == input$filter_status_udw)
+        }
+      } else {
+        # Breeding site filters
+        if (input$filter_air_gnd != "all") {
+          filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
+        }
+        if (input$filter_drone == "exclude") {
+          filtered <- filtered %>% filter(is.na(drone) | drone == "")
+        } else if (input$filter_drone == "only") {
+          filtered <- filtered %>% filter(!is.na(drone) & drone != "")
+        }
       }
-      if (input$filter_drone == "exclude") {
-        filtered <- filtered %>% filter(is.na(drone) | drone == "")
-      } else if (input$filter_drone == "only") {
-        filtered <- filtered %>% filter(!is.na(drone) & drone != "")
-      }
+      
       if (input$filter_zone != "all") {
         filtered <- filtered %>% filter(zone == input$filter_zone)
       }
@@ -679,13 +822,21 @@ server <- function(input, output, session) {
       ))
       
       # Generate HTML with progress tracking
+      # split_by_type only applies to structures
+      split_type <- if (!is.null(input$site_type) && input$site_type == "structures") {
+        isTRUE(input$split_by_type)
+      } else {
+        FALSE
+      }
+      
       html_cards <- generate_section_cards_html(
         filtered,
         title_fields,
         table_fields,
         input$num_rows,
         input$split_by_section,
-        input$split_by_priority
+        input$split_by_priority,
+        split_type
       )
       
       # Update progress

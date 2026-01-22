@@ -1,4 +1,4 @@
-name: R Package Tests
+name: R Tests
 
 # Run tests on all branches for pushes, and on pull requests to main/master
 on:
@@ -53,7 +53,7 @@ jobs:
           ${{ runner.os }}-R${{ matrix.r-version }}-
           ${{ runner.os }}-R-
 
-    - name: Install R dependencies (optimized)
+    - name: Install R dependencies
       run: |
         # Use pak for much faster package installation
         install.packages("pak", repos = "https://r-lib.github.io/p/pak/devel/")

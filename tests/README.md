@@ -78,35 +78,3 @@ The `test_stubs.R` file provides mock implementations for database-dependent fun
 | `get_virus_target_choices()` | Returns WNV, LAC, JC, EEE, WEE |
 
 **Note**: Stub data is sourced from the actual MMCD database to ensure realistic test scenarios.
-
-## Adding New Tests
-
-### For Shared Modules
-
-1. Create a new file in `tests/shared/` named `test-<module-name>.R`
-2. Follow the existing test patterns
-3. Use `context()` to group related tests
-4. Use `test_that()` for individual test cases
-
-### For Apps
-
-1. Create a new folder in `tests/apps/<app-name>/`
-2. Create test files following the pattern `test-<feature>.R`
-3. The test runner will automatically source app helper functions
-
-## Test Guidelines
-
-1. **Independence**: Each test should be independent and not rely on state from other tests
-2. **Stubs**: If a test requires database access, ensure the stub provides appropriate mock data
-3. **Descriptive Names**: Use descriptive test names that explain what's being tested
-4. **Edge Cases**: Include tests for edge cases (NULL, empty, invalid inputs)
-
-## Known Limitations
-
-- Some Shiny UI tests require a full Shiny environment to pass
-- File export tests may fail in isolated environments without write permissions
-- Plotly chart tests validate object creation, not visual output
-
-## Last Updated
-
-2026-01-22 - Initial test suite created with stubs for isolated testing

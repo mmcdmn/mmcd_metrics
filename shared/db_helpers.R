@@ -1,10 +1,40 @@
 # =============================================================================
-# MMCD METRICS - DATABASE HELPER FUNCTIONS
+# MMCD METRICS - SHARED HELPER FUNCTIONS
 # =============================================================================
-# This file contains shared database connections, lookup functions, and 
-# utility functions used across multiple MMCD dashboard applications.
-# 
-# All apps should source this file: source("../../shared/db_helpers.R")
+# Central utility library for all MMCD dashboard applications.
+# Source this file: source("../../shared/db_helpers.R")
+#
+# TABLE OF CONTENTS (Line numbers approximate):
+# -----------------------------------------------------------------------------
+# 1. INITIALIZATION & DEPENDENCIES.............. Lines ~10-90
+#    - Library loading, color themes, connection pool
+#
+# 2. DATABASE CONNECTION......................... Lines ~90-190
+#    - get_db_connection(), safe_disconnect(), load_env_vars()
+#
+# 3. SQL FILTER HELPERS.......................... Lines ~190-270
+#    - is_valid_filter(), build_sql_in_clause(), etc.
+#
+# 4. LOOKUP TABLE FUNCTIONS...................... Lines ~270-600
+#    - get_facility_lookup(), get_foreman_choices(), get_species_choices()
+#
+# 5. COLOR FUNCTIONS............................. Lines ~600-1150
+#    - get_facility_base_colors(), get_status_colors(), get_foreman_colors()
+#
+# 6. SPECIES DATA FUNCTIONS...................... Lines ~1150-1200
+#    - get_mosquito_species_colors() (test-app only)
+#
+# 7. TREATMENT PLAN FUNCTIONS.................... Lines ~1200-1380
+#    - get_treatment_plan_types(), get_treatment_plan_colors()
+#
+# 8. CSV EXPORT HELPERS.......................... Lines ~1380-1460
+#    - export_csv_safe()
+#
+# 9. UI/CSS HELPERS.............................. Lines ~1460-1600
+#    - get_universal_text_css()
+#
+# 10. HISTORICAL DATA HELPERS.................... Lines ~1600-1700
+#    - apply_historical_group_labels(), summarize_historical_data()
 # =============================================================================
 
 # Load required libraries
@@ -643,40 +673,6 @@ get_species_lookup <- function() {
     safe_disconnect(con)
     return(data.frame())
   })
-}
-
-# Get species code to name mapping
-get_species_code_map <- function() {
-  species_lookup <- get_species_lookup()
-  
-  if (nrow(species_lookup) == 0) {
-    return(character(0))
-  }
-  
-  # Create mapping from sppcode to formatted species name
-  species_map <- character(0)
-  
-  for (i in 1:nrow(species_lookup)) {
-    code <- as.character(species_lookup$sppcode[i])
-    genus <- species_lookup$genus[i]
-    species <- species_lookup$species[i]
-    
-    # Create formatted name
-    if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
-      # Use abbreviated genus (first 2 letters) + full species name
-      formatted_name <- paste0(substr(genus, 1, 2), ". ", species)
-    } else if (!is.na(genus) && genus != "") {
-      formatted_name <- genus
-    } else if (!is.na(species) && species != "") {
-      formatted_name <- species
-    } else {
-      formatted_name <- paste0("Species ", code)
-    }
-    
-    species_map[code] <- formatted_name
-  }
-  
-  return(species_map)
 }
 
 #' Enhanced Species Name Mapping for SUCO Applications
@@ -1411,48 +1407,6 @@ get_treatment_plan_colors <- function(use_names = FALSE, theme = getOption("mmcd
 #' Get Treatment Plan Choices for Select Inputs
 #' 
 #' Returns properly formatted choices for selectInput widgets with full names as labels
-#' and plan codes as values for database queries.
-#' 
-#' Usage:
-#' ```r
-#' # In UI:
-#' checkboxGroupInput(
-#'   "plan_types",
-#'   "Select Treatment Plan Types:",
-#'   choices = get_treatment_plan_choices(),
-#'   selected = c("A", "D", "G")
-#' )
-#' ```
-#' 
-#' Parameters:
-#'   include_all: If TRUE, includes "All Types" option
-#' 
-#' Returns:
-#'   Named vector suitable for selectInput choices
-get_treatment_plan_choices <- function(include_all = FALSE) {
-  plan_types <- get_treatment_plan_types()
-  
-  if (nrow(plan_types) == 0) {
-    return(c("Air (A)" = "A", "Drone (D)" = "D", "Ground (G)" = "G", "None (N)" = "N", "Unknown (U)" = "U"))
-  }
-  
-  # Create choices with format "Name (Code)" = "Code"
-  labels <- paste0(plan_types$plan_name, " (", plan_types$plan_code, ")")
-  choices <- setNames(plan_types$plan_code, labels)
-  
-  if (include_all) {
-    choices <- c("All Types" = "all", choices)
-  }
-  
-  return(choices)
-}
-
-# =============================================================================
-# COLOR HELPER FUNCTIONS - ONE STOP SHOP
-# =============================================================================
-# Centralized color management with optional zone differentiation support.
-# All color functions support optional alpha_zones parameter for P1/P2 zones.
-
 # =============================================================================
 # CSV EXPORT HELPER FUNCTIONS
 # =============================================================================

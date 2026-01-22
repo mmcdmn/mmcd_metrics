@@ -23,6 +23,9 @@ source("display_functions.R")
 source("historical_functions.R")
 source("ui_helper.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("cattail_treatments")
+
 # Define UI
 ui <- cattail_treatments_ui()
 

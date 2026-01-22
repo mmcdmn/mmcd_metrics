@@ -27,6 +27,9 @@ source("progress_functions.R")
 # Source the historical comparison functions
 source("historical_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("cattail_inspections")
+
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),

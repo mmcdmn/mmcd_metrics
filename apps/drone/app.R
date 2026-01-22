@@ -12,6 +12,9 @@ source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("drone")
+
 # Load environment variables
 load_env_vars()
 

@@ -1417,6 +1417,28 @@ get_treatment_plan_colors <- function(use_names = FALSE, theme = getOption("mmcd
 #' line breaks, quotes, and other problematic characters in text fields.
 #' 
 #' @param data Data frame to clean
+#' @return Cleaned data frame safe for CSV export
+#' @export
+clean_data_for_csv <- function(data) {
+  if (is.null(data) || nrow(data) == 0) {
+    return(data)
+  }
+  
+  # Process each character column
+  for (col in names(data)) {
+    if (is.character(data[[col]])) {
+      # Replace newlines, tabs, and carriage returns with spaces
+      data[[col]] <- gsub("[\r\n\t]+", " ", data[[col]])
+      # Replace multiple spaces with single space
+      data[[col]] <- gsub(" +", " ", data[[col]])
+      # Trim leading/trailing whitespace
+      data[[col]] <- trimws(data[[col]])
+    }
+  }
+  
+  return(data)
+}
+
 #' Export Data to CSV with Error Handling
 #' 
 #' This function provides a robust way to export data to CSV with proper

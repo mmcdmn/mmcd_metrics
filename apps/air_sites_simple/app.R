@@ -37,6 +37,9 @@ source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("air_sites_simple")
+
 # Functions are now loaded from data_functions.R and display_functions.R
 
 # Define UI

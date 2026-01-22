@@ -23,6 +23,9 @@ source("data_functions.R")
 source("display_functions.R")
 source("ui_helpers.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("suco_history")
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(

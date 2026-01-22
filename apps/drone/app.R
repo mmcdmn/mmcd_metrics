@@ -248,7 +248,7 @@ server <- function(input, output, session) {
   })
   
   # Current progress plot
-  output$currentPlot <- renderPlot({
+  output$currentPlot <- renderPlotly({
     req(input$refresh)  # Only render after refresh button is clicked
     inputs <- refresh_inputs()
     result <- processed_data()
@@ -383,9 +383,33 @@ server <- function(input, output, session) {
       data$y_active <- data$active_acres
       data$y_expiring <- data$expiring_acres
     }
-    # For visual stacking via overlay, compute active+expiring layer
-    data$y_active_plus_exp <- data$y_active + data$y_expiring
+    # Calculate expired values for tooltips
+    # NOTE: expiring is a SUBSET of active, NOT separate
+    # So expired = total - active (not total - active - expiring)
+    data$y_expired <- data$y_total - data$y_active
     
+    # Create tooltip text
+    if (inputs$current_display_metric == "sites") {
+      data$tooltip <- paste0(
+        "<b>", data[[x_var]], "</b><br>",
+        "Total Sites: ", data$y_total, "<br>",
+        "Active: ", data$y_active, "<br>", 
+        "Expiring: ", data$y_expiring, "<br>",
+        "Expired/Untreated: ", data$y_expired
+      )
+    } else {
+      data$tooltip <- paste0(
+        "<b>", data[[x_var]], "</b><br>",
+        "Total Acres: ", data$y_total, "<br>",
+        "Active: ", data$y_active, "<br>",
+        "Expiring: ", data$y_expiring, "<br>", 
+        "Expired/Untreated: ", data$y_expired
+      )
+    }
+    
+    # NOTE: expiring is a SUBSET of active, not separate
+    # Visual stacking: gray (total) > green (active) > orange (expiring)
+
     # Create plot - USE STATUS COLORS FOR ALL BARS
     # Create dummy data for legend (ensures all statuses appear)
     legend_data <- data.frame(
@@ -395,12 +419,13 @@ server <- function(input, output, session) {
       x_pos = rep(Inf, 3),
       y_pos = rep(Inf, 3)
     )
-    
-    p <- ggplot(data, aes(x = .data[[x_var]])) +
+
+    p <- ggplot(data, aes(x = .data[[x_var]], text = tooltip)) +
       # Slightly transparent gray background for total
       geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4, position = "identity") +
-      # Overlay colored bars to create a stacked look: first active+expiring (green), then expiring (orange)
-      geom_bar(aes(y = y_active_plus_exp), stat = "identity", fill = status_colors["active"], alpha = 1, position = "identity") +
+      # Green bar for active (which INCLUDES expiring)
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"], alpha = 1, position = "identity") +
+      # Orange bar for expiring (overlays on green - it's a subset of active)
       geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"], alpha = 1, position = "identity") +
       # Add legend items (outside plot area) using FILL mapping to force correct colors
       geom_point(
@@ -436,8 +461,11 @@ server <- function(input, output, session) {
           legend.position = "bottom",
           legend.key.size = unit(1.5, "cm")
       )
-    print(p)
-  }, height = 900)
+    
+    # Convert to plotly for interactive tooltips  
+    ggplotly(p, tooltip = "text") %>%
+      layout(height = 800)
+  })
   
   # Current progress data table - show sitecode details
   # Current progress data table with dynamic sizing

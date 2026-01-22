@@ -1,5 +1,5 @@
 # data_functions.R
-# Data processing functions for sections-cards DEMO
+# Data processing functions for Section Cards
 
 #' Get filter options from database (lightweight query)
 #' 

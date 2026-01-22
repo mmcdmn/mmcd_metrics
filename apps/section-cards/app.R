@@ -1,4 +1,4 @@
-# sections-cards DEMO App
+# Section Cards App
 
 # Load required libraries
 suppressPackageStartupMessages({

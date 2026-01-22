@@ -158,7 +158,7 @@ drone_ui <- function() {
                    br(),
                    textOutput("currentDescription"),
                    br(),
-                   plotOutput("currentPlot", height = "auto"),
+                   plotlyOutput("currentPlot", height = "800px"),
                    br(),
                    fluidRow(
                      column(10, h4("Sitecode Details")),

@@ -1,5 +1,5 @@
 # ui_helper.R
-# UI helper functions for sections-cards DEMO
+# UI helper functions for Section Cards
 
 #' Create field selection panel for section cards
 #' 

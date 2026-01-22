@@ -1,5 +1,5 @@
 # display_functions.R
-# Display and visualization functions for sections-cards DEMO
+# Display and visualization functions for Section Cards
 
 #' Generate HTML for section cards with printable layout
 #' 

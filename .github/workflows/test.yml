@@ -1,9 +1,10 @@
 name: R Package Tests
 
-# Run tests on push to main/master and on pull requests
+# Run tests on all branches for pushes, and on pull requests to main/master
 on:
   push:
-    branches: [ main, master ]
+    # Run on all branches
+    branches: [ '**' ]
   pull_request:
     branches: [ main, master ]
   # Allow manual triggering

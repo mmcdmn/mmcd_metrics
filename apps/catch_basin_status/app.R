@@ -12,6 +12,9 @@ source("display_functions.R")
 source("ui_helper.R")
 source("historical_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("catch_basin_status")
+
 # =============================================================================
 # USER INTERFACE
 # =============================================================================

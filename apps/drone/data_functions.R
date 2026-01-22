@@ -130,24 +130,30 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
 #' @param data List containing drone_sites and drone_treatments
 #' @param facility_filter Vector of selected facilities  
 #' @param foreman_filter Vector of selected foremen
+#' @param zone_filter Vector of selected zones (optional)
 #' @param prehatch_only Boolean for prehatch filter
 #' @return Filtered data list
 apply_data_filters <- function(data, facility_filter = NULL, 
-                               foreman_filter = NULL, prehatch_only = FALSE) {
+                               foreman_filter = NULL, zone_filter = NULL, 
+                               prehatch_only = FALSE) {
   
   drone_sites <- data$drone_sites
   drone_treatments <- data$drone_treatments
   
-  # Note: Zone filtering is handled in processed_data() after database joins
-  
-  # Apply facility filter
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% facility_filter)) {
+  # Apply facility filter using shared helper
+  if (is_valid_filter(facility_filter)) {
     drone_sites <- drone_sites %>% filter(facility %in% facility_filter)
     drone_treatments <- drone_treatments %>% filter(facility %in% facility_filter)
   }
   
-  # Apply foreman/FOS filter
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !("all" %in% foreman_filter)) {
+  # Apply zone filter (zones don't use "all" check)
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    drone_sites <- drone_sites %>% filter(zone %in% zone_filter)
+    drone_treatments <- drone_treatments %>% filter(zone %in% zone_filter)
+  }
+  
+  # Apply foreman/FOS filter using shared helper
+  if (is_valid_filter(foreman_filter)) {
     # Convert shortnames to employee numbers for filtering
     foremen_lookup <- get_foremen_lookup()
     selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
@@ -157,7 +163,7 @@ apply_data_filters <- function(data, facility_filter = NULL,
   }
   
   # Apply prehatch filter
-  if (prehatch_only) {
+  if (!is.null(prehatch_only) && prehatch_only) {
     drone_sites <- drone_sites %>% filter(prehatch == 'PREHATCH')
     drone_treatments <- drone_treatments %>% filter(prehatch == 'PREHATCH')
   }
@@ -264,19 +270,16 @@ get_sitecode_data <- function(start_year, end_year, zone_filter, facility_filter
     return(data.frame())
   }
   
-  # Apply filters
+  # Apply filters using shared helper
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    # Always filter by the specified zones
     result <- result %>% filter(zone %in% zone_filter)
   }
   
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && 
-      !("all" %in% facility_filter)) {
+  if (is_valid_filter(facility_filter)) {
     result <- result %>% filter(facility %in% facility_filter)
   }
   
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && 
-      !("all" %in% foreman_filter)) {
+  if (is_valid_filter(foreman_filter)) {
     # Convert shortnames to employee numbers for filtering
     foremen_lookup <- get_foremen_lookup()
     selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]

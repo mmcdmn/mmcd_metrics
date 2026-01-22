@@ -163,36 +163,15 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
       )
     }
     
-    # Get both colors and lookup exactly as documented
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    foremen_lookup <- get_foremen_lookup()
+    # Get foreman colors using shared function
+    emp_colors <- map_foreman_emp_to_colors(theme = theme)
     
-    # Create mapping from foreman NUMBER to facility-based colors (same logic as plot)
+    # Filter to only foremen in data
     foremen_in_data <- unique(na.omit(data$foreman))
-    emp_colors <- character(0)
-    
-    for (foreman_num in foremen_in_data) {
-      foreman_num_str <- trimws(as.character(foreman_num))
-      
-      # Find the shortname for this foreman number
-      matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-      
-      if(length(matches) > 0) {
-        shortname <- foremen_lookup$shortname[matches[1]]
-        facility <- foremen_lookup$facility[matches[1]]
-        
-        # Get the facility-based color for this shortname
-        if(shortname %in% names(foreman_colors)) {
-          emp_colors[foreman_num_str] <- foreman_colors[shortname]
-        }
-      }
-    }
-    
-    # Remove any NA colors
-    emp_colors <- emp_colors[!is.na(emp_colors)]
+    emp_colors <- emp_colors[names(emp_colors) %in% as.character(foremen_in_data)]
     
     # Create ORDERED colors to ensure legend and map match exactly
-    # Order by facility, then by foreman within facility (same as legend)
+    foremen_lookup <- get_foremen_lookup()
     ordered_foremen <- foremen_lookup[order(foremen_lookup$facility, foremen_lookup$shortname), ]
     ordered_emp_colors <- character(0)
     ordered_emp_numbers <- character(0)
@@ -530,47 +509,17 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     TRUE ~ "Zone: All"
   )
   
-  # Get color scales from db_helpers based on grouping
+  # Get color scales based on grouping - use shared functions
   custom_colors <- if(group_col == "facility") {
     get_facility_base_colors(theme = theme)
   } else if(group_col == "foreman") {
-    # Get the foreman colors from db_helpers
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Create mapping from foreman NUMBER to facility-based colors
-    foremen_in_data <- unique(na.omit(data[[group_col]]))
-    emp_colors <- character(0)
-    
-    for (foreman_num in foremen_in_data) {
-      foreman_num_str <- trimws(as.character(foreman_num))
-      
-      # Find the shortname for this foreman number
-      matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-      
-      if(length(matches) > 0) {
-        shortname <- foremen_lookup$shortname[matches[1]]
-        facility <- foremen_lookup$facility[matches[1]]
-        
-        # Get the facility-based color for this shortname
-        if(shortname %in% names(foreman_colors)) {
-          emp_colors[foreman_num_str] <- foreman_colors[shortname]
-        }
-      }
-    }
-    
-    # Remove any NA colors
-    emp_colors <- emp_colors[!is.na(emp_colors)]
-    
-    # Return the mapped colors
-    emp_colors
+    map_foreman_emp_to_colors(theme = theme)
   } else {
     NULL
   }
   
   # Determine the plotting group column and handle color mapping for combined zones
   # With the current implementation, zones are never shown separately
-  # "P1 + P2" combines zones into single bars/lines
   zones_selected <- convert_zone_selection(input$zone_filter)
   show_zones_separately <- FALSE  # Never show zones separately in this version
   
@@ -578,27 +527,11 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   
   # Get colors based on grouping - simplified since zones are never shown separately
   if (group_col == "facility") {
-    # Standard facility colors
     custom_colors <- get_facility_base_colors(theme = theme)
     alpha_values <- NULL
   } else if (group_col == "foreman") {
-    # Get foremen lookup for mapping emp_num to shortname
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Standard foreman colors - map from shortname to emp_num
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    emp_colors <- character(0)
-    
-    for (i in 1:nrow(foremen_lookup)) {
-      shortname <- trimws(foremen_lookup$shortname[i])
-      emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
-      
-      if (shortname %in% names(foreman_colors)) {
-        emp_colors[emp_num] <- foreman_colors[shortname]
-      }
-    }
-    
-    custom_colors <- emp_colors
+    # Use shared function for foreman emp_num to colors
+    custom_colors <- map_foreman_emp_to_colors(theme = theme)
     alpha_values <- NULL
   } else {
     custom_colors <- NULL

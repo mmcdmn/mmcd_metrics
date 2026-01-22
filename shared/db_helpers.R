@@ -1,10 +1,40 @@
 # =============================================================================
-# MMCD METRICS - DATABASE HELPER FUNCTIONS
+# MMCD METRICS - SHARED HELPER FUNCTIONS
 # =============================================================================
-# This file contains shared database connections, lookup functions, and 
-# utility functions used across multiple MMCD dashboard applications.
-# 
-# All apps should source this file: source("../../shared/db_helpers.R")
+# Central utility library for all MMCD dashboard applications.
+# Source this file: source("../../shared/db_helpers.R")
+#
+# TABLE OF CONTENTS (Line numbers approximate):
+# -----------------------------------------------------------------------------
+# 1. INITIALIZATION & DEPENDENCIES.............. Lines ~10-90
+#    - Library loading, color themes, connection pool
+#
+# 2. DATABASE CONNECTION......................... Lines ~90-190
+#    - get_db_connection(), safe_disconnect(), load_env_vars()
+#
+# 3. SQL FILTER HELPERS.......................... Lines ~190-270
+#    - is_valid_filter(), build_sql_in_clause(), etc.
+#
+# 4. LOOKUP TABLE FUNCTIONS...................... Lines ~270-600
+#    - get_facility_lookup(), get_foreman_choices(), get_species_choices()
+#
+# 5. COLOR FUNCTIONS............................. Lines ~600-1150
+#    - get_facility_base_colors(), get_status_colors(), get_foreman_colors()
+#
+# 6. SPECIES DATA FUNCTIONS...................... Lines ~1150-1200
+#    - get_mosquito_species_colors() (test-app only)
+#
+# 7. TREATMENT PLAN FUNCTIONS.................... Lines ~1200-1380
+#    - get_treatment_plan_types(), get_treatment_plan_colors()
+#
+# 8. CSV EXPORT HELPERS.......................... Lines ~1380-1460
+#    - export_csv_safe()
+#
+# 9. UI/CSS HELPERS.............................. Lines ~1460-1600
+#    - get_universal_text_css()
+#
+# 10. HISTORICAL DATA HELPERS.................... Lines ~1600-1700
+#    - apply_historical_group_labels(), summarize_historical_data()
 # =============================================================================
 
 # Load required libraries
@@ -16,15 +46,29 @@ suppressPackageStartupMessages({
 
 # Source color themes - try multiple paths to find color_themes.R
 # Source color themes directly (will attempt from multiple paths)
-tryCatch({
-  source("color_themes.R", local = FALSE)
-}, error = function(e) {
-  tryCatch({
-    source("../../shared/color_themes.R", local = FALSE)
-  }, error = function(e) {
-    message("Note: color_themes.R not found. Using default MMCD colors only.")
-  })
-})
+color_themes_paths <- c(
+  "color_themes.R",
+  "../../shared/color_themes.R",
+  "../shared/color_themes.R",
+  "shared/color_themes.R"
+)
+
+color_themes_loaded <- FALSE
+for (ct_path in color_themes_paths) {
+  if (file.exists(ct_path)) {
+    tryCatch({
+      source(ct_path, local = FALSE)
+      color_themes_loaded <- TRUE
+      break
+    }, error = function(e) {
+      # Continue to next path
+    })
+  }
+}
+
+if (!color_themes_loaded) {
+  message("Note: color_themes.R not found. Using default MMCD colors only.")
+}
 
 # =============================================================================
 # LOAD CONNECTION POOL MODULE
@@ -172,7 +216,118 @@ safe_disconnect <- function(con) {
   })
 }
 
+# =============================================================================
+# SQL FILTER BUILDING HELPERS
+# =============================================================================
+# Standardized functions for building SQL WHERE clauses from filter inputs.
+# These replace the repetitive pattern of checking for NULL/"all" and building
+# IN clauses that was duplicated 30+ times across apps.
 
+#' Check if a filter should be applied (not null, not empty, not "all")
+#' @param filter_values Vector of filter values from user input
+#' @param case_sensitive If FALSE (default), checks for "all" case-insensitively
+#' @return TRUE if filter should be applied, FALSE otherwise
+is_valid_filter <- function(filter_values, case_sensitive = FALSE) {
+  if (is.null(filter_values) || length(filter_values) == 0) {
+    return(FALSE)
+  }
+  
+  # Check for "all" value (case-insensitive by default)
+  all_check <- if (case_sensitive) {
+    "all" %in% filter_values || "All" %in% filter_values
+  } else {
+    "all" %in% tolower(filter_values)
+  }
+  
+  return(!all_check)
+}
+
+#' Build a SQL IN clause from a vector of values
+#' @param values Vector of values to include in the IN clause
+#' @return String like "'val1', 'val2', 'val3'" ready for SQL IN ()
+build_sql_in_list <- function(values) {
+  if (is.null(values) || length(values) == 0) {
+    return("")
+  }
+  paste0("'", values, "'", collapse = ", ")
+}
+
+#' Build a complete SQL WHERE clause for a column IN filter
+#' @param column_name The SQL column name (e.g., "facility", "gis.facility")
+#' @param filter_values Vector of filter values
+#' @param prefix What to prepend (default "AND ") - use "" for first clause
+#' @return String like "AND facility IN ('E', 'W')" or "" if filter not valid
+build_sql_in_clause <- function(column_name, filter_values, prefix = "AND ") {
+  if (!is_valid_filter(filter_values)) {
+    return("")
+  }
+  
+  in_list <- build_sql_in_list(filter_values)
+  paste0(prefix, column_name, " IN (", in_list, ")")
+}
+
+#' Build SQL WHERE clause for a single value (equals)
+#' @param column_name The SQL column name
+#' @param value Single value to match
+#' @param prefix What to prepend (default "AND ")
+#' @return String like "AND zone = '1'" or "" if value is null
+build_sql_equals_clause <- function(column_name, value, prefix = "AND ") {
+  if (is.null(value) || length(value) == 0 || (is.character(value) && value == "")) {
+    return("")
+  }
+  paste0(prefix, column_name, " = '", value, "'")
+}
+
+#' Extract filter value from input, returning NULL if "all" is selected
+#' Useful for reactive filter processing
+#' @param input_value The raw input value (potentially containing "all")
+#' @return The filter values, or NULL if "all" was selected or empty
+normalize_filter_input <- function(input_value) {
+  if (is.null(input_value) || length(input_value) == 0) {
+    return(NULL)
+  }
+  if ("all" %in% tolower(input_value)) {
+    return(NULL)
+  }
+  return(input_value)
+}
+
+# Get year ranges from current and archive tables for historical data
+# This handles March transitions when data moves between tables
+get_historical_year_ranges <- function(con, current_table, archive_table, date_column = "inspdate") {
+  if (is.null(con)) {
+    return(list(current_years = c(), archive_years = c()))
+  }
+  
+  tryCatch({
+    # Get year ranges from each table to determine data availability
+    current_year_query <- sprintf("SELECT MIN(EXTRACT(YEAR FROM %s)) as min_year, MAX(EXTRACT(YEAR FROM %s)) as max_year FROM %s WHERE %s IS NOT NULL", 
+                                   date_column, date_column, current_table, date_column)
+    archive_year_query <- sprintf("SELECT MIN(EXTRACT(YEAR FROM %s)) as min_year, MAX(EXTRACT(YEAR FROM %s)) as max_year FROM %s WHERE %s IS NOT NULL", 
+                                   date_column, date_column, archive_table, date_column)
+    
+    current_year_range <- dbGetQuery(con, current_year_query)
+    archive_year_range <- dbGetQuery(con, archive_year_query)
+    
+    # Determine which years to get from which table based on actual data availability
+    current_years <- c()
+    archive_years <- c()
+    
+    if (!is.na(current_year_range$min_year) && !is.na(current_year_range$max_year)) {
+      current_years <- seq(current_year_range$min_year, current_year_range$max_year, 1)
+    }
+    
+    if (!is.na(archive_year_range$min_year) && !is.na(archive_year_range$max_year)) {
+      archive_years <- seq(archive_year_range$min_year, archive_year_range$max_year, 1)
+    }
+    
+    return(list(current_years = current_years, archive_years = archive_years))
+    
+  }, error = function(e) {
+    warning(paste("Error getting historical year ranges:", e$message))
+    return(list(current_years = c(), archive_years = c()))
+  })
+}
 
 # Facility lookup functions
 get_facility_lookup <- function() {
@@ -520,40 +675,6 @@ get_species_lookup <- function() {
   })
 }
 
-# Get species code to name mapping
-get_species_code_map <- function() {
-  species_lookup <- get_species_lookup()
-  
-  if (nrow(species_lookup) == 0) {
-    return(character(0))
-  }
-  
-  # Create mapping from sppcode to formatted species name
-  species_map <- character(0)
-  
-  for (i in 1:nrow(species_lookup)) {
-    code <- as.character(species_lookup$sppcode[i])
-    genus <- species_lookup$genus[i]
-    species <- species_lookup$species[i]
-    
-    # Create formatted name
-    if (!is.na(genus) && !is.na(species) && genus != "" && species != "") {
-      # Use abbreviated genus (first 2 letters) + full species name
-      formatted_name <- paste0(substr(genus, 1, 2), ". ", species)
-    } else if (!is.na(genus) && genus != "") {
-      formatted_name <- genus
-    } else if (!is.na(species) && species != "") {
-      formatted_name <- species
-    } else {
-      formatted_name <- paste0("Species ", code)
-    }
-    
-    species_map[code] <- formatted_name
-  }
-  
-  return(species_map)
-}
-
 #' Enhanced Species Name Mapping for SUCO Applications
 #' 
 #' This function provides enhanced species name mapping with flexible formatting options
@@ -861,11 +982,11 @@ get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL,
 #' Returns:
 #'   If alpha_zones is NULL: Named vector where names are foreman shortnames and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
-get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
+get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
   foremen <- get_foremen_lookup()
   if (nrow(foremen) == 0) return(c())
   
-  facility_colors <- get_facility_base_colors()
+  facility_colors <- get_facility_base_colors(theme = theme)
   foreman_colors <- character(nrow(foremen))
   
   # For each facility
@@ -880,6 +1001,52 @@ get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
     
     # Convert base color to HSV for manipulation
     rgb_base <- col2rgb(base_color) / 255
+    hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
+    
+    # Generate variations of the base color using enhanced logic
+    if (n_foremen == 1) {
+      # Single foreman gets the facility base color
+      foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
+    } else {
+      # Sort foremen by shortname for consistent ordering
+      facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
+      base_hue <- hsv_base[1]
+      
+      # Use a smaller hue range for better facility color grouping
+      hue_range <- 0.08  # ±8% variation around facility color
+      
+      # Create distinct but related colors for foremen in this facility
+      for (i in seq_len(n_foremen)) {
+        foreman_name <- facility_foremen$shortname[i]
+        
+        # Calculate hue offset based on position
+        if (n_foremen == 2) {
+          # For 2 foremen: one slightly lighter, one slightly darker
+          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
+        } else {
+          # For 3+ foremen: spread across the hue range
+          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
+        }
+        
+        # Calculate foreman hue (keep within facility color family)
+        foreman_hue <- (base_hue + hue_offset) %% 1
+        
+        # Vary saturation and brightness more distinctly
+        if (n_foremen <= 3) {
+          # For small groups, use more pronounced saturation/value differences
+          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
+          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
+        } else {
+          # For larger groups, use smaller but still distinct differences
+          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
+          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
+        }
+        
+        # Assign the color for this foreman
+        foreman_idx <- which(foremen$shortname == foreman_name)
+        foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
+      }
+    }
     hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
     
     # Generate variations of the base color
@@ -956,76 +1123,11 @@ get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL) {
 # Get theme-aware foreman colors based on facility colors
 # This version accepts a theme parameter and generates foreman colors as variations
 # of their facility's base color from the specified theme
+# Alias for backwards compatibility - get_themed_foreman_colors is the same as get_foreman_colors
+# Both generate theme-aware foreman colors based on facility colors
 get_themed_foreman_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
-  foremen <- get_foremen_lookup()
-  if (nrow(foremen) == 0) return(c())
-  
-  # Get facility colors with the specified theme
-  facility_colors <- get_facility_base_colors(theme = theme)
-  foreman_colors <- character(nrow(foremen))
-  
-  # For each facility, create color variations for its foremen
-  for (facility in unique(foremen$facility)) {
-    facility_foremen <- foremen[foremen$facility == facility, ]
-    n_foremen <- nrow(facility_foremen)
-    
-    # Get base color for this facility from the theme
-    base_color <- facility_colors[facility]
-    if (is.na(base_color)) next
-    
-    # Convert base color to HSV for manipulation
-    rgb_base <- col2rgb(base_color) / 255
-    hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
-    
-    # Generate variations of the base color
-    if (n_foremen == 1) {
-      # Single foreman gets the facility base color
-      foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
-    } else {
-      # Sort foremen by shortname for consistent ordering
-      facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
-      base_hue <- hsv_base[1]
-      
-      # Use a smaller hue range for better facility color grouping
-      hue_range <- 0.08  # ±8% variation around facility color
-      
-      # Create distinct but related colors for foremen in this facility
-      for (i in seq_len(n_foremen)) {
-        foreman_name <- facility_foremen$shortname[i]
-        
-        # Calculate hue offset based on position
-        if (n_foremen == 2) {
-          # For 2 foremen: one slightly lighter, one slightly darker
-          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
-        } else {
-          # For 3+ foremen: spread across the hue range
-          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
-        }
-        
-        # Calculate foreman hue (keep within facility color family)
-        foreman_hue <- (base_hue + hue_offset) %% 1
-        
-        # Vary saturation and brightness more distinctly
-        if (n_foremen <= 3) {
-          # For small groups, use more pronounced saturation/value differences
-          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
-          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
-        } else {
-          # For larger groups, use smaller but still distinct differences
-          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
-          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
-        }
-        
-        # Assign the color for this foreman
-        foreman_idx <- which(foremen$shortname == foreman_name)
-        foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
-      }
-    }
-  }
-  
-  # Create named vector
-  names(foreman_colors) <- foremen$shortname
-  return(foreman_colors)
+  # Simply call get_foreman_colors with theme support (no zone handling)
+  return(get_foreman_colors(alpha_zones = NULL, combined_groups = NULL, theme = theme))
 }
 
 # Common date range options
@@ -1305,48 +1407,6 @@ get_treatment_plan_colors <- function(use_names = FALSE, theme = getOption("mmcd
 #' Get Treatment Plan Choices for Select Inputs
 #' 
 #' Returns properly formatted choices for selectInput widgets with full names as labels
-#' and plan codes as values for database queries.
-#' 
-#' Usage:
-#' ```r
-#' # In UI:
-#' checkboxGroupInput(
-#'   "plan_types",
-#'   "Select Treatment Plan Types:",
-#'   choices = get_treatment_plan_choices(),
-#'   selected = c("A", "D", "G")
-#' )
-#' ```
-#' 
-#' Parameters:
-#'   include_all: If TRUE, includes "All Types" option
-#' 
-#' Returns:
-#'   Named vector suitable for selectInput choices
-get_treatment_plan_choices <- function(include_all = FALSE) {
-  plan_types <- get_treatment_plan_types()
-  
-  if (nrow(plan_types) == 0) {
-    return(c("Air (A)" = "A", "Drone (D)" = "D", "Ground (G)" = "G", "None (N)" = "N", "Unknown (U)" = "U"))
-  }
-  
-  # Create choices with format "Name (Code)" = "Code"
-  labels <- paste0(plan_types$plan_name, " (", plan_types$plan_code, ")")
-  choices <- setNames(plan_types$plan_code, labels)
-  
-  if (include_all) {
-    choices <- c("All Types" = "all", choices)
-  }
-  
-  return(choices)
-}
-
-# =============================================================================
-# COLOR HELPER FUNCTIONS - ONE STOP SHOP
-# =============================================================================
-# Centralized color management with optional zone differentiation support.
-# All color functions support optional alpha_zones parameter for P1/P2 zones.
-
 # =============================================================================
 # CSV EXPORT HELPER FUNCTIONS
 # =============================================================================
@@ -1357,6 +1417,28 @@ get_treatment_plan_choices <- function(include_all = FALSE) {
 #' line breaks, quotes, and other problematic characters in text fields.
 #' 
 #' @param data Data frame to clean
+#' @return Cleaned data frame safe for CSV export
+#' @export
+clean_data_for_csv <- function(data) {
+  if (is.null(data) || nrow(data) == 0) {
+    return(data)
+  }
+  
+  # Process each character column
+  for (col in names(data)) {
+    if (is.character(data[[col]])) {
+      # Replace newlines, tabs, and carriage returns with spaces
+      data[[col]] <- gsub("[\r\n\t]+", " ", data[[col]])
+      # Replace multiple spaces with single space
+      data[[col]] <- gsub(" +", " ", data[[col]])
+      # Trim leading/trailing whitespace
+      data[[col]] <- trimws(data[[col]])
+    }
+  }
+  
+  return(data)
+}
+
 #' Export Data to CSV with Error Handling
 #' 
 #' This function provides a robust way to export data to CSV with proper
@@ -1562,4 +1644,99 @@ get_universal_text_css <- function(base_increase = 4) {
       }
     ")))
   )
+}
+
+#' Apply historical data grouping labels
+#'
+#' Adds group_label column to data based on grouping type and zone separation
+#' @param data Data frame with facility, foreman/fosarea, and zone columns
+#' @param group_by Grouping type: "facility", "foreman", or "mmcd_all"
+#' @param show_zones_separately Whether to add zone suffix to labels
+#' @param foreman_col Name of the foreman column (default "foreman", some apps use "fosarea")
+#' @return Data frame with group_label column added
+apply_historical_group_labels <- function(data, group_by, show_zones_separately = FALSE, foreman_col = "foreman") {
+  if (is.null(data) || nrow(data) == 0) {
+    return(data)
+  }
+  
+  # Get lookup tables
+  facilities <- get_facility_lookup()
+  facility_map <- setNames(facilities$full_name, facilities$short_name)
+  foremen_lookup <- get_foremen_lookup()
+  foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
+  
+  # Build group labels based on grouping type
+  if (group_by == "facility" && "facility" %in% names(data)) {
+    data <- data %>%
+      mutate(
+        facility_display = ifelse(
+          facility %in% names(facility_map),
+          facility_map[facility],
+          facility
+        ),
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0(facility_display, " P", zone)
+        } else {
+          facility_display
+        }
+      )
+  } else if (group_by == "foreman" && foreman_col %in% names(data)) {
+    foreman_values <- data[[foreman_col]]
+    data <- data %>%
+      mutate(
+        foreman_name = ifelse(
+          foreman_values %in% names(foreman_map),
+          foreman_map[as.character(foreman_values)],
+          paste("FOS", foreman_values)
+        ),
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0(foreman_name, " P", zone)
+        } else {
+          foreman_name
+        }
+      )
+  } else if (group_by == "mmcd_all") {
+    data <- data %>%
+      mutate(
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0("All MMCD P", zone)
+        } else {
+          "All MMCD"
+        }
+      )
+  }
+  
+  return(data)
+}
+
+#' Summarize historical data by group and time period
+#'
+#' @param data Data frame with group_label and time_period columns
+#' @param metric Display metric: "treatments", "sites", "acres", "treatment_acres", "active_count", "active_acres"
+#' @return Summarized data frame with group_label, time_period, value columns
+summarize_historical_data <- function(data, metric) {
+  if (is.null(data) || nrow(data) == 0 || !"group_label" %in% names(data)) {
+    return(data.frame())
+  }
+  
+  grouped_data <- data %>%
+    group_by(group_label, time_period)
+  
+  if (metric == "treatments") {
+    summary_data <- grouped_data %>%
+      summarize(value = n(), .groups = "drop")
+  } else if (metric == "treatment_acres") {
+    summary_data <- grouped_data %>%
+      summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
+  } else if (metric %in% c("sites", "active_count")) {
+    summary_data <- grouped_data %>%
+      summarize(value = n_distinct(sitecode), .groups = "drop")
+  } else if (metric %in% c("site_acres", "acres", "active_acres")) {
+    summary_data <- grouped_data %>%
+      summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
+  } else {
+    summary_data <- data.frame()
+  }
+  
+  return(summary_data)
 }

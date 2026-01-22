@@ -42,15 +42,15 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Build filter conditions
+    # Build filter conditions using shared SQL helpers
     site_filters <- c()
     
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facilities_str <- paste0("'", facility_filter, "'", collapse = ",")
+    if (is_valid_filter(facility_filter)) {
+      facilities_str <- build_sql_in_list(facility_filter)
       site_filters <- c(site_filters, paste0("sc.facility IN (", facilities_str, ")"))
     }
     
-    if (!is.null(fosarea_filter) && length(fosarea_filter) > 0 && !"all" %in% fosarea_filter) {
+    if (is_valid_filter(fosarea_filter)) {
       # Map foreman shortnames to their emp_num (which corresponds to fosarea codes in gis_sectcode)
       foreman_lookup <- get_foremen_lookup()
       if (nrow(foreman_lookup) > 0) {
@@ -65,19 +65,19 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
         if (length(fosarea_codes) > 0) {
           # Format fosarea codes as 4-digit strings to match gis_sectcode format
           fosarea_codes_formatted <- sprintf("%04d", as.numeric(fosarea_codes))
-          fosareas_str <- paste0("'", fosarea_codes_formatted, "'", collapse = ",")
+          fosareas_str <- build_sql_in_list(fosarea_codes_formatted)
           site_filters <- c(site_filters, paste0("sc.fosarea IN (", fosareas_str, ")"))
         }
       }
     }
 
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
-      zones_str <- paste0("'", zone_filter, "'", collapse = ",")
+      zones_str <- build_sql_in_list(zone_filter)
       site_filters <- c(site_filters, paste0("sc.zone IN (", zones_str, ")"))
     }
     
-    if (!is.null(priority_filter) && length(priority_filter) > 0 && !"all" %in% priority_filter) {
-      priorities_str <- paste0("'", priority_filter, "'", collapse = ",")
+    if (is_valid_filter(priority_filter)) {
+      priorities_str <- build_sql_in_list(priority_filter)
       site_filters <- c(site_filters, paste0("b.priority IN (", priorities_str, ")"))
     }
     

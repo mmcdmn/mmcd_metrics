@@ -324,8 +324,8 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
       )
   }
   
-  # Apply facility filter AFTER group_label is created
-  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+  # Apply facility filter AFTER group_label is created using shared helper
+  if (is_valid_filter(facility_filter)) {
     if (nrow(inspection_data) > 0) {
       inspection_data <- inspection_data %>% filter(facility %in% facility_filter)
     }
@@ -334,8 +334,8 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
     }
   }
   
-  # Apply foreman filter AFTER group_label is created
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
+  # Apply foreman filter AFTER group_label is created using shared helper
+  if (is_valid_filter(foreman_filter)) {
     if (nrow(inspection_data) > 0) {
       inspection_data <- inspection_data %>% filter(foreman_name %in% foreman_filter)
     }
@@ -579,77 +579,38 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
     }
   }
   
-  # For bar charts, convert time_group to character year for better display
+  # Prepare data for shared chart function - needs time_period column
   if (chart_type %in% c("bar", "stacked")) {
-    plot_data <- plot_data %>%
-      mutate(
-        year_label = format(time_group, "%Y"),
-        time_group_char = as.character(year(time_group))
-      )
-  }
-  
-  # Create base plot
-  if (chart_type == "bar") {
-    # Grouped bar chart
-    p <- ggplot(plot_data, aes(x = year_label, y = value, fill = group_label)) +
-      geom_col(position = "dodge", alpha = 0.8) +
-      scale_fill_manual(values = color_mapping) +
-      scale_x_discrete(name = "Inspection Year (Fall-Summer Season)")
-  } else if (chart_type == "stacked") {
-    # Stacked bar chart
-    p <- ggplot(plot_data, aes(x = year_label, y = value, fill = group_label)) +
-      geom_col(position = "stack", alpha = 0.8) +
-      scale_fill_manual(values = color_mapping) +
-      scale_x_discrete(name = "Inspection Year (Fall-Summer Season)")
+    plot_data$time_period <- format(plot_data$time_group, "%Y")
   } else {
-    # Default to line chart
-    p <- ggplot(plot_data, aes(x = time_group, y = value, color = group_label)) +
-      geom_line(linewidth = 1.2) +
-      geom_point(size = 2) +
-      scale_color_manual(values = color_mapping) +
-      scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
-      labs(x = "Inspection Year (Fall-Summer Season)")
+    plot_data$time_period <- as.character(year(plot_data$time_group))
   }
   
-  # Add labels and theme
-  legend_title <- stringr::str_to_title(group_by)
-  
+  # Build chart title
   metric_title <- case_when(
     display_metric == "need_treatment" ~ "Sites Need Treatment",
     display_metric == "treated" ~ "Sites Treated (as of Aug 1)",
     display_metric == "pct_treated" ~ "% Sites Treated (as of Aug 1)",
     TRUE ~ "Historical Analysis"
   )
+  chart_title <- paste("Historical Cattail:", metric_title, "by", stringr::str_to_title(group_by))
   
-  if (chart_type %in% c("bar", "stacked")) {
-    p <- p +
-      labs(
-        title = paste("Historical Cattail:", metric_title, "by", stringr::str_to_title(group_by)),
-        y = y_label,
-        fill = legend_title
-      )
-  } else {
-    p <- p +
-      labs(
-        title = paste("Historical Cattail:", metric_title, "by", stringr::str_to_title(group_by)),
-        y = y_label,
-        color = legend_title
-      )
-  }
+  # Map chart types to shared function format
+  shared_chart_type <- switch(chart_type,
+    "bar" = "grouped_bar",
+    "stacked" = "stacked_bar",
+    "line"  # default
+  )
   
-  p <- p +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 20, family = "Arial"),
-      axis.title = element_text(face = "bold", size = 16, family = "Arial"),
-      axis.text = element_text(size = 16, family = "Arial"),
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
-      legend.title = element_text(face = "bold", size = 16, family = "Arial"),
-      legend.text = element_text(size = 16, family = "Arial"),
-      legend.position = "bottom"
-    )
-  
-  return(ggplotly(p, tooltip = c("x", "y", "color")))
+  # Use shared chart function
+  create_trend_chart(
+    data = plot_data,
+    chart_type = shared_chart_type,
+    title = chart_title,
+    x_label = "Inspection Year (Fall-Summer Season)",
+    y_label = y_label,
+    colors = color_mapping
+  )
 }
 
 # UI Helper functions for historical tab

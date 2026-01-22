@@ -123,8 +123,8 @@ struct_trt_ui <- function() {
           ),
           
           sliderInput("hist_year_range", "Year Range:",
-                     min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
-                     value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
+                     min = 2010, max = 2026,
+                     value = c(2018, 2026),
                      step = 1, sep = "")
         ),
         
@@ -189,9 +189,9 @@ struct_trt_ui <- function() {
           tabPanel("Current Progress", value = "current",
                    br(),
                    fluidRow(
-                     column(3, uiOutput("total_structures_box")),
-                     column(3, uiOutput("active_structures_box")),
-                     column(3, uiOutput("expiring_structures_box")),
+                     column(3, uiOutput("total_count_box")),
+                     column(3, uiOutput("active_count_box")),
+                     column(3, uiOutput("expiring_count_box")),
                      column(3, uiOutput("active_pct_box"))
                    ),
                    br(),

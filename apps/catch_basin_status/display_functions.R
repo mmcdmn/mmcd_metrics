@@ -21,9 +21,9 @@ create_status_chart <- function(data, group_by = "facility", expiring_filter = "
   # Orange layer: Expiring treatments
   data <- data %>%
     mutate(
-      y_total = wet_cb_count,                                      # ALL wet catch basins (background)
-      y_active = count_wet_activetrt - count_wet_expiring,         # Treated only (not expiring)
-      y_expiring = count_wet_expiring                              # Just expiring sites
+      y_total = total_count,                                      # ALL wet catch basins (background)
+      y_active = active_count - expiring_count,         # Treated only (not expiring)
+      y_expiring = expiring_count                              # Just expiring sites
     )
   
   # Create layered plot with status-based colors (not facility colors)
@@ -100,10 +100,10 @@ format_details_table <- function(data) {
     ) %>%
     select(
       Group = display_name,
-      `Total Wet CB` = wet_cb_count,
-      `Treated` = count_wet_activetrt,
-      `Expiring` = count_wet_expiring,
-      `Expired` = count_wet_expired,
+      `Total Wet CB` = total_count,
+      `Treated` = active_count,
+      `Expiring` = expiring_count,
+      `Expired` = expired_count,
       `Never Treated` = untreated_count,
       `% Coverage` = pct_coverage
     ) %>%
@@ -128,8 +128,8 @@ calculate_summary_stats <- function(data) {
     ))
   }
   
-  total_wet <- sum(data$wet_cb_count, na.rm = TRUE)
-  total_treated <- sum(data$count_wet_activetrt, na.rm = TRUE)
+  total_wet <- sum(data$total_count, na.rm = TRUE)
+  total_treated <- sum(data$active_count, na.rm = TRUE)
   pct_treated <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
   
   return(list(

@@ -260,9 +260,6 @@ render_high_larvae_table <- function(data, theme = "MMCD") {
 create_wet_frequency_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
   
-  # Get status colors for consistent theming
-  status_colors <- get_status_colors(theme = theme)
-  
   # Create frequency bins using the correct column name 'wet_percentage' from raw data
   wet_freq_bins <- cut(data$wet_percentage, 
                       breaks = c(0, 10, 25, 50, 75, 90, 100),
@@ -271,27 +268,14 @@ create_wet_frequency_chart <- function(data, theme = "MMCD") {
   
   freq_counts <- table(wet_freq_bins)
   
-  p <- plot_ly(
-    x = names(freq_counts),
-    y = as.numeric(freq_counts),
-    type = 'bar',
-    marker = list(color = 'lightblue', line = list(color = 'darkblue', width = 1))
-  ) %>%
-  layout(
-    title = list(text = "Distribution of Wet Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-    xaxis = list(
-      title = list(text = "Wet Frequency Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-    ),
-    yaxis = list(
-      title = list(text = "Number of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-    ),
-    margin = list(l = 70, r = 30, t = 100, b = 70),
-    font = list(size = 18, family = "Arial, sans-serif")
+  create_distribution_chart(
+    x_values = names(freq_counts),
+    y_values = as.numeric(freq_counts),
+    title = "Distribution of Wet Frequencies",
+    x_label = "Wet Frequency Range",
+    bar_color = "lightblue",
+    border_color = "darkblue"
   )
-  
-  return(p)
 }
 
 # Create priority distribution chart
@@ -341,96 +325,54 @@ create_priority_chart <- function(data, theme = "MMCD") {
 create_exceedance_frequency_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
   
-  # Get status colors for consistent theming
-  status_colors <- get_status_colors(theme = theme)
-  
   # Create frequency bins for exceedance rates with ordered levels
+  ordered_labels <- c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%")
   freq_bins <- cut(data$exceedance_frequency,
                   breaks = c(0, 5, 15, 30, 50, 75, 100),
-                  labels = c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%"),
+                  labels = ordered_labels,
                   include.lowest = TRUE)
   
   bin_counts <- table(freq_bins)
-  
-  # Ensure proper ordering of factor levels
-  ordered_labels <- c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%")
   freq_df <- data.frame(
     bin = factor(names(bin_counts), levels = ordered_labels),
     count = as.numeric(bin_counts)
   )
   
-  p <- plot_ly(
-    data = freq_df,
-    x = ~bin,
-    y = ~count,
-    type = 'bar',
-    marker = list(color = 'lightcoral', line = list(color = 'darkred', width = 1))
-  ) %>%
-  layout(
-    title = list(text = "Distribution of Exceedance Frequencies", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-    xaxis = list(
-      title = list(text = "Exceedance Frequency Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-      categoryorder = "array",
-      categoryarray = ordered_labels,
-      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-    ),
-    yaxis = list(
-      title = list(text = "Number of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-    ),
-    margin = list(l = 70, r = 30, t = 100, b = 70),
-    font = list(size = 18, family = "Arial, sans-serif")
-  )
-  
-  return(p)
+  create_distribution_chart(
+    x_values = freq_df$bin,
+    y_values = freq_df$count,
+    title = "Distribution of Exceedance Frequencies",
+    x_label = "Exceedance Frequency Range",
+    bar_color = "lightcoral",
+    border_color = "darkred"
+  ) %>% layout(xaxis = list(categoryorder = "array", categoryarray = ordered_labels))
 }
 
 # Create larvae count distribution chart
 create_larvae_distribution_chart <- function(data, theme = "MMCD") {
   if (nrow(data) == 0) return(NULL)
   
-  # Get status colors for consistent theming
-  status_colors <- get_status_colors(theme = theme)
-  
   # Create bins for average dip count with ordered levels
+  ordered_labels <- c("0-1", "1-2", "2-5", "5-10", "10-20", "20+")
   avg_bins <- cut(data$avg_dip_count, 
                  breaks = c(0, 1, 2, 5, 10, 20, Inf),
-                 labels = c("0-1", "1-2", "2-5", "5-10", "10-20", "20+"),
+                 labels = ordered_labels,
                  include.lowest = TRUE)
   
   freq_counts <- table(avg_bins)
-  
-  # Ensure proper ordering of factor levels
-  ordered_labels <- c("0-1", "1-2", "2-5", "5-10", "10-20", "20+")
   freq_df <- data.frame(
     bin = factor(names(freq_counts), levels = ordered_labels),
     count = as.numeric(freq_counts)
   )
   
-  p <- plot_ly(
-    data = freq_df,
-    x = ~bin,
-    y = ~count,
-    type = 'bar',
-    marker = list(color = 'orange', line = list(color = 'darkorange', width = 1))
-  ) %>%
-  layout(
-    title = list(text = "Average Dip Count Distribution", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-    xaxis = list(
-      title = list(text = "Average Dip Count Range", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-      categoryorder = "array", 
-      categoryarray = ordered_labels,
-      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-    ),
-    yaxis = list(
-      title = list(text = "Number of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-      tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-    ),
-    margin = list(l = 70, r = 30, t = 100, b = 70),
-    font = list(size = 18, family = "Arial, sans-serif")
-  )
-  
-  return(p)
+  create_distribution_chart(
+    x_values = freq_df$bin,
+    y_values = freq_df$count,
+    title = "Average Dip Count Distribution",
+    x_label = "Average Dip Count Range",
+    bar_color = "orange",
+    border_color = "darkorange"
+  ) %>% layout(xaxis = list(categoryorder = "array", categoryarray = ordered_labels))
 }
 
 # Create facility gap chart - Stacked percentage comparison by facility only

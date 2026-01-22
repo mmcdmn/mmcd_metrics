@@ -23,6 +23,9 @@ source("data_functions.R")
 source("display_functions.R")
 source("ui_helper.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("district_overview")
+
 # Load environment variables
 load_env_vars()
 
@@ -99,7 +102,7 @@ server <- function(input, output, session) {
       cb_data <- tryCatch({
         result <- load_catch_basin_overview(
           zone_filter = inputs$zone_filter,
-          custom_today = inputs$custom_today,
+          analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           separate_zones = inputs$separate_zones
         )
@@ -133,7 +136,7 @@ server <- function(input, output, session) {
       ground_data <- tryCatch({
         result <- load_ground_prehatch_overview(
           zone_filter = inputs$zone_filter,
-          simulation_date = inputs$custom_today,
+          analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           separate_zones = inputs$separate_zones
         )
@@ -150,7 +153,7 @@ server <- function(input, output, session) {
       struct_data <- tryCatch({
         result <- load_structure_overview(
           zone_filter = inputs$zone_filter,
-          custom_today = inputs$custom_today,
+          analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           separate_zones = inputs$separate_zones
         )
@@ -321,7 +324,7 @@ server <- function(input, output, session) {
           h4("Drone Sites"),
           p(class = "stat-value", paste0(drone_stats$pct, "%")),
           p(class = "stat-label", paste0(format(drone_stats$active, big.mark = ","), " / ", 
-                                         format(drone_stats$total, big.mark = ","), " active"))
+                                         format(drone_stats$total, big.mark = ","), " treated"))
         )
       ),
       column(3,

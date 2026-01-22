@@ -15,12 +15,16 @@ library(sf)
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
+source("../../shared/server_utilities.R")
 
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
 source("ui_helper.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("cattail_treatments")
 
 # Define UI
 ui <- cattail_treatments_ui()
@@ -129,7 +133,7 @@ server <- function(input, output, session) {
     req(input$refresh_data)  # Require refresh button click
     if (is.null(values$aggregated_data) || is.null(values$aggregated_data$total_summary)) {
       return(list(
-        total_sites = 0, total_acres = 0, sites_inspected = 0,
+        total_count = 0, total_acres = 0, sites_inspected = 0,
         sites_need_treatment = 0, sites_treated = 0, 
         percent_need_treatment = 0, percent_treated = 0
       ))
@@ -562,41 +566,41 @@ server <- function(input, output, session) {
   # Summary statistics value boxes
   output$total_inspected_stat <- renderUI({
     stats <- cattail_values()
-    create_metric_box(
+    create_stat_box(
       value = stats$sites_inspected,
-      subtitle = "Sites Inspected",
-      icon = "clipboard-check",
-      color = "primary"
+      title = "Sites Inspected",
+      bg_color = "#3c8dbc",
+      icon = "clipboard-check"
     )
   })
   
   output$total_acres_stat <- renderUI({
     stats <- cattail_values()
-    create_metric_box(
+    create_stat_box(
       value = paste(stats$total_acres, "ac"),
-      subtitle = "Total Acres",
-      icon = "ruler-combined",
-      color = "info"
+      title = "Total Acres",
+      bg_color = "#00c0ef",
+      icon = "ruler-combined"
     )
   })
   
   output$under_threshold_stat <- renderUI({
     stats <- cattail_values()
-    create_metric_box(
+    create_stat_box(
       value = stats$sites_under_threshold,
-      subtitle = "Under Threshold",
-      icon = "check-circle",
-      color = "success"
+      title = "Under Threshold",
+      bg_color = "#00a65a",
+      icon = "check-circle"
     )
   })
   
   output$need_treatment_stat <- renderUI({
     stats <- cattail_values()
-    create_metric_box(
+    create_stat_box(
       value = stats$sites_need_treatment,
-      subtitle = "Need Treatment",
-      icon = "exclamation-triangle",
-      color = "danger"
+      title = "Need Treatment",
+      bg_color = "#dd4b39",
+      icon = "exclamation-triangle"
     )
   })
   
@@ -606,11 +610,11 @@ server <- function(input, output, session) {
     sites_needing_treatment <- stats$sites_need_treatment
     pct_need_treatment <- if (total_inspected > 0) round(100 * sites_needing_treatment / total_inspected, 1) else 0
     
-    create_metric_box(
+    create_stat_box(
       value = paste0(pct_need_treatment, "%"),
-      subtitle = "% Need Treatment (of inspected)",
-      icon = "percentage",
-      color = "warning"
+      title = "% Need Treatment (of inspected)",
+      bg_color = "#f39c12",
+      icon = "percentage"
     )
   })
   
@@ -621,11 +625,11 @@ server <- function(input, output, session) {
     sites_requiring_treatment <- sites_needing_treatment + sites_treated
     pct_treated_of_requiring <- if (sites_requiring_treatment > 0) round(100 * sites_treated / sites_requiring_treatment, 1) else 0
     
-    create_metric_box(
+    create_stat_box(
       value = paste0(pct_treated_of_requiring, "%"),
-      subtitle = "% Treated (of need treatment)",
-      icon = "chart-pie",
-      color = "info"
+      title = "% Treated (of need treatment)",
+      bg_color = "#00c0ef",
+      icon = "chart-pie"
     )
   })
   

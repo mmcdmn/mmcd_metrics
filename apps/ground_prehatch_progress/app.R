@@ -1,25 +1,19 @@
 # Ground Prehatch Treatment Progress
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(DT)
-  library(plotly)
-  library(tidyr)
-})
 
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")
-source("ui_helpers.R")
+source("ui_helper.R")
 source("historical_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("ground_prehatch_progress")
 
 # =============================================================================
 # USER INTERFACE
@@ -33,12 +27,11 @@ ui <- ground_prehatch_ui()
 
 server <- function(input, output, session) {
   
-  # Reactive theme handling
+  # Theme handling
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Set global theme option when changed
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -83,7 +76,7 @@ server <- function(input, output, session) {
     if (input$hist_time_period == "yearly") {
       updateRadioButtons(session, "hist_display_metric", selected = "sites")
     } else if (input$hist_time_period == "weekly") {
-      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_sites")
+      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_count")
     }
   })
   
@@ -177,10 +170,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
     withProgress(message = "Loading ground prehatch data...", value = 0.5, {
-      get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+      get_ground_prehatch_data(inputs$zone_filter, analysis_date, inputs$expiring_days)
     })
   })
   
@@ -189,10 +182,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
     withProgress(message = "Loading site details...", value = 0.5, {
-      get_site_details_data(inputs$expiring_days, simulation_date)
+      get_site_details_data(inputs$expiring_days, analysis_date)
     })
   })
   
@@ -249,7 +242,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Require refresh button click
     
     data <- aggregated_data()
-    display_metric <- isolate(input$display_metric)
+    display_metric <- input$display_metric  # Not isolated - changes trigger update
     create_value_boxes(data, display_metric = display_metric)
   })
   
@@ -342,7 +335,7 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only calculate after refresh button clicked
     inputs <- refresh_inputs()
     data <- aggregated_data()
-    display_metric <- isolate(input$display_metric)
+    display_metric <- input$display_metric  # Not isolated - changes trigger update
     create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, 
                          return_height_info = TRUE, theme = current_theme(), display_metric = display_metric)
   })
@@ -449,7 +442,8 @@ server <- function(input, output, session) {
       display_metric = inputs$hist_display_metric,
       time_period = inputs$hist_time_period,
       group_by = inputs$group_by,
-      theme = current_theme()
+      theme = current_theme(),
+      show_zones_separately = !inputs$combine_zones
     )
   })
   

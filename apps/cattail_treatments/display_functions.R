@@ -37,9 +37,9 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
         display_name
       }
     ) %>%
-    select(display_name, total_sites, treatments_applied, active_treatments, planned_treatments) %>%
+    select(display_name, total_count, treatments_applied, active_treatments, planned_treatments) %>%
     mutate(
-      untreated_sites = pmax(0, total_sites - treatments_applied),
+      untreated_sites = pmax(0, total_count - treatments_applied),
       inactive_treatments = pmax(0, treatments_applied - active_treatments)
     ) %>%
     # Reshape for chart
@@ -302,7 +302,7 @@ create_planning_calendar <- function(plans_data, theme = "MMCD") {
 create_cattail_value_boxes <- function(data, treatments_data, plans_data) {
   
   # Calculate totals
-  total_sites <- sum(data$total_sites, na.rm = TRUE)
+  total_count <- sum(data$total_count, na.rm = TRUE)
   total_acres <- sum(data$total_acres, na.rm = TRUE)
   
   # Treatment statistics
@@ -316,11 +316,11 @@ create_cattail_value_boxes <- function(data, treatments_data, plans_data) {
   upcoming_plans <- sum(data$upcoming_plans, na.rm = TRUE)
   
   # Calculate percentages
-  treatment_coverage <- if (total_sites > 0) round(100 * total_treatments / total_sites, 1) else 0
+  treatment_coverage <- if (total_count > 0) round(100 * total_treatments / total_count, 1) else 0
   active_percentage <- if (total_treatments > 0) round(100 * active_treatments / total_treatments, 1) else 0
   
   return(list(
-    total_sites = total_sites,
+    total_count = total_count,
     total_acres = round(total_acres, 1),
     total_treatments = total_treatments,
     active_treatments = active_treatments,

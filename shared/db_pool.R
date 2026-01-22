@@ -29,6 +29,9 @@ suppressPackageStartupMessages({
 # Flag to track if we've already tried to load environment variables
 .env_loaded <- FALSE
 
+# Application name for database connection tracking (visible in AWS RDS monitoring)
+.app_name <- "mmcd_metrics"
+
 #' Load environment variables for database connection
 #' 
 #' Tries multiple paths to find .env file, or uses system environment variables
@@ -69,6 +72,31 @@ load_db_env_vars <- function() {
   
   warning("Could not load database environment variables from .env file or system")
   return(FALSE)
+}
+
+#' Set the application name for database connection tracking
+#' 
+#' Sets the application name that will be visible in AWS RDS Performance Insights
+#' and PostgreSQL's pg_stat_activity view. Call this BEFORE calling get_pool().
+#' 
+#' @param name The application name (e.g., "struct_trt", "drone", "catch_basin_status")
+#' @export
+#' 
+#' @examples
+#' # In your app.R, call this before any database queries:
+#' set_app_name("struct_trt")
+#' conn <- get_pool()
+set_app_name <- function(name) {
+  .app_name <<- paste0("mmcd_", name)
+  message(sprintf(" Application name set to: %s", .app_name))
+}
+
+#' Get the current application name
+#' 
+#' @return The current application name string
+#' @export
+get_app_name <- function() {
+  return(.app_name)
 }
 
 #' Initialize or retrieve the database connection pool
@@ -136,6 +164,8 @@ get_pool <- function(force_reconnect = FALSE) {
       dbname = Sys.getenv("DB_NAME"),
       user = Sys.getenv("DB_USER"),
       password = Sys.getenv("DB_PASSWORD"),
+      # Application name for AWS RDS monitoring
+      application_name = .app_name,
       # Pool configuration
       minSize = 1,               # Keep at least 1 connection ready
       maxSize = 15,              # Allow up to 15 concurrent connections
@@ -146,6 +176,7 @@ get_pool <- function(force_reconnect = FALSE) {
     message("✓ Database connection pool initialized successfully")
     message(sprintf("  Host: %s:%s", Sys.getenv("DB_HOST"), Sys.getenv("DB_PORT")))
     message(sprintf("  Database: %s", Sys.getenv("DB_NAME")))
+    message(sprintf("  App Name: %s", .app_name))
     message("  Pool size: 1-15 connections")
     
     return(.mmcd_connection_pool)
@@ -258,6 +289,6 @@ get_pooled_connection <- function() {
 }
 
 # Message on load
-message("📦 db_pool.R loaded - Connection pooling available")
+message(" db_pool.R loaded - Connection pooling available")
 message("   Use get_pool() to access the connection pool")
 message("   No disconnect needed - connections are automatically managed!")

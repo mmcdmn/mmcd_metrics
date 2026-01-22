@@ -1,0 +1,100 @@
+# Stub data for dblarv_insptrt_current table
+# Based on actual database schema and sample data from mmcd_data.public.dblarv_insptrt_current
+# This stub provides realistic treatment inspection data for testing
+
+#' Get stub data for dblarv_insptrt_current (current treatments/inspections)
+#' @return data.frame with realistic treatment data
+get_stub_dblarv_insptrt_current <- function() {
+  data.frame(
+    pkey_pg = c(3238610L, 3256115L, 3238808L, 3238951L, 3238982L),
+    pkey_pda = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    inspdate = as.Date(c("2025-04-16", "2025-05-07", "2025-04-16", "2025-04-16", "2025-04-16")),
+    insptime = as.POSIXct(c("2025-04-16 09:39:47", "2025-05-07 12:50:42", "2025-04-16 11:17:34",
+                            "2025-04-16 12:48:03", "2025-04-16 13:06:28")),
+    facility = c("N", "Sj", "N", "N", "N"),
+    foreman = c("0204", "7002", "0208", "0204", "0204"),
+    emp1 = c("0240", "7016", "0239", "0270", "0240"),
+    emp2 = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    sitecode = c("020207-002", "700407-032", "021335-112", "021308-099", "020207-015"),
+    overridefa = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    zone = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    action = c(1L, 3L, 1L, 1L, 1L),
+    wet = c(7L, 0L, 0L, 0L, 1L),
+    dip_type = c("F", NA_character_, "F", "F", "F"),
+    numdip = c(0L, NA_integer_, 0L, 0L, 0L),
+    sample_num = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    sampnum_yr = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    presampnum = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    presamp_yr = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    matcode = c("G2", "G2", "G2", "G2", "G2"),
+    mattype = c("Alt_P35", "Alt_P35", "Alt_P35", "Alt_P35", "Alt_P35"),
+    mat_t_dose = c(2.5, 2.5, 2.5, 2.5, 2.5),
+    mat_units = c("lbs", "lbs", "lbs", "lbs", "lbs"),
+    amts = c(3.000, 0.097, 0.264, 0.400, 1.000),
+    acres = c(1.20, 0.04, 0.11, 0.16, 0.40),
+    cb_count = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    pilot_id = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    equip_id = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    start_time = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    end_time = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    rems1 = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    rems2 = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    servreqnum = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    case_num = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    bfdeadlarv = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    dischrgcfs = c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
+    watertempf = c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
+    airgrnd_plan = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    reinspect = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    posttrt_p = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    water_lev = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    mat_found = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    poor_cont = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    new_brood = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    diphabitat = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    comments = c("", "", "", "", ""),
+    moved = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    errcode = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    toflysetname = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    prgassign = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    siteclass = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    linsptrtnum = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    acres_plan = c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
+    matcode_plan = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    amts_plan = c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
+    list_type = c("WTL-G", "WTL-G", "WTL-G", "WTL-G", "WTL-G"),
+    over_field_thresh = c(FALSE, FALSE, FALSE, FALSE, FALSE),
+    unbal_amts = c(NA_real_, 0.1, 0.3, 0.4, NA_real_),
+    balanced = as.POSIXct(c(NA, "2025-05-07 19:41:10", "2025-04-16 19:49:49", "2025-04-16 19:19:17", NA)),
+    cinspecnum = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    x = c(-93.26524, -93.39197, -93.17506, -93.22793, -93.25961),
+    y = c(45.36925, 44.68969, 45.22106, 45.27732, 45.36008),
+    airtemp = c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
+    sortie = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    windspeed = c(NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
+    winddir = c(NA_character_, NA_character_, NA_character_, NA_character_, NA_character_),
+    pupaecnt = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    flagpoint = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    errfixed = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    balset_id = c(145951L, 146674L, 145946L, 145959L, 145951L),
+    emergedcnt = c(NA_integer_, NA_integer_, NA_integer_, NA_integer_, NA_integer_),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Get a minimal version of treatment data for simpler tests
+#' @return data.frame with essential treatment columns only
+get_stub_treatments_minimal <- function() {
+  data.frame(
+    pkey_pg = c(3238610L, 3256115L, 3238808L, 3238951L, 3238982L),
+    sitecode = c("020207-002", "700407-032", "021335-112", "021308-099", "020207-015"),
+    inspdate = as.Date(c("2025-04-16", "2025-05-07", "2025-04-16", "2025-04-16", "2025-04-16")),
+    facility = c("N", "Sj", "N", "N", "N"),
+    foreman = c("0204", "7002", "0208", "0204", "0204"),
+    matcode = c("G2", "G2", "G2", "G2", "G2"),
+    amts = c(3.000, 0.097, 0.264, 0.400, 1.000),
+    acres = c(1.20, 0.04, 0.11, 0.16, 0.40),
+    action = c(1L, 3L, 1L, 1L, 1L),
+    stringsAsFactors = FALSE
+  )
+}

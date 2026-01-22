@@ -23,6 +23,9 @@ suppressWarnings({
 source("air_status_functions.R")
 source("flow_testing_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("red_air_legacy")
+
 # Define UI
 ui <- dashboardPage(
   dashboardHeader(title = "Air Work Pipeline"),

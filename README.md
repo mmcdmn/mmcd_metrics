@@ -29,7 +29,7 @@ A comprehensive analytics platform for the Metropolitan Mosquito Control Distric
   - [Cattail Inspections](#cattail-inspections) - [Notes](apps/cattail_inspections/NOTES.md)
   - [Cattail Treatments](#cattail-treatments) - [Notes](apps/cattail_treatments/NOTES.md)
   - [Trap Surveillance Test](#trap-surveillance-test) - [Notes](apps/trap_survillance_test/NOTES.md)
-  - [Section Cards DEMO](#section-cards-demo) - [Notes](apps/section-cards/NOTES.md)
+  - [Section Cards](#section-cards) - [Notes](apps/section-cards/NOTES.md)
   - [Test Application](#test-application)
 - [Installation & Deployment](#installation--deployment)
   - [Prerequisites - System Dependencies](#prerequisites---system-dependencies)
@@ -211,7 +211,7 @@ mmcd_metrics/
 │   │   ├── ui_helper.R           # UI component functions
 │   │   ├── NOTES.md              # Technical documentation
 │   │   └── NOTES.html            # HTML documentation
-│   ├── section-cards/            # Section cards DEMO (modular structure)
+│   ├── section-cards/            # Section Cards (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
 │   │   ├── display_functions.R   # Visualization functions
@@ -465,7 +465,7 @@ See [Shared Resources README](shared/README.md) for complete documentation.
   - Unified SQL query with CTEs for optimal performance
   - Species filtering for targeted analysis
 
-### Section Cards DEMO
+### Section Cards
 - **Path**: `/section-cards/`
 - **Purpose**: Demo application for section cards functionality
 - **Documentation**: [Technical Notes](apps/section-cards/NOTES.md)

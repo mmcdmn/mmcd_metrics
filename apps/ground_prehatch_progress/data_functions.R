@@ -139,11 +139,50 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
   })
 }
 
+#' Apply filters to ground prehatch data
+#' @param data List containing ground_sites and ground_treatments
+#' @param facility_filter Vector of selected facilities  
+#' @param foreman_filter Vector of selected foremen (emp_num values)
+#' @param zone_filter Vector of selected zones
+#' @return Filtered data list
+apply_data_filters <- function(data, facility_filter = NULL, 
+                               foreman_filter = NULL, zone_filter = NULL) {
+  
+  ground_sites <- data$ground_sites
+  ground_treatments <- data$ground_treatments
+  
+  # Apply facility filter using shared helper
+  if (is_valid_filter(facility_filter)) {
+    ground_sites <- ground_sites %>% filter(facility %in% facility_filter)
+    ground_treatments <- ground_treatments %>% filter(facility %in% facility_filter)
+  }
+  
+  # Apply zone filter (zones don't use "all" check)
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    ground_sites <- ground_sites %>% filter(zone %in% zone_filter)
+    ground_treatments <- ground_treatments %>% filter(zone %in% zone_filter)
+  }
+  
+  # Apply foreman/FOS filter using shared helper
+  # Note: foreman_filter is already emp_nums in this app, no conversion needed
+  if (is_valid_filter(foreman_filter)) {
+    ground_sites <- ground_sites %>% filter(fosarea %in% foreman_filter)
+    ground_treatments <- ground_treatments %>% filter(fosarea %in% foreman_filter)
+  }
+  
+  return(list(
+    ground_sites = ground_sites,
+    ground_treatments = ground_treatments
+  ))
+}
+
 # Function to get ground prehatch data from database
 # Uses load_raw_data as single source of truth and processes status like get_site_details_data
-get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), expiring_days = 14) {
+# Standard column names added: total_count, active_count, expiring_count, expired_count
+get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = Sys.Date(), 
+                                      expiring_days = 14) {
   # Load raw data using the unified function
-  raw_data <- load_raw_data(analysis_date = simulation_date, include_archive = FALSE)
+  raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
   
   if (nrow(raw_data$ground_sites) == 0) {
     return(data.frame())
@@ -151,6 +190,14 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
   
   # Calculate treatment status for each site
   site_details <- raw_data$ground_sites
+  
+  # Apply zone filter
+  site_details <- site_details %>%
+    filter(zone %in% zone_filter)
+  
+  if (nrow(site_details) == 0) {
+    return(data.frame())
+  }
   
   if (nrow(raw_data$ground_treatments) > 0) {
     # Get latest treatment for each site
@@ -160,10 +207,10 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
       slice(1) %>%
       ungroup() %>%
       mutate(
-        age = as.numeric(simulation_date - inspdate),
+        age = as.numeric(analysis_date - inspdate),
         # Calculate end of year date for skipped sites
-        end_of_year = as.Date(paste0(format(simulation_date, "%Y"), "-12-30")),
-        days_until_eoy = as.numeric(end_of_year - simulation_date),
+        end_of_year = as.Date(paste0(format(analysis_date, "%Y"), "-12-30")),
+        days_until_eoy = as.numeric(end_of_year - analysis_date),
         prehatch_status = case_when(
           # If there's a ground inspection with action=2 and wet=0 after treatment, it's skipped
           !is.na(last_inspection_date) & !is.na(inspection_action) & !is.na(inspection_wet) &
@@ -193,11 +240,11 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
   result <- site_details %>%
     group_by(facility, zone, fosarea, sectcode) %>%
     summarise(
-      foreman = first(fosarea),  # Use fosarea as foreman (gis_sectcode is source of truth)
+      foreman = first(fosarea),
       tot_ground = n(),  
       not_prehatch_sites = 0, 
-      prehatch_sites_cnt = n(),  # All prehatch sites
-      prehatch_acres = sum(acres, na.rm = TRUE),  # Total prehatch acres
+      prehatch_sites_cnt = n(),
+      prehatch_acres = sum(acres, na.rm = TRUE),
       drone_sites_cnt = 0, 
       ph_treated_cnt = sum(prehatch_status == "treated", na.rm = TRUE),
       ph_treated_acres = sum(ifelse(prehatch_status == "treated", acres, 0), na.rm = TRUE),
@@ -208,6 +255,14 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
       ph_skipped_cnt = sum(prehatch_status == "skipped", na.rm = TRUE),
       ph_skipped_acres = sum(ifelse(prehatch_status == "skipped", acres, 0), na.rm = TRUE),
       ph_untreated_cnt = sum(is.na(prehatch_status), na.rm = TRUE),
+      # Standard column names
+      total_count = n(),
+      active_count = sum(prehatch_status %in% c("treated", "expiring"), na.rm = TRUE),
+      expiring_count = sum(prehatch_status == "expiring", na.rm = TRUE),
+      expired_count = sum(prehatch_status %in% c("expired", NA), na.rm = TRUE),
+      total_acres = sum(acres, na.rm = TRUE),
+      active_acres = sum(ifelse(prehatch_status %in% c("treated", "expiring"), acres, 0), na.rm = TRUE),
+      expiring_acres = sum(ifelse(prehatch_status == "expiring", acres, 0), na.rm = TRUE),
       .groups = "drop"
     )
   
@@ -215,9 +270,9 @@ get_ground_prehatch_data <- function(zone_filter, simulation_date = Sys.Date(), 
 }
 
 # Function to get site details data - uses same source as charts
-get_site_details_data <- function(expiring_days = 14, simulation_date = Sys.Date()) {
+get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()) {
   # Load raw data using the unified function - same as charts use
-  raw_data <- load_raw_data(analysis_date = simulation_date, include_archive = FALSE)
+  raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
   
   if (nrow(raw_data$ground_sites) == 0) {
     return(data.frame())
@@ -234,10 +289,10 @@ get_site_details_data <- function(expiring_days = 14, simulation_date = Sys.Date
       slice(1) %>%
       ungroup() %>%
       mutate(
-        age = as.numeric(simulation_date - inspdate),
+        age = as.numeric(analysis_date - inspdate),
         # Calculate end of year date for skipped sites
-        end_of_year = as.Date(paste0(format(simulation_date, "%Y"), "-12-30")),
-        days_until_eoy = as.numeric(end_of_year - simulation_date),
+        end_of_year = as.Date(paste0(format(analysis_date, "%Y"), "-12-30")),
+        days_until_eoy = as.numeric(end_of_year - analysis_date),
         prehatch_status = case_when(
           # If there's a ground inspection with action=2 and wet=0 after treatment, it's skipped
           !is.na(last_inspection_date) & !is.na(inspection_action) & !is.na(inspection_wet) &
@@ -296,13 +351,13 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
     data <- data %>% filter(zone %in% zone_filter)
   }
   
-  # Filter by facility
-  if (!is.null(facility_filter) && !("all" %in% facility_filter)) {
+  # Filter by facility using shared helper
+  if (is_valid_filter(facility_filter)) {
     data <- data %>% filter(facility %in% facility_filter)
   }
   
-  # Filter by foreman
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter)) {
+  # Filter by foreman using shared helper
+  if (is_valid_filter(foreman_filter)) {
     data <- data %>% filter(foreman %in% foreman_filter)
   }
   
@@ -320,11 +375,11 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
   if (expiring_filter != "all" && !is.null(site_details)) {
     if (expiring_filter == "expiring") {
       # Show only expiring sites
-      expiring_sites <- site_details %>% filter(prehatch_status == "expiring")
+      expiring_count_data <- site_details %>% filter(prehatch_status == "expiring")
       
-      if (nrow(expiring_sites) > 0) {
+      if (nrow(expiring_count_data) > 0) {
         # Filter data to only sections that have expiring sites
-        expiring_sections <- unique(expiring_sites$sectcode)
+        expiring_sections <- unique(expiring_count_data$sectcode)
         data <- data %>% filter(sectcode %in% expiring_sections)
         
         # Zero out all counts except expiring
@@ -385,7 +440,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           .groups = "drop"
         ) %>%
         mutate(
-          display_name = paste0("MMCD (P", zone, ")"),
+          display_name = paste0("MMCD P", zone),
           group_name = "MMCD"
         )
     } else {
@@ -460,7 +515,7 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
         ) %>%
         mutate(
           facility_display = map_facility_names(data.frame(facility = facility))$facility_display,
-          display_name = paste0(facility_display, " (P", zone, ")"),
+          display_name = paste0(facility_display, " P", zone),
           group_name = facility
         )
     } else {
@@ -518,9 +573,9 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
             matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
             if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
           }),
-          display_name = paste0(foreman_name, " (P", zone, ")"),
+          display_name = paste0(foreman_name, " P", zone),
           group_name = foreman,
-          combined_group = paste0(foreman, " (P", zone, ")")
+          combined_group = paste0(foreman, " P", zone)
         )
     } else {
       # Group by foreman only
@@ -559,7 +614,15 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
       treated_pct = ifelse(prehatch_sites_cnt > 0, 
                           round(100 * ph_treated_cnt / prehatch_sites_cnt, 1), 0),
       expiring_pct = ifelse(prehatch_sites_cnt > 0, 
-                           round(100 * ph_expiring_cnt / prehatch_sites_cnt, 1), 0)
+                           round(100 * ph_expiring_cnt / prehatch_sites_cnt, 1), 0),
+      # Add standardized column names for cross-app consistency
+      total_count = prehatch_sites_cnt,
+      active_count = ph_treated_cnt + ph_expiring_cnt,
+      expiring_count = ph_expiring_cnt,
+      expired_count = ph_expired_cnt,
+      total_acres = prehatch_acres,
+      active_acres = ph_treated_acres + ph_expiring_acres,
+      expiring_acres = ph_expiring_acres
     )
   
   return(result)
@@ -609,14 +672,14 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
       filter(zone %in% zone_filter)
   }
   
-  # Apply facility filter
-  if (!is.null(facility_filter) && !"all" %in% facility_filter) {
+  # Apply facility filter using shared helper
+  if (is_valid_filter(facility_filter)) {
     raw_data$ground_sites <- raw_data$ground_sites %>% 
       filter(facility %in% facility_filter)
   }
   
-  # Apply foreman filter (using fosarea)
-  if (!is.null(foreman_filter) && !"all" %in% foreman_filter) {
+  # Apply foreman filter (using fosarea) using shared helper
+  if (is_valid_filter(foreman_filter)) {
     raw_data$ground_sites <- raw_data$ground_sites %>% 
       filter(fosarea %in% foreman_filter)
   }

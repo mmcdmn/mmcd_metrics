@@ -1,0 +1,130 @@
+name: R Tests
+
+# Run tests on all branches for pushes, and on pull requests to main/master
+on:
+  push:
+    # Run on all branches
+    branches: [ '**' ]
+  pull_request:
+    branches: [ main, master ]
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        # Test on just the latest R version for speed (change to multiple versions if needed)
+        r-version: ['release']
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up R ${{ matrix.r-version }}
+      uses: r-lib/actions/setup-r@v2
+      with:
+        r-version: ${{ matrix.r-version }}
+        use-public-rspm: true
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libcurl4-openssl-dev \
+          libssl-dev \
+          libxml2-dev \
+          libpq-dev \
+          libgdal-dev \
+          libproj-dev \
+          libgeos-dev \
+          libudunits2-dev \
+          libnode-dev \
+          libpoppler-cpp-dev
+    
+    - name: Cache R packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.R_LIBS_USER }}
+        key: ${{ runner.os }}-R${{ matrix.r-version }}-${{ hashFiles('**/*.R') }}
+        restore-keys: |
+          ${{ runner.os }}-R${{ matrix.r-version }}-
+          ${{ runner.os }}-R-
+
+    - name: Install R dependencies
+      run: |
+        # Use pak for much faster package installation
+        install.packages("pak", repos = "https://r-lib.github.io/p/pak/devel/")
+        
+        # Install packages using pak (faster than install.packages)
+        pak::pkg_install(c(
+          "testthat",
+          "shiny", 
+          "DBI",
+          "RPostgres",
+          "dplyr",
+          "tidyr",
+          "ggplot2", 
+          "lubridate",
+          "rlang",
+          "purrr",
+          "tibble",
+          "scales",
+          "DT",
+          "plotly",
+          "leaflet",
+          "sf", 
+          "RColorBrewer",
+          "htmltools",
+          "pool",
+          "shinyWidgets",
+          "shinydashboard",
+          "shinyjs"
+        ))
+      shell: Rscript {0}
+    
+    - name: Verify R environment
+      run: |
+        cat("=== R Environment Check ===\n")
+        cat("R version:", R.version.string, "\n")
+        cat("Working directory:", getwd(), "\n")
+        cat("Library paths:", .libPaths(), "\n")
+        
+        # Check if key packages load
+        required_packages <- c("testthat", "shiny", "DBI", "dplyr")
+        for (pkg in required_packages) {
+          if (require(pkg, character.only = TRUE, quietly = TRUE)) {
+            cat("✓", pkg, "loaded successfully\n")
+          } else {
+            cat("✗", pkg, "failed to load\n")
+            quit(status = 1)
+          }
+        }
+      shell: Rscript {0}
+      
+    - name: Run tests
+      run: |
+        cat("=== Running MMCD Metrics Test Suite ===\n")
+        
+        # Set working directory 
+        if (basename(getwd()) == "tests") {
+          setwd("..")
+        }
+        
+        # Run the test suite (same as local)
+        source("tests/testthat.R")
+        
+        cat("=== Test execution completed ===\n")
+      shell: Rscript {0}
+      
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: test-results-R${{ matrix.r-version }}
+        path: |
+          tests/
+          *.log
+        retention-days: 30

@@ -104,6 +104,8 @@ test_that("display functions can be sourced without errors", {
 })
 
 test_that("create_current_progress_chart handles empty data", {
+  skip_if_not_installed("ggplot2")
+  library(ggplot2)  # Need to load ggplot2 for functions to work
   root <- get_project_root()
   source(file.path(root, "apps/struct_trt/display_functions.R"), local = TRUE)
   

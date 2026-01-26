@@ -109,6 +109,7 @@ test_that("filter_ground_data handles filters", {
 })
 
 test_that("display_functions can be sourced without errors", {
+  skip_if_not_installed("leaflet")
   root <- get_project_root()
   expect_no_error({
     source(file.path(root, "apps/ground_prehatch_progress/display_functions.R"), local = TRUE)

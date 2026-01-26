@@ -100,7 +100,8 @@ server <- function(input, output, session) {
       # Load Catch Basin data aggregated by zone
       setProgress(value = 0.1, detail = "Loading catch basin data...")
       cb_data <- tryCatch({
-        result <- load_catch_basin_by_zone(
+        result <- load_data_by_zone(
+          "catch_basin",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
@@ -117,7 +118,8 @@ server <- function(input, output, session) {
       # Load Drone data aggregated by zone
       setProgress(value = 0.3, detail = "Loading drone data...")
       drone_data <- tryCatch({
-        result <- load_drone_by_zone(
+        result <- load_data_by_zone(
+          "drone",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
@@ -134,7 +136,8 @@ server <- function(input, output, session) {
       # Load Ground Prehatch data aggregated by zone
       setProgress(value = 0.5, detail = "Loading ground prehatch data...")
       ground_data <- tryCatch({
-        result <- load_ground_prehatch_by_zone(
+        result <- load_data_by_zone(
+          "ground_prehatch",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
@@ -151,7 +154,8 @@ server <- function(input, output, session) {
       # Load Structure Treatment data aggregated by zone
       setProgress(value = 0.7, detail = "Loading structure data...")
       struct_data <- tryCatch({
-        result <- load_structure_by_zone(
+        result <- load_data_by_zone(
+          "structure",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,

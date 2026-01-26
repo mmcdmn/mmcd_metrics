@@ -39,8 +39,14 @@
 #   - get_stub_facilities()             # Facility code lookup
 #
 # Get the directory where this script lives
+# First try to get the path from sys.frame (works when sourced directly)
 stub_dir <- tryCatch({
-  dirname(sys.frame(1)$ofile)
+  script_path <- sys.frame(1)$ofile
+  if (!is.null(script_path) && script_path != "") {
+    dirname(normalizePath(script_path, mustWork = FALSE))
+  } else {
+    NULL
+  }
 }, error = function(e) {
   NULL
 })
@@ -57,14 +63,21 @@ if (is.null(stub_dir) || stub_dir == "" || stub_dir == ".") {
   
   for (path in possible_paths) {
     if (file.exists(file.path(path, "stub_treatments.R"))) {
-      stub_dir <- path
+      stub_dir <- normalizePath(path, mustWork = FALSE)
       break
     }
   }
   
-  # Final fallback
+  # Final fallback - use absolute path from working directory
   if (is.null(stub_dir) || stub_dir == "" || stub_dir == ".") {
-    stub_dir <- "tests/stubs"
+    # Try to find project root and build path
+    if (file.exists("tests/stubs/stub_treatments.R")) {
+      stub_dir <- normalizePath("tests/stubs", mustWork = FALSE)
+    } else if (file.exists("../stubs/stub_treatments.R")) {
+      stub_dir <- normalizePath("../stubs", mustWork = FALSE)
+    } else {
+      stub_dir <- "tests/stubs"
+    }
   }
 }
 

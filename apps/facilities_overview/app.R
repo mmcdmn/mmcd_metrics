@@ -136,10 +136,11 @@ server <- function(input, output, session) {
       # Load Catch Basin data
       setProgress(value = 0.1, detail = "Loading catch basin data...")
       cb_data <- tryCatch({
-        result <- load_catch_basin_overview(
-          zone_filter = inputs$zone_filter,
+        result <- load_data_by_facility(
+          "catch_basin",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
         cat("Catch basin data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
@@ -153,10 +154,11 @@ server <- function(input, output, session) {
       # Load Drone data
       setProgress(value = 0.3, detail = "Loading drone data...")
       drone_data <- tryCatch({
-        result <- load_drone_overview(
-          zone_filter = inputs$zone_filter,
+        result <- load_data_by_facility(
+          "drone",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
         cat("Drone data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
@@ -170,10 +172,11 @@ server <- function(input, output, session) {
       # Load Ground Prehatch data
       setProgress(value = 0.5, detail = "Loading ground prehatch data...")
       ground_data <- tryCatch({
-        result <- load_ground_prehatch_overview(
-          zone_filter = inputs$zone_filter,
+        result <- load_data_by_facility(
+          "ground_prehatch",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
         cat("Ground prehatch data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
@@ -187,10 +190,11 @@ server <- function(input, output, session) {
       # Load Structure Treatment data
       setProgress(value = 0.7, detail = "Loading structure data...")
       struct_data <- tryCatch({
-        result <- load_structure_overview(
-          zone_filter = inputs$zone_filter,
+        result <- load_data_by_facility(
+          "structure",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
         cat("Structure data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")

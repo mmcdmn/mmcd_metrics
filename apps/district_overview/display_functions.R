@@ -229,7 +229,7 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", chart_id = "
   # Ensure display_name is ordered (P1, P2)
   data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
   
-  # Create base ggplot with layered bars (vertical for zone chart)
+  # Create base ggplot with layered bars (horizontal for consistency with facilities)
   p <- ggplot(data, aes(x = display_name)) +
     # Gray background - total/untreated
     geom_bar(aes(y = y_total, text = tooltip_text), 
@@ -240,9 +240,7 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", chart_id = "
     # Orange layer - expiring (at the bottom of the active portion)
     geom_bar(aes(y = y_expiring), 
              stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-    # Add percentage labels on top of bars
-    geom_text(aes(y = y_total + max(y_total) * 0.02, label = paste0(pct, "%")),
-              size = 5, fontface = "bold") +
+    coord_flip() +
     labs(
       title = NULL,
       x = NULL,

@@ -203,9 +203,9 @@ district_overview_ui <- function() {
           selectInput("zone_filter", "Zone:",
                      choices = c("P1 Only" = "1",
                                 "P2 Only" = "2", 
-                                "P1 + P2 Combined" = "both",
-                                "P1 & P2 Separately" = "separate"),
-                     selected = "both")
+                                "P1 and P2" = "1,2",
+                                "P1 and P2 SEPARATE" = "separate"),
+                     selected = "1,2")
         ),
         column(2,
           selectInput("color_theme", "Color Theme:",

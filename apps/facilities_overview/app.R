@@ -349,38 +349,42 @@ server <- function(input, output, session) {
       list(total = 0, active = 0, pct = 0)
     }
     
-    # Create summary boxes
+    # Create summary boxes using custom stat boxes from shared
     fluidRow(
       column(3,
-        div(class = "summary-box",
-          h4("Catch Basins"),
-          p(class = "stat-value", paste0(cb_stats$pct, "%")),
-          p(class = "stat-label", paste0(format(cb_stats$active, big.mark = ","), " / ", 
-                                         format(cb_stats$total, big.mark = ","), " treated"))
+        create_stat_box(
+          value = paste0(cb_stats$pct, "%"),
+          title = paste0("Catch Basins: ", format(cb_stats$active, big.mark = ","), 
+                        " / ", format(cb_stats$total, big.mark = ","), " treated"),
+          bg_color = "#667eea",
+          icon = "tint"
         )
       ),
       column(3,
-        div(class = "summary-box",
-          h4("Drone Sites"),
-          p(class = "stat-value", paste0(drone_stats$pct, "%")),
-          p(class = "stat-label", paste0(format(drone_stats$active, big.mark = ","), " / ", 
-                                         format(drone_stats$total, big.mark = ","), " treated"))
+        create_stat_box(
+          value = paste0(drone_stats$pct, "%"),
+          title = paste0("Drone Sites: ", format(drone_stats$active, big.mark = ","), 
+                        " / ", format(drone_stats$total, big.mark = ","), " treated"),
+          bg_color = "#f5576c",
+          icon = "helicopter"
         )
       ),
       column(3,
-        div(class = "summary-box",
-          h4("Ground Prehatch"),
-          p(class = "stat-value", paste0(ground_stats$pct, "%")),
-          p(class = "stat-label", paste0(format(ground_stats$active, big.mark = ","), " / ", 
-                                         format(ground_stats$total, big.mark = ","), " treated"))
+        create_stat_box(
+          value = paste0(ground_stats$pct, "%"),
+          title = paste0("Ground Prehatch: ", format(ground_stats$active, big.mark = ","), 
+                        " / ", format(ground_stats$total, big.mark = ","), " treated"),
+          bg_color = "#4facfe",
+          icon = "seedling"
         )
       ),
       column(3,
-        div(class = "summary-box",
-          h4("Structures"),
-          p(class = "stat-value", paste0(struct_stats$pct, "%")),
-          p(class = "stat-label", paste0(format(struct_stats$active, big.mark = ","), " / ", 
-                                         format(struct_stats$total, big.mark = ","), " treated"))
+        create_stat_box(
+          value = paste0(struct_stats$pct, "%"),
+          title = paste0("Structures: ", format(struct_stats$active, big.mark = ","), 
+                        " / ", format(struct_stats$total, big.mark = ","), " treated"),
+          bg_color = "#43e97b",
+          icon = "building"
         )
       )
     )

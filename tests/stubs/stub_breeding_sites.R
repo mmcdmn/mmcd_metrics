@@ -71,3 +71,62 @@ get_stub_drone_sites <- function() {
     stringsAsFactors = FALSE
   )
 }
+
+# =============================================================================
+# STANDARDIZED STUB DATA HELPERS (for cross-app testing)
+# =============================================================================
+
+#' Get standard sites data - SINGLE SOURCE OF TRUTH for all app tests
+#' Uses consistent sitecodes/facilities/zones/foremen across all tests
+#' @return data.frame with standard site columns
+get_stub_standard_sites <- function() {
+  sites <- get_stub_drone_sites()
+  # Ensure fosarea column exists for apps that expect it
+  sites$fosarea <- sites$foreman
+  sites
+}
+
+#' Get standard treatments data - SINGLE SOURCE OF TRUTH for all app tests
+#' @return data.frame with standard treatment columns
+get_stub_standard_treatments <- function() {
+  data.frame(
+    sitecode = c("020207-001", "020207-001", "700407-010"),
+    facility = c("N", "N", "Sj"),
+    foreman = c("0204", "0204", "7002"),
+    fosarea = c("0204", "0204", "7002"),
+    zone = c("1", "1", "1"),
+    inspdate = as.Date(c("2025-04-16", "2025-04-10", "2025-05-07")),
+    matcode = c("G2", "G2", "G2"),
+    effect_days = c(30L, 30L, 30L),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Get raw data in the format expected by each app's apply_data_filters
+#' Each app uses different key names but same underlying data
+#' @param app_name One of: drone, ground_prehatch_progress, struct_trt, catch_basin_status
+#' @return List with sites and treatments in app-specific format
+get_stub_raw_data_for_app <- function(app_name) {
+  sites <- get_stub_standard_sites()
+  treatments <- get_stub_standard_treatments()
+  
+  switch(app_name,
+    "drone" = list(drone_sites = sites, drone_treatments = treatments),
+    "ground_prehatch_progress" = list(ground_sites = sites, ground_treatments = treatments),
+    "struct_trt" = list(struct_sites = sites, struct_treatments = treatments),
+    "catch_basin_status" = list(cb_sites = sites, cb_treatments = treatments),
+    stop(paste("Unknown app:", app_name))
+  )
+}
+
+#' Get expected sitecodes when filtering by facility "N"
+#' @return Character vector of sitecodes
+get_stub_expected_facility_n_sites <- function() {
+  sort(c("020125-003", "020207-001", "021335-005"))
+}
+
+#' Get expected sitecodes when filtering by zone "1"
+#' @return Character vector of sitecodes
+get_stub_expected_zone1_sites <- function() {
+  sort(c("020125-003", "020207-001", "700407-010"))
+}

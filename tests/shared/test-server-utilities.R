@@ -84,12 +84,6 @@ test_that("map_foreman_display_names_to_colors returns named vector", {
   
   expect_type(result, "character")
 })
-  
-  for (color in result) {
-    expect_match(color, "^#[0-9A-Fa-f]{6}$",
-                 info = paste("Invalid hex color:", color))
-  }
-})
 
 # =============================================================================
 # create_trend_chart() tests

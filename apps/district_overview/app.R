@@ -59,9 +59,28 @@ server <- function(input, output, session) {
   # =============================================================================
   
   refresh_inputs <- eventReactive(input$refresh, {
+    zone_value <- isolate(input$zone_filter)
+    
+    # Parse zone filter and determine if zones should be shown separately
+    # "separate" = show P1 and P2 as separate bars
+    # "both" = combine P1 and P2 into single totals
+    # "1" or "2" = filter to that zone only
+    if (zone_value == "separate") {
+      zone_filter <- c("1", "2")
+      separate_zones <- TRUE
+    } else if (zone_value == "both") {
+      zone_filter <- c("1", "2")
+      separate_zones <- FALSE
+    } else {
+      zone_filter <- zone_value
+      separate_zones <- FALSE
+    }
+    
     list(
       custom_today = isolate(input$custom_today),
-      expiring_days = isolate(input$expiring_days)
+      expiring_days = isolate(input$expiring_days),
+      zone_filter = zone_filter,
+      separate_zones = separate_zones
     )
   })
   
@@ -72,7 +91,9 @@ server <- function(input, output, session) {
   district_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    cat("Loading district data for date:", as.character(inputs$custom_today), "\n")
+    cat("Loading district data for date:", as.character(inputs$custom_today), 
+        ", zone_filter:", paste(inputs$zone_filter, collapse=","),
+        ", separate:", inputs$separate_zones, "\n")
     
     withProgress(message = "Loading district overview...", value = 0, {
       
@@ -81,7 +102,9 @@ server <- function(input, output, session) {
       cb_data <- tryCatch({
         result <- load_catch_basin_by_zone(
           analysis_date = inputs$custom_today,
-          expiring_days = inputs$expiring_days
+          expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
+          separate_zones = inputs$separate_zones
         )
         cat("Catch basin by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
@@ -96,7 +119,9 @@ server <- function(input, output, session) {
       drone_data <- tryCatch({
         result <- load_drone_by_zone(
           analysis_date = inputs$custom_today,
-          expiring_days = inputs$expiring_days
+          expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
+          separate_zones = inputs$separate_zones
         )
         cat("Drone by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
@@ -111,7 +136,9 @@ server <- function(input, output, session) {
       ground_data <- tryCatch({
         result <- load_ground_prehatch_by_zone(
           analysis_date = inputs$custom_today,
-          expiring_days = inputs$expiring_days
+          expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
+          separate_zones = inputs$separate_zones
         )
         cat("Ground prehatch by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
@@ -126,7 +153,9 @@ server <- function(input, output, session) {
       struct_data <- tryCatch({
         result <- load_structure_by_zone(
           analysis_date = inputs$custom_today,
-          expiring_days = inputs$expiring_days
+          expiring_days = inputs$expiring_days,
+          zone_filter = inputs$zone_filter,
+          separate_zones = inputs$separate_zones
         )
         cat("Structure by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result

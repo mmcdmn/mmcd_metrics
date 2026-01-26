@@ -127,9 +127,36 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       ground_sites <- map_facility_names(ground_sites)
     }
     
-    # No need to convert dates - they're already Date objects from PostgreSQL
+    # Calculate site-level status from latest treatment per site
+    # STANDARDIZED: sites MUST have is_active and is_expiring columns
+    if (nrow(ground_treatments) > 0) {
+      current_date <- as.Date(analysis_date)
+      expiring_days <- 7  # Default expiring window
+      
+      site_status <- ground_treatments %>%
+        mutate(
+          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
+          is_active = treatment_end >= current_date,
+          is_expiring = is_active & treatment_end <= (current_date + expiring_days)
+        ) %>%
+        group_by(sitecode) %>%
+        arrange(desc(inspdate)) %>%
+        slice(1) %>%
+        ungroup() %>%
+        select(sitecode, is_active, is_expiring)
+      
+      ground_sites <- ground_sites %>%
+        left_join(site_status, by = "sitecode") %>%
+        mutate(
+          is_active = ifelse(is.na(is_active), FALSE, is_active),
+          is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
+        )
+    } else {
+      ground_sites$is_active <- FALSE
+      ground_sites$is_expiring <- FALSE
+    }
     
-    # Return STANDARDIZED format - same as all other apps
+    # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring
     return(list(
       sites = ground_sites,
       treatments = ground_treatments,
@@ -163,26 +190,22 @@ apply_data_filters <- function(data, facility_filter = NULL,
   # Apply facility filter using shared helper
   if (is_valid_filter(facility_filter)) {
     sites <- sites %>% filter(facility %in% facility_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(facility %in% facility_filter)
-    }
   }
   
   # Apply zone filter (zones don't use "all" check)
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
     sites <- sites %>% filter(zone %in% zone_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(zone %in% zone_filter)
-    }
   }
   
   # Apply foreman/FOS filter using shared helper
   # Note: foreman_filter is already emp_nums in this app, no conversion needed
   if (is_valid_filter(foreman_filter)) {
     sites <- sites %>% filter(fosarea %in% foreman_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(fosarea %in% foreman_filter)
-    }
+  }
+  
+  # Filter treatments to only include those for filtered sites
+  if (!is.null(treatments) && nrow(treatments) > 0 && nrow(sites) > 0) {
+    treatments <- treatments %>% filter(sitecode %in% sites$sitecode)
   }
   
   # Return STANDARDIZED format
@@ -245,13 +268,15 @@ get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = 
     # Join sites with treatment status
     site_details <- site_details %>%
       left_join(latest_treatments, by = "sitecode")
+    
+    # Sites without treatments in the join are expired
+    site_details <- site_details %>%
+      mutate(prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status))
+  } else {
+    # No treatments at all (e.g., January before prehatch season)
+    # All sites are counted as "expired" (untreated)
+    site_details$prehatch_status <- "expired"
   }
-  
-  # Sites without treatments are expired/unknown (count as expired)
-  site_details <- site_details %>%
-    mutate(
-      prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status)
-    )
   
   # Aggregate by sectcode and foreman to match expected structure
   result <- site_details %>%

@@ -180,7 +180,7 @@ district_overview_ui <- function() {
       div(class = "subtitle", "All MMCD treatment progress by zone - Click a bar to drill down to Facilities")
     ),
     
-    # Controls Panel - Simplified (no zone filter needed)
+    # Controls Panel - Same filters as facilities_overview for consistency
     div(class = "controls-panel",
       fluidRow(
         column(2,
@@ -200,11 +200,19 @@ district_overview_ui <- function() {
                      min = 1, max = 30, value = 3, step = 1)
         ),
         column(2,
+          selectInput("zone_filter", "Zone:",
+                     choices = c("P1 Only" = "1",
+                                "P2 Only" = "2", 
+                                "P1 + P2 Combined" = "both",
+                                "P1 & P2 Separately" = "separate"),
+                     selected = "both")
+        ),
+        column(2,
           selectInput("color_theme", "Color Theme:",
                      choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
                      selected = "MMCD")
         ),
-        column(4,
+        column(2,
           div(class = "last-updated",
             textOutput("last_updated")
           )

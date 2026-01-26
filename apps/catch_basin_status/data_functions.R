@@ -171,11 +171,15 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     # Calculate total catch basins from aggregated section data
     total_count <- sum(data$total_count, na.rm = TRUE)
     
-    # Return STANDARDIZED format - sites/treatments are same for aggregated data
+    # Return STANDARDIZED format
+    # Note: catch_basin is PRE-AGGREGATED for performance (50K+ sites)
+    # Instead of is_active/is_expiring per site, we have active_count/expiring_count per sectcode
+    # Set pre_aggregated flag so unified functions know to sum counts instead of counting rows
     return(list(
       sites = data,
       treatments = data,
-      total_count = total_count
+      total_count = total_count,
+      pre_aggregated = TRUE  # Flag indicating counts are already aggregated
     ))
     
   }, error = function(e) {

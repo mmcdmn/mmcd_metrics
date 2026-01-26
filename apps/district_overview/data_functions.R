@@ -1,686 +1,305 @@
-# District Overview - Data Functions
-# Aggregates ALL MMCD data by ZONE (P1 vs P2) for the top-level district view
-# REUSES existing functions from other apps - no duplicate SQL!
+# District Overview - UNIFIED Data Functions
+# =============================================================================
+# ONE function for ALL metrics. All apps now return standardized format:
+#   list(sites = df, treatments = df, total_count = int)
 # 
-# SOLUTION FOR FUNCTION NAME COLLISIONS:
-# Instead of sourcing all files at once (which causes collisions),
-# we use local() environments to isolate each app's functions.
-
-# =============================================================================
-# FACILITY ORDERING FUNCTIONS - Use database lookup for consistent ordering
+# Where sites has: sitecode, facility, zone, is_active, is_expiring
+# (Exception: catch_basin is pre-aggregated for performance, has pre_aggregated=TRUE)
 # =============================================================================
 
-#' Get consistent facility ordering from database
-get_facility_order <- function() {
-  facilities <- get_facility_lookup()
-  if (nrow(facilities) == 0) {
-    # Fallback order if database query fails
-    return(c("East", "North", "South Jordan", "South Reserve", "West Metro"))
-  }
-  return(facilities$full_name)
-}
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 
-#' Order facilities consistently across all charts
-#' @param data Data frame with display_name column
-#' @param separate_zones Whether zones are separated (affects factor levels)
-order_facilities <- function(data, separate_zones = FALSE) {
-  if (!"display_name" %in% names(data)) {
-    return(data)
-  }
-  
-  facility_order <- get_facility_order()
-  
-  if (separate_zones) {
-    # For separate zones, create levels like "East (P1)", "East (P2)", etc.
-    zone_levels <- unlist(lapply(facility_order, function(f) {
-      c(paste0(f, " (P1)"), paste0(f, " (P2)"))
-    }))
-    data <- data %>%
-      mutate(display_name = factor(display_name, levels = zone_levels))
-  } else {
-    # For combined facilities, use facility order
-    data <- data %>%
-      mutate(display_name = factor(display_name, levels = facility_order))
-  }
-  
-  # Sort by the factor levels
-  data <- data %>% arrange(display_name)
-  
-  return(data)
-}
+METRIC_DEFAULTS <- list(
+  catch_basin = list(expiring_days = 7),
+  drone = list(expiring_days = 7),
+  ground_prehatch = list(expiring_days = 7),
+  structure = list(expiring_days = 7)
+)
+
+VALID_METRICS <- c("catch_basin", "drone", "ground_prehatch", "structure")
+
+METRIC_TO_APP <- list(
+  catch_basin = "catch_basin_status",
+  drone = "drone",
+  ground_prehatch = "ground_prehatch_progress",
+  structure = "struct_trt"
+)
 
 # =============================================================================
-# ISOLATED ENVIRONMENT LOADING
+# ENVIRONMENT LOADING
 # =============================================================================
-# Note: We use new.env(parent = globalenv()) so that the sourced functions
-# can access db_helpers functions (get_db_connection, is_valid_filter, etc.)
-# that are already loaded in the global environment by app.R
 
-# Determine base path for sourcing other apps
-# Works both when run from Shiny (working dir is app folder) and from Rscript
 get_apps_base_path <- function() {
-  # Check if running in Shiny context (working dir is the app folder)
-  if (file.exists("../catch_basin_status/data_functions.R")) {
-    return("..")
-  }
-  # Check for absolute server path
-  if (file.exists("/srv/shiny-server/apps/catch_basin_status/data_functions.R")) {
-    return("/srv/shiny-server/apps")
-  }
-  # Fallback to relative
+  if (file.exists("../catch_basin_status/data_functions.R")) return("..")
+  if (file.exists("/srv/shiny-server/apps/catch_basin_status/data_functions.R")) return("/srv/shiny-server/apps")
   return("..")
 }
 
 apps_base <- get_apps_base_path()
 
-# Load catch basin functions in isolated environment
-catch_basin_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "catch_basin_status/data_functions.R"), local = catch_basin_env)
-
-# Load drone functions in isolated environment  
-drone_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "drone/data_functions.R"), local = drone_env)
-source(file.path(apps_base, "drone/display_functions.R"), local = drone_env)
-
-# Load ground prehatch functions in isolated environment
-ground_prehatch_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "ground_prehatch_progress/data_functions.R"), local = ground_prehatch_env)
-
-# Load structure functions in isolated environment
-struct_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "struct_trt/data_functions.R"), local = struct_env)
+# Load each app into isolated environment
+app_envs <- list()
+for (metric in names(METRIC_TO_APP)) {
+  app_folder <- METRIC_TO_APP[[metric]]
+  env <- new.env(parent = globalenv())
+  source(file.path(apps_base, app_folder, "data_functions.R"), local = env)
+  app_envs[[metric]] <- env
+}
 
 # =============================================================================
-# WRAPPER FUNCTIONS - Call existing app functions and summarize by facility
+# THE UNIFIED FUNCTION
 # =============================================================================
 
-#' Load catch basin overview using existing app function
-#' @param zone_filter Zone filter ("1", "2", or c("1", "2"))
-#' @param separate_zones If TRUE, show P1 and P2 as separate bars
-load_catch_basin_overview <- function(zone_filter = c("1", "2"), 
-                                       analysis_date = Sys.Date(), 
-                                       expiring_days = 14,
-                                       separate_zones = FALSE) {
-  cat("CB Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","), 
-      "separate =", separate_zones, "\n")
+#' Load data for ANY metric, aggregated by facility+zone
+#' 
+#' Returns: facility, zone, total_count, active_count, expiring_count
+#' 
+#' This ONE function replaces all the separate load_*_by_zone functions.
+#' All apps now return sites with is_active/is_expiring, so we just aggregate.
+#'
+#' @param metric One of: "catch_basin", "drone", "ground_prehatch", "structure"
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring
+#' @param zone_filter Vector of zones to include
+load_metric_data <- function(metric, 
+                             analysis_date = Sys.Date(),
+                             expiring_days = NULL,
+                             zone_filter = c("1", "2")) {
   
-  # Call load_raw_data from catch basin environment (REFACTORED function name)
-  raw_data <- tryCatch({
-    catch_basin_env$load_raw_data(
-      facility_filter = "all",
-      foreman_filter = "all",
-      zone_filter = zone_filter,
-      analysis_date = analysis_date,
-      expiring_days = expiring_days
-    )
-  }, error = function(e) {
-    cat("CB: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame()))
-  })
-  
-  # load_raw_data returns a list with sites, treatments, total_count
-  data <- raw_data$sites
-  
-  if (is.null(data) || nrow(data) == 0) {
-    cat("CB: No data returned\n")
-    return(data.frame())
+  if (!metric %in% VALID_METRICS) {
+    stop(paste("Invalid metric:", metric))
   }
   
-  cat("CB: Got", nrow(data), "rows, aggregating by facility\n")
+  if (is.null(expiring_days)) {
+    expiring_days <- METRIC_DEFAULTS[[metric]]$expiring_days
+  }
   
-  # Aggregate by facility (and zone if separate)
-  # Use standardized column names from load_catch_basin_data
+  env <- app_envs[[metric]]
+  
+  # Load data - each app has load_raw_data with slightly different params
+  raw_data <- switch(metric,
+    "catch_basin" = env$load_raw_data(
+      analysis_date = analysis_date,
+      expiring_days = expiring_days,
+      zone_filter = zone_filter
+    ),
+    "drone" = env$load_raw_data(
+      drone_types = c("Y", "M", "C"),
+      analysis_date = analysis_date
+    ),
+    "ground_prehatch" = env$load_raw_data(
+      analysis_date = analysis_date
+    ),
+    "structure" = env$load_raw_data(
+      analysis_date = analysis_date,
+      expiring_days = expiring_days,
+      zone_filter = zone_filter
+    )
+  )
+  
+  # Apply filters for apps that need them
+  if (metric == "drone") {
+    raw_data <- env$apply_data_filters(
+      data = raw_data,
+      zone_filter = zone_filter,
+      prehatch_only = TRUE
+    )
+  } else if (metric == "ground_prehatch") {
+    raw_data <- env$apply_data_filters(
+      data = raw_data,
+      zone_filter = zone_filter
+    )
+  }
+  
+  sites <- raw_data$sites
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(data.frame(
+      facility = character(),
+      zone = character(),
+      total_count = integer(),
+      active_count = integer(),
+      expiring_count = integer()
+    ))
+  }
+  
+  # Aggregate to facility+zone level
+  # Check if pre-aggregated (catch_basin) or site-level (others)
+  if (isTRUE(raw_data$pre_aggregated)) {
+    # Already has counts - just sum them
+    result <- sites %>%
+      filter(zone %in% zone_filter) %>%
+      group_by(facility, zone) %>%
+      summarize(
+        total_count = sum(total_count, na.rm = TRUE),
+        active_count = sum(active_count, na.rm = TRUE),
+        expiring_count = sum(expiring_count, na.rm = TRUE),
+        .groups = "drop"
+      )
+  } else {
+    # Site-level data with is_active/is_expiring - count them
+    result <- sites %>%
+      filter(zone %in% zone_filter) %>%
+      group_by(facility, zone) %>%
+      summarize(
+        total_count = n(),
+        active_count = sum(is_active, na.rm = TRUE),
+        expiring_count = sum(is_expiring, na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+  
+  return(result)
+}
+
+# =============================================================================
+# AGGREGATION FUNCTIONS
+# =============================================================================
+
+#' Load ANY metric aggregated by zone (P1/P2)
+load_data_by_zone <- function(metric, 
+                              analysis_date = Sys.Date(),
+                              expiring_days = NULL,
+                              zone_filter = c("1", "2"),
+                              separate_zones = TRUE) {
+  
+  data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
+  if (nrow(data) == 0) return(data.frame())
+  
+  if (separate_zones) {
+    result <- data %>%
+      group_by(zone) %>%
+      summarize(
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(display_name = paste0("P", zone)) %>%
+      arrange(zone)
+  } else {
+    result <- data %>%
+      summarize(
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE)
+      ) %>%
+      mutate(zone = "all", display_name = "District Total")
+  }
+  
+  return(result)
+}
+
+#' Load ANY metric aggregated by facility
+load_data_by_facility <- function(metric,
+                                  analysis_date = Sys.Date(),
+                                  expiring_days = NULL,
+                                  zone_filter = c("1", "2"),
+                                  separate_zones = FALSE) {
+  
+  data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
+  if (nrow(data) == 0) return(data.frame())
+  
+  data <- map_facility_names(data)
+  
   if (separate_zones && length(zone_filter) == 2) {
     result <- data %>%
-      group_by(facility, zone) %>%
+      group_by(facility, facility_display, zone) %>%
       summarize(
         total = sum(total_count, na.rm = TRUE),
         active = sum(active_count, na.rm = TRUE),
         expiring = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
-      mutate(display_name = facility) %>%
-      map_facility_names(facility_col = "display_name") %>%
-      mutate(display_name = paste0(display_name_display, " (P", zone, ")")) %>%
-      select(-display_name_display)
+      mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>%
+      select(-facility_display)
   } else {
     result <- data %>%
-      group_by(facility) %>%
+      group_by(facility, facility_display) %>%
       summarize(
         total = sum(total_count, na.rm = TRUE),
         active = sum(active_count, na.rm = TRUE),
         expiring = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
-      mutate(display_name = facility) %>%
-      map_facility_names(facility_col = "display_name") %>%
-      mutate(display_name = display_name_display) %>%
-      select(-display_name_display)
+      mutate(display_name = facility_display) %>%
+      select(-facility_display)
   }
   
-  # Apply consistent ordering
-  result <- order_facilities(result, separate_zones)
-  cat("CB: Aggregated to", nrow(result), "rows\n")
-  return(result)
-}
-
-
-#' Load drone overview using isolated drone environment
-#' @param separate_zones If TRUE, show P1 and P2 as separate bars
-load_drone_overview <- function(zone_filter = c("1", "2"),
-                                 analysis_date = Sys.Date(),
-                                 expiring_days = 7,
-                                 separate_zones = FALSE) {
-  cat("Drone Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","),
-      "separate =", separate_zones, "\n")
-  
-  # Load raw data using drone environment
-  raw <- tryCatch({
-    drone_env$load_raw_data(
-      drone_types = c("Y", "M", "C"),
-      analysis_date = analysis_date
-    )
-  }, error = function(e) {
-    cat("Drone: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
-  
-  if (is.null(raw$sites) || nrow(raw$sites) == 0) {
-    cat("Drone: No raw sites data\n")
-    return(data.frame())
-  }
-  
-  cat("Drone: Got", nrow(raw$sites), "sites,", nrow(raw$treatments), "treatments\n")
-  
-  # Apply filters using drone environment
-  filtered <- tryCatch({
-    drone_env$apply_data_filters(
-      data = raw,
-      facility_filter = "all",
-      foreman_filter = "all",
-      prehatch_only = TRUE
-    )
-  }, error = function(e) {
-    cat("Drone: apply_data_filters error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
-  
-  if (is.null(filtered$sites) || nrow(filtered$sites) == 0) {
-    cat("Drone: No filtered sites data\n")
-    return(data.frame())
-  }
-  
-  cat("Drone: Filtered to", nrow(filtered$sites), "sites\n")
-  
-  # For separate zones, we need to call process_current_data with combine_zones = FALSE
-  combine_zones_param <- !separate_zones
-  
-  # Process using drone environment's display function
-  processed <- tryCatch({
-    drone_env$process_current_data(
-      drone_sites = filtered$sites,
-      drone_treatments = filtered$treatments,
-      zone_filter = zone_filter,
-      combine_zones = combine_zones_param,
-      expiring_days = expiring_days,
-      group_by = "facility",
-      analysis_date = analysis_date
-    )
-  }, error = function(e) {
-    cat("Drone: process_current_data error:", e$message, "\n")
-    return(list(data = data.frame()))
-  })
-  
-  if (is.null(processed$data) || nrow(processed$data) == 0) {
-    cat("Drone: No processed data\n")
-    return(data.frame())
-  }
-  
-  cat("Drone: Processed", nrow(processed$data), "rows\n")
-  
-  # Return in standard format - drone already has proper display_name from process_current_data
-  # Use standardized column names from process_current_data
-  result <- processed$data %>%
-    transmute(
-      facility = facility,
-      zone = if ("zone" %in% names(processed$data)) zone else NA,
-      display_name = display_name,
-      total = total_count,
-      active = active_count,
-      expiring = expiring_count
-    )
-  
-  # Apply consistent ordering
   result <- order_facilities(result, separate_zones)
   return(result)
-}
-
-
-#' Load ground prehatch overview using isolated environment
-#' @param separate_zones If TRUE, show P1 and P2 as separate bars
-load_ground_prehatch_overview <- function(zone_filter = c("1", "2"),
-                                           analysis_date = Sys.Date(),
-                                           expiring_days = 14,
-                                           separate_zones = FALSE) {
-  cat("Ground Prehatch Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","),
-      "separate =", separate_zones, "\n")
-  
-  # Call function from ground prehatch environment
-  data <- tryCatch({
-    ground_prehatch_env$get_ground_prehatch_data(
-      zone_filter = zone_filter,
-      analysis_date = analysis_date,
-      expiring_days = expiring_days
-    )
-  }, error = function(e) {
-    cat("Ground: get_ground_prehatch_data error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(data) || nrow(data) == 0) {
-    cat("Ground: No data returned\n")
-    return(data.frame())
-  }
-  
-  cat("Ground: Got", nrow(data), "rows, aggregating by facility\n")
-  
-  # Aggregate by facility (and zone if separate)
-  # Use standardized column names from get_ground_prehatch_data
-  if (separate_zones && length(zone_filter) == 2 && "zone" %in% names(data)) {
-    result <- data %>%
-      group_by(facility, zone) %>%
-      summarize(
-        total = sum(total_count, na.rm = TRUE),
-        active = sum(active_count, na.rm = TRUE),
-        expiring = sum(expiring_count, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = facility) %>%
-      map_facility_names(facility_col = "display_name") %>%
-      mutate(display_name = paste0(display_name_display, " (P", zone, ")")) %>%
-      select(-display_name_display)
-  } else {
-    result <- data %>%
-      group_by(facility) %>%
-      summarize(
-        total = sum(total_count, na.rm = TRUE),
-        active = sum(active_count, na.rm = TRUE),
-        expiring = sum(expiring_count, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = facility) %>%
-      map_facility_names(facility_col = "display_name") %>%
-      mutate(display_name = display_name_display) %>%
-      select(-display_name_display)
-  }
-  
-  # Apply consistent ordering
-  result <- order_facilities(result, separate_zones)
-  cat("Ground: Aggregated to", nrow(result), "rows\n")
-  return(result)
-}
-
-
-#' Load structure overview using isolated environment
-#' Uses struct_trt's aggregate_structure_data() for consistent aggregation logic
-#' 
-#' @param separate_zones If TRUE, show P1 and P2 as separate bars
-load_structure_overview <- function(zone_filter = c("1", "2"),
-                                     analysis_date = Sys.Date(),
-                                     expiring_days = 7,
-                                     separate_zones = FALSE) {
-  cat("Structure Overview: date =", as.character(analysis_date), "zones =", paste(zone_filter, collapse=","),
-      "separate =", separate_zones, "\n")
-  
-  # Get ALL structures - matches struct_trt's all_structures()
-  all_structures <- tryCatch({
-    struct_env$get_all_structures(
-      facility_filter = "all",
-      foreman_filter = "all",
-      structure_type_filter = "all",
-      priority_filter = "all",
-      status_types = c("W", "U"),
-      zone_filter = zone_filter
-    )
-  }, error = function(e) {
-    cat("Structure: get_all_structures error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(all_structures) || nrow(all_structures) == 0) {
-    cat("Structure: No structures data\n")
-    return(data.frame())
-  }
-  
-  cat("Structure: Got", nrow(all_structures), "total structures\n")
-  
-  # Get treatments using load_raw_data (REFACTORED function name)
-  treatment_result <- tryCatch({
-    struct_env$load_raw_data(
-      analysis_date = analysis_date,
-      expiring_days = expiring_days,
-      facility_filter = "all",
-      foreman_filter = "all",
-      structure_type_filter = "all",
-      priority_filter = "all",
-      status_types = c("W", "U"),
-      zone_filter = zone_filter
-    )
-  }, error = function(e) {
-    cat("Structure: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
-  
-  # load_raw_data returns list with sites and treatments
-  treatments <- treatment_result$sites  # sites contains treatment status info
-  if (is.null(treatments)) treatments <- data.frame()
-  
-  cat("Structure: Got", nrow(treatments), "treatment rows\n")
-  
-  # Use aggregate_structure_data with standardized column names
-  combine_zones_param <- !separate_zones
-  agg_data <- tryCatch({
-    struct_env$aggregate_structure_data(
-      structures = all_structures,
-      treatments = treatments,
-      group_by = "facility",
-      zone_filter = zone_filter,
-      combine_zones = combine_zones_param
-    )
-  }, error = function(e) {
-    cat("Structure: aggregate_structure_data error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(agg_data) || nrow(agg_data) == 0) {
-    cat("Structure: No aggregated data\n")
-    return(data.frame())
-  }
-  
-  # Map to standard output format using standardized column names
-  agg_result <- agg_data %>%
-    transmute(
-      facility = if ("facility" %in% names(agg_data)) facility else NA,
-      zone = if ("zone" %in% names(agg_data)) zone else NA,
-      display_name = display_name,
-      total = total_count,
-      active = active_count,
-      expiring = expiring_count
-    )
-  
-  # Apply consistent ordering
-  agg_result <- order_facilities(agg_result, separate_zones)
-  cat("Structure: Aggregated to", nrow(agg_result), "rows\n")
-  
-  # Debug output
-  cat("Structure totals:", paste(agg_result$display_name, "total=", agg_result$total, "active=", agg_result$active, collapse = " | "), "\n")
-  check_pct <- agg_result %>%
-    mutate(pct = round(100 * active / pmax(1, total), 1))
-  cat("Structure percentages:", paste(agg_result$display_name, check_pct$pct, "%", collapse = ", "), "\n")
-  
-  return(agg_result)
 }
 
 # =============================================================================
-# ZONE AGGREGATION FUNCTIONS - Aggregate ALL MMCD by zone (P1 vs P2)
-# Used by the top-level District Overview dashboard
+# FACILITY ORDERING
 # =============================================================================
 
-#' Load catch basin data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_catch_basin_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 14) {
-  cat("CB by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Load all catch basin data for both zones using load_raw_data (REFACTORED function name)
-  raw_data <- tryCatch({
-    catch_basin_env$load_raw_data(
-      facility_filter = "all",
-      foreman_filter = "all",
-      zone_filter = c("1", "2"),
-      analysis_date = analysis_date,
-      expiring_days = expiring_days
-    )
-  }, error = function(e) {
-    cat("CB by Zone: load error:", e$message, "\n")
-    return(list(sites = data.frame()))
-  })
-  
-  # load_raw_data returns a list with sites, treatments, total_count
-  data <- raw_data$sites
-  
-  if (is.null(data) || nrow(data) == 0) {
-    cat("CB by Zone: No data returned\n")
-    return(data.frame())
+get_facility_order <- function() {
+  facilities <- get_facility_lookup()
+  if (nrow(facilities) == 0) {
+    return(c("East", "North", "South Jordan", "South Reserve", "West Metro"))
   }
-  
-  # Aggregate by zone only (combine all facilities)
-  result <- data %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("CB by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
+  return(facilities$full_name)
 }
 
-#' Load drone data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_drone_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7) {
-  cat("Drone by Zone: date =", as.character(analysis_date), "\n")
+order_facilities <- function(data, separate_zones = FALSE) {
+  if (!"display_name" %in% names(data)) return(data)
   
-  # Load raw drone data
-  raw <- tryCatch({
-    drone_env$load_raw_data(
-      drone_types = c("Y", "M", "C"),
-      analysis_date = analysis_date
-    )
-  }, error = function(e) {
-    cat("Drone by Zone: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
+  facility_order <- get_facility_order()
   
-  if (is.null(raw$sites) || nrow(raw$sites) == 0) {
-    cat("Drone by Zone: No raw sites data\n")
-    return(data.frame())
+  if (separate_zones) {
+    zone_levels <- unlist(lapply(facility_order, function(f) {
+      c(paste0(f, " (P1)"), paste0(f, " (P2)"))
+    }))
+    data <- data %>% mutate(display_name = factor(display_name, levels = zone_levels))
+  } else {
+    data <- data %>% mutate(display_name = factor(display_name, levels = facility_order))
   }
   
-  # Apply filters
-  filtered <- tryCatch({
-    drone_env$apply_data_filters(
-      data = raw,
-      facility_filter = "all",
-      foreman_filter = "all",
-      prehatch_only = TRUE
-    )
-  }, error = function(e) {
-    cat("Drone by Zone: apply_data_filters error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
-  
-  if (is.null(filtered$sites) || nrow(filtered$sites) == 0) {
-    cat("Drone by Zone: No filtered sites data\n")
-    return(data.frame())
-  }
-  
-  # Process with group_by = "mmcd_all" but we need zone data
-  # Use zone-separated processing and then aggregate by zone
-  processed <- tryCatch({
-    drone_env$process_current_data(
-      drone_sites = filtered$sites,
-      drone_treatments = filtered$treatments,
-      zone_filter = c("1", "2"),
-      combine_zones = FALSE,  # Keep zones separate
-      expiring_days = expiring_days,
-      group_by = "facility",  # Will aggregate further by zone
-      analysis_date = analysis_date
-    )
-  }, error = function(e) {
-    cat("Drone by Zone: process_current_data error:", e$message, "\n")
-    return(list(data = data.frame()))
-  })
-  
-  if (is.null(processed$data) || nrow(processed$data) == 0) {
-    cat("Drone by Zone: No processed data\n")
-    return(data.frame())
-  }
-  
-  # Extract zone from display_name - handle both "Facility (P1)" and "Facility P1" formats
-  result <- processed$data %>%
-    mutate(zone = case_when(
-      grepl("P1", display_name) ~ "1",
-      grepl("P2", display_name) ~ "2",
-      TRUE ~ NA_character_
-    )) %>%
-    filter(!is.na(zone)) %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("Drone by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
+  data %>% arrange(display_name)
 }
 
-#' Load ground prehatch data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_ground_prehatch_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 14) {
-  cat("Ground by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Load all ground prehatch data for both zones
-  data <- tryCatch({
-    ground_prehatch_env$get_ground_prehatch_data(
-      zone_filter = c("1", "2"),
-      analysis_date = analysis_date,
-      expiring_days = expiring_days
-    )
-  }, error = function(e) {
-    cat("Ground by Zone: get_ground_prehatch_data error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(data) || nrow(data) == 0) {
-    cat("Ground by Zone: No data returned\n")
-    return(data.frame())
-  }
-  
-  # Aggregate by zone only
-  result <- data %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("Ground by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
+# =============================================================================
+# BACKWARD COMPATIBILITY (simple one-liners)
+# =============================================================================
+
+load_catch_basin_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7,
+                                     zone_filter = c("1", "2"), separate_zones = TRUE) {
+  load_data_by_zone("catch_basin", analysis_date, expiring_days, zone_filter, separate_zones)
 }
 
-#' Load structure data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_structure_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7) {
-  cat("Structure by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Get all structures for both zones
-  all_structures <- tryCatch({
-    struct_env$get_all_structures(
-      facility_filter = "all",
-      foreman_filter = "all",
-      structure_type_filter = "all",
-      priority_filter = "all",
-      status_types = c("W", "U"),
-      zone_filter = c("1", "2")
-    )
-  }, error = function(e) {
-    cat("Structure by Zone: get_all_structures error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(all_structures) || nrow(all_structures) == 0) {
-    cat("Structure by Zone: No structures data\n")
-    return(data.frame())
-  }
-  
-  # Get treatments using load_raw_data (REFACTORED function name)
-  treatment_result <- tryCatch({
-    struct_env$load_raw_data(
-      analysis_date = analysis_date,
-      expiring_days = expiring_days,
-      facility_filter = "all",
-      foreman_filter = "all",
-      structure_type_filter = "all",
-      priority_filter = "all",
-      status_types = c("W", "U"),
-      zone_filter = c("1", "2")
-    )
-  }, error = function(e) {
-    cat("Structure by Zone: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame()))
-  })
-  
-  # load_raw_data returns list with sites containing treatment info
-  treatments <- treatment_result$sites
-  if (is.null(treatments)) treatments <- data.frame()
-  
-  # Aggregate by zone
-  agg_data <- tryCatch({
-    struct_env$aggregate_structure_data(
-      structures = all_structures,
-      treatments = treatments,
-      group_by = "facility",  # Will aggregate further by zone
-      zone_filter = c("1", "2"),
-      combine_zones = FALSE  # Keep zones separate
-    )
-  }, error = function(e) {
-    cat("Structure by Zone: aggregate_structure_data error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(agg_data) || nrow(agg_data) == 0) {
-    cat("Structure by Zone: No aggregated data\n")
-    return(data.frame())
-  }
-  
-  # Extract zone from display_name - handle both "Facility (P1)" and "Facility P1" formats
-  result <- agg_data %>%
-    mutate(zone = case_when(
-      grepl("P1", display_name) ~ "1",
-      grepl("P2", display_name) ~ "2",
-      TRUE ~ NA_character_
-    )) %>%
-    filter(!is.na(zone)) %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("Structure by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
+load_drone_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7,
+                               zone_filter = c("1", "2"), separate_zones = TRUE) {
+  load_data_by_zone("drone", analysis_date, expiring_days, zone_filter, separate_zones)
+}
+
+load_ground_prehatch_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7,
+                                         zone_filter = c("1", "2"), separate_zones = TRUE) {
+  load_data_by_zone("ground_prehatch", analysis_date, expiring_days, zone_filter, separate_zones)
+}
+
+load_structure_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7,
+                                   zone_filter = c("1", "2"), separate_zones = TRUE) {
+  load_data_by_zone("structure", analysis_date, expiring_days, zone_filter, separate_zones)
+}
+
+load_catch_basin_overview <- function(zone_filter = c("1", "2"), analysis_date = Sys.Date(),
+                                      expiring_days = 7, separate_zones = FALSE) {
+  load_data_by_facility("catch_basin", analysis_date, expiring_days, zone_filter, separate_zones)
+}
+
+load_drone_overview <- function(zone_filter = c("1", "2"), analysis_date = Sys.Date(),
+                                expiring_days = 7, separate_zones = FALSE) {
+  load_data_by_facility("drone", analysis_date, expiring_days, zone_filter, separate_zones)
+}
+
+load_ground_prehatch_overview <- function(zone_filter = c("1", "2"), analysis_date = Sys.Date(),
+                                          expiring_days = 7, separate_zones = FALSE) {
+  load_data_by_facility("ground_prehatch", analysis_date, expiring_days, zone_filter, separate_zones)
+}
+
+load_structure_overview <- function(zone_filter = c("1", "2"), analysis_date = Sys.Date(),
+                                    expiring_days = 7, separate_zones = FALSE) {
+  load_data_by_facility("structure", analysis_date, expiring_days, zone_filter, separate_zones)
 }

@@ -1,5 +1,10 @@
 # Data functions for drone app - handles all database queries and data processing
 
+# Source shared helpers (only if not already loaded - allows use from district_overview)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
+}
+
 #' Load raw data from database
 #' @param drone_types Vector of drone type selections
 #' @param analysis_date Date to use as "current date" for analysis (defaults to today)
@@ -124,7 +129,23 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
       is_expiring = is_active & treatment_end_date <= (current_date + 7)
     )
   
-  # Return STANDARDIZED format - same as all other apps
+  # Calculate site-level status from latest treatment per site
+  # STANDARDIZED: sites MUST have is_active and is_expiring columns
+  site_status <- drone_treatments %>%
+    group_by(sitecode) %>%
+    arrange(desc(inspdate)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    select(sitecode, is_active, is_expiring)
+  
+  drone_sites <- drone_sites %>%
+    left_join(site_status, by = "sitecode") %>%
+    mutate(
+      is_active = ifelse(is.na(is_active), FALSE, is_active),
+      is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
+    )
+  
+  # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring
   return(list(
     sites = drone_sites,
     treatments = drone_treatments,

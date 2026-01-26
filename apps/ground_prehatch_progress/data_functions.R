@@ -8,7 +8,7 @@ source("../../shared/db_helpers.R")
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
                          start_year = NULL, end_year = NULL, include_geometry = FALSE) {
   con <- get_db_connection()
-  if (is.null(con)) return(list(ground_sites = data.frame(), ground_treatments = data.frame()))
+  if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
   tryCatch({
     analysis_year <- format(analysis_date, "%Y")
@@ -127,52 +127,67 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     
     # No need to convert dates - they're already Date objects from PostgreSQL
     
+    # Return STANDARDIZED format - same as all other apps
     return(list(
-      ground_sites = ground_sites,
-      ground_treatments = ground_treatments
+      sites = ground_sites,
+      treatments = ground_treatments,
+      total_count = nrow(ground_sites)
     ))
     
   }, error = function(e) {
     warning(paste("Error loading raw data:", e$message))
     if (!is.null(con)) safe_disconnect(con)
-    return(list(ground_sites = data.frame(), ground_treatments = data.frame()))
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   })
 }
 
-#' Apply filters to ground prehatch data
-#' @param data List containing ground_sites and ground_treatments
+#' Apply filters to ground prehatch data - STANDARDIZED FORMAT
+#' @param data List containing sites and treatments (standardized keys)
 #' @param facility_filter Vector of selected facilities  
 #' @param foreman_filter Vector of selected foremen (emp_num values)
 #' @param zone_filter Vector of selected zones
-#' @return Filtered data list
+#' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL, 
                                foreman_filter = NULL, zone_filter = NULL) {
   
-  ground_sites <- data$ground_sites
-  ground_treatments <- data$ground_treatments
+  # Use standardized keys
+  sites <- data$sites
+  treatments <- data$treatments
+  
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  }
   
   # Apply facility filter using shared helper
   if (is_valid_filter(facility_filter)) {
-    ground_sites <- ground_sites %>% filter(facility %in% facility_filter)
-    ground_treatments <- ground_treatments %>% filter(facility %in% facility_filter)
+    sites <- sites %>% filter(facility %in% facility_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(facility %in% facility_filter)
+    }
   }
   
   # Apply zone filter (zones don't use "all" check)
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    ground_sites <- ground_sites %>% filter(zone %in% zone_filter)
-    ground_treatments <- ground_treatments %>% filter(zone %in% zone_filter)
+    sites <- sites %>% filter(zone %in% zone_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(zone %in% zone_filter)
+    }
   }
   
   # Apply foreman/FOS filter using shared helper
   # Note: foreman_filter is already emp_nums in this app, no conversion needed
   if (is_valid_filter(foreman_filter)) {
-    ground_sites <- ground_sites %>% filter(fosarea %in% foreman_filter)
-    ground_treatments <- ground_treatments %>% filter(fosarea %in% foreman_filter)
+    sites <- sites %>% filter(fosarea %in% foreman_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(fosarea %in% foreman_filter)
+    }
   }
   
+  # Return STANDARDIZED format
   return(list(
-    ground_sites = ground_sites,
-    ground_treatments = ground_treatments
+    sites = sites,
+    treatments = if(is.null(treatments)) data.frame() else treatments,
+    total_count = nrow(sites)
   ))
 }
 
@@ -184,12 +199,12 @@ get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = 
   # Load raw data using the unified function
   raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
   
-  if (nrow(raw_data$ground_sites) == 0) {
+  if (is.null(raw_data$sites) || nrow(raw_data$sites) == 0) {
     return(data.frame())
   }
   
   # Calculate treatment status for each site
-  site_details <- raw_data$ground_sites
+  site_details <- raw_data$sites
   
   # Apply zone filter
   site_details <- site_details %>%
@@ -199,9 +214,9 @@ get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = 
     return(data.frame())
   }
   
-  if (nrow(raw_data$ground_treatments) > 0) {
+  if (!is.null(raw_data$treatments) && nrow(raw_data$treatments) > 0) {
     # Get latest treatment for each site
-    latest_treatments <- raw_data$ground_treatments %>%
+    latest_treatments <- raw_data$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate), desc(insptime)) %>%
       slice(1) %>%
@@ -274,16 +289,16 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
   # Load raw data using the unified function - same as charts use
   raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
   
-  if (nrow(raw_data$ground_sites) == 0) {
+  if (is.null(raw_data$sites) || nrow(raw_data$sites) == 0) {
     return(data.frame())
   }
   
-  # Start with all ground sites (gis_sectcode is source of truth)
-  result <- raw_data$ground_sites
+  # Start with all sites (gis_sectcode is source of truth)
+  result <- raw_data$sites
   
-  if (nrow(raw_data$ground_treatments) > 0) {
+  if (!is.null(raw_data$treatments) && nrow(raw_data$treatments) > 0) {
     # Get latest treatment for each site
-    latest_treatments <- raw_data$ground_treatments %>%
+    latest_treatments <- raw_data$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate), desc(insptime)) %>%
       slice(1) %>%
@@ -662,25 +677,25 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
     include_geometry = TRUE
   )
   
-  if (nrow(raw_data$ground_sites) == 0) {
+  if (is.null(raw_data$sites) || nrow(raw_data$sites) == 0) {
     return(NULL)
   }
   
   # Apply zone filter
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    raw_data$ground_sites <- raw_data$ground_sites %>% 
+    raw_data$sites <- raw_data$sites %>% 
       filter(zone %in% zone_filter)
   }
   
   # Apply facility filter using shared helper
   if (is_valid_filter(facility_filter)) {
-    raw_data$ground_sites <- raw_data$ground_sites %>% 
+    raw_data$sites <- raw_data$sites %>% 
       filter(facility %in% facility_filter)
   }
   
   # Apply foreman filter (using fosarea) using shared helper
   if (is_valid_filter(foreman_filter)) {
-    raw_data$ground_sites <- raw_data$ground_sites %>% 
+    raw_data$sites <- raw_data$sites %>% 
       filter(fosarea %in% foreman_filter)
   }
   
@@ -688,8 +703,8 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
   current_date <- as.Date(analysis_date)
   
   # Get latest treatment for each site with proper effect_days from database
-  if (!is.null(raw_data$ground_treatments) && nrow(raw_data$ground_treatments) > 0) {
-    latest_treatments <- raw_data$ground_treatments %>%
+  if (!is.null(raw_data$treatments) && nrow(raw_data$treatments) > 0) {
+    latest_treatments <- raw_data$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate)) %>%
       slice(1) %>%
@@ -718,9 +733,9 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
   
   # Convert sites to sf object
   sites_sf <- tryCatch({
-    if ("geometry" %in% names(raw_data$ground_sites) && !all(is.na(raw_data$ground_sites$geometry))) {
+    if ("geometry" %in% names(raw_data$sites) && !all(is.na(raw_data$sites$geometry))) {
       # Convert to sf using WKT
-      sf_result <- sf::st_as_sf(raw_data$ground_sites, wkt = "geometry", crs = 4326)
+      sf_result <- sf::st_as_sf(raw_data$sites, wkt = "geometry", crs = 4326)
       
       # Convert polygons to centroids for point markers
       if (any(sf::st_geometry_type(sf_result) %in% c("POLYGON", "MULTIPOLYGON"))) {

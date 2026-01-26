@@ -16,9 +16,9 @@ test_that("apply_data_filters works with facility filter", {
   root <- get_project_root()
   source(file.path(root, "apps/ground_prehatch_progress/data_functions.R"), local = TRUE)
   
-  # Create sample data similar to what load_raw_data returns
+  # Create sample data similar to what load_raw_data returns (STANDARDIZED format)
   test_data <- list(
-    ground_sites = data.frame(
+    sites = data.frame(
       sitecode = c("020207-001", "700407-010", "021335-005"),
       facility = c("N", "Sj", "N"),
       acres = c(0.50, 0.25, 1.20),
@@ -27,7 +27,7 @@ test_that("apply_data_filters works with facility filter", {
       zone = c("1", "1", "2"),
       stringsAsFactors = FALSE
     ),
-    ground_treatments = data.frame(
+    treatments = data.frame(
       sitecode = c("020207-001", "700407-010"),
       facility = c("N", "Sj"),
       inspdate = as.Date(c("2025-04-16", "2025-05-07")),
@@ -35,18 +35,19 @@ test_that("apply_data_filters works with facility filter", {
       fosarea = c("0204", "7002"),
       zone = c("1", "1"),
       stringsAsFactors = FALSE
-    )
+    ),
+    total_count = 3
   )
   
   # Test filtering by facility
   result <- apply_data_filters(test_data, facility_filter = "N")
-  expect_equal(nrow(result$ground_sites), 2)
-  expect_true(all(result$ground_sites$facility == "N"))
+  expect_equal(nrow(result$sites), 2)
+  expect_true(all(result$sites$facility == "N"))
   
   # Test filtering by zone
   result <- apply_data_filters(test_data, zone_filter = "1")
-  expect_equal(nrow(result$ground_sites), 2)
-  expect_true(all(result$ground_sites$zone == "1"))
+  expect_equal(nrow(result$sites), 2)
+  expect_true(all(result$sites$zone == "1"))
 })
 
 test_that("apply_data_filters handles NULL filters correctly", {
@@ -54,7 +55,7 @@ test_that("apply_data_filters handles NULL filters correctly", {
   source(file.path(root, "apps/ground_prehatch_progress/data_functions.R"), local = TRUE)
   
   test_data <- list(
-    ground_sites = data.frame(
+    sites = data.frame(
       sitecode = c("020207-001", "700407-010"),
       facility = c("N", "Sj"),
       acres = c(0.50, 0.25),
@@ -63,7 +64,7 @@ test_that("apply_data_filters handles NULL filters correctly", {
       zone = c("1", "2"),
       stringsAsFactors = FALSE
     ),
-    ground_treatments = data.frame(
+    treatments = data.frame(
       sitecode = c("020207-001"),
       facility = c("N"),
       inspdate = as.Date(c("2025-04-16")),
@@ -71,7 +72,8 @@ test_that("apply_data_filters handles NULL filters correctly", {
       fosarea = c("0204"),
       zone = c("1"),
       stringsAsFactors = FALSE
-    )
+    ),
+    total_count = 2
   )
   
   # With NULL filters, all data should be returned
@@ -80,8 +82,8 @@ test_that("apply_data_filters handles NULL filters correctly", {
                                foreman_filter = NULL, 
                                zone_filter = NULL)
   
-  expect_equal(nrow(result$ground_sites), 2)
-  expect_equal(nrow(result$ground_treatments), 1)
+  expect_equal(nrow(result$sites), 2)
+  expect_equal(nrow(result$treatments), 1)
 })
 
 test_that("filter_ground_data handles filters", {

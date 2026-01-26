@@ -160,8 +160,8 @@ server <- function(input, output, session) {
     
     # Process current progress data using captured input values
     processed <- process_current_data(
-      drone_sites = filtered$drone_sites,
-      drone_treatments = filtered$drone_treatments,
+      drone_sites = filtered$sites,
+      drone_treatments = filtered$treatments,
       zone_filter = inputs$zone_filter,
       combine_zones = inputs$combine_zones,
       expiring_days = inputs$expiring_days,
@@ -379,7 +379,7 @@ server <- function(input, output, session) {
       data$y_active <- data$active_count
       data$y_expiring <- data$expiring_count
     } else {  # treated_acres
-      data$y_total <- data$total_treated_acres
+      data$y_total <- data$total_acres
       data$y_active <- data$active_acres
       data$y_expiring <- data$expiring_acres
     }
@@ -454,7 +454,7 @@ server <- function(input, output, session) {
       prehatch_only = inputs$prehatch_only
     )
     
-    if (nrow(filtered$drone_treatments) == 0) {
+    if (is.null(filtered$treatments) || nrow(filtered$treatments) == 0) {
       return(DT::datatable(
         data.frame("No data available" = character(0)),
         options = list(pageLength = 15, scrollX = TRUE),
@@ -468,7 +468,7 @@ server <- function(input, output, session) {
     expiring_end_date <- current_date + inputs$expiring_days
     
     # Calculate treatment status
-    treatments_with_status <- filtered$drone_treatments %>%
+    treatments_with_status <- filtered$treatments %>%
       mutate(
         treatment_end_date = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
         is_active = treatment_end_date >= current_date,
@@ -481,10 +481,10 @@ server <- function(input, output, session) {
       )
     
     # Create sitecode summary table - include ALL sites (active, expiring, AND expired)
-    all_sites <- filtered$drone_sites
+    all_sites <- filtered$sites
     
     # Get latest treatment for each site
-    latest_treatments <- filtered$drone_treatments %>%
+    latest_treatments <- filtered$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate)) %>%
       slice(1) %>%
@@ -510,7 +510,7 @@ server <- function(input, output, session) {
       ) %>%
       # Count treatments per site
       left_join(
-        filtered$drone_treatments %>% 
+        filtered$treatments %>% 
           group_by(sitecode) %>% 
           summarise(
             treatments = n(),
@@ -1065,14 +1065,14 @@ server <- function(input, output, session) {
         prehatch_only = inputs$prehatch_only
       )
       
-      if (nrow(filtered$drone_treatments) > 0) {
+      if (!is.null(filtered$treatments) && nrow(filtered$treatments) > 0) {
         # Get current date for active/expiring calculations
         current_date <- as.Date(inputs$analysis_date)
         expiring_start_date <- current_date
         expiring_end_date <- current_date + inputs$expiring_days
         
         # Calculate treatment status
-        treatments_with_status <- filtered$drone_treatments %>%
+        treatments_with_status <- filtered$treatments %>%
           mutate(
             treatment_end_date = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
             is_active = treatment_end_date >= current_date,
@@ -1085,7 +1085,7 @@ server <- function(input, output, session) {
           )
         
         # Create sitecode summary table
-        all_sites <- filtered$drone_sites
+        all_sites <- filtered$sites
         latest_treatments <- treatments_with_status %>%
           group_by(sitecode) %>%
           slice_max(inspdate, with_ties = FALSE) %>%

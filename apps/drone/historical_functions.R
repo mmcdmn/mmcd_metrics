@@ -10,28 +10,35 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   start_date <- as.Date(paste0(start_year, "-01-01"))
   end_date <- as.Date(paste0(end_year, "-12-31"))
   
-  # Load raw data with archive
-  raw_data <- load_raw_data(analysis_date = start_date, include_archive = TRUE, 
+  # Load raw data with archive - use END date as analysis_date so all treatments in range are included
+  # The year filtering is done via start_year/end_year params
+  raw_data <- load_raw_data(analysis_date = end_date, include_archive = TRUE, 
                            start_year = start_year, end_year = end_year)
   
-  if (is.null(raw_data) || is.null(raw_data$drone_treatments) || nrow(raw_data$drone_treatments) == 0) {
+  # Robust check for empty data - handle NULL, empty df, or missing keys
+  if (is.null(raw_data) || 
+      is.null(raw_data$treatments) || 
+      !is.data.frame(raw_data$treatments) ||
+      nrow(raw_data$treatments) == 0 ||
+      is.null(raw_data$sites) ||
+      !is.data.frame(raw_data$sites)) {
     return(data.frame())
   }
   
-  drone_sites <- raw_data$drone_sites
-  drone_treatments <- raw_data$drone_treatments %>%
+  drone_sites <- raw_data$sites
+  drone_treatments <- raw_data$treatments %>%
     filter(inspdate >= start_date & inspdate <= end_date)
   
   # Apply filters using shared function from data_functions.R
   filtered_data <- apply_data_filters(
-    list(drone_sites = drone_sites, drone_treatments = drone_treatments),
+    list(sites = drone_sites, treatments = drone_treatments, total_count = nrow(drone_sites)),
     facility_filter = facility_filter,
     foreman_filter = foreman_filter,
     zone_filter = zone_filter,
     prehatch_only = prehatch_only
   )
-  drone_sites <- filtered_data$drone_sites
-  drone_treatments <- filtered_data$drone_treatments
+  drone_sites <- filtered_data$sites
+  drone_treatments <- filtered_data$treatments
   
   # Determine if zones should be shown separately
   show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
@@ -149,15 +156,25 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   start_year <- as.integer(hist_start_year[1])
   end_year <- as.integer(hist_end_year[1])
   
-  # Use consolidated load_raw_data with archive support
-  raw_data <- load_raw_data(include_archive = TRUE, start_year = start_year, end_year = end_year)
+  # Calculate end date for historical range
+  end_date <- as.Date(paste0(end_year, "-12-31"))
   
-  if (is.null(raw_data) || nrow(raw_data$drone_treatments) == 0) {
+  # Use consolidated load_raw_data with archive support
+  # Use END date as analysis_date so all treatments in range are included
+  raw_data <- load_raw_data(analysis_date = end_date, include_archive = TRUE, start_year = start_year, end_year = end_year)
+  
+  # Robust check for empty data - handle NULL, empty df, or missing keys
+  if (is.null(raw_data) || 
+      is.null(raw_data$treatments) || 
+      !is.data.frame(raw_data$treatments) ||
+      nrow(raw_data$treatments) == 0 ||
+      is.null(raw_data$sites) ||
+      !is.data.frame(raw_data$sites)) {
     return(data.frame())
   }
   
-  drone_treatments <- raw_data$drone_treatments
-  drone_sites <- raw_data$drone_sites
+  drone_treatments <- raw_data$treatments
+  drone_sites <- raw_data$sites
   
   # Filter drone_sites to only include sites that were treated in the time period
   treated_sitecodes <- unique(drone_treatments$sitecode)
@@ -170,14 +187,14 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   
   # Apply filters using shared function from data_functions.R
   filtered_data <- apply_data_filters(
-    list(drone_sites = drone_sites, drone_treatments = drone_treatments),
+    list(sites = drone_sites, treatments = drone_treatments, total_count = nrow(drone_sites)),
     facility_filter = facility_filter,
     foreman_filter = foreman_filter,
     zone_filter = zone_filter,
     prehatch_only = prehatch_only
   )
-  drone_sites <- filtered_data$drone_sites
-  drone_treatments <- filtered_data$drone_treatments
+  drone_sites <- filtered_data$sites
+  drone_treatments <- filtered_data$treatments
   
   if (nrow(drone_treatments) == 0 || nrow(drone_sites) == 0) {
     return(data.frame())
@@ -315,27 +332,4 @@ get_historical_processed_data <- function(hist_start_year, hist_end_year, drone_
   }
   
   return(result)
-}
-
-# Legacy function for compatibility - now uses consolidated approach
-get_shared_historical_data <- function(hist_start_year, hist_end_year, drone_types) {
-  start_year <- as.integer(hist_start_year[1])
-  end_year <- as.integer(hist_end_year[1])
-  
-  # Use consolidated load_raw_data with archive support
-  raw_data <- load_raw_data(include_archive = TRUE, start_year = start_year, end_year = end_year)
-  
-  if (is.null(raw_data)) {
-    return(list(
-      drone_sites = data.frame(),
-      current_treatments = data.frame(),
-      archive_treatments = data.frame()
-    ))
-  }
-  
-  return(list(
-    drone_sites = raw_data$drone_sites,
-    current_treatments = raw_data$drone_treatments,  # Combined current + archive
-    archive_treatments = data.frame()  # Already combined in drone_treatments
-  ))
 }

@@ -102,20 +102,47 @@ get_stub_standard_treatments <- function() {
   )
 }
 
-#' Get raw data in the format expected by each app's apply_data_filters
-#' Each app uses different key names but same underlying data
+#' Get raw data in STANDARDIZED format for all apps
+#' ALL apps now use the SAME format: list(sites, treatments, total_count)
 #' @param app_name One of: drone, ground_prehatch_progress, struct_trt, catch_basin_status
-#' @return List with sites and treatments in app-specific format
+#' @return List with standardized format: list(sites, treatments, total_count)
 get_stub_raw_data_for_app <- function(app_name) {
-  sites <- get_stub_standard_sites()
-  treatments <- get_stub_standard_treatments()
-  
-  switch(app_name,
-    "drone" = list(drone_sites = sites, drone_treatments = treatments),
-    "ground_prehatch_progress" = list(ground_sites = sites, ground_treatments = treatments),
-    "struct_trt" = list(struct_sites = sites, struct_treatments = treatments),
-    "catch_basin_status" = list(cb_sites = sites, cb_treatments = treatments),
-    stop(paste("Unknown app:", app_name))
+  # All apps return the SAME standardized format
+  if (app_name == "catch_basin_status") {
+    # Catch basin uses aggregated section data
+    agg_data <- create_stub_catch_basin_aggregated_data()
+    return(list(
+      sites = agg_data,
+      treatments = agg_data,
+      total_count = sum(agg_data$total_count)
+    ))
+  } else {
+    # All other apps use individual site/treatment records
+    sites <- get_stub_standard_sites()
+    treatments <- get_stub_standard_treatments()
+    return(list(
+      sites = sites,
+      treatments = treatments,
+      total_count = nrow(sites)
+    ))
+  }
+}
+
+#' Create stub catch basin aggregated data (matches load_raw_data output format)
+#' @return data.frame with aggregated catch basin status data
+create_stub_catch_basin_aggregated_data <- function() {
+  data.frame(
+    facility = c("N", "N", "Sj", "E", "Sr"),
+    zone = c("1", "2", "1", "1", "2"),
+    fosarea = c("0204", "0204", "7002", "0301", "0501"),
+    sectcode = c("020125-", "020207-", "700407-", "620123-", "500123-"),
+    total_count = c(50L, 30L, 40L, 25L, 35L),
+    active_count = c(40L, 25L, 35L, 20L, 30L),
+    expiring_count = c(5L, 3L, 4L, 2L, 3L),
+    expired_count = c(5L, 2L, 1L, 3L, 2L),
+    facility_full = c("Navarre", "Navarre", "St. Joseph", "East", "Shoreview"),
+    foreman_name = c("FOS1", "FOS1", "FOS2", "FOS3", "FOS4"),
+    stringsAsFactors = FALSE
   )
 }
 

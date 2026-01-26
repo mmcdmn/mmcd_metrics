@@ -192,7 +192,7 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     withProgress(message = "Loading catch basin data...", value = 0.5, {
-      data <- load_catch_basin_data(
+      data <- load_raw_data(
         facility_filter = inputs$facility_filter,
         foreman_filter = inputs$foreman_filter,
         zone_filter = inputs$zone_filter,

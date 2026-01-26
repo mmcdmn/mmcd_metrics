@@ -146,14 +146,18 @@ if (exists("TESTING_MODE_ISOLATED") && TESTING_MODE_ISOLATED) {
   # Stub: is_valid_filter (from db_helpers)
   # Checks if a filter has valid selections (not NULL, not empty, not just "all")
   is_valid_filter <- function(filter_values, case_sensitive = FALSE) {
-    if (is.null(filter_values)) return(FALSE)
-    if (length(filter_values) == 0) return(FALSE)
+    if (is.null(filter_values) || length(filter_values) == 0) {
+      return(FALSE)
+    }
     
-    # Check for "all" option
-    check_values <- if (case_sensitive) filter_values else tolower(filter_values)
-    if (length(check_values) == 1 && check_values[1] == "all") return(FALSE)
+    # Check for "all" value (case-insensitive by default)
+    all_check <- if (case_sensitive) {
+      "all" %in% filter_values || "All" %in% filter_values
+    } else {
+      "all" %in% tolower(filter_values)
+    }
     
-    return(TRUE)
+    return(!all_check)
   }
   
   cat("✓ Test stubs loaded - database functions mocked with real sample data\n")

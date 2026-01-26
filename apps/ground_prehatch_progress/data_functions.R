@@ -1,8 +1,10 @@
 # Ground Prehatch Progress - Data Functions
 # Functions for fetching and processing ground prehatch data
 
-# Source shared helpers
-source("../../shared/db_helpers.R")
+# Source shared helpers (only if not already loaded - allows use from district_overview)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
+}
 
 # Unified function to load raw ground prehatch data 
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 

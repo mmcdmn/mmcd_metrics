@@ -1,6 +1,6 @@
-# District Overview - Data Functions
-# Aggregates ALL MMCD data by ZONE (P1 vs P2) for the top-level district view
+# Facilities Overview - Data Functions
 # REUSES existing functions from other apps - no duplicate SQL!
+# Groups data by FACILITY for comparison
 # 
 # SOLUTION FOR FUNCTION NAME COLLISIONS:
 # Instead of sourcing all files at once (which causes collisions),
@@ -56,39 +56,22 @@ order_facilities <- function(data, separate_zones = FALSE) {
 # can access db_helpers functions (get_db_connection, is_valid_filter, etc.)
 # that are already loaded in the global environment by app.R
 
-# Determine base path for sourcing other apps
-# Works both when run from Shiny (working dir is app folder) and from Rscript
-get_apps_base_path <- function() {
-  # Check if running in Shiny context (working dir is the app folder)
-  if (file.exists("../catch_basin_status/data_functions.R")) {
-    return("..")
-  }
-  # Check for absolute server path
-  if (file.exists("/srv/shiny-server/apps/catch_basin_status/data_functions.R")) {
-    return("/srv/shiny-server/apps")
-  }
-  # Fallback to relative
-  return("..")
-}
-
-apps_base <- get_apps_base_path()
-
 # Load catch basin functions in isolated environment
 catch_basin_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "catch_basin_status/data_functions.R"), local = catch_basin_env)
+source("../catch_basin_status/data_functions.R", local = catch_basin_env)
 
 # Load drone functions in isolated environment  
 drone_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "drone/data_functions.R"), local = drone_env)
-source(file.path(apps_base, "drone/display_functions.R"), local = drone_env)
+source("../drone/data_functions.R", local = drone_env)
+source("../drone/display_functions.R", local = drone_env)
 
 # Load ground prehatch functions in isolated environment
 ground_prehatch_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "ground_prehatch_progress/data_functions.R"), local = ground_prehatch_env)
+source("../ground_prehatch_progress/data_functions.R", local = ground_prehatch_env)
 
 # Load structure functions in isolated environment
 struct_env <- new.env(parent = globalenv())
-source(file.path(apps_base, "struct_trt/data_functions.R"), local = struct_env)
+source("../struct_trt/data_functions.R", local = struct_env)
 
 # =============================================================================
 # WRAPPER FUNCTIONS - Call existing app functions and summarize by facility
@@ -129,7 +112,7 @@ load_catch_basin_overview <- function(zone_filter = c("1", "2"),
   cat("CB: Got", nrow(data), "rows, aggregating by facility\n")
   
   # Aggregate by facility (and zone if separate)
-  # Use standardized column names from load_catch_basin_data
+  # Use standardized column names from load_raw_data
   if (separate_zones && length(zone_filter) == 2) {
     result <- data %>%
       group_by(facility, zone) %>%
@@ -368,11 +351,11 @@ load_structure_overview <- function(zone_filter = c("1", "2"),
     )
   }, error = function(e) {
     cat("Structure: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
+    return(list(sites = data.frame()))
   })
   
-  # load_raw_data returns list with sites and treatments
-  treatments <- treatment_result$sites  # sites contains treatment status info
+  # load_raw_data returns list with sites containing treatment info
+  treatments <- treatment_result$sites
   if (is.null(treatments)) treatments <- data.frame()
   
   cat("Structure: Got", nrow(treatments), "treatment rows\n")
@@ -419,268 +402,4 @@ load_structure_overview <- function(zone_filter = c("1", "2"),
   cat("Structure percentages:", paste(agg_result$display_name, check_pct$pct, "%", collapse = ", "), "\n")
   
   return(agg_result)
-}
-
-# =============================================================================
-# ZONE AGGREGATION FUNCTIONS - Aggregate ALL MMCD by zone (P1 vs P2)
-# Used by the top-level District Overview dashboard
-# =============================================================================
-
-#' Load catch basin data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_catch_basin_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 14) {
-  cat("CB by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Load all catch basin data for both zones using load_raw_data (REFACTORED function name)
-  raw_data <- tryCatch({
-    catch_basin_env$load_raw_data(
-      facility_filter = "all",
-      foreman_filter = "all",
-      zone_filter = c("1", "2"),
-      analysis_date = analysis_date,
-      expiring_days = expiring_days
-    )
-  }, error = function(e) {
-    cat("CB by Zone: load error:", e$message, "\n")
-    return(list(sites = data.frame()))
-  })
-  
-  # load_raw_data returns a list with sites, treatments, total_count
-  data <- raw_data$sites
-  
-  if (is.null(data) || nrow(data) == 0) {
-    cat("CB by Zone: No data returned\n")
-    return(data.frame())
-  }
-  
-  # Aggregate by zone only (combine all facilities)
-  result <- data %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("CB by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
-}
-
-#' Load drone data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_drone_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7) {
-  cat("Drone by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Load raw drone data
-  raw <- tryCatch({
-    drone_env$load_raw_data(
-      drone_types = c("Y", "M", "C"),
-      analysis_date = analysis_date
-    )
-  }, error = function(e) {
-    cat("Drone by Zone: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
-  
-  if (is.null(raw$sites) || nrow(raw$sites) == 0) {
-    cat("Drone by Zone: No raw sites data\n")
-    return(data.frame())
-  }
-  
-  # Apply filters
-  filtered <- tryCatch({
-    drone_env$apply_data_filters(
-      data = raw,
-      facility_filter = "all",
-      foreman_filter = "all",
-      prehatch_only = TRUE
-    )
-  }, error = function(e) {
-    cat("Drone by Zone: apply_data_filters error:", e$message, "\n")
-    return(list(sites = data.frame(), treatments = data.frame()))
-  })
-  
-  if (is.null(filtered$sites) || nrow(filtered$sites) == 0) {
-    cat("Drone by Zone: No filtered sites data\n")
-    return(data.frame())
-  }
-  
-  # Process with group_by = "mmcd_all" but we need zone data
-  # Use zone-separated processing and then aggregate by zone
-  processed <- tryCatch({
-    drone_env$process_current_data(
-      drone_sites = filtered$sites,
-      drone_treatments = filtered$treatments,
-      zone_filter = c("1", "2"),
-      combine_zones = FALSE,  # Keep zones separate
-      expiring_days = expiring_days,
-      group_by = "facility",  # Will aggregate further by zone
-      analysis_date = analysis_date
-    )
-  }, error = function(e) {
-    cat("Drone by Zone: process_current_data error:", e$message, "\n")
-    return(list(data = data.frame()))
-  })
-  
-  if (is.null(processed$data) || nrow(processed$data) == 0) {
-    cat("Drone by Zone: No processed data\n")
-    return(data.frame())
-  }
-  
-  # Extract zone from display_name - handle both "Facility (P1)" and "Facility P1" formats
-  result <- processed$data %>%
-    mutate(zone = case_when(
-      grepl("P1", display_name) ~ "1",
-      grepl("P2", display_name) ~ "2",
-      TRUE ~ NA_character_
-    )) %>%
-    filter(!is.na(zone)) %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("Drone by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
-}
-
-#' Load ground prehatch data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_ground_prehatch_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 14) {
-  cat("Ground by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Load all ground prehatch data for both zones
-  data <- tryCatch({
-    ground_prehatch_env$get_ground_prehatch_data(
-      zone_filter = c("1", "2"),
-      analysis_date = analysis_date,
-      expiring_days = expiring_days
-    )
-  }, error = function(e) {
-    cat("Ground by Zone: get_ground_prehatch_data error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(data) || nrow(data) == 0) {
-    cat("Ground by Zone: No data returned\n")
-    return(data.frame())
-  }
-  
-  # Aggregate by zone only
-  result <- data %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("Ground by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
-}
-
-#' Load structure data aggregated by zone (P1 vs P2)
-#' @param analysis_date Date to use for analysis
-#' @param expiring_days Number of days for expiring window
-#' @return Data frame with columns: zone, display_name, total, active, expiring
-load_structure_by_zone <- function(analysis_date = Sys.Date(), expiring_days = 7) {
-  cat("Structure by Zone: date =", as.character(analysis_date), "\n")
-  
-  # Get all structures for both zones
-  all_structures <- tryCatch({
-    struct_env$get_all_structures(
-      facility_filter = "all",
-      foreman_filter = "all",
-      structure_type_filter = "all",
-      priority_filter = "all",
-      status_types = c("W", "U"),
-      zone_filter = c("1", "2")
-    )
-  }, error = function(e) {
-    cat("Structure by Zone: get_all_structures error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(all_structures) || nrow(all_structures) == 0) {
-    cat("Structure by Zone: No structures data\n")
-    return(data.frame())
-  }
-  
-  # Get treatments using load_raw_data (REFACTORED function name)
-  treatment_result <- tryCatch({
-    struct_env$load_raw_data(
-      analysis_date = analysis_date,
-      expiring_days = expiring_days,
-      facility_filter = "all",
-      foreman_filter = "all",
-      structure_type_filter = "all",
-      priority_filter = "all",
-      status_types = c("W", "U"),
-      zone_filter = c("1", "2")
-    )
-  }, error = function(e) {
-    cat("Structure by Zone: load_raw_data error:", e$message, "\n")
-    return(list(sites = data.frame()))
-  })
-  
-  # load_raw_data returns list with sites containing treatment info
-  treatments <- treatment_result$sites
-  if (is.null(treatments)) treatments <- data.frame()
-  
-  # Aggregate by zone
-  agg_data <- tryCatch({
-    struct_env$aggregate_structure_data(
-      structures = all_structures,
-      treatments = treatments,
-      group_by = "facility",  # Will aggregate further by zone
-      zone_filter = c("1", "2"),
-      combine_zones = FALSE  # Keep zones separate
-    )
-  }, error = function(e) {
-    cat("Structure by Zone: aggregate_structure_data error:", e$message, "\n")
-    return(data.frame())
-  })
-  
-  if (is.null(agg_data) || nrow(agg_data) == 0) {
-    cat("Structure by Zone: No aggregated data\n")
-    return(data.frame())
-  }
-  
-  # Extract zone from display_name - handle both "Facility (P1)" and "Facility P1" formats
-  result <- agg_data %>%
-    mutate(zone = case_when(
-      grepl("P1", display_name) ~ "1",
-      grepl("P2", display_name) ~ "2",
-      TRUE ~ NA_character_
-    )) %>%
-    filter(!is.na(zone)) %>%
-    group_by(zone) %>%
-    summarize(
-      total = sum(total_count, na.rm = TRUE),
-      active = sum(active_count, na.rm = TRUE),
-      expiring = sum(expiring_count, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    mutate(display_name = paste0("P", zone)) %>%
-    arrange(zone)
-  
-  cat("Structure by Zone: Aggregated to", nrow(result), "rows\n")
-  return(result)
 }

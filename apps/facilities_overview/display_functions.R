@@ -1,5 +1,6 @@
-# District Overview - Display Functions
-# Functions for creating charts and visualizations for the overview dashboard
+# Facilities Overview - Display Functions
+# Functions for creating charts and visualizations for the facilities overview dashboard
+# Compares facility-to-facility treatment progress
 
 #' Create an overview chart showing treatment progress
 #' @param data Data frame with columns: facility, total, active, expiring, display_name
@@ -190,85 +191,4 @@ create_percentage_chart <- function(data, theme = "MMCD") {
   ggplotly(p, tooltip = "text") %>%
     layout(margin = list(l = 80, r = 20, t = 10, b = 50)) %>%
     config(displayModeBar = FALSE)
-}
-
-#' Create a zone-level chart showing P1 vs P2 with click capability
-#' Used by the top-level District Overview dashboard
-#' @param data Data frame with columns: zone, display_name, total, active, expiring
-#' @param title Chart title
-#' @param y_label Y-axis label
-#' @param theme Color theme name
-#' @param chart_id Unique ID for this chart (used for plotly source)
-#' @return Plotly chart object with click event support
-create_zone_chart <- function(data, title, y_label, theme = "MMCD", chart_id = "chart") {
-  if (is.null(data) || nrow(data) == 0) {
-    return(create_empty_chart(title, "No data available"))
-  }
-  
-  # Get status colors from db_helpers with theme support
-  status_colors <- get_status_colors(theme = theme)
-  
-  # Prepare data for layered bars
-  data <- data %>%
-    mutate(
-      y_total = total,
-      y_active = pmax(0, active - expiring),  # Active only (not including expiring)
-      y_expiring = expiring,
-      pct = round(100 * active / pmax(1, total), 1),
-      # Tooltips
-      tooltip_text = paste0(
-        "<b>", display_name, "</b><br>",
-        "Total: ", format(total, big.mark = ","), "<br>",
-        "Active: ", format(active, big.mark = ","), 
-        " (", pct, "%)<br>",
-        "Expiring: ", format(expiring, big.mark = ","), "<br>",
-        "<i>Click to drill down</i>"
-      )
-    )
-  
-  # Ensure display_name is ordered (P1, P2)
-  data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
-  
-  # Create base ggplot with layered bars (vertical for zone chart)
-  p <- ggplot(data, aes(x = display_name)) +
-    # Gray background - total/untreated
-    geom_bar(aes(y = y_total, text = tooltip_text), 
-             stat = "identity", fill = "gray70", alpha = 0.4) +
-    # Green layer - active treatments (stacked from bottom)
-    geom_bar(aes(y = y_active + y_expiring), 
-             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-    # Orange layer - expiring (at the bottom of the active portion)
-    geom_bar(aes(y = y_expiring), 
-             stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-    # Add percentage labels on top of bars
-    geom_text(aes(y = y_total + max(y_total) * 0.02, label = paste0(pct, "%")),
-              size = 5, fontface = "bold") +
-    labs(
-      title = NULL,
-      x = NULL,
-      y = y_label
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(face = "bold", size = 12),
-      axis.text = element_text(size = 14, face = "bold"),
-      panel.grid.minor = element_blank(),
-      legend.position = "none"
-    )
-  
-  # Convert to plotly with custom tooltip and click event source
-  plotly_chart <- ggplotly(p, tooltip = "text", source = chart_id) %>%
-    layout(
-      margin = list(l = 50, r = 20, t = 20, b = 50),
-      hoverlabel = list(
-        bgcolor = "white",
-        font = list(size = 12),
-        bordercolor = "black"
-      )
-    ) %>%
-    config(displayModeBar = FALSE) %>%
-    event_register("plotly_click")
-  
-  return(plotly_chart)
 }

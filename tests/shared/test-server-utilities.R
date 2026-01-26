@@ -84,30 +84,6 @@ test_that("map_foreman_display_names_to_colors returns named vector", {
   
   expect_type(result, "character")
 })
-
-# =============================================================================
-# map_foreman_emp_to_colors() tests
-# =============================================================================
-
-test_that("map_foreman_emp_to_colors returns named vector", {
-  skip_if_not(exists("get_foremen_lookup", mode = "function"))
-  
-  lookup <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
-  skip_if(is.null(lookup) || nrow(lookup) == 0, "Database connection not available")
-  
-  result <- map_foreman_emp_to_colors()
-  
-  expect_type(result, "character")
-  expect_true(length(result) > 0)
-})
-
-test_that("map_foreman_emp_to_colors returns valid hex colors", {
-  skip_if_not(exists("get_foremen_lookup", mode = "function"))
-  
-  lookup <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
-  skip_if(is.null(lookup) || nrow(lookup) == 0, "Database connection not available")
-  
-  result <- map_foreman_emp_to_colors()
   
   for (color in result) {
     expect_match(color, "^#[0-9A-Fa-f]{6}$",

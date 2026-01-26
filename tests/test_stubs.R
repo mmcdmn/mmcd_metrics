@@ -205,14 +205,27 @@ if (exists("TESTING_MODE_ISOLATED") && TESTING_MODE_ISOLATED) {
   }
   
   # Stub: get_themed_foreman_colors (from db_helpers)
-  # Returns a set of distinct colors for foremen
+  # Returns a named vector where names are foreman shortnames and values are hex colors
   get_themed_foreman_colors <- function(theme = "MMCD", n = 20) {
+    # Get foreman data to create proper names
+    foremen_data <- get_foremen_lookup()
+    
     colors <- c(
       "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
       "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
       "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
       "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"
     )
+    
+    # Create named vector using foreman shortnames
+    if (nrow(foremen_data) > 0) {
+      color_count <- min(nrow(foremen_data), length(colors))
+      result <- colors[1:color_count]
+      names(result) <- foremen_data$shortname[1:color_count]
+      return(result)
+    }
+    
+    # Fallback for when no foreman data available
     if (n <= length(colors)) {
       return(colors[1:n])
     }

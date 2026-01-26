@@ -1,7 +1,6 @@
-# District Overview - UI Helper Functions
-# Creates the user interface for the district overview dashboard
-# Top-level view showing ALL MMCD aggregated by zone (P1 vs P2)
-# Click on a zone bar to drill down to Facilities Overview
+# Facilities Overview - UI Helper Functions
+# Creates the user interface for the facilities overview dashboard
+# Compares facility-to-facility performance
 
 #' Create the main UI for the district overview app
 #' @return Shiny UI object
@@ -10,7 +9,7 @@ district_overview_ui <- function() {
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
     
-    # JavaScript for filter info toggle and navigation
+    # JavaScript for filter info toggle
     tags$head(
       tags$script(HTML("
         function toggleFilterInfo(id) {
@@ -33,10 +32,6 @@ district_overview_ui <- function() {
               t.classList.remove('show');
             });
           }
-        });
-        // Handle navigation from Shiny
-        Shiny.addCustomMessageHandler('navigate', function(url) {
-          window.location.href = url;
         });
       "))
     ),
@@ -176,11 +171,11 @@ district_overview_ui <- function() {
     
     # Page Header
     div(class = "page-header",
-      h1("District Overview Dashboard"),
-      div(class = "subtitle", "All MMCD treatment progress by zone - Click a bar to drill down to Facilities")
+      h1("Facilities Overview Dashboard"),
+      div(class = "subtitle", "Compare treatment progress across all facilities")
     ),
     
-    # Controls Panel - Same filters as facilities_overview for consistency
+    # Controls Panel
     div(class = "controls-panel",
       fluidRow(
         column(2,

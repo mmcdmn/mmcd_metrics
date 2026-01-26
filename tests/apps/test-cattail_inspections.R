@@ -34,6 +34,8 @@ test_that("historical_functions can be sourced without errors", {
 })
 
 test_that("create_progress_plot handles empty data", {
+  skip_if_not_installed("ggplot2")
+  library(ggplot2)  # Need to load ggplot2 for functions to work
   root <- get_project_root()
   source(file.path(root, "apps/cattail_inspections/progress_functions.R"), local = TRUE)
   
@@ -52,6 +54,8 @@ test_that("create_progress_plot handles empty data", {
 })
 
 test_that("create_treatment_plan_plot_with_data handles empty data", {
+  skip_if_not_installed("ggplot2")
+  library(ggplot2)  # Need to load ggplot2 for functions to work
   root <- get_project_root()
   source(file.path(root, "apps/cattail_inspections/planned_treatment_functions.R"), local = TRUE)
   
@@ -74,6 +78,7 @@ test_that("create_treatment_plan_plot_with_data handles empty data", {
 })
 
 test_that("create_historical_progress_plot handles empty data", {
+  skip_if_not_installed("plotly")
   root <- get_project_root()
   source(file.path(root, "apps/cattail_inspections/historical_functions.R"), local = TRUE)
   

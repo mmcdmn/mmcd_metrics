@@ -121,10 +121,14 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
   return(paste(conditions, collapse = " "))
 }
 
-# Function to get current structure treatment data
-get_current_structure_data <- function(analysis_date = Sys.Date(), expiring_days = 7, facility_filter = "all", foreman_filter = "all", structure_type_filter = "all", priority_filter = "all", status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
+# Function to get current structure treatment data (STANDARD FUNCTION - renamed from get_current_structure_data)
+load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
+                          start_year = NULL, end_year = NULL, include_geometry = FALSE,
+                          expiring_days = 7, facility_filter = "all", foreman_filter = "all", 
+                          structure_type_filter = "all", priority_filter = "all", 
+                          status_types = c("D", "W", "U"), zone_filter = c("1", "2")) {
   con <- get_db_connection()
-  if (is.null(con)) return(data.frame())
+  if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
   tryCatch({
     # Query for current structure treatments using gis_sectcode for zone, fosarea, and facility
@@ -146,6 +150,8 @@ LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE trt.list_type = 'STR'
   AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+  AND trt.inspdate <= '%s'::date
+  AND loc.startdate <= '%s'::date
 %s
 %s
 %s
@@ -153,6 +159,8 @@ WHERE trt.list_type = 'STR'
 %s
 ORDER BY trt.sitecode, trt.inspdate DESC
 ",
+      analysis_date,
+      analysis_date,
       get_facility_condition(facility_filter),
       get_foreman_condition(foreman_filter),
       get_structure_type_condition(structure_type_filter),
@@ -194,7 +202,11 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
         {map_facility_names(.)}
     }
     
+    # Return STANDARDIZED format - same as all other apps
+    # For struct_trt, each treatment row IS a unique site (due to DISTINCT ON sitecode)
+    # So sites = treatments (they're the same data here)
     return(list(
+      sites = current_data,
       treatments = current_data,
       total_count = total_count
     ))
@@ -202,8 +214,51 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
   }, error = function(e) {
     warning(paste("Error loading current structure data:", e$message))
     if (!is.null(con)) safe_disconnect(con)
-    return(list(treatments = data.frame(), total_count = 0))
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   })
+}
+
+#' Apply filters to structure data - STANDARDIZED FORMAT
+#' Standard function to filter structure data
+#' @param data The result from load_raw_data (list with sites, treatments, total_count)
+#' @param facility_filter Vector of selected facilities
+#' @param foreman_filter Vector of selected foremen  
+#' @param zone_filter Vector of selected zones
+#' @return Filtered data list with standardized keys
+apply_data_filters <- function(data, facility_filter = NULL,
+                              foreman_filter = NULL, zone_filter = NULL) {
+  # Use standardized keys
+  sites <- data$sites
+  treatments <- data$treatments
+  
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  }
+  
+  # Apply facility filter
+  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+    sites <- sites %>% filter(facility %in% facility_filter)
+    treatments <- treatments %>% filter(facility %in% facility_filter)
+  }
+  
+  # Apply foreman filter
+  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
+    sites <- sites %>% filter(foreman %in% foreman_filter)
+    treatments <- treatments %>% filter(foreman %in% foreman_filter)
+  }
+  
+  # Apply zone filter  
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    sites <- sites %>% filter(zone %in% zone_filter)
+    treatments <- treatments %>% filter(zone %in% zone_filter)
+  }
+  
+  # Return STANDARDIZED format
+  return(list(
+    sites = sites,
+    treatments = treatments,
+    total_count = data$total_count  # Keep original total_count from universe
+  ))
 }
 
 # Function to get historical structure treatment data

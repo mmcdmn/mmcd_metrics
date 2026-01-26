@@ -109,7 +109,7 @@ create_value_boxes <- function(data, display_metric = "sites") {
   if (display_metric == "treated_acres") {
     # Calculate totals for acres
     total_count_var <- sum(data$total_count, na.rm = TRUE)
-    total_acres <- sum(data$total_treated_acres, na.rm = TRUE)
+    total_acres <- sum(data$total_acres, na.rm = TRUE)
     active_acres <- sum(data$active_acres, na.rm = TRUE)
     expiring_acres <- sum(data$expiring_acres, na.rm = TRUE)
     
@@ -277,12 +277,7 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     # P1 and P2 separate bars
     total_count <- drone_sites %>%
       group_by(combined_group, zone) %>%
-      summarize(total_count = n(), .groups = "drop")
-    
-    # Calculate actual treated acres from treatments
-    treated_acres_summary <- drone_treatments %>%
-      group_by(combined_group, zone) %>%
-      summarize(total_treated_acres = sum(treated_acres, na.rm = TRUE), .groups = "drop")
+      summarize(total_count = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     
     active_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"))
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, c("combined_group", "zone"), "is_expiring")
@@ -290,12 +285,7 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     # P1+P2 combined but not MMCD - combine by group but not by zone
     total_count <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
-      summarize(total_count = n(), .groups = "drop")
-    
-    # Calculate actual treated acres from treatments  
-    treated_acres_summary <- drone_treatments %>%
-      group_by(!!sym(group_col)) %>%
-      summarize(total_treated_acres = sum(treated_acres, na.rm = TRUE), .groups = "drop")
+      summarize(total_count = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     
     active_treatments <- safe_aggregate_treatments(drone_treatments, group_col)
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
@@ -303,12 +293,7 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
     # Single zone or MMCD all grouping
     total_count <- drone_sites %>%
       group_by(!!sym(group_col)) %>%
-      summarize(total_count = n(), .groups = "drop")
-    
-    # Calculate actual treated acres from treatments
-    treated_acres_summary <- drone_treatments %>%
-      group_by(!!sym(group_col)) %>%
-      summarize(total_treated_acres = sum(treated_acres, na.rm = TRUE), .groups = "drop")
+      summarize(total_count = n(), total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
     
     active_treatments <- safe_aggregate_treatments(drone_treatments, group_col)
     expiring_treatments <- safe_aggregate_treatments(drone_treatments, group_col, "is_expiring")
@@ -318,13 +303,11 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
   if (show_zones_separately) {
     # P1 and P2 separate
     combined_data <- total_count %>%
-      left_join(treated_acres_summary, by = c("combined_group", "zone")) %>%
       left_join(active_treatments, by = c("combined_group", "zone")) %>%
       left_join(expiring_treatments, by = c("combined_group", "zone"))
   } else {
     # P1+P2 combined OR single zone OR MMCD grouping
     combined_data <- total_count %>%
-      left_join(treated_acres_summary, by = group_col) %>%
       left_join(active_treatments, by = group_col) %>%
       left_join(expiring_treatments, by = group_col)
   }
@@ -332,11 +315,11 @@ process_current_data <- function(drone_sites, drone_treatments, zone_filter, com
   # Fill missing values and round acres
   combined_data <- combined_data %>%
     mutate(
+      total_acres = ifelse(is.na(total_acres), 0, round(total_acres, 2)),
       active_count = ifelse(is.na(active_count), 0, active_count),
       active_acres = ifelse(is.na(active_acres), 0, round(active_acres, 2)),
       expiring_count = ifelse(is.na(expiring_count), 0, expiring_count),
-      expiring_acres = ifelse(is.na(expiring_acres), 0, round(expiring_acres, 2)),
-      total_treated_acres = ifelse(is.na(total_treated_acres), 0, round(total_treated_acres, 2))
+      expiring_acres = ifelse(is.na(expiring_acres), 0, round(expiring_acres, 2))
     )
   
   # Add display names and color mapping keys

@@ -219,7 +219,7 @@ get_overview_config <- function(type) {
       load_function = "load_data_by_zone",
       chart_function = "create_zone_chart",
       enable_drill_down = TRUE,
-      drill_down_target = "facilities",
+      drill_down_target = "facilities_overview",
       historical_type = "weekly",     # weekly line charts
       historical_group_by = "mmcd_all" # single line, all MMCD combined
     ),

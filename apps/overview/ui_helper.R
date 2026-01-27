@@ -337,17 +337,61 @@ get_overview_css <- function() {
 #' @param zone_clicked The zone that was clicked (e.g., "P1")
 #' @param analysis_date The current analysis date
 #' @param expiring_days The current expiring days setting
+#' @param color_theme The current color theme
 #' @export
-navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days) {
-  # Extract zone number from display name (e.g., "P1" -> "1")
-  zone_num <- gsub("P", "", zone_clicked)
+navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days, color_theme = "MMCD") {
+  # Debug the input
+  cat("DEBUG navigate_to_overview: zone_clicked =", zone_clicked, "class =", class(zone_clicked), "\n")
+  
+  # Extract zone number from different possible formats
+  zone_num <- NA
+  
+  if (is.character(zone_clicked)) {
+    if (zone_clicked %in% c("P1", "P2")) {
+      # Standard format: "P1" -> "1", "P2" -> "2"
+      zone_num <- gsub("P", "", zone_clicked)
+    } else if (zone_clicked %in% c("1", "2")) {
+      # Already a number string
+      zone_num <- zone_clicked
+    }
+  } else if (is.numeric(zone_clicked)) {
+    # If it's a point number (0, 1), convert to zone
+    if (zone_clicked == 0) {
+      zone_num <- "1"  # First point = P1
+    } else if (zone_clicked == 1) {
+      zone_num <- "2"  # Second point = P2
+    }
+  }
+  
+  # Fallback: if zone_num is still NA, try to extract from the raw value
+  if (is.na(zone_num) && !is.null(zone_clicked)) {
+    # If zone_clicked is a large number, it's probably the data value, not the zone
+    # In this case, we can't determine the zone, so we'll skip the zone parameter
+    cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
+    zone_num <- NULL
+  }
+  
+  cat("DEBUG: Final zone_num =", zone_num, "\n")
   
   # Build URL with parameters
-  url <- paste0(
-    "../", target, "/?zone=", zone_num,
-    "&date=", as.character(analysis_date),
-    "&expiring=", expiring_days
-  )
+  if (!is.null(zone_num) && !is.na(zone_num)) {
+    url <- paste0(
+      "../", target, "/?zone=", zone_num,
+      "&date=", as.character(analysis_date),
+      "&expiring=", expiring_days,
+      "&theme=", color_theme
+    )
+  } else {
+    # Navigate without zone filter if we can't determine it
+    url <- paste0(
+      "../", target, "/?",
+      "date=", as.character(analysis_date),
+      "&expiring=", expiring_days,
+      "&theme=", color_theme
+    )
+  }
+  
+  cat("DEBUG: Final URL =", url, "\n")
   
   # Navigate using JavaScript
   session$sendCustomMessage("navigate", url)

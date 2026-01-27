@@ -493,6 +493,44 @@ build_overview_server <- function(input, output, session,
   }
   
   # =========================================================================
+  # DRILL-DOWN CLICK HANDLERS (for district overview)
+  # =========================================================================
+  
+  if (overview_config$enable_drill_down) {
+    lapply(metrics, function(metric_id) {
+      observeEvent(event_data("plotly_click", source = metric_id), {
+        click_data <- event_data("plotly_click", source = metric_id)
+        if (!is.null(click_data)) {
+          # For zone charts with flipped coordinates, use pointNumber to determine zone
+          # pointNumber 0 = first bar = P1, pointNumber 1 = second bar = P2
+          point_num <- click_data$pointNumber
+          
+          # Map pointNumber to zone
+          if (point_num == 0) {
+            zone_clicked <- "P1"
+          } else if (point_num == 1) {
+            zone_clicked <- "P2"  
+          } else {
+            # Fallback to original method
+            zone_clicked <- click_data$y  # For flipped coordinates
+          }
+          
+          cat("DEBUG: Click data - x:", click_data$x, "y:", click_data$y, "pointNumber:", point_num, "\n")
+          cat("DEBUG: Determined zone_clicked:", zone_clicked, "\n")
+          
+          navigate_to_overview(
+            session, 
+            overview_config$drill_down_target,
+            zone_clicked, 
+            input$custom_today, 
+            input$expiring_days,
+            current_theme()
+          )
+        }
+      })
+    })
+  }
+  # =========================================================================
   # SUMMARY STATS OUTPUT
   # =========================================================================
   

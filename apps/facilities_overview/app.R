@@ -1,7 +1,7 @@
-# District Overview Dashboard
-# Top-level dashboard showing ALL MMCD aggregated by zone (P1 vs P2)
-# Click on a zone bar to drill-down to Facilities Overview
+# Facilities Overview Dashboard
+# Shows current progress from multiple apps in a single view, grouped by FACILITY
 # Displays: Catch Basin, Drone, Ground Prehatch, and Structure Treatment progress
+# Drill-down from District Overview - receives zone filter from URL parameter
 
 # Load required libraries
 suppressPackageStartupMessages({
@@ -25,7 +25,7 @@ source("display_functions.R")
 source("ui_helper.R")
 
 # Set application name for AWS RDS monitoring
-set_app_name("district_overview")
+set_app_name("facilities_overview")
 
 # Load environment variables
 load_env_vars()
@@ -41,6 +41,41 @@ ui <- district_overview_ui()
 # =============================================================================
 
 server <- function(input, output, session) {
+  
+  # =============================================================================
+  # URL PARAMETER HANDLING - For drill-down from District Overview
+  # =============================================================================
+  
+  # Check for URL parameters on session start
+  observe({
+    query <- parseQueryString(session$clientData$url_search)
+    
+    if (!is.null(query$zone)) {
+      # Update zone filter based on URL parameter
+      zone_value <- query$zone
+      if (zone_value %in% c("1", "2")) {
+        updateSelectInput(session, "zone_filter", selected = zone_value)
+      }
+    }
+    
+    if (!is.null(query$date)) {
+      # Update analysis date based on URL parameter
+      tryCatch({
+        date_value <- as.Date(query$date)
+        updateDateInput(session, "custom_today", value = date_value)
+      }, error = function(e) {
+        cat("Invalid date parameter:", query$date, "\n")
+      })
+    }
+    
+    if (!is.null(query$expiring)) {
+      # Update expiring days based on URL parameter
+      exp_value <- as.integer(query$expiring)
+      if (!is.na(exp_value) && exp_value >= 1 && exp_value <= 30) {
+        updateSliderInput(session, "expiring_days", value = exp_value)
+      }
+    }
+  })
   
   # =============================================================================
   # THEME SUPPORT
@@ -62,111 +97,112 @@ server <- function(input, output, session) {
     zone_value <- isolate(input$zone_filter)
     
     # Parse zone filter and determine if zones should be shown separately
-    # "separate" = show P1 and P2 as separate bars
-    # "1,2" = combine P1 and P2 into single totals
-    # "1" or "2" = filter to that zone only
-    if (zone_value == "separate") {
-      zone_filter <- c("1", "2")
-      separate_zones <- TRUE
-    } else if (zone_value == "1,2") {
-      zone_filter <- c("1", "2")
-      separate_zones <- FALSE
+    # "separate" = show P1 and P2 as separate bars (e.g., "East (P1)", "East (P2)")
+    # "1,2" = show both zones combined into single facility bars
+    # "1" or "2" = single zone only
+    
+    separate_zones <- (zone_value == "separate")
+    
+    parsed_zones <- if (zone_value == "1,2" || zone_value == "separate") {
+      c("1", "2")
     } else {
-      zone_filter <- zone_value
-      separate_zones <- FALSE
+      zone_value
     }
     
     list(
+      zone_filter_raw = zone_value,
+      zone_filter = parsed_zones,
+      combine_zones = (zone_value == "1,2"),
+      separate_zones = separate_zones,
       custom_today = isolate(input$custom_today),
-      expiring_days = isolate(input$expiring_days),
-      zone_filter = zone_filter,
-      separate_zones = separate_zones
+      expiring_days = isolate(input$expiring_days)
     )
   })
   
   # =============================================================================
-  # DATA LOADING - Load data aggregated by ZONE (P1 vs P2)
+  # DATA LOADING - Load data from all apps
   # =============================================================================
   
+  # Load all facility data when refresh is clicked
   district_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    cat("Loading district data for date:", as.character(inputs$custom_today), 
-        ", zone_filter:", paste(inputs$zone_filter, collapse=","),
-        ", separate:", inputs$separate_zones, "\n")
+    # Debug logging
+    cat("Loading facilities data for date:", as.character(inputs$custom_today), 
+        "separate_zones:", inputs$separate_zones, "\n")
     
-    withProgress(message = "Loading district overview...", value = 0, {
+    withProgress(message = "Loading facilities overview...", value = 0, {
       
-      # Load Catch Basin data aggregated by zone
+      # Load Catch Basin data
       setProgress(value = 0.1, detail = "Loading catch basin data...")
       cb_data <- tryCatch({
-        result <- load_data_by_zone(
+        result <- load_data_by_facility(
           "catch_basin",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
-        cat("Catch basin by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
+        cat("Catch basin data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
       }, error = function(e) {
-        cat("ERROR in catch basin by zone:", e$message, "\n")
+        cat("ERROR in catch basin data:", e$message, "\n")
         warning(paste("Error loading catch basin data:", e$message))
-        data.frame()
+        data.frame() # Return empty df instead of NULL
       })
       
-      # Load Drone data aggregated by zone
+      # Load Drone data
       setProgress(value = 0.3, detail = "Loading drone data...")
       drone_data <- tryCatch({
-        result <- load_data_by_zone(
+        result <- load_data_by_facility(
           "drone",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
-        cat("Drone by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
+        cat("Drone data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
       }, error = function(e) {
-        cat("ERROR in drone by zone:", e$message, "\n")
+        cat("ERROR in drone data:", e$message, "\n")
         warning(paste("Error loading drone data:", e$message))
-        data.frame()
+        data.frame() # Return empty df instead of NULL
       })
       
-      # Load Ground Prehatch data aggregated by zone
+      # Load Ground Prehatch data
       setProgress(value = 0.5, detail = "Loading ground prehatch data...")
       ground_data <- tryCatch({
-        result <- load_data_by_zone(
+        result <- load_data_by_facility(
           "ground_prehatch",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
-        cat("Ground prehatch by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
+        cat("Ground prehatch data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
       }, error = function(e) {
-        cat("ERROR in ground prehatch by zone:", e$message, "\n")
+        cat("ERROR in ground prehatch data:", e$message, "\n")
         warning(paste("Error loading ground prehatch data:", e$message))
-        data.frame()
+        data.frame() # Return empty df instead of NULL
       })
       
-      # Load Structure Treatment data aggregated by zone
+      # Load Structure Treatment data
       setProgress(value = 0.7, detail = "Loading structure data...")
       struct_data <- tryCatch({
-        result <- load_data_by_zone(
+        result <- load_data_by_facility(
           "structure",
           analysis_date = inputs$custom_today,
           expiring_days = inputs$expiring_days,
           zone_filter = inputs$zone_filter,
           separate_zones = inputs$separate_zones
         )
-        cat("Structure by zone rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
+        cat("Structure data rows:", ifelse(is.null(result), 0, nrow(result)), "\n")
         result
       }, error = function(e) {
-        cat("ERROR in structure by zone:", e$message, "\n")
+        cat("ERROR in structure data:", e$message, "\n")
         warning(paste("Error loading structure data:", e$message))
-        data.frame()
+        data.frame() # Return empty df instead of NULL
       })
       
       setProgress(value = 1.0, detail = "Complete!")
@@ -181,24 +217,25 @@ server <- function(input, output, session) {
   })
   
   # =============================================================================
-  # OUTPUTS - Render charts with click handlers for drill-down
+  # OUTPUTS - Render charts
   # =============================================================================
   
   # Catch Basin Progress Chart
   output$catch_basin_chart <- renderPlotly({
     req(district_data())
     data <- district_data()$catch_basin
+    inputs <- refresh_inputs()
     
     if (is.null(data) || nrow(data) == 0) {
       return(create_empty_chart("Catch Basin Progress", "No data available"))
     }
     
-    create_zone_chart(
+    create_overview_chart(
       data = data,
       title = "Catch Basin Progress",
       y_label = "Wet Catch Basins",
       theme = current_theme(),
-      chart_id = "catch_basin"
+      metric_type = "catch_basin"
     )
   })
   
@@ -206,17 +243,18 @@ server <- function(input, output, session) {
   output$drone_chart <- renderPlotly({
     req(district_data())
     data <- district_data()$drone
+    inputs <- refresh_inputs()
     
     if (is.null(data) || nrow(data) == 0) {
       return(create_empty_chart("Drone Progress", "No data available"))
     }
     
-    create_zone_chart(
+    create_overview_chart(
       data = data,
       title = "Drone Progress",
       y_label = "Drone Sites",
       theme = current_theme(),
-      chart_id = "drone"
+      metric_type = "drone"
     )
   })
   
@@ -224,17 +262,18 @@ server <- function(input, output, session) {
   output$ground_prehatch_chart <- renderPlotly({
     req(district_data())
     data <- district_data()$ground_prehatch
+    inputs <- refresh_inputs()
     
     if (is.null(data) || nrow(data) == 0) {
       return(create_empty_chart("Ground Prehatch Progress", "No data available"))
     }
     
-    create_zone_chart(
+    create_overview_chart(
       data = data,
       title = "Ground Prehatch Progress",
       y_label = "Prehatch Sites",
       theme = current_theme(),
-      chart_id = "ground_prehatch"
+      metric_type = "ground_prehatch"
     )
   })
   
@@ -242,55 +281,19 @@ server <- function(input, output, session) {
   output$structure_chart <- renderPlotly({
     req(district_data())
     data <- district_data()$structure
+    inputs <- refresh_inputs()
     
     if (is.null(data) || nrow(data) == 0) {
       return(create_empty_chart("Structure Progress", "No data available"))
     }
     
-    create_zone_chart(
+    create_overview_chart(
       data = data,
       title = "Structure Progress",
       y_label = "Structures",
       theme = current_theme(),
-      chart_id = "structure"
+      metric_type = "structure"
     )
-  })
-  
-  # =============================================================================
-  # DRILL-DOWN CLICK HANDLERS
-  # =============================================================================
-  
-  # Handle clicks on any chart - navigate to facilities overview with zone filter
-  observeEvent(event_data("plotly_click", source = "catch_basin"), {
-    click_data <- event_data("plotly_click", source = "catch_basin")
-    if (!is.null(click_data)) {
-      zone_clicked <- click_data$x
-      navigate_to_facilities(session, zone_clicked, input$custom_today, input$expiring_days)
-    }
-  })
-  
-  observeEvent(event_data("plotly_click", source = "drone"), {
-    click_data <- event_data("plotly_click", source = "drone")
-    if (!is.null(click_data)) {
-      zone_clicked <- click_data$x
-      navigate_to_facilities(session, zone_clicked, input$custom_today, input$expiring_days)
-    }
-  })
-  
-  observeEvent(event_data("plotly_click", source = "ground_prehatch"), {
-    click_data <- event_data("plotly_click", source = "ground_prehatch")
-    if (!is.null(click_data)) {
-      zone_clicked <- click_data$x
-      navigate_to_facilities(session, zone_clicked, input$custom_today, input$expiring_days)
-    }
-  })
-  
-  observeEvent(event_data("plotly_click", source = "structure"), {
-    click_data <- event_data("plotly_click", source = "structure")
-    if (!is.null(click_data)) {
-      zone_clicked <- click_data$x
-      navigate_to_facilities(session, zone_clicked, input$custom_today, input$expiring_days)
-    }
   })
   
   # =============================================================================
@@ -392,26 +395,6 @@ server <- function(input, output, session) {
     req(district_data())
     paste("Last updated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
   })
-}
-
-#' Navigate to facilities overview with zone filter
-#' @param session Shiny session
-#' @param zone_clicked The zone that was clicked ("P1" or "P2")
-#' @param analysis_date The current analysis date
-#' @param expiring_days The current expiring days setting
-navigate_to_facilities <- function(session, zone_clicked, analysis_date, expiring_days) {
-  # Extract zone number from display name (e.g., "P1" -> "1")
-  zone_num <- gsub("P", "", zone_clicked)
-  
-  # Build URL with parameters
-  url <- paste0(
-    "../facilities_overview/?zone=", zone_num,
-    "&date=", as.character(analysis_date),
-    "&expiring=", expiring_days
-  )
-  
-  # Navigate using JavaScript
-  session$sendCustomMessage("navigate", url)
 }
 
 # Run the application

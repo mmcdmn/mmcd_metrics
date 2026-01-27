@@ -189,7 +189,7 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     withProgress(message = "Loading structure treatment data...", value = 0.5, {
-      get_current_structure_data(
+      load_raw_data(
         analysis_date = inputs$custom_today,
         expiring_days = inputs$expiring_days,
         facility_filter = inputs$facility_filter,

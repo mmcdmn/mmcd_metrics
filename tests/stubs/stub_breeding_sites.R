@@ -71,3 +71,89 @@ get_stub_drone_sites <- function() {
     stringsAsFactors = FALSE
   )
 }
+
+# =============================================================================
+# STANDARDIZED STUB DATA HELPERS (for cross-app testing)
+# =============================================================================
+
+#' Get standard sites data - SINGLE SOURCE OF TRUTH for all app tests
+#' Uses consistent sitecodes/facilities/zones/foremen across all tests
+#' @return data.frame with standard site columns
+get_stub_standard_sites <- function() {
+  sites <- get_stub_drone_sites()
+  # Ensure fosarea column exists for apps that expect it
+  sites$fosarea <- sites$foreman
+  sites
+}
+
+#' Get standard treatments data - SINGLE SOURCE OF TRUTH for all app tests
+#' @return data.frame with standard treatment columns
+get_stub_standard_treatments <- function() {
+  data.frame(
+    sitecode = c("020207-001", "020207-001", "700407-010"),
+    facility = c("N", "N", "Sj"),
+    foreman = c("0204", "0204", "7002"),
+    fosarea = c("0204", "0204", "7002"),
+    zone = c("1", "1", "1"),
+    inspdate = as.Date(c("2025-04-16", "2025-04-10", "2025-05-07")),
+    matcode = c("G2", "G2", "G2"),
+    effect_days = c(30L, 30L, 30L),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Get raw data in STANDARDIZED format for all apps
+#' ALL apps now use the SAME format: list(sites, treatments, total_count)
+#' @param app_name One of: drone, ground_prehatch_progress, struct_trt, catch_basin_status
+#' @return List with standardized format: list(sites, treatments, total_count)
+get_stub_raw_data_for_app <- function(app_name) {
+  # All apps return the SAME standardized format
+  if (app_name == "catch_basin_status") {
+    # Catch basin uses aggregated section data
+    agg_data <- create_stub_catch_basin_aggregated_data()
+    return(list(
+      sites = agg_data,
+      treatments = agg_data,
+      total_count = sum(agg_data$total_count)
+    ))
+  } else {
+    # All other apps use individual site/treatment records
+    sites <- get_stub_standard_sites()
+    treatments <- get_stub_standard_treatments()
+    return(list(
+      sites = sites,
+      treatments = treatments,
+      total_count = nrow(sites)
+    ))
+  }
+}
+
+#' Create stub catch basin aggregated data (matches load_raw_data output format)
+#' @return data.frame with aggregated catch basin status data
+create_stub_catch_basin_aggregated_data <- function() {
+  data.frame(
+    facility = c("N", "N", "Sj", "E", "Sr"),
+    zone = c("1", "2", "1", "1", "2"),
+    fosarea = c("0204", "0204", "7002", "0301", "0501"),
+    sectcode = c("020125-", "020207-", "700407-", "620123-", "500123-"),
+    total_count = c(50L, 30L, 40L, 25L, 35L),
+    active_count = c(40L, 25L, 35L, 20L, 30L),
+    expiring_count = c(5L, 3L, 4L, 2L, 3L),
+    expired_count = c(5L, 2L, 1L, 3L, 2L),
+    facility_full = c("Navarre", "Navarre", "St. Joseph", "East", "Shoreview"),
+    foreman_name = c("FOS1", "FOS1", "FOS2", "FOS3", "FOS4"),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Get expected sitecodes when filtering by facility "N"
+#' @return Character vector of sitecodes
+get_stub_expected_facility_n_sites <- function() {
+  sort(c("020125-003", "020207-001", "021335-005"))
+}
+
+#' Get expected sitecodes when filtering by zone "1"
+#' @return Character vector of sitecodes
+get_stub_expected_zone1_sites <- function() {
+  sort(c("020125-003", "020207-001", "700407-010"))
+}

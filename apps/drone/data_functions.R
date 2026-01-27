@@ -1,5 +1,10 @@
 # Data functions for drone app - handles all database queries and data processing
 
+# Source shared helpers (only if not already loaded - allows use from district_overview)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
+}
+
 #' Load raw data from database
 #' @param drone_types Vector of drone type selections
 #' @param analysis_date Date to use as "current date" for analysis (defaults to today)
@@ -7,12 +12,12 @@
 #' @param start_year Optional start year filter for treatments (for historical analysis)
 #' @param end_year Optional end year filter for treatments (for historical analysis)
 #' @param include_geometry Boolean to include spatial geometry data for mapping
-#' @return List with drone_sites and drone_treatments data frames
+#' @return List with sites and treatments data frames (STANDARDIZED format)
 load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Date(), 
                          include_archive = FALSE, start_year = NULL, end_year = NULL,
                          include_geometry = FALSE) {
   con <- get_db_connection()
-  if (is.null(con)) return(list(drone_sites = data.frame(), drone_treatments = data.frame()))
+  if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
   # Build the drone designation filter based on user selection
   drone_types_str <- paste0("'", paste(drone_types, collapse = "','"), "'")
@@ -45,20 +50,23 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
     AND e.emp_type = 'FieldSuper' 
     AND e.active = true
   WHERE (b.drone IN (%s) OR b.air_gnd = 'D')
-  AND b.enddate IS NULL %s
-  ", geom_select, drone_types_str, geom_where)
+  AND b.enddate IS NULL
+  AND b.startdate <= '%s'::date %s
+  ", geom_select, drone_types_str, analysis_date, geom_where)
   
   drone_sites <- dbGetQuery(con, drone_sites_query)
   
   # Query to get treatment information with facility and zone from gis_sectcode
-  treatments_query = "
+  # Include date filter to exclude future treatments
+  treatments_query = sprintf("
   SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
          g.facility, g.zone, g.fosarea
   FROM public.dblarv_insptrt_current t
   LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
   LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
   WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-  "
+    AND t.inspdate <= '%s'::date
+  ", analysis_date)
   
   # Add year filtering for historical analysis
   if (!is.null(start_year) && !is.null(end_year)) {
@@ -70,14 +78,15 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   
   # Get archive treatments if requested (for historical analysis)
   if (include_archive) {
-    archive_query <- "
+    archive_query <- sprintf("
     SELECT t.sitecode, g.facility, t.inspdate, t.matcode, t.acres as treated_acres, 
            NULL::character as foreman, NULL::integer as effect_days,
            g.zone, g.fosarea
     FROM public.dblarv_insptrt_archive t
     LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
     WHERE t.action = 'D'
-    "
+      AND t.inspdate <= '%s'::date
+    ", analysis_date)
     
     # Add same year filtering for archive
     if (!is.null(start_year) && !is.null(end_year)) {
@@ -116,40 +125,67 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
       inspdate = as.Date(inspdate),
       effect_days = ifelse(is.na(effect_days), 0, effect_days),
       treatment_end_date = inspdate + effect_days,
-      is_active = treatment_end_date >= current_date
+      is_active = treatment_end_date >= current_date,
+      is_expiring = is_active & treatment_end_date <= (current_date + 7)
     )
   
-  # Return all the data needed for filtering later
+  # Calculate site-level status from latest treatment per site
+  # STANDARDIZED: sites MUST have is_active and is_expiring columns
+  site_status <- drone_treatments %>%
+    group_by(sitecode) %>%
+    arrange(desc(inspdate)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    select(sitecode, is_active, is_expiring)
+  
+  drone_sites <- drone_sites %>%
+    left_join(site_status, by = "sitecode") %>%
+    mutate(
+      is_active = ifelse(is.na(is_active), FALSE, is_active),
+      is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
+    )
+  
+  # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring
   return(list(
-    drone_sites = drone_sites,
-    drone_treatments = drone_treatments
+    sites = drone_sites,
+    treatments = drone_treatments,
+    total_count = nrow(drone_sites)
   ))
 }
 
-#' Apply filters to drone data
-#' @param data List containing drone_sites and drone_treatments
+#' Apply filters to drone data - STANDARDIZED FORMAT
+#' @param data List containing sites and treatments (standardized keys)
 #' @param facility_filter Vector of selected facilities  
 #' @param foreman_filter Vector of selected foremen
 #' @param zone_filter Vector of selected zones (optional)
 #' @param prehatch_only Boolean for prehatch filter
-#' @return Filtered data list
+#' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL, 
                                foreman_filter = NULL, zone_filter = NULL, 
                                prehatch_only = FALSE) {
   
-  drone_sites <- data$drone_sites
-  drone_treatments <- data$drone_treatments
+  # Use standardized keys
+  sites <- data$sites
+  treatments <- data$treatments
+  
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  }
   
   # Apply facility filter using shared helper
   if (is_valid_filter(facility_filter)) {
-    drone_sites <- drone_sites %>% filter(facility %in% facility_filter)
-    drone_treatments <- drone_treatments %>% filter(facility %in% facility_filter)
+    sites <- sites %>% filter(facility %in% facility_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(facility %in% facility_filter)
+    }
   }
   
   # Apply zone filter (zones don't use "all" check)
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    drone_sites <- drone_sites %>% filter(zone %in% zone_filter)
-    drone_treatments <- drone_treatments %>% filter(zone %in% zone_filter)
+    sites <- sites %>% filter(zone %in% zone_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(zone %in% zone_filter)
+    }
   }
   
   # Apply foreman/FOS filter using shared helper
@@ -158,19 +194,25 @@ apply_data_filters <- function(data, facility_filter = NULL,
     foremen_lookup <- get_foremen_lookup()
     selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
     
-    drone_sites <- drone_sites %>% filter(foreman %in% selected_emp_nums)
-    drone_treatments <- drone_treatments %>% filter(foreman %in% selected_emp_nums)
+    sites <- sites %>% filter(foreman %in% selected_emp_nums)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(foreman %in% selected_emp_nums)
+    }
   }
   
-  # Apply prehatch filter
+  # Apply prehatch filter (drone-specific but still returns standard format)
   if (!is.null(prehatch_only) && prehatch_only) {
-    drone_sites <- drone_sites %>% filter(prehatch == 'PREHATCH')
-    drone_treatments <- drone_treatments %>% filter(prehatch == 'PREHATCH')
+    sites <- sites %>% filter(prehatch == 'PREHATCH')
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(prehatch == 'PREHATCH')
+    }
   }
   
+  # Return STANDARDIZED format
   return(list(
-    drone_sites = drone_sites,
-    drone_treatments = drone_treatments
+    sites = sites,
+    treatments = if(is.null(treatments)) data.frame() else treatments,
+    total_count = nrow(sites)
   ))
 }
 
@@ -419,7 +461,7 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
     include_geometry = TRUE
   )
   
-  if (nrow(raw_data$drone_sites) == 0) {
+  if (is.null(raw_data$sites) || nrow(raw_data$sites) == 0) {
     return(NULL)
   }
   
@@ -433,9 +475,9 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
   
   # Filter by zones
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    filtered_data$drone_sites <- filtered_data$drone_sites %>% 
+    filtered_data$sites <- filtered_data$sites %>% 
       filter(zone %in% zone_filter)
-    filtered_data$drone_treatments <- filtered_data$drone_treatments %>% 
+    filtered_data$treatments <- filtered_data$treatments %>% 
       filter(zone %in% zone_filter)
   }
   
@@ -445,7 +487,7 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
   expiring_end_date <- current_date + expiring_days
   
   # Get latest treatment for each site
-  latest_treatments <- filtered_data$drone_treatments %>%
+  latest_treatments <- filtered_data$treatments %>%
     group_by(sitecode) %>%
     arrange(desc(inspdate)) %>%
     slice(1) %>%
@@ -466,7 +508,7 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
     )
   
   # Join sites with treatment status
-  spatial_data <- filtered_data$drone_sites %>%
+  spatial_data <- filtered_data$sites %>%
     left_join(latest_treatments, by = "sitecode") %>%
     mutate(
       treatment_status = if_else(is.na(treatment_status), "No Treatment", treatment_status),

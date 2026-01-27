@@ -13,6 +13,7 @@ get_project_root <- function() {
 }
 
 test_that("data_functions can be sourced without errors", {
+  skip_if_not_installed("RPostgres")
   root <- get_project_root()
   expect_no_error({
     source(file.path(root, "apps/control_efficacy/data_functions.R"), local = TRUE)
@@ -27,6 +28,7 @@ test_that("checkback_functions can be sourced without errors", {
 })
 
 test_that("display_functions can be sourced without errors", {
+  skip_if_not_installed("plotly")
   root <- get_project_root()
   expect_no_error({
     source(file.path(root, "apps/control_efficacy/display_functions.R"), local = TRUE)

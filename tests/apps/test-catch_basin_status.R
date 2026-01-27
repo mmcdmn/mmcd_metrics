@@ -149,6 +149,7 @@ test_that("ui_helper functions can be sourced without errors", {
 })
 
 test_that("historical_functions can be sourced without errors", {
+  skip_if_not_installed("plotly")
   root <- get_project_root()
   expect_no_error({
     source(file.path(root, "apps/catch_basin_status/historical_functions.R"), local = TRUE)

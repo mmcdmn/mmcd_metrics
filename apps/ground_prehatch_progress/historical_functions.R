@@ -31,20 +31,26 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   start_date <- as.Date(paste0(start_year, "-01-01"))
   end_date <- as.Date(paste0(end_year, "-12-31"))
   
-  # Load raw data with archive
+  # Load raw data with archive - use END date as analysis_date so all treatments in range are included
   raw_data <- load_raw_data(
-    analysis_date = start_date, 
+    analysis_date = end_date, 
     include_archive = TRUE, 
     start_year = start_year, 
     end_year = end_year
   )
   
-  if (is.null(raw_data) || is.null(raw_data$ground_treatments) || nrow(raw_data$ground_treatments) == 0) {
+  # Robust check for empty data - handle NULL, empty df, or missing keys
+  if (is.null(raw_data) || 
+      is.null(raw_data$treatments) || 
+      !is.data.frame(raw_data$treatments) ||
+      nrow(raw_data$treatments) == 0 ||
+      is.null(raw_data$sites) ||
+      !is.data.frame(raw_data$sites)) {
     return(data.frame())
   }
   
-  ground_sites <- raw_data$ground_sites
-  ground_treatments <- raw_data$ground_treatments %>%
+  ground_sites <- raw_data$sites
+  ground_treatments <- raw_data$treatments %>%
     filter(inspdate >= start_date & inspdate <= end_date) %>%
     # Treatments already have facility, zone, fosarea from gis_sectcode join in the query
     rename(acres = treated_acres) %>%  # Rename for consistency
@@ -52,13 +58,13 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   
   # Apply filters using shared function from data_functions.R
   filtered_data <- apply_data_filters(
-    list(ground_sites = ground_sites, ground_treatments = ground_treatments),
+    list(sites = ground_sites, treatments = ground_treatments, total_count = nrow(ground_sites)),
     facility_filter = facility_filter,
     foreman_filter = foreman_filter,
     zone_filter = zone_filter
   )
-  ground_sites <- filtered_data$ground_sites
-  ground_treatments <- filtered_data$ground_treatments
+  ground_sites <- filtered_data$sites
+  ground_treatments <- filtered_data$treatments
   
   # Determine if zones should be shown separately
   show_zones_separately <- !is.null(hist_zone_display) && 

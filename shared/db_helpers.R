@@ -50,6 +50,7 @@ color_themes_paths <- c(
   "color_themes.R",
   "../../shared/color_themes.R",
   "../shared/color_themes.R",
+  "../../../shared/color_themes.R",
   "shared/color_themes.R"
 )
 
@@ -81,6 +82,7 @@ tryCatch({
     file.path(dirname(sys.frame(1)$ofile %||% ""), "db_pool.R"),
     "shared/db_pool.R",
     "../../shared/db_pool.R",
+    "../../../shared/db_pool.R",
     "db_pool.R",
     "../shared/db_pool.R"
   )

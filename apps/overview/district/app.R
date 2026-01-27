@@ -26,6 +26,7 @@ source("../metric_registry.R")
 source("../data_functions.R")
 source("../display_functions.R")
 source("../historical_functions.R")
+source("../ui_helper.R")
 source("../dynamic_ui.R")
 source("../dynamic_server.R")
 

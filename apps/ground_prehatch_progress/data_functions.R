@@ -214,11 +214,6 @@ get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = 
         end_of_year = as.Date(paste0(format(analysis_date, "%Y"), "-12-30")),
         days_until_eoy = as.numeric(end_of_year - analysis_date),
         prehatch_status = case_when(
-          # If there's a ground inspection with action=2 and wet=0 after treatment, it's skipped
-          !is.na(last_inspection_date) & !is.na(inspection_action) & !is.na(inspection_wet) &
-            inspection_action == '2' & inspection_wet == '0' & 
-            last_inspection_date > inspdate ~ ifelse(days_until_eoy > 0, "skipped", "expired"),
-          # Regular status calculation
           age > effect_days ~ "expired",
           age > (effect_days - expiring_days) ~ "expiring", 
           age <= effect_days ~ "treated",
@@ -298,11 +293,7 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
         end_of_year = as.Date(paste0(format(analysis_date, "%Y"), "-12-30")),
         days_until_eoy = as.numeric(end_of_year - analysis_date),
         prehatch_status = case_when(
-          # If there's a ground inspection with action=2 and wet=0 after treatment, it's skipped
-          !is.na(last_inspection_date) & !is.na(inspection_action) & !is.na(inspection_wet) &
-            inspection_action == '2' & inspection_wet == '0' & 
-            last_inspection_date > inspdate ~ ifelse(days_until_eoy > 0, "skipped", "expired"),
-          # Regular status calculation
+          # Regular status calculation (skipped logic removed for now - needs inspection data)
           age > effect_days ~ "expired",
           age > (effect_days - expiring_days) ~ "expiring",
           age <= effect_days ~ "treated", 

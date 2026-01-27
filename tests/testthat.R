@@ -132,6 +132,18 @@ if (dir.exists("tests/apps") && length(list.files("tests/apps", pattern = "^test
   )
 }
 
+# Run regression tests if they exist
+regression_results <- NULL
+if (dir.exists("tests/regression") && length(list.files("tests/regression", pattern = "^test-.*\\.R$")) > 0) {
+  cat("\n=== Running Regression Tests ===\n\n")
+  
+  regression_results <- test_dir(
+    "tests/regression",
+    reporter = "summary",
+    stop_on_failure = FALSE
+  )
+}
+
 # =============================================================================
 # TEST SUMMARY
 # =============================================================================
@@ -157,6 +169,16 @@ if (!is.null(app_results)) {
   total_failed <- total_failed + sum(app_results_df$failed)
   total_skipped <- total_skipped + sum(app_results_df$skipped)
   total_warnings <- total_warnings + sum(app_results_df$warning)
+}
+
+# Add regression results if they exist
+if (!is.null(regression_results)) {
+  regression_results_df <- as.data.frame(regression_results)
+  total_tests <- total_tests + sum(regression_results_df$passed) + sum(regression_results_df$failed) + sum(regression_results_df$skipped)
+  total_passed <- total_passed + sum(regression_results_df$passed)
+  total_failed <- total_failed + sum(regression_results_df$failed)
+  total_skipped <- total_skipped + sum(regression_results_df$skipped)
+  total_warnings <- total_warnings + sum(regression_results_df$warning)
 }
 
 cat(sprintf("|  Total Tests:    %4d                                                |\n", total_tests))

@@ -316,14 +316,44 @@ build_overview_server <- function(input, output, session,
           detail = paste("Loading", config$display_name, "...")
         )
         
+        # Use the correct load function based on overview type
+        load_function <- overview_config$load_function
+        
         results[[metric_id]] <- tryCatch({
-          load_data_by_zone(
-            metric = metric_id,
-            analysis_date = inputs$custom_today,
-            expiring_days = inputs$expiring_days,
-            zone_filter = inputs$zone_filter,
-            separate_zones = inputs$separate_zones
-          )
+          if (load_function == "load_data_by_zone") {
+            load_data_by_zone(
+              metric = metric_id,
+              analysis_date = inputs$custom_today,
+              expiring_days = inputs$expiring_days,
+              zone_filter = inputs$zone_filter,
+              separate_zones = inputs$separate_zones
+            )
+          } else if (load_function == "load_data_by_facility") {
+            load_data_by_facility(
+              metric = metric_id,
+              analysis_date = inputs$custom_today,
+              expiring_days = inputs$expiring_days,
+              zone_filter = inputs$zone_filter,
+              separate_zones = inputs$separate_zones
+            )
+          } else if (load_function == "load_data_by_fos") {
+            load_data_by_fos(
+              metric = metric_id,
+              analysis_date = inputs$custom_today,
+              expiring_days = inputs$expiring_days,
+              zone_filter = inputs$zone_filter,
+              separate_zones = inputs$separate_zones
+            )
+          } else {
+            # Fallback
+            load_data_by_zone(
+              metric = metric_id,
+              analysis_date = inputs$custom_today,
+              expiring_days = inputs$expiring_days,
+              zone_filter = inputs$zone_filter,
+              separate_zones = inputs$separate_zones
+            )
+          }
         }, error = function(e) {
           cat("ERROR loading current", metric_id, ":", e$message, "\n")
           data.frame()

@@ -1,6 +1,11 @@
 # Structure Treatment - Data Functions
 # Functions for fetching and processing structure treatment data
 
+# Source shared helpers (only if not already loaded - allows use from overview apps)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
+}
+
 # Helper function to construct facility filter condition for SQL
 get_facility_condition <- function(facility_filter) {
   if (is.null(facility_filter) || ("all" %in% facility_filter)) {
@@ -40,9 +45,11 @@ get_priority_condition <- function(priority) {
 }
 
 # Function to construct status condition for SQL
+# Empty list = get ALL statuses (for overview)
+# Specific list = filter to those statuses (for individual app)
 get_status_condition <- function(status_types) {
   if (is.null(status_types) || length(status_types) == 0) {
-    return("AND FALSE") # No statuses selected, return no results
+    return("") # Empty = get ALL statuses (no filter)
   } else {
     status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
     return(sprintf("AND loc.status_udw IN (%s)", status_list))
@@ -112,7 +119,8 @@ get_facility_condition_total <- function(facility_filter, structure_type_filter,
     conditions <- c(conditions, sprintf("AND loc.priority = '%s'", priority_filter))
   }
   
-  # Status condition
+  # Status condition - only filter if status_types is specified
+  # Empty list means get ALL (for overview), non-empty list means filter (for app)
   if (!is.null(status_types) && length(status_types) > 0) {
     status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
     conditions <- c(conditions, sprintf("AND loc.status_udw IN (%s)", status_list))
@@ -131,10 +139,49 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
   if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
   tryCatch({
-    # Query for current structure treatments using gis_sectcode for zone, fosarea, and facility
-    query <- sprintf(
+    # Current mode: First get ALL structures from loc_cxstruct (the universe)
+    # This ensures total_count matches what the individual app shows
+    
+    # Build zone condition for universe query
+    zone_condition <- ""
+    if (!is.null(zone_filter) && length(zone_filter) > 0) {
+      zone_list <- paste0("'", paste(zone_filter, collapse = "','"), "'")
+      zone_condition <- sprintf("AND gis.zone IN (%s)", zone_list)
+    }
+    
+    # Query ALL structures (universe) - same as get_all_structures()
+    all_structures_query <- sprintf(
       "
-SELECT DISTINCT ON (trt.sitecode)
+SELECT 
+  loc.sitecode,
+  gis.facility,
+  loc.s_type,
+  loc.priority,
+  loc.status_udw as status,
+  gis.zone,
+  gis.fosarea as foreman
+FROM public.loc_cxstruct loc
+LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+%s
+%s
+%s
+%s
+%s
+",
+      zone_condition,
+      get_facility_condition(facility_filter),
+      get_structure_type_condition(structure_type_filter),
+      get_priority_condition(priority_filter),
+      get_status_condition(status_types)
+    )
+    
+    all_structures <- dbGetQuery(con, all_structures_query)
+    
+    # Query for current treatments
+    treatments_query <- sprintf(
+      "
+SELECT
   trt.sitecode,
   trt.inspdate,
   gis.facility,
@@ -157,58 +204,112 @@ WHERE trt.list_type = 'STR'
 %s
 %s
 %s
-ORDER BY trt.sitecode, trt.inspdate DESC
 ",
       analysis_date,
       analysis_date,
+      zone_condition,
       get_facility_condition(facility_filter),
-      get_foreman_condition(foreman_filter),
       get_structure_type_condition(structure_type_filter),
       get_priority_condition(priority_filter),
       get_status_condition(status_types)
     )
     
-    current_data <- dbGetQuery(con, query)
+    # Add year filtering for historical analysis (same pattern as drone)
+    if (!is.null(start_year) && !is.null(end_year)) {
+      treatments_query <- paste0(treatments_query, sprintf(
+        " AND EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d", start_year, end_year))
+    }
     
-    # Get total structures count
-    query_total <- sprintf(
-      "
-SELECT COUNT(DISTINCT loc.sitecode)::bigint AS total_count
-FROM loc_cxstruct loc
+    current_treatments <- dbGetQuery(con, treatments_query)
+    
+    # Get archive treatments if requested (same pattern as drone)
+    if (include_archive) {
+      archive_query <- sprintf(
+        "
+SELECT
+  trt.sitecode,
+  trt.inspdate,
+  gis.facility,
+  gis.fosarea as foreman,
+  COALESCE(mat.effect_days, 30) AS effect_days,
+  loc.s_type,
+  loc.priority,
+  loc.status_udw as status,
+  gis.zone
+FROM public.dblarv_insptrt_archive trt
+LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode  
+LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-WHERE 1=1
-AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+WHERE trt.list_type = 'STR'
+  AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+  AND trt.inspdate <= '%s'::date
+%s
+%s
+%s
+%s
 %s
 ",
-      get_facility_condition_total(facility_filter, structure_type_filter, priority_filter, status_types)
-    )
+        analysis_date,
+        zone_condition,
+        get_facility_condition(facility_filter),
+        get_structure_type_condition(structure_type_filter),
+        get_priority_condition(priority_filter),
+        get_status_condition(status_types)
+      )
+      
+      # Add year filtering for archive
+      if (!is.null(start_year) && !is.null(end_year)) {
+        archive_query <- paste0(archive_query, sprintf(
+          " AND EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d", start_year, end_year))
+      }
+      
+      archive_treatments <- dbGetQuery(con, archive_query)
+      
+      # Combine current and archive treatments
+      current_treatments <- bind_rows(current_treatments, archive_treatments)
+    }
     
-    total_count <- as.integer(dbGetQuery(con, query_total)$total_count)
     safe_disconnect(con)
     
-    # Process the data
-    if (nrow(current_data) > 0) {
-      current_data <- current_data %>%
+    # Process treatments to get is_active status
+    if (nrow(current_treatments) > 0) {
+      current_treatments <- current_treatments %>%
         mutate(
           inspdate = as.Date(inspdate),
           enddate = inspdate + effect_days,
           days_since_treatment = as.numeric(analysis_date - inspdate),
           is_active = days_since_treatment <= effect_days,
           is_expiring = days_since_treatment > (effect_days - expiring_days) & days_since_treatment <= effect_days
-        ) %>%
-        # Filter by zone
-        filter(zone %in% zone_filter) %>%
-        # Map facility names
-        {map_facility_names(.)}
+        )
     }
     
-    # Return STANDARDIZED format - same as all other apps
-    # For struct_trt, each treatment row IS a unique site (due to DISTINCT ON sitecode)
-    # So sites = treatments (they're the same data here)
+    # Join treatment status to all structures
+    # Structures without treatments get is_active = FALSE
+    if (nrow(all_structures) > 0) {
+      all_structures <- map_facility_names(all_structures)
+      
+      if (nrow(current_treatments) > 0) {
+        treatment_status <- current_treatments %>%
+          select(sitecode, is_active, is_expiring)
+        
+        all_structures <- all_structures %>%
+          left_join(treatment_status, by = "sitecode") %>%
+          mutate(
+            is_active = ifelse(is.na(is_active), FALSE, is_active),
+            is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
+          )
+      } else {
+        all_structures$is_active <- FALSE
+        all_structures$is_expiring <- FALSE
+      }
+    }
+    
+    # Return STANDARDIZED format
+    # sites = ALL structures (universe), treatments = current treatments
     return(list(
-      sites = current_data,
-      treatments = current_data,
-      total_count = total_count
+      sites = all_structures,
+      treatments = current_treatments,
+      total_count = nrow(all_structures)
     ))
     
   }, error = function(e) {
@@ -366,20 +467,17 @@ AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
     total_count <- as.numeric(dbGetQuery(con, query_total_count)$total_count)
     safe_disconnect(con)
     
-    # Combine and process data
+    # Combine and process data - return data frame directly (standardized format)
     combined_data <- bind_rows(archive_data, current_data) %>%
       mutate(inspdate = as.Date(inspdate),
              enddate = inspdate + effect_days)
-    
-    return(list(
-      treatments = combined_data,
-      total_count = total_count
-    ))
+
+    return(combined_data)
     
   }, error = function(e) {
     warning(paste("Error loading historical structure data:", e$message))
     if (!is.null(con)) safe_disconnect(con)
-    return(list(treatments = data.frame(), total_count = 0))
+    return(data.frame())
   })
 }
 

@@ -1,6 +1,10 @@
 # Catch Basin Status - Data Functions
 # Functions for fetching and processing catch basin status data
-# Note: db_helpers.R is sourced by app.R before this file
+
+# Source shared helpers (only if not already loaded - allows use from overview apps)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
+}
 
 # Standard column names used across all apps:
 # - total_count: Total items in this group
@@ -226,11 +230,12 @@ apply_data_filters <- function(data, facility_filter = NULL,
     treatments <- treatments %>% filter(zone %in% zone_filter)
   }
   
-  # Return STANDARDIZED format
+  # Return STANDARDIZED format - preserve pre_aggregated flag
   return(list(
     sites = sites,
     treatments = treatments,
-    total_count = data$total_count  # Keep original total_count from universe
+    total_count = data$total_count,  # Keep original total_count from universe
+    pre_aggregated = data$pre_aggregated  # Preserve pre_aggregated flag
   ))
 }
 
@@ -381,4 +386,115 @@ process_catch_basin_data <- function(data, group_by = "facility", combine_zones 
     filter(total_count > 0 | active_count > 0)
   
   return(processed)
+}
+
+# =============================================================================
+# HISTORICAL TREATMENTS LOADER - For overview dashboards
+# =============================================================================
+
+#' Load raw historical treatments for catch basins
+#' Returns individual treatments with inspdate for weekly aggregation
+#' Standardized interface matching drone/ground_prehatch for overview use
+#' 
+#' @param start_year Start year for historical range
+#' @param end_year End year for historical range  
+#' @param zone_filter Vector of zones to include
+#' @return List with $treatments data frame containing inspdate, facility, zone columns
+#' @export
+load_historical_treatments <- function(start_year, end_year, zone_filter = c("1", "2")) {
+  con <- get_db_connection()
+  if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  
+  tryCatch({
+    # Build zone filter
+    zone_condition <- ""
+    if (!is.null(zone_filter) && length(zone_filter) > 0) {
+      zone_list <- paste0("'", paste(zone_filter, collapse = "','"), "'")
+      zone_condition <- sprintf("AND sc.zone IN (%s)", zone_list)
+    }
+    
+    # Use shared function to determine which years are in which table
+    year_ranges <- get_historical_year_ranges(con, "dblarv_insptrt_current", "dblarv_insptrt_archive", "inspdate")
+    current_years <- year_ranges$current_years
+    archive_years <- year_ranges$archive_years
+    
+    cat("DEBUG load_historical_treatments: current_years =", paste(current_years, collapse = ","), 
+        "archive_years =", paste(range(archive_years), collapse = "-"), "\n")
+    
+    treatments <- data.frame()
+    
+    # Get data from CURRENT table for recent years
+    current_year_range <- intersect(start_year:end_year, current_years)
+    if (length(current_year_range) > 0) {
+      query_current <- sprintf("
+        SELECT 
+          trt.inspdate,
+          loc.facility,
+          sc.zone,
+          loc.gid as catchbasin_id,
+          COALESCE(mat.effect_days, 28) as effect_days
+        FROM dblarv_insptrt_current trt
+        JOIN dblarv_treatment_catchbasin tcb ON trt.pkey_pg = tcb.treatment_id
+        JOIN loc_catchbasin loc ON tcb.catchbasin_id = loc.gid
+        JOIN mattype_list_targetdose mat USING (matcode)
+        LEFT JOIN gis_sectcode sc ON left(loc.sitecode, 7) = sc.sectcode
+        WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
+          AND loc.status_udw = 'W'
+          AND loc.lettergrp <> 'Z'
+          %s
+      ", min(current_year_range), max(current_year_range), zone_condition)
+      
+      cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
+      current_data <- dbGetQuery(con, query_current)
+      cat("DEBUG: Current table returned", nrow(current_data), "rows\n")
+      treatments <- bind_rows(treatments, current_data)
+    }
+    
+    # Get data from ARCHIVE table for historical years
+    archive_year_range <- intersect(start_year:end_year, archive_years)
+    if (length(archive_year_range) > 0) {
+      query_archive <- sprintf("
+        SELECT 
+          trt.inspdate,
+          loc.facility,
+          sc.zone,
+          loc.gid as catchbasin_id,
+          COALESCE(mat.effect_days, 28) as effect_days
+        FROM dblarv_insptrt_archive trt
+        JOIN dblarv_treatment_cb_archive tcb ON trt.pkey_pg = tcb.treatment_id
+        JOIN loc_catchbasin loc ON tcb.catchbasin_id = loc.gid
+        JOIN mattype_list_targetdose mat USING (matcode)
+        LEFT JOIN gis_sectcode sc ON left(loc.sitecode, 7) = sc.sectcode
+        WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
+          AND loc.status_udw = 'W'
+          AND loc.lettergrp <> 'Z'
+          %s
+      ", min(archive_year_range), max(archive_year_range), zone_condition)
+      
+      cat("DEBUG: Getting archive table data for years", min(archive_year_range), "-", max(archive_year_range), "\n")
+      archive_data <- dbGetQuery(con, query_archive)
+      cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
+      treatments <- bind_rows(treatments, archive_data)
+    }
+    
+    safe_disconnect(con)
+    
+    if (nrow(treatments) > 0) {
+      treatments <- treatments %>% mutate(inspdate = as.Date(inspdate))
+    }
+    
+    cat("DEBUG: Total treatments loaded:", nrow(treatments), "\n")
+    
+    # Return in standardized format matching other apps
+    list(
+      sites = data.frame(),
+      treatments = treatments,
+      total_count = nrow(treatments)
+    )
+    
+  }, error = function(e) {
+    warning(paste("Error loading catch basin historical treatments:", e$message))
+    if (!is.null(con)) safe_disconnect(con)
+    list(sites = data.frame(), treatments = data.frame(), total_count = 0)
+  })
 }

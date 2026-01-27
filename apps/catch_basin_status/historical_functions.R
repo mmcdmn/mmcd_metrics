@@ -188,38 +188,125 @@ create_historical_cb_data <- function(start_year, end_year,
                                       zone_filter = NULL, 
                                       foreman_filter = NULL) {
   
+  cat("DEBUG CB create_historical_cb_data called!\n")
+  cat("  - hist_time_period:", hist_time_period, "\n")
+  cat("  - hist_display_metric:", hist_display_metric, "\n")
+  cat("  - start_year:", start_year, "end_year:", end_year, "\n")
+  
   # Normalize metric names
   hist_display_metric <- gsub("weekly_", "", hist_display_metric)
-  
-  # Load historical treatment data
-  treatments <- load_historical_cb_data(
-    start_year = start_year,
-    end_year = end_year,
-    facility_filter = facility_filter,
-    zone_filter = zone_filter,
-    foreman_filter = foreman_filter
-  )
-  
-  if (is.null(treatments) || nrow(treatments) == 0) {
-    return(data.frame())
-  }
   
   # Determine if zones should be shown separately
   show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
   
   # Process based on time period
   if (hist_time_period == "yearly") {
-    # Data is already aggregated by year from the query
-    # Use the total_count which represents the number of treatments
+    # For yearly: use the pre-aggregated function (faster)
+    treatments <- load_historical_cb_data(
+      start_year = start_year,
+      end_year = end_year,
+      facility_filter = facility_filter,
+      zone_filter = zone_filter,
+      foreman_filter = foreman_filter
+    )
+    
+    if (is.null(treatments) || nrow(treatments) == 0) {
+      return(data.frame())
+    }
+    
     result <- treatments %>%
       mutate(time_period = as.character(treatment_year)) %>%
       select(time_period, facility, facility_full, zone, fosarea, foreman_name, 
-             count = total_count)  # Use total_count as the count
+             count = total_count)
   } else {
-    # Weekly aggregation not supported with this aggregated data structure
-    # Would need raw treatment data for weekly calculations
-    warning("Weekly aggregation not supported with current data structure")
-    result <- data.frame()
+    # For weekly ACTIVE treatments: count catch basins with ACTIVE treatment on each week's Friday
+    # A treatment is active if: inspdate <= week_friday AND inspdate + effect_days >= week_friday
+    
+    raw_data <- load_historical_treatments(
+      start_year = start_year,
+      end_year = end_year,
+      zone_filter = zone_filter
+    )
+    
+    cat("DEBUG CB: raw_data$treatments rows =", 
+        if (!is.null(raw_data$treatments)) nrow(raw_data$treatments) else "NULL", "\n")
+    
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) {
+      cat("DEBUG CB ERROR: No raw_data returned from load_historical_treatments\n")
+      return(data.frame())
+    }
+    
+    treatments <- raw_data$treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        effect_days = ifelse(is.na(effect_days), 28, effect_days),  # Default 28 days for CB
+        treatment_end = inspdate + effect_days
+      )
+    
+    cat("DEBUG CB: After mutate, treatments rows =", nrow(treatments), "\n")
+    
+    # Apply facility filter if provided (and not "all")
+    if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% facility_filter)) {
+      cat("DEBUG CB: Applying facility filter:", paste(facility_filter, collapse = ","), "\n")
+      treatments <- treatments %>% filter(facility %in% facility_filter)
+      cat("DEBUG CB: After facility filter, treatments rows =", nrow(treatments), "\n")
+    }
+    
+    # Build facility_full using lookup
+    facilities <- get_facility_lookup()
+    if (!is.null(facilities) && nrow(facilities) > 0) {
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      treatments$facility_full <- ifelse(
+        treatments$facility %in% names(facility_map),
+        facility_map[treatments$facility],
+        treatments$facility
+      )
+    } else {
+      treatments$facility_full <- treatments$facility
+    }
+    
+    # Generate all weeks in the date range
+    start_date <- as.Date(paste0(start_year, "-01-01"))
+    end_date <- as.Date(paste0(end_year, "-12-31"))
+    all_weeks <- seq.Date(start_date, end_date, by = "week")
+    
+    cat("DEBUG CB: Loaded", nrow(treatments), "raw treatments\n")
+    cat("DEBUG CB: Processing", length(all_weeks), "weeks\n")
+    
+    # For each week, count ACTIVE catch basins (treatments that are still active on that Friday)
+    week_data <- data.frame()
+    
+    for (week_start in all_weeks) {
+      week_friday <- as.Date(week_start) + 4  # Friday of that week
+      week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
+      
+      # Find catch basins with active treatment on that Friday
+      # Active = treatment started on or before Friday AND treatment hasn't expired yet
+      active_on_friday <- treatments %>%
+        filter(
+          inspdate <= week_friday,
+          treatment_end >= week_friday
+        )
+      
+      if (nrow(active_on_friday) > 0) {
+        # Count UNIQUE catch basins with active treatment (not total treatments)
+        active_data <- active_on_friday %>%
+          mutate(time_period = week_label) %>%
+          select(catchbasin_id, facility, facility_full, zone, time_period) %>%
+          distinct(catchbasin_id, .keep_all = TRUE)  # One count per catch basin
+        
+        week_data <- bind_rows(week_data, active_data)
+      }
+    }
+    
+    if (nrow(week_data) == 0) {
+      cat("DEBUG CB ERROR: week_data is empty after loop\n")
+      return(data.frame())
+    }
+    
+    # Each row is a unique active catch basin per week
+    result <- week_data %>%
+      mutate(count = 1)
   }
   
   # Apply grouping
@@ -236,16 +323,22 @@ create_historical_cb_data <- function(start_year, end_year,
         mutate(group_name = facility_full)
     }
   } else if (hist_group_by == "foreman") {
-    if (show_zones_separately) {
+    if (show_zones_separately && "fosarea" %in% names(result)) {
       result <- result %>%
-        group_by(time_period, fosarea, foreman_name, zone) %>%
+        group_by(time_period, fosarea, zone) %>%
         summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(group_name = paste0(foreman_name, " P", zone))
+        mutate(group_name = paste0(fosarea, " P", zone))
+    } else if ("fosarea" %in% names(result)) {
+      result <- result %>%
+        group_by(time_period, fosarea) %>%
+        summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+        mutate(group_name = fosarea)
     } else {
+      # No foreman data, fall back to mmcd_all
       result <- result %>%
-        group_by(time_period, fosarea, foreman_name) %>%
+        group_by(time_period) %>%
         summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(group_name = foreman_name)
+        mutate(group_name = "All MMCD")
     }
   } else {
     # mmcd_all
@@ -254,7 +347,8 @@ create_historical_cb_data <- function(start_year, end_year,
       summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
       mutate(group_name = "All MMCD")
   }
-  
+  cat(capture.output(head(result)), sep = "\n")
+  cat("I am here\n")
   return(result)
 }
 
@@ -301,7 +395,7 @@ format_historical_cb_table <- function(data) {
       Group = group_name,
       Count = count
     )
-  
+    cat("I am here also\n")
   return(display_data)
 } 
 

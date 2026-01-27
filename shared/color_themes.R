@@ -272,6 +272,25 @@ generate_distinct_colors <- function(n, theme = "MMCD") {
   return(colors)
 }
 
+#' Get Consistent Historical Comparison Colors
+#' 
+#' Returns standardized colors for historical comparison charts (5-Year Avg vs Current Year)
+#' 
+#' @param theme Character. Theme name (default "MMCD")
+#' @return Named list with colors for "5-Year Avg" and current year
+get_historical_comparison_colors <- function(theme = "MMCD") {
+  palette <- get_theme_palette(theme)
+  
+  # Use consistent colors across all historical comparison charts
+  # Blue for 5-Year Average, Orange for Current Year
+  colors <- list(
+    "5-Year Avg" = palette$primary[1],  # Blue
+    "current_year" = palette$primary[2]  # Orange
+  )
+  
+  return(colors)
+}
+
 # NULL coalescing operator
 `%||%` <- function(a, b) if (is.null(a)) b else a
 

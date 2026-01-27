@@ -78,14 +78,13 @@ test_that("get_status_condition handles status types", {
   root <- get_project_root()
   source(file.path(root, "apps/struct_trt/data_functions.R"), local = TRUE)
   
-  # Test with NULL - should return no results condition
-
+  # Test with NULL - should return empty (no filter = get ALL)
   result <- get_status_condition(NULL)
-  expect_match(result, "FALSE")
+  expect_equal(result, "")
   
-  # Test with empty vector
+  # Test with empty vector - should return empty (no filter = get ALL)
   result <- get_status_condition(character(0))
-  expect_match(result, "FALSE")
+  expect_equal(result, "")
   
   # Test with status types
   result <- get_status_condition(c("D", "W", "U"))

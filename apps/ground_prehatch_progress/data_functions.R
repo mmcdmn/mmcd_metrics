@@ -36,89 +36,50 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     
     ground_sites <- dbGetQuery(con, sites_query)
     
-    # Load treatments based on include_archive flag
-    if (include_archive && !is.null(start_year) && !is.null(end_year)) {
-      # Historical mode: ALWAYS get current year data from current table, archive from archive table
-      current_year <- as.numeric(format(Sys.Date(), "%Y"))
-      
-      # Build query parts
-      query_parts <- c()
-      
-      # ALWAYS include current year data from dblarv_insptrt_current
-      if (end_year >= current_year) {
-        current_query <- sprintf("
-        SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-               c.acres as treated_acres, sc.facility, sc.zone, sc.fosarea,
-               p.effect_days, 'current' as data_source
-        FROM dblarv_insptrt_current c
-        JOIN gis_sectcode sc ON left(c.sitecode, 7) = sc.sectcode
-        JOIN mattype_list_targetdose p ON c.matcode = p.matcode
-        WHERE c.inspdate >= '%d-01-01' AND c.inspdate <= '%d-12-31'
-          AND p.prehatch IS TRUE
-        ", current_year, current_year)
-        query_parts <- c(query_parts, current_query)
-      }
-      
-      # Include archive data for any years before current year
-      if (start_year < current_year) {
-        archive_end_year <- min(end_year, current_year - 1)
-        archive_query <- sprintf("
-        SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-               c.acres as treated_acres, sc.facility, sc.zone, sc.fosarea,
-               p.effect_days, 'archive' as data_source
-        FROM dblarv_insptrt_archive c
-        JOIN gis_sectcode sc ON left(c.sitecode, 7) = sc.sectcode
-        JOIN mattype_list_targetdose p ON c.matcode = p.matcode
-        WHERE c.inspdate >= '%d-01-01' AND c.inspdate <= '%d-12-31'
-          AND p.prehatch IS TRUE
-        ", start_year, archive_end_year)
-        query_parts <- c(query_parts, archive_query)
-      }
-      
-      # Combine query parts
-      if (length(query_parts) > 0) {
-        treatments_query <- paste(query_parts, collapse = " UNION ALL ")
-        treatments_query <- paste(treatments_query, "ORDER BY inspdate DESC, sitecode")
-      } else {
-        # Fallback empty query
-        treatments_query <- "SELECT NULL::text as sitecode, NULL::date as inspdate, NULL::text as matcode, NULL::time as insptime, NULL::numeric as treated_acres, NULL::text as facility, NULL::text as zone, NULL::text as fosarea, NULL::integer as effect_days, NULL::text as data_source WHERE FALSE"
-      }
-    } else {
-      # Current mode: use exact working pattern with current year from analysis_date
-      analysis_year <- format(analysis_date, "%Y")
-      treatments_query <- sprintf("
-      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
-             c.acres as treated_acres, p.effect_days, 'current' as data_source,
-             -- Add inspection data for skipped status
-             i.inspdate as last_inspection_date, i.action as inspection_action, i.wet as inspection_wet
-      FROM (SELECT * FROM dblarv_insptrt_current WHERE inspdate>'%s-01-01' AND inspdate <= '%s') c
-      JOIN (
-        SELECT sc.facility, sc.zone, sc.fosarea, left(b.sitecode,7) AS sectcode,
-               b.sitecode, acres, air_gnd, priority, prehatch, drone, remarks,
-               sc.fosarea as foreman
-        FROM loc_breeding_sites b
-        LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-        WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
-          AND b.air_gnd='G'
-          AND b.prehatch IN ('PREHATCH','BRIQUET')
-      ) a ON c.sitecode = a.sitecode
-      JOIN (SELECT * FROM mattype_list_targetdose WHERE prehatch IS TRUE) p USING (matcode)
-      -- Left join to get the most recent ground inspection for skipped status
-      LEFT JOIN LATERAL (
-        SELECT inspdate, action, wet
-        FROM dblarv_insptrt_current 
-        WHERE sitecode = c.sitecode 
-          AND action = '2'
-          AND wet = '0'
-          AND inspdate > c.inspdate
-        ORDER BY inspdate DESC, insptime DESC
-        LIMIT 1
-      ) i ON true
-      ORDER BY c.inspdate DESC, c.sitecode
-      ", analysis_year, format(analysis_date, "%Y-%m-%d"), analysis_year)
+    # Query for current treatments (base query)
+    treatments_query <- sprintf("
+    SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+           c.acres as treated_acres, sc.facility, sc.zone, sc.fosarea,
+           p.effect_days, 'current' as data_source
+    FROM dblarv_insptrt_current c
+    JOIN gis_sectcode sc ON left(c.sitecode, 7) = sc.sectcode
+    JOIN mattype_list_targetdose p ON c.matcode = p.matcode
+    WHERE p.prehatch IS TRUE
+      AND c.inspdate <= '%s'::date
+    ", format(analysis_date, "%Y-%m-%d"))
+    
+    # Add year filtering for historical analysis (same pattern as drone)
+    if (!is.null(start_year) && !is.null(end_year)) {
+      treatments_query <- paste0(treatments_query, sprintf(
+        " AND EXTRACT(YEAR FROM c.inspdate) BETWEEN %d AND %d", start_year, end_year))
     }
     
     ground_treatments <- dbGetQuery(con, treatments_query)
+    
+    # Get archive treatments if requested (same pattern as drone)
+    if (include_archive) {
+      archive_query <- sprintf("
+      SELECT c.sitecode, c.inspdate, c.matcode, c.insptime,
+             c.acres as treated_acres, sc.facility, sc.zone, sc.fosarea,
+             p.effect_days, 'archive' as data_source
+      FROM dblarv_insptrt_archive c
+      JOIN gis_sectcode sc ON left(c.sitecode, 7) = sc.sectcode
+      JOIN mattype_list_targetdose p ON c.matcode = p.matcode
+      WHERE p.prehatch IS TRUE
+        AND c.inspdate <= '%s'::date
+      ", format(analysis_date, "%Y-%m-%d"))
+      
+      # Add year filtering for archive
+      if (!is.null(start_year) && !is.null(end_year)) {
+        archive_query <- paste0(archive_query, sprintf(
+          " AND EXTRACT(YEAR FROM c.inspdate) BETWEEN %d AND %d", start_year, end_year))
+      }
+      
+      archive_treatments <- dbGetQuery(con, archive_query)
+      
+      # Combine current and archive treatments
+      ground_treatments <- bind_rows(ground_treatments, archive_treatments)
+    }
     
     safe_disconnect(con)
     
@@ -157,6 +118,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     }
     
     # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring
+    # total_count comes from nrow(ground_sites) - the universe loaded initially
     return(list(
       sites = ground_sites,
       treatments = ground_treatments,

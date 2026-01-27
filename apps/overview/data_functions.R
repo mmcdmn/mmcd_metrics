@@ -1,0 +1,411 @@
+# Overview - UNIFIED Data Functions
+# =============================================================================
+# ONE function for ALL metrics. All apps now return standardized format:
+#   list(sites = df, treatments = df, total_count = int)
+# 
+# Where sites has: sitecode, facility, zone, is_active, is_expiring
+# 
+# NO HARDCODED METRIC NAMES - Everything comes from the registry!
+# =============================================================================
+
+# Source the registry (must exist before this file is sourced)
+# Registry is sourced in app.R before this file
+
+# =============================================================================
+# ENVIRONMENT LOADING - Uses registry for app folders
+# =============================================================================
+
+# Get apps base path - checks relative paths
+get_apps_base_path_df <- function() {
+  # When running from apps/overview/district or apps/overview/facilities
+  if (file.exists("../../drone/data_functions.R")) return("../..")
+  # When running from apps/overview
+  if (file.exists("../drone/data_functions.R")) return("..")
+  # When running on server
+  if (file.exists("/srv/shiny-server/apps/drone/data_functions.R")) return("/srv/shiny-server/apps")
+  # Fallback
+  return("../..")
+}
+
+# Load each app's data_functions into isolated environment
+# Uses registry to get app folders dynamically
+.load_app_environments <- function() {
+  apps_base <- get_apps_base_path_df()
+  registry <- get_metric_registry()
+  
+  app_envs <- list()
+  for (metric_id in names(registry)) {
+    config <- registry[[metric_id]]
+    app_folder <- config$app_folder
+    data_file <- file.path(apps_base, app_folder, "data_functions.R")
+    
+    if (file.exists(data_file)) {
+      env <- new.env(parent = globalenv())
+      tryCatch({
+        source(data_file, local = env, chdir = TRUE)
+        app_envs[[metric_id]] <- env
+      }, error = function(e) {
+        cat("Warning: Could not load", data_file, ":", e$message, "\n")
+      })
+    } else {
+      cat("Warning: Data file not found:", data_file, "\n")
+    }
+  }
+  return(app_envs)
+}
+
+# Initialize app environments (lazy loading)
+.app_envs <- NULL
+get_app_envs <- function() {
+  if (is.null(.app_envs)) {
+    .app_envs <<- .load_app_environments()
+  }
+  return(.app_envs)
+}
+
+# =============================================================================
+# THE UNIFIED FUNCTION - COMPLETELY DYNAMIC
+# =============================================================================
+
+#' Load data for ANY metric, aggregated by facility+zone
+#' 
+#' Returns: facility, zone, total_count, active_count, expiring_count
+#' 
+#' This ONE function works for ALL metrics dynamically.
+#' Uses the registry to get configuration, no hardcoded metric names.
+#'
+#' @param metric Metric ID from registry
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring (defaults to registry value)
+#' @param zone_filter Vector of zones to include
+#' @export
+load_metric_data <- function(metric, 
+                             analysis_date = Sys.Date(),
+                             expiring_days = NULL,
+                             zone_filter = c("1", "2")) {
+  
+  # Get config from registry
+  registry <- get_metric_registry()
+  if (!metric %in% names(registry)) {
+    stop(paste("Invalid metric:", metric, "- not found in registry"))
+  }
+  
+  config <- registry[[metric]]
+  
+  # Get expiring_days from registry if not specified
+  if (is.null(expiring_days)) {
+    expiring_days <- if (!is.null(config$load_params$expiring_days)) {
+      config$load_params$expiring_days
+    } else {
+      7  # default fallback
+    }
+  }
+  
+  app_envs <- get_app_envs()
+  env <- app_envs[[metric]]
+  
+  if (is.null(env)) {
+    warning(paste("Environment not loaded for metric:", metric))
+    return(data.frame(
+      facility = character(),
+      zone = character(),
+      total_count = integer(),
+      active_count = integer(),
+      expiring_count = integer()
+    ))
+  }
+  
+  # Dynamically load raw data - try standard interface first
+  raw_data <- tryCatch({
+    # All apps should have load_raw_data with at minimum analysis_date
+    if ("load_raw_data" %in% names(env)) {
+      # Try with common parameters - apps will ignore unknown params
+      # Pass empty status_types list to get FULL universe (not filtered by status)
+      env$load_raw_data(
+        analysis_date = analysis_date,
+        expiring_days = expiring_days,
+        zone_filter = zone_filter,
+        status_types = character(0)
+      )
+    } else {
+      warning(paste("load_raw_data not found for metric:", metric))
+      list(sites = data.frame(), treatments = data.frame())
+    }
+  }, error = function(e) {
+    # If the call fails, try with just analysis_date
+    tryCatch({
+      env$load_raw_data(analysis_date = analysis_date)
+    }, error = function(e2) {
+      warning(paste("Error loading", metric, ":", e2$message))
+      list(sites = data.frame(), treatments = data.frame())
+    })
+  })
+  
+  # Apply filters if the app has apply_data_filters function
+  if ("apply_data_filters" %in% names(env) && !is.null(raw_data$sites) && nrow(raw_data$sites) > 0) {
+    tryCatch({
+      raw_data <- env$apply_data_filters(
+        data = raw_data,
+        zone_filter = zone_filter
+      )
+    }, error = function(e) {
+      # Filter application failed, continue with unfiltered data
+      cat("Note: apply_data_filters failed for", metric, "\n")
+    })
+  }
+  
+  sites <- raw_data$sites
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(data.frame(
+      facility = character(),
+      zone = character(),
+      total_count = integer(),
+      active_count = integer(),
+      expiring_count = integer()
+    ))
+  }
+  
+  # Aggregate to facility+zone level
+  # Check if pre-aggregated or site-level data
+  if (isTRUE(raw_data$pre_aggregated)) {
+    # Already has counts - just sum them
+    result <- sites %>%
+      filter(zone %in% zone_filter) %>%
+      group_by(facility, zone) %>%
+      summarize(
+        total_count = sum(total_count, na.rm = TRUE),
+        active_count = sum(active_count, na.rm = TRUE),
+        expiring_count = sum(expiring_count, na.rm = TRUE),
+        .groups = "drop"
+      )
+  } else {
+    # Site-level data with is_active/is_expiring - count them
+    result <- sites %>%
+      filter(zone %in% zone_filter) %>%
+      group_by(facility, zone) %>%
+      summarize(
+        total_count = n(),
+        active_count = sum(is_active, na.rm = TRUE),
+        expiring_count = sum(is_expiring, na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+  
+  return(result)
+}
+
+# =============================================================================
+# AGGREGATION FUNCTIONS BY GROUP TYPE
+# =============================================================================
+
+#' Load ANY metric aggregated by zone (P1/P2)
+#' @export
+load_data_by_zone <- function(metric, 
+                              analysis_date = Sys.Date(),
+                              expiring_days = NULL,
+                              zone_filter = c("1", "2"),
+                              separate_zones = TRUE) {
+  
+  data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
+  if (nrow(data) == 0) return(data.frame())
+  
+  if (separate_zones) {
+    result <- data %>%
+      group_by(zone) %>%
+      summarize(
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(display_name = paste0("P", zone)) %>%
+      arrange(zone)
+  } else {
+    result <- data %>%
+      summarize(
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE)
+      ) %>%
+      mutate(zone = "all", display_name = "District Total")
+  }
+  
+  return(result)
+}
+
+#' Load ANY metric aggregated by facility
+#' @export
+load_data_by_facility <- function(metric,
+                                  analysis_date = Sys.Date(),
+                                  expiring_days = NULL,
+                                  zone_filter = c("1", "2"),
+                                  separate_zones = FALSE) {
+  
+  data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
+  if (nrow(data) == 0) return(data.frame())
+  
+  data <- map_facility_names(data)
+  
+  if (separate_zones && length(zone_filter) == 2) {
+    result <- data %>%
+      group_by(facility, facility_display, zone) %>%
+      summarize(
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>%
+      select(-facility_display)
+  } else {
+    result <- data %>%
+      group_by(facility, facility_display) %>%
+      summarize(
+        total = sum(total_count, na.rm = TRUE),
+        active = sum(active_count, na.rm = TRUE),
+        expiring = sum(expiring_count, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(display_name = facility_display) %>%
+      select(-facility_display)
+  }
+  
+  result <- order_facilities(result, separate_zones)
+  return(result)
+}
+
+#' Load ANY metric aggregated by FOS (placeholder for future)
+#' @export
+load_data_by_fos <- function(metric,
+                             analysis_date = Sys.Date(),
+                             expiring_days = NULL,
+                             zone_filter = c("1", "2"),
+                             separate_zones = FALSE) {
+  # TODO: Implement FOS aggregation when FOS overview is needed
+  # For now, return empty data frame with correct structure
+  data.frame(
+    fos = character(),
+    display_name = character(),
+    total = integer(),
+    active = integer(),
+    expiring = integer()
+  )
+}
+
+# =============================================================================
+# FACILITY MAPPING AND ORDERING
+# =============================================================================
+
+# NOTE: map_facility_names is now provided by shared/db_helpers.R
+# Do NOT define it here as it will override the shared version!
+
+#' Get the standard facility order
+get_facility_order <- function() {
+  facilities <- tryCatch({
+    get_facility_lookup()
+  }, error = function(e) {
+    data.frame(full_name = c("East", "North", "South Jordan", "South Reserve", "West Metro"))
+  })
+  
+  if (nrow(facilities) == 0) {
+    return(c("East", "North", "South Jordan", "South Reserve", "West Metro"))
+  }
+  return(facilities$full_name)
+}
+
+#' Order facilities in standard order
+order_facilities <- function(data, separate_zones = FALSE) {
+  if (!"display_name" %in% names(data)) return(data)
+  
+  facility_order <- get_facility_order()
+  
+  if (separate_zones) {
+    zone_levels <- unlist(lapply(facility_order, function(f) {
+      c(paste0(f, " (P1)"), paste0(f, " (P2)"))
+    }))
+    data <- data %>% mutate(display_name = factor(display_name, levels = zone_levels))
+  } else {
+    data <- data %>% mutate(display_name = factor(display_name, levels = facility_order))
+  }
+  
+  data %>% arrange(display_name)
+}
+
+# =============================================================================
+# GENERIC LOADER FOR ALL METRICS
+# =============================================================================
+
+#' Load all metrics for an overview dashboard
+#' 
+#' @param metrics Vector of metric IDs to load
+#' @param group_by Aggregation type: "zone", "facility", or "fos"
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring
+#' @param zone_filter Vector of zones to include
+#' @param separate_zones Whether to show zones separately
+#' @return Named list of data frames, one per metric
+#' @export
+load_all_metrics <- function(metrics = NULL,
+                             group_by = "zone",
+                             analysis_date = Sys.Date(),
+                             expiring_days = 7,
+                             zone_filter = c("1", "2"),
+                             separate_zones = TRUE) {
+  
+  if (is.null(metrics)) {
+    metrics <- VALID_METRICS
+  }
+  
+  # Choose the right loader function
+  loader <- switch(group_by,
+    "zone" = load_data_by_zone,
+    "facility" = load_data_by_facility,
+    "fos" = load_data_by_fos,
+    load_data_by_zone  # default
+  )
+  
+  results <- list()
+  for (metric in metrics) {
+    results[[metric]] <- tryCatch({
+      loader(
+        metric = metric,
+        analysis_date = analysis_date,
+        expiring_days = expiring_days,
+        zone_filter = zone_filter,
+        separate_zones = separate_zones
+      )
+    }, error = function(e) {
+      cat("ERROR loading", metric, ":", e$message, "\n")
+      data.frame()
+    })
+  }
+  
+  return(results)
+}
+
+# =============================================================================
+# STATS CALCULATION
+# =============================================================================
+
+#' Calculate stats for a single metric (for stat boxes)
+#' Uses ceiling() to round percentages UP with no decimal places
+#' 
+#' @param data Data frame with total, active, expiring columns
+#' @return List with total, active, pct (ceiling rounded, no decimals)
+#' @export
+calculate_metric_stats <- function(data) {
+  if (is.null(data) || nrow(data) == 0) {
+    return(list(total = 0, active = 0, pct = 0))
+  }
+  
+  total <- sum(data$total, na.rm = TRUE)
+  active <- sum(data$active, na.rm = TRUE)
+  # Use ceiling() to round UP with no decimal places
+  pct <- ceiling(100 * active / max(1, total))
+  
+  list(
+    total = total,
+    active = active,
+    pct = pct
+  )
+}

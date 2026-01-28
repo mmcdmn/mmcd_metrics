@@ -5,6 +5,25 @@
 # =============================================================================
 
 # =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+#' Create a metric icon (image if available, FontAwesome icon as fallback)
+#' @param config Metric configuration from registry
+#' @return HTML tag for the icon
+get_metric_icon <- function(config) {
+  if (!is.null(config$image_path)) {
+    # Use image file (Shiny will serve from www directory)
+    tags$img(src = config$image_path, 
+             alt = config$display_name,
+             style = "width: 20px; height: 20px; margin-right: 5px; vertical-align: middle;")
+  } else {
+    # Fallback to FontAwesome icon
+    icon(config$icon, style = "margin-right: 5px;")
+  }
+}
+
+# =============================================================================
 # CSS AND JAVASCRIPT (shared across all overview apps)
 # =============================================================================
 
@@ -178,17 +197,23 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
   }
   
   title_text <- if (is_historical) {
-    y_suffix <- if (isTRUE(config$has_acres)) "Acres" else "Treatments"
-    paste0(config$display_name, " ", y_suffix, " (Historical)")
+    # For cattail treatments historical, use "Yearly History"
+    if (isTRUE(config$historical_type == "yearly_grouped")) {
+      paste0(config$display_name, " (Yearly History)")
+    } else {
+      y_suffix <- if (isTRUE(config$has_acres)) "Acres" else "Treatments"
+      paste0(config$display_name, " ", y_suffix, " (Historical)")
+    }
   } else {
     paste0(config$display_name, " Progress")
   }
   
   filter_id <- paste0(metric_id, "_filters")
+  legend_id <- paste0(metric_id, "_legend")
   
   div(class = "chart-panel",
     div(class = "chart-title",
-      icon(config$icon), " ", title_text,
+      get_metric_icon(config), title_text,
       if (!is_historical && !is.null(config$filter_info)) {
         tagList(
           span(class = "filter-info-btn",
@@ -197,6 +222,10 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
         )
       }
     ),
+    # Add legend for current progress charts (not historical)
+    if (!is_historical) {
+      uiOutput(legend_id)
+    },
     plotlyOutput(output_id, height = chart_height)
   )
 }

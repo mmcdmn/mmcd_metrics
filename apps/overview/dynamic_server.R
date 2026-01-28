@@ -67,7 +67,8 @@ load_all_historical_data <- function(overview_type, zone_filter = c("1", "2"), p
   registry <- get_metric_registry()
   overview_config <- get_overview_config(overview_type)
   
-  years <- get_historical_year_range(5, analysis_date)
+  # Use 10 years to calculate 10-year averages
+  years <- get_historical_year_range(10, analysis_date)
   
   results <- list()
   for (i in seq_along(metrics)) {
@@ -88,7 +89,8 @@ load_all_historical_data <- function(overview_type, zone_filter = c("1", "2"), p
         end_year = years$end_year,
         display_metric = config$display_metric,
         zone_filter = zone_filter,
-        analysis_date = analysis_date
+        analysis_date = analysis_date,
+        overview_type = overview_type
       )
     }, error = function(e) {
       cat("ERROR loading historical", metric_id, ":", e$message, "\n")
@@ -144,6 +146,31 @@ setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, c
   invisible(NULL)
 }
 
+#' Setup legend outputs for all current metrics
+#' @param output Shiny output object
+#' @param theme_reactive Reactive returning current theme
+#' @export
+setup_legend_outputs <- function(output, theme_reactive) {
+  metrics <- get_active_metrics()
+  registry <- get_metric_registry()
+  
+  lapply(metrics, function(metric_id) {
+    config <- registry[[metric_id]]
+    legend_id <- paste0(metric_id, "_legend")
+    
+    # Use local() to capture correct values
+    local({
+      local_metric_id <- metric_id
+      
+      output[[legend_id]] <- renderUI({
+        create_overview_legend(theme = theme_reactive(), metric_id = local_metric_id)
+      })
+    })
+  })
+  
+  invisible(NULL)
+}
+
 #' Setup historical chart outputs for all metrics
 #' @param output Shiny output object
 #' @param data_reactive Reactive returning named list of historical data (each with $average and $current)
@@ -161,15 +188,17 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
     local({
       local_metric_id <- metric_id
       local_config <- config
+      local_overview_type <- overview_type
       
       output[[output_id]] <- renderPlotly({
         req(data_reactive())
         hist_data <- data_reactive()[[local_metric_id]]
         
-        # Expect hist_data to be a list with $average and $current
+        # Expect hist_data to be a list with $average and $current OR $yearly_data
         if (is.null(hist_data) || 
             (is.null(hist_data$average) || nrow(hist_data$average) == 0) &&
-            (is.null(hist_data$current) || nrow(hist_data$current) == 0)) {
+            (is.null(hist_data$current) || nrow(hist_data$current) == 0) &&
+            (is.null(hist_data$yearly_data) || nrow(hist_data$yearly_data) == 0)) {
           return(create_empty_chart(
             paste(local_config$display_name, "Historical"),
             "No historical data available"
@@ -182,14 +211,28 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
           local_config$y_label
         }
         
-        create_comparison_chart(
-          avg_data = hist_data$average,
-          current_data = hist_data$current,
-          title = paste(local_config$display_name, "- 5 Year Avg vs Current"),
-          y_label = y_label,
-          bar_color = local_config$bg_color,
-          theme = current_theme()
-        )
+        # Check if this metric uses yearly grouped chart
+        if (isTRUE(local_config$historical_type == "yearly_grouped")) {
+          # Use yearly grouped bar chart
+          create_yearly_grouped_chart(
+            data = hist_data$yearly_data,
+            title = paste(local_config$display_name, "- Yearly Totals"),
+            y_label = y_label,
+            theme = current_theme(),
+            overview_type = local_overview_type
+          )
+        } else {
+          # Use standard comparison chart with 5-year and 10-year averages
+          create_comparison_chart(
+            avg_data = hist_data$average,
+            current_data = hist_data$current,
+            title = paste(local_config$display_name, "- Historical"),
+            y_label = y_label,
+            bar_color = local_config$bg_color,
+            theme = current_theme(),
+            ten_year_avg_data = hist_data$ten_year_average
+          )
+        }
       })
     })
   })
@@ -219,20 +262,36 @@ generate_summary_stats <- function(data) {
     if (!is.null(metric_data) && nrow(metric_data) > 0) {
       total <- sum(metric_data$total, na.rm = TRUE)
       active <- sum(metric_data$active, na.rm = TRUE)
-      pct <- ceiling(100 * active / max(1, total))
+      expiring <- sum(metric_data$expiring, na.rm = TRUE)
+      
+      # For cattail_treatments: 
+      # treated = active - expiring (sites marked active but NOT expiring)
+      # need_treatment = expiring (sites that still need treatment)
+      # The percentage is treated / (treated + need_treatment)
+      if (metric_id == "cattail_treatments") {
+        treated <- active - expiring  # Treated sites (active minus those needing treatment)
+        need_treatment <- expiring    # Sites that still need treatment
+        workload <- treated + need_treatment  # Total sites requiring treatment
+        pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+        stat_title <- paste0(config$display_name, ": ", format(treated, big.mark = ","),
+                            " / ", format(workload, big.mark = ","), " treated")
+      } else {
+        pct <- ceiling(100 * active / max(1, total))
+        stat_title <- paste0(config$display_name, ": ", format(active, big.mark = ","),
+                            " / ", format(total, big.mark = ","), " treated")
+      }
     } else {
-      total <- 0
-      active <- 0
       pct <- 0
+      stat_title <- paste0(config$display_name, ": 0 / 0 treated")
     }
     
     column(col_width,
       create_stat_box(
         value = paste0(pct, "%"),
-        title = paste0(config$display_name, ": ", format(active, big.mark = ","),
-                      " / ", format(total, big.mark = ","), " treated"),
+        title = stat_title,
         bg_color = config$bg_color,
-        icon = config$icon
+        icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+        icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
       )
     )
   })
@@ -368,7 +427,7 @@ build_overview_server <- function(input, output, session,
   historical_data <- if (include_historical) {
     eventReactive(input$refresh, {
       inputs <- refresh_inputs()
-      years <- get_historical_year_range(5, inputs$custom_today)
+      years <- get_historical_year_range(10, inputs$custom_today)
       hist_metrics <- get_historical_metrics()
       n_metrics <- length(hist_metrics)
       
@@ -389,11 +448,12 @@ build_overview_server <- function(input, output, session,
               start_year = years$start_year,
               end_year = years$end_year,
               display_metric = config$display_metric,
-              zone_filter = inputs$zone_filter
+              zone_filter = inputs$zone_filter,
+              overview_type = overview_type
             )
           }, error = function(e) {
             cat("ERROR loading historical", metric_id, ":", e$message, "\n")
-            list(average = data.frame(), current = data.frame())
+            list(average = data.frame(), current = data.frame(), yearly_data = data.frame())
           })
         }
         setProgress(value = 1, detail = "Complete!")
@@ -414,6 +474,18 @@ build_overview_server <- function(input, output, session,
   } else {
     create_overview_chart
   }
+  
+  # Setup legend outputs for all current metrics
+  lapply(metrics, function(metric_id) {
+    local({
+      local_metric_id <- metric_id
+      legend_id <- paste0(local_metric_id, "_legend")
+      
+      output[[legend_id]] <- renderUI({
+        create_overview_legend(theme = current_theme(), metric_id = local_metric_id)
+      })
+    })
+  })
   
   # Setup current charts - each watches the current_data reactive
   lapply(metrics, function(metric_id) {
@@ -447,6 +519,7 @@ build_overview_server <- function(input, output, session,
       local({
         local_metric_id <- metric_id
         local_config <- registry[[metric_id]]
+        local_overview_type <- overview_type
         output_id <- paste0(local_metric_id, "_historical_chart")
         
         output[[output_id]] <- renderPlotly({
@@ -457,13 +530,33 @@ build_overview_server <- function(input, output, session,
           cat("DEBUG Historical", local_metric_id, ":\n")
           cat("  - Average rows:", if (!is.null(hist_data$average)) nrow(hist_data$average) else "NULL", "\n")
           cat("  - Current rows:", if (!is.null(hist_data$current)) nrow(hist_data$current) else "NULL", "\n")
-          if (!is.null(hist_data$average) && nrow(hist_data$average) > 0) {
-            cat("  - Average label:", hist_data$average$group_label[1], "\n")
-          }
-          if (!is.null(hist_data$current) && nrow(hist_data$current) > 0) {
-            cat("  - Current label:", hist_data$current$group_label[1], "\n")
+          cat("  - Yearly data rows:", if (!is.null(hist_data$yearly_data)) nrow(hist_data$yearly_data) else "NULL", "\n")
+          
+          # Check if this metric uses yearly grouped chart
+          if (isTRUE(local_config$historical_type == "yearly_grouped")) {
+            if (is.null(hist_data$yearly_data) || nrow(hist_data$yearly_data) == 0) {
+              return(create_empty_chart(
+                paste(local_config$display_name, "Historical"),
+                "No historical data available"
+              ))
+            }
+            
+            y_label <- if (local_config$has_acres) {
+              paste(local_config$short_name, "Acres")
+            } else {
+              local_config$y_label
+            }
+            
+            return(create_yearly_grouped_chart(
+              data = hist_data$yearly_data,
+              title = paste(local_config$display_name, "- Yearly Totals"),
+              y_label = y_label,
+              theme = current_theme(),
+              overview_type = local_overview_type
+            ))
           }
           
+          # Standard comparison chart
           if (is.null(hist_data) || 
               (is.null(hist_data$average) || nrow(hist_data$average) == 0) &&
               (is.null(hist_data$current) || nrow(hist_data$current) == 0)) {
@@ -482,10 +575,11 @@ build_overview_server <- function(input, output, session,
           create_comparison_chart(
             avg_data = hist_data$average,
             current_data = hist_data$current,
-            title = paste(local_config$display_name, "- 5 Year Avg vs Current"),
+            title = paste(local_config$display_name, "- Historical"),
             y_label = y_label,
             bar_color = local_config$bg_color,
-            theme = current_theme()
+            theme = current_theme(),
+            ten_year_avg_data = hist_data$ten_year_average
           )
         })
       })

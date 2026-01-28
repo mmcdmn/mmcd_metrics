@@ -4,6 +4,44 @@
 # These work with any group_by type (zone, facility, fos).
 # =============================================================================
 
+#' Create a legend HTML element for overview charts
+#' Shows what the colors mean based on current theme
+#' @param theme Color theme name
+#' @param metric_id Optional metric ID for custom labels
+#' @return HTML string for legend
+#' @export
+create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
+  status_colors <- get_status_colors(theme = theme)
+  
+  # Default labels - can be customized per metric
+  total_label <- "Total Sites"
+  active_label <- "Treated"
+  expiring_label <- "Expiring"
+  
+  # Customize labels for specific metrics
+  if (!is.null(metric_id)) {
+    if (metric_id == "cattail_treatments") {
+      total_label <- "Total Sites Inspected"
+      active_label <- "Treated"
+      expiring_label <- "Needs Treatment"
+    } else if (metric_id == "catch_basin_status") {
+      active_label <- "Treated"
+      expiring_label <- "Expiring"
+    } else if (metric_id == "drone") {
+      active_label <- "Active Treatments"
+      expiring_label <- "Expiring"
+    }
+  }
+  
+  HTML(paste0(
+    '<div style="display: flex; gap: 20px; justify-content: center; padding: 8px 0; font-size: 12px;">',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: gray70; opacity: 0.4; margin-right: 5px;"></span>', total_label, '</span>',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["active"]), '; margin-right: 5px;"></span>', active_label, '</span>',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["planned"]), '; margin-right: 5px;"></span>', expiring_label, '</span>',
+    '</div>'
+  ))
+}
+
 #' Create an overview chart showing treatment progress
 #' @param data Data frame with columns: display_name, total, active, expiring
 #' @param title Chart title
@@ -41,27 +79,40 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       )
     )
   
-  # Ensure display_name is ordered correctly (if it's a factor, use its levels; otherwise sort by total)
-  if (!is.factor(data$display_name)) {
-    data$display_name <- reorder(data$display_name, data$y_total)
-  }
+  # Order by total descending (highest total at top) - matches original apps
+  data$display_name <- reorder(data$display_name, -data$y_total)
   
   # Create base ggplot with layered bars
-  p <- ggplot(data, aes(x = display_name)) +
-    # Gray background - total/untreated
-    geom_bar(aes(y = y_total, text = tooltip_text), 
-             stat = "identity", fill = "gray70", alpha = 0.4) +
-    # Green layer - active treatments (stacked from bottom)
-    geom_bar(aes(y = y_active + y_expiring), 
-             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-    # Orange layer - expiring (at the bottom of the active portion)
-    geom_bar(aes(y = y_expiring), 
-             stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-    coord_flip() +
-    labs(
-      x = NULL,
-      y = y_label
-    ) +
+  # For cattail_treatments: Green (treated) at bottom, showing progress "filling up"
+  # For all other metrics: standard layered bars (gray total, orange expiring, green active)
+  if (metric_type == "cattail_treatments") {
+    # Cattail: Green bar shows treated, filling up toward total needing treatment
+    p <- ggplot(data, aes(x = display_name)) +
+      # Gray background - total sites that need/needed treatment
+      geom_bar(aes(y = active + expiring, text = tooltip_text), 
+               stat = "identity", fill = "gray70", alpha = 0.4) +
+      # Green layer - treated sites (filling up from bottom)
+      geom_bar(aes(y = active - expiring), 
+               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
+      coord_flip() +
+      labs(x = NULL, y = y_label)
+  } else {
+    # Standard: Gray total -> Orange expiring on top -> Green active below
+    p <- ggplot(data, aes(x = display_name)) +
+      # Gray background - total/untreated
+      geom_bar(aes(y = y_total, text = tooltip_text), 
+               stat = "identity", fill = "gray70", alpha = 0.4) +
+      # Orange layer - expiring/needs treatment (on top of active)
+      geom_bar(aes(y = y_expiring + y_active), 
+               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
+      # Green layer - active/treated (at bottom)
+      geom_bar(aes(y = y_active), 
+               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
+      coord_flip() +
+      labs(x = NULL, y = y_label)
+  }
+  
+  p <- p +
     theme_minimal() +
     theme(
       plot.title = element_text(face = "bold", size = 14),
@@ -311,13 +362,14 @@ render_metric_chart <- function(data, metric_config, overview_type = "facilities
 #' 
 #' @param avg_data Data frame with columns: time_period, week_num, value, group_label (5-year avg)
 #' @param current_data Data frame with columns: time_period, week_num, value, group_label (current year)
+#' @param ten_year_avg_data Optional: Data frame for 10-year average line
 #' @param title Chart title
 #' @param y_label Y-axis label
 #' @param bar_color Color for the average bars (deprecated - use theme instead)
 #' @param theme Color theme name (default: "MMCD")
 #' @return Plotly chart object
 #' @export
-create_comparison_chart <- function(avg_data, current_data, title, y_label, bar_color = NULL, theme = "MMCD") {
+create_comparison_chart <- function(avg_data, current_data, title, y_label, bar_color = NULL, theme = "MMCD", ten_year_avg_data = NULL) {
   
   # Handle empty data
   has_avg <- !is.null(avg_data) && nrow(avg_data) > 0
@@ -377,6 +429,28 @@ create_comparison_chart <- function(avg_data, current_data, title, y_label, bar_
     )
   }
   
+  # Add 10-year average as line (if provided)
+  has_ten_year <- !is.null(ten_year_avg_data) && nrow(ten_year_avg_data) > 0
+  if (has_ten_year) {
+    ten_year_label <- if (nrow(ten_year_avg_data) > 0) ten_year_avg_data$group_label[1] else "10-Year Avg"
+    
+    p <- p %>% add_trace(
+      data = ten_year_avg_data,
+      x = ~time_period,
+      y = ~value,
+      name = ten_year_label,
+      type = "scatter",
+      mode = "lines+markers",
+      line = list(color = "#9C27B0", width = 2, dash = "dot"),
+      marker = list(color = "#9C27B0", size = 5),
+      hovertemplate = paste0(
+        "<b>Week %{x}</b><br>",
+        ten_year_label, ": %{y:,.0f}<br>",
+        "<extra></extra>"
+      )
+    )
+  }
+  
   # Layout - always show legend
   p %>% layout(
     xaxis = list(
@@ -397,6 +471,158 @@ create_comparison_chart <- function(avg_data, current_data, title, y_label, bar_
     showlegend = TRUE,  # Always show legend
     margin = list(l = 60, r = 20, t = 30, b = 80),
     hovermode = "x unified"
+  ) %>%
+    config(displayModeBar = FALSE)
+}
+
+# =============================================================================
+# YEARLY GROUPED BAR CHART - For cattail treatments and similar metrics
+# =============================================================================
+
+#' Create a yearly grouped bar chart showing yearly totals by group
+#' With 5-year and 10-year average lines
+#' 
+#' @param data Data frame with columns: year, group_label, value
+#' @param title Chart title
+#' @param y_label Y-axis label
+#' @param theme Color theme name
+#' @param overview_type "district" (MMCD total) or "facilities" (by facility)
+#' @return Plotly chart object
+#' @export
+create_yearly_grouped_chart <- function(data, title, y_label, theme = "MMCD", overview_type = "facilities") {
+  
+  if (is.null(data) || nrow(data) == 0) {
+    return(create_empty_chart(title, "No historical data available"))
+  }
+  
+  # Get facility colors from theme
+  facility_colors <- get_facility_base_colors(theme = theme)
+  
+  # For district overview, aggregate to MMCD total
+  if (overview_type == "district") {
+    data <- data %>%
+      group_by(year) %>%
+      summarise(
+        value = sum(value, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(group_label = "MMCD Total")
+  }
+  
+  # Ensure year is numeric for calculations
+  data <- data %>%
+    mutate(year_num = as.numeric(year))
+  
+  # Calculate averages using YEARLY TOTALS (not per-facility averages)
+  current_year <- max(data$year_num, na.rm = TRUE)
+  
+  # First, aggregate to yearly totals across all groups
+  yearly_totals <- data %>%
+    group_by(year_num) %>%
+    summarise(yearly_total = sum(value, na.rm = TRUE), .groups = "drop")
+  
+  # 5-year average (last 5 years including current) - average of yearly totals
+  five_year_data <- yearly_totals %>% 
+    filter(year_num >= (current_year - 4))
+  five_year_avg <- mean(five_year_data$yearly_total, na.rm = TRUE)
+  
+  # 10-year average (last 10 years including current) - average of yearly totals
+  ten_year_data <- yearly_totals %>% 
+    filter(year_num >= (current_year - 9))
+  ten_year_avg <- mean(ten_year_data$yearly_total, na.rm = TRUE)
+  
+  # Convert year to character for x-axis display
+  data <- data %>%
+    mutate(year = as.character(year))
+  
+  # Get unique groups and assign colors
+  groups <- unique(data$group_label)
+  n_groups <- length(groups)
+  
+  if (n_groups == 1) {
+    # Single group - use theme primary color
+    group_colors <- setNames("#ff9500", groups)  # Cattail orange
+  } else {
+    # Multiple groups - use facility colors
+    group_colors <- setNames(
+      facility_colors[1:min(n_groups, length(facility_colors))],
+      groups[1:min(n_groups, length(facility_colors))]
+    )
+    # Fill any remaining with defaults
+    if (n_groups > length(facility_colors)) {
+      extra_colors <- scales::hue_pal()(n_groups - length(facility_colors))
+      for (i in (length(facility_colors) + 1):n_groups) {
+        group_colors[groups[i]] <- extra_colors[i - length(facility_colors)]
+      }
+    }
+  }
+  
+  # Create plotly grouped bar chart
+  p <- plot_ly()
+  
+  # Add bars for each group
+  for (grp in groups) {
+    grp_data <- data %>% filter(group_label == grp)
+    p <- p %>% add_trace(
+      data = grp_data,
+      x = ~year,
+      y = ~value,
+      name = grp,
+      type = "bar",
+      marker = list(color = unname(group_colors[grp])),
+      hovertemplate = paste0(
+        "<b>", grp, " - %{x}</b><br>",
+        y_label, ": %{y:,.0f}<br>",
+        "<extra></extra>"
+      )
+    )
+  }
+  
+  # Get x-axis range for average lines
+  years <- unique(data$year)
+  
+  # Add 5-year average line (dashed blue)
+  p <- p %>% add_trace(
+    x = years,
+    y = rep(five_year_avg, length(years)),
+    name = paste0("5-Yr Avg (", format(round(five_year_avg, 0), big.mark = ","), ")"),
+    type = "scatter",
+    mode = "lines",
+    line = list(color = "#2196F3", width = 2, dash = "dash"),
+    hovertemplate = paste0("5-Year Avg: ", format(round(five_year_avg, 0), big.mark = ","), "<extra></extra>")
+  )
+  
+  # Add 10-year average line (dotted purple)
+  p <- p %>% add_trace(
+    x = years,
+    y = rep(ten_year_avg, length(years)),
+    name = paste0("10-Yr Avg (", format(round(ten_year_avg, 0), big.mark = ","), ")"),
+    type = "scatter",
+    mode = "lines",
+    line = list(color = "#9C27B0", width = 2, dash = "dot"),
+    hovertemplate = paste0("10-Year Avg: ", format(round(ten_year_avg, 0), big.mark = ","), "<extra></extra>")
+  )
+  
+  # Layout with legend - remove "Year" title from x-axis
+  p %>% layout(
+    barmode = "group",
+    xaxis = list(
+      title = "",  # No "Year" label - just show years
+      tickfont = list(size = 12),
+      categoryorder = "category ascending"
+    ),
+    yaxis = list(
+      title = y_label,
+      rangemode = "tozero"
+    ),
+    legend = list(
+      orientation = "h",
+      y = -0.15,
+      x = 0.5,
+      xanchor = "center"
+    ),
+    showlegend = TRUE,
+    margin = list(l = 60, r = 20, t = 30, b = 80)
   ) %>%
     config(displayModeBar = FALSE)
 }

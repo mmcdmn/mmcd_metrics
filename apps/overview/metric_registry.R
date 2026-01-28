@@ -72,6 +72,7 @@ get_metric_registry <- function() {
       display_name = "Catch Basins",
       short_name = "CB",
       icon = "tint",
+      image_path = "assets/catchbasin.png",
       y_label = "Active Catch Basins",
       bg_color = "#667eea",
       app_folder = "catch_basin_status",
@@ -79,6 +80,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week (using effect_days)
       display_metric = "treatments",  # count of treatments
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Wet catch basins only (status_udw = 'W')<br>
                          • All facilities<br>
@@ -88,9 +91,10 @@ get_metric_registry <- function() {
     
     drone = list(
       id = "drone",
-      display_name = "Drone Sites",
+      display_name = "Drone Acres",
       short_name = "Drone",
       icon = "helicopter",
+      image_path = "assets/drone.jpg",
       y_label = "Active Drone Acres",
       bg_color = "#f5576c",
       app_folder = "drone",
@@ -98,6 +102,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week
       display_metric = "treatment_acres",  # use acres for historical
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Drone types: Y, M, C<br>
                          • All facilities, all foremen<br>
@@ -108,9 +114,10 @@ get_metric_registry <- function() {
     
     ground_prehatch = list(
       id = "ground_prehatch",
-      display_name = "Ground Prehatch",
+      display_name = "Ground Prehatch Acres",
       short_name = "Ground",
       icon = "seedling",
+      image_path = "assets/ground.png",
       y_label = "Active Prehatch Acres",
       bg_color = "#4facfe",
       app_folder = "ground_prehatch_progress",
@@ -118,6 +125,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week
       display_metric = "treatment_acres",  # use acres for historical
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Prehatch sites only<br>
                          • All facilities<br>
@@ -130,6 +139,7 @@ get_metric_registry <- function() {
       display_name = "Structures",
       short_name = "Struct",
       icon = "building",
+      image_path = "assets/layer-group.jpg",
       y_label = "Active Structures",
       bg_color = "#43e97b",
       app_folder = "struct_trt",
@@ -137,12 +147,38 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week
       display_metric = "treatments",  # count of treatments
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Structure types: All<br>
                          • Status: W, U (Wet, Unknown)<br>
                          • Priority: All<br>
                          • Zone filter from dropdown"),
       load_params = list(expiring_days = 7)
+    ),
+    
+    cattail_treatments = list(
+      id = "cattail_treatments",
+      display_name = "Cattail Treatments", 
+      short_name = "Cattail",
+      icon = "spa",
+      y_label = "Cattail Acres",
+      bg_color = "#ff9500",
+      app_folder = "cattail_treatments",
+      has_acres = TRUE,
+      historical_enabled = TRUE,
+      historical_type = "yearly_grouped",  # Yearly grouped bars by facility/MMCD
+      historical_group_by = "facility",    # Group by facility for facilities overview, MMCD for district
+      historical_year_column = "inspection_year",  # Use this column for year if present (seasonal logic)
+      use_active_calculation = TRUE,       # Sites needing treatment or treated
+      display_metric = "sites",            # count of active sites
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • Inspected cattail sites only<br>
+                         • Treated: Sites that have been treated<br>
+                         • Needs Treatment: Sites requiring treatment<br>
+                         • All facilities<br>
+                         • Zone filter from dropdown"),
+      load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
     )
   )
 }
@@ -356,7 +392,8 @@ generate_summary_stats_ui <- function(data) {
         title = paste0(config$display_name, ": ", format(active, big.mark = ","),
                       " / ", format(total, big.mark = ","), " treated"),
         bg_color = config$bg_color,
-        icon = config$icon
+        icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+        icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
       )
     )
   })

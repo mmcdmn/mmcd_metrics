@@ -7,13 +7,20 @@
 #' @param title The title/label for the value box
 #' @param bg_color Background color (hex code)
 #' @param text_color Text color (hex code, default white)
-#' @param icon Icon name (without "fa-" prefix) or Shiny icon object
+#' @param icon Icon name (without "fa-" prefix), Shiny icon object, or path to image
+#' @param icon_type Type of icon: "fontawesome" (default) or "image"
 #' @return A Shiny value box UI element
-create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon = NULL) {
-  # Convert icon name to icon object if it's a string
+create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon = NULL, icon_type = "fontawesome") {
+  # Convert icon name to icon object or image element
   icon_element <- NULL
   if (!is.null(icon)) {
-    if (is.character(icon)) {
+    if (icon_type == "image") {
+      # Use an image file
+      icon_element <- tags$img(
+        src = icon,
+        style = "width: 48px; height: 48px; opacity: 0.9;"
+      )
+    } else if (is.character(icon)) {
       icon_element <- shiny::icon(icon)
     } else {
       icon_element <- icon

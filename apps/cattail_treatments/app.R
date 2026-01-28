@@ -86,7 +86,7 @@ server <- function(input, output, session) {
     current_year <- year(analysis_date)
     
     withProgress(message = "Loading cattail treatment data...", value = 0.5, {
-      values$raw_data <- load_cattail_data(
+      values$raw_data <- load_raw_data(
         analysis_date = analysis_date,
         include_archive = TRUE,
         start_year = current_year - 2,
@@ -114,10 +114,10 @@ server <- function(input, output, session) {
       )
       
       # Determine if zones should be combined for aggregation
-      combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
+      combine_zones <- input$zone_display != "separate"
       
-      values$filtered_data <- filter_cattail_data(
-        values$raw_data,
+      values$filtered_data <- apply_data_filters(
+        data = values$raw_data,
         zone_filter = zone_filter,
         facility_filter = if("all" %in% input$facility_filter || is.null(input$facility_filter)) "all" else input$facility_filter
       )
@@ -397,7 +397,7 @@ server <- function(input, output, session) {
       data.frame()
     }
 
-    combine_zones <- input$zone_display %in% c("combined", "p1", "p2")
+    combine_zones <- input$zone_display != "separate"
     metric_type <- if (is.null(input$display_metric_type)) "sites" else input$display_metric_type
     create_current_progress_chart(sites_data, input$group_by, input$progress_chart_type, combine_zones, metric_type, theme = current_theme())
   })
@@ -490,7 +490,7 @@ server <- function(input, output, session) {
         display_metric = hist_status_metric,
         start_date = start_date,
         end_date = end_date,
-        combine_zones = zone_display %in% c("combined", "p1", "p2"),
+        combine_zones = zone_display != "separate",
         metric_type = metric_type,
         theme = color_theme,
         facility_filter = if("all" %in% facility_filter || is.null(facility_filter)) "all" else facility_filter,
@@ -534,9 +534,9 @@ server <- function(input, output, session) {
   
   # Map output
   output$treatment_map <- renderLeaflet({
-    sites_data <- if (!is.null(values$filtered_data)) values$filtered_data$cattail_sites else data.frame()
-    treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$cattail_sites)) {
-      values$filtered_data$cattail_sites %>% filter(state == "treated")
+    sites_data <- if (!is.null(values$filtered_data)) values$filtered_data$sites else data.frame()
+    treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$sites)) {
+      values$filtered_data$sites %>% filter(state == "treated")
     } else {
       data.frame()
     }
@@ -544,7 +544,7 @@ server <- function(input, output, session) {
   })
   
   output$map_details_table <- renderDT({
-    sites_data <- if (!is.null(values$filtered_data)) values$filtered_data$cattail_sites else data.frame()
+    sites_data <- if (!is.null(values$filtered_data)) values$filtered_data$sites else data.frame()
     
     if (nrow(sites_data) > 0 && "sf" %in% class(sites_data)) {
       table_data <- st_drop_geometry(sites_data) %>%
@@ -639,8 +639,8 @@ server <- function(input, output, session) {
       paste0("cattail_treatments_", Sys.Date(), ".csv")
     },
     content = function(file) {
-      treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$cattail_sites)) {
-        values$filtered_data$cattail_sites %>% filter(state == "treated")
+      treatments_data <- if (!is.null(values$filtered_data) && !is.null(values$filtered_data$sites)) {
+        values$filtered_data$sites %>% filter(state == "treated")
       } else {
         data.frame()
       }

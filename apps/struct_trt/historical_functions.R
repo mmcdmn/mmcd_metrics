@@ -77,8 +77,12 @@ load_historical_struct_data <- function(start_year, end_year,
     status_where <- build_sql_in_clause("loc.status_udw", status_types)
     
     # Determine which years need current table vs archive table
-    current_years_needed <- intersect(start_year:end_year, current_table_years)
-    archive_years_needed <- intersect(start_year:end_year, archive_table_years)
+    # Query full requested range - database will return what exists
+    current_years_needed <- start_year:end_year
+    # For archive, query all years before current table starts
+    archive_start_year <- start_year
+    archive_end_year <- min(current_table_years, na.rm = TRUE) - 1
+    use_archive <- archive_start_year <= archive_end_year
     
     all_data <- data.frame()
     
@@ -114,7 +118,7 @@ load_historical_struct_data <- function(start_year, end_year,
     }
     
     # Query ARCHIVE table if needed
-    if (length(archive_years_needed) > 0) {
+    if (use_archive) {
       archive_query <- sprintf("
         SELECT DISTINCT
           trt.sitecode,
@@ -130,7 +134,7 @@ load_historical_struct_data <- function(start_year, end_year,
         LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
         LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
         LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-        WHERE EXTRACT(YEAR FROM trt.inspdate) IN (%s)
+        WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
           AND trt.list_type = 'STR'
           AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
           %s
@@ -138,7 +142,7 @@ load_historical_struct_data <- function(start_year, end_year,
           %s
           %s
           %s
-      ", paste(archive_years_needed, collapse = ","), facility_where, zone_where, foreman_where, structure_type_where, status_where)
+      ", archive_start_year, archive_end_year, facility_where, zone_where, foreman_where, structure_type_where, status_where)
       
       archive_data <- dbGetQuery(con, archive_query)
       all_data <- bind_rows(all_data, archive_data)

@@ -80,6 +80,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week (using effect_days)
       display_metric = "treatments",  # count of treatments
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Wet catch basins only (status_udw = 'W')<br>
                          • All facilities<br>
@@ -89,7 +91,7 @@ get_metric_registry <- function() {
     
     drone = list(
       id = "drone",
-      display_name = "Drone Sites",
+      display_name = "Drone Acres",
       short_name = "Drone",
       icon = "helicopter",
       image_path = "assets/drone.jpg",
@@ -100,6 +102,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week
       display_metric = "treatment_acres",  # use acres for historical
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Drone types: Y, M, C<br>
                          • All facilities, all foremen<br>
@@ -110,7 +114,7 @@ get_metric_registry <- function() {
     
     ground_prehatch = list(
       id = "ground_prehatch",
-      display_name = "Ground Prehatch",
+      display_name = "Ground Prehatch Acres",
       short_name = "Ground",
       icon = "seedling",
       image_path = "assets/ground.png",
@@ -121,6 +125,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week
       display_metric = "treatment_acres",  # use acres for historical
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Prehatch sites only<br>
                          • All facilities<br>
@@ -141,6 +147,8 @@ get_metric_registry <- function() {
       historical_enabled = TRUE,
       use_active_calculation = TRUE,  # Calculate ACTIVE treatments per week
       display_metric = "treatments",  # count of treatments
+      chart_types = c("bar", "pie"),  # Support both bar and pie charts
+      default_chart_type = "bar",     # Default to bar chart
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Structure types: All<br>
                          • Status: W, U (Wet, Unknown)<br>

@@ -30,6 +30,11 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
     } else if (metric_id == "drone") {
       active_label <- "Active Treatments"
       expiring_label <- "Expiring"
+      total_label <- "Total acres"
+    }else if (metric_id == "ground_prehatch") {
+      total_label <- "Total acres"
+      active_label <- "Active Treatments"
+      expiring_label <- "Expiring"
     }
   }
   
@@ -217,6 +222,156 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type 
     event_register("plotly_click")
   
   return(plotly_chart)
+}
+
+#' Create pie charts showing treatment progress (Total → Treated → Expiring)
+#' Creates separate pie charts for each zone/facility group
+#' @param data Data frame with columns: display_name, total, active, expiring 
+#' @param title Chart title
+#' @param theme Color theme name
+#' @param metric_type Type of metric for specific styling
+#' @return Plotly chart object with multiple pie charts
+#' @export
+create_overview_pie_chart <- function(data, title, theme = "MMCD", metric_type = "default") {
+  if (is.null(data) || nrow(data) == 0) {
+    return(create_empty_chart(title, "No data available"))
+  }
+  
+  status_colors <- get_status_colors(theme = theme)
+  
+  # Use the data as-is - respect whether it's combined or separate zones
+  # If data has 1 row (combined), show 1 pie
+  # If data has 2 rows (P1/P2), show 2 pies
+  complete_data <- data
+  
+  # Create pie chart data for each group (zone/facility)
+  pie_data_list <- list()
+  
+  for (i in 1:nrow(complete_data)) {
+    row <- complete_data[i, ]
+    group_name <- row$display_name
+    
+    # Use same logic as bar charts for segment calculation
+    # Total gray background, active treatments (green), expiring treatments (orange)
+    
+    untreated <- max(0, row$total - row$active)  # Gray - sites not treated
+    active_stable <- max(0, row$active - row$expiring)  # Green - active but not expiring
+    expiring <- row$expiring  # Orange - expiring treatments
+    
+    # Create segments (include zero values for empty zones)
+    segments <- list()
+    if (untreated > 0) {
+      segments[["Untreated"]] <- list(value = untreated, color = "lightgray")
+    }
+    if (active_stable > 0) {
+      segments[["Treated"]] <- list(value = active_stable, color = status_colors["active"])
+    }
+    if (expiring > 0) {
+      segments[["Expiring"]] <- list(value = expiring, color = status_colors["planned"])
+    }
+    
+    # If no segments (all zero), create a "No Data" segment that's visible
+    if (length(segments) == 0) {
+      segments[["No Data"]] <- list(value = 100, color = "#f0f0f0")
+    }
+    
+    pie_segments <- data.frame(
+      category = names(segments),
+      values = sapply(segments, function(x) x$value),
+      colors = sapply(segments, function(x) x$color),
+      stringsAsFactors = FALSE
+    )
+    pie_data_list[[group_name]] <- pie_segments
+  }
+  
+  if (length(pie_data_list) == 0) {
+    return(create_empty_chart(title, "No data to display"))
+  }
+  
+  # Create pie charts
+  n_pies <- length(pie_data_list)
+  group_names <- names(pie_data_list)
+  
+  if (n_pies == 1) {
+    # Single pie chart
+    pie_data <- pie_data_list[[1]]
+    
+    p <- plot_ly(
+      pie_data,
+      labels = ~category,
+      values = ~values,
+      type = 'pie',
+      textinfo = 'label+percent',
+      textposition = 'auto',
+      marker = list(colors = pie_data$colors),
+      hovertemplate = paste0(
+        "<b>%{label}</b><br>",
+        "Count: %{value}<br>",
+        "Percentage: %{percent}<br>",
+        "<extra></extra>"
+      )
+    ) %>%
+    layout(
+      title = list(text = title, font = list(size = 16)),
+      showlegend = TRUE,
+      margin = list(t = 50, b = 20, l = 20, r = 20)
+    ) %>%
+    config(displayModeBar = FALSE)
+    
+  } else {
+    # Multiple pie charts - need to manually set domain for each pie
+    # Plotly subplot doesn't work well with pie charts, so we create one plot with multiple traces
+    
+    p <- plot_ly()
+    
+    for (i in 1:n_pies) {
+      pie_data <- pie_data_list[[i]]
+      group_name <- group_names[i]
+      
+      # Calculate domain for this pie (side by side)
+      x_start <- (i - 1) / n_pies + 0.02
+      x_end <- i / n_pies - 0.02
+      
+      p <- p %>% add_pie(
+        data = pie_data,
+        labels = ~category,
+        values = ~values,
+        textinfo = 'percent',
+        textposition = 'auto',
+        marker = list(colors = pie_data$colors),
+        domain = list(x = c(x_start, x_end), y = c(0.1, 0.9)),
+        name = group_name,
+        hovertemplate = paste0(
+          "<b>", group_name, " - %{label}</b><br>",
+          "Value: %{value:,.1f}<br>",
+          "Percentage: %{percent}<br>",
+          "<extra></extra>"
+        )
+      )
+    }
+    
+    # Add annotations for P1, P2 labels
+    p <- p %>%
+      layout(
+        title = list(text = title, font = list(size = 16)),
+        showlegend = TRUE,
+        annotations = lapply(1:n_pies, function(i) {
+          list(
+            x = (i - 0.5) / n_pies,
+            y = 0,
+            text = paste0("<b>", group_names[i], "</b>"),
+            showarrow = FALSE,
+            font = list(size = 14),
+            xref = "paper",
+            yref = "paper"
+          )
+        }),
+        margin = list(t = 70, b = 50, l = 20, r = 20)
+      ) %>%
+      config(displayModeBar = FALSE)
+  }
+  
+  return(p)
 }
 
 

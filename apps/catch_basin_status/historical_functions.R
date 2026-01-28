@@ -63,7 +63,7 @@ load_historical_cb_data <- function(start_year, end_year,
     data <- data.frame()
     
     # Get data from CURRENT table for recent years (2025+)
-    current_year_range <- intersect(start_year:end_year, current_years)
+    current_year_range <- start_year:end_year
     if (length(current_year_range) > 0) {
       current_query <- sprintf("
         SELECT 
@@ -101,7 +101,7 @@ load_historical_cb_data <- function(start_year, end_year,
     }
     
     # Get data from ARCHIVE table for historical years (2006-2024)  
-    archive_year_range <- intersect(start_year:end_year, archive_years)
+    archive_year_range <- start_year:end_year
     if (length(archive_year_range) > 0) {
       archive_query <- sprintf("
         SELECT 

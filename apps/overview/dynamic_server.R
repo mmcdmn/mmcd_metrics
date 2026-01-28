@@ -108,10 +108,11 @@ load_all_historical_data <- function(overview_type, zone_filter = c("1", "2"), p
 #' Setup current chart outputs for all metrics
 #' @param output Shiny output object
 #' @param data_reactive Reactive returning named list of data
-#' @param theme_reactive Reactive returning current theme
+#' @param theme_reactive Reactive returning current theme  
 #' @param chart_function Function to create charts (create_zone_chart or create_overview_chart)
+#' @param input Shiny input object for chart type selection
 #' @export
-setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, chart_function) {
+setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, chart_function, input = NULL) {
   metrics <- get_active_metrics()
   registry <- get_metric_registry()
   
@@ -132,13 +133,32 @@ setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, c
           return(create_empty_chart(local_config$display_name, "No data available"))
         }
         
-        chart_function(
-          data = data,
-          title = paste(local_config$display_name, "Progress"),
-          y_label = local_config$y_label,
-          theme = theme_reactive(),
-          metric_type = local_metric_id
-        )
+        # Check if this metric supports chart type selection
+        chart_type <- "bar"  # default
+        if (!is.null(input) && !is.null(local_config$chart_types) && length(local_config$chart_types) > 1) {
+          chart_type_input <- input[[paste0(local_metric_id, "_chart_type")]]
+          if (!is.null(chart_type_input)) {
+            chart_type <- chart_type_input
+          }
+        }
+        
+        # Choose chart function based on chart type
+        if (chart_type == "pie" && "pie" %in% local_config$chart_types) {
+          create_overview_pie_chart(
+            data = data,
+            title = paste(local_config$display_name, "Progress"),
+            theme = theme_reactive(),
+            metric_type = local_metric_id
+          )
+        } else {
+          chart_function(
+            data = data,
+            title = paste(local_config$display_name, "Progress"),
+            y_label = local_config$y_label,
+            theme = theme_reactive(),
+            metric_type = local_metric_id
+          )
+        }
       })
     })
   })
@@ -502,13 +522,32 @@ build_overview_server <- function(input, output, session,
           return(create_empty_chart(local_config$display_name, "No data available"))
         }
         
-        chart_function(
-          data = data,
-          title = paste(local_config$display_name, "Progress"),
-          y_label = local_config$y_label,
-          theme = current_theme(),
-          metric_type = local_metric_id
-        )
+        # Check if this metric supports chart type selection
+        chart_type <- "bar"  # default
+        if (!is.null(local_config$chart_types) && length(local_config$chart_types) > 1) {
+          chart_type_input <- input[[paste0(local_metric_id, "_chart_type")]]
+          if (!is.null(chart_type_input)) {
+            chart_type <- chart_type_input
+          }
+        }
+        
+        # Choose chart function based on chart type
+        if (chart_type == "pie" && "pie" %in% local_config$chart_types) {
+          create_overview_pie_chart(
+            data = data,
+            title = paste(local_config$display_name, "Progress"),
+            theme = current_theme(),
+            metric_type = local_metric_id
+          )
+        } else {
+          chart_function(
+            data = data,
+            title = paste(local_config$display_name, "Progress"),
+            y_label = local_config$y_label,
+            theme = current_theme(),
+            metric_type = local_metric_id
+          )
+        }
       })
     })
   })

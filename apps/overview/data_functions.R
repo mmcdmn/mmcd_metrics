@@ -169,7 +169,7 @@ load_metric_data <- function(metric,
   # Check if pre-aggregated or site-level data
   if (isTRUE(raw_data$pre_aggregated)) {
     # Already has counts - just sum them
-    result <- sites %>%
+    base_result <- sites %>%
       filter(zone %in% zone_filter) %>%
       group_by(facility, zone) %>%
       summarize(
@@ -178,9 +178,26 @@ load_metric_data <- function(metric,
         expiring_count = sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       )
+    
+    # Add acres columns if they exist
+    if ("total_acres" %in% names(sites)) {
+      acres_data <- sites %>%
+        filter(zone %in% zone_filter) %>%
+        group_by(facility, zone) %>%
+        summarize(
+          total_acres = sum(total_acres, na.rm = TRUE),
+          active_acres = sum(active_acres, na.rm = TRUE),
+          expiring_acres = sum(expiring_acres, na.rm = TRUE),
+          .groups = "drop"
+        )
+      result <- base_result %>%
+        left_join(acres_data, by = c("facility", "zone"))
+    } else {
+      result <- base_result
+    }
   } else {
     # Site-level data with is_active/is_expiring - count them
-    result <- sites %>%
+    base_result <- sites %>%
       filter(zone %in% zone_filter) %>%
       group_by(facility, zone) %>%
       summarize(
@@ -189,6 +206,23 @@ load_metric_data <- function(metric,
         expiring_count = sum(is_expiring, na.rm = TRUE),
         .groups = "drop"
       )
+    
+    # Add acres columns if they exist
+    if ("acres" %in% names(sites)) {
+      acres_data <- sites %>%
+        filter(zone %in% zone_filter) %>%
+        group_by(facility, zone) %>%
+        summarize(
+          total_acres = sum(acres, na.rm = TRUE),
+          active_acres = sum(ifelse(is_active, acres, 0), na.rm = TRUE),
+          expiring_acres = sum(ifelse(is_expiring, acres, 0), na.rm = TRUE),
+          .groups = "drop"
+        )
+      result <- base_result %>%
+        left_join(acres_data, by = c("facility", "zone"))
+    } else {
+      result <- base_result
+    }
   }
   
   return(result)
@@ -209,25 +243,53 @@ load_data_by_zone <- function(metric,
   data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
   if (nrow(data) == 0) return(data.frame())
   
+  # Determine if this metric should use acres data
+  # Only drone and ground_prehatch have acres - struct_trt and catch_basin use site counts
+  acres_metrics <- c("drone", "ground_prehatch")
+  use_acres <- metric %in% acres_metrics && "total_acres" %in% names(data)
+  
   if (separate_zones) {
-    result <- data %>%
-      group_by(zone) %>%
-      summarize(
-        total = sum(total_count, na.rm = TRUE),
-        active = sum(active_count, na.rm = TRUE),
-        expiring = sum(expiring_count, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = paste0("P", zone)) %>%
-      arrange(zone)
+    if (use_acres) {
+      result <- data %>%
+        group_by(zone) %>%
+        summarize(
+          total = sum(total_acres, na.rm = TRUE),
+          active = sum(active_acres, na.rm = TRUE),
+          expiring = sum(expiring_acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = paste0("P", zone)) %>%
+        arrange(zone)
+    } else {
+      result <- data %>%
+        group_by(zone) %>%
+        summarize(
+          total = sum(total_count, na.rm = TRUE),
+          active = sum(active_count, na.rm = TRUE),
+          expiring = sum(expiring_count, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = paste0("P", zone)) %>%
+        arrange(zone)
+    }
   } else {
-    result <- data %>%
-      summarize(
-        total = sum(total_count, na.rm = TRUE),
-        active = sum(active_count, na.rm = TRUE),
-        expiring = sum(expiring_count, na.rm = TRUE)
-      ) %>%
-      mutate(zone = "all", display_name = "District Total")
+    if (use_acres) {
+      result <- data %>%
+        summarize(
+          total = sum(total_acres, na.rm = TRUE),
+          active = sum(active_acres, na.rm = TRUE),
+          expiring = sum(expiring_acres, na.rm = TRUE)
+        ) %>%
+        mutate(zone = "all", display_name = "District Total")
+    } else {
+      result <- data %>%
+        summarize(
+          total = sum(total_count, na.rm = TRUE),
+          active = sum(active_count, na.rm = TRUE),
+          expiring = sum(expiring_count, na.rm = TRUE)
+        ) %>%
+        mutate(zone = "all", display_name = "District Total")
+    }
   }
   
   return(result)

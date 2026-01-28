@@ -424,7 +424,7 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
     treatments <- data.frame()
     
     # Get data from CURRENT table for recent years
-    current_year_range <- intersect(start_year:end_year, current_years)
+    current_year_range <- start_year:end_year
     if (length(current_year_range) > 0) {
       query_current <- sprintf("
         SELECT 
@@ -451,8 +451,8 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
     }
     
     # Get data from ARCHIVE table for historical years
-    archive_year_range <- intersect(start_year:end_year, archive_years)
-    if (length(archive_year_range) > 0) {
+    # Query full requested range - database will return what exists
+    if (start_year < min(current_years, na.rm = TRUE)) {
       query_archive <- sprintf("
         SELECT 
           trt.inspdate,
@@ -461,17 +461,17 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           loc.gid as catchbasin_id,
           COALESCE(mat.effect_days, 28) as effect_days
         FROM dblarv_insptrt_archive trt
-        JOIN dblarv_treatment_cb_archive tcb ON trt.pkey_pg = tcb.treatment_id
-        JOIN loc_catchbasin loc ON tcb.catchbasin_id = loc.gid
+        JOIN loc_catchbasin loc ON trt.sitecode = loc.sitecode
         JOIN mattype_list_targetdose mat USING (matcode)
         LEFT JOIN gis_sectcode sc ON left(loc.sitecode, 7) = sc.sectcode
         WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
+          AND trt.action = '6'
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", min(archive_year_range), max(archive_year_range), zone_condition)
+      ", start_year, end_year, zone_condition)
       
-      cat("DEBUG: Getting archive table data for years", min(archive_year_range), "-", max(archive_year_range), "\n")
+      cat("DEBUG: Getting archive table data for years", start_year, "-", end_year, "\n")
       archive_data <- dbGetQuery(con, query_archive)
       cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
       treatments <- bind_rows(treatments, archive_data)

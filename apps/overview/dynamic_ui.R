@@ -151,6 +151,25 @@ get_overview_css <- function() {
       color: #1e3c72;
       margin-bottom: 20px;
     }
+    .chart-toggle-btn {
+      font-size: 11px;
+      padding: 4px 8px;
+      border: 1px solid #ccc;
+      background: #f8f9fa;
+      color: #333;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .chart-toggle-btn:hover {
+      background: #e9ecef;
+      border-color: #999;
+    }
+    .chart-toggle-btn.active {
+      background: #007bff;
+      color: white;
+      border-color: #007bff;
+    }
   "))
 }
 
@@ -174,6 +193,20 @@ get_overview_js <- function() {
     });
     Shiny.addCustomMessageHandler('navigate', function(url) {
       window.location.href = url;
+    });
+    
+    // Chart type toggle functionality
+    $(document).on('click', '.chart-toggle-btn', function() {
+      var btn = $(this);
+      var metric = btn.attr('id').replace('_toggle_bar', '').replace('_toggle_pie', '');
+      var chartType = btn.attr('id').includes('_toggle_pie') ? 'pie' : 'bar';
+      
+      // Update button states
+      $('#' + metric + '_toggle_bar, #' + metric + '_toggle_pie').removeClass('active');
+      btn.addClass('active');
+      
+      // Send chart type change to server
+      Shiny.setInputValue(metric + '_chart_type', chartType, {priority: 'event'});
     });
   "))
 }
@@ -210,10 +243,31 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
   
   filter_id <- paste0(metric_id, "_filters")
   legend_id <- paste0(metric_id, "_legend")
+  chart_type_id <- paste0(metric_id, "_chart_type")
+  
+  # Check if metric supports multiple chart types
+  has_chart_toggle <- !is.null(config$chart_types) && length(config$chart_types) > 1
   
   div(class = "chart-panel",
     div(class = "chart-title",
       get_metric_icon(config), title_text,
+      # Chart type toggle buttons (only for metrics that support it)
+      if (!is_historical && has_chart_toggle) {
+        div(style = "float: right; margin-left: 10px;",
+          actionButton(
+            inputId = paste0(metric_id, "_toggle_bar"),
+            label = "Bar",
+            class = "btn-xs chart-toggle-btn active",
+            style = "margin-right: 5px;"
+          ),
+          actionButton(
+            inputId = paste0(metric_id, "_toggle_pie"),
+            label = "Pie", 
+            class = "btn-xs chart-toggle-btn",
+            style = ""
+          )
+        )
+      },
       if (!is_historical && !is.null(config$filter_info)) {
         tagList(
           span(class = "filter-info-btn",

@@ -9,6 +9,7 @@ library(purrr)
 library(shiny)
 
 source("data_functions.R")
+source("../../shared/server_utilities.R")
 
 # Function to get historical cattail inspection and treatment data
 get_historical_cattail_data <- function(time_period = "monthly", display_metric = "need_treatment", 

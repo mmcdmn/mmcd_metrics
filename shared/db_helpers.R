@@ -1262,6 +1262,43 @@ get_mosquito_species_colors <- function() {
 
 # Get shape mappings for mosquito species (ggplot shape numbers)
 
+# Get species color mapping for display names to color keys
+# Maps human-readable species names to the color key names used in get_mosquito_species_colors()
+get_species_display_colors <- function() {
+  # Get all available species colors
+  all_species_colors <- get_mosquito_species_colors()
+  
+  # Create mapping from display names to color keys
+  species_color_mapping <- c(
+    "Aedes triseriatus" = "Ae_triseriatus_24",
+    "Aedes japonicus" = "Ae_japonicus_52", 
+    "Culex tarsalis" = "Cx_tarsalis_36",
+    "Culiseta melanura" = "Culiseta_melanura",
+    "Aedes albopictus" = "Ae_albopictus_51",
+    "Aedes cinereus" = "Ae_cinereus_7",
+    "Aedes canadensis" = "Ae_canadensis_6",
+    "Aedes dorsalis" = "Ae_dorsalis_10", 
+    "Aedes vexans" = "Ae_vexans_26",
+    "No species" = "#999999",      # Gray for no species
+    "Multiple species" = "#800080"  # Purple for multiple species at same location
+  )
+  
+  # Extract colors for the mapped species
+  display_colors <- sapply(names(species_color_mapping), function(display_name) {
+    color_key <- species_color_mapping[display_name]
+    if (color_key %in% names(all_species_colors)) {
+      return(all_species_colors[[color_key]])
+    } else if (startsWith(color_key, "#")) {
+      return(color_key)  # Direct hex color
+    } else {
+      return("#666666")  # Default gray
+    }
+  })
+  names(display_colors) <- names(species_color_mapping)
+  
+  return(display_colors)
+}
+
 
 # Treatment Plan Type Colors
 # Dynamic function to get treatment plan types and assign consistent colors

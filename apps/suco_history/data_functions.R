@@ -9,87 +9,69 @@ suppressPackageStartupMessages({
 
 source("../../shared/db_helpers.R")
 
-# Get available species list for filter dropdown
+# Get available species list for SUCO filter dropdown
+# Based on analysis of 2025 data, only 5 species are relevant to SUCOs
 get_available_species <- function(date_range = NULL) {
-  con <- get_db_connection()
-  if (is.null(con)) {
-    return(character(0))
+  # Return the 5 species actually found in SUCO data (from 2025 analysis)
+  # Ordered by frequency of occurrence
+  species_names <- c(
+    "Aedes triseriatus",   # Most common (401 occurrences)
+    "Aedes japonicus",     # Second (266 occurrences) 
+    "Culex tarsalis",      # Third (124 occurrences)
+    "Culiseta melanura",   # Fourth (5 occurrences)
+    "Aedes albopictus"     # Fifth (2 occurrences)
+  )
+  
+  return(species_names)
+}
+
+# Determine which tables to query based on date range
+# Uses get_historical_year_ranges from shared/db_helpers.R
+get_optimal_table_strategy <- function(date_range) {
+  if (is.null(date_range) || length(date_range) != 2) {
+    return(list(query_current = TRUE, query_archive = TRUE))
   }
   
-  # Use provided date range or default
-  if (is.null(date_range) || length(date_range) != 2) {
-    # Default to current year
-    start_date <- paste0(format(Sys.Date(), "%Y"), "-01-01")
-    end_date <- format(Sys.Date(), "%Y-%m-%d")
-  } else {
-    start_date <- format(date_range[1], "%Y-%m-%d")
-    end_date <- format(date_range[2], "%Y-%m-%d")
+  con <- get_db_connection()
+  if (is.null(con)) {
+    return(list(query_current = TRUE, query_archive = TRUE))
   }
   
   tryCatch({
-    # Get SUCOs from the date range
-    sucos_query <- sprintf("
-    SELECT DISTINCT s.ainspecnum
-    FROM public.dbadult_insp_current s
-    WHERE s.survtype = '7' AND s.inspdate BETWEEN '%s' AND '%s'
-    UNION
-    SELECT DISTINCT s.ainspecnum
-    FROM public.dbadult_insp_archive s
-    WHERE s.survtype = '7' AND s.inspdate BETWEEN '%s' AND '%s'
-    ", start_date, end_date, start_date, end_date)
+    # Get year ranges for inspection tables
+    year_ranges <- get_historical_year_ranges(con, 
+                                               "public.dbadult_insp_current",
+                                               "public.dbadult_insp_archive", 
+                                               "inspdate")
     
-    sucos <- dbGetQuery(con, sucos_query)
-    
-    if (nrow(sucos) == 0) {
-      safe_disconnect(con)
-      return(character(0))
-    }
-    
-    # Get species for these SUCOs
-    ainspecnums <- paste0("'", sucos$ainspecnum, "'", collapse = ", ")
-    species_query <- sprintf("
-    SELECT DISTINCT sp.spp, l.genus, l.species
-    FROM (
-      SELECT spp FROM public.dbadult_species_current WHERE ainspecnum IN (%s)
-      UNION 
-      SELECT spp FROM public.dbadult_species_archive WHERE ainspecnum IN (%s)
-    ) sp
-    LEFT JOIN public.lookup_specieslist l ON sp.spp = l.sppcode
-    WHERE sp.spp IS NOT NULL
-    ORDER BY l.genus, l.species
-    ", ainspecnums, ainspecnums)
-    
-    species_data <- dbGetQuery(con, species_query)
     safe_disconnect(con)
     
-    # Use enhanced species mapping from db_helpers
-    species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
+    # Extract years from date range
+    start_year <- as.numeric(format(date_range[1], "%Y"))
+    end_year <- as.numeric(format(date_range[2], "%Y"))
+    requested_years <- seq(start_year, end_year, 1)
     
-    # Create species names using the mapping
-    species_names <- species_data %>%
-      mutate(
-        species_name = case_when(
-          !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
-          !is.na(genus) & !is.na(species) ~ paste(genus, species),
-          !is.na(spp) ~ as.character(spp),
-          TRUE ~ NA_character_
-        )
-      ) %>%
-      filter(!is.na(species_name)) %>%
-      pull(species_name) %>%
-      unique() %>%
-      sort()
+    # Determine overlap
+    current_overlap <- length(intersect(requested_years, year_ranges$current_years)) > 0
+    archive_overlap <- length(intersect(requested_years, year_ranges$archive_years)) > 0
     
-    return(species_names)
+    return(list(
+      query_current = current_overlap,
+      query_archive = archive_overlap,
+      requested_years = requested_years,
+      current_years = year_ranges$current_years,
+      archive_years = year_ranges$archive_years
+    ))
     
   }, error = function(e) {
     safe_disconnect(con)
-    return(character(0))
+    # Fallback to querying both tables
+    return(list(query_current = TRUE, query_archive = TRUE))
   })
 }
 
-# Get SUCO data with proper current vs all distinction
-get_suco_data <- function(data_source = "all", date_range = NULL) {
+# Get SUCO data with optimized table querying
+get_suco_data <- function(data_source = "all", date_range = NULL, return_species_details = FALSE) {
   con <- get_db_connection()
   if (is.null(con)) {
     return(data.frame())  # Return empty data frame if connection fails
@@ -105,20 +87,25 @@ get_suco_data <- function(data_source = "all", date_range = NULL) {
     end_date <- format(date_range[2], "%Y-%m-%d")
   }
   
-  if (data_source == "current") {
-    # Current data only - from dbadult_insp_current table
-    # Use loc_harborage as authoritative source for foreman and facility
-    # Fallback to gis_sectcode facility if harborage doesn't have data
-    # Additional fallback to original inspection data for foreman if harborage is NULL
-    current_query <- sprintf("
+  # Determine optimal querying strategy
+  table_strategy <- get_optimal_table_strategy(date_range)
+  
+  cat("Table strategy: Current =", table_strategy$query_current, ", Archive =", table_strategy$query_archive, "\n")
+  
+  # Build queries based on table strategy
+  queries <- list()
+  
+  if (table_strategy$query_current) {
+    queries$current <- sprintf("
 SELECT
 s.id, s.ainspecnum, 
 COALESCE(h.facility, g.facility, s.facility) as facility,
 COALESCE(h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-s.x, s.y,
-g.zone
+s.x, s.y, ST_AsText(s.geometry) as geometry_text,
+g.zone,
+'current' as source_table
 FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
@@ -127,110 +114,10 @@ LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
-    
-    current_data <- dbGetQuery(con, current_query)
-    
-    # Get species data
-    species_current_query <- "
-SELECT ainspecnum, spp, cnt
-FROM public.dbadult_species_current
-WHERE ainspecnum IS NOT NULL
-"
-    species_current <- dbGetQuery(con, species_current_query)
-    
-    # Get species lookup
-    species_lookup <- get_species_lookup()
-    
-    safe_disconnect(con)
-    
-    if (nrow(current_data) == 0) {
-      return(data.frame())
-    }
-    
-    # Process data with all required fields
-    processed_data <- current_data %>%
-      mutate(
-        inspdate = as.Date(inspdate),
-        year = year(inspdate),
-        month = month(inspdate),
-        week_start = floor_date(inspdate, "week", week_start = 1),
-        epi_week = epiweek(inspdate),
-        epi_year = epiyear(inspdate),
-        epi_week_label = paste0(" ", epi_week),
-        month_label = format(inspdate, "%b %Y"),
-        location = ifelse(!is.na(park_name) & park_name != "", park_name,
-                          ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
-        foreman = trimws(as.character(foreman)),
-        zone = as.character(zone)
-      ) %>%
-      left_join(species_current, by = "ainspecnum", relationship = "many-to-many") %>%
-      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
-      mutate(
-        species_name = {
-          # Use enhanced species mapping from db_helpers
-          species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
-          case_when(
-            !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
-            !is.na(genus) & !is.na(species) ~ paste(genus, species),
-            !is.na(spp) ~ as.character(spp),
-            TRUE ~ NA_character_
-          )
-        }
-      )
-    
-    # Create species summary for each unique SUCO inspection
-    species_summaries <- processed_data %>%
-      filter(!is.na(species_name) & !is.na(cnt)) %>%
-      group_by(ainspecnum) %>%
-      summarize(
-        species_summary = {
-          species_data <- pick(everything()) %>%
-            group_by(species_name) %>%
-            summarize(total_count = sum(cnt, na.rm = TRUE), .groups = "drop") %>%
-            arrange(desc(total_count))
-          
-          if (nrow(species_data) == 0) {
-            "No species identified"
-          } else {
-            species_list <- species_data %>%
-              mutate(species_text = paste0(species_name, ": ", total_count)) %>%
-              pull(species_text)
-            
-            # Limit to top 5 species to keep popup reasonable
-            if (length(species_list) > 5) {
-              total_others <- sum(species_data$total_count[6:nrow(species_data)])
-              species_list <- c(species_list[1:5], paste0("Others: ", total_others))
-            }
-            
-            paste(species_list, collapse = "<br>")
-          }
-        },
-        total_species_count = sum(cnt, na.rm = TRUE),
-        .groups = "drop"
-      )
-    
-    # Create final dataset with one row per SUCO inspection
-    final_data <- processed_data %>%
-      group_by(ainspecnum, id, inspdate, sitecode, address1, park_name, 
-               survtype, fieldcount, comments, x, y, 
-               facility, foreman, zone, year, month, week_start, 
-               epi_week, epi_year, epi_week_label, month_label, location) %>%
-      summarize(.groups = "drop") %>%
-      left_join(species_summaries, by = "ainspecnum") %>%
-      mutate(
-        species_summary = ifelse(is.na(species_summary), "No species data available", species_summary),
-        total_species_count = ifelse(is.na(total_species_count), 0, total_species_count)
-      )
-    
-    return(final_data)
-    
-  } else {
-    # All data - both current and archive
-    # Query current data for SUCOs (survtype = 7) with harborage lookup for current foreman assignments
-    # Use loc_harborage as authoritative source for foreman and facility
-    # Fallback to gis_sectcode facility if harborage doesn't have data
-    # Additional fallback to original inspection data for foreman if harborage is NULL
-    current_query <- sprintf("
+  }
+  
+  if (table_strategy$query_archive) {
+    queries$archive <- sprintf("
 SELECT
 s.id, s.ainspecnum, 
 COALESCE(h.facility, g.facility, s.facility) as facility,
@@ -238,29 +125,8 @@ COALESCE(h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
 s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-g.zone
-FROM public.dbadult_insp_current s
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND s.inspdate >= h.startdate 
-  AND (h.enddate IS NULL OR s.inspdate <= h.enddate)
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
-WHERE s.survtype = '7'
-AND s.inspdate BETWEEN '%s' AND '%s'
-", start_date, end_date)
-    
-    # Query archive data for SUCOs with harborage lookup for current foreman assignments
-    # Use loc_harborage as authoritative source for foreman and facility
-    # Fallback to gis_sectcode facility if harborage doesn't have data
-    # Additional fallback to original inspection data for foreman if harborage is NULL
-    archive_query <- sprintf("
-SELECT
-s.id, s.ainspecnum, 
-COALESCE(h.facility, g.facility, s.facility) as facility,
-COALESCE(h.foreman, s.foreman) as foreman,
-s.inspdate, s.sitecode,
-s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-g.zone
+g.zone,
+'archive' as source_table
 FROM public.dbadult_insp_archive s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
   AND s.inspdate >= h.startdate 
@@ -269,76 +135,131 @@ LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ", start_date, end_date)
-    
-    # Execute queries
-    current_data <- dbGetQuery(con, current_query)
-    archive_data <- dbGetQuery(con, archive_query)
-    
-    # Query species tables (current and archive)
-    species_current_query <- "
-SELECT ainspecnum, spp, cnt
-FROM public.dbadult_species_current
-WHERE ainspecnum IS NOT NULL
-"
-    species_archive_query <- "
-SELECT ainspecnum, spp, cnt
-FROM public.dbadult_species_archive
-WHERE ainspecnum IS NOT NULL
-"
-    species_current <- dbGetQuery(con, species_current_query)
-    species_archive <- dbGetQuery(con, species_archive_query)
-
-    # Query species lookup table using centralized function
-    species_lookup <- get_species_lookup()
-
-    # Close connection
+  }
+  
+  # Execute queries and combine results
+  all_data_parts <- list()
+  for (query_name in names(queries)) {
+    tryCatch({
+      result <- dbGetQuery(con, queries[[query_name]])
+      if (nrow(result) > 0) {
+        all_data_parts[[query_name]] <- result
+        cat("Retrieved", nrow(result), "SUCOs from", query_name, "table\n")
+      }
+    }, error = function(e) {
+      warning(paste("Error querying", query_name, "table:", e$message))
+    })
+  }
+  
+  if (length(all_data_parts) == 0) {
     safe_disconnect(con)
-
-    # Combine current and archive data
-    all_data <- bind_rows(
-      mutate(current_data, source = "Current"),
-      mutate(archive_data, source = "Archive")
+    return(data.frame())
+  }
+  
+  # Combine all data
+  all_data <- bind_rows(all_data_parts)
+  
+  # Get species data from both tables
+  species_queries <- list()
+  if (table_strategy$query_current) {
+    species_queries$current <- "SELECT ainspecnum, spp, cnt FROM public.dbadult_species_current WHERE ainspecnum IS NOT NULL"
+  }
+  if (table_strategy$query_archive) {
+    species_queries$archive <- "SELECT ainspecnum, spp, cnt FROM public.dbadult_species_archive WHERE ainspecnum IS NOT NULL"
+  }
+  
+  all_species_parts <- list()
+  for (query_name in names(species_queries)) {
+    tryCatch({
+      result <- dbGetQuery(con, species_queries[[query_name]])
+      if (nrow(result) > 0) {
+        all_species_parts[[query_name]] <- result
+      }
+    }, error = function(e) {
+      warning(paste("Error querying species", query_name, "table:", e$message))
+    })
+  }
+  
+  all_species <- if (length(all_species_parts) > 0) bind_rows(all_species_parts) else data.frame()
+  
+  # Get species lookup
+  species_lookup <- get_species_lookup()
+  safe_disconnect(con)
+  
+  if (nrow(all_data) == 0) {
+    return(data.frame())
+  }
+  
+  # Process data
+  processed_data <- all_data %>%
+    mutate(
+      inspdate = as.Date(inspdate),
+      year = year(inspdate),
+      month = month(inspdate),
+      week_start = floor_date(inspdate, "week", week_start = 1),
+      epi_week = epiweek(inspdate),
+      epi_year = epiyear(inspdate),
+      epi_week_label = paste0("EW ", epi_week),
+      month_label = format(inspdate, "%b %Y"),
+      location = ifelse(!is.na(park_name) & park_name != "", park_name,
+                        ifelse(!is.na(address1) & address1 != "", address1, sitecode)),
+      foreman = trimws(as.character(foreman)),
+      zone = as.character(zone)
     ) %>%
-      mutate(
-        inspdate = as.Date(inspdate),
-        year = year(inspdate),
-        month = month(inspdate),
-        week_start = floor_date(inspdate, "week", week_start = 1),
-        epi_week = epiweek(inspdate),
-        epi_year = epiyear(inspdate),
-        epi_week_label = paste0("EW ", epi_week),
-        month_label = format(inspdate, "%b %Y"),
-        location = ifelse(!is.na(park_name) & park_name != "", park_name,
-                          ifelse(!is.na(address1) & address1 != "", address1, sitecode))
-      )
-    # Combine species data
-    all_species <- bind_rows(species_current, species_archive)
-
-    # Join SUCO data with species data and lookup for names
-    joined_data <- all_data %>%
-      left_join(all_species, by = "ainspecnum", relationship = "many-to-many") %>%
-      left_join(species_lookup, by = c("spp" = "sppcode")) %>%
-      mutate(
-        species_name = {
-          # Use enhanced species mapping from db_helpers
-          species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
-          dplyr::case_when(
-            !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
-            !is.na(genus) & !is.na(species) ~ paste(genus, species),
-            !is.na(spp) ~ as.character(spp),
-            TRUE ~ NA_character_
-          )
-        },
-        # Ensure foreman values are consistent strings
-        foreman = trimws(as.character(foreman))
-      )
-    
-    # Create species summary for each unique SUCO inspection
-    # This aggregates species data per SUCO for mapping purposes
-    species_summaries <- joined_data %>%
+    left_join(all_species, by = "ainspecnum", relationship = "many-to-many") %>%
+    left_join(species_lookup, by = c("spp" = "sppcode")) %>%
+    mutate(
+      species_name = {
+        # Use enhanced species mapping from db_helpers
+        species_map <- get_enhanced_species_mapping(format_style = "display", include_code = FALSE)
+        case_when(
+          !is.na(spp) & as.character(spp) %in% names(species_map) ~ species_map[as.character(spp)],
+          !is.na(genus) & !is.na(species) ~ paste(genus, species),
+          !is.na(spp) ~ as.character(spp),
+          TRUE ~ NA_character_
+        )
+      }
+    )
+  
+  # Create species summary for each unique SUCO inspection
+  species_summaries <- processed_data %>%
+    filter(!is.na(species_name) & !is.na(cnt)) %>%
+    group_by(ainspecnum) %>%
+    summarize(
+      species_summary = {
+        species_data <- pick(everything()) %>%
+          group_by(species_name) %>%
+          summarize(total_count = sum(cnt, na.rm = TRUE), .groups = "drop") %>%
+          arrange(desc(total_count))
+        
+        if (nrow(species_data) == 0) {
+          "No species identified"
+        } else {
+          species_list <- species_data %>%
+            mutate(species_text = paste0(species_name, ": ", total_count)) %>%
+            pull(species_text)
+          
+          # Limit to top 5 species to keep popup reasonable
+          if (length(species_list) > 5) {
+            total_others <- sum(species_data$total_count[6:nrow(species_data)])
+            species_list <- c(species_list[1:5], paste0("Others: ", total_others))
+          }
+          
+          paste(species_list, collapse = "<br>")
+        }
+      },
+      total_species_count = sum(cnt, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Return appropriate format based on requirement
+  if (return_species_details) {
+    # Return detailed species data for grouping - one row per species per inspection
+    species_details <- processed_data %>%
       filter(!is.na(species_name) & !is.na(cnt)) %>%
+      # Add summarized fields back to each species record
       group_by(ainspecnum) %>%
-      summarize(
+      mutate(
         species_summary = {
           species_data <- pick(everything()) %>%
             group_by(species_name) %>%
@@ -352,26 +273,25 @@ WHERE ainspecnum IS NOT NULL
               mutate(species_text = paste0(species_name, ": ", total_count)) %>%
               pull(species_text)
             
-            # Limit to top 5 species to keep popup reasonable
             if (length(species_list) > 5) {
               total_others <- sum(species_data$total_count[6:nrow(species_data)])
               species_list <- c(species_list[1:5], paste0("Others: ", total_others))
             }
-            
             paste(species_list, collapse = "<br>")
           }
         },
-        total_species_count = sum(cnt, na.rm = TRUE),
-        .groups = "drop"
-      )
+        total_species_count = sum(cnt, na.rm = TRUE)
+      ) %>%
+      ungroup()
     
-    # Add species summaries back to the main data and create final dataset
-    # For mapping and display, we want one row per SUCO inspection
-    final_data <- joined_data %>%
+    return(species_details)
+  } else {
+    # Create final dataset with one row per SUCO inspection (existing behavior)
+    final_data <- processed_data %>%
       group_by(ainspecnum, id, inspdate, sitecode, address1, park_name, 
-               survtype, fieldcount, comments, x, y, geometry_text, 
-               facility, foreman, zone, source, year, month, week_start, 
-               epi_week, epi_year, epi_week_label, month_label, location) %>%
+               survtype, fieldcount, comments, x, y, geometry_text,
+               facility, foreman, zone, year, month, week_start, 
+               epi_week, epi_year, epi_week_label, month_label, location, source_table) %>%
       summarize(.groups = "drop") %>%
       left_join(species_summaries, by = "ainspecnum") %>%
       mutate(
@@ -434,12 +354,44 @@ filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter,
 }
 
 # Create spatial data for mapping with species-based sizing
-create_spatial_data <- function(data, species_filter = "All") {
+create_spatial_data <- function(data, species_filter = "All", group_by = "mmcd_all") {
   if (nrow(data) == 0) {
     return(data.frame())
   }
+
+  # For species grouping, we need to handle the data differently
+  if (group_by == "species_name" && "species_name" %in% colnames(data)) {
+    # Species grouping: create one point per species per location with species info
+    sf_data <- data %>%
+      # Include zero species locations by replacing NA with "No species"
+      mutate(species_name = ifelse(is.na(species_name), "No species", species_name)) %>%
+      mutate(
+        longitude = as.numeric(x),
+        latitude = as.numeric(y),
+        has_coords = !is.na(longitude) & !is.na(latitude) &
+          longitude > -180 & longitude < 180 &
+          latitude > -90 & latitude < 90
+      ) %>%
+      filter(has_coords) %>%
+      # Keep species information for coloring
+      mutate(
+        display_species_count = cnt,
+        marker_size = case_when(
+          cnt == 0 ~ 4,
+          cnt == 1 ~ 6,
+          cnt <= 5 ~ 8,
+          cnt <= 10 ~ 10,
+          cnt <= 20 ~ 12,
+          TRUE ~ 14
+        )
+      ) %>%
+      # Create sf object
+      st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+    
+    return(sf_data)
+  }
   
-  # Create sf object for mapping
+  # Regular grouping (existing logic)
   sf_data <- data %>%
     # Use x and y coordinates if available, otherwise try to parse geometry
     mutate(
@@ -519,6 +471,14 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
   # Define the grouping column
   group_col <- group_by
   
+  # Map species group_by to correct column name
+  if (group_col == "species_name") {
+    species_grouping <- TRUE
+    # group_col stays as "species_name" since that's the actual column name
+  } else {
+    species_grouping <- FALSE
+  }
+  
   # We should NOT show zones separately when user selects "P1 + P2" 
   # Zones should only be shown separately when user wants to compare zones
   # For now, we'll only show zones separately if explicitly requested (never in this version)
@@ -552,6 +512,24 @@ aggregate_suco_data <- function(data, group_by, zone_filter) {
       # Add a dummy column for plotting
       result$mmcd_all <- "MMCD (All)"
     }
+  } else if (species_grouping) {
+    # Check if we have detailed species data - if not, throw error
+    if (!("species_name" %in% colnames(data)) || sum(!is.na(data$species_name)) == 0) {
+      stop("Species grouping requires detailed species data. No species_name column found or all values are NA.")
+    }
+    
+    # Use detailed species data directly
+    result <- data %>%
+      filter(!is.na(species_name)) %>%
+      group_by(time_group, species_name) %>%
+      summarize(
+        count = n_distinct(ainspecnum),  # Number of distinct SUCOs with this species
+        total_count = sum(cnt, na.rm = TRUE),  # Total specimens of this species
+        epi_week_label = first(epi_week_label),
+        .groups = "drop"
+      ) %>%
+      arrange(time_group, species_name)
+    
   } else {
     if (show_zones_separately) {
       # Group by both the selected grouping column AND zone
@@ -644,6 +622,28 @@ create_summary_stats <- function(data, group_by, data_source = "all") {
     # Rename columns
     colnames(summary_data)[1:2] <- c("Facility", "Facility_Name")
     
+  } else if (group_col == "species") {
+    # Species grouping requires detailed species data
+    if (!("species_name" %in% colnames(data)) || sum(!is.na(data$species_name)) == 0) {
+      stop("Species summary requires detailed species data. No species_name column found or all values are NA.")
+    }
+    
+    # Summarize by species using detailed data
+    summary_data <- data %>%
+      filter(!is.na(species_name)) %>%
+      group_by(species_name) %>%
+      summarize(
+        Total_SUCOs = n_distinct(ainspecnum), # Distinct SUCOs with this species
+        Total_Species_Count = sum(cnt, na.rm = TRUE), # Total count of this species
+        First_SUCO = min(inspdate),
+        Last_SUCO = max(inspdate),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(Total_Species_Count), species_name)
+    
+    # Rename first column
+    colnames(summary_data)[1] <- "Species"
+    
   } else {  # foreman grouping
     # Get foreman lookup
     foremen_lookup <- get_foremen_lookup()
@@ -718,7 +718,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
         # Add sample identifiers for stacking
         mutate(
           sample_id = paste0("Sample_", row_number()),
-          date_label = format(inspdate, "%m/%d"),
+          date_label = paste0("EW ", epiweek(inspdate)),
           date_numeric = as.numeric(inspdate)  # For continuous color scale
         )
       
@@ -741,7 +741,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
       sample_data <- data %>%
         mutate(
           sample_id = paste0("Sample_", row_number()),
-          date_label = format(inspdate, "%m/%d"),
+          date_label = paste0("EW ", epiweek(inspdate)),
           date_numeric = as.numeric(inspdate)  # For continuous color scale
         )
       
@@ -764,7 +764,7 @@ get_top_locations <- function(data, mode = "visits", species_filter = "All") {
     sample_data <- data %>%
       mutate(
         sample_id = paste0("Sample_", row_number()),
-        date_label = format(inspdate, "%m/%d"),
+        date_label = paste0("EW ", epiweek(inspdate)),
         date_numeric = as.numeric(inspdate),  # For continuous color scale
         visit_count = 1  # Each sample represents one visit
       )

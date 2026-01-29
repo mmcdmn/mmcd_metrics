@@ -152,38 +152,100 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
         marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
     
-    # Create color palette for species - use actual species in data
-    species_in_data <- unique(data$dominant_species)
+    # Aggregate by location to handle multi-species SUCOs
+    coords <- st_coordinates(data)
+    location_summary <- data %>%
+      st_drop_geometry() %>%
+      mutate(longitude = coords[,1], latitude = coords[,2]) %>%
+      group_by(longitude, latitude, location, inspdate, facility, foreman) %>%
+      summarise(
+        # Create species breakdown with counts (e.g., "Aedes triseriatus: 3<br>Culex tarsalis: 2")
+        species_counts = {
+          valid_species <- species_name[species_name != "No species"]
+          valid_counts <- cnt[species_name != "No species"]
+          if (length(valid_species) > 0) {
+            paste(paste0(valid_species, ": ", valid_counts), collapse = "<br>")
+          } else {
+            ""
+          }
+        },
+        species_list = paste(unique(species_name[species_name != "No species"]), collapse = ", "),
+        n_species = n_distinct(species_name[species_name != "No species"]),
+        total_count = sum(cnt, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        # Assign color category based on number of species
+        color_category = case_when(
+          n_species == 0 ~ "No species",
+          n_species == 1 ~ species_list,  # Single species - use that species name
+          TRUE ~ "Multiple species"  # Multiple species
+        ),
+        popup_text = paste0(
+          "<b>Date:</b> ", inspdate, "<br>",
+          "<b>Sitecode:</b> ", location, "<br>",
+          "<b>Species:</b><br>", 
+          ifelse(species_counts == "" | is.na(species_counts), "None found", species_counts)
+        ),
+        marker_size = case_when(
+          total_count == 0 ~ 4,
+          total_count <= 5 ~ 8,
+          total_count <= 10 ~ 10,
+          total_count <= 20 ~ 12,
+          TRUE ~ 14
+        ),
+        marker_opacity = ifelse(total_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(total_count == 0, 4, 1.5)
+      ) %>%
+      # Add small offset for SUCOs at same location to make them clickable
+      group_by(longitude, latitude) %>%
+      mutate(
+        n_at_location = n(),
+        location_idx = row_number(),
+        # Offset in a circle pattern around the original location
+        angle = 2 * pi * (location_idx - 1) / n_at_location,
+        offset_dist = ifelse(n_at_location > 1, 0.0003, 0),  # ~33 meters offset
+        longitude = longitude + offset_dist * cos(angle),
+        latitude = latitude + offset_dist * sin(angle)
+      ) %>%
+      ungroup() %>%
+      select(-n_at_location, -location_idx, -angle, -offset_dist)
+    
+    # Use colors from db_helpers - already includes 'Multiple species' with purple
+    species_colors_extended <- species_colors
+    
+    # Create color palette for species including multi-species
+    species_in_data <- unique(location_summary$color_category)
     species_in_data <- species_in_data[!is.na(species_in_data)]
     
     pal <- colorFactor(
-      palette = species_colors,
-      domain = species_in_data)  # Use actual species, not all possible species
+      palette = species_colors_extended,
+      domain = species_in_data)
     
-    legend_labels <- names(species_colors)
-    
-    # Create map with species coloring - simplified approach
-    leaflet(data) %>%
+    # Create map with location-aggregated markers
+    leaflet(location_summary) %>%
       addProviderTiles(basemap) %>%
       fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
+        lng1 = min(location_summary$longitude),
+        lat1 = min(location_summary$latitude),
+        lng2 = max(location_summary$longitude),
+        lat2 = max(location_summary$latitude)
       ) %>%
       addCircleMarkers(
+        lng = ~longitude,
+        lat = ~latitude,
         radius = ~marker_size,
         color = "black", 
         weight = ~marker_weight,
-        fillColor = ~pal(dominant_species),  # Use species-specific colors from db_helpers
-        fillOpacity = ~marker_fill_opacity,
+        fillColor = ~pal(color_category),  # Use color_category for proper species/multi colors
+        fillOpacity = ~marker_opacity,
         popup = ~popup_text,
         popupOptions = popupOptions(maxWidth = 300)
       ) %>%
       addLegend(
         "topright",
         pal = pal,
-        values = ~dominant_species,
+        values = ~color_category,
         title = "Species",
         opacity = 1
       ) %>%
@@ -499,6 +561,11 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
   )
   
   # Create stacked bar chart
+  # Calculate date range for legend breaks
+  date_range <- range(top_locations_data$date_numeric, na.rm = TRUE)
+  date_breaks <- seq(date_range[1], date_range[2], length.out = 5)
+  date_labels <- format(as.Date(date_breaks, origin = "1970-01-01"), "%m/%d/%y")
+  
   p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
                                      fill = date_numeric, 
                                      text = paste("Location:", location, "<br>",
@@ -507,7 +574,8 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
                                                  "Species Found:<br>",
                                                  gsub("<br>", "<br>", species_summary)))) +
     geom_bar(stat = "identity", position = "stack", na.rm = TRUE) +
-    scale_fill_viridis_c(option = viridis_option, name = "Date") +
+    scale_fill_viridis_c(option = viridis_option, name = "Date",
+                         breaks = date_breaks, labels = date_labels) +
     coord_flip() +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +  # Better scale handling
     labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +

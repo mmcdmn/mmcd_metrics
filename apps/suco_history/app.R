@@ -356,11 +356,14 @@ server <- function(input, output, session) {
       p <- p + geom_area(position = "stack", alpha = 0.6)
     }
     
-    # Add TARGET LINE at 72 SUCOs per week
-    p <- p + geom_hline(yintercept = 72, color = "red", linetype = "dashed", linewidth = 1.2) +
-      annotate("text", x = min(data$time_group), y = 72, 
-               label = "Target: 72/week", hjust = 0, vjust = -0.5, 
-               color = "red", fontface = "bold", size = 4)
+    # Add TARGET LINE at 72 SUCOs per week - only if data is within reasonable range
+    max_count <- max(data$count, na.rm = TRUE)
+    if (max_count >= 30) {  # Only show target if max count is at least 30 (within ~2x of target)
+      p <- p + geom_hline(yintercept = 72, color = "red", linetype = "dashed", linewidth = 1.2) +
+        annotate("text", x = min(data$time_group), y = 72, 
+                 label = "Target: 72/week", hjust = 0, vjust = -0.5, 
+                 color = "red", fontface = "bold", size = 4)
+    }
     
     # Calculate and show average line
     weekly_totals <- data %>%

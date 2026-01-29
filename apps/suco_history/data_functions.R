@@ -255,13 +255,19 @@ AND s.inspdate BETWEEN '%s' AND '%s'
   # Return appropriate format based on requirement
   if (return_species_details) {
     # Return detailed species data for grouping - one row per species per inspection
+    # IMPORTANT: Include zero-species inspections by keeping NA species and converting them
     species_details <- processed_data %>%
-      filter(!is.na(species_name) & !is.na(cnt)) %>%
+      # Keep all rows but convert NA species to "No species" with cnt = 0
+      mutate(
+        species_name = ifelse(is.na(species_name), NA_character_, species_name),
+        cnt = ifelse(is.na(cnt), 0, cnt)
+      ) %>%
       # Add summarized fields back to each species record
       group_by(ainspecnum) %>%
       mutate(
         species_summary = {
           species_data <- pick(everything()) %>%
+            filter(!is.na(species_name)) %>%
             group_by(species_name) %>%
             summarize(total_count = sum(cnt, na.rm = TRUE), .groups = "drop") %>%
             arrange(desc(total_count))
@@ -282,6 +288,15 @@ AND s.inspdate BETWEEN '%s' AND '%s'
         },
         total_species_count = sum(cnt, na.rm = TRUE)
       ) %>%
+      ungroup() %>%
+      # Now deduplicate: for each inspection, keep species rows OR one "No species" row if none
+      group_by(ainspecnum) %>%
+      mutate(
+        has_species = any(!is.na(species_name) & species_name != ""),
+        row_keep = !is.na(species_name) | (!has_species & row_number() == 1)
+      ) %>%
+      filter(row_keep) %>%
+      select(-has_species, -row_keep) %>%
       ungroup()
     
     return(species_details)

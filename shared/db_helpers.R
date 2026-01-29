@@ -1279,7 +1279,8 @@ get_species_display_colors <- function() {
     "Aedes canadensis" = "Ae_canadensis_6",
     "Aedes dorsalis" = "Ae_dorsalis_10", 
     "Aedes vexans" = "Ae_vexans_26",
-    "No species" = "#999999"  # Gray for no species
+    "No species" = "#999999",      # Gray for no species
+    "Multiple species" = "#800080"  # Purple for multiple species at same location
   )
   
   # Extract colors for the mapped species

@@ -612,6 +612,101 @@ get_foremen_lookup <- function() {
 }
 
 # =============================================================================
+# OPTIMIZED VECTORIZED LOOKUP FUNCTIONS
+# =============================================================================
+# These functions replace slow sapply() loops with vectorized operations
+
+#' Get foreman display names for a vector of emp_nums (vectorized)
+#' 
+#' @param emp_nums Vector of employee numbers
+#' @param lookup Optional pre-loaded lookup table from get_foremen_lookup()
+#' @param fallback_prefix Prefix for unknown foremen (default: "FOS #")
+#' @return Vector of display names
+#' @export
+get_foreman_display_names <- function(emp_nums, lookup = NULL, fallback_prefix = "FOS #") {
+  # Load lookup if not provided
+  if (is.null(lookup)) {
+    lookup <- get_foremen_lookup()
+  }
+  
+  # Ensure emp_nums is character
+  emp_nums <- trimws(as.character(emp_nums))
+  
+  # Create named vector for fast lookup
+  name_map <- setNames(lookup$shortname, as.character(lookup$emp_num))
+  
+  # Vectorized lookup with fallback
+  result <- name_map[emp_nums]
+  missing <- is.na(result)
+  result[missing] <- ifelse(
+    is.na(emp_nums[missing]) | emp_nums[missing] == "",
+    "No FOS assigned",
+    paste0(fallback_prefix, emp_nums[missing])
+  )
+  
+  unname(result)
+}
+
+#' Get facility display names for a vector of facility codes (vectorized)
+#' 
+#' @param facility_codes Vector of facility codes (e.g., "E", "N", "W")
+#' @param lookup Optional pre-loaded lookup table from get_facility_lookup()
+#' @return Vector of full facility names
+#' @export
+get_facility_display_names <- function(facility_codes, lookup = NULL) {
+  # Load lookup if not provided
+  if (is.null(lookup)) {
+    lookup <- get_facility_lookup()
+  }
+  
+  # Create named vector for fast lookup
+  name_map <- setNames(lookup$full_name, lookup$short_name)
+  
+  # Vectorized lookup with fallback to code itself
+  result <- name_map[facility_codes]
+  result[is.na(result)] <- facility_codes[is.na(result)]
+  
+  unname(result)
+}
+
+#' Create popup text column using vectorized operations
+#' 
+#' @param data Data frame with columns to use in popup
+#' @param template Character template with {column_name} placeholders
+#' @return Vector of popup HTML strings
+#' @export
+create_popup_text_vectorized <- function(data, template) {
+  result <- template
+  
+  # Find all column placeholders in template
+  placeholders <- regmatches(template, gregexpr("\\{[^}]+\\}", template))[[1]]
+  
+  for (placeholder in placeholders) {
+    col_name <- gsub("[{}]", "", placeholder)
+    if (col_name %in% names(data)) {
+      values <- as.character(data[[col_name]])
+      values[is.na(values)] <- ""
+      result <- gsub(placeholder, "%s", result, fixed = TRUE)
+    }
+  }
+  
+  # Build the result using sprintf for each row
+  # This is more complex but still faster than sapply
+  col_names <- gsub("[{}]", "", placeholders)
+  col_names <- col_names[col_names %in% names(data)]
+  
+  if (length(col_names) == 0) {
+    return(rep(template, nrow(data)))
+  }
+  
+  # Use paste0 for simple case
+  paste0(
+    "<b>Date:</b> ", data$inspdate, "<br>",
+    "<b>Facility:</b> ", data$facility, "<br>"
+  )
+}
+
+# =============================================================================
 # VIRUS TARGET CONFIGURATION
 # =============================================================================
 

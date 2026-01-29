@@ -1,207 +1,36 @@
 # Display functions for SUCO History app
 # These functions handle visualization and rendering for both current and all data
+#
+# Uses shared utilities from:
+#   - geometry_helpers.R: shapefile loading, map bounds, leaflet helpers
+#   - db_helpers.R: lookups, colors, vectorized functions
 
 source("../../shared/db_helpers.R")
-
-# Load background layers for SUCO map (facility and zone boundaries)
-load_suco_background_layers <- function() {
-  q_to_r_path <- file.path("..", "..", "shared", "Q_to_R", "data")
-  
-  layers <- list()
-  
-  # Load facility boundaries
-  facilities_path <- file.path(q_to_r_path, "facility_boundaries.shp")
-  if (file.exists(facilities_path)) {
-    layers$facilities <- sf::st_read(facilities_path, quiet = TRUE)
-    # Ensure WGS84 projection for leaflet
-    if (sf::st_crs(layers$facilities)$epsg != 4326) {
-      layers$facilities <- sf::st_transform(layers$facilities, 4326)
-    }
-  }
-  
-  # Load zone boundaries
-  zones_path <- file.path(q_to_r_path, "zone_boundaries.shp")
-  if (file.exists(zones_path)) {
-    layers$zones <- sf::st_read(zones_path, quiet = TRUE)
-    if (sf::st_crs(layers$zones)$epsg != 4326) {
-      layers$zones <- sf::st_transform(layers$zones, 4326)
-    }
-  }
-  
-  return(layers)
-}
-
-# Load harborage shapefiles for all facilities/foremen
-# Structure: harborages/{facility_code}/{emp_num}_harborages.shp
-load_harborage_layers <- function(facility_filter = NULL, foreman_filter = NULL) {
-  q_to_r_path <- file.path("..", "..", "shared", "Q_to_R", "data", "harborages")
-  
-  if (!dir.exists(q_to_r_path)) {
-    message("Harborage data directory not found: ", q_to_r_path)
-    return(NULL)
-  }
-  
-  # Get all facility folders
-  facility_folders <- list.dirs(q_to_r_path, full.names = TRUE, recursive = FALSE)
-  
-  # Filter by facility if specified
-  if (!is.null(facility_filter) && facility_filter != "all") {
-    facility_folders <- facility_folders[tolower(basename(facility_folders)) == tolower(facility_filter)]
-  }
-  
-  all_harborages <- list()
-  
-  for (folder in facility_folders) {
-    facility_code <- basename(folder)
-    
-    # Find all harborage shapefiles in this folder
-    shp_files <- list.files(folder, pattern = "_harborages\\.shp$", full.names = TRUE)
-    
-    for (shp_file in shp_files) {
-      # Extract emp_num from filename (e.g., "8202_harborages.shp" -> "8202")
-      emp_num <- gsub("_harborages\\.shp$", "", basename(shp_file))
-      
-      # Filter by foreman if specified
-      if (!is.null(foreman_filter) && length(foreman_filter) > 0 && 
-          !("all" %in% foreman_filter) && !(emp_num %in% foreman_filter)) {
-        next
-      }
-      
-      tryCatch({
-        harb_sf <- sf::st_read(shp_file, quiet = TRUE)
-        
-        # Ensure WGS84 projection
-        if (!is.na(sf::st_crs(harb_sf)) && sf::st_crs(harb_sf)$epsg != 4326) {
-          harb_sf <- sf::st_transform(harb_sf, 4326)
-        }
-        
-        # Standardize column names to essential ones only
-        # Keep: Sitecode, Acres, Foreman, Facility, Park_name, HarbName, geometry
-        essential_cols <- c("Sitecode", "Acres", "Foreman", "Facility", "Park_name", "HarbName")
-        
-        # Add facility code if not present
-        if (!"Facility" %in% names(harb_sf)) {
-          harb_sf$Facility <- toupper(facility_code)
-        }
-        
-        # Ensure all essential columns exist (add NA if missing)
-        for (col in essential_cols) {
-          if (!(col %in% names(harb_sf))) {
-            harb_sf[[col]] <- NA_character_
-          }
-        }
-        
-        # Keep only essential columns + geometry
-        harb_sf <- harb_sf[, c(essential_cols, "geometry")]
-        
-        all_harborages[[paste0(facility_code, "_", emp_num)]] <- harb_sf
-        
-      }, error = function(e) {
-        message("Error loading harborage file: ", shp_file, " - ", e$message)
-      })
-    }
-  }
-  
-  # Combine all harborages into single sf object
-  if (length(all_harborages) > 0) {
-    # Use bind_rows from dplyr/sf to combine
-    combined <- do.call(rbind, all_harborages)
-    return(combined)
-  }
-  
-  return(NULL)
-}
-
-# Cache for background layers to avoid reloading on every map render
-.suco_bg_cache <- new.env(parent = emptyenv())
-
-get_cached_background_layers <- function() {
-  if (is.null(.suco_bg_cache$layers)) {
-    .suco_bg_cache$layers <- load_suco_background_layers()
-  }
-  return(.suco_bg_cache$layers)
-}
+source("../../shared/geometry_helpers.R")
 
 # Helper to add all background layers to a leaflet map
-# Returns the map with layers added
-# Harborages are hidden by default and only shown when zoomed in (via JavaScript)
+# Uses shared geometry_helpers for loading and rendering
 add_background_layers_to_map <- function(m, facility_filter = NULL, foreman_filter = NULL, load_harborages = FALSE) {
   # Show loading indicator
   shiny::incProgress(0.1, message = "Loading map layers...", detail = "Facility boundaries")
   
-  bg_layers <- get_cached_background_layers()
+  # Use shared geometry_helpers for loading
+  bg_layers <- load_background_layers()
   
   shiny::incProgress(0.2, detail = "Zone boundaries")
   
-  # Add facility boundaries
-  if (!is.null(bg_layers$facilities)) {
-    m <- m %>%
-      addPolylines(
-        data = bg_layers$facilities,
-        color = "#2c3e50",
-        weight = 2.5,
-        opacity = 0.8,
-        group = "Facility Boundaries",
-        popup = ~paste0("<b>Facility:</b> ", if("facility" %in% names(bg_layers$facilities)) facility else "")
-      )
-  }
-  
-  # Add zone boundaries
-  if (!is.null(bg_layers$zones)) {
-    m <- m %>%
-      addPolylines(
-        data = bg_layers$zones,
-        color = "#e74c3c",
-        weight = 2,
-        opacity = 0.7,
-        dashArray = "5,5",
-        group = "Zone Boundaries"
-      )
-  }
+  # Use shared function for adding background layers
+  m <- add_background_layers(m, bg_layers)
   
   # Only load harborages if toggle is enabled
   if (load_harborages) {
     shiny::incProgress(0.3, detail = "Loading harborages...")
-    harborages <- load_harborage_layers(facility_filter, foreman_filter)
+    harborages <- load_harborage_layers(facility_filter = facility_filter, foreman_filter = foreman_filter)
     
-    # Add harborage polygons
+    # Use shared function for adding harborage layer
     if (!is.null(harborages) && nrow(harborages) > 0) {
       shiny::incProgress(0.2, detail = paste0("Rendering ", nrow(harborages), " harborages..."))
-      
-      # Create popup for harborages - handle NA values
-      harb_name <- ifelse(
-        !is.na(harborages$HarbName) & harborages$HarbName != "", 
-        harborages$HarbName,
-        ifelse(!is.na(harborages$Park_name) & harborages$Park_name != "",
-               harborages$Park_name,
-               "Unnamed")
-      )
-      
-      harb_popup <- paste0(
-        "<b>Harborage:</b> ", harborages$Sitecode, "<br>",
-        "<b>Name:</b> ", harb_name, "<br>",
-        "<b>Acres:</b> ", round(as.numeric(harborages$Acres), 2), "<br>",
-        "<b>Foreman:</b> ", harborages$Foreman, "<br>",
-        "<b>Facility:</b> ", harborages$Facility
-      )
-      
-      m <- m %>%
-        addPolygons(
-          data = harborages,
-          color = "#27ae60",
-          weight = 1.5,
-          opacity = 0.7,
-          fillColor = "#27ae60",
-          fillOpacity = 0.15,
-          popup = harb_popup,
-          highlightOptions = highlightOptions(
-            weight = 3,
-            color = "#27ae60",
-            fillOpacity = 0.3,
-            bringToFront = FALSE
-          ),
-          group = "Harborages"
-        )
+      m <- add_harborage_layer(m, harborages)
     }
   } else {
     shiny::incProgress(0.5, detail = "Skipping harborages (disabled)...")
@@ -261,51 +90,26 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     # Get facility colors and lookup from db_helpers
     facility_colors <- get_facility_base_colors(theme = theme)
     facilities <- get_facility_lookup()
-    foremen_lookup <- get_foremen_lookup()  # Add foremen lookup for popups
-    foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)  # Ensure string format
+    foremen_lookup <- get_foremen_lookup()
     
-    # Create facility name mapping FIRST
-    facility_names <- setNames(facilities$full_name, facilities$short_name)
-    
-    # Create popup text beforehand to avoid scope issues
+    # Create popup text using vectorized lookups for performance
     data <- data %>%
       mutate(
-        popup_text = {
-          # Get proper foreman names with robust matching
-          foreman_names <- sapply(foreman, function(f) {
-            if (!is.na(f) && f != "" && !is.null(f)) {
-              # Ensure both foreman and emp_num are strings for comparison
-              foreman_str <- trimws(as.character(f))
-              
-              # Find matching foreman in lookup table
-              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
-              
-              if(length(matches) > 0) {
-                foremen_lookup$shortname[matches[1]]
-              } else {
-                # Fallback: show the raw foreman ID if no match found
-                paste0("FOS #", foreman_str)
-              }
-            } else {
-              "No FOS assigned"
-            }
-          })
-          
-          facility_names_vec <- sapply(facility, function(f) {
-            fname <- facility_names[f]
-            if(length(fname) > 0) fname[1] else f
-          })
-          
-          paste0("<b>Date:</b> ", inspdate, "<br>",
-                 "<b>Facility:</b> ", facility_names_vec, "<br>",
-                 "<b>FOS:</b> ", foreman_names, "<br>",
+        # Use vectorized lookup functions from db_helpers
+        foreman_name = get_foreman_display_names(foreman, foremen_lookup),
+        facility_name = get_facility_display_names(facility, facilities),
+        popup_text = paste0("<b>Date:</b> ", inspdate, "<br>",
+                 "<b>Facility:</b> ", facility_name, "<br>",
+                 "<b>FOS:</b> ", foreman_name, "<br>",
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
-                 "<b>Species Found:</b><br>", species_summary)
-        },
+                 "<b>Species Found:</b><br>", species_summary),
         marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
         marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
+    
+    # Create facility name mapping for legend
+    facility_names <- setNames(facilities$full_name, facilities$short_name)
     
     # Create color palette function
     pal <- colorFactor(
@@ -315,15 +119,11 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     # Create a named vector for legend labels
     legend_labels <- sapply(names(facility_colors), function(code) facility_names[code] %||% code)
     
-    # Create map with facility coloring
+    # Create map with facility coloring - use safe bounds calculation
+    bounds <- calculate_map_bounds(data)
     m <- leaflet(data) %>%
-      addProviderTiles(basemap, group = "Base Map") %>%
-      fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
-      )
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
     m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
@@ -372,40 +172,23 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
   } else if (input$group_by == "species_name") {
     # Get species colors and create species-based markers
     species_colors <- get_species_display_colors()
-    foremen_lookup <- get_foremen_lookup()  
-    foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)
+    foremen_lookup <- get_foremen_lookup()
     
     # Get the species for each location to determine marker color
     data <- data %>%
       mutate(
-        # Use the species_name column that already exists in the data
         dominant_species = case_when(
           !is.na(species_name) & species_name != "" ~ species_name,
           TRUE ~ "No species"
         ),
-        popup_text = {
-          # Get proper foreman names
-          foreman_names <- sapply(foreman, function(f) {
-            if (!is.na(f) && f != "" && !is.null(f)) {
-              foreman_str <- trimws(as.character(f))
-              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
-              if(length(matches) > 0) {
-                foremen_lookup$shortname[matches[1]]
-              } else {
-                paste0("FOS #", foreman_str)
-              }
-            } else {
-              "No FOS assigned"
-            }
-          })
-          
-          paste0("<b>Date:</b> ", inspdate, "<br>",
+        # Use vectorized lookup for foreman names
+        foreman_name = get_foreman_display_names(foreman, foremen_lookup),
+        popup_text = paste0("<b>Date:</b> ", inspdate, "<br>",
                  "<b>Species:</b> ", ifelse(!is.na(species_name) & species_name != "", species_name, "No species"), "<br>",
-                 "<b>FOS:</b> ", foreman_names, "<br>",
+                 "<b>FOS:</b> ", foreman_name, "<br>",
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
-                 "<b>Species Found:</b><br>", species_summary)
-        },
+                 "<b>Species Found:</b><br>", species_summary),
         marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
         marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
@@ -480,15 +263,11 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
       palette = species_colors_extended,
       domain = species_in_data)
     
-    # Create map with location-aggregated markers
+    # Create map with location-aggregated markers - use safe bounds calculation
+    bounds <- calculate_map_bounds(location_summary, lng_col = "longitude", lat_col = "latitude")
     m <- leaflet(location_summary) %>%
-      addProviderTiles(basemap, group = "Base Map") %>%
-      fitBounds(
-        lng1 = min(location_summary$longitude),
-        lat1 = min(location_summary$latitude),
-        lng2 = max(location_summary$longitude),
-        lat2 = max(location_summary$latitude)
-      )
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
     m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
@@ -582,55 +361,29 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
       ordered = TRUE  # Maintain order
     )
     
-    # Create popup text beforehand for foreman map too
+    # Get facilities lookup for display names
+    facilities <- get_facility_lookup()
+    
+    # Create popup text using vectorized lookups for performance
     data <- data %>%
       mutate(
-        popup_text_foreman = {
-          # Get proper foreman names with robust matching
-          foreman_names <- sapply(foreman, function(f) {
-            if (!is.na(f) && f != "" && !is.null(f)) {
-              # Ensure both foreman and emp_num are strings for comparison
-              foreman_str <- trimws(as.character(f))
-              
-              # Find matching foreman in lookup table
-              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
-              
-              if(length(matches) > 0) {
-                foremen_lookup$shortname[matches[1]]
-              } else {
-                # Fallback: show the raw foreman ID if no match found
-                paste0("FOS #", foreman_str)
-              }
-            } else {
-              "No FOS assigned"
-            }
-          })
-          
-          facility_names_vec <- sapply(facility, function(f) {
-            fname <- facilities$full_name[facilities$short_name == f]
-            if(length(fname) > 0) fname[1] else f
-          })
-          
-          paste0("<b>Date:</b> ", inspdate, "<br>",
-                 "<b>Facility:</b> ", facility_names_vec, "<br>",
-                 "<b>FOS:</b> ", foreman_names, "<br>",
+        foreman_name = get_foreman_display_names(foreman, foremen_lookup),
+        facility_name = get_facility_display_names(facility, facilities),
+        popup_text_foreman = paste0("<b>Date:</b> ", inspdate, "<br>",
+                 "<b>Facility:</b> ", facility_name, "<br>",
+                 "<b>FOS:</b> ", foreman_name, "<br>",
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
-                 "<b>Species Found:</b><br>", species_summary)
-        },
+                 "<b>Species Found:</b><br>", species_summary),
         marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
         marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
     
-    # Create map with foreman coloring
+    # Create map with foreman coloring - use safe bounds calculation
+    bounds <- calculate_map_bounds(data)
     m <- leaflet(data) %>%
-      addProviderTiles(basemap, group = "Base Map") %>%
-      fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
-      )
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
     m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
@@ -705,15 +458,11 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
       cat("[MMCD All Map Debug] Sample coords:", head(coords, 1), "\n")
     }
     
-    # Create base map
+    # Create base map - use safe bounds calculation for single-point case
+    bounds <- calculate_map_bounds(data)
     m <- leaflet(data) %>%
-      addProviderTiles(basemap, group = "Base Map") %>%
-      fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
-      )
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
     m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)

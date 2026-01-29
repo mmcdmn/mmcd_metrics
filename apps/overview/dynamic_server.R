@@ -264,9 +264,9 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
 # SUMMARY STATS GENERATOR
 # =============================================================================
 
-#' Generate summary stats UI from data
+#' Generate summary stats UI from data with clickable value boxes
 #' @param data Named list of data frames keyed by metric_id
-#' @return fluidRow with stat boxes
+#' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
 generate_summary_stats <- function(data) {
   metrics <- get_active_metrics()
@@ -305,13 +305,18 @@ generate_summary_stats <- function(data) {
       stat_title <- paste0(config$display_name, ": 0 / 0 treated")
     }
     
+    # Create clickable stat box with data-metric-id attribute
     column(col_width,
-      create_stat_box(
-        value = paste0(pct, "%"),
-        title = stat_title,
-        bg_color = config$bg_color,
-        icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-        icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+      div(
+        class = "stat-box-clickable",
+        `data-metric-id` = metric_id,
+        create_stat_box(
+          value = paste0(pct, "%"),
+          title = stat_title,
+          bg_color = config$bg_color,
+          icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+          icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+        )
       )
     )
   })
@@ -634,23 +639,44 @@ build_overview_server <- function(input, output, session,
       observeEvent(event_data("plotly_click", source = metric_id), {
         click_data <- event_data("plotly_click", source = metric_id)
         if (!is.null(click_data)) {
-          # For zone charts with flipped coordinates, use pointNumber to determine zone
-          # pointNumber 0 = first bar = P1, pointNumber 1 = second bar = P2
-          point_num <- click_data$pointNumber
+          # Debug the click data
+          cat("DEBUG: Click event for", metric_id, "- x:", click_data$x, "y:", click_data$y, "pointNumber:", click_data$pointNumber, "\n")
           
-          # Map pointNumber to zone
-          if (point_num == 0) {
-            zone_clicked <- "P1"
-          } else if (point_num == 1) {
-            zone_clicked <- "P2"  
-          } else {
-            # Fallback to original method
-            zone_clicked <- click_data$y  # For flipped coordinates
+          # Get current zone filter to understand data structure
+          current_zone_filter <- input$zone_filter
+          cat("DEBUG: Current zone filter:", current_zone_filter, "\n")
+          
+          # Zone determination logic based on current filter and click position
+          zone_clicked <- NULL
+          
+          if (current_zone_filter == "1,2") {
+            # Combined P1+P2 data - check if we have 1 or 2 bars
+            if (!is.null(click_data$pointNumber)) {
+              # If pointNumber 0 and there are 2 bars, it's P1; if 1 bar total, it's combined P1+P2
+              # Check by looking at the y value (display_name)
+              display_name <- as.character(click_data$y)
+              if (grepl("P1", display_name, ignore.case = TRUE)) {
+                zone_clicked <- "P1"
+              } else if (grepl("P2", display_name, ignore.case = TRUE)) {
+                zone_clicked <- "P2"  
+              } else {
+                # Combined bar - pass the combined filter
+                zone_clicked <- "1,2"
+              }
+            }
+          } else if (current_zone_filter %in% c("1", "2")) {
+            # Single zone selected - pass through the current filter
+            zone_clicked <- if (current_zone_filter == "1") "P1" else "P2"
+          } else if (current_zone_filter == "separate") {
+            # Separate zones - use pointNumber or y value to determine
+            if (!is.null(click_data$pointNumber)) {
+              zone_clicked <- if (click_data$pointNumber == 0) "P1" else "P2"
+            }
           }
           
-          cat("DEBUG: Click data - x:", click_data$x, "y:", click_data$y, "pointNumber:", point_num, "\n")
           cat("DEBUG: Determined zone_clicked:", zone_clicked, "\n")
           
+          # Navigate with the determined zone
           navigate_to_overview(
             session, 
             overview_config$drill_down_target,

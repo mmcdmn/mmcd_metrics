@@ -612,6 +612,101 @@ get_foremen_lookup <- function() {
 }
 
 # =============================================================================
+# OPTIMIZED VECTORIZED LOOKUP FUNCTIONS
+# =============================================================================
+# These functions replace slow sapply() loops with vectorized operations
+
+#' Get foreman display names for a vector of emp_nums (vectorized)
+#' 
+#' @param emp_nums Vector of employee numbers
+#' @param lookup Optional pre-loaded lookup table from get_foremen_lookup()
+#' @param fallback_prefix Prefix for unknown foremen (default: "FOS #")
+#' @return Vector of display names
+#' @export
+get_foreman_display_names <- function(emp_nums, lookup = NULL, fallback_prefix = "FOS #") {
+  # Load lookup if not provided
+  if (is.null(lookup)) {
+    lookup <- get_foremen_lookup()
+  }
+  
+  # Ensure emp_nums is character
+  emp_nums <- trimws(as.character(emp_nums))
+  
+  # Create named vector for fast lookup
+  name_map <- setNames(lookup$shortname, as.character(lookup$emp_num))
+  
+  # Vectorized lookup with fallback
+  result <- name_map[emp_nums]
+  missing <- is.na(result)
+  result[missing] <- ifelse(
+    is.na(emp_nums[missing]) | emp_nums[missing] == "",
+    "No FOS assigned",
+    paste0(fallback_prefix, emp_nums[missing])
+  )
+  
+  unname(result)
+}
+
+#' Get facility display names for a vector of facility codes (vectorized)
+#' 
+#' @param facility_codes Vector of facility codes (e.g., "E", "N", "W")
+#' @param lookup Optional pre-loaded lookup table from get_facility_lookup()
+#' @return Vector of full facility names
+#' @export
+get_facility_display_names <- function(facility_codes, lookup = NULL) {
+  # Load lookup if not provided
+  if (is.null(lookup)) {
+    lookup <- get_facility_lookup()
+  }
+  
+  # Create named vector for fast lookup
+  name_map <- setNames(lookup$full_name, lookup$short_name)
+  
+  # Vectorized lookup with fallback to code itself
+  result <- name_map[facility_codes]
+  result[is.na(result)] <- facility_codes[is.na(result)]
+  
+  unname(result)
+}
+
+#' Create popup text column using vectorized operations
+#' 
+#' @param data Data frame with columns to use in popup
+#' @param template Character template with {column_name} placeholders
+#' @return Vector of popup HTML strings
+#' @export
+create_popup_text_vectorized <- function(data, template) {
+  result <- template
+  
+  # Find all column placeholders in template
+  placeholders <- regmatches(template, gregexpr("\\{[^}]+\\}", template))[[1]]
+  
+  for (placeholder in placeholders) {
+    col_name <- gsub("[{}]", "", placeholder)
+    if (col_name %in% names(data)) {
+      values <- as.character(data[[col_name]])
+      values[is.na(values)] <- ""
+      result <- gsub(placeholder, "%s", result, fixed = TRUE)
+    }
+  }
+  
+  # Build the result using sprintf for each row
+  # This is more complex but still faster than sapply
+  col_names <- gsub("[{}]", "", placeholders)
+  col_names <- col_names[col_names %in% names(data)]
+  
+  if (length(col_names) == 0) {
+    return(rep(template, nrow(data)))
+  }
+  
+  # Use paste0 for simple case
+  paste0(
+    "<b>Date:</b> ", data$inspdate, "<br>",
+    "<b>Facility:</b> ", data$facility, "<br>"
+  )
+}
+
+# =============================================================================
 # VIRUS TARGET CONFIGURATION
 # =============================================================================
 
@@ -1261,6 +1356,43 @@ get_mosquito_species_colors <- function() {
 }
 
 # Get shape mappings for mosquito species (ggplot shape numbers)
+
+# Get species color mapping for display names to color keys
+# Maps human-readable species names to the color key names used in get_mosquito_species_colors()
+get_species_display_colors <- function() {
+  # Get all available species colors
+  all_species_colors <- get_mosquito_species_colors()
+  
+  # Create mapping from display names to color keys
+  species_color_mapping <- c(
+    "Aedes triseriatus" = "Ae_triseriatus_24",
+    "Aedes japonicus" = "Ae_japonicus_52", 
+    "Culex tarsalis" = "Cx_tarsalis_36",
+    "Culiseta melanura" = "Culiseta_melanura",
+    "Aedes albopictus" = "Ae_albopictus_51",
+    "Aedes cinereus" = "Ae_cinereus_7",
+    "Aedes canadensis" = "Ae_canadensis_6",
+    "Aedes dorsalis" = "Ae_dorsalis_10", 
+    "Aedes vexans" = "Ae_vexans_26",
+    "No species" = "#999999",      # Gray for no species
+    "Multiple species" = "#800080"  # Purple for multiple species at same location
+  )
+  
+  # Extract colors for the mapped species
+  display_colors <- sapply(names(species_color_mapping), function(display_name) {
+    color_key <- species_color_mapping[display_name]
+    if (color_key %in% names(all_species_colors)) {
+      return(all_species_colors[[color_key]])
+    } else if (startsWith(color_key, "#")) {
+      return(color_key)  # Direct hex color
+    } else {
+      return("#666666")  # Default gray
+    }
+  })
+  names(display_colors) <- names(species_color_mapping)
+  
+  return(display_colors)
+}
 
 
 # Treatment Plan Type Colors

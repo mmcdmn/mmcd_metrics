@@ -99,12 +99,14 @@ get_suco_data <- function(data_source = "all", date_range = NULL, return_species
     queries$current <- sprintf("
 SELECT
 s.id, s.ainspecnum, 
-COALESCE(h.facility, g.facility, s.facility) as facility,
-COALESCE(h.foreman, s.foreman) as foreman,
+COALESCE(g.facility, h.facility, s.facility) as facility,
+COALESCE(g.fosarea, h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-g.zone,
+COALESCE(s.x, ST_X(ST_Transform(s.geometry, 4326))) as x,
+COALESCE(s.y, ST_Y(ST_Transform(s.geometry, 4326))) as y,
+ST_AsText(s.geometry) as geometry_text,
+COALESCE(g.zone, CASE WHEN h.sitecode LIKE '%%P1%%' THEN '1' WHEN h.sitecode LIKE '%%P2%%' THEN '2' ELSE NULL END) as zone,
 'current' as source_table
 FROM public.dbadult_insp_current s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
@@ -120,12 +122,14 @@ AND s.inspdate BETWEEN '%s' AND '%s'
     queries$archive <- sprintf("
 SELECT
 s.id, s.ainspecnum, 
-COALESCE(h.facility, g.facility, s.facility) as facility,
-COALESCE(h.foreman, s.foreman) as foreman,
+COALESCE(g.facility, h.facility, s.facility) as facility,
+COALESCE(g.fosarea, h.foreman, s.foreman) as foreman,
 s.inspdate, s.sitecode,
 s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-s.x, s.y, ST_AsText(s.geometry) as geometry_text,
-g.zone,
+COALESCE(s.x, ST_X(ST_Transform(s.geometry, 4326))) as x,
+COALESCE(s.y, ST_Y(ST_Transform(s.geometry, 4326))) as y,
+ST_AsText(s.geometry) as geometry_text,
+COALESCE(g.zone, CASE WHEN h.sitecode LIKE '%%P1%%' THEN '1' WHEN h.sitecode LIKE '%%P2%%' THEN '2' ELSE NULL END) as zone,
 'archive' as source_table
 FROM public.dbadult_insp_archive s
 LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
@@ -339,22 +343,12 @@ filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter,
       filter(facility == facility_filter)
   }
   
-  # Apply foreman filter using shared helper
+  # Apply foreman filter - foreman_filter contains emp_num values from the UI
   if (is_valid_filter(foreman_filter) && "foreman" %in% names(filtered_data)) {
-    # Convert shortnames to emp_nums for filtering
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Get emp_nums that match the selected shortnames
-    selected_emp_nums <- foremen_lookup %>%
-      filter(shortname %in% foreman_filter) %>%
-      pull(emp_num) %>%
-      as.character()
-    
-    # Filter by the emp_nums
-    if (length(selected_emp_nums) > 0) {
-      filtered_data <- filtered_data %>%
-        filter(as.character(foreman) %in% selected_emp_nums)
-    }
+    # foreman_filter already contains emp_nums from the UI (values of the selectize input)
+    # Just filter directly by emp_num
+    filtered_data <- filtered_data %>%
+      filter(as.character(foreman) %in% as.character(foreman_filter))
   }
   
   # Apply species filter - check if species appears in species_summary

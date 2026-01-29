@@ -95,7 +95,10 @@ ui <- fluidPage(
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
                                 "Esri Satellite" = "satellite"),
-                    selected = "carto")
+                    selected = "carto"),
+        checkboxInput("load_harborages", "Load Harborage Polygons", value = FALSE),
+        p(style = "font-size: 0.85em; color: #666; margin-top: -5px;",
+          "(Large geometry - may slow map loading)")
       ),
       
       # Top locations mode (conditional)
@@ -226,7 +229,8 @@ server <- function(input, output, session) {
       species_filter = isolate(input$species_filter),
       graph_type = isolate(input$graph_type),
       top_locations_mode = isolate(input$top_locations_mode),
-      basemap = isolate(input$basemap)
+      basemap = isolate(input$basemap),
+      load_harborages = isolate(input$load_harborages)
     )
   })
   
@@ -421,8 +425,10 @@ server <- function(input, output, session) {
     req(input$refresh)
     inputs <- refresh_inputs()
     data <- spatial_data()
-    # Pass group_by information to the map function
-    create_suco_map(data, inputs, data_source = "all", theme = current_theme(), group_by = inputs$group_by)
+    # Wrap in withProgress to enable loading indicators for geometry
+    withProgress(message = "Building map...", value = 0, {
+      create_suco_map(data, inputs, data_source = "all", theme = current_theme(), group_by = inputs$group_by)
+    })
   })
   
   # ===========================================================================

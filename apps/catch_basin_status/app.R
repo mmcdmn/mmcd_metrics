@@ -16,6 +16,16 @@ source("historical_functions.R")
 set_app_name("catch_basin_status")
 
 # =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message(" Preloading lookup tables for catch_basin_status app...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message(" Lookup tables preloaded")
+}, error = function(e) message(" Preload warning: ", e$message))
+
+# =============================================================================
 # USER INTERFACE
 # =============================================================================
 

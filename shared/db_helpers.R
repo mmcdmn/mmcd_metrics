@@ -120,6 +120,48 @@ if (!exists("%||%", mode = "function")) {
 }
 
 # =============================================================================
+# IN-MEMORY LOOKUP CACHE (Fast per-process cache)
+# =============================================================================
+# In-memory cache for lookup tables. Much faster than file-based cache.
+# Shared across all sessions in the same R process.
+
+.lookup_memory_cache <- new.env(parent = emptyenv())
+.lookup_cache_timestamps <- new.env(parent = emptyenv())
+LOOKUP_CACHE_TTL_SECONDS <- 300  # 5 minutes
+
+#' Get item from in-memory cache
+get_memory_cached <- function(key) {
+  if (!exists(key, envir = .lookup_memory_cache)) return(NULL)
+  
+  # Check if expired
+  if (exists(key, envir = .lookup_cache_timestamps)) {
+    cached_time <- get(key, envir = .lookup_cache_timestamps)
+    if (as.numeric(difftime(Sys.time(), cached_time, units = "secs")) > LOOKUP_CACHE_TTL_SECONDS) {
+      # Expired - remove and return NULL
+      rm(list = key, envir = .lookup_memory_cache)
+      rm(list = key, envir = .lookup_cache_timestamps)
+      return(NULL)
+    }
+  }
+  
+  get(key, envir = .lookup_memory_cache)
+}
+
+#' Set item in in-memory cache
+set_memory_cached <- function(key, value) {
+  assign(key, value, envir = .lookup_memory_cache)
+  assign(key, Sys.time(), envir = .lookup_cache_timestamps)
+  invisible(value)
+}
+
+#' Clear in-memory cache
+clear_memory_cache <- function() {
+  rm(list = ls(.lookup_memory_cache), envir = .lookup_memory_cache)
+  rm(list = ls(.lookup_cache_timestamps), envir = .lookup_cache_timestamps)
+  message("In-memory lookup cache cleared")
+}
+
+# =============================================================================
 # LOOKUP CACHE - File-based cache for static reference data
 # =============================================================================
 # Cache for lookup tables that don't change frequently.
@@ -411,11 +453,19 @@ get_historical_year_ranges <- function(con, current_table, archive_table, date_c
   })
 }
 
-# Facility lookup functions (CACHED - file-based)
+# Facility lookup functions (CACHED - in-memory first, then file-based)
 get_facility_lookup <- function() {
-  # Return cached value if available
+  # Check in-memory cache first (fastest)
+  cached_mem <- get_memory_cached("facilities")
+  if (!is.null(cached_mem)) {
+    return(cached_mem)
+  }
+  
+  # Check file cache
   cached <- get_cached_lookup("facilities")
   if (!is.null(cached)) {
+    # Store in memory for next access
+    set_memory_cached("facilities", cached)
     return(cached)
   }
   
@@ -434,7 +484,8 @@ get_facility_lookup <- function() {
     
     safe_disconnect(con)
     
-    # Cache the result to file
+    # Cache in both memory and file
+    set_memory_cached("facilities", facilities)
     set_cached_lookup("facilities", facilities)
     return(facilities)
     
@@ -681,11 +732,19 @@ get_treatment_material_choices <- function(include_all = TRUE, filter_type = NUL
   return(get_material_choices(include_all = include_all, filter_type = filter_type))
 }
 
-# Get foremen (field supervisors) lookup table (CACHED - file-based)
+# Get foremen (field supervisors) lookup table (CACHED - in-memory first, then file-based)
 get_foremen_lookup <- function() {
-  # Return cached value if available
+  # Check in-memory cache first (fastest)
+  cached_mem <- get_memory_cached("foremen")
+  if (!is.null(cached_mem)) {
+    return(cached_mem)
+  }
+  
+  # Check file cache
   cached <- get_cached_lookup("foremen")
   if (!is.null(cached)) {
+    # Store in memory for next access
+    set_memory_cached("foremen", cached)
     return(cached)
   }
   
@@ -707,7 +766,8 @@ get_foremen_lookup <- function() {
     
     safe_disconnect(con)
     
-    # Cache the result to file
+    # Cache in both memory and file
+    set_memory_cached("foremen", foremen)
     set_cached_lookup("foremen", foremen)
     return(foremen)
     

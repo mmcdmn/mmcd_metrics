@@ -19,6 +19,20 @@ set_app_name("drone")
 load_env_vars()
 
 # =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+# This ensures the first user doesn't experience slow load times
+# Lookups are cached in-memory for 5 minutes, shared across all sessions
+message(" Preloading lookup tables for drone app...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message(" Lookup tables preloaded")
+}, error = function(e) {
+  message(" Preload warning: ", e$message)
+})
+
+# =============================================================================
 # USER INTERFACE
 # =============================================================================
 

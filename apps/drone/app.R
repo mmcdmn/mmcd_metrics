@@ -23,13 +23,13 @@ load_env_vars()
 # =============================================================================
 # This ensures the first user doesn't experience slow load times
 # Lookups are cached in-memory for 5 minutes, shared across all sessions
-message(" Preloading lookup tables for drone app...")
+message("[drone] Preloading lookup tables...")
 tryCatch({
   get_facility_lookup()
   get_foremen_lookup()
-  message(" Lookup tables preloaded")
+  message("[drone] Lookup tables preloaded")
 }, error = function(e) {
-  message(" Preload warning: ", e$message)
+  message("[drone] Preload warning: ", e$message)
 })
 
 # =============================================================================

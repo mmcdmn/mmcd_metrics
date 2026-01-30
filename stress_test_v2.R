@@ -1,8 +1,8 @@
 # =============================================================================
-# MMCD Metrics Stress Test v2.0
+# MMCD Metrics Stress Test v2.1
 # =============================================================================
-# Enhanced stress test with better metrics tracking, baseline comparisons,
-# and detailed per-app analysis for optimization progress tracking.
+# Stress test using TRUE concurrent HTTP connections via httr2.
+# Tests actual server capacity under simultaneous load.
 #
 # Usage:
 #   source("stress_test_v2.R")
@@ -13,11 +13,13 @@
 # =============================================================================
 
 library(httr2)
-library(parallel)
 library(ggplot2)
 library(dplyr)
 library(lubridate)
 library(tidyr)
+
+# Define %||% operator for null coalescing
+`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # =============================================================================
 # CONFIGURATION
@@ -168,50 +170,101 @@ worker_function <- function(worker_id, duration_sec, endpoints, delay_ms) {
   do.call(rbind, lapply(worker_results, as.data.frame, stringsAsFactors = FALSE))
 }
 
-#' Run load test at a specific concurrency level
-run_load_level <- function(num_workers, duration_sec, endpoints, verbose = TRUE) {
+#' Run load test at a specific concurrency level using TRUE concurrent connections
+run_load_level <- function(num_concurrent, duration_sec, endpoints, verbose = TRUE) {
   if (verbose) {
-    cat(sprintf("\n━━━ Testing with %d concurrent users for %d seconds ━━━\n", 
-                num_workers, duration_sec))
+    cat(sprintf("\n--- Testing with %d concurrent connections for %d seconds ---\n", 
+                num_concurrent, duration_sec))
   }
   
-  # Create cluster (use cores - 1 to leave room for main process)
-  num_cores <- min(num_workers, max(1, detectCores() - 1))
-  cl <- makeCluster(num_cores)
+  # Precompute weights for endpoint selection
+  weights <- sapply(endpoints, function(e) e$weight)
   
-  # Export required objects
-  clusterExport(cl, c("make_request", "CONFIG", "endpoints"), 
-                envir = environment())
-  clusterExport(cl, "%||%", envir = baseenv())
-  
-  # Load libraries on workers
-  clusterEvalQ(cl, {
-    suppressPackageStartupMessages({
-      library(httr2)
-    })
-    # Define %||% if not available
-    if (!exists("%||%")) {
-      `%||%` <- function(a, b) if (is.null(a)) b else a
-    }
-  })
-  
-  # Run workers
+  all_results <- list()
   test_start <- Sys.time()
-  results_list <- parLapply(cl, seq_len(num_workers), function(id) {
-    worker_function(id, duration_sec, endpoints, CONFIG$request_delay_ms)
-  })
-  test_end <- Sys.time()
+  test_end_time <- test_start + duration_sec
+  batch_num <- 0
   
-  stopCluster(cl)
+  while (Sys.time() < test_end_time) {
+    batch_num <- batch_num + 1
+    batch_start <- Sys.time()
+    
+    # Create N concurrent requests (random endpoints based on weights)
+    requests <- lapply(seq_len(num_concurrent), function(i) {
+      selected_idx <- sample(seq_along(endpoints), size = 1, prob = weights)
+      endpoint <- endpoints[[selected_idx]]
+      
+      request(paste0(CONFIG$base_url, endpoint$path)) %>%
+        req_timeout(30) %>%
+        req_error(is_error = function(resp) FALSE)  # Don't error, we'll check status
+    })
+    
+    # Track which endpoint each request is for
+    endpoint_info <- lapply(seq_len(num_concurrent), function(i) {
+      selected_idx <- sample(seq_along(endpoints), size = 1, prob = weights)
+      endpoints[[selected_idx]]
+    })
+    
+    # Execute all requests concurrently
+    responses <- req_perform_parallel(requests, on_error = "continue")
+    
+    batch_end <- Sys.time()
+    batch_time <- as.numeric(difftime(batch_end, batch_start, units = "secs")) * 1000
+    
+    # Process responses
+    for (i in seq_along(responses)) {
+      resp <- responses[[i]]
+      endpoint <- endpoint_info[[i]]
+      
+      # Calculate per-request time (approximate - divide batch time by concurrency)
+      # This is an approximation since we can't get individual timings from parallel requests
+      response_time <- batch_time / num_concurrent
+      
+      if (inherits(resp, "httr2_response")) {
+        status <- resp_status(resp)
+        all_results[[length(all_results) + 1]] <- list(
+          timestamp = as.character(batch_start),
+          endpoint = endpoint$name,
+          endpoint_category = endpoint$category,
+          response_time_ms = response_time,
+          status_code = status,
+          success = status == 200,
+          error_type = NA_character_,
+          error_message = NA_character_,
+          worker_id = i,
+          batch = batch_num
+        )
+      } else {
+        # Error response
+        all_results[[length(all_results) + 1]] <- list(
+          timestamp = as.character(batch_start),
+          endpoint = endpoint$name,
+          endpoint_category = endpoint$category,
+          response_time_ms = response_time,
+          status_code = 0,
+          success = FALSE,
+          error_type = "error",
+          error_message = if (inherits(resp, "error")) substr(resp$message, 1, 200) else "unknown",
+          worker_id = i,
+          batch = batch_num
+        )
+      }
+    }
+    
+    # Small delay between batches to not overwhelm
+    Sys.sleep(0.05)
+  }
   
-  # Combine results
-  if (length(results_list) == 0 || all(sapply(results_list, is.null))) {
+  actual_duration <- as.numeric(difftime(Sys.time(), test_start, units = "secs"))
+  
+  # Convert to data frame
+  if (length(all_results) == 0) {
     return(NULL)
   }
   
-  combined <- do.call(rbind, results_list)
-  combined$num_workers <- num_workers
-  combined$test_duration_actual <- as.numeric(difftime(test_end, test_start, units = "secs"))
+  combined <- do.call(rbind, lapply(all_results, as.data.frame, stringsAsFactors = FALSE))
+  combined$num_workers <- num_concurrent
+  combined$test_duration_actual <- actual_duration
   
   # Calculate summary stats
   summary_stats <- calculate_level_stats(combined)
@@ -255,10 +308,10 @@ calculate_level_stats <- function(results) {
 
 #' Print summary for a load level
 print_level_summary <- function(stats) {
-  # Status icon
-  status_icon <- if (stats$success_rate >= CONFIG$success_rate_threshold) "✅" else "⚠️"
+  # Status indicator
+  status_txt <- if (stats$success_rate >= CONFIG$success_rate_threshold) "[PASS]" else "[WARN]"
   
-  cat(sprintf("\n%s Results (%d workers):\n", status_icon, stats$num_workers))
+  cat(sprintf("\n%s Results (%d workers):\n", status_txt, stats$num_workers))
   cat(sprintf("   Requests: %d total, %d successful (%.1f%%)\n", 
               stats$total_requests, stats$successful_requests, stats$success_rate))
   cat(sprintf("   Throughput: %.1f requests/sec\n", stats$requests_per_sec))
@@ -368,13 +421,13 @@ generate_report <- function(results, timestamp) {
     sprintf("| **Total Requests** | %s | |", format(nrow(results), big.mark = ",")),
     sprintf("| **Success Rate** | %.1f%% | %s |", 
             mean(results$success) * 100,
-            if (mean(results$success) >= 0.95) "✅" else "⚠️"),
+            if (mean(results$success) >= 0.95) "OK" else "WARN"),
     sprintf("| **Avg Response** | %.0f ms | %s |",
             mean(results$response_time_ms, na.rm = TRUE),
-            if (mean(results$response_time_ms, na.rm = TRUE) <= CONFIG$avg_response_threshold_ms) "✅" else "⚠️"),
+            if (mean(results$response_time_ms, na.rm = TRUE) <= CONFIG$avg_response_threshold_ms) "OK" else "WARN"),
     sprintf("| **95th Percentile** | %.0f ms | %s |",
             quantile(results$response_time_ms, 0.95, na.rm = TRUE),
-            if (quantile(results$response_time_ms, 0.95, na.rm = TRUE) <= CONFIG$p95_response_threshold_ms) "✅" else "⚠️"),
+            if (quantile(results$response_time_ms, 0.95, na.rm = TRUE) <= CONFIG$p95_response_threshold_ms) "OK" else "WARN"),
     sprintf("| **Max Concurrent Users** | %d | |", max(results$num_workers)),
     "",
     "---",
@@ -486,11 +539,11 @@ generate_comparison_report <- function(current_results, baseline_file, timestamp
   
   for (i in seq_len(nrow(comparison))) {
     row <- comparison[i, ]
-    change_icon <- if (row$response_change_pct < -5) "🟢" 
-                   else if (row$response_change_pct > 5) "🔴" 
-                   else "🟡"
-    cat(sprintf("%s %s: %.0fms → %.0fms (%+.1f%%)\n",
-                change_icon, row$endpoint,
+    change_txt <- if (row$response_change_pct < -5) "[+]" 
+                   else if (row$response_change_pct > 5) "[-]" 
+                   else "[=]"
+    cat(sprintf("%s %s: %.0fms -> %.0fms (%+.1f%%)\n",
+                change_txt, row$endpoint,
                 row$avg_response_ms_old, row$avg_response_ms_new,
                 row$response_change_pct))
   }
@@ -615,16 +668,16 @@ quick_test <- function(num_users = 10, duration = 30, verbose = TRUE) {
 
 #' Run full progressive stress test
 run_stress_test <- function(save_baseline = FALSE, compare_baseline = NULL) {
-  cat("╔══════════════════════════════════════════════════════════════╗\n")
-  cat("║         MMCD Metrics Stress Test v2.0                       ║\n")
-  cat("╚══════════════════════════════════════════════════════════════╝\n\n")
+  cat("+--------------------------------------------------------------+\n")
+  cat("|  MMCD Metrics Stress Test v2.1 - True Concurrent Connections |\n")
+  cat("+--------------------------------------------------------------+\n\n")
   
   timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
   
   cat("Configuration:\n")
   cat(sprintf("  Target URL: %s\n", CONFIG$base_url))
-  cat(sprintf("  Max Workers: %d\n", CONFIG$max_workers))
-  cat(sprintf("  Ramp-up Step: %d workers\n", CONFIG$ramp_up_step))
+  cat(sprintf("  Max Concurrent: %d connections\n", CONFIG$max_workers))
+  cat(sprintf("  Ramp-up Step: %d connections\n", CONFIG$ramp_up_step))
   cat(sprintf("  Test Duration: %d sec per level\n", CONFIG$test_duration_sec))
   cat(sprintf("  Endpoints: %d\n", length(ENDPOINTS)))
   cat(sprintf("  Success Threshold: %.0f%%\n", CONFIG$success_rate_threshold))
@@ -752,7 +805,7 @@ test_endpoint <- function(endpoint_name, num_requests = 50) {
   results <- lapply(seq_len(num_requests), function(i) {
     result <- make_request(endpoint, worker_id = 1)
     cat(sprintf("  [%d/%d] %s - %dms\n", i, num_requests, 
-                if (result$success) "✅" else "❌",
+                if (result$success) "OK" else "FAIL",
                 round(result$response_time_ms)))
     as.data.frame(result, stringsAsFactors = FALSE)
   })
@@ -776,17 +829,17 @@ test_endpoint <- function(endpoint_name, num_requests = 50) {
 # USAGE EXAMPLES
 # =============================================================================
 cat("
-╔══════════════════════════════════════════════════════════════╗
-║  MMCD Stress Test v2.0 Loaded                                ║
-╠══════════════════════════════════════════════════════════════╣
-║  Commands:                                                   ║
-║                                                              ║
-║  run_stress_test()              Full progressive test        ║
-║  run_stress_test(save_baseline = TRUE)  Save as baseline     ║
-║  quick_test(10, 30)             Quick 10-user, 30-sec test   ║
-║  test_endpoint(\"SUCO History\")  Test single endpoint         ║
-║                                                              ║
-║  Results saved to: stress_test_results/                      ║
-╚══════════════════════════════════════════════════════════════╝
++--------------------------------------------------------------+
+|  MMCD Stress Test v2.1 - True Concurrent Connections         |
++--------------------------------------------------------------+
+|  Commands:                                                   |
+|                                                              |
+|  run_stress_test()              Full progressive test        |
+|  run_stress_test(save_baseline = TRUE)  Save as baseline     |
+|  quick_test(10, 30)             Quick 10-conn, 30-sec test   |
+|  test_endpoint(\"SUCO History\")  Test single endpoint         |
+|                                                              |
+|  Results saved to: stress_test_results/                      |
++--------------------------------------------------------------+
 
 ")

@@ -66,7 +66,7 @@ get_cache_env <- function() {
 clear_app_cache <- function() {
   cache_env <- get_cache_env()
   rm(list = ls(cache_env), envir = cache_env)
-  if (CACHE_CONFIG$debug) message("🗑️ App cache cleared")
+  if (CACHE_CONFIG$debug) message("[cache] App cache cleared")
 }
 
 #' Get cache statistics
@@ -150,7 +150,7 @@ get_cached <- function(key, load_func = NULL, ttl_minutes = CACHE_CONFIG$default
       assign(key, entry, envir = cache_env)
       
       if (CACHE_CONFIG$debug) {
-        message(sprintf("📦 Cache HIT: %s (accessed %d times)", key, entry$access_count))
+        message(sprintf("[cache] HIT: %s (accessed %d times)", key, entry$access_count))
       }
       
       return(entry$data)
@@ -159,11 +159,11 @@ get_cached <- function(key, load_func = NULL, ttl_minutes = CACHE_CONFIG$default
   
   # Cache miss or expired - need to load data
   if (is.null(load_func)) {
-    if (CACHE_CONFIG$debug) message(sprintf("❌ Cache MISS: %s (no load function)", key))
+    if (CACHE_CONFIG$debug) message(sprintf("[cache] MISS: %s (no load function)", key))
     return(NULL)
   }
   
-  if (CACHE_CONFIG$debug) message(sprintf("🔄 Cache MISS: %s (loading...)", key))
+  if (CACHE_CONFIG$debug) message(sprintf("[cache] MISS: %s (loading...)", key))
   
   # Load fresh data
   data <- tryCatch({
@@ -191,7 +191,7 @@ set_cached <- function(key, data, ttl_minutes = CACHE_CONFIG$default_ttl_minutes
   assign(key, entry, envir = cache_env)
   
   if (CACHE_CONFIG$debug) {
-    message(sprintf("💾 Cache SET: %s (TTL: %d min)", key, ttl_minutes))
+    message(sprintf("[cache] SET: %s (TTL: %d min)", key, ttl_minutes))
   }
   
   # Check memory limits and evict if needed
@@ -205,7 +205,7 @@ remove_cached <- function(key) {
   cache_env <- get_cache_env()
   if (exists(key, envir = cache_env)) {
     rm(list = key, envir = cache_env)
-    if (CACHE_CONFIG$debug) message(sprintf("🗑️ Cache REMOVE: %s", key))
+    if (CACHE_CONFIG$debug) message(sprintf("[cache] REMOVE: %s", key))
   }
 }
 
@@ -235,7 +235,7 @@ enforce_cache_limits <- function() {
   }
   
   if (CACHE_CONFIG$debug) {
-    message(sprintf("🧹 Cache evicted %d entries", length(to_remove)))
+    message(sprintf("[cache] Evicted %d entries", length(to_remove)))
   }
 }
 
@@ -398,7 +398,7 @@ get_cached_lookup_v2 <- function(lookup_name, load_func, ttl_hours = 1) {
 #'
 #' @param lookups List of lookup names to preload
 preload_lookups <- function(lookups = c("facilities", "foremen", "species")) {
-  message("🔄 Preloading lookup tables...")
+  message("[cache] Preloading lookup tables...")
   
   # These functions are defined in db_helpers.R
   preload_funcs <- list(
@@ -419,15 +419,15 @@ preload_lookups <- function(lookups = c("facilities", "foremen", "species")) {
         data <- preload_funcs[[name]]()
         if (!is.null(data)) {
           set_cached(paste0("lookup_", name), data, ttl_minutes = 60)
-          message(sprintf("  ✓ %s preloaded", name))
+          message(sprintf("  - %s preloaded", name))
         }
       }, error = function(e) {
-        message(sprintf("  ✗ %s failed: %s", name, e$message))
+        message(sprintf("  - %s failed: %s", name, e$message))
       })
     }
   }
   
-  message("✅ Preload complete")
+  message("[cache] Preload complete")
 }
 
 # =============================================================================
@@ -444,12 +444,12 @@ preload_lookups <- function(lookups = c("facilities", "foremen", "species")) {
 warm_cache <- function(app_name, warm_func) {
   cache_key <- paste0("warm_", app_name, "_", Sys.Date())
   
-  message(sprintf("🔥 Warming cache for %s...", app_name))
+  message(sprintf("[cache] Warming cache for %s...", app_name))
   
   tryCatch({
     data <- warm_func()
     set_cached(cache_key, data, ttl_minutes = 60)
-    message(sprintf("✅ Cache warmed for %s", app_name))
+    message(sprintf("[cache] Cache warmed for %s", app_name))
   }, error = function(e) {
     warning(sprintf("Cache warming failed for %s: %s", app_name, e$message))
   })
@@ -489,4 +489,4 @@ print_cache_info <- function() {
 }
 
 # Log on load
-message("✓ App caching module loaded (shared/app_cache.R)")
+message("[app_cache] Module loaded (shared/app_cache.R)")

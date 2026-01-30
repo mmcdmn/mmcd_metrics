@@ -23,12 +23,12 @@ set_app_name("cattail_treatments")
 # =============================================================================
 # STARTUP OPTIMIZATION: Preload lookup tables into cache
 # =============================================================================
-message(" Preloading lookup tables for cattail_treatments app...")
+message("[cattail_treatments] Preloading lookup tables...")
 tryCatch({
   get_facility_lookup()
   get_foremen_lookup()
-  message(" Lookup tables preloaded")
-}, error = function(e) message(" Preload warning: ", e$message))
+  message("[cattail_treatments] Lookup tables preloaded")
+}, error = function(e) message("[cattail_treatments] Preload warning: ", e$message))
 
 # Source external function files
 source("data_functions.R")

@@ -18,12 +18,12 @@ set_app_name("struct_trt")
 # =============================================================================
 # STARTUP OPTIMIZATION: Preload lookup tables into cache
 # =============================================================================
-message(" Preloading lookup tables for struct_trt app...")
+message("[struct_trt] Preloading lookup tables...")
 tryCatch({
   get_facility_lookup()
   get_foremen_lookup()
-  message(" Lookup tables preloaded")
-}, error = function(e) message(" Preload warning: ", e$message))
+  message("[struct_trt] Lookup tables preloaded")
+}, error = function(e) message("[struct_trt] Preload warning: ", e$message))
 
 # Load environment variables from .env file
 env_paths <- c(

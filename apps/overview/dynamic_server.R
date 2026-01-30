@@ -474,6 +474,7 @@ build_overview_server <- function(input, output, session,
               end_year = years$end_year,
               display_metric = config$display_metric,
               zone_filter = inputs$zone_filter,
+              analysis_date = inputs$custom_today,  # CRITICAL: Pass the analysis date!
               overview_type = overview_type
             )
           }, error = function(e) {

@@ -16,11 +16,22 @@ library(lubridate)
 # Toggle this to enable/disable caching
 USE_CACHED_AVERAGES <- TRUE
 
-# Cache file location (in the same directory as this file)
+# Cache file location (in the shared/cache directory for all apps)
 CACHE_DIR <- tryCatch({
-  dirname(sys.frame(1)$ofile)
+  # Try shared/cache directory first (actual location)
+  if (dir.exists("/srv/shiny-server/shared/cache")) {
+    "/srv/shiny-server/shared/cache"
+  } else if (dir.exists("../../shared/cache")) {
+    "../../shared/cache"  # Relative path from overview app  
+  } else if (dir.exists("/srv/shiny-server/shared")) {
+    "/srv/shiny-server/shared"
+  } else if (dir.exists("../../shared")) {
+    "../../shared"  # Relative path from overview app
+  } else {
+    dirname(sys.frame(1)$ofile)  # Fallback to current file directory
+  }
 }, error = function(e) {
-  getwd()  # Fallback to current working directory
+  getwd()  # Final fallback to current working directory
 })
 CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
 
@@ -34,18 +45,49 @@ CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
 #' @return Data frame with cached averages by week, or NULL if not cached
 #' @export
 get_cached_average <- function(metric_id, avg_type = "10yr") {
-  if (!USE_CACHED_AVERAGES) return(NULL)
-  
-  if (!file.exists(CACHE_FILE)) {
-    cat("Cache file not found:", CACHE_FILE, "\n")
+  if (!USE_CACHED_AVERAGES) {
+    cat("Cache disabled\n")
     return(NULL)
   }
   
-  cache <- readRDS(CACHE_FILE)
+  # Debug: show what cache file path we're using
+  cat("CACHE DEBUG: Looking for cache file at:", CACHE_FILE, "\n")
+  cat("CACHE DEBUG: Working directory:", getwd(), "\n")
+  cat("CACHE DEBUG: File exists:", file.exists(CACHE_FILE), "\n")
+  
+  if (!file.exists(CACHE_FILE)) {
+    cat("Cache file not found:", CACHE_FILE, "\n")
+    # Try alternative paths in order of preference
+    alt_paths <- c(
+      "/srv/shiny-server/shared/cache/historical_averages_cache.rds",  # New location
+      "/srv/shiny-server/shared/historical_averages_cache.rds",        # Old shared location
+      "/srv/shiny-server/apps/overview/historical_averages_cache.rds"  # Original location
+    )
+    
+    cache_found <- FALSE
+    for (alt_path in alt_paths) {
+      cat("CACHE DEBUG: Trying path:", alt_path, "- exists:", file.exists(alt_path), "\n")
+      if (file.exists(alt_path)) {
+        cat("CACHE DEBUG: Found cache file at:", alt_path, "\n")
+        cache <- readRDS(alt_path)
+        cache_found <- TRUE
+        break
+      }
+    }
+    
+    if (!cache_found) {
+      cat("CACHE DEBUG: No cache file found in any location\n")
+      return(NULL)
+    }
+  } else {
+    cache <- readRDS(CACHE_FILE)
+  }
   
   cache_key <- paste0(metric_id, "_", avg_type)
+  cat("CACHE DEBUG: Looking for key:", cache_key, "\n")
   if (!cache_key %in% names(cache$averages)) {
     cat("No cached data for:", cache_key, "\n")
+    cat("Available keys:", paste(names(cache$averages), collapse=", "), "\n")
     return(NULL)
   }
   

@@ -11,30 +11,42 @@
 library(dplyr)
 library(lubridate)
 
-# Source cache system if available
-cache_file <- file.path(dirname(sys.frame(1)$ofile %||% "."), "historical_cache.R")
-# Backup paths for container environment
-if (!file.exists(cache_file)) {
-  cache_file <- "historical_cache.R"  # Try current directory
-}
-if (!file.exists(cache_file)) {
-  cache_file <- file.path(dirname(sys.frame(1)$filename %||% "."), "historical_cache.R")  # Try filename instead of ofile
-}
-# Try absolute path for district app
-if (!file.exists(cache_file)) {
-  cache_file <- "/srv/shiny-server/apps/overview/historical_cache.R"
-}
-# Try relative path to parent directory (for district app)
-if (!file.exists(cache_file)) {
-  cache_file <- "../historical_cache.R"
+# Source cache utilities (shared across all apps)
+cache_utilities_file <- tryCatch({
+  if (file.exists("/srv/shiny-server/shared/cache_utilities.R")) {
+    "/srv/shiny-server/shared/cache_utilities.R"
+  } else if (file.exists("../../shared/cache_utilities.R")) {
+    "../../shared/cache_utilities.R"
+  } else {
+    "../shared/cache_utilities.R"
+  }
+}, error = function(e) {
+  "cache_utilities.R"
+})
+
+if (file.exists(cache_utilities_file)) {
+  source(cache_utilities_file, local = FALSE)
 }
 
+# Source cache system if available
+cache_file <- tryCatch({
+  if (file.exists("/srv/shiny-server/shared/historical_cache.R")) {
+    "/srv/shiny-server/shared/historical_cache.R"
+  } else if (file.exists("../../shared/historical_cache.R")) {
+    "../../shared/historical_cache.R"
+  } else if (file.exists("historical_cache.R")) {
+    "historical_cache.R"
+  } else {
+    "/srv/shiny-server/apps/overview/historical_cache.R"
+  }
+}, error = function(e) {
+  "historical_cache.R"
+})
+
 if (file.exists(cache_file)) {
-  source(cache_file, local = TRUE)
-  cat("CACHE SYSTEM LOADED: USE_CACHED_AVERAGES =", exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES, "\n")
+  source(cache_file, local = FALSE)  # Source into global environment
 } else {
   USE_CACHED_AVERAGES <- FALSE
-  cat("CACHE SYSTEM NOT FOUND: cache_file =", cache_file, "\n")
 }
 
 # =============================================================================
@@ -102,6 +114,86 @@ load_current_year_efficiently <- function(metric_id, current_year, zone_filter =
   }, error = function(e) {
     # Return NULL to trigger fallback
     return(NULL)
+  })
+}
+
+#' Load current year data for cache path (helper function)
+#' Handles both active treatment metrics and simple count metrics
+#' @param metric Metric ID
+#' @param analysis_year Year to load
+#' @param zone_filter Zone filter
+#' @param config Metric config from registry
+#' @return Data frame with time_period, week_num, value, group_label columns
+load_current_year_for_cache <- function(metric, analysis_year, zone_filter, config) {
+  tryCatch({
+    raw_data <- load_app_historical_data(metric, analysis_year, analysis_year, zone_filter)
+    
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) {
+      return(data.frame(time_period = character(), week_num = integer(), 
+                        value = numeric(), group_label = character()))
+    }
+    
+    treatments <- raw_data$treatments
+    treatments$inspdate <- as.Date(treatments$inspdate)
+    
+    has_acres <- isTRUE(config$has_acres)
+    is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
+    
+    # Create value column
+    if (has_acres) {
+      acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
+                   else if ("acres" %in% names(treatments)) "acres" else NULL
+      treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
+    } else {
+      treatments$value <- 1
+    }
+    
+    # Calculate weekly data
+    if (is_active) {
+      if (!"effect_days" %in% names(treatments)) {
+        treatments$effect_days <- if (metric == "catch_basin") 28 else 14
+      }
+      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
+      
+      weekly_data <- data.frame()
+      start_date <- as.Date(paste0(analysis_year, "-01-01"))
+      end_date <- min(as.Date(paste0(analysis_year, "-12-31")), Sys.Date())
+      
+      for (week_start in seq.Date(start_date, end_date, by = "week")) {
+        # Convert back to Date (R for loop strips Date class)
+        week_start <- as.Date(week_start, origin = "1970-01-01")
+        week_friday <- week_start + 4
+        week_num <- week(week_friday)
+        active <- treatments %>% filter(inspdate <= week_friday, treatment_end >= week_friday)
+        
+        if (nrow(active) > 0) {
+          week_value <- sum(active$value, na.rm = TRUE)
+          weekly_data <- bind_rows(weekly_data, data.frame(
+            year = analysis_year, week_num = week_num, value = week_value
+          ))
+        }
+      }
+    } else {
+      weekly_data <- treatments %>%
+        mutate(year = year(inspdate), week_num = week(inspdate)) %>%
+        group_by(year, week_num) %>%
+        summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+    }
+    
+    # Format output
+    if (nrow(weekly_data) > 0) {
+      weekly_data %>%
+        mutate(time_period = sprintf("W%02d", week_num), 
+               group_label = as.character(analysis_year)) %>%
+        select(time_period, week_num, value, group_label)
+    } else {
+      data.frame(time_period = character(), week_num = integer(), 
+                 value = numeric(), group_label = character())
+    }
+  }, error = function(e) {
+    cat("ERROR loading current year for", metric, ":", e$message, "\n")
+    data.frame(time_period = character(), week_num = integer(), 
+               value = numeric(), group_label = character())
   })
 }
 
@@ -311,97 +403,36 @@ load_historical_comparison_data <- function(metric,
                                              analysis_date = NULL,
                                              overview_type = "facilities") {
   
-  # Console debug to confirm function is called
-  cat("=== HISTORICAL FUNCTION CALLED ===", metric, "at", as.character(Sys.time()), "\n")
-  cat("REFRESH DEBUG: Overview type =", overview_type, ", zones =", paste(zone_filter, collapse=","), "\n")
-  
-  # Get registry config for metric (need early to check historical_type)
+  # Get registry config for metric
   registry <- get_metric_registry()
   config <- registry[[metric]]
   
-  # Check for cached averages FIRST - skip all database operations if cache available
-  cached_10yr <- NULL
-  cached_5yr <- NULL
-  cat("🔍 CACHE CHECK: Looking for cached data for", metric, "\n")
-  cat("CACHE CHECK: exists get_cached_average =", exists("get_cached_average"), 
-      ", exists USE_CACHED_AVERAGES =", exists("USE_CACHED_AVERAGES"), "\n")
-  if (exists("get_cached_average") && exists("USE_CACHED_AVERAGES")) {
-    cat("CACHE CHECK: USE_CACHED_AVERAGES =", USE_CACHED_AVERAGES, "\n")
-  }
-  
-  if (exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES) {
-    cat("🔄 CACHE: Attempting to get cached averages for", metric, "\n")
-    cached_10yr <- get_cached_average(metric, "10yr")
-    cached_5yr <- get_cached_average(metric, "5yr")
-    cat("CACHE RESULTS:", ifelse(is.null(cached_5yr), "NO 5yr", paste("5yr =", nrow(cached_5yr), "rows")), 
-        ",", ifelse(is.null(cached_10yr), "NO 10yr", paste("10yr =", nrow(cached_10yr), "rows")), "\n")
+  # ==========================================================================
+  # CACHE PATH: Try to use cached averages first (much faster)
+  # ==========================================================================
+  if (exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES &&
+      exists("is_metric_cacheable") && is_metric_cacheable(metric)) {
     
-    # If we have both cached averages, return them immediately (no database queries!)
+    cached_5yr <- tryCatch(get_cached_average(metric, "5yr"), error = function(e) NULL)
+    cached_10yr <- tryCatch(get_cached_average(metric, "10yr"), error = function(e) NULL)
+    
     if (!is.null(cached_10yr) && !is.null(cached_5yr)) {
-      cat("🚀 CACHE HIT: Using cached averages for", metric, "- skipping database queries\n")
-      cat("🚀 CACHE DETAILS: 5yr =", nrow(cached_5yr), "rows, 10yr =", nrow(cached_10yr), "rows\n")
-      
-      # For current year, try to get minimal data efficiently
-      current_year <- as.numeric(format(Sys.Date(), "%Y"))
-      
-      # OPTIMIZATION: Skip current year loading if cache is fresh (< 2 hours old)
-      skip_current_year <- FALSE
-      if (file.exists(CACHE_FILE)) {
-        cache_info <- readRDS(CACHE_FILE)
-        if (!is.null(cache_info$generated_date)) {
-          cache_age_hours <- as.numeric(difftime(Sys.time(), 
-            as.POSIXct(paste(cache_info$generated_date, "00:00:00")), 
-            units = "hours"))
-          if (cache_age_hours < 2) {
-            cat("CACHE: Skipping current year query - cache is fresh (", round(cache_age_hours, 1), "hrs old)\n")
-            skip_current_year <- TRUE
-          }
-        }
-      }
-      
-      # Get current year data efficiently or skip if cache is fresh
-      current_formatted <- if (skip_current_year) {
-        data.frame()  # Empty current data - use cached averages only
-      } else {
-        tryCatch({
-          # Use optimized current year query
-          current_data <- load_current_year_efficiently(metric, current_year, zone_filter)
-          
-          if (!is.null(current_data$treatments) && nrow(current_data$treatments) > 0) {
-            current_data$treatments %>%
-              mutate(
-                year = year(inspdate),
-                week_num = week(inspdate),
-                time_period = sprintf("W%02d", week_num),
-                group_label = as.character(current_year)
-              ) %>%
-              filter(year == current_year) %>%
-              group_by(week_num, time_period, group_label) %>%
-              summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
-          } else {
-            data.frame()
-          }
-        }, error = function(e) {
-          cat("CACHE: Current year query failed, skipping (", e$message, ")\n")
-          data.frame()
-        })
-      }
+      # Load current year data fresh
+      years <- get_historical_year_range(10, analysis_date)
+      analysis_year <- years$end_year
+      current_formatted <- load_current_year_for_cache(metric, analysis_year, zone_filter, config)
       
       return(list(
         average = cached_5yr,
         ten_year_average = cached_10yr,
         current = current_formatted
       ))
-    } else if (!is.null(cached_10yr) || !is.null(cached_5yr)) {
-      cat("⚠️ PARTIAL CACHE: Using partial cached averages for", metric, "\n")
-    } else {
-      cat("❌ NO CACHE: No cached averages found for", metric, "- will run full database queries\n")
     }
-  } else {
-    cat("❌ CACHE DISABLED: Cache system not available\n")
   }
   
-  cat("🔄 FALLBACK: Loading", metric, "data from database (10 years)...\n")
+  # ==========================================================================
+  # DATABASE FALLBACK: Load full historical data from database
+  # ==========================================================================
   
   # Get default year range if not specified
   # Always use 10 years to have data for 10-year average calculations
@@ -410,7 +441,6 @@ load_historical_comparison_data <- function(metric,
     years <- get_historical_year_range(n_years, analysis_date)
     start_year <- years$start_year
     end_year <- years$end_year
-    cat("LOADING DATA: start_year =", start_year, ", end_year =", end_year, "(", n_years, "years )\n")
   }
   
   # Use analysis_date to filter out future data
@@ -500,7 +530,9 @@ load_historical_comparison_data <- function(metric,
       weeks_in_year <- seq.Date(start_date, end_date, by = "week")
       
       for (week_start in weeks_in_year) {
-        week_friday <- as.Date(week_start) + 4
+        # Convert back to Date (R for loop strips Date class)
+        week_start <- as.Date(week_start, origin = "1970-01-01")
+        week_friday <- week_start + 4
         week_num <- week(week_friday)
         
         # Find treatments ACTIVE on this Friday
@@ -548,13 +580,6 @@ load_historical_comparison_data <- function(metric,
   # =========================================================================
   # SPLIT INTO PREVIOUS YEARS (for average) AND CURRENT YEAR
   # =========================================================================
-  
-  cat("DEBUG", metric, ": weekly_data rows =", nrow(weekly_data), "\n")
-  if (nrow(weekly_data) > 0) {
-    cat("DEBUG", metric, ": years in data =", paste(unique(weekly_data$year), collapse = ", "), "\n")
-  }
-  cat("DEBUG", metric, ": current_year =", current_year, "\n")
-  
   previous_data <- weekly_data %>% filter(year < current_year)
   current_data <- weekly_data %>% filter(year == current_year)
   
@@ -564,17 +589,10 @@ load_historical_comparison_data <- function(metric,
   
   previous_5yr <- previous_data %>% filter(year >= five_year_cutoff)
   previous_10yr <- previous_data  # Use ALL available historical data for 10-year average
-  
-  cat("DEBUG", metric, ": previous_5yr rows =", nrow(previous_5yr), ", previous_10yr rows =", nrow(previous_10yr), "\n")
-  cat("DEBUG", metric, ": 5yr years =", paste(unique(previous_5yr$year), collapse = ","), "\n")  
-  cat("DEBUG", metric, ": 10yr years =", paste(unique(previous_10yr$year), collapse = ","), "\n")
 
-  # Calculate 5-year average by week (or use cache)
-  if (!is.null(cached_5yr)) {
-    average_data <- cached_5yr
-    cat("DEBUG", metric, ": Using CACHED 5-year average with", nrow(average_data), "rows\n")
-  } else {
-    average_data <- previous_5yr %>%
+
+  # Calculate 5-year average by week
+  average_data <- if (!is.null(cached_5yr)) cached_5yr else previous_5yr %>%
       group_by(week_num) %>%
       summarize(
         value = mean(value, na.rm = TRUE),
@@ -585,18 +603,9 @@ load_historical_comparison_data <- function(metric,
         group_label = "5-Year Avg"
       ) %>%
       select(time_period, week_num, value, group_label)
-  }
   
   # Calculate 10-year average by week
-  # For active calculation, use weekly_data (which has active counts per week per year)
-  # The weekly_data already contains years with active treatments computed correctly
-  
-  # Check if we have a cached 10-year average
-  if (!is.null(cached_10yr)) {
-    ten_year_avg_data <- cached_10yr
-    cat("DEBUG", metric, ": Using CACHED 10-year average with", nrow(ten_year_avg_data), "rows\n")
-  } else {
-    ten_year_avg_data <- previous_data %>%
+  ten_year_avg_data <- if (!is.null(cached_10yr)) cached_10yr else previous_data %>%
       group_by(week_num) %>%
       summarize(
         value = mean(value, na.rm = TRUE),
@@ -607,7 +616,6 @@ load_historical_comparison_data <- function(metric,
         group_label = "10-Year Avg"
       ) %>%
       select(time_period, week_num, value, group_label)
-  }
   
   # Format current year data
   current_formatted <- current_data %>%
@@ -616,8 +624,6 @@ load_historical_comparison_data <- function(metric,
       group_label = as.character(current_year)
     ) %>%
     select(time_period, week_num, value, group_label)
-  
-  cat("DEBUG", metric, ": FINAL 5yr avg rows =", nrow(average_data), ", 10yr avg rows =", nrow(ten_year_avg_data), ", current rows =", nrow(current_formatted), "\n")
   
   list(
     average = average_data,

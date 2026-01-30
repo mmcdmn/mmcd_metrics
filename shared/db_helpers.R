@@ -119,6 +119,18 @@ if (!exists("%||%", mode = "function")) {
   `%||%` <- function(a, b) if (is.null(a)) b else a
 }
 
+# =============================================================================
+# LOOKUP CACHE - Avoid repeated DB queries for static reference data
+# =============================================================================
+# Cache for lookup tables that don't change during a session.
+# Automatically cleared when Shiny restarts.
+.lookup_cache <- new.env(parent = emptyenv())
+
+# Clear all cached lookups (call if reference data changes)
+clear_lookup_cache <- function() {
+  rm(list = ls(.lookup_cache), envir = .lookup_cache)
+}
+
 # Load environment variables function
 load_env_vars <- function() {
   # Load environment variables from .env file (for local development)
@@ -331,13 +343,17 @@ get_historical_year_ranges <- function(con, current_table, archive_table, date_c
   })
 }
 
-# Facility lookup functions
+# Facility lookup functions (CACHED)
 get_facility_lookup <- function() {
+  # Return cached value if available
+  if (exists("facilities", envir = .lookup_cache)) {
+    return(get("facilities", envir = .lookup_cache))
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get facility lookup from gis_facility table, excluding special facilities
     facilities <- dbGetQuery(con, "
       SELECT DISTINCT 
         abbrv as short_name,
@@ -348,6 +364,9 @@ get_facility_lookup <- function() {
     ")
     
     safe_disconnect(con)
+    
+    # Cache the result
+    assign("facilities", facilities, envir = .lookup_cache)
     return(facilities)
     
   }, error = function(e) {
@@ -426,12 +445,17 @@ get_priority_choices <- function(include_all = TRUE) {
 }
 
 # Get spring date thresholds from ACT4-P1 lookup table
+# Get spring date thresholds from ACT4-P1 lookup table (CACHED)
 get_spring_date_thresholds <- function() {
+  # Return cached value if available
+  if (exists("spring_thresholds", envir = .lookup_cache)) {
+    return(get("spring_thresholds", envir = .lookup_cache))
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get ACT4-P1 thresholds, excluding January 1st start dates
     qry <- "
     SELECT EXTRACT(year FROM date_start) as year, date_start
     FROM public.lookup_threshold_larv
@@ -448,6 +472,8 @@ get_spring_date_thresholds <- function() {
       result$date_start <- as.Date(result$date_start)
     }
     
+    # Cache the result
+    assign("spring_thresholds", result, envir = .lookup_cache)
     return(result)
     
   }, error = function(e) {
@@ -457,53 +483,59 @@ get_spring_date_thresholds <- function() {
   })
 }
 
-# Structure type lookup from database
+# Structure type lookup from database (CACHED)
 get_structure_type_choices <- function(include_all = TRUE) {
-  con <- get_db_connection()
-  if (is.null(con)) {
-    # Fallback to hardcoded values if database connection fails
-    choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
-                 "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
-                 "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
-  } else {
-    tryCatch({
-      # Get structure types from lookup table
-      structure_types <- dbGetQuery(con, "
-        SELECT DISTINCT 
-          code,
-          definition
-        FROM public.lookup_cx_stype
-        ORDER BY code ASC
-      ")
-      
-      safe_disconnect(con)
-      
-      if (nrow(structure_types) > 0) {
-        # Create named vector with full names as labels and codes as values
-        choices <- setNames(structure_types$code, 
-                           paste0(structure_types$definition, " (", structure_types$code, ")"))
-      } else {
-        # Fallback if no data returned
-        choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
-                     "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
-                     "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
-      }
-      
-    }, error = function(e) {
-      warning(paste("Error loading structure types:", e$message))
-      safe_disconnect(con)
-      # Fallback to hardcoded values
-      choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+  # Check cache first (for the base choices without "all")
+  cached_choices <- NULL
+  if (exists("structure_types", envir = .lookup_cache)) {
+    cached_choices <- get("structure_types", envir = .lookup_cache)
+  }
+  
+  if (is.null(cached_choices)) {
+    con <- get_db_connection()
+    if (is.null(con)) {
+      # Fallback to hardcoded values if database connection fails
+      cached_choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
                    "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
                    "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
-    })
+    } else {
+      tryCatch({
+        structure_types <- dbGetQuery(con, "
+          SELECT DISTINCT 
+            code,
+            definition
+          FROM public.lookup_cx_stype
+          ORDER BY code ASC
+        ")
+        
+        safe_disconnect(con)
+        
+        if (nrow(structure_types) > 0) {
+          cached_choices <- setNames(structure_types$code, 
+                             paste0(structure_types$definition, " (", structure_types$code, ")"))
+        } else {
+          cached_choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                       "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                       "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+        }
+        
+      }, error = function(e) {
+        warning(paste("Error loading structure types:", e$message))
+        safe_disconnect(con)
+        cached_choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                     "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                     "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+      })
+    }
+    # Cache the result
+    assign("structure_types", cached_choices, envir = .lookup_cache)
   }
   
   if (include_all) {
-    choices <- c("All Types" = "all", choices)
+    return(c("All Types" = "all", cached_choices))
   }
   
-  return(choices)
+  return(cached_choices)
 }
 
 # Get material choices with optional filtering for prehatch or BTI materials
@@ -582,13 +614,17 @@ get_treatment_material_choices <- function(include_all = TRUE, filter_type = NUL
   return(get_material_choices(include_all = include_all, filter_type = filter_type))
 }
 
-# Get foremen (field supervisors) lookup table
+# Get foremen (field supervisors) lookup table (CACHED)
 get_foremen_lookup <- function() {
+  # Return cached value if available
+  if (exists("foremen", envir = .lookup_cache)) {
+    return(get("foremen", envir = .lookup_cache))
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-        # Get active field supervisors basic info
     foremen <- dbGetQuery(con, "
       SELECT 
         emp_num,
@@ -602,6 +638,9 @@ get_foremen_lookup <- function() {
     ")
     
     safe_disconnect(con)
+    
+    # Cache the result
+    assign("foremen", foremen, envir = .lookup_cache)
     return(foremen)
     
   }, error = function(e) {
@@ -747,12 +786,17 @@ get_available_zones <- function(include_all = TRUE, include_combined = TRUE) {
   return(result)
 }
 
+# Get species lookup (CACHED)
 get_species_lookup <- function() {
+  # Return cached value if available
+  if (exists("species", envir = .lookup_cache)) {
+    return(get("species", envir = .lookup_cache))
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get species lookup from lookup_specieslist table
     species_lookup <- dbGetQuery(con, "
       SELECT 
         sppcode,
@@ -763,6 +807,9 @@ get_species_lookup <- function() {
     ")
     
     safe_disconnect(con)
+    
+    # Cache the result
+    assign("species", species_lookup, envir = .lookup_cache)
     return(species_lookup)
     
   }, error = function(e) {

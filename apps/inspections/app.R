@@ -33,9 +33,6 @@ server <- function(input, output, session) {
     options(mmcd.color.theme = input$color_theme)
   })
   
-  # Helper for null coalescing
-  `%||%` <- function(x, y) if (is.null(x)) y else x
-  
   # Update FOS choices when facility changes
   observeEvent(input$facility, {
     foremen_lookup <- get_foremen_lookup()

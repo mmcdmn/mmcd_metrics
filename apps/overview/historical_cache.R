@@ -46,52 +46,39 @@ CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
 #' @export
 get_cached_average <- function(metric_id, avg_type = "10yr") {
   if (!USE_CACHED_AVERAGES) {
-    cat("Cache disabled\n")
     return(NULL)
   }
   
-  # Debug: show what cache file path we're using
-  cat("CACHE DEBUG: Looking for cache file at:", CACHE_FILE, "\n")
-  cat("CACHE DEBUG: Working directory:", getwd(), "\n")
-  cat("CACHE DEBUG: File exists:", file.exists(CACHE_FILE), "\n")
-  
-  if (!file.exists(CACHE_FILE)) {
-    cat("Cache file not found:", CACHE_FILE, "\n")
-    # Try alternative paths in order of preference
+  # Find cache file
+  cache_file <- CACHE_FILE
+  if (!file.exists(cache_file)) {
+    # Try alternative paths
     alt_paths <- c(
-      "/srv/shiny-server/shared/cache/historical_averages_cache.rds",  # New location
-      "/srv/shiny-server/shared/historical_averages_cache.rds",        # Old shared location
-      "/srv/shiny-server/apps/overview/historical_averages_cache.rds"  # Original location
+      "/srv/shiny-server/shared/cache/historical_averages_cache.rds",
+      "/srv/shiny-server/shared/historical_averages_cache.rds",
+      "/srv/shiny-server/apps/overview/historical_averages_cache.rds"
     )
     
-    cache_found <- FALSE
+    cache_file <- NULL
     for (alt_path in alt_paths) {
-      cat("CACHE DEBUG: Trying path:", alt_path, "- exists:", file.exists(alt_path), "\n")
       if (file.exists(alt_path)) {
-        cat("CACHE DEBUG: Found cache file at:", alt_path, "\n")
-        cache <- readRDS(alt_path)
-        cache_found <- TRUE
+        cache_file <- alt_path
         break
       }
     }
     
-    if (!cache_found) {
-      cat("CACHE DEBUG: No cache file found in any location\n")
+    if (is.null(cache_file)) {
       return(NULL)
     }
-  } else {
-    cache <- readRDS(CACHE_FILE)
   }
   
+  cache <- readRDS(cache_file)
   cache_key <- paste0(metric_id, "_", avg_type)
-  cat("CACHE DEBUG: Looking for key:", cache_key, "\n")
+  
   if (!cache_key %in% names(cache$averages)) {
-    cat("No cached data for:", cache_key, "\n")
-    cat("Available keys:", paste(names(cache$averages), collapse=", "), "\n")
     return(NULL)
   }
   
-  cat("Using cached", avg_type, "average for", metric_id, "(generated:", cache$generated_date, ")\n")
   return(cache$averages[[cache_key]])
 }
 

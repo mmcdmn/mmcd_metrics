@@ -4,9 +4,16 @@ This folder contains shared utilities and resources used across all apps in the 
 
 ## Files
 
-### Database Helpers
+### Database & Data Helpers
 - **`db_helpers.R`** - Common database connection and utility functions
 - **`db_pool.R`** - Database connection pooling with pool package (v1.0.4)
+
+### Cache System
+- **`cache_utilities.R`** - Dynamic cache management for historical averages (registry-driven)
+- **`cache/`** - Cache data files
+  - `historical_averages_cache.rds` - Pre-calculated 5yr/10yr historical averages
+
+### Themes & Colors
 - **`color_themes.R`** - Centralized color theme definitions for consistent UI styling
 
 ### Static Assets

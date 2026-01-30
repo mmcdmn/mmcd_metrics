@@ -16,6 +16,16 @@ source("historical_functions.R")
 set_app_name("ground_prehatch_progress")
 
 # =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[ground_prehatch_progress] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[ground_prehatch_progress] Lookup tables preloaded")
+}, error = function(e) message("[ground_prehatch_progress] Preload warning: ", e$message))
+
+# =============================================================================
 # USER INTERFACE
 # =============================================================================
 

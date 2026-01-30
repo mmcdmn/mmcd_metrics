@@ -38,10 +38,72 @@ get_overview_css <- function() {
       background: #fff;
       border: 1px solid #ddd;
       border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 20px;
+      padding: 10px;
+      margin-bottom: 15px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      min-height: 350px;
+      min-height: 200px;
+    }
+    .chart-panel-wrapper {
+      height: 0;
+      overflow: hidden;
+      transition: height 0.3s ease-out;
+      max-width: 400px;
+      margin: 0 auto 20px auto;
+    }
+    .chart-panel-wrapper.visible {
+      height: auto;
+      overflow: visible;
+    }
+    .charts-flex-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      justify-content: flex-start;
+      align-items: flex-start;
+    }
+    .inline-chart {
+      flex: 0 1 calc(50% - 8px);
+      min-width: 350px;
+    }
+    @media (max-width: 768px) {
+      .inline-chart {
+        flex: 1 1 100%;
+        min-width: 300px;
+      }
+    }
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .stat-box-clickable {
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      position: relative;
+    }
+    .stat-box-clickable:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+    }
+    .stat-box-clickable.active {
+      outline: 3px solid #333;
+      outline-offset: 2px;
+    }
+    .stat-box-clickable::after {
+      content: 'Click to view chart';
+      position: absolute;
+      bottom: 5px;
+      right: 10px;
+      font-size: 10px;
+      opacity: 0.7;
+    }
+    .stat-box-clickable.active::after {
+      content: 'Click to hide chart';
     }
     .chart-title {
       font-size: 18px;
@@ -195,7 +257,38 @@ get_overview_js <- function() {
       window.location.href = url;
     });
     
-    // Chart type toggle functionality
+    // Value box click to toggle chart visibility
+    $(document).on('click', '.stat-box-clickable', function() {
+      var metricId = $(this).data('metric-id');
+      var chartWrapper = $('#chart_wrapper_' + metricId);
+      var statBox = $(this);
+      
+      // Toggle visibility
+      chartWrapper.toggleClass('visible');
+      statBox.toggleClass('active');
+      
+      // Scroll to chart if now visible and resize Plotly
+      if (chartWrapper.hasClass('visible')) {
+        // Wait for CSS transition to complete, then resize plotly
+        setTimeout(function() {
+          // Find all plotly charts in this wrapper and resize them
+          chartWrapper.find('.plotly').each(function() {
+            if (window.Plotly && this.layout) {
+              window.Plotly.Plots.resize(this);
+            }
+          });
+          // Scroll to chart after resize
+          $('html, body').animate({
+            scrollTop: chartWrapper.offset().top - 100
+          }, 300);
+        }, 350); // Wait slightly longer than CSS transition
+      }
+      
+      // Send visibility state to server
+      Shiny.setInputValue(metricId + '_chart_visible', chartWrapper.hasClass('visible'), {priority: 'event'});
+    });
+    
+    // Legacy: Chart type toggle functionality (kept for backwards compatibility)
     $(document).on('click', '.chart-toggle-btn', function() {
       var btn = $(this);
       var metric = btn.attr('id').replace('_toggle_bar', '').replace('_toggle_pie', '');
@@ -245,29 +338,13 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
   legend_id <- paste0(metric_id, "_legend")
   chart_type_id <- paste0(metric_id, "_chart_type")
   
-  # Check if metric supports multiple chart types
+  # Check if metric supports multiple chart types (legacy - kept but not shown)
   has_chart_toggle <- !is.null(config$chart_types) && length(config$chart_types) > 1
   
   div(class = "chart-panel",
     div(class = "chart-title",
       get_metric_icon(config), title_text,
-      # Chart type toggle buttons (only for metrics that support it)
-      if (!is_historical && has_chart_toggle) {
-        div(style = "float: right; margin-left: 10px;",
-          actionButton(
-            inputId = paste0(metric_id, "_toggle_bar"),
-            label = "Bar",
-            class = "btn-xs chart-toggle-btn active",
-            style = "margin-right: 5px;"
-          ),
-          actionButton(
-            inputId = paste0(metric_id, "_toggle_pie"),
-            label = "Pie", 
-            class = "btn-xs chart-toggle-btn",
-            style = ""
-          )
-        )
-      },
+      # Pie chart toggle buttons removed - now using value box click to show/hide
       if (!is_historical && !is.null(config$filter_info)) {
         tagList(
           span(class = "filter-info-btn",
@@ -285,23 +362,27 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
 }
 
 #' Generate all current metric chart panels dynamically
-#' Reads from registry and creates UI for each metric
+#' Charts are hidden by default and shown when value boxes are clicked
 #' @param chart_height Height of each chart
-#' @return List of fluidRow elements
+#' @return List of fluidRow elements with collapsible chart containers
 #' @export
-generate_current_charts_ui <- function(chart_height = "300px") {
+generate_current_charts_ui <- function(chart_height = "150px") {
   metrics <- get_active_metrics()
   registry <- get_metric_registry()
   
-  # Create panels for each metric
+  # Create collapsible panels for each metric (hidden by default)
   panels <- lapply(metrics, function(metric_id) {
     config <- registry[[metric_id]]
-    column(6, create_chart_panel(metric_id, config, chart_height, is_historical = FALSE))
+    # Wrap each chart panel in a collapsible div with smaller width for side-by-side display
+    div(
+      id = paste0("chart_wrapper_", metric_id),
+      class = "chart-panel-wrapper inline-chart",  # Add inline-chart class for flexbox layout
+      create_chart_panel(metric_id, config, chart_height, is_historical = FALSE)
+    )
   })
   
-  # Arrange in rows of 2
-  rows <- split(panels, ceiling(seq_along(panels) / 2))
-  lapply(rows, function(row_panels) do.call(fluidRow, row_panels))
+  # Wrap all panels in a flex container for side-by-side display
+  div(class = "charts-flex-container", panels)
 }
 
 #' Generate all historical chart panels dynamically

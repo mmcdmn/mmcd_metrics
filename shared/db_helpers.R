@@ -119,6 +119,128 @@ if (!exists("%||%", mode = "function")) {
   `%||%` <- function(a, b) if (is.null(a)) b else a
 }
 
+# =============================================================================
+# IN-MEMORY LOOKUP CACHE (Fast per-process cache)
+# =============================================================================
+# In-memory cache for lookup tables. Much faster than file-based cache.
+# Shared across all sessions in the same R process.
+
+.lookup_memory_cache <- new.env(parent = emptyenv())
+.lookup_cache_timestamps <- new.env(parent = emptyenv())
+LOOKUP_CACHE_TTL_SECONDS <- 300  # 5 minutes
+
+#' Get item from in-memory cache
+get_memory_cached <- function(key) {
+  if (!exists(key, envir = .lookup_memory_cache)) return(NULL)
+  
+  # Check if expired
+  if (exists(key, envir = .lookup_cache_timestamps)) {
+    cached_time <- get(key, envir = .lookup_cache_timestamps)
+    if (as.numeric(difftime(Sys.time(), cached_time, units = "secs")) > LOOKUP_CACHE_TTL_SECONDS) {
+      # Expired - remove and return NULL
+      rm(list = key, envir = .lookup_memory_cache)
+      rm(list = key, envir = .lookup_cache_timestamps)
+      return(NULL)
+    }
+  }
+  
+  get(key, envir = .lookup_memory_cache)
+}
+
+#' Set item in in-memory cache
+set_memory_cached <- function(key, value) {
+  assign(key, value, envir = .lookup_memory_cache)
+  assign(key, Sys.time(), envir = .lookup_cache_timestamps)
+  invisible(value)
+}
+
+#' Clear in-memory cache
+clear_memory_cache <- function() {
+  rm(list = ls(.lookup_memory_cache), envir = .lookup_memory_cache)
+  rm(list = ls(.lookup_cache_timestamps), envir = .lookup_cache_timestamps)
+  message("In-memory lookup cache cleared")
+}
+
+# =============================================================================
+# LOOKUP CACHE - File-based cache for static reference data
+# =============================================================================
+# Cache for lookup tables that don't change frequently.
+# Persists across Shiny restarts via RDS file.
+
+# Get lookup cache directory (same as historical cache)
+get_lookup_cache_dir <- function() {
+  paths <- c(
+    "/srv/shiny-server/shared/cache",
+    "../../shared/cache",
+    "../shared/cache",
+    "./shared/cache"
+  )
+  for (p in paths) {
+    if (dir.exists(p)) return(normalizePath(p))
+  }
+  # Create if needed
+  if (dir.exists("/srv/shiny-server/shared")) {
+    dir.create("/srv/shiny-server/shared/cache", showWarnings = FALSE, recursive = TRUE)
+    return("/srv/shiny-server/shared/cache")
+  }
+  "."
+}
+
+# Get lookup cache file path
+get_lookup_cache_file <- function() {
+  file.path(get_lookup_cache_dir(), "lookup_cache.rds")
+}
+
+# Load lookup cache from file
+load_lookup_cache <- function() {
+  cache_file <- get_lookup_cache_file()
+  if (file.exists(cache_file)) {
+    tryCatch({
+      readRDS(cache_file)
+    }, error = function(e) {
+      warning(paste("Error reading lookup cache:", e$message))
+      list()
+    })
+  } else {
+    list()
+  }
+}
+
+# Save lookup cache to file
+save_lookup_cache <- function(cache) {
+  cache_file <- get_lookup_cache_file()
+  tryCatch({
+    saveRDS(cache, cache_file)
+  }, error = function(e) {
+    warning(paste("Error saving lookup cache:", e$message))
+  })
+}
+
+# Get a specific item from the lookup cache
+get_cached_lookup <- function(key) {
+  cache <- load_lookup_cache()
+  if (key %in% names(cache)) {
+    return(cache[[key]])
+  }
+  NULL
+}
+
+# Set a specific item in the lookup cache
+set_cached_lookup <- function(key, value) {
+  cache <- load_lookup_cache()
+  cache[[key]] <- value
+  cache[[paste0(key, "_timestamp")]] <- Sys.time()
+  save_lookup_cache(cache)
+}
+
+# Clear all cached lookups (call if reference data changes)
+clear_lookup_cache <- function() {
+  cache_file <- get_lookup_cache_file()
+  if (file.exists(cache_file)) {
+    file.remove(cache_file)
+  }
+}
+
 # Load environment variables function
 load_env_vars <- function() {
   # Load environment variables from .env file (for local development)
@@ -331,13 +453,26 @@ get_historical_year_ranges <- function(con, current_table, archive_table, date_c
   })
 }
 
-# Facility lookup functions
+# Facility lookup functions (CACHED - in-memory first, then file-based)
 get_facility_lookup <- function() {
+  # Check in-memory cache first (fastest)
+  cached_mem <- get_memory_cached("facilities")
+  if (!is.null(cached_mem)) {
+    return(cached_mem)
+  }
+  
+  # Check file cache
+  cached <- get_cached_lookup("facilities")
+  if (!is.null(cached)) {
+    # Store in memory for next access
+    set_memory_cached("facilities", cached)
+    return(cached)
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get facility lookup from gis_facility table, excluding special facilities
     facilities <- dbGetQuery(con, "
       SELECT DISTINCT 
         abbrv as short_name,
@@ -348,6 +483,10 @@ get_facility_lookup <- function() {
     ")
     
     safe_disconnect(con)
+    
+    # Cache in both memory and file
+    set_memory_cached("facilities", facilities)
+    set_cached_lookup("facilities", facilities)
     return(facilities)
     
   }, error = function(e) {
@@ -426,12 +565,18 @@ get_priority_choices <- function(include_all = TRUE) {
 }
 
 # Get spring date thresholds from ACT4-P1 lookup table
+# Get spring date thresholds from ACT4-P1 lookup table (CACHED - file-based)
 get_spring_date_thresholds <- function() {
+  # Return cached value if available
+  cached <- get_cached_lookup("spring_thresholds")
+  if (!is.null(cached)) {
+    return(cached)
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get ACT4-P1 thresholds, excluding January 1st start dates
     qry <- "
     SELECT EXTRACT(year FROM date_start) as year, date_start
     FROM public.lookup_threshold_larv
@@ -448,6 +593,8 @@ get_spring_date_thresholds <- function() {
       result$date_start <- as.Date(result$date_start)
     }
     
+    # Cache the result to file
+    set_cached_lookup("spring_thresholds", result)
     return(result)
     
   }, error = function(e) {
@@ -457,53 +604,56 @@ get_spring_date_thresholds <- function() {
   })
 }
 
-# Structure type lookup from database
+# Structure type lookup from database (CACHED - file-based)
 get_structure_type_choices <- function(include_all = TRUE) {
-  con <- get_db_connection()
-  if (is.null(con)) {
-    # Fallback to hardcoded values if database connection fails
-    choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
-                 "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
-                 "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
-  } else {
-    tryCatch({
-      # Get structure types from lookup table
-      structure_types <- dbGetQuery(con, "
-        SELECT DISTINCT 
-          code,
-          definition
-        FROM public.lookup_cx_stype
-        ORDER BY code ASC
-      ")
-      
-      safe_disconnect(con)
-      
-      if (nrow(structure_types) > 0) {
-        # Create named vector with full names as labels and codes as values
-        choices <- setNames(structure_types$code, 
-                           paste0(structure_types$definition, " (", structure_types$code, ")"))
-      } else {
-        # Fallback if no data returned
-        choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
-                     "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
-                     "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
-      }
-      
-    }, error = function(e) {
-      warning(paste("Error loading structure types:", e$message))
-      safe_disconnect(con)
-      # Fallback to hardcoded values
-      choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+  # Check cache first (for the base choices without "all")
+  cached_choices <- get_cached_lookup("structure_types")
+  
+  if (is.null(cached_choices)) {
+    con <- get_db_connection()
+    if (is.null(con)) {
+      # Fallback to hardcoded values if database connection fails
+      cached_choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
                    "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
                    "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
-    })
+    } else {
+      tryCatch({
+        structure_types <- dbGetQuery(con, "
+          SELECT DISTINCT 
+            code,
+            definition
+          FROM public.lookup_cx_stype
+          ORDER BY code ASC
+        ")
+        
+        safe_disconnect(con)
+        
+        if (nrow(structure_types) > 0) {
+          cached_choices <- setNames(structure_types$code, 
+                             paste0(structure_types$definition, " (", structure_types$code, ")"))
+        } else {
+          cached_choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                       "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                       "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+        }
+        
+      }, error = function(e) {
+        warning(paste("Error loading structure types:", e$message))
+        safe_disconnect(con)
+        cached_choices <- c("AP" = "AP", "CB" = "CB", "CG" = "CG", "CV" = "CV", "DR" = "DR", 
+                     "PC" = "PC", "Pool" = "Pool", "PR" = "PR", "RG" = "RG", "RR" = "RR", 
+                     "SP" = "SP", "SS" = "SS", "US" = "US", "W" = "W", "WO" = "WO", "XX" = "XX")
+      })
+    }
+    # Cache the result to file
+    set_cached_lookup("structure_types", cached_choices)
   }
   
   if (include_all) {
-    choices <- c("All Types" = "all", choices)
+    return(c("All Types" = "all", cached_choices))
   }
   
-  return(choices)
+  return(cached_choices)
 }
 
 # Get material choices with optional filtering for prehatch or BTI materials
@@ -582,13 +732,26 @@ get_treatment_material_choices <- function(include_all = TRUE, filter_type = NUL
   return(get_material_choices(include_all = include_all, filter_type = filter_type))
 }
 
-# Get foremen (field supervisors) lookup table
+# Get foremen (field supervisors) lookup table (CACHED - in-memory first, then file-based)
 get_foremen_lookup <- function() {
+  # Check in-memory cache first (fastest)
+  cached_mem <- get_memory_cached("foremen")
+  if (!is.null(cached_mem)) {
+    return(cached_mem)
+  }
+  
+  # Check file cache
+  cached <- get_cached_lookup("foremen")
+  if (!is.null(cached)) {
+    # Store in memory for next access
+    set_memory_cached("foremen", cached)
+    return(cached)
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-        # Get active field supervisors basic info
     foremen <- dbGetQuery(con, "
       SELECT 
         emp_num,
@@ -602,6 +765,10 @@ get_foremen_lookup <- function() {
     ")
     
     safe_disconnect(con)
+    
+    # Cache in both memory and file
+    set_memory_cached("foremen", foremen)
+    set_cached_lookup("foremen", foremen)
     return(foremen)
     
   }, error = function(e) {
@@ -609,6 +776,101 @@ get_foremen_lookup <- function() {
     safe_disconnect(con)
     return(data.frame())
   })
+}
+
+# =============================================================================
+# OPTIMIZED VECTORIZED LOOKUP FUNCTIONS
+# =============================================================================
+# These functions replace slow sapply() loops with vectorized operations
+
+#' Get foreman display names for a vector of emp_nums (vectorized)
+#' 
+#' @param emp_nums Vector of employee numbers
+#' @param lookup Optional pre-loaded lookup table from get_foremen_lookup()
+#' @param fallback_prefix Prefix for unknown foremen (default: "FOS #")
+#' @return Vector of display names
+#' @export
+get_foreman_display_names <- function(emp_nums, lookup = NULL, fallback_prefix = "FOS #") {
+  # Load lookup if not provided
+  if (is.null(lookup)) {
+    lookup <- get_foremen_lookup()
+  }
+  
+  # Ensure emp_nums is character
+  emp_nums <- trimws(as.character(emp_nums))
+  
+  # Create named vector for fast lookup
+  name_map <- setNames(lookup$shortname, as.character(lookup$emp_num))
+  
+  # Vectorized lookup with fallback
+  result <- name_map[emp_nums]
+  missing <- is.na(result)
+  result[missing] <- ifelse(
+    is.na(emp_nums[missing]) | emp_nums[missing] == "",
+    "No FOS assigned",
+    paste0(fallback_prefix, emp_nums[missing])
+  )
+  
+  unname(result)
+}
+
+#' Get facility display names for a vector of facility codes (vectorized)
+#' 
+#' @param facility_codes Vector of facility codes (e.g., "E", "N", "W")
+#' @param lookup Optional pre-loaded lookup table from get_facility_lookup()
+#' @return Vector of full facility names
+#' @export
+get_facility_display_names <- function(facility_codes, lookup = NULL) {
+  # Load lookup if not provided
+  if (is.null(lookup)) {
+    lookup <- get_facility_lookup()
+  }
+  
+  # Create named vector for fast lookup
+  name_map <- setNames(lookup$full_name, lookup$short_name)
+  
+  # Vectorized lookup with fallback to code itself
+  result <- name_map[facility_codes]
+  result[is.na(result)] <- facility_codes[is.na(result)]
+  
+  unname(result)
+}
+
+#' Create popup text column using vectorized operations
+#' 
+#' @param data Data frame with columns to use in popup
+#' @param template Character template with {column_name} placeholders
+#' @return Vector of popup HTML strings
+#' @export
+create_popup_text_vectorized <- function(data, template) {
+  result <- template
+  
+  # Find all column placeholders in template
+  placeholders <- regmatches(template, gregexpr("\\{[^}]+\\}", template))[[1]]
+  
+  for (placeholder in placeholders) {
+    col_name <- gsub("[{}]", "", placeholder)
+    if (col_name %in% names(data)) {
+      values <- as.character(data[[col_name]])
+      values[is.na(values)] <- ""
+      result <- gsub(placeholder, "%s", result, fixed = TRUE)
+    }
+  }
+  
+  # Build the result using sprintf for each row
+  # This is more complex but still faster than sapply
+  col_names <- gsub("[{}]", "", placeholders)
+  col_names <- col_names[col_names %in% names(data)]
+  
+  if (length(col_names) == 0) {
+    return(rep(template, nrow(data)))
+  }
+  
+  # Use paste0 for simple case
+  paste0(
+    "<b>Date:</b> ", data$inspdate, "<br>",
+    "<b>Facility:</b> ", data$facility, "<br>"
+  )
 }
 
 # =============================================================================
@@ -652,12 +914,18 @@ get_available_zones <- function(include_all = TRUE, include_combined = TRUE) {
   return(result)
 }
 
+# Get species lookup (CACHED - file-based)
 get_species_lookup <- function() {
+  # Return cached value if available
+  cached <- get_cached_lookup("species")
+  if (!is.null(cached)) {
+    return(cached)
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Get species lookup from lookup_specieslist table
     species_lookup <- dbGetQuery(con, "
       SELECT 
         sppcode,
@@ -668,6 +936,9 @@ get_species_lookup <- function() {
     ")
     
     safe_disconnect(con)
+    
+    # Cache the result to file
+    set_cached_lookup("species", species_lookup)
     return(species_lookup)
     
   }, error = function(e) {

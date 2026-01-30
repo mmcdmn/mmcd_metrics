@@ -30,6 +30,16 @@ source("historical_functions.R")
 # Set application name for AWS RDS monitoring
 set_app_name("cattail_inspections")
 
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[cattail_inspections] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[cattail_inspections] Lookup tables preloaded")
+}, error = function(e) message("[cattail_inspections] Preload warning: ", e$message))
+
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),

@@ -173,7 +173,7 @@ get_pool <- function(force_reconnect = FALSE) {
       validationInterval = 60    # Check connection health every minute
     )
     
-    message("✓ Database connection pool initialized successfully")
+    message("[db_pool] Database connection pool initialized successfully")
     message(sprintf("  Host: %s:%s", Sys.getenv("DB_HOST"), Sys.getenv("DB_PORT")))
     message(sprintf("  Database: %s", Sys.getenv("DB_NAME")))
     message(sprintf("  App Name: %s", .app_name))
@@ -198,7 +198,7 @@ close_pool <- function() {
     tryCatch({
       pool::poolClose(.mmcd_connection_pool)
       .mmcd_connection_pool <<- NULL
-      message("✓ Connection pool closed")
+      message("[db_pool] Connection pool closed")
     }, error = function(e) {
       warning(sprintf("Error closing connection pool: %s", e$message))
       .mmcd_connection_pool <<- NULL

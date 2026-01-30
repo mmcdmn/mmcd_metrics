@@ -40,6 +40,16 @@ source("historical_functions.R")
 # Set application name for AWS RDS monitoring
 set_app_name("air_sites_simple")
 
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[air_sites_simple] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[air_sites_simple] Lookup tables preloaded")
+}, error = function(e) message("[air_sites_simple] Preload warning: ", e$message))
+
 # Functions are now loaded from data_functions.R and display_functions.R
 
 # Define UI

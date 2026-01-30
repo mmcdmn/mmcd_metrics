@@ -33,6 +33,16 @@ source("../dynamic_server.R")
 # Set application name for AWS RDS monitoring
 set_app_name("district_overview")
 
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[district_overview] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[district_overview] Lookup tables preloaded")
+}, error = function(e) message("[district_overview] Preload warning: ", e$message))
+
 # Load environment variables
 load_env_vars()
 

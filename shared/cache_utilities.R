@@ -266,7 +266,7 @@ clear_cache <- function(metrics = NULL) {
 # =============================================================================
 # LOOKUP CACHE MANAGEMENT
 # =============================================================================
-# These functions provide access to the in-memory lookup cache from db_helpers.R
+# These functions provide access to the file-based lookup cache from db_helpers.R
 # enabling test-app to clear/refresh lookup data without restarting the server.
 
 #' Get list of cached lookup types
@@ -275,34 +275,33 @@ get_lookup_cache_types <- function() {
   c("facilities", "foremen", "species", "structure_types", "spring_thresholds")
 }
 
-#' Get status of lookup cache
+#' Get status of lookup cache (file-based)
 #' @return Data frame with cache status for each lookup type
 get_lookup_cache_status <- function() {
-  # Access the .lookup_cache environment from db_helpers.R
-  if (!exists(".lookup_cache", mode = "environment")) {
-    return(data.frame(
-      lookup_type = get_lookup_cache_types(),
-      status = "Not initialized",
-      row_count = NA_integer_,
-      stringsAsFactors = FALSE
-    ))
-  }
-  
-  cache_env <- get(".lookup_cache", envir = .GlobalEnv)
+  # Load cache from file
+  cache <- load_lookup_cache()
   
   lookup_types <- get_lookup_cache_types()
   
   status_df <- data.frame(
     lookup_type = lookup_types,
     status = sapply(lookup_types, function(lt) {
-      if (exists(lt, envir = cache_env)) "Cached" else "Empty"
+      if (lt %in% names(cache)) "Cached" else "Empty"
     }),
     row_count = sapply(lookup_types, function(lt) {
-      if (exists(lt, envir = cache_env)) {
-        obj <- get(lt, envir = cache_env)
+      if (lt %in% names(cache)) {
+        obj <- cache[[lt]]
         if (is.data.frame(obj)) nrow(obj) else length(obj)
       } else {
         NA_integer_
+      }
+    }),
+    cached_at = sapply(lookup_types, function(lt) {
+      ts_key <- paste0(lt, "_timestamp")
+      if (ts_key %in% names(cache)) {
+        as.character(cache[[ts_key]])
+      } else {
+        NA_character_
       }
     }),
     stringsAsFactors = FALSE
@@ -311,39 +310,35 @@ get_lookup_cache_status <- function() {
   return(status_df)
 }
 
-#' Clear lookup cache (all or specific types)
+#' Clear lookup cache (all or specific types) - file-based
 #' @param lookup_types Character vector of lookup types to clear, or NULL for all
 #' @return Invisible NULL
 clear_lookup_cache_types <- function(lookup_types = NULL) {
-  if (!exists(".lookup_cache", mode = "environment")) {
-    cat("Lookup cache not initialized\n")
-    return(invisible())
-  }
-  
-  cache_env <- get(".lookup_cache", envir = .GlobalEnv)
-  
   if (is.null(lookup_types)) {
-    # Clear all
-    rm(list = ls(cache_env), envir = cache_env)
+    # Clear all by deleting the file
+    clear_lookup_cache()
     cat("All lookup caches cleared\n")
   } else {
-    # Clear specific types
+    # Clear specific types by removing from the list
+    cache <- load_lookup_cache()
     for (lt in lookup_types) {
-      if (exists(lt, envir = cache_env)) {
-        rm(list = lt, envir = cache_env)
+      if (lt %in% names(cache)) {
+        cache[[lt]] <- NULL
+        cache[[paste0(lt, "_timestamp")]] <- NULL
         cat("Cleared lookup cache:", lt, "\n")
       }
     }
+    save_lookup_cache(cache)
   }
   
   invisible()
 }
 
-#' Refresh all lookup caches by clearing and re-fetching
+#' Refresh all lookup caches by clearing and re-fetching (file-based)
 #' @return Invisible list of refreshed data
 refresh_lookup_caches <- function() {
   # Clear all cached lookups
-  clear_lookup_cache_types()
+  clear_lookup_cache()
   
   # Re-fetch by calling the lookup functions
   # These will populate the cache on first call
@@ -373,4 +368,10 @@ refresh_lookup_caches <- function() {
   
   cat("Lookup cache refresh complete\n")
   invisible(results)
+}
+
+#' Get lookup cache file path for display
+#' @return Path to cache file
+get_lookup_cache_path <- function() {
+  get_lookup_cache_file()
 }

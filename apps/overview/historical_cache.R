@@ -16,11 +16,22 @@ library(lubridate)
 # Toggle this to enable/disable caching
 USE_CACHED_AVERAGES <- TRUE
 
-# Cache file location (in the same directory as this file)
+# Cache file location (in the shared/cache directory for all apps)
 CACHE_DIR <- tryCatch({
-  dirname(sys.frame(1)$ofile)
+  # Try shared/cache directory first (actual location)
+  if (dir.exists("/srv/shiny-server/shared/cache")) {
+    "/srv/shiny-server/shared/cache"
+  } else if (dir.exists("../../shared/cache")) {
+    "../../shared/cache"  # Relative path from overview app  
+  } else if (dir.exists("/srv/shiny-server/shared")) {
+    "/srv/shiny-server/shared"
+  } else if (dir.exists("../../shared")) {
+    "../../shared"  # Relative path from overview app
+  } else {
+    dirname(sys.frame(1)$ofile)  # Fallback to current file directory
+  }
 }, error = function(e) {
-  getwd()  # Fallback to current working directory
+  getwd()  # Final fallback to current working directory
 })
 CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
 
@@ -34,22 +45,40 @@ CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
 #' @return Data frame with cached averages by week, or NULL if not cached
 #' @export
 get_cached_average <- function(metric_id, avg_type = "10yr") {
-  if (!USE_CACHED_AVERAGES) return(NULL)
-  
-  if (!file.exists(CACHE_FILE)) {
-    cat("Cache file not found:", CACHE_FILE, "\n")
+  if (!USE_CACHED_AVERAGES) {
     return(NULL)
   }
   
-  cache <- readRDS(CACHE_FILE)
+  # Find cache file
+  cache_file <- CACHE_FILE
+  if (!file.exists(cache_file)) {
+    # Try alternative paths
+    alt_paths <- c(
+      "/srv/shiny-server/shared/cache/historical_averages_cache.rds",
+      "/srv/shiny-server/shared/historical_averages_cache.rds",
+      "/srv/shiny-server/apps/overview/historical_averages_cache.rds"
+    )
+    
+    cache_file <- NULL
+    for (alt_path in alt_paths) {
+      if (file.exists(alt_path)) {
+        cache_file <- alt_path
+        break
+      }
+    }
+    
+    if (is.null(cache_file)) {
+      return(NULL)
+    }
+  }
   
+  cache <- readRDS(cache_file)
   cache_key <- paste0(metric_id, "_", avg_type)
+  
   if (!cache_key %in% names(cache$averages)) {
-    cat("No cached data for:", cache_key, "\n")
     return(NULL)
   }
   
-  cat("Using cached", avg_type, "average for", metric_id, "(generated:", cache$generated_date, ")\n")
   return(cache$averages[[cache_key]])
 }
 

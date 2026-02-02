@@ -16,6 +16,16 @@ source("historical_functions.R")
 set_app_name("catch_basin_status")
 
 # =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[catch_basin_status] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[catch_basin_status] Lookup tables preloaded")
+}, error = function(e) message("[catch_basin_status] Preload warning: ", e$message))
+
+# =============================================================================
 # USER INTERFACE
 # =============================================================================
 
@@ -128,8 +138,7 @@ server <- function(input, output, session) {
       # Filter to only N, E, MO, Sr, Sj, Wm, Wp as specified in query
       facilities <- get_facility_lookup()
       if (!is.null(facilities) && nrow(facilities) > 0) {
-        facilities <- facilities %>%
-          filter(short_name %in% c("N", "E", "MO", "Sr", "Sj", "Wm", "Wp"))
+        facilities <- facilities[facilities$short_name %in% c("N", "E", "MO", "Sr", "Sj", "Wm", "Wp"), ]
         facility_choices <- c("All Facilities" = "all", setNames(facilities$short_name, facilities$full_name))
       }
       updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
@@ -211,13 +220,24 @@ server <- function(input, output, session) {
     
     data <- catch_basin_data()
     
-    if (is.null(data) || nrow(data) == 0) {
+    if (is.null(data) || !is.list(data) || length(data) == 0) {
+      return(data.frame())
+    }
+    
+    # Extract sites from the list structure
+    if (is.list(data) && "sites" %in% names(data)) {
+      data_df <- data$sites
+    } else {
+      data_df <- data
+    }
+    
+    if (is.null(data_df) || !is.data.frame(data_df) || nrow(data_df) == 0) {
       return(data.frame())
     }
     
     # Apply grouping and filtering
     processed <- process_catch_basin_data(
-      data = data,
+      data = data_df,
       group_by = inputs$group_by,
       combine_zones = inputs$combine_zones,
       expiring_filter = inputs$expiring_filter
@@ -234,10 +254,16 @@ server <- function(input, output, session) {
   output$total_wet_cb <- renderUI({
     data <- catch_basin_data()
     
-    if (is.null(data) || nrow(data) == 0) {
+    if (is.null(data) || !is.list(data) || length(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$total_count, na.rm = TRUE)
+      # Extract sites data from list structure
+      data_df <- if (is.list(data) && "sites" %in% names(data)) data$sites else data
+      if (is.null(data_df) || !is.data.frame(data_df) || nrow(data_df) == 0) {
+        total <- 0
+      } else {
+        total <- sum(data_df$total_count, na.rm = TRUE)
+      }
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -252,10 +278,16 @@ server <- function(input, output, session) {
   output$total_treated <- renderUI({
     data <- catch_basin_data()
     
-    if (is.null(data) || nrow(data) == 0) {
+    if (is.null(data) || !is.list(data) || length(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$active_count, na.rm = TRUE)
+      # Extract sites data from list structure
+      data_df <- if (is.list(data) && "sites" %in% names(data)) data$sites else data
+      if (is.null(data_df) || !is.data.frame(data_df) || nrow(data_df) == 0) {
+        total <- 0
+      } else {
+        total <- sum(data_df$active_count, na.rm = TRUE)
+      }
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -271,12 +303,18 @@ server <- function(input, output, session) {
     data <- catch_basin_data()
     status_colors <- get_status_colors(theme = current_theme())
     
-    if (is.null(data) || nrow(data) == 0) {
+    if (is.null(data) || !is.list(data) || length(data) == 0) {
       pct <- 0
     } else {
-      total_wet <- sum(data$total_count, na.rm = TRUE)
-      total_treated <- sum(data$active_count, na.rm = TRUE)
-      pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
+      # Extract sites data from list structure
+      data_df <- if (is.list(data) && "sites" %in% names(data)) data$sites else data
+      if (is.null(data_df) || !is.data.frame(data_df) || nrow(data_df) == 0) {
+        pct <- 0
+      } else {
+        total_wet <- sum(data_df$total_count, na.rm = TRUE)
+        total_treated <- sum(data_df$active_count, na.rm = TRUE)
+        pct <- if (total_wet > 0) (total_treated / total_wet) * 100 else 0
+      }
     }
     
     # Use theme-aware colors based on coverage percentage
@@ -299,10 +337,16 @@ server <- function(input, output, session) {
   output$total_expiring <- renderUI({
     data <- catch_basin_data()
     
-    if (is.null(data) || nrow(data) == 0) {
+    if (is.null(data) || !is.list(data) || length(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$expiring_count, na.rm = TRUE)
+      # Extract sites data from list structure
+      data_df <- if (is.list(data) && "sites" %in% names(data)) data$sites else data
+      if (is.null(data_df) || !is.data.frame(data_df) || nrow(data_df) == 0) {
+        total <- 0
+      } else {
+        total <- sum(data_df$expiring_count, na.rm = TRUE)
+      }
     }
     
     status_colors <- get_status_colors(theme = current_theme())
@@ -317,10 +361,16 @@ server <- function(input, output, session) {
   output$total_expired <- renderUI({
     data <- catch_basin_data()
     
-    if (is.null(data) || nrow(data) == 0) {
+    if (is.null(data) || !is.list(data) || length(data) == 0) {
       total <- 0
     } else {
-      total <- sum(data$expired_count, na.rm = TRUE)
+      # Extract sites data from list structure
+      data_df <- if (is.list(data) && "sites" %in% names(data)) data$sites else data
+      if (is.null(data_df) || !is.data.frame(data_df) || nrow(data_df) == 0) {
+        total <- 0
+      } else {
+        total <- sum(data_df$expired_count, na.rm = TRUE)
+      }
     }
     
     status_colors <- get_status_colors(theme = current_theme())

@@ -27,6 +27,16 @@ source("display_functions.R")
 # Set application name for AWS RDS monitoring
 set_app_name("section_cards")
 
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[section_cards] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[section_cards] Lookup tables preloaded")
+}, error = function(e) message("[section_cards] Preload warning: ", e$message))
+
 # Load environment variables
 load_env_vars()
 

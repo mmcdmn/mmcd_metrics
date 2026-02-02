@@ -15,6 +15,16 @@ source("historical_functions.R")
 # Set application name for AWS RDS monitoring
 set_app_name("struct_trt")
 
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[struct_trt] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[struct_trt] Lookup tables preloaded")
+}, error = function(e) message("[struct_trt] Preload warning: ", e$message))
+
 # Load environment variables from .env file
 env_paths <- c(
   "../../.env",

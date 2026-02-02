@@ -17,6 +17,19 @@ source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
 source("../../shared/server_utilities.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("cattail_treatments")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[cattail_treatments] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[cattail_treatments] Lookup tables preloaded")
+}, error = function(e) message("[cattail_treatments] Preload warning: ", e$message))
+
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")

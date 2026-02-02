@@ -165,6 +165,45 @@ load_metric_data <- function(metric,
     ))
   }
   
+  # Special handling for SUCO - capacity-based instead of active/expiring
+  if (metric == "suco") {
+    # For SUCOs: 
+    # - total = capacity (from config)
+    # - active = actual SUCOs completed this week
+    # - expiring = 0 (not applicable)
+    
+    # Get capacity from config
+    capacity_total <- config$load_params$capacity_total  # 72
+    capacity_per_facility <- config$load_params$capacity_per_facility  # 72/7
+    
+    # Count SUCOs by facility and zone (each row in sites is one SUCO)
+    suco_counts <- sites %>%
+      filter(zone %in% zone_filter) %>%
+      group_by(facility, zone) %>%
+      summarize(
+        active_count = n(),  # Count of SUCOs done this week
+        .groups = "drop"
+      )
+    
+    # Get all facilities and zones to show capacity even if no SUCOs
+    all_facilities <- get_facility_lookup()
+    all_combinations <- expand.grid(
+      facility = all_facilities$short_name,
+      zone = zone_filter,
+      stringsAsFactors = FALSE
+    )
+    
+    result <- all_combinations %>%
+      left_join(suco_counts, by = c("facility", "zone")) %>%
+      mutate(
+        total_count = capacity_per_facility,  # Capacity per facility
+        active_count = ifelse(is.na(active_count), 0, active_count),  # Actual SUCOs
+        expiring_count = 0  # Not applicable for SUCOs
+      )
+    
+    return(result)
+  }
+  
   # Aggregate to facility+zone level
   # Check if pre-aggregated or site-level data
   if (isTRUE(raw_data$pre_aggregated)) {
@@ -242,6 +281,39 @@ load_data_by_zone <- function(metric,
   
   data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
   if (nrow(data) == 0) return(data.frame())
+  
+  # Special handling for SUCO - capacity-based at district level
+  if (metric == "suco") {
+    registry <- get_metric_registry()
+    config <- registry[[metric]]
+    capacity_total <- config$load_params$capacity_total  # 72
+    
+    if (separate_zones) {
+      result <- data %>%
+        group_by(zone) %>%
+        summarize(
+          total = capacity_total / 2,  # Split capacity between P1 and P2
+          active = sum(active_count, na.rm = TRUE),
+          expiring = 0,
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = paste0("P", zone))
+    } else {
+      result <- data %>%
+        summarize(
+          total = capacity_total,  # Full district capacity
+          active = sum(active_count, na.rm = TRUE),
+          expiring = 0,
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = "MMCD (All)",
+          zone = "1,2"
+        )
+    }
+    
+    return(result)
+  }
   
   # Determine if this metric should use acres data
   # Only drone and ground_prehatch have acres - struct_trt and catch_basin use site counts

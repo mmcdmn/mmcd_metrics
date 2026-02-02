@@ -179,6 +179,33 @@ get_metric_registry <- function() {
                          • All facilities<br>
                          • Zone filter from dropdown"),
       load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
+    ),
+    
+    suco = list(
+      id = "suco",
+      display_name = "SUCO Capacity",
+      short_name = "SUCO",
+      icon = "search",
+      image_path = "assets/adult.png",  # Use adult mosquito icon
+      y_label = "SUCOs Completed",
+      bg_color = "#6366f1",  # Indigo color
+      app_folder = "suco_history",
+      has_acres = FALSE,
+      historical_enabled = FALSE,  # Can enable later with weekly historical data
+      use_active_calculation = FALSE,  # SUCOs use count-based progress
+      display_metric = "inspections",  # count of SUCO inspections
+      chart_types = c("bar"),
+      default_chart_type = "bar",
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • SUCO inspections only (survtype = 7)<br>
+                         • Current week (Monday through today)<br>
+                         • All facilities<br>
+                         • Zone filter from dropdown"),
+      load_params = list(
+        capacity_total = 72,  # District-wide capacity: 72 SUCOs per week
+        capacity_per_facility = 72 / 7,  # Per-facility capacity
+        time_period = "current_week"  # Use current week for progress
+      )
     )
   )
 }

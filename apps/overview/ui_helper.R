@@ -339,7 +339,7 @@ get_overview_css <- function() {
 #' @param expiring_days The current expiring days setting
 #' @param color_theme The current color theme
 #' @export
-navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days, color_theme = "MMCD") {
+navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days, color_theme = "MMCD", metric_id = NULL) {
   # Debug the input
   cat("DEBUG navigate_to_overview: zone_clicked =", zone_clicked, "class =", class(zone_clicked), "\n")
   
@@ -373,23 +373,31 @@ navigate_to_overview <- function(session, target, zone_clicked, analysis_date, e
   
   cat("DEBUG: Final zone_num =", zone_num, "\n")
   
-  # Build URL with parameters
+  # Map target to unified app view
+  view_param <- switch(target,
+    "facilities_overview" = "facility",
+    "fos_overview" = "fos",
+    "district"  # default
+  )
+  
+  # Build URL with parameters for unified app
+  base_url <- "/overview/"
+  params <- list()
+  params$view <- view_param
   if (!is.null(zone_num) && !is.na(zone_num)) {
-    url <- paste0(
-      "../", target, "/?zone=", zone_num,
-      "&date=", as.character(analysis_date),
-      "&expiring=", expiring_days,
-      "&theme=", color_theme
-    )
-  } else {
-    # Navigate without zone filter if we can't determine it
-    url <- paste0(
-      "../", target, "/?",
-      "date=", as.character(analysis_date),
-      "&expiring=", expiring_days,
-      "&theme=", color_theme
-    )
+    params$zone <- zone_num
   }
+  # Add metric filter if specified
+  if (!is.null(metric_id)) {
+    params$metric <- metric_id
+  }
+  params$date <- as.character(analysis_date)
+  params$expiring <- expiring_days
+  params$theme <- color_theme
+  
+  # Build query string
+  query_parts <- paste(names(params), params, sep="=", collapse="&")
+  url <- paste0(base_url, "?", query_parts)
   
   cat("DEBUG: Final URL =", url, "\n")
   

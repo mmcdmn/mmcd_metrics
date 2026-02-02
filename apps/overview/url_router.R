@@ -26,6 +26,8 @@ get_default_url_params <- function() {
     metric = "all",              # Metrics to show: "all" or comma-separated IDs
     zone = "1,2",                # Zone filter: "1", "2", "1,2", "separate"
     facility = "all",            # Facility filter: "all" or facility code
+    fos = "all",                 # FOS filter: "all" or FOS name
+    site_id = NULL,              # Site filter: NULL or specific site_id
     date = as.character(Sys.Date()),
     expiring = 7,
     theme = "MMCD",
@@ -43,7 +45,7 @@ get_default_url_params <- function() {
 #' @export
 get_valid_param_values <- function() {
   list(
-    view = c("district", "facility", "fos", "metric_detail"),
+    view = c("district", "facility", "fos", "site_detail", "metric_detail"),
     zone = c("1", "2", "1,2", "separate"),
     theme = c("MMCD", "IBM", "Wong", "Tol", "Viridis")
   )
@@ -104,6 +106,16 @@ parse_url_params <- function(query_string) {
   # Parse facility
   if (!is.null(query$facility)) {
     params$facility <- query$facility
+  }
+  
+  # Parse fos (Field Operations Supervisor)
+  if (!is.null(query$fos)) {
+    params$fos <- query$fos
+  }
+  
+  # Parse site_id
+  if (!is.null(query$site_id)) {
+    params$site_id <- query$site_id
   }
   
   # Parse date
@@ -178,6 +190,8 @@ get_display_metrics <- function(params) {
 #' @param metric Metric ID(s) - single or vector
 #' @param zone Zone filter
 #' @param facility Facility filter
+#' @param fos FOS (Field Operations Supervisor) filter
+#' @param site_id Site ID filter
 #' @param date Analysis date
 #' @param expiring Expiring days
 #' @param theme Color theme
@@ -192,6 +206,8 @@ build_drill_down_url <- function(
   metric = "all",
   zone = "1,2",
   facility = "all",
+  fos = "all",
+  site_id = NULL,
   date = Sys.Date(),
   expiring = 7,
   theme = "MMCD",
@@ -218,6 +234,14 @@ build_drill_down_url <- function(
     theme = theme,
     show_historical = if (show_historical) "true" else "false"
   )
+  
+  # Add optional parameters
+  if (fos != "all") {
+    params$fos <- fos
+  }
+  if (!is.null(site_id)) {
+    params$site_id <- site_id
+  }
   
   # Add breadcrumb tracking if provided
   if (!is.null(from_view)) {
@@ -261,8 +285,10 @@ build_click_drill_down_url <- function(session, click_data, current_params, metr
   current_view <- current_params$view
   next_view <- switch(current_view,
     "district" = "facility",
-    "facility" = "metric_detail",
-    "metric_detail" = "metric_detail",  # Can't drill further
+    "facility" = "fos",              # Drill from facility to FOS
+    "fos" = "metric_detail",         # Drill from FOS to metric detail
+    "metric_detail" = "site_detail", # Drill from metric to individual site
+    "site_detail" = "site_detail",   # Can't drill further
     "facility"  # Default
   )
   
@@ -281,12 +307,26 @@ build_click_drill_down_url <- function(session, click_data, current_params, metr
     facility_clicked <- as.character(clicked_value)
   }
   
+  # Determine FOS from click (if in FOS view)
+  fos_clicked <- current_params$fos
+  if (current_view == "fos" && !is.null(clicked_value)) {
+    fos_clicked <- as.character(clicked_value)
+  }
+  
+  # Determine site from click (if in metric_detail view)
+  site_clicked <- current_params$site_id
+  if (current_view == "metric_detail" && !is.null(clicked_value)) {
+    site_clicked <- as.character(clicked_value)
+  }
+  
   # Build the URL
   build_drill_down_url(
     view = next_view,
     metric = metric_id,  # Focus on the clicked metric
     zone = zone_clicked,
     facility = facility_clicked,
+    fos = fos_clicked,
+    site_id = site_clicked,
     date = current_params$date,
     expiring = current_params$expiring,
     theme = current_params$theme,
@@ -354,9 +394,10 @@ get_view_title <- function(params) {
   # Base title
   base_title <- switch(params$view,
     "district" = "District Overview",
-    "facility" = "Facility Overview",
+    "facility" = "Facility Overview", 
     "fos" = "FOS Overview",
     "metric_detail" = "Metric Detail",
+    "site_detail" = "Site Detail",
     "Overview"
   )
   
@@ -376,8 +417,19 @@ get_view_title <- function(params) {
   }
   
   # Add facility if filtered
-  if (params$facility != "all" && params$view %in% c("facility", "metric_detail")) {
+  if (params$facility != "all" && params$view %in% c("facility", "fos", "metric_detail", "site_detail")) {
     base_title <- paste(base_title, "-", params$facility)
+  }
+  
+  # Add FOS if filtered
+  if (!is.null(params$fos) && params$fos != "all" && params$view %in% c("fos", "metric_detail", "site_detail")) {
+    base_title <- paste(base_title, "-", params$fos)
+  }
+  
+  # Add site if filtered 
+  if (!is.null(params$site_id) && params$view == "site_detail") {
+    base_title <- paste(base_title, "-", params$site_id)
+  }
   }
   
   base_title
@@ -390,9 +442,10 @@ get_view_title <- function(params) {
 get_view_subtitle <- function(params) {
   switch(params$view,
     "district" = "Treatment progress aggregated by zone - Click a bar to drill down",
-    "facility" = "Treatment progress by facility - Click a bar for details",
-    "fos" = "Treatment progress by Field Operations Supervisor",
-    "metric_detail" = "Detailed metric view with historical comparison",
+    "facility" = "Treatment progress by facility - Click a bar to drill into FOS",
+    "fos" = "Treatment progress by Field Operations Supervisor - Click a bar for metric detail",
+    "metric_detail" = "Detailed metric view with historical comparison - Click a bar for site detail",
+    "site_detail" = "Individual site detail with treatment history",
     "Click charts to explore"
   )
 }
@@ -422,7 +475,7 @@ generate_breadcrumb_ui <- function(params, session) {
   }
   
   # Add facility level if applicable
-  if (params$view %in% c("facility", "metric_detail")) {
+  if (params$view %in% c("facility", "fos", "metric_detail", "site_detail")) {
     zone_label <- if (params$zone %in% c("1", "2")) paste0(" (P", params$zone, ")") else ""
     
     crumbs[[2]] <- tags$span(" > ")
@@ -442,8 +495,29 @@ generate_breadcrumb_ui <- function(params, session) {
     }
   }
   
+  # Add FOS level if applicable
+  if (params$view %in% c("fos", "metric_detail", "site_detail")) {
+    fos_label <- if (!is.null(params$fos) && params$fos != "all") paste0(" (", params$fos, ")") else ""
+    
+    crumbs[[4]] <- tags$span(" > ")
+    crumbs[[5]] <- if (params$view == "fos") {
+      tags$span(class = "breadcrumb-current", paste0("FOS", fos_label))
+    } else {
+      tags$a(
+        href = "#",
+        class = "breadcrumb-link", 
+        onclick = sprintf(
+          "Shiny.setInputValue('nav_to', '%s', {priority: 'event'});",
+          build_drill_down_url(view = "fos", metric = "all", zone = params$zone, facility = params$facility,
+                               date = params$date, expiring = params$expiring, theme = params$theme)
+        ),
+        paste0("FOS", fos_label)
+      )
+    }
+  }
+
   # Add metric detail level if applicable
-  if (params$view == "metric_detail") {
+  if (params$view %in% c("metric_detail", "site_detail")) {
     registry <- get_metric_registry()
     metric_name <- if (!identical(params$metric, "all") && length(params$metric) == 1) {
       config <- registry[[params$metric]]
@@ -452,8 +526,30 @@ generate_breadcrumb_ui <- function(params, session) {
       "Detail"
     }
     
-    crumbs[[4]] <- tags$span(" > ")
-    crumbs[[5]] <- tags$span(class = "breadcrumb-current", metric_name)
+    crumbs[[6]] <- tags$span(" > ")
+    crumbs[[7]] <- if (params$view == "metric_detail") {
+      tags$span(class = "breadcrumb-current", metric_name)
+    } else {
+      tags$a(
+        href = "#",
+        class = "breadcrumb-link",
+        onclick = sprintf(
+          "Shiny.setInputValue('nav_to', '%s', {priority: 'event'});",
+          build_drill_down_url(view = "metric_detail", metric = params$metric, zone = params$zone,
+                               facility = params$facility, fos = params$fos,
+                               date = params$date, expiring = params$expiring, theme = params$theme)
+        ),
+        metric_name
+      )
+    }
+  }
+  
+  # Add site detail level if applicable
+  if (params$view == "site_detail") {
+    site_label <- if (!is.null(params$site_id)) params$site_id else "Site"
+    
+    crumbs[[8]] <- tags$span(" > ")
+    crumbs[[9]] <- tags$span(class = "breadcrumb-current", site_label)
   }
   
   div(

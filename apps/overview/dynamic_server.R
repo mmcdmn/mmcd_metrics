@@ -61,8 +61,14 @@ load_all_current_data <- function(inputs, group_by = "zone", progress_callback =
 #' @param analysis_date Date to use as "current year" for comparison
 #' @return Named list of data frames keyed by metric_id
 #' @export
-load_all_historical_data <- function(overview_type, zone_filter = c("1", "2"), progress_callback = NULL, analysis_date = NULL) {
-  metrics <- get_historical_metrics()
+load_all_historical_data <- function(overview_type, zone_filter = c("1", "2"), progress_callback = NULL, analysis_date = NULL, metrics_filter = NULL) {
+  # Use filtered metrics if provided, otherwise get all historical metrics
+  all_historical <- get_historical_metrics()
+  metrics <- if (!is.null(metrics_filter)) {
+    intersect(metrics_filter, all_historical)
+  } else {
+    all_historical
+  }
   n_metrics <- length(metrics)
   registry <- get_metric_registry()
   overview_config <- get_overview_config(overview_type)
@@ -268,8 +274,9 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
 #' @param data Named list of data frames keyed by metric_id
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data) {
-  metrics <- get_active_metrics()
+generate_summary_stats <- function(data, metrics_filter = NULL) {
+  # Use filtered metrics if provided, otherwise get all active metrics
+  metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
   registry <- get_metric_registry()
   n_metrics <- length(metrics)
   col_width <- floor(12 / n_metrics)
@@ -338,10 +345,12 @@ generate_summary_stats <- function(data) {
 #' @export
 build_overview_server <- function(input, output, session, 
                                    overview_type = "district",
-                                   include_historical = TRUE) {
+                                   include_historical = TRUE,
+                                   metrics_filter = NULL) {
   
   overview_config <- get_overview_config(overview_type)
-  metrics <- get_active_metrics()
+  # Use filtered metrics if provided, otherwise get all active metrics
+  metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
   registry <- get_metric_registry()
   
   # =========================================================================
@@ -453,7 +462,20 @@ build_overview_server <- function(input, output, session,
     eventReactive(input$refresh, {
       inputs <- refresh_inputs()
       years <- get_historical_year_range(10, inputs$custom_today)
-      hist_metrics <- get_historical_metrics()
+      
+      # Use filtered metrics if provided, otherwise get all historical metrics
+      all_historical <- get_historical_metrics()
+      hist_metrics <- if (!is.null(metrics_filter)) {
+        intersect(metrics_filter, all_historical)
+      } else {
+        all_historical
+      }
+      
+      # If no historical metrics to load, return empty list
+      if (length(hist_metrics) == 0) {
+        return(list())
+      }
+      
       n_metrics <- length(hist_metrics)
       
       withProgress(message = "Loading historical data...", value = 0, {
@@ -677,14 +699,15 @@ build_overview_server <- function(input, output, session,
           
           cat("DEBUG: Determined zone_clicked:", zone_clicked, "\n")
           
-          # Navigate with the determined zone
+          # Navigate with the determined zone and clicked metric
           navigate_to_overview(
             session, 
             overview_config$drill_down_target,
             zone_clicked, 
             input$custom_today, 
             input$expiring_days,
-            current_theme()
+            current_theme(),
+            metric_id  # Pass the clicked metric
           )
         }
       })
@@ -696,7 +719,7 @@ build_overview_server <- function(input, output, session,
   
   output$summary_stats <- renderUI({
     req(current_data())
-    generate_summary_stats(current_data())
+    generate_summary_stats(current_data(), metrics_filter)
   })
   
   # =========================================================================

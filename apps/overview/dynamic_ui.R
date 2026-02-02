@@ -366,8 +366,15 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
 #' @param chart_height Height of each chart
 #' @return List of fluidRow elements with collapsible chart containers
 #' @export
-generate_current_charts_ui <- function(chart_height = "150px") {
-  metrics <- get_active_metrics()
+generate_current_charts_ui <- function(chart_height = "150px", metrics_filter = NULL) {
+  # Use filtered metrics if provided, otherwise get all active metrics
+  metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
+  
+  # If no metrics to show, return nothing
+  if (length(metrics) == 0) {
+    return(div(class = "charts-flex-container", NULL))
+  }
+  
   registry <- get_metric_registry()
   
   # Create collapsible panels for each metric (hidden by default)
@@ -391,8 +398,20 @@ generate_current_charts_ui <- function(chart_height = "150px") {
 #' @param chart_height Height of each chart
 #' @return List of UI elements including section header
 #' @export
-generate_historical_charts_ui <- function(overview_type = "district", chart_height = "300px") {
-  metrics <- get_historical_metrics()
+generate_historical_charts_ui <- function(overview_type = "district", chart_height = "300px", metrics_filter = NULL) {
+  # Use filtered metrics if provided (intersected with historical), otherwise get historical
+  all_historical <- get_historical_metrics()
+  metrics <- if (!is.null(metrics_filter)) {
+    intersect(metrics_filter, all_historical)
+  } else {
+    all_historical
+  }
+  
+  # If no metrics to show, return nothing
+  if (length(metrics) == 0) {
+    return(NULL)
+  }
+  
   registry <- get_metric_registry()
   overview_config <- get_overview_config(overview_type)
   
@@ -430,7 +449,9 @@ generate_historical_charts_ui <- function(overview_type = "district", chart_heig
 #' @param include_historical Whether to include historical charts section
 #' @return Complete fluidPage UI
 #' @export
-build_overview_ui <- function(overview_type = "district", include_historical = TRUE) {
+build_overview_ui <- function(overview_type = "district", include_historical = TRUE, metrics_filter = NULL, 
+                               initial_zone = "1,2", initial_date = Sys.Date(), 
+                               initial_expiring = 3, initial_theme = "MMCD") {
   
   overview_config <- get_overview_config(overview_type)
   
@@ -461,13 +482,13 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
         ),
         column(2,
           dateInput("custom_today", "Analysis Date:",
-                   value = Sys.Date(),
+                   value = initial_date,
                    max = Sys.Date(),
                    format = "yyyy-mm-dd")
         ),
         column(2,
           sliderInput("expiring_days", "Expiring Window (days):",
-                     min = 1, max = 30, value = 3, step = 1)
+                     min = 1, max = 30, value = initial_expiring, step = 1)
         ),
         column(2,
           selectInput("zone_filter", "Zone:",
@@ -475,12 +496,12 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
                                 "P2 Only" = "2",
                                 "P1 and P2" = "1,2",
                                 "P1 and P2 SEPARATE" = "separate"),
-                     selected = "1,2")
+                     selected = initial_zone)
         ),
         column(2,
           selectInput("color_theme", "Color Theme:",
                      choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
-                     selected = "MMCD")
+                     selected = initial_theme)
         ),
         column(2,
           div(class = "last-updated",
@@ -496,10 +517,14 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     # Main Charts Container
     div(class = "dashboard-container",
       # Current progress charts (generated dynamically)
-      generate_current_charts_ui(),
+      generate_current_charts_ui(metrics_filter = metrics_filter),
       
-      # Historical charts (generated dynamically) if enabled
-      if (include_historical) generate_historical_charts_ui(overview_type) else NULL
+      # Historical charts (generated dynamically) - only show when drilling down to specific metrics
+      if (include_historical && !is.null(metrics_filter)) {
+        generate_historical_charts_ui(overview_type, metrics_filter = metrics_filter) 
+      } else {
+        NULL
+      }
     )
   )
 }

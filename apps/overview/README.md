@@ -8,7 +8,7 @@ to edit ONE file to add or remove metrics.
 
 ```
 apps/overview/
-├── metric_registry.R     # 🎯 SINGLE SOURCE OF TRUTH - Edit this to add/remove metrics
+├── metric_registry.R     #  SINGLE SOURCE OF TRUTH - Edit this to add/remove metrics
 ├── data_functions.R      # Data loading for current progress
 ├── display_functions.R   # Chart creation (plotly)
 ├── historical_functions.R # Historical data loading
@@ -119,10 +119,12 @@ allowing users to share specific views and use browser back/forward buttons.
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
-| `view` | `district`, `facility`, `metric_detail` | `district` | Aggregation level |
+| `view` | `district`, `facility`, `fos`, `metric_detail`, `site_detail` | `district` | Aggregation level |
 | `metric` | `all` or comma-separated IDs | `all` | Which metrics to show |
 | `zone` | `1`, `2`, `1,2`, `separate` | `1,2` | Zone filter |
 | `facility` | Facility code or `all` | `all` | Facility filter |
+| `fos` | FOS name or `all` | `all` | Field Operations Supervisor filter |
+| `site_id` | Site ID or `null` | `null` | Individual site filter |
 | `date` | `YYYY-MM-DD` | Today | Analysis date |
 | `expiring` | `1-30` | `7` | Expiring days |
 | `theme` | `MMCD`, `IBM`, `Wong`, etc. | `MMCD` | Color theme |
@@ -153,9 +155,11 @@ District (all metrics, by zone)
   |
   +-> Click P1 bar -> Facility (all metrics, P1 only)
                         |
-                        +-> Click drone bar -> Metric Detail (drone, P1, all facilities)
-                                                  |
-                                                  +-> Click SLP bar -> Metric Detail (drone, P1, SLP)
+                        +-> Click facility bar -> FOS (all metrics, P1, selected facility)
+                                                    |
+                                                    +-> Click FOS bar -> Metric Detail (single metric, P1, facility, FOS)
+                                                                          |
+                                                                          +-> Click site bar -> Site Detail (single site detail)
 ```
 
 ### Key Files
@@ -175,3 +179,5 @@ District (all metrics, by zone)
 | `navigate_to_url()` | Navigate using JavaScript pushState |
 | `build_back_url()` | Build URL for back navigation |
 | `generate_breadcrumb_ui()` | Create breadcrumb navigation UI |
+
+---

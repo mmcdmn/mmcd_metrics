@@ -101,3 +101,77 @@ This is configured in `get_overview_config()` in metric_registry.R.
 3. **Consistent UI**: All metrics get the same styling automatically
 4. **Easy Maintenance**: Change the registry, everything updates
 5. **Less Code**: ~60 lines per app instead of ~500+
+
+---
+
+## URL-Based Navigation System
+
+The unified overview app (`unified/app.R`) uses URL parameters for drill-down navigation,
+allowing users to share specific views and use browser back/forward buttons.
+
+### URL Structure
+
+```
+/overview/?view=<view>&metric=<metrics>&zone=<zone>&facility=<facility>&date=<date>
+```
+
+### Parameters
+
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `view` | `district`, `facility`, `metric_detail` | `district` | Aggregation level |
+| `metric` | `all` or comma-separated IDs | `all` | Which metrics to show |
+| `zone` | `1`, `2`, `1,2`, `separate` | `1,2` | Zone filter |
+| `facility` | Facility code or `all` | `all` | Facility filter |
+| `date` | `YYYY-MM-DD` | Today | Analysis date |
+| `expiring` | `1-30` | `7` | Expiring days |
+| `theme` | `MMCD`, `IBM`, `Wong`, etc. | `MMCD` | Color theme |
+
+### URL Examples
+
+```bash
+# District overview - all metrics, all zones
+/overview/?view=district
+
+# Facility view for P1 only
+/overview/?view=facility&zone=1
+
+# Drill into drone metric only, P1
+/overview/?view=metric_detail&metric=drone&zone=1
+
+# Multiple metrics, specific facility
+/overview/?view=facility&metric=drone,ground_prehatch&zone=1&facility=SLP
+
+# Full URL with all params
+/overview/?view=facility&metric=drone&zone=1&date=2026-02-02&expiring=7&theme=MMCD
+```
+
+### Drill-Down Flow
+
+```
+District (all metrics, by zone)
+  |
+  +-> Click P1 bar -> Facility (all metrics, P1 only)
+                        |
+                        +-> Click drone bar -> Metric Detail (drone, P1, all facilities)
+                                                  |
+                                                  +-> Click SLP bar -> Metric Detail (drone, P1, SLP)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `url_router.R` | URL parsing, building, and navigation helpers |
+| `unified/app.R` | Single app that handles all views |
+
+### URL Router Functions
+
+| Function | Purpose |
+|----------|---------|
+| `parse_url_params()` | Parse query string into structured params |
+| `build_drill_down_url()` | Build URL for navigation |
+| `build_click_drill_down_url()` | Build URL from bar click event |
+| `navigate_to_url()` | Navigate using JavaScript pushState |
+| `build_back_url()` | Build URL for back navigation |
+| `generate_breadcrumb_ui()` | Create breadcrumb navigation UI |

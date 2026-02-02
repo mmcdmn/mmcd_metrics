@@ -65,6 +65,11 @@ get_overview_css <- function() {
       flex: 0 1 calc(50% - 8px);
       min-width: 350px;
     }
+    .drilldown-chart {
+      max-width: 100% !important;
+      width: 100%;
+      margin: 20px 0;
+    }
     @media (max-width: 768px) {
       .inline-chart {
         flex: 1 1 100%;
@@ -367,6 +372,11 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
 #' @return List of fluidRow elements with collapsible chart containers
 #' @export
 generate_current_charts_ui <- function(chart_height = "150px", metrics_filter = NULL) {
+  # When drilling down (metrics_filter provided), use larger charts to match historical
+  if (!is.null(metrics_filter)) {
+    chart_height <- "300px"
+  }
+  
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
   
@@ -377,19 +387,30 @@ generate_current_charts_ui <- function(chart_height = "150px", metrics_filter = 
   
   registry <- get_metric_registry()
   
-  # Create collapsible panels for each metric (hidden by default)
-  panels <- lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    # Wrap each chart panel in a collapsible div with smaller width for side-by-side display
-    div(
-      id = paste0("chart_wrapper_", metric_id),
-      class = "chart-panel-wrapper inline-chart",  # Add inline-chart class for flexbox layout
+  # Create collapsible panels for each metric
+  # If metrics_filter is provided (drill-down view), show charts without column wrapper (parent handles layout)
+  # Otherwise, charts are hidden and shown when value boxes are clicked
+  if (!is.null(metrics_filter)) {
+    # Drill-down view: just the chart panels, no column wrapper
+    panels <- lapply(metrics, function(metric_id) {
+      config <- registry[[metric_id]]
       create_chart_panel(metric_id, config, chart_height, is_historical = FALSE)
-    )
-  })
-  
-  # Wrap all panels in a flex container for side-by-side display
-  div(class = "charts-flex-container", panels)
+    })
+    tagList(panels)
+  } else {
+    # District view: compact flex layout with collapsible charts
+    chart_class <- "chart-panel-wrapper inline-chart"
+    panels <- lapply(metrics, function(metric_id) {
+      config <- registry[[metric_id]]
+      div(
+        id = paste0("chart_wrapper_", metric_id),
+        class = chart_class,
+        create_chart_panel(metric_id, config, chart_height, is_historical = FALSE)
+      )
+    })
+    # Wrap in flex container for side-by-side display
+    div(class = "charts-flex-container", panels)
+  }
 }
 
 #' Generate all historical chart panels dynamically
@@ -417,27 +438,43 @@ generate_historical_charts_ui <- function(overview_type = "district", chart_heig
   
   time_label <- if (overview_config$historical_type == "yearly") "Yearly" else "Weekly"
   
-  # Section header
-  header <- div(class = "historical-section",
-    h3(icon("chart-line"), " Historical Trends (Last 5 Years)"),
-    p(style = "color: #666; margin-bottom: 20px;",
-      paste0(time_label, " treatment data - ",
-             if (overview_config$historical_group_by == "mmcd_all") "All MMCD combined" 
-             else paste0("By ", overview_config$historical_group_by)))
-  )
+  # Section header - only show when NOT drilling down
+  header <- if (is.null(metrics_filter)) {
+    div(class = "historical-section",
+      h3(icon("chart-line"), " Historical Trends (Last 5 Years)"),
+      p(style = "color: #666; margin-bottom: 20px;",
+        paste0(time_label, " treatment data - ",
+               if (overview_config$historical_group_by == "mmcd_all") "All MMCD combined" 
+               else paste0("By ", overview_config$historical_group_by)))
+    )
+  } else {
+    NULL
+  }
   
   # Create panels for each metric
   panels <- lapply(metrics, function(metric_id) {
     config <- registry[[metric_id]]
-    column(6, create_chart_panel(metric_id, config, chart_height, is_historical = TRUE))
+    create_chart_panel(metric_id, config, chart_height, is_historical = TRUE)
   })
   
-  # Arrange in rows of 2
-  rows <- split(panels, ceiling(seq_along(panels) / 2))
-  chart_rows <- lapply(rows, function(row_panels) do.call(fluidRow, row_panels))
-  
-  # Combine header and chart rows
-  c(list(header), chart_rows)
+  # When drilling down (metrics_filter not null), don't add header or column wrappers
+  # Parent will handle side-by-side layout
+  if (!is.null(metrics_filter)) {
+    tagList(panels)
+  } else {
+    # Normal view: use column wrappers and rows
+    panels_with_cols <- lapply(metrics, function(metric_id) {
+      config <- registry[[metric_id]]
+      column(6, create_chart_panel(metric_id, config, chart_height, is_historical = TRUE))
+    })
+    
+    # Arrange in rows of 2
+    rows <- split(panels_with_cols, ceiling(seq_along(panels_with_cols) / 2))
+    chart_rows <- lapply(rows, function(row_panels) do.call(fluidRow, row_panels))
+    
+    # Combine header and chart rows
+    c(list(header), chart_rows)
+  }
 }
 
 # =============================================================================
@@ -516,14 +553,25 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     
     # Main Charts Container
     div(class = "dashboard-container",
-      # Current progress charts (generated dynamically)
-      generate_current_charts_ui(metrics_filter = metrics_filter),
-      
-      # Historical charts (generated dynamically) - only show when drilling down to specific metrics
+      # For drill-down view, show current progress and historical side-by-side
       if (include_historical && !is.null(metrics_filter)) {
-        generate_historical_charts_ui(overview_type, metrics_filter = metrics_filter) 
+        fluidRow(
+          column(6,
+            div(style = "padding-right: 10px;",
+              generate_current_charts_ui(metrics_filter = metrics_filter)
+            )
+          ),
+          column(6,
+            div(style = "padding-left: 10px;",
+              generate_historical_charts_ui(overview_type, metrics_filter = metrics_filter)
+            )
+          )
+        )
       } else {
-        NULL
+        # For district view, just show current progress charts
+        div(
+          generate_current_charts_ui(metrics_filter = metrics_filter)
+        )
       }
     )
   )

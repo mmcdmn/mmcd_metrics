@@ -272,63 +272,134 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
 
 #' Generate summary stats UI from data with clickable value boxes
 #' @param data Named list of data frames keyed by metric_id
+#' @param metrics_filter Optional filter for which metrics to display
+#' @param overview_type Type of overview (district, facilities, fos)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL) {
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district") {
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
   registry <- get_metric_registry()
-  n_metrics <- length(metrics)
-  col_width <- floor(12 / n_metrics)
   
-  stat_boxes <- lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    metric_data <- data[[metric_id]]
-    
-    # Calculate stats
-    if (!is.null(metric_data) && nrow(metric_data) > 0) {
-      total <- sum(metric_data$total, na.rm = TRUE)
-      active <- sum(metric_data$active, na.rm = TRUE)
-      expiring <- sum(metric_data$expiring, na.rm = TRUE)
-      
-      # For cattail_treatments: 
-      # treated = active - expiring (sites marked active but NOT expiring)
-      # need_treatment = expiring (sites that still need treatment)
-      # The percentage is treated / (treated + need_treatment)
-      if (metric_id == "cattail_treatments") {
-        treated <- active - expiring  # Treated sites (active minus those needing treatment)
-        need_treatment <- expiring    # Sites that still need treatment
-        workload <- treated + need_treatment  # Total sites requiring treatment
-        pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
-        stat_title <- paste0(config$display_name, ": ", format(treated, big.mark = ","),
-                            " / ", format(workload, big.mark = ","), " treated")
+  # For facilities view, generate one value box per facility instead of per metric
+  if (overview_type == "facilities" && length(metrics) > 0) {
+    # Get unique facilities from the data
+    all_facilities <- unique(unlist(lapply(metrics, function(metric_id) {
+      metric_data <- data[[metric_id]]
+      if (!is.null(metric_data) && "facility" %in% names(metric_data)) {
+        unique(metric_data$facility)
       } else {
-        pct <- ceiling(100 * active / max(1, total))
-        stat_title <- paste0(config$display_name, ": ", format(active, big.mark = ","),
-                            " / ", format(total, big.mark = ","), " treated")
+        NULL
       }
-    } else {
-      pct <- 0
-      stat_title <- paste0(config$display_name, ": 0 / 0 treated")
-    }
+    })))
     
-    # Create clickable stat box with data-metric-id attribute
-    column(col_width,
-      div(
-        class = "stat-box-clickable",
-        `data-metric-id` = metric_id,
-        create_stat_box(
-          value = paste0(pct, "%"),
-          title = stat_title,
-          bg_color = config$bg_color,
-          icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-          icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+    if (length(all_facilities) == 0) return(fluidRow())
+    
+    n_facilities <- length(all_facilities)
+    # For 7 facilities, use 4 columns in first row, 3 in second (col_width = 3)
+    # For other counts, distribute evenly
+    col_width <- if (n_facilities == 7) 3 else floor(12 / min(n_facilities, 6))
+    
+    stat_boxes <- lapply(all_facilities, function(fac) {
+      # For this facility, aggregate across all metrics
+      total_all <- 0
+      active_all <- 0
+      expiring_all <- 0
+      
+      for (metric_id in metrics) {
+        metric_data <- data[[metric_id]]
+        if (!is.null(metric_data) && "facility" %in% names(metric_data)) {
+          fac_data <- metric_data[metric_data$facility == fac, ]
+          if (nrow(fac_data) > 0) {
+            total_all <- total_all + sum(fac_data$total, na.rm = TRUE)
+            active_all <- active_all + sum(fac_data$active, na.rm = TRUE)
+            expiring_all <- expiring_all + sum(fac_data$expiring, na.rm = TRUE)
+          }
+        }
+      }
+      
+      # For cattail, calculate % treated out of (treated + needs treatment)
+      # treated = active - expiring (active includes expiring)
+      # For other metrics, use active / total
+      if (metrics[1] == "cattail_treatments") {
+        treated_all <- active_all - expiring_all
+        workload <- treated_all + expiring_all
+        pct <- if (workload > 0) ceiling(100 * treated_all / workload) else 0
+      } else {
+        pct <- if (total_all > 0) ceiling(100 * active_all / total_all) else 0
+      }
+      
+      # Use first metric's color (they should all be the same metric)
+      config <- registry[[metrics[1]]]
+      
+      # Create stat box with facility short name
+      column(col_width,
+        div(
+          class = "stat-box-clickable",
+          `data-facility` = fac,
+          create_stat_box(
+            value = paste0(pct, "%"),
+            title = fac,  # Just show facility short name
+            bg_color = config$bg_color,
+            icon = NULL,  # No icon for facility view
+            icon_type = "fontawesome"
+          )
         )
       )
-    )
-  })
-  
-  do.call(fluidRow, stat_boxes)
+    })
+    
+    fluidRow(stat_boxes)
+    
+  } else {
+    # District view: one value box per metric
+    n_metrics <- length(metrics)
+    col_width <- floor(12 / n_metrics)
+    
+    stat_boxes <- lapply(metrics, function(metric_id) {
+      config <- registry[[metric_id]]
+      metric_data <- data[[metric_id]]
+      
+      # Calculate stats
+      if (!is.null(metric_data) && nrow(metric_data) > 0) {
+        total <- sum(metric_data$total, na.rm = TRUE)
+        active <- sum(metric_data$active, na.rm = TRUE)
+        expiring <- sum(metric_data$expiring, na.rm = TRUE)
+        
+        # For cattail_treatments:
+        # treated = active - expiring (active includes expiring in this dataset)
+        # needs_treatment = expiring
+        # Percentage = treated / (treated + needs_treatment)
+        if (metric_id == "cattail_treatments") {
+          treated <- active - expiring
+          needs_treatment <- expiring
+          workload <- treated + needs_treatment
+          pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+        } else {
+          pct <- ceiling(100 * active / max(1, total))
+        }
+      } else {
+        pct <- 0
+      }
+      
+      # Create clickable stat box with data-metric-id attribute
+      # Just show percentage, no detailed title text
+      column(col_width,
+        div(
+          class = "stat-box-clickable",
+          `data-metric-id` = metric_id,
+          create_stat_box(
+            value = paste0(pct, "%"),
+            title = config$display_name,  # Just metric name, no "X/Y treated"
+            bg_color = config$bg_color,
+            icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+          )
+        )
+      )
+    })
+    
+    fluidRow(stat_boxes)
+  }
 }
 
 # =============================================================================
@@ -719,7 +790,7 @@ build_overview_server <- function(input, output, session,
   
   output$summary_stats <- renderUI({
     req(current_data())
-    generate_summary_stats(current_data(), metrics_filter)
+    generate_summary_stats(current_data(), metrics_filter, overview_type)
   })
   
   # =========================================================================

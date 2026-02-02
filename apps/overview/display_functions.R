@@ -39,10 +39,10 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
   }
   
   HTML(paste0(
-    '<div style="display: flex; gap: 20px; justify-content: center; padding: 8px 0; font-size: 12px;">',
-    '<span><span style="display: inline-block; width: 12px; height: 12px; background: gray70; opacity: 0.4; margin-right: 5px;"></span>', total_label, '</span>',
-    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["active"]), '; margin-right: 5px;"></span>', active_label, '</span>',
-    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["planned"]), '; margin-right: 5px;"></span>', expiring_label, '</span>',
+    '<div style="display: flex; gap: 20px; justify-content: center; padding: 8px 0; font-size: 16px; font-weight: 600;">',
+    '<span><span style="display: inline-block; width: 16px; height: 16px; background: #D32F2F; opacity: 0.3; margin-right: 8px; border: 1px solid #999;"></span>', total_label, '</span>',
+    '<span><span style="display: inline-block; width: 16px; height: 16px; background: ', unname(status_colors["active"]), '; margin-right: 8px; border: 1px solid #999;"></span>', active_label, '</span>',
+    '<span><span style="display: inline-block; width: 16px; height: 16px; background: ', unname(status_colors["planned"]), '; margin-right: 8px; border: 1px solid #999;"></span>', expiring_label, '</span>',
     '</div>'
   ))
 }
@@ -89,28 +89,32 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   
   # Create base ggplot with layered bars
   # For cattail_treatments: Green (treated) at bottom, showing progress "filling up"
-  # For all other metrics: standard layered bars (gray total, orange expiring, green active)
+  # For all other metrics: standard layered bars (red total, orange expiring, green active)
   if (metric_type == "cattail_treatments") {
-    # Cattail: Green bar shows treated, filling up toward total needing treatment
+    # Cattail: Show treated (green at bottom) + needs treatment (orange at top) on red background (visible around edges)
+    # The red background should show the full total height with less opacity so layers are visible on top
     p <- ggplot(data, aes(x = display_name)) +
-      # Gray background - total sites that need/needed treatment
-      geom_bar(aes(y = active + expiring, text = tooltip_text), 
-               stat = "identity", fill = "gray70", alpha = 0.4) +
-      # Green layer - treated sites (filling up from bottom)
-      geom_bar(aes(y = active - expiring), 
+      # Red background - total sites that need/needed treatment (very light, visible behind)
+      geom_bar(aes(y = y_total, text = tooltip_text), 
+               stat = "identity", fill = "#D32F2F", alpha = 0.15) +
+      # Orange layer - needs treatment (visible above treated)
+      geom_bar(aes(y = y_expiring + y_active), 
+               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
+      # Green layer - treated sites (at bottom, covers orange up to treated level)
+      geom_bar(aes(y = y_active), 
                stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
       coord_flip() +
       labs(x = NULL, y = y_label)
   } else {
-    # Standard: Gray total -> Orange expiring on top -> Green active below
+    # Standard: Red total -> Green active on top -> Orange expiring at bottom
     p <- ggplot(data, aes(x = display_name)) +
-      # Gray background - total/untreated
+      # Red background - total/untreated
       geom_bar(aes(y = y_total, text = tooltip_text), 
-               stat = "identity", fill = "gray70", alpha = 0.4) +
-      # Orange layer - expiring/needs treatment (on top of active)
+               stat = "identity", fill = "#D32F2F", alpha = 0.3) +
+      # Orange layer - expiring (full height including active)
       geom_bar(aes(y = y_expiring + y_active), 
                stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-      # Green layer - active/treated (at bottom)
+      # Green layer - active (at bottom/left of expiring)
       geom_bar(aes(y = y_active), 
                stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
       coord_flip() +
@@ -184,15 +188,15 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type 
   
   # Create base ggplot with layered bars (horizontal for consistency with facilities)
   p <- ggplot(data, aes(x = display_name)) +
-    # Gray background - total/untreated
+    # Red background - total/untreated
     geom_bar(aes(y = y_total, text = tooltip_text), 
-             stat = "identity", fill = "gray70", alpha = 0.4) +
-    # Green layer - active treatments (stacked from bottom)
-    geom_bar(aes(y = y_active + y_expiring), 
-             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-    # Orange layer - expiring (at the bottom of the active portion)
-    geom_bar(aes(y = y_expiring), 
+             stat = "identity", fill = "#D32F2F", alpha = 0.3) +
+    # Orange layer - expiring (full height including active)
+    geom_bar(aes(y = y_expiring + y_active), 
              stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
+    # Green layer - active (at the bottom of the expiring portion)
+    geom_bar(aes(y = y_active), 
+             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
     coord_flip() +
     labs(
       title = NULL,

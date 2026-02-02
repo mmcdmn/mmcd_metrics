@@ -107,6 +107,17 @@ if (TESTING_MODE_ISOLATED) {
   source("tests/test_stubs.R")
 }
 
+# Load overview modules for URL router tests
+tryCatch({
+  source("apps/overview/metric_registry.R")
+  cat("✓ metric_registry.R loaded\n")
+}, error = function(e) cat("✗ metric_registry.R failed:", e$message, "\n"))
+
+tryCatch({
+  source("apps/overview/url_router.R")
+  cat("✓ url_router.R loaded\n")
+}, error = function(e) cat("✗ url_router.R failed:", e$message, "\n"))
+
 # =============================================================================
 # RUN TESTS
 # =============================================================================

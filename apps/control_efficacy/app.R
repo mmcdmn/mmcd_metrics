@@ -25,6 +25,16 @@ source("display_functions.R")
 # Set application name for AWS RDS monitoring
 set_app_name("control_efficacy")
 
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[control_efficacy] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[control_efficacy] Lookup tables preloaded")
+}, error = function(e) message("[control_efficacy] Preload warning: ", e$message))
+
 # Suppress R CMD check notes for dplyr/ggplot2 NSE variables
 if (getRversion() >= "2.15.1") {
   utils::globalVariables(c(

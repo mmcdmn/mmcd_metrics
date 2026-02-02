@@ -15,6 +15,16 @@ source("ui_helpers.R")
 set_app_name("suco_history")
 
 # =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[suco_history] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[suco_history] Lookup tables preloaded")
+}, error = function(e) message("[suco_history] Preload warning: ", e$message))
+
+# =============================================================================
 # USER INTERFACE
 # =============================================================================
 

@@ -35,6 +35,10 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
       total_label <- "Total acres"
       active_label <- "Active Treatments"
       expiring_label <- "Expiring"
+    }else if (metric_id == "mosquito_monitoring") {
+      total_label <- "10-Year Average"
+      active_label <- "Current Week"
+      expiring_label <- "Above Average"
     }
   }
   

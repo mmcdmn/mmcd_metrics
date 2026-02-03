@@ -52,6 +52,10 @@ get_apps_base_path <- function() {
   if (file.exists("../drone/data_functions.R")) return("..")
   # When running on server
   if (file.exists("/srv/shiny-server/apps/drone/data_functions.R")) return("/srv/shiny-server/apps")
+  # When running from workspace root
+  if (file.exists("apps/drone/data_functions.R")) return("apps")
+  # Docker container path
+  if (file.exists("/srv/shiny-server/drone/data_functions.R")) return("/srv/shiny-server")
   # Fallback
   return("../..")
 }
@@ -179,6 +183,25 @@ get_metric_registry <- function() {
                          • All facilities<br>
                          • Zone filter from dropdown"),
       load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
+    ),
+
+    mosquito_monitoring = list(
+      id = "mosquito_monitoring",
+      display_name = "avg mosquitoes per trap",
+      short_name = "Mosquito",
+      icon = "bug",
+      image_path = "assets/adult.png",
+      y_label = "Mosquito Counts (Total Ae + Cq)",
+      bg_color = "#10b981",
+      app_folder = "mosquito-monitoring",
+      has_acres = FALSE,
+      historical_enabled = FALSE,      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • CO2 trap counts (dbadult_mon_nt_co2_tall2_forr)<br>
+                         • Species: Total Ae + Cq (combined Aedes aegypti)<br>
+                         • Current week vs 10-year average for same week<br>
+                         • All facilities<br>
+                         • Zone filter from dropdown"),
+      load_params = list(expiring_days = 30, species_filter = "Total_Ae_+_Cq")
     ),
     
     suco = list(
@@ -406,21 +429,50 @@ generate_summary_stats_ui <- function(data) {
     if (!is.null(metric_data) && nrow(metric_data) > 0) {
       total <- sum(metric_data$total, na.rm = TRUE)
       active <- sum(metric_data$active, na.rm = TRUE)
-      pct <- ceiling(100 * active / max(1, total))
     } else {
       total <- 0
       active <- 0
-      pct <- 0
     }
     
+    # Standard treatment progress display for all metrics
+    pct <- ceiling(100 * active / max(1, total))
+    
+    # Create progress bar div showing 10-year average background + current week foreground
+    progress_bar <- div(
+      style = "margin-top: 8px; height: 12px; background-color: rgba(255,255,255,0.3); border-radius: 6px; position: relative; overflow: hidden;",
+      div(
+        style = paste0("height: 100%; background-color: rgba(255,255,255,0.6); border-radius: 6px; width: 100%; position: absolute;"),
+        title = paste0("10-year average: ", format(total, big.mark = ","))
+      ),
+      div(
+        style = paste0("height: 100%; background-color: rgba(255,255,255,0.9); border-radius: 6px; width: ", min(100, pct), "%; position: absolute;"),
+        title = paste0("Current week: ", format(active, big.mark = ","))
+      )
+    )
+    
     column(12 / length(metrics),
-      create_stat_box(
-        value = paste0(pct, "%"),
-        title = paste0(config$display_name, ": ", format(active, big.mark = ","),
-                      " / ", format(total, big.mark = ","), " treated"),
-        bg_color = config$bg_color,
-        icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-        icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+      div(
+        style = paste0(
+          "background-color: ", config$bg_color, "; ",
+          "color: #ffffff; ",
+          "padding: 20px; ",
+          "border-radius: 5px; ",
+          "margin-bottom: 15px; ",
+          "box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+        ),
+        div(
+          style = "font-size: 24px; font-weight: bold; margin-bottom: 5px;",
+          paste0(pct, "%")
+        ),
+        div(
+          style = "font-size: 14px; opacity: 0.9; margin-bottom: 8px;",
+          config$display_name
+        ),
+        div(
+          style = "font-size: 12px; opacity: 0.8; margin-bottom: 8px;",
+          paste0("Current: ", format(active, big.mark = ","), " | 10yr avg: ", format(total, big.mark = ","))
+        ),
+        progress_bar
       )
     )
   })
@@ -562,6 +614,11 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
       
       if (is.null(data) || nrow(data) == 0) {
         return(create_empty_chart(paste(config$display_name, "Historical"), "No historical data"))
+      }
+      
+      # Skip mosquito monitoring - no historical chart
+      if (metric_id == "mosquito_monitoring") {
+        return(create_empty_chart("Mosquito Monitoring", "Historical chart disabled"))
       }
       
       y_label <- if (config$has_acres) paste(config$short_name, "Acres") else config$y_label

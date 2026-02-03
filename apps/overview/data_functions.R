@@ -207,32 +207,39 @@ load_metric_data <- function(metric,
   # Aggregate to facility+zone level
   # Check if pre-aggregated or site-level data
   if (isTRUE(raw_data$pre_aggregated)) {
-    # Already has counts - just sum them
-    base_result <- sites %>%
-      filter(zone %in% zone_filter) %>%
-      group_by(facility, zone) %>%
-      summarize(
-        total_count = sum(total_count, na.rm = TRUE),
-        active_count = sum(active_count, na.rm = TRUE),
-        expiring_count = sum(expiring_count, na.rm = TRUE),
-        .groups = "drop"
-      )
-    
-    # Add acres columns if they exist
-    if ("total_acres" %in% names(sites)) {
-      acres_data <- sites %>%
+    # Special case: mosquito monitoring - DON'T aggregate, use as-is
+    if (metric == "mosquito_monitoring") {
+      result <- sites %>%
+        filter(zone %in% zone_filter) %>%
+        select(facility, zone, total_count, active_count, expiring_count)
+    } else {
+      # Already has counts - just sum them
+      base_result <- sites %>%
         filter(zone %in% zone_filter) %>%
         group_by(facility, zone) %>%
         summarize(
-          total_acres = sum(total_acres, na.rm = TRUE),
-          active_acres = sum(active_acres, na.rm = TRUE),
-          expiring_acres = sum(expiring_acres, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
           .groups = "drop"
         )
-      result <- base_result %>%
-        left_join(acres_data, by = c("facility", "zone"))
-    } else {
-      result <- base_result
+    
+      # Add acres columns if they exist
+      if ("total_acres" %in% names(sites)) {
+        acres_data <- sites %>%
+          filter(zone %in% zone_filter) %>%
+          group_by(facility, zone) %>%
+          summarize(
+            total_acres = sum(total_acres, na.rm = TRUE),
+            active_acres = sum(active_acres, na.rm = TRUE),
+            expiring_acres = sum(expiring_acres, na.rm = TRUE),
+            .groups = "drop"
+          )
+        result <- base_result %>%
+          left_join(acres_data, by = c("facility", "zone"))
+      } else {
+        result <- base_result
+      }
     }
   } else {
     # Site-level data with is_active/is_expiring - count them

@@ -165,35 +165,84 @@ load_metric_data <- function(metric,
     ))
   }
   
-  # Aggregate to facility+zone level
-  # Check if pre-aggregated or site-level data
-  if (isTRUE(raw_data$pre_aggregated)) {
-    # Already has counts - just sum them
-    base_result <- sites %>%
+  # Special handling for SUCO - capacity-based instead of active/expiring
+  if (metric == "suco") {
+    # For SUCOs: 
+    # - total = capacity (from config)
+    # - active = actual SUCOs completed this week
+    # - expiring = 0 (not applicable)
+    
+    # Get capacity from config
+    capacity_total <- config$load_params$capacity_total  # 72
+    capacity_per_facility <- config$load_params$capacity_per_facility  # 72/7
+    
+    # Count SUCOs by facility and zone (each row in sites is one SUCO)
+    suco_counts <- sites %>%
       filter(zone %in% zone_filter) %>%
       group_by(facility, zone) %>%
       summarize(
-        total_count = sum(total_count, na.rm = TRUE),
-        active_count = sum(active_count, na.rm = TRUE),
-        expiring_count = sum(expiring_count, na.rm = TRUE),
+        active_count = n(),  # Count of SUCOs done this week
         .groups = "drop"
       )
     
-    # Add acres columns if they exist
-    if ("total_acres" %in% names(sites)) {
-      acres_data <- sites %>%
+    # Get all facilities and zones to show capacity even if no SUCOs
+    all_facilities <- get_facility_lookup()
+    all_combinations <- expand.grid(
+      facility = all_facilities$short_name,
+      zone = zone_filter,
+      stringsAsFactors = FALSE
+    )
+    
+    result <- all_combinations %>%
+      left_join(suco_counts, by = c("facility", "zone")) %>%
+      mutate(
+        total_count = capacity_per_facility,  # Capacity per facility
+        active_count = ifelse(is.na(active_count), 0, active_count),  # Actual SUCOs
+        expiring_count = 0  # Not applicable for SUCOs
+      )
+    
+    return(result)
+  }
+  
+  # Aggregate to facility+zone level
+  # Check if pre-aggregated or site-level data
+  if (isTRUE(raw_data$pre_aggregated)) {
+    # Get metric config for display_as_average check
+    config <- registry[[metric]]
+    
+    # For metrics with display_as_average (like mosquito_monitoring) - DON'T aggregate, use as-is
+    if (isTRUE(config$display_as_average)) {
+      result <- sites %>%
+        filter(zone %in% zone_filter) %>%
+        select(facility, zone, total_count, active_count, expiring_count)
+    } else {
+      # Already has counts - just sum them
+      base_result <- sites %>%
         filter(zone %in% zone_filter) %>%
         group_by(facility, zone) %>%
         summarize(
-          total_acres = sum(total_acres, na.rm = TRUE),
-          active_acres = sum(active_acres, na.rm = TRUE),
-          expiring_acres = sum(expiring_acres, na.rm = TRUE),
+          total_count = sum(total_count, na.rm = TRUE),
+          active_count = sum(active_count, na.rm = TRUE),
+          expiring_count = sum(expiring_count, na.rm = TRUE),
           .groups = "drop"
         )
-      result <- base_result %>%
-        left_join(acres_data, by = c("facility", "zone"))
-    } else {
-      result <- base_result
+    
+      # Add acres columns if they exist
+      if ("total_acres" %in% names(sites)) {
+        acres_data <- sites %>%
+          filter(zone %in% zone_filter) %>%
+          group_by(facility, zone) %>%
+          summarize(
+            total_acres = sum(total_acres, na.rm = TRUE),
+            active_acres = sum(active_acres, na.rm = TRUE),
+            expiring_acres = sum(expiring_acres, na.rm = TRUE),
+            .groups = "drop"
+          )
+        result <- base_result %>%
+          left_join(acres_data, by = c("facility", "zone"))
+      } else {
+        result <- base_result
+      }
     }
   } else {
     # Site-level data with is_active/is_expiring - count them
@@ -242,6 +291,39 @@ load_data_by_zone <- function(metric,
   
   data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
   if (nrow(data) == 0) return(data.frame())
+  
+  # Special handling for SUCO - capacity-based at district level
+  if (metric == "suco") {
+    registry <- get_metric_registry()
+    config <- registry[[metric]]
+    capacity_total <- config$load_params$capacity_total  # 72
+    
+    if (separate_zones) {
+      result <- data %>%
+        group_by(zone) %>%
+        summarize(
+          total = capacity_total / 2,  # Split capacity between P1 and P2
+          active = sum(active_count, na.rm = TRUE),
+          expiring = 0,
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = paste0("P", zone))
+    } else {
+      result <- data %>%
+        summarize(
+          total = capacity_total,  # Full district capacity
+          active = sum(active_count, na.rm = TRUE),
+          expiring = 0,
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = "MMCD (All)",
+          zone = "1,2"
+        )
+    }
+    
+    return(result)
+  }
   
   # Determine if this metric should use acres data
   # Only drone and ground_prehatch have acres - struct_trt and catch_basin use site counts
@@ -466,17 +548,31 @@ load_all_metrics <- function(metrics = NULL,
 #' Uses ceiling() to round percentages UP with no decimal places
 #' 
 #' @param data Data frame with total, active, expiring columns
+#' @param metric_id Optional metric ID for special handling
+#' @param metric_config Optional registry config (avoids lookup)
 #' @return List with total, active, pct (ceiling rounded, no decimals)
 #' @export
-calculate_metric_stats <- function(data) {
+calculate_metric_stats <- function(data, metric_id = NULL, metric_config = NULL) {
   if (is.null(data) || nrow(data) == 0) {
     return(list(total = 0, active = 0, pct = 0))
   }
   
   total <- sum(data$total, na.rm = TRUE)
   active <- sum(data$active, na.rm = TRUE)
-  # Use ceiling() to round UP with no decimal places
-  pct <- ceiling(100 * active / max(1, total))
+  
+  # Get config from registry if not provided
+  if (!is.null(metric_id) && is.null(metric_config)) {
+    registry <- get_metric_registry()
+    metric_config <- registry[[metric_id]]
+  }
+  
+  # For metrics with display_as_average, show percentage: current vs avg
+  if (isTRUE(metric_config$display_as_average)) {
+    pct <- if (total > 0) round(100 * active / total, 1) else 0  # Show percentage
+  } else {
+    # Use ceiling() to round UP with no decimal places for percentages
+    pct <- ceiling(100 * active / max(1, total))
+  }
   
   list(
     total = total,

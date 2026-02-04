@@ -430,7 +430,6 @@ get_view_title <- function(params) {
   if (!is.null(params$site_id) && params$view == "site_detail") {
     base_title <- paste(base_title, "-", params$site_id)
   }
-  }
   
   base_title
 }

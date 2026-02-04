@@ -320,17 +320,20 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       
       # For cattail, calculate % treated out of (treated + needs treatment)
       # treated = active - expiring (active includes expiring)
+      # For metrics with display_as_average, show percentage: current vs avg
       # For other metrics, use active / total
+      config <- registry[[metrics[1]]]
+      
       if (metrics[1] == "cattail_treatments") {
         treated_all <- active_all - expiring_all
         workload <- treated_all + expiring_all
         pct <- if (workload > 0) ceiling(100 * treated_all / workload) else 0
+      } else if (isTRUE(config$display_as_average)) {
+        # For display_as_average metrics: current / avg * 100
+        pct <- if (total_all > 0) round(100 * active_all / total_all, 1) else 0
       } else {
         pct <- if (total_all > 0) ceiling(100 * active_all / total_all) else 0
       }
-      
-      # Use first metric's color (they should all be the same metric)
-      config <- registry[[metrics[1]]]
       
       # Create stat box with facility short name
       column(col_width,
@@ -369,11 +372,15 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         # treated = active - expiring (active includes expiring in this dataset)
         # needs_treatment = expiring
         # Percentage = treated / (treated + needs_treatment)
+        # For display_as_average metrics: show percentage (current / avg * 100)
         if (metric_id == "cattail_treatments") {
           treated <- active - expiring
           needs_treatment <- expiring
           workload <- treated + needs_treatment
           pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+        } else if (isTRUE(config$display_as_average)) {
+          # For display_as_average metrics: current / avg * 100
+          pct <- if (total > 0) round(100 * active / total, 1) else 0
         } else {
           pct <- ceiling(100 * active / max(1, total))
         }

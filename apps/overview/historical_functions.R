@@ -69,6 +69,12 @@ load_current_year_efficiently <- function(metric_id, current_year, zone_filter =
   
   apps_base <- get_apps_base_path()
   app_folder <- config$app_folder
+  
+  # Fix path construction - when running from workspace root, apps_base should be "apps"
+  if (apps_base == "../.." && file.exists("apps")) {
+    apps_base <- "apps"
+  }
+  
   data_file <- file.path(apps_base, app_folder, "data_functions.R")
   
   if (!file.exists(data_file)) {
@@ -237,6 +243,12 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
   
   apps_base <- get_apps_base_path()
   app_folder <- config$app_folder
+  
+  # Fix path construction - when running from workspace root, apps_base should be "apps"
+  if (apps_base == "../.." && file.exists("apps")) {
+    apps_base <- "apps"
+  }
+  
   data_file <- file.path(apps_base, app_folder, "data_functions.R")
   
   if (!file.exists(data_file)) {
@@ -407,6 +419,35 @@ load_historical_comparison_data <- function(metric,
   registry <- get_metric_registry()
   config <- registry[[metric]]
   
+  # CHECK FOR RAW DATA ONLY MODE (mosquito monitoring)
+  if (isTRUE(config$raw_data_only)) {
+    # For mosquito monitoring: return ONLY current year raw data, no averages
+    raw_data <- load_app_historical_data(metric, end_year, end_year, zone_filter)
+    
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) {
+      return(list(average = data.frame(), current = data.frame(), yearly_data = data.frame(), total_count = 0))
+    }
+    
+    treatments <- raw_data$treatments %>% 
+      filter(inspdate <= (if(is.null(analysis_date)) Sys.Date() else analysis_date))
+    treatments$inspdate <- as.Date(treatments$inspdate)
+    
+    # Return ONLY current year data as a simple time series (no averages)
+    return(list(
+      average = data.frame(),  # NO 5-year average
+      current = treatments %>% 
+        group_by(inspdate) %>% 
+        summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+        mutate(group_label = as.character(end_year)),
+      yearly_data = data.frame(),  # NO yearly data
+      total_count = sum(treatments$value, na.rm = TRUE)
+    ))
+  }
+  
+  # Initialize cache variables (may be set by cache path below)
+  cached_5yr <- NULL
+  cached_10yr <- NULL
+  
   # ==========================================================================
   # CACHE PATH: Try to use cached averages first (much faster)
   # ==========================================================================
@@ -476,7 +517,10 @@ load_historical_comparison_data <- function(metric,
   }
   
   # Determine value column based on metric type
-  if (has_acres && display_metric == "treatment_acres") {
+  # If data already has a 'value' column and uses aggregate_as_average, keep it
+  if ("value" %in% names(treatments) && isTRUE(config$aggregate_as_average)) {
+    # Keep existing value column - data is pre-aggregated (e.g., mosquito monitoring)
+  } else if (has_acres && display_metric == "treatment_acres") {
     # Use acres if available
     acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
                  else if ("acres" %in% names(treatments)) "acres"
@@ -547,6 +591,7 @@ load_historical_comparison_data <- function(metric,
           # For unique sites, only count each site once per week
           if ("treatment_id" %in% names(active_on_friday)) {
             week_value <- active_on_friday %>%
+              arrange(desc(inspdate)) %>%
               distinct(treatment_id, .keep_all = TRUE) %>%
               summarize(value = sum(value, na.rm = TRUE)) %>%
               pull(value)
@@ -572,9 +617,17 @@ load_historical_comparison_data <- function(metric,
         week_num = week(inspdate)
       )
     
-    weekly_data <- treatments %>%
-      group_by(year, week_num) %>%
-      summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+    # Use mean for metrics where values are already averages (e.g., mosquito monitoring)
+    # Use sum for metrics counting treatments or acres
+    if (isTRUE(config$aggregate_as_average)) {
+      weekly_data <- treatments %>%
+        group_by(year, week_num) %>%
+        summarize(value = mean(value, na.rm = TRUE), .groups = "drop")
+    } else {
+      weekly_data <- treatments %>%
+        group_by(year, week_num) %>%
+        summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+    }
   }
   
   # =========================================================================

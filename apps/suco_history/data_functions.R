@@ -933,3 +933,93 @@ create_detailed_samples_table <- function(data, species_filter = "All") {
   
   return(detailed_table)
 }
+# =============================================================================
+# OVERVIEW INTEGRATION - Required function for overview framework
+# =============================================================================
+
+#' Load SUCO data in overview-compatible format
+#' Required function for metric registry integration
+#' 
+#' @param analysis_date Date for analysis (typically today)
+#' @param expiring_days Not used for SUCOs (kept for compatibility)
+#' @param include_archive Whether to include archive data
+#' @param start_year Start year for historical data
+#' @param end_year End year for historical data
+#' @return List with sites, treatments, and total_count matching overview format
+#' @export
+load_raw_data <- function(analysis_date = Sys.Date(),
+                          expiring_days = 7,
+                          include_archive = FALSE,
+                          start_year = NULL,
+                          end_year = NULL) {
+  
+  # Determine date range based on parameters
+  if (!is.null(start_year) && !is.null(end_year)) {
+    # Historical mode: use full year range
+    date_range <- c(
+      as.Date(paste0(start_year, "-01-01")),
+      as.Date(paste0(end_year, "-12-31"))
+    )
+  } else {
+    # Current week mode: Monday of current week through analysis_date
+    week_start <- floor_date(analysis_date, "week", week_start = 1)
+    date_range <- c(week_start, analysis_date)
+
+  }
+  
+  cat("[SUCO] Loading data from", format(date_range[1]), "to", format(date_range[2]), "\n")
+  
+  # Get SUCO data (survtype = '7')
+  suco_data <- get_suco_data(
+    data_source = if (include_archive) "all" else "current",
+    date_range = date_range,
+    return_species_details = FALSE
+  )
+  
+  if (nrow(suco_data) == 0) {
+    cat("[SUCO] No data found\n")
+    return(list(
+      sites = data.frame(),
+      treatments = data.frame(),
+      total_count = 0
+    ))
+  }
+  
+  cat("[SUCO] Found", nrow(suco_data), "SUCO inspections\n")
+  
+  # Transform to overview-compatible format
+  # For SUCOs, each inspection is both a "site" and a "treatment"
+  # We need: site_id, facility, zone columns
+  
+  sites_df <- suco_data %>%
+    mutate(
+      site_id = paste0("SUCO_", ainspecnum),  # Unique ID for each SUCO
+      facility = as.character(facility),
+      zone = as.character(zone)
+    ) %>%
+    select(site_id, facility, zone, sitecode, inspdate, location, 
+           total_species_count, species_summary) %>%
+    distinct()
+  
+  # For treatments, we count each SUCO as one treatment
+  # The "treatment_date" is the inspection date
+  treatments_df <- suco_data %>%
+    mutate(
+      site_id = paste0("SUCO_", ainspecnum),
+      treatment_date = inspdate,
+      facility = as.character(facility),
+      zone = as.character(zone)
+    ) %>%
+    select(site_id, treatment_date, facility, zone) %>%
+    distinct()
+  
+  result <- list(
+    sites = sites_df,
+    treatments = treatments_df,
+    total_count = nrow(sites_df)
+  )
+  
+  cat("[SUCO] Returning", result$total_count, "sites/treatments\n")
+  
+  return(result)
+}

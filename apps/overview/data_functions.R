@@ -211,10 +211,17 @@ load_metric_data <- function(metric,
     config <- registry[[metric]]
     
     # For metrics with display_as_average (like mosquito_monitoring) - DON'T aggregate, use as-is
+    # Also preserve trap_count columns for proper weighted averaging
     if (isTRUE(config$display_as_average)) {
+      # Select all available columns including trap_count if present
+      available_cols <- intersect(
+        c("facility", "zone", "total_count", "active_count", "expiring_count", 
+          "trap_count", "historical_trap_count"),
+        names(sites)
+      )
       result <- sites %>%
         filter(zone %in% zone_filter) %>%
-        select(facility, zone, total_count, active_count, expiring_count)
+        select(all_of(available_cols))
     } else {
       # Already has counts - just sum them
       base_result <- sites %>%
@@ -292,10 +299,12 @@ load_data_by_zone <- function(metric,
   data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
   if (nrow(data) == 0) return(data.frame())
   
+  # Get registry config for metric-specific handling
+  registry <- get_metric_registry()
+  config <- registry[[metric]]
+  
   # Special handling for SUCO - capacity-based at district level
   if (metric == "suco") {
-    registry <- get_metric_registry()
-    config <- registry[[metric]]
     capacity_total <- config$load_params$capacity_total  # 72
     
     if (separate_zones) {
@@ -320,6 +329,35 @@ load_data_by_zone <- function(metric,
           display_name = "MMCD (All)",
           zone = "1,2"
         )
+    }
+    
+    return(result)
+  }
+  
+  # Special handling for mosquito_monitoring - use weighted averages
+  # trap_count is available for proper weighting
+  if (isTRUE(config$display_as_average) && "trap_count" %in% names(data)) {
+    if (separate_zones) {
+      result <- data %>%
+        group_by(zone) %>%
+        summarize(
+          # Weighted average: sum(totals) / sum(trap_counts)
+          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
+          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          expiring = round(mean(expiring_count, na.rm = TRUE), 1),  # Already per-trap difference
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = paste0("P", zone)) %>%
+        arrange(zone)
+    } else {
+      result <- data %>%
+        summarize(
+          # Weighted average across ALL traps
+          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
+          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          expiring = round(mean(expiring_count, na.rm = TRUE), 1)
+        ) %>%
+        mutate(zone = "all", display_name = "District Total")
     }
     
     return(result)
@@ -401,6 +439,42 @@ load_data_by_facility <- function(metric,
   if (!is.null(facility_filter) && facility_filter != "all") {
     data <- data %>%
       filter(facility == facility_filter | facility_display == facility_filter)
+  }
+  
+  # Get registry config for metric-specific handling
+  registry <- get_metric_registry()
+  config <- registry[[metric]]
+  
+  # Special handling for mosquito_monitoring - use weighted averages per facility
+  if (isTRUE(config$display_as_average) && "trap_count" %in% names(data)) {
+    if (separate_zones && length(zone_filter) == 2) {
+      result <- data %>%
+        group_by(facility, facility_display, zone) %>%
+        summarize(
+          # Weighted average per facility per zone
+          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
+          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          expiring = round(mean(expiring_count, na.rm = TRUE), 1),
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>%
+        select(-facility_display)
+    } else {
+      result <- data %>%
+        group_by(facility, facility_display) %>%
+        summarize(
+          # Weighted average per facility (across all zones)
+          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
+          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          expiring = round(mean(expiring_count, na.rm = TRUE), 1),
+          .groups = "drop"
+        ) %>%
+        mutate(display_name = facility_display) %>%
+        select(-facility_display)
+    }
+    
+    result <- order_facilities(result, separate_zones)
+    return(result)
   }
   
   if (separate_zones && length(zone_filter) == 2) {

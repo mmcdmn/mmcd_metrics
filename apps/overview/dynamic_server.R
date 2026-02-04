@@ -354,58 +354,79 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     fluidRow(stat_boxes)
     
   } else {
-    # District view: one value box per metric
-    n_metrics <- length(metrics)
-    col_width <- floor(12 / n_metrics)
+    # District view: metrics grouped by category
+    categories <- get_metric_categories()
+    metrics_by_cat <- get_metrics_grouped_by_category()
     
-    stat_boxes <- lapply(metrics, function(metric_id) {
-      config <- registry[[metric_id]]
-      metric_data <- data[[metric_id]]
+    # Build category sections
+    category_sections <- lapply(categories, function(cat) {
+      cat_metrics <- intersect(metrics_by_cat[[cat]], metrics)
+      if (length(cat_metrics) == 0) return(NULL)
       
-      # Calculate stats
-      if (!is.null(metric_data) && nrow(metric_data) > 0) {
-        total <- sum(metric_data$total, na.rm = TRUE)
-        active <- sum(metric_data$active, na.rm = TRUE)
-        expiring <- sum(metric_data$expiring, na.rm = TRUE)
+      # Calculate column width based on number of metrics in this category
+      n_metrics <- length(cat_metrics)
+      col_width <- floor(12 / n_metrics)
+      
+      stat_boxes <- lapply(cat_metrics, function(metric_id) {
+        config <- registry[[metric_id]]
+        metric_data <- data[[metric_id]]
         
-        # For cattail_treatments:
-        # treated = active - expiring (active includes expiring in this dataset)
-        # needs_treatment = expiring
-        # Percentage = treated / (treated + needs_treatment)
-        # For display_as_average metrics: show percentage (current / avg * 100)
-        if (metric_id == "cattail_treatments") {
-          treated <- active - expiring
-          needs_treatment <- expiring
-          workload <- treated + needs_treatment
-          pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
-        } else if (isTRUE(config$display_as_average)) {
-          # For display_as_average metrics: current / avg * 100
-          pct <- if (total > 0) round(100 * active / total, 1) else 0
+        # Calculate stats
+        if (!is.null(metric_data) && nrow(metric_data) > 0) {
+          total <- sum(metric_data$total, na.rm = TRUE)
+          active <- sum(metric_data$active, na.rm = TRUE)
+          expiring <- sum(metric_data$expiring, na.rm = TRUE)
+          
+          # For cattail_treatments:
+          # treated = active - expiring (active includes expiring in this dataset)
+          # needs_treatment = expiring
+          # Percentage = treated / (treated + needs_treatment)
+          # For display_as_average metrics: show percentage (current / avg * 100)
+          if (metric_id == "cattail_treatments") {
+            treated <- active - expiring
+            needs_treatment <- expiring
+            workload <- treated + needs_treatment
+            pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+          } else if (isTRUE(config$display_as_average)) {
+            # For display_as_average metrics: current / avg * 100
+            pct <- if (total > 0) round(100 * active / total, 1) else 0
+          } else {
+            pct <- ceiling(100 * active / max(1, total))
+          }
         } else {
-          pct <- ceiling(100 * active / max(1, total))
+          pct <- 0
         }
-      } else {
-        pct <- 0
-      }
-      
-      # Create clickable stat box with data-metric-id attribute
-      # Just show percentage, no detailed title text
-      column(col_width,
-        div(
-          class = "stat-box-clickable",
-          `data-metric-id` = metric_id,
-          create_stat_box(
-            value = paste0(pct, "%"),
-            title = config$display_name,  # Just metric name, no "X/Y treated"
-            bg_color = config$bg_color,
-            icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+        
+        # Create clickable stat box with data-metric-id attribute
+        column(col_width,
+          div(
+            class = "stat-box-clickable",
+            `data-metric-id` = metric_id,
+            create_stat_box(
+              value = paste0(pct, "%"),
+              title = config$display_name,
+              bg_color = config$bg_color,
+              icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+              icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+            )
           )
         )
+      })
+      
+      # Return category section with header and metrics row
+      div(class = "category-section",
+        style = "margin-bottom: 15px;",
+        div(class = "category-header",
+          style = "font-size: 14px; font-weight: bold; color: #666; margin-bottom: 8px; padding-left: 5px; border-left: 3px solid #2c5aa0;",
+          cat
+        ),
+        fluidRow(stat_boxes)
       )
     })
     
-    fluidRow(stat_boxes)
+    # Filter out NULL sections and wrap in a container
+    category_sections <- Filter(Negate(is.null), category_sections)
+    div(class = "metrics-by-category", category_sections)
   }
 }
 

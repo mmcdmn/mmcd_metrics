@@ -71,12 +71,16 @@ get_apps_base_path <- function() {
 #' @export
 get_metric_registry <- function() {
   list(
+    # =========================================================================
+    # VECTOR CATEGORY - Catch basins, structures, SUCO
+    # =========================================================================
     catch_basin = list(
       id = "catch_basin",
       display_name = "Catch Basins",
       short_name = "CB",
       icon = "tint",
       image_path = "assets/catchbasin.png",
+      category = "Vector",
       y_label = "Active Catch Basins",
       bg_color = "#667eea",
       app_folder = "catch_basin_status",
@@ -93,12 +97,16 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 7)
     ),
     
+    # =========================================================================
+    # FLOODWATER CATEGORY - Drone, Ground Prehatch
+    # =========================================================================
     drone = list(
       id = "drone",
       display_name = "Drone Acres",
       short_name = "Drone",
       icon = "helicopter",
       image_path = "assets/drone.jpg",
+      category = "Floodwater",
       y_label = "Active Drone Acres",
       bg_color = "#f5576c",
       app_folder = "drone",
@@ -122,6 +130,7 @@ get_metric_registry <- function() {
       short_name = "Ground",
       icon = "seedling",
       image_path = "assets/ground.png",
+      category = "Floodwater",
       y_label = "Active Prehatch Acres",
       bg_color = "#207010",
       app_folder = "ground_prehatch_progress",
@@ -144,6 +153,7 @@ get_metric_registry <- function() {
       short_name = "Struct",
       icon = "building",
       image_path = "assets/layer-group.jpg",
+      category = "Vector",
       y_label = "Active Structures",
       bg_color = "#3851db",
       app_folder = "struct_trt",
@@ -161,9 +171,13 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 7)
     ),
     
+    # =========================================================================
+    # CATTAIL CATEGORY - Treatments and Inspections
+    # =========================================================================
     cattail_treatments = list(
       id = "cattail_treatments",
-      display_name = "Cattail Treatments", 
+      display_name = "Cattail Treatments",
+      category = "Cattail", 
       short_name = "Cattail",
       icon = "spa",
       y_label = "Cattail Acres",
@@ -185,12 +199,16 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
     ),
 
+    # =========================================================================
+    # ADULT SAMPLES CATEGORY - Mosquito surveillance
+    # =========================================================================
     mosquito_monitoring = list(
       id = "mosquito_monitoring",
       display_name = "avg mosquitoes per trap",
       short_name = "Mosquito",
       icon = "bug",
       image_path = "assets/adult.png",
+      category = "Adult Samples",
       y_label = "Avg Mosquitoes per Trap",
       bg_color = "#10b981",
       app_folder = "mosquito-monitoring",
@@ -219,6 +237,7 @@ get_metric_registry <- function() {
       short_name = "SUCO",
       icon = "search",
       image_path = "assets/adult.png",  # Use adult mosquito icon
+      category = "Adult Samples",
       y_label = "SUCOs Completed",
       bg_color = "#6366f1",  # Indigo color
       app_folder = "suco_history",
@@ -251,6 +270,7 @@ get_metric_registry <- function() {
       display_name = "Cattail Inspections Progress",
       short_name = "Cat Insp",
       icon = "tasks",
+      category = "Cattail",
       y_label = "Sites Inspected vs Goal",
       bg_color = "#8b5cf6",  # Purple color
       app_folder = "cattail_inspections",
@@ -276,6 +296,36 @@ get_metric_registry <- function() {
         time_period = "yearly"  # Yearly progress tracking
       )
     )
+  )
+}
+
+#' Get the ordered list of metric categories
+#' Categories are displayed in this order in the UI
+#' @return Character vector of category names
+#' @export
+get_metric_categories <- function() {
+  c("Floodwater", "Vector", "Adult Samples", "Cattail")
+}
+
+#' Get metrics by category
+#' @param category The category name (e.g., "Floodwater", "Vector")
+#' @return Character vector of metric IDs in that category
+#' @export
+get_metrics_by_category <- function(category) {
+  registry <- get_metric_registry()
+  names(registry)[sapply(registry, function(m) {
+    isTRUE(m$category == category)
+  })]
+}
+
+#' Get all metrics grouped by category
+#' @return Named list with categories as keys and metric ID vectors as values
+#' @export
+get_metrics_grouped_by_category <- function() {
+  categories <- get_metric_categories()
+  setNames(
+    lapply(categories, get_metrics_by_category),
+    categories
   )
 }
 

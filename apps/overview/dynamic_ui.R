@@ -110,6 +110,36 @@ get_overview_css <- function() {
     .stat-box-clickable.active::after {
       content: 'Click to hide chart';
     }
+    /* Category grouping styles */
+    .metrics-by-category {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .category-section {
+      flex: 1 1 auto;
+      min-width: 280px;
+    }
+    .category-header {
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 8px;
+      padding-left: 8px;
+      border-left: 3px solid #2c5aa0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    @media (min-width: 1200px) {
+      .category-section {
+        flex: 0 1 48%;
+      }
+    }
+    @media (min-width: 1600px) {
+      .category-section {
+        flex: 0 1 24%;
+      }
+    }
     .chart-title {
       font-size: 18px;
       font-weight: bold;

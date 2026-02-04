@@ -244,6 +244,37 @@ get_metric_registry <- function() {
         capacity_per_facility = 72 / 7,  # Per-facility capacity
         time_period = "current_week"  # Use current week for progress
       )
+    ),
+    
+    cattail_inspections = list(
+      id = "cattail_inspections",
+      display_name = "Cattail Inspections Progress",
+      short_name = "Cat Insp",
+      icon = "tasks",
+      y_label = "Sites Inspected vs Goal",
+      bg_color = "#8b5cf6",  # Purple color
+      app_folder = "cattail_inspections",
+      has_acres = FALSE,
+      historical_enabled = FALSE,  # Progress vs goal is yearly, not weekly trending
+      use_active_calculation = FALSE,  # Uses goal-based progress
+      display_metric = "progress",  # progress toward goal
+      chart_types = c("bar"),
+      default_chart_type = "bar",
+      chart_labels = list(
+        total = "Goal",
+        active = "Inspected",
+        expiring = "Remaining"
+      ),
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • Cattail inspections (action = '9')<br>
+                         • Unique sites only<br>
+                         • Season: Aug-Dec<br>
+                         • Zone filter (P1, P2, Total)<br>
+                         • Year from dropdown"),
+      load_params = list(
+        zone_filter = c("1", "2"),  # Default to both zones (total)
+        time_period = "yearly"  # Yearly progress tracking
+      )
     )
   )
 }

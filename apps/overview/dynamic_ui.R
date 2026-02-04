@@ -332,7 +332,7 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
     if (isTRUE(config$historical_type == "yearly_grouped")) {
       paste0(config$display_name, " (Yearly History)")
     } else {
-      y_suffix <- if (isTRUE(config$has_acres)) "Acres" else "Treatments"
+      y_suffix <- if (isTRUE(config$has_acres)) "Acres" else " " # leave else blank for now
       paste0(config$display_name, " ", y_suffix, " (Historical)")
     }
   } else {

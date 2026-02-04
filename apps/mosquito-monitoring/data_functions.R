@@ -78,7 +78,7 @@ load_raw_data <- function(analysis_date = NULL,
     mosquito0 <- mosquito0 %>%
       filter(Year >= start_year, Year <= end_year)
     
-    # HISTORICAL CHART MODE: Return EXACT SAME data as mosquito monitoring app
+    # HISTORICAL CHART MODE: Return data for historical trending
     # This is called by overview historical chart to get the raw treatment data
     
     # Filter to species FIRST if specified  
@@ -86,15 +86,17 @@ load_raw_data <- function(analysis_date = NULL,
       mosquito0 <- mosquito0 %>% filter(spp_name == species_filter)
     }
     
+    # Apply zone filter if provided, otherwise use zone 1 for consistency
+    if (!is.null(zone_filter)) {
+      mosquito0 <- mosquito0 %>% filter(zone %in% zone_filter)
+    }
+    
     treatments <- mosquito0 %>%
-      filter(zone == "1") %>%  # App uses zone 1 for main chart
-      group_by(inspdate, facility) %>%
+      group_by(inspdate, facility, zone) %>%
       summarise(
-        value = round(mean(as.numeric(mosqcount)), 1),  # SAME as app: mean per date
+        value = round(mean(as.numeric(mosqcount)), 1),  # mean per date/facility
         .groups = "drop"
       ) %>%
-      # Add zone column for compatibility
-      mutate(zone = "1") %>%
       select(inspdate, facility, zone, value)
     
     # Sites data (empty for historical)
@@ -113,6 +115,9 @@ load_raw_data <- function(analysis_date = NULL,
       pre_aggregated = TRUE
     ))
   } else {
+    # KEEP full data for historical comparison
+    mosquito0_full <- mosquito0
+    
     # Get current week data (within ±3 days of analysis date)
     start_date <- analysis_date - 3
     end_date <- analysis_date + 3
@@ -122,21 +127,26 @@ load_raw_data <- function(analysis_date = NULL,
 
   if (!is.null(zone_filter)) {
     mosquito0 <- mosquito0 %>% filter(zone %in% zone_filter)
+    if (exists("mosquito0_full")) {
+      mosquito0_full <- mosquito0_full %>% filter(zone %in% zone_filter)
+    }
   }
   
   # Filter to species if specified
   if (!is.null(species_filter) && species_filter != "all") {
     mosquito0 <- mosquito0 %>% filter(spp_name == species_filter)
+    if (exists("mosquito0_full")) {
+      mosquito0_full <- mosquito0_full %>% filter(spp_name == species_filter)
+    }
   }
 
-  # Get REAL mosquito counts - weekly averages like the app shows
-  # Current week data
+  # Get REAL mosquito counts - PROPER weekly comparison
+  # Current week data (specific analysis date week)
   current_week_start <- floor_date(analysis_date, "week", week_start = 1)
   current_week_end <- current_week_start + days(6)
   
   current_data <- mosquito0 %>%
     filter(
-      zone == "1",
       inspdate >= current_week_start,
       inspdate <= current_week_end
     ) %>%
@@ -146,32 +156,35 @@ load_raw_data <- function(analysis_date = NULL,
       .groups = "drop"
     )
   
-  # Historical data - same week in previous years (10-year average)
-  current_year <- year(analysis_date)
+  # Historical average - same week across ALL years (use FULL unfiltered data)
+  # This gives the AVERAGE for this specific week across multiple years
   current_week_num <- week(analysis_date)
   
-  historical_data <- mosquito0 %>%
+  # Use mosquito0_full for historical data (not the filtered mosquito0)
+  historical_source <- if (exists("mosquito0_full")) mosquito0_full else mosquito0
+  
+  historical_data <- historical_source %>%
     filter(
-      zone == "1",
-      year(inspdate) >= (current_year - 10),
-      year(inspdate) < current_year,
-      week(inspdate) == current_week_num
+      week(inspdate) == current_week_num  # Same week across all years
     ) %>%
     group_by(facility) %>%
     summarize(
       historical_avg = round(mean(as.numeric(mosqcount)), 1),
+      historical_count = n(),
       .groups = "drop"
     )
   
-  # Combine current and historical for each facility  
+  # Combine current week vs overall average for that week
   sites <- current_data %>%
     left_join(historical_data, by = "facility") %>%
     mutate(
-      zone = "1",
-      historical_avg = ifelse(is.na(historical_avg) | historical_avg == 0, 
+      # Use zone from filter or default to "1"
+      zone = if (!is.null(zone_filter) && length(zone_filter) == 1) zone_filter else "1",
+      # Use overall week average, fallback if no data
+      historical_avg = ifelse(is.na(historical_avg) | historical_avg == 0 | is.na(historical_count) | historical_count < 2, 
                              current_avg, historical_avg),
-      total_count = round(historical_avg),    # 10-year average for this week
-      active_count = current_avg,            # Current week average
+      total_count = round(historical_avg),    # Average for this week across all years
+      active_count = current_avg,            # This specific week in current year
       expiring_count = 0
     ) %>%
     select(facility, zone, total_count, active_count, expiring_count)

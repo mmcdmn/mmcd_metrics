@@ -207,8 +207,11 @@ load_metric_data <- function(metric,
   # Aggregate to facility+zone level
   # Check if pre-aggregated or site-level data
   if (isTRUE(raw_data$pre_aggregated)) {
-    # Special case: mosquito monitoring - DON'T aggregate, use as-is
-    if (metric == "mosquito_monitoring") {
+    # Get metric config for display_as_average check
+    config <- registry[[metric]]
+    
+    # For metrics with display_as_average (like mosquito_monitoring) - DON'T aggregate, use as-is
+    if (isTRUE(config$display_as_average)) {
       result <- sites %>%
         filter(zone %in% zone_filter) %>%
         select(facility, zone, total_count, active_count, expiring_count)
@@ -545,17 +548,31 @@ load_all_metrics <- function(metrics = NULL,
 #' Uses ceiling() to round percentages UP with no decimal places
 #' 
 #' @param data Data frame with total, active, expiring columns
+#' @param metric_id Optional metric ID for special handling
+#' @param metric_config Optional registry config (avoids lookup)
 #' @return List with total, active, pct (ceiling rounded, no decimals)
 #' @export
-calculate_metric_stats <- function(data) {
+calculate_metric_stats <- function(data, metric_id = NULL, metric_config = NULL) {
   if (is.null(data) || nrow(data) == 0) {
     return(list(total = 0, active = 0, pct = 0))
   }
   
   total <- sum(data$total, na.rm = TRUE)
   active <- sum(data$active, na.rm = TRUE)
-  # Use ceiling() to round UP with no decimal places
-  pct <- ceiling(100 * active / max(1, total))
+  
+  # Get config from registry if not provided
+  if (!is.null(metric_id) && is.null(metric_config)) {
+    registry <- get_metric_registry()
+    metric_config <- registry[[metric_id]]
+  }
+  
+  # For metrics with display_as_average, show percentage: current vs avg
+  if (isTRUE(metric_config$display_as_average)) {
+    pct <- if (total > 0) round(100 * active / total, 1) else 0  # Show percentage
+  } else {
+    # Use ceiling() to round UP with no decimal places for percentages
+    pct <- ceiling(100 * active / max(1, total))
+  }
   
   list(
     total = total,

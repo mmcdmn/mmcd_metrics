@@ -182,7 +182,7 @@ create_summary_stats_ui <- function(data, registry) {
   
   cols <- lapply(metrics, function(metric_id) {
     config <- registry[[metric_id]]
-    stats <- calculate_metric_stats(data[[metric_id]])
+    stats <- calculate_metric_stats(data[[metric_id]], metric_id)
     
     # Create progress bar div showing 10-year average background + current week foreground
     progress_bar <- div(

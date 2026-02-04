@@ -610,9 +610,17 @@ load_historical_comparison_data <- function(metric,
         week_num = week(inspdate)
       )
     
-    weekly_data <- treatments %>%
-      group_by(year, week_num) %>%
-      summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+    # Use mean for metrics where values are already averages (e.g., mosquito monitoring)
+    # Use sum for metrics counting treatments or acres
+    if (isTRUE(config$aggregate_as_average)) {
+      weekly_data <- treatments %>%
+        group_by(year, week_num) %>%
+        summarize(value = mean(value, na.rm = TRUE), .groups = "drop")
+    } else {
+      weekly_data <- treatments %>%
+        group_by(year, week_num) %>%
+        summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+    }
   }
   
   # =========================================================================

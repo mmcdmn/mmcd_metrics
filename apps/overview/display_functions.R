@@ -8,18 +8,31 @@
 #' Shows what the colors mean based on current theme
 #' @param theme Color theme name
 #' @param metric_id Optional metric ID for custom labels
+#' @param metric_config Optional registry config (avoids extra lookup)
 #' @return HTML string for legend
 #' @export
-create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
+create_overview_legend <- function(theme = "MMCD", metric_id = NULL, metric_config = NULL) {
   status_colors <- get_status_colors(theme = theme)
   
-  # Default labels - can be customized per metric
+  # Default labels - can be customized per metric via registry
   total_label <- "Total Sites"
   active_label <- "Treated"
   expiring_label <- "Expiring"
   
-  # Customize labels for specific metrics
-  if (!is.null(metric_id)) {
+  # Get config from registry if not provided
+  if (!is.null(metric_id) && is.null(metric_config)) {
+    registry <- get_metric_registry()
+    metric_config <- registry[[metric_id]]
+  }
+  
+  # Use registry chart_labels if available (generic approach)
+  if (!is.null(metric_config) && !is.null(metric_config$chart_labels)) {
+    labels <- metric_config$chart_labels
+    if (!is.null(labels$total)) total_label <- labels$total
+    if (!is.null(labels$active)) active_label <- labels$active
+    if (!is.null(labels$expiring)) expiring_label <- labels$expiring
+  } else if (!is.null(metric_id)) {
+    # Fallback to legacy hard-coded labels for metrics without chart_labels
     if (metric_id == "cattail_treatments") {
       total_label <- "Total Sites Inspected"
       active_label <- "Treated"
@@ -27,17 +40,13 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
     } else if (metric_id == "catch_basin_status") {
       active_label <- "Treated"
       expiring_label <- "Expiring"
-    } else if (metric_id == "drone") {
-      active_label <- "Active Treatments"
-      expiring_label <- "Expiring"
-      total_label <- "Total acres"
-    }else if (metric_id == "ground_prehatch") {
+    } else if (metric_id == "drone" || metric_id == "ground_prehatch") {
       total_label <- "Total acres"
       active_label <- "Active Treatments"
       expiring_label <- "Expiring"
     }else if (metric_id == "mosquito_monitoring") {
       total_label <- "10-Year Average"
-      active_label <- "Current Week"
+      active_label <- "avg per trap"
       expiring_label <- "Above Average"
     }
   }
@@ -57,15 +66,26 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL) {
 #' @param y_label Y-axis label
 #' @param theme Color theme name
 #' @param metric_type Type of metric for specific styling
+#' @param metric_config Optional registry config for display flags
 #' @return Plotly chart object
 #' @export
-create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "default") {
+create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "default", metric_config = NULL) {
   if (is.null(data) || nrow(data) == 0) {
     return(create_empty_chart(title, "No data available"))
   }
   
   # Get status colors from db_helpers with theme support
   status_colors <- get_status_colors(theme = theme)
+  
+  # Check if metric uses average display (from registry flag)
+  display_as_average <- isTRUE(metric_config$display_as_average)
+  
+  # Get chart labels from registry or use defaults
+  labels <- if (!is.null(metric_config$chart_labels)) {
+    metric_config$chart_labels
+  } else {
+    list(total = "Total", active = "Active", expiring = "Expiring")
+  }
   
   # Prepare data for layered bars
   # Gray background: Total (all sites)
@@ -76,16 +96,30 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       y_total = total,
       y_active = pmax(0, active - expiring),  # Active only (not including expiring)
       y_expiring = expiring,
-      # Calculate percentage rounded UP with no decimals
-      pct = ceiling(100 * active / pmax(1, total)),
-      # Tooltips - also show percentage rounded up with no decimals
-      tooltip_text = paste0(
-        display_name, "\n",
-        "Total: ", format(total, big.mark = ","), "\n",
-        "Active: ", format(active, big.mark = ","), 
-        " (", pct, "%)\n",
-        "Expiring: ", format(expiring, big.mark = ",")
-      )
+      # Calculate percentage rounded UP with no decimals for most metrics
+      # For display_as_average metrics, show actual values instead of percentages
+      pct = if (display_as_average) {
+        round(active, 1)  # Show avg values
+      } else {
+        ceiling(100 * active / pmax(1, total))
+      },
+      # Tooltips - use registry labels
+      tooltip_text = if (display_as_average) {
+        paste0(
+          display_name, "\n",
+          labels$active, ": ", format(active, big.mark = ","), "\n",
+          labels$total, ": ", format(total, big.mark = ","), "\n",
+          labels$expiring, ": ", format(expiring, big.mark = ",")
+        )
+      } else {
+        paste0(
+          display_name, "\n",
+          "Total: ", format(total, big.mark = ","), "\n",
+          "Active: ", format(active, big.mark = ","), 
+          " (", pct, "%)\n",
+          "Expiring: ", format(expiring, big.mark = ",")
+        )
+      }
     )
   
   # Order by total descending (highest total at top) - matches original apps
@@ -159,9 +193,10 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
 #' @param y_label Y-axis label
 #' @param theme Color theme name
 #' @param metric_type Unique ID for this chart (used for plotly source)
+#' @param metric_config Optional registry config for display flags
 #' @return Plotly chart object with click event support
 #' @export
-create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "chart") {
+create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "chart", metric_config = NULL) {
   if (is.null(data) || nrow(data) == 0) {
     return(create_empty_chart(title, "No data available"))
   }
@@ -169,22 +204,40 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type 
   # Get status colors from db_helpers with theme support
   status_colors <- get_status_colors(theme = theme)
   
+  # Check if metric uses average display (from registry flag)
+  display_as_average <- isTRUE(metric_config$display_as_average)
+  labels <- if (!is.null(metric_config$chart_labels)) metric_config$chart_labels else list()
+  
   # Prepare data for layered bars - percentage rounded UP with no decimals
   data <- data %>%
     mutate(
       y_total = total,
       y_active = pmax(0, active - expiring),  # Active only (not including expiring)
       y_expiring = expiring,
-      pct = ceiling(100 * active / pmax(1, total)),
-      # Tooltips
-      tooltip_text = paste0(
-        "<b>", display_name, "</b><br>",
-        "Total: ", format(total, big.mark = ","), "<br>",
-        "Active: ", format(active, big.mark = ","), 
-        " (", pct, "%)<br>",
-        "Expiring: ", format(expiring, big.mark = ","), "<br>",
-        "<i>Click to drill down</i>"
-      )
+      # For display_as_average metrics, show actual values
+      pct = if (display_as_average) {
+        round(active, 1)
+      } else {
+        ceiling(100 * active / pmax(1, total))
+      },
+      # Tooltips - use registry labels if available
+      tooltip_text = if (display_as_average) {
+        paste0(
+          "<b>", display_name, "</b><br>",
+          if (!is.null(labels$active)) labels$active else "Current", ": ", format(active, big.mark = ","), "<br>",
+          if (!is.null(labels$total)) labels$total else "Avg", ": ", format(total, big.mark = ","), "<br>",
+          "<i>Click to drill down</i>"
+        )
+      } else {
+        paste0(
+          "<b>", display_name, "</b><br>",
+          "Total: ", format(total, big.mark = ","), "<br>",
+          "Active: ", format(active, big.mark = ","), 
+          " (", pct, "%)<br>",
+          "Expiring: ", format(expiring, big.mark = ","), "<br>",
+          "<i>Click to drill down</i>"
+        )
+      }
     )
   
   # Ensure display_name is ordered (P1, P2)
@@ -422,9 +475,21 @@ create_district_summary_chart <- function(data, theme = "MMCD") {
   )
   
   # Calculate percentages rounded UP with no decimals
+  # For metrics with display_as_average, show actual values
   summary_data <- summary_data %>%
     mutate(
-      pct_active = ceiling(100 * active / pmax(1, total)),
+      pct_active = {
+        # Check each metric for display_as_average flag
+        sapply(seq_along(metrics), function(i) {
+          m <- metrics[i]
+          config <- registry[[m]]
+          if (isTRUE(config$display_as_average)) {
+            round(active[i], 1)  # Show avg value
+          } else {
+            ceiling(100 * active[i] / pmax(1, total[i]))
+          }
+        })
+      },
       display_name = program
     )
   

@@ -191,11 +191,20 @@ get_metric_registry <- function() {
       short_name = "Mosquito",
       icon = "bug",
       image_path = "assets/adult.png",
-      y_label = "Mosquito Counts (Total Ae + Cq)",
+      y_label = "Avg Mosquitoes per Trap",
       bg_color = "#10b981",
       app_folder = "mosquito-monitoring",
       has_acres = FALSE,
-      historical_enabled = FALSE,      filter_info = HTML("<b>Filters Applied:</b><br>
+      historical_enabled = TRUE,  # Enable historical trending
+      # Display configuration - makes behavior generic (no special case checks needed)
+      display_as_average = TRUE,  # Show avg values instead of percentages
+      aggregate_as_average = TRUE,  # Use mean instead of sum for weekly aggregation
+      chart_labels = list(
+        total = "10-Year Average",
+        active = "avg per trap",
+        expiring = "Above Average"
+      ),
+      filter_info = HTML("<b>Filters Applied:</b><br>
                          • CO2 trap counts (dbadult_mon_nt_co2_tall2_forr)<br>
                          • Species: Total Ae + Cq (combined Aedes aegypti)<br>
                          • Current week vs 10-year average for same week<br>
@@ -435,7 +444,12 @@ generate_summary_stats_ui <- function(data) {
     }
     
     # Standard treatment progress display for all metrics
-    pct <- ceiling(100 * active / max(1, total))
+    # For metrics with display_as_average, show percentage: current week avg / 10-year avg * 100
+    if (isTRUE(config$display_as_average)) {
+      pct <- if (total > 0) round(100 * active / total, 1) else 0  # Show percentage
+    } else {
+      pct <- ceiling(100 * active / max(1, total))
+    }
     
     # Create progress bar div showing 10-year average background + current week foreground
     progress_bar <- div(
@@ -616,9 +630,9 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
         return(create_empty_chart(paste(config$display_name, "Historical"), "No historical data"))
       }
       
-      # Skip mosquito monitoring - no historical chart
-      if (metric_id == "mosquito_monitoring") {
-        return(create_empty_chart("Mosquito Monitoring", "Historical chart disabled"))
+      # Skip metrics with historical_enabled = FALSE
+      if (!isTRUE(config$historical_enabled)) {
+        return(create_empty_chart(config$display_name, "Historical chart not available"))
       }
       
       y_label <- if (config$has_acres) paste(config$short_name, "Acres") else config$y_label

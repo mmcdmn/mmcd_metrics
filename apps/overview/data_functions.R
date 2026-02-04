@@ -477,13 +477,16 @@ load_data_by_facility <- function(metric,
     return(result)
   }
   
+  use_acres <- isTRUE(config$has_acres) &&
+    all(c("total_acres", "active_acres", "expiring_acres") %in% names(data))
+  
   if (separate_zones && length(zone_filter) == 2) {
     result <- data %>%
       group_by(facility, facility_display, zone) %>%
       summarize(
-        total = sum(total_count, na.rm = TRUE),
-        active = sum(active_count, na.rm = TRUE),
-        expiring = sum(expiring_count, na.rm = TRUE),
+        total = if (use_acres) sum(total_acres, na.rm = TRUE) else sum(total_count, na.rm = TRUE),
+        active = if (use_acres) sum(active_acres, na.rm = TRUE) else sum(active_count, na.rm = TRUE),
+        expiring = if (use_acres) sum(expiring_acres, na.rm = TRUE) else sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>%
@@ -492,9 +495,9 @@ load_data_by_facility <- function(metric,
     result <- data %>%
       group_by(facility, facility_display) %>%
       summarize(
-        total = sum(total_count, na.rm = TRUE),
-        active = sum(active_count, na.rm = TRUE),
-        expiring = sum(expiring_count, na.rm = TRUE),
+        total = if (use_acres) sum(total_acres, na.rm = TRUE) else sum(total_count, na.rm = TRUE),
+        active = if (use_acres) sum(active_acres, na.rm = TRUE) else sum(active_count, na.rm = TRUE),
+        expiring = if (use_acres) sum(expiring_acres, na.rm = TRUE) else sum(expiring_count, na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(display_name = facility_display) %>%

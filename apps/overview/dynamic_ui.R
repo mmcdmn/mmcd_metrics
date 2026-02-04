@@ -130,6 +130,44 @@ get_overview_css <- function() {
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
+    /* Facility detail section styles */
+    .facility-detail-section {
+      background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 15px 0;
+      border: 1px solid #ddd;
+      animation: fadeIn 0.3s ease-in-out;
+      display: none;
+    }
+    .facility-detail-section.visible {
+      display: block !important;
+    }
+    .facility-detail-header {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #2c5aa0;
+    }
+    .facility-detail-boxes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+    }
+    .facility-detail-boxes .stat-box {
+      flex: 1 1 150px;
+      min-width: 140px;
+      max-width: 200px;
+    }
+    /* Facility clickable hints */
+    .stat-box-clickable[data-facility]::after {
+      content: 'Click for details';
+    }
+    .stat-box-clickable[data-facility].active::after {
+      content: 'Click to hide details';
+    }
     @media (min-width: 1200px) {
       .category-section {
         flex: 0 1 48%;
@@ -292,8 +330,8 @@ get_overview_js <- function() {
       window.location.href = url;
     });
     
-    // Value box click to toggle chart visibility
-    $(document).on('click', '.stat-box-clickable', function() {
+    // Value box click to toggle chart visibility (for district view - metric boxes)
+    $(document).on('click', '.stat-box-clickable[data-metric-id]', function() {
       var metricId = $(this).data('metric-id');
       var chartWrapper = $('#chart_wrapper_' + metricId);
       var statBox = $(this);
@@ -321,6 +359,40 @@ get_overview_js <- function() {
       
       // Send visibility state to server
       Shiny.setInputValue(metricId + '_chart_visible', chartWrapper.hasClass('visible'), {priority: 'event'});
+    });
+    
+    // Facility box click to show detail boxes (for facilities view)
+    $(document).on('click', '.stat-box-clickable[data-facility]', function() {
+      var facility = $(this).data('facility');
+      var statBox = $(this);
+      var detailContainer = $('#facility_detail_container');
+      
+      // Toggle active state on facility boxes
+      $('.stat-box-clickable[data-facility]').removeClass('active');
+      
+      // Check if this facility is already selected
+      var currentFacility = detailContainer.data('current-facility');
+      if (currentFacility === facility) {
+        // Clicking same facility - toggle off
+        detailContainer.data('current-facility', null);
+        detailContainer.removeClass('visible');
+        Shiny.setInputValue('selected_facility', null, {priority: 'event'});
+      } else {
+        // Clicking new facility - show details
+        statBox.addClass('active');
+        detailContainer.data('current-facility', facility);
+        detailContainer.addClass('visible');
+        Shiny.setInputValue('selected_facility', facility, {priority: 'event'});
+        
+        // Scroll to detail container
+        setTimeout(function() {
+          if (detailContainer.length && detailContainer.hasClass('visible')) {
+            $('html, body').animate({
+              scrollTop: detailContainer.offset().top - 100
+            }, 300);
+          }
+        }, 100);
+      }
     });
     
     // Legacy: Chart type toggle functionality (kept for backwards compatibility)
@@ -580,6 +652,13 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     
     # Summary Statistics Row
     uiOutput("summary_stats"),
+    
+    # Facility Detail Boxes Container (for facilities view drill-down)
+    div(id = "facility_detail_container",
+      class = "facility-detail-section",
+      style = "margin-top: 20px;",
+      uiOutput("facility_detail_boxes")
+    ),
     
     # Main Charts Container
     div(class = "dashboard-container",

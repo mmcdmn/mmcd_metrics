@@ -90,6 +90,13 @@ get_metric_registry <- function() {
       display_metric = "treatments",  # count of treatments
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      # Uses columns from load_data_by_facility: total, active, expiring
+      detail_boxes = list(
+        list(id = "total", title = "Wet CBs", column = "total", icon = "tint", status = "completed"),
+        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Wet catch basins only (status_udw = 'W')<br>
                          • All facilities<br>
@@ -116,6 +123,13 @@ get_metric_registry <- function() {
       display_metric = "treatment_acres",  # use acres for historical
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      # Uses columns from load_data_by_facility: total, active, expiring (as acres for this metric)
+      detail_boxes = list(
+        list(id = "total", title = "Total Acres", column = "total", icon = "expand", status = "completed"),
+        list(id = "active", title = "Active Acres", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring Acres", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Drone types: Y, M, C<br>
                          • All facilities, all foremen<br>
@@ -140,6 +154,13 @@ get_metric_registry <- function() {
       display_metric = "treatment_acres",  # use acres for historical
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      # Uses columns from load_data_by_facility: total, active, expiring
+      detail_boxes = list(
+        list(id = "total", title = "Total Acres", column = "total", icon = "egg", status = "completed"),
+        list(id = "active", title = "Active Acres", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring Acres", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Prehatch sites only<br>
                          • All facilities<br>
@@ -163,6 +184,12 @@ get_metric_registry <- function() {
       display_metric = "treatments",  # count of treatments
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "total", title = "Total Sites", column = "total", icon = "map-marker-alt", status = "completed"),
+        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Structure types: All<br>
                          • Status: W, U (Wet, Unknown)<br>
@@ -180,6 +207,7 @@ get_metric_registry <- function() {
       category = "Cattail", 
       short_name = "Cattail",
       icon = "spa",
+      image_path = "assets/cattail_background.png",
       y_label = "Cattail Acres",
       bg_color = "#ff9500",
       app_folder = "cattail_treatments",
@@ -190,6 +218,11 @@ get_metric_registry <- function() {
       historical_year_column = "inspection_year",  # Use this column for year if present (seasonal logic)
       use_active_calculation = TRUE,       # Sites needing treatment or treated
       display_metric = "sites",            # count of active sites
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Needs Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Inspected cattail sites only<br>
                          • Treated: Sites that have been treated<br>
@@ -217,6 +250,11 @@ get_metric_registry <- function() {
       # Display configuration - makes behavior generic (no special case checks needed)
       display_as_average = TRUE,  # Show avg values instead of percentages
       aggregate_as_average = TRUE,  # Use mean instead of sum for weekly aggregation
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "historical", title = "10-Year Average", column = "total", icon = "history", status = "completed"),
+        list(id = "current", title = "Current Avg/Trap", column = "active", icon = "bug", status = "active")
+      ),
       chart_labels = list(
         total = "10-Year Average",
         active = "avg per trap",
@@ -236,7 +274,7 @@ get_metric_registry <- function() {
       display_name = "SUCO Capacity",
       short_name = "SUCO",
       icon = "search",
-      image_path = "assets/adult.png",  # Use adult mosquito icon
+      image_path = "assets/bucket.png",  # Use adult mosquito icon
       category = "Adult Samples",
       y_label = "SUCOs Completed",
       bg_color = "#6366f1",  # Indigo color
@@ -248,6 +286,11 @@ get_metric_registry <- function() {
       display_as_average = TRUE,  # Show capacity-style display (not percentage)
       chart_types = c("bar"),
       default_chart_type = "bar",
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "capacity", title = "Weekly Capacity", column = "total", icon = "chart-line", status = "completed"),
+        list(id = "completed", title = "Completed", column = "active", icon = "check-circle", status = "active")
+      ),
       chart_labels = list(
         total = "Weekly Capacity",
         active = "Completed",
@@ -280,6 +323,12 @@ get_metric_registry <- function() {
       display_metric = "progress",  # progress toward goal
       chart_types = c("bar"),
       default_chart_type = "bar",
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "goal", title = "Goal", column = "total", icon = "bullseye", status = "completed"),
+        list(id = "inspected", title = "Inspected", column = "active", icon = "check-circle", status = "active"),
+        list(id = "remaining", title = "Remaining", column = "expiring", icon = "clock", status = "planned")
+      ),
       chart_labels = list(
         total = "Goal",
         active = "Inspected",
@@ -355,6 +404,28 @@ get_historical_metrics <- function() {
 get_metric_config <- function(metric_id) {
   registry <- get_metric_registry()
   registry[[metric_id]]
+}
+
+#' Get detail boxes configuration for a metric
+#' Returns the list of detail box definitions for drill-down views
+#' 
+#' @param metric_id The metric ID
+#' @return List of detail box configurations or NULL if not defined
+#' @export
+get_metric_detail_boxes <- function(metric_id) {
+  config <- get_metric_config(metric_id)
+  if (!is.null(config) && !is.null(config$detail_boxes)) {
+    return(config$detail_boxes)
+  }
+  return(NULL)
+}
+
+#' Check if a metric has detail boxes available
+#' @param metric_id The metric ID
+#' @return Boolean
+#' @export
+has_detail_boxes <- function(metric_id) {
+  !is.null(get_metric_detail_boxes(metric_id))
 }
 
 #' Add a new metric to the registry

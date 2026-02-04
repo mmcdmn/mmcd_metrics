@@ -267,6 +267,155 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
 }
 
 # =============================================================================
+# DETAIL VALUE BOXES GENERATOR
+# =============================================================================
+
+#' Generate detail value boxes for a specific facility drill-down
+#' Shows detailed metrics (active, expiring, expired, etc.) for a single facility
+#' 
+#' @param metric_id The metric ID
+#' @param facility The facility name to filter by
+#' @param zone_filter Vector of zones to include
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring
+#' @param theme Current color theme
+#' @param detail_data Optional preloaded detail data frame (avoid reloading)
+#' @return UI element with detail value boxes or NULL if not supported
+#' @export
+generate_facility_detail_boxes <- function(metric_id, facility, zone_filter, 
+                                           analysis_date, expiring_days, theme = "MMCD",
+                                           detail_data = NULL) {
+  # Get metric config
+  config <- get_metric_config(metric_id)
+  if (is.null(config)) return(NULL)
+  
+  # Check if this metric has detail boxes defined
+  detail_boxes <- get_metric_detail_boxes(metric_id)
+  if (is.null(detail_boxes)) return(NULL)
+  
+  # Load detailed data for this specific facility (unless provided)
+  tryCatch({
+    if (is.null(detail_data)) {
+      # Use load_data_by_facility with the facility filter
+      detail_data <- load_data_by_facility(
+        metric = metric_id,
+        analysis_date = analysis_date,
+        expiring_days = expiring_days,
+        zone_filter = zone_filter,
+        separate_zones = FALSE,
+        facility_filter = facility
+      )
+    }
+    if (is.null(detail_data) || nrow(detail_data) == 0) {
+      return(div(
+        class = "alert alert-warning",
+        style = "margin: 10px 0;",
+        icon("exclamation-triangle"), " ",
+        "No data available for ", facility
+      ))
+    }
+    
+    # Normalize column names if needed (fallbacks for *_count or *_acres)
+    if (!"total" %in% names(detail_data)) {
+      if ("total_count" %in% names(detail_data)) {
+        detail_data$total <- detail_data$total_count
+      } else if ("total_acres" %in% names(detail_data)) {
+        detail_data$total <- detail_data$total_acres
+      }
+    }
+    if (!"active" %in% names(detail_data)) {
+      if ("active_count" %in% names(detail_data)) {
+        detail_data$active <- detail_data$active_count
+      } else if ("active_acres" %in% names(detail_data)) {
+        detail_data$active <- detail_data$active_acres
+      }
+    }
+    if (!"expiring" %in% names(detail_data)) {
+      if ("expiring_count" %in% names(detail_data)) {
+        detail_data$expiring <- detail_data$expiring_count
+      } else if ("expiring_acres" %in% names(detail_data)) {
+        detail_data$expiring <- detail_data$expiring_acres
+      }
+    }
+
+    # Get status colors
+    status_colors <- get_status_colors(theme = theme)
+    
+    # Generate detail boxes from config
+    n_boxes <- length(detail_boxes)
+    col_width <- max(2, floor(12 / n_boxes))  # At least 2 columns wide
+    
+    box_elements <- lapply(detail_boxes, function(box_def) {
+      # Get value from data - column names should match (total, active, expiring)
+      value <- if (box_def$column %in% names(detail_data)) {
+        sum(detail_data[[box_def$column]], na.rm = TRUE)
+      } else {
+        NA
+      }
+      
+      # Skip this box if no data
+      if (is.na(value)) return(NULL)
+      
+      # Round if it's a decimal (acres)
+      display_value <- if (is.numeric(value) && value %% 1 != 0) {
+        format(round(value, 1), big.mark = ",")
+      } else {
+        format(value, big.mark = ",")
+      }
+      
+      # Get color based on status
+      bg_color <- if (!is.null(box_def$status) && box_def$status %in% names(status_colors)) {
+        unname(status_colors[box_def$status])
+      } else {
+        config$bg_color
+      }
+      
+      column(col_width,
+        create_stat_box(
+          value = display_value,
+          title = box_def$title,
+          bg_color = bg_color,
+          icon = icon(box_def$icon),
+          icon_type = "fontawesome"
+        )
+      )
+    })
+    
+    # Remove NULL elements
+    box_elements <- Filter(Negate(is.null), box_elements)
+    
+    if (length(box_elements) == 0) {
+      # Log columns for debugging if detail boxes failed
+      cat("Detail boxes missing columns for", metric_id, "facility", facility, "\n")
+      cat("Available columns:", paste(names(detail_data), collapse = ", "), "\n")
+      return(div(
+        class = "alert alert-info",
+        style = "margin: 10px 0;",
+        icon("info-circle"), " ",
+        "Detail breakdown not available for ", facility
+      ))
+    }
+    
+    # Return container with facility header and detail boxes
+    div(class = "facility-detail-boxes-container",
+      div(class = "facility-detail-header",
+        icon("building"), " ", facility, " - ", config$display_name, " Details"
+      ),
+      fluidRow(class = "facility-detail-boxes", box_elements)
+    )
+    
+  }, error = function(e) {
+    warning(paste("Error generating detail boxes for", metric_id, ":", e$message))
+    return(div(
+      class = "alert alert-danger",
+      style = "margin: 10px 0;",
+      icon("exclamation-circle"), " ",
+      "Error loading details: ", e$message
+    ))
+  })
+}
+
+# =============================================================================
 # SUMMARY STATS GENERATOR
 # =============================================================================
 
@@ -486,6 +635,12 @@ build_overview_server <- function(input, output, session,
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days)
     )
+  })
+
+  # Cache last refresh inputs so downstream UI can reuse without reloading
+  last_refresh_inputs <- reactiveVal(NULL)
+  observeEvent(input$refresh, {
+    last_refresh_inputs(refresh_inputs())
   })
   
   # =========================================================================
@@ -820,6 +975,94 @@ build_overview_server <- function(input, output, session,
     req(current_data())
     generate_summary_stats(current_data(), metrics_filter, overview_type)
   })
+  
+  # =========================================================================
+  # FACILITY DETAIL BOXES (for facilities view drill-down)
+  # =========================================================================
+  
+  output$facility_detail_boxes <- renderUI({
+    tryCatch({
+      req(input$selected_facility)
+      req(current_data())
+      
+      facility <- input$selected_facility
+
+      inputs <- last_refresh_inputs()
+      if (is.null(inputs)) {
+        return(div(
+          class = "alert alert-info",
+          style = "margin: 10px 0;",
+          icon("sync"), " ",
+          "Press Refresh to load facility details."
+        ))
+      }
+      
+      if (is.null(metrics_filter) || length(metrics_filter) == 0) {
+        return(div(
+          class = "alert alert-info",
+          "Select a metric category to see facility details."
+        ))
+      }
+      
+      # For now, use the first (should be only) metric in the filter
+      metric_id <- metrics_filter[1]
+      
+      # Check if this metric supports detail boxes
+      if (!has_detail_boxes(metric_id)) {
+        return(div(
+          class = "alert alert-info",
+          style = "margin: 10px 0;",
+          icon("info-circle"), " ",
+          "Detail breakdown not yet available for this metric."
+        ))
+      }
+
+      # Use already-loaded data (avoid reloading)
+      preloaded_detail <- current_data()[[metric_id]]
+      if (!is.null(preloaded_detail) && nrow(preloaded_detail) > 0) {
+        facility_key <- trimws(tolower(facility))
+        
+        # Create facility matching vectors
+        facility_match <- if ("facility" %in% names(preloaded_detail)) {
+          trimws(tolower(as.character(preloaded_detail$facility))) == facility_key
+        } else {
+          rep(FALSE, nrow(preloaded_detail))
+        }
+        
+        display_match <- if ("display_name" %in% names(preloaded_detail)) {
+          trimws(tolower(as.character(preloaded_detail$display_name))) == facility_key
+        } else {
+          rep(FALSE, nrow(preloaded_detail))
+        }
+        
+        # Apply the filter
+        preloaded_detail <- preloaded_detail[facility_match | display_match, , drop = FALSE]
+      }
+
+      # Generate the detail boxes
+      generate_facility_detail_boxes(
+        metric_id = metric_id,
+        facility = facility,
+        zone_filter = inputs$zone_filter,
+        analysis_date = inputs$custom_today,
+        expiring_days = inputs$expiring_days,
+        theme = current_theme(),
+        detail_data = preloaded_detail
+      )
+    }, error = function(e) {
+      # Capture and display actual error message in UI
+      div(
+        class = "alert alert-danger",
+        style = "margin: 10px 0; word-break: break-word;",
+        icon("exclamation-circle"), " ",
+        strong("Error loading facility details:"), br(),
+        code(e$message)
+      )
+    })
+  })
+
+  # Ensure facility detail boxes render even when container is hidden
+  outputOptions(output, "facility_detail_boxes", suspendWhenHidden = FALSE)
   
   # =========================================================================
   # LAST UPDATED TIMESTAMP

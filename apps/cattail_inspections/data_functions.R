@@ -118,20 +118,34 @@ load_raw_data <- function(analysis_date = NULL,
     p1_goal <- if (nrow(goal_f) > 0) goal_f$p1_totsitecount else 0
     p2_goal <- if (nrow(goal_f) > 0) goal_f$p2_totsitecount else 0
     
-    # For zone_filter, return appropriate data
+    # For zone_filter, return data in overview-compatible format
     if (is.null(zone_filter) || all(c("1", "2") %in% zone_filter)) {
-      # Both zones - combine
-      data.frame(
-        facility = f,
-        zone = "all",
-        total_count = p1_goal + p2_goal,  # Combined goal
-        active_count = p1_actual + p2_actual,  # Combined inspections
-        expiring_count = 0,  # Not applicable
-        p1_goal = p1_goal,
-        p1_actual = p1_actual,
-        p2_goal = p2_goal,
-        p2_actual = p2_actual,
-        stringsAsFactors = FALSE
+      # Both zones - return P1 and P2 as separate rows for overview compatibility
+      list(
+        data.frame(
+          facility = f,
+          zone = "1",
+          total_count = p1_goal,
+          active_count = p1_actual,
+          expiring_count = 0,
+          p1_goal = p1_goal,
+          p1_actual = p1_actual,
+          p2_goal = 0,
+          p2_actual = 0,
+          stringsAsFactors = FALSE
+        ),
+        data.frame(
+          facility = f,
+          zone = "2",
+          total_count = p2_goal,
+          active_count = p2_actual,
+          expiring_count = 0,
+          p1_goal = 0,
+          p1_actual = 0,
+          p2_goal = p2_goal,
+          p2_actual = p2_actual,
+          stringsAsFactors = FALSE
+        )
       )
     } else if ("1" %in% zone_filter) {
       # P1 only
@@ -164,7 +178,19 @@ load_raw_data <- function(analysis_date = NULL,
     }
   })
   
-  sites <- bind_rows(sites_list)
+  # Flatten the sites_list in case some entries return multiple data frames
+  sites_flat <- list()
+  for (item in sites_list) {
+    if (is.list(item) && !is.data.frame(item)) {
+      # Multiple data frames (from both zones case)
+      sites_flat <- c(sites_flat, item)
+    } else {
+      # Single data frame
+      sites_flat <- c(sites_flat, list(item))
+    }
+  }
+  
+  sites <- bind_rows(sites_flat)
   
   # Build treatments data frame (for historical charts)
   # Convert to daily counts for historical trending
@@ -182,7 +208,7 @@ load_raw_data <- function(analysis_date = NULL,
     treatments = treatments,
     total_count = sum(sites$active_count, na.rm = TRUE),
     goal_count = sum(sites$total_count, na.rm = TRUE),
-    pre_aggregated = FALSE
+    pre_aggregated = TRUE  # Data is already aggregated by facility/zone
   ))
 }
 

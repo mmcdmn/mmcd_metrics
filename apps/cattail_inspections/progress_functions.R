@@ -66,9 +66,14 @@ get_progress_data <- function(year, zone_option, custom_today) {
       map_facility_names()
       
   } else {
-    # Total (P1+P2 combined)
+    # Total (P1+P2 combined) - need to sum the separate P1/P2 rows
     plot_data <- sites %>%
-      select(facility, goal = total_count, actual = active_count) %>%
+      group_by(facility) %>%
+      summarise(
+        goal = sum(total_count, na.rm = TRUE),
+        actual = sum(active_count, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
       tidyr::pivot_longer(cols = c(goal, actual), names_to = "type", values_to = "count") %>%
       mutate(type = ifelse(type == "goal", "Goal", "Actual Inspections")) %>%
       map_facility_names()

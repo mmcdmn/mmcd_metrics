@@ -296,17 +296,30 @@ load_data_by_zone <- function(metric,
 }
 
 #' Load ANY metric aggregated by facility
+#' @param metric Metric ID from registry
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring
+#' @param zone_filter Vector of zones to include
+#' @param separate_zones Whether to show P1/P2 separately
+#' @param facility_filter Optional: filter to specific facility (NULL = all)
 #' @export
 load_data_by_facility <- function(metric,
                                   analysis_date = Sys.Date(),
                                   expiring_days = NULL,
                                   zone_filter = c("1", "2"),
-                                  separate_zones = FALSE) {
+                                  separate_zones = FALSE,
+                                  facility_filter = NULL) {
   
   data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
   if (nrow(data) == 0) return(data.frame())
   
   data <- map_facility_names(data)
+  
+  # Apply facility filter if specified
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    data <- data %>%
+      filter(facility == facility_filter | facility_display == facility_filter)
+  }
   
   if (separate_zones && length(zone_filter) == 2) {
     result <- data %>%

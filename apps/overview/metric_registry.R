@@ -206,7 +206,7 @@ get_metric_registry <- function() {
       ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • CO2 trap counts (dbadult_mon_nt_co2_tall2_forr)<br>
-                         • Species: Total Ae + Cq (combined Aedes aegypti)<br>
+                         • Species: Total Ae + Cq (combined Aedes)<br>
                          • Current week vs 10-year average for same week<br>
                          • All facilities<br>
                          • Zone filter from dropdown"),
@@ -226,8 +226,14 @@ get_metric_registry <- function() {
       historical_enabled = FALSE,  # Can enable later with weekly historical data
       use_active_calculation = FALSE,  # SUCOs use count-based progress
       display_metric = "inspections",  # count of SUCO inspections
+      display_as_average = TRUE,  # Show capacity-style display (not percentage)
       chart_types = c("bar"),
       default_chart_type = "bar",
+      chart_labels = list(
+        total = "Weekly Capacity",
+        active = "Completed",
+        expiring = "Above Capacity"
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • SUCO inspections only (survtype = 7)<br>
                          • Current week (Monday through today)<br>

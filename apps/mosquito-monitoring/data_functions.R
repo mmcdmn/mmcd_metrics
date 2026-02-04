@@ -185,7 +185,8 @@ load_raw_data <- function(analysis_date = NULL,
                              current_avg, historical_avg),
       total_count = round(historical_avg),    # Average for this week across all years
       active_count = current_avg,            # This specific week in current year
-      expiring_count = 0
+      # Above average: how much current exceeds historical (only if above)
+      expiring_count = pmax(0, round(current_avg - historical_avg, 1))
     ) %>%
     select(facility, zone, total_count, active_count, expiring_count)
 

@@ -444,6 +444,10 @@ load_historical_comparison_data <- function(metric,
     ))
   }
   
+  # Initialize cache variables (may be set by cache path below)
+  cached_5yr <- NULL
+  cached_10yr <- NULL
+  
   # ==========================================================================
   # CACHE PATH: Try to use cached averages first (much faster)
   # ==========================================================================
@@ -513,7 +517,10 @@ load_historical_comparison_data <- function(metric,
   }
   
   # Determine value column based on metric type
-  if (has_acres && display_metric == "treatment_acres") {
+  # If data already has a 'value' column and uses aggregate_as_average, keep it
+  if ("value" %in% names(treatments) && isTRUE(config$aggregate_as_average)) {
+    # Keep existing value column - data is pre-aggregated (e.g., mosquito monitoring)
+  } else if (has_acres && display_metric == "treatment_acres") {
     # Use acres if available
     acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
                  else if ("acres" %in% names(treatments)) "acres"

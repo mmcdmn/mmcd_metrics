@@ -3,7 +3,23 @@
 
 # Source data_functions.R if not already loaded
 if (!exists("load_raw_data", mode = "function")) {
-  source("data_functions.R")
+  # Try to find data_functions.R relative to this file
+  script_dir <- dirname(sys.frame(1)$ofile %||% ".")
+  data_functions_path <- file.path(script_dir, "data_functions.R")
+  
+  # Fallback paths for different execution contexts
+  if (!file.exists(data_functions_path)) {
+    data_functions_path <- "data_functions.R"  # Current directory
+  }
+  if (!file.exists(data_functions_path)) {
+    data_functions_path <- "apps/cattail_inspections/data_functions.R"  # From project root
+  }
+  
+  if (file.exists(data_functions_path)) {
+    source(data_functions_path)
+  } else {
+    warning("Could not find data_functions.R - some functions may not work")
+  }
 }
 
 #' Get inspection progress data (actuals vs goals)

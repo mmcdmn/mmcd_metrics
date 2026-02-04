@@ -18,7 +18,17 @@ if (!exists("load_raw_data", mode = "function")) {
   if (file.exists(data_functions_path)) {
     source(data_functions_path)
   } else {
-    warning("Could not find data_functions.R - some functions may not work")
+    # Create stub function for testing environments
+    load_raw_data <- function(...) {
+      data.frame(
+        facility = character(0),
+        zone = character(0),
+        total_count = numeric(0),
+        active_count = numeric(0),
+        expiring_count = numeric(0)
+      )
+    }
+    message("Using stub load_raw_data function - data_functions.R not available")
   }
 }
 

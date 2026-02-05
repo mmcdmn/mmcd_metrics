@@ -5,6 +5,46 @@
 # =============================================================================
 
 # =============================================================================
+# SHORT-TERM CACHE FOR CURRENT WEEK VALUES
+# Reduces DB load under concurrent multi-user access
+# Cache expires after 60 seconds - data rarely changes within a minute
+# =============================================================================
+
+# In-memory cache (per R process)
+.current_week_cache <- new.env(parent = emptyenv())
+
+#' Get cached current week value, or compute and cache it
+#' @param metric_id Metric ID
+#' @param analysis_date Date for analysis  
+#' @param zone_filter Zones to include
+#' @param ttl_seconds Cache time-to-live in seconds (default 60)
+#' @return Current week's value or NULL
+get_cached_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1", "2"), ttl_seconds = 60) {
+  cache_key <- paste(metric_id, as.character(analysis_date), paste(zone_filter, collapse = "_"), sep = "|")
+  
+  # Check if cached and not expired
+  if (exists(cache_key, envir = .current_week_cache)) {
+    cached <- get(cache_key, envir = .current_week_cache)
+    if (difftime(Sys.time(), cached$timestamp, units = "secs") < ttl_seconds) {
+      return(cached$value)
+    }
+  }
+  
+  # Not cached or expired - compute fresh value
+  value <- get_current_week_value(metric_id, analysis_date, zone_filter)
+  
+  # Store in cache
+  assign(cache_key, list(value = value, timestamp = Sys.time()), envir = .current_week_cache)
+  
+  value
+}
+
+#' Clear the current week cache (call when data might have changed)
+clear_current_week_cache <- function() {
+  rm(list = ls(envir = .current_week_cache), envir = .current_week_cache)
+}
+
+# =============================================================================
 # DYNAMIC DATA LOADERS - Iterate through registry
 # =============================================================================
 
@@ -471,11 +511,12 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   historical_avg <- get_historical_week_avg(metric_id, week_num)
   if (is.null(historical_avg) || historical_avg == 0) return(result)
   
-  # Use pre-loaded weekly value if provided, otherwise load from DB (slower)
+  # Use pre-loaded weekly value if provided, otherwise use short-term cache
   current_week <- if (!is.null(weekly_value)) {
     weekly_value
   } else {
-    get_current_week_value(metric_id, analysis_date, zone_filter)
+    # Use cached value (60s TTL) to reduce DB load under concurrent access
+    get_cached_current_week_value(metric_id, analysis_date, zone_filter)
   }
   if (is.null(current_week)) {
     # Fallback: can't get weekly value, use default color
@@ -591,8 +632,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         pct <- if (total_all > 0) ceiling(100 * active_all / total_all) else 0
       }
       
-      # Get dynamic color for this facility based on aggregated active value
-      box_color <- get_dynamic_value_box_color(metrics[1], active_all, analysis_date, config)
+      # For facilities view, use metric's default color
+      # (We don't have facility-level historical data for comparison)
+      box_color <- config$bg_color
       
       # Create stat box with facility short name
       column(col_width,

@@ -182,15 +182,44 @@ create_summary_stats_ui <- function(data, registry) {
   
   cols <- lapply(metrics, function(metric_id) {
     config <- registry[[metric_id]]
-    stats <- calculate_metric_stats(data[[metric_id]])
+    stats <- calculate_metric_stats(data[[metric_id]], metric_id)
+    
+    # Create progress bar div showing 10-year average background + current week foreground
+    progress_bar <- div(
+      style = "margin-top: 8px; height: 12px; background-color: rgba(255,255,255,0.3); border-radius: 6px; position: relative; overflow: hidden;",
+      div(
+        style = "height: 100%; background-color: rgba(255,255,255,0.6); border-radius: 6px; width: 100%; position: absolute;",
+        title = paste0("10-year average: ", format(stats$total, big.mark = ","))
+      ),
+      div(
+        style = paste0("height: 100%; background-color: rgba(255,255,255,0.9); border-radius: 6px; width: ", min(100, stats$pct), "%; position: absolute;"),
+        title = paste0("Current week: ", format(stats$active, big.mark = ","))
+      )
+    )
     
     column(col_width,
-      create_stat_box(
-        value = paste0(stats$pct, "%"),
-        title = paste0(config$display_name, ": ", format(stats$active, big.mark = ","), 
-                      " / ", format(stats$total, big.mark = ","), " treated"),
-        bg_color = config$bg_color,
-        icon = config$icon
+      div(
+        style = paste0(
+          "background-color: ", config$bg_color, "; ",
+          "color: #ffffff; ",
+          "padding: 20px; ",
+          "border-radius: 5px; ",
+          "margin-bottom: 15px; ",
+          "box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+        ),
+        div(
+          style = "font-size: 24px; font-weight: bold; margin-bottom: 5px;",
+          paste0(stats$pct, "%")
+        ),
+        div(
+          style = "font-size: 14px; opacity: 0.9; margin-bottom: 8px;",
+          config$display_name
+        ),
+        div(
+          style = "font-size: 12px; opacity: 0.8; margin-bottom: 8px;",
+          paste0("Current: ", format(stats$active, big.mark = ","), " | 10yr avg: ", format(stats$total, big.mark = ","))
+        ),
+        progress_bar
       )
     )
   })

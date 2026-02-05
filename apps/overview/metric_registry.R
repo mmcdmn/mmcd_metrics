@@ -52,6 +52,10 @@ get_apps_base_path <- function() {
   if (file.exists("../drone/data_functions.R")) return("..")
   # When running on server
   if (file.exists("/srv/shiny-server/apps/drone/data_functions.R")) return("/srv/shiny-server/apps")
+  # When running from workspace root
+  if (file.exists("apps/drone/data_functions.R")) return("apps")
+  # Docker container path
+  if (file.exists("/srv/shiny-server/drone/data_functions.R")) return("/srv/shiny-server")
   # Fallback
   return("../..")
 }
@@ -179,6 +183,98 @@ get_metric_registry <- function() {
                          • All facilities<br>
                          • Zone filter from dropdown"),
       load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
+    ),
+
+    mosquito_monitoring = list(
+      id = "mosquito_monitoring",
+      display_name = "avg mosquitoes per trap",
+      short_name = "Mosquito",
+      icon = "bug",
+      image_path = "assets/adult.png",
+      y_label = "Avg Mosquitoes per Trap",
+      bg_color = "#10b981",
+      app_folder = "mosquito-monitoring",
+      has_acres = FALSE,
+      historical_enabled = TRUE,  # Enable historical trending
+      # Display configuration - makes behavior generic (no special case checks needed)
+      display_as_average = TRUE,  # Show avg values instead of percentages
+      aggregate_as_average = TRUE,  # Use mean instead of sum for weekly aggregation
+      chart_labels = list(
+        total = "10-Year Average",
+        active = "avg per trap",
+        expiring = "Above Average"
+      ),
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • CO2 trap counts (dbadult_mon_nt_co2_tall2_forr)<br>
+                         • Species: Total Ae + Cq (combined Aedes)<br>
+                         • Current week vs 10-year average for same week<br>
+                         • All facilities<br>
+                         • Zone filter from dropdown"),
+      load_params = list(expiring_days = 30, species_filter = "Total_Ae_+_Cq")
+    ),
+    
+    suco = list(
+      id = "suco",
+      display_name = "SUCO Capacity",
+      short_name = "SUCO",
+      icon = "search",
+      image_path = "assets/adult.png",  # Use adult mosquito icon
+      y_label = "SUCOs Completed",
+      bg_color = "#6366f1",  # Indigo color
+      app_folder = "suco_history",
+      has_acres = FALSE,
+      historical_enabled = FALSE,  # Can enable later with weekly historical data
+      use_active_calculation = FALSE,  # SUCOs use count-based progress
+      display_metric = "inspections",  # count of SUCO inspections
+      display_as_average = TRUE,  # Show capacity-style display (not percentage)
+      chart_types = c("bar"),
+      default_chart_type = "bar",
+      chart_labels = list(
+        total = "Weekly Capacity",
+        active = "Completed",
+        expiring = "Above Capacity"
+      ),
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • SUCO inspections only (survtype = 7)<br>
+                         • Current week (Monday through today)<br>
+                         • All facilities<br>
+                         • Zone filter from dropdown"),
+      load_params = list(
+        capacity_total = 72,  # District-wide capacity: 72 SUCOs per week
+        capacity_per_facility = 72 / 7,  # Per-facility capacity
+        time_period = "current_week"  # Use current week for progress
+      )
+    ),
+    
+    cattail_inspections = list(
+      id = "cattail_inspections",
+      display_name = "Cattail Inspections Progress",
+      short_name = "Cat Insp",
+      icon = "tasks",
+      y_label = "Sites Inspected vs Goal",
+      bg_color = "#8b5cf6",  # Purple color
+      app_folder = "cattail_inspections",
+      has_acres = FALSE,
+      historical_enabled = FALSE,  # Progress vs goal is yearly, not weekly trending
+      use_active_calculation = FALSE,  # Uses goal-based progress
+      display_metric = "progress",  # progress toward goal
+      chart_types = c("bar"),
+      default_chart_type = "bar",
+      chart_labels = list(
+        total = "Goal",
+        active = "Inspected",
+        expiring = "Remaining"
+      ),
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • Cattail inspections (action = '9')<br>
+                         • Unique sites only<br>
+                         • Season: Aug-Dec<br>
+                         • Zone filter (P1, P2, Total)<br>
+                         • Year from dropdown"),
+      load_params = list(
+        zone_filter = c("1", "2"),  # Default to both zones (total)
+        time_period = "yearly"  # Yearly progress tracking
+      )
     )
   )
 }
@@ -379,21 +475,55 @@ generate_summary_stats_ui <- function(data) {
     if (!is.null(metric_data) && nrow(metric_data) > 0) {
       total <- sum(metric_data$total, na.rm = TRUE)
       active <- sum(metric_data$active, na.rm = TRUE)
-      pct <- ceiling(100 * active / max(1, total))
     } else {
       total <- 0
       active <- 0
-      pct <- 0
     }
     
+    # Standard treatment progress display for all metrics
+    # For metrics with display_as_average, show percentage: current week avg / 10-year avg * 100
+    if (isTRUE(config$display_as_average)) {
+      pct <- if (total > 0) round(100 * active / total, 1) else 0  # Show percentage
+    } else {
+      pct <- ceiling(100 * active / max(1, total))
+    }
+    
+    # Create progress bar div showing 10-year average background + current week foreground
+    progress_bar <- div(
+      style = "margin-top: 8px; height: 12px; background-color: rgba(255,255,255,0.3); border-radius: 6px; position: relative; overflow: hidden;",
+      div(
+        style = paste0("height: 100%; background-color: rgba(255,255,255,0.6); border-radius: 6px; width: 100%; position: absolute;"),
+        title = paste0("10-year average: ", format(total, big.mark = ","))
+      ),
+      div(
+        style = paste0("height: 100%; background-color: rgba(255,255,255,0.9); border-radius: 6px; width: ", min(100, pct), "%; position: absolute;"),
+        title = paste0("Current week: ", format(active, big.mark = ","))
+      )
+    )
+    
     column(12 / length(metrics),
-      create_stat_box(
-        value = paste0(pct, "%"),
-        title = paste0(config$display_name, ": ", format(active, big.mark = ","),
-                      " / ", format(total, big.mark = ","), " treated"),
-        bg_color = config$bg_color,
-        icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-        icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+      div(
+        style = paste0(
+          "background-color: ", config$bg_color, "; ",
+          "color: #ffffff; ",
+          "padding: 20px; ",
+          "border-radius: 5px; ",
+          "margin-bottom: 15px; ",
+          "box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+        ),
+        div(
+          style = "font-size: 24px; font-weight: bold; margin-bottom: 5px;",
+          paste0(pct, "%")
+        ),
+        div(
+          style = "font-size: 14px; opacity: 0.9; margin-bottom: 8px;",
+          config$display_name
+        ),
+        div(
+          style = "font-size: 12px; opacity: 0.8; margin-bottom: 8px;",
+          paste0("Current: ", format(active, big.mark = ","), " | 10yr avg: ", format(total, big.mark = ","))
+        ),
+        progress_bar
       )
     )
   })
@@ -535,6 +665,11 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
       
       if (is.null(data) || nrow(data) == 0) {
         return(create_empty_chart(paste(config$display_name, "Historical"), "No historical data"))
+      }
+      
+      # Skip metrics with historical_enabled = FALSE
+      if (!isTRUE(config$historical_enabled)) {
+        return(create_empty_chart(config$display_name, "Historical chart not available"))
       }
       
       y_label <- if (config$has_acres) paste(config$short_name, "Acres") else config$y_label

@@ -80,9 +80,10 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   if (include_archive) {
     archive_query <- sprintf("
     SELECT t.sitecode, g.facility, t.inspdate, t.matcode, t.acres as treated_acres, 
-           NULL::character as foreman, NULL::integer as effect_days,
+           NULL::character as foreman, COALESCE(m.effect_days, 14) as effect_days,
            g.zone, g.fosarea
     FROM public.dblarv_insptrt_archive t
+    LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
     LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
     WHERE t.action = 'D'
       AND t.inspdate <= '%s'::date

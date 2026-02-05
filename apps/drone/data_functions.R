@@ -124,26 +124,29 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   drone_treatments <- drone_treatments %>%
     mutate(
       inspdate = as.Date(inspdate),
-      effect_days = ifelse(is.na(effect_days), 0, effect_days),
+      effect_days = ifelse(is.na(effect_days), 14, effect_days),
       treatment_end_date = inspdate + effect_days,
-      is_active = treatment_end_date >= current_date,
+      is_active = treatment_end_date >= current_date & inspdate <= current_date,
       is_expiring = is_active & treatment_end_date <= (current_date + 7)
     )
   
   # Calculate site-level status from latest treatment per site
-  # STANDARDIZED: sites MUST have is_active and is_expiring columns
+  # STANDARDIZED: sites MUST have is_active, is_expiring, and treated_acres columns
+  # treated_acres = the acres from the LATEST treatment (not site.acres)
+  # A new treatment OVERWRITES the old one - no double counting
   site_status <- drone_treatments %>%
     group_by(sitecode) %>%
     arrange(desc(inspdate)) %>%
     slice(1) %>%
     ungroup() %>%
-    select(sitecode, is_active, is_expiring)
+    select(sitecode, is_active, is_expiring, treated_acres)
   
   drone_sites <- drone_sites %>%
     left_join(site_status, by = "sitecode") %>%
     mutate(
       is_active = ifelse(is.na(is_active), FALSE, is_active),
-      is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
+      is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring),
+      treated_acres = ifelse(is.na(treated_acres), 0, treated_acres)
     )
   
   # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring

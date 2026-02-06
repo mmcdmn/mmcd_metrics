@@ -771,6 +771,34 @@ sudo systemctl enable shiny-server
 ```
 
 
+### Concurrency Configuration: nginx Multi-Instance vs Single Server
+
+The MMCD Dashboard supports two deployment modes for handling concurrent users:
+
+#### **Concurrent Mode (Default - nginx Multi-Instance)**
+- **What it does**: Runs multiple Shiny Server instances behind nginx load balancer
+
+```bash
+# Default mode - runs nginx with multiple Shiny instances
+docker run -p 3838:3838 --env-file .env mmcd-dashboard
+
+# Or explicitly enable (same as default)
+docker run -p 3838:3838 --env-file .env -e ENABLE_NGINX=true mmcd-dashboard
+
+# Control number of instances (default: 3)
+docker run -p 3838:3838 --env-file .env -e SHINY_WORKERS=5 mmcd-dashboard
+```
+
+#### **Normal Mode (Single Shiny Server)**
+- **What it does**: Runs a single Shiny Server instance directly
+
+```bash
+# Disable nginx - runs single Shiny Server instance
+docker run -p 3838:3838 --env-file .env -e ENABLE_NGINX=false mmcd-dashboard
+```
+
+
+
 ### Environment Variables Setup
 
 #### Local Development

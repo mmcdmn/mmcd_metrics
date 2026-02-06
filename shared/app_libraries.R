@@ -1,10 +1,16 @@
 # Shared library loading for all mmcd_metrics apps
 # This reduces code duplication across all treatment tracking apps
+# Optional packages (RPostgres, DT, plotly, leaflet, sf) are loaded
+# conditionally so the file can be sourced in test environments that
+# may not have all visualization/database packages installed.
 
 suppressPackageStartupMessages({
   library(shiny)
   library(DBI)
-  library(RPostgres)
+  # RPostgres may not be installed in test environments
+  if (requireNamespace("RPostgres", quietly = TRUE)) {
+    library(RPostgres)
+  }
   library(dplyr)
   library(tidyr)      # For pivot operations
   library(ggplot2)
@@ -13,10 +19,10 @@ suppressPackageStartupMessages({
   library(purrr)      # For map functions
   library(tibble)     # For data frame operations
   library(scales)     # For formatting
-  library(DT)         # For data tables
-  library(plotly)     # For interactive plots
-  library(leaflet)    # For maps (used by some apps)
-  library(sf)         # For spatial data (used by some apps)
+  # Optional visualization/data packages - load if available
+  for (.pkg in c("DT", "plotly", "leaflet", "sf")) {
+    if (requireNamespace(.pkg, quietly = TRUE)) library(.pkg, character.only = TRUE)
+  }
   library(RColorBrewer) # For color palettes
 })
 

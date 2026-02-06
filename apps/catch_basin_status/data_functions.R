@@ -46,6 +46,10 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       zone_where <- "AND sc.zone IN ('1', '2')"
     }
     
+    # Determine which tables have data for this analysis_date
+    table_info <- get_table_strategy(analysis_date)
+    insptrt_source <- table_info$insptrt_source
+    
     # Main query 
     query <- sprintf("
     SELECT o.facility,
@@ -70,7 +74,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
             count(*) AS total_count
      FROM loc_catchbasin
      LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode,7)=sc.sectcode
-     WHERE loc_catchbasin.enddate IS NULL 
+     WHERE (loc_catchbasin.enddate IS NULL OR loc_catchbasin.enddate > '%s'::date)
        AND loc_catchbasin.lettergrp::text <> 'Z'::text
        AND loc_catchbasin.status_udw='W'
        %s
@@ -113,20 +117,20 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
                       loc_catchbasin.status_udw,
                       loc_catchbasin.lettergrp,
                       loc_catchbasin.enddate,
-                      dblarv_insptrt_current.pkey_pg AS insptrt_id,
-                      date_part('days'::text, '%s'::timestamp - dblarv_insptrt_current.inspdate::timestamp with time zone) AS age,
+                      insptrt.pkey_pg AS insptrt_id,
+                      date_part('days'::text, '%s'::timestamp - insptrt.inspdate::timestamp with time zone) AS age,
                       dblarv_treatment_catchbasin.status,
                       mattype_list_targetdose.effect_days,
                       mattype_list_targetdose.days_retrt_early
-               FROM dblarv_insptrt_current
-               JOIN dblarv_treatment_catchbasin ON dblarv_insptrt_current.pkey_pg = dblarv_treatment_catchbasin.treatment_id
+               FROM %s AS insptrt
+               JOIN dblarv_treatment_catchbasin ON insptrt.pkey_pg = dblarv_treatment_catchbasin.treatment_id
                JOIN loc_catchbasin ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
                JOIN mattype_list_targetdose USING (matcode)
                LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode,7)=sc.sectcode
-               WHERE dblarv_insptrt_current.inspdate <= '%s'::date
+               WHERE insptrt.inspdate <= '%s'::date
                %s
                %s
-               ORDER BY loc_catchbasin.gid, dblarv_insptrt_current.inspdate DESC, dblarv_insptrt_current.insptime DESC) s_tcb
+               ORDER BY loc_catchbasin.gid, insptrt.inspdate DESC, insptrt.insptime DESC) s_tcb
         ORDER BY s_tcb.sectcode, s_tcb.status_udw, s_tcb.gid
       ) cbstat
       WHERE cbstat.status_udw::text = 'W'::text
@@ -134,8 +138,9 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     ) t ON t.facility=o.facility AND t.sectcode=o.sectcode
     
     ORDER BY o.facility, o.zone, o.fosarea, o.sectcode
-    ", facility_clause, foreman_where, zone_where, foreman_where, zone_where, 
-       expiring_days, analysis_date, analysis_date, foreman_where, zone_where)
+    ", facility_clause, foreman_where, zone_where, 
+       analysis_date, foreman_where, zone_where, 
+       expiring_days, analysis_date, insptrt_source, analysis_date, foreman_where, zone_where)
     
     data <- dbGetQuery(con, query)
     safe_disconnect(con)

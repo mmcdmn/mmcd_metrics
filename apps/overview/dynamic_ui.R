@@ -23,6 +23,77 @@ get_metric_icon <- function(config) {
   }
 }
 
+#' Create loading skeleton boxes
+#' @param overview_type Type of overview ("district", "facilities")
+#' @param n_boxes Number of boxes to show (defaults based on overview type)
+#' @param show_loading_text Whether to show "Loading..." text above skeleton
+#' @return UI elements for skeleton loading state
+create_loading_skeleton <- function(overview_type = "district", n_boxes = NULL, show_loading_text = TRUE) {
+  
+  loading_indicator <- if (show_loading_text) {
+    div(class = "loading-indicator",
+      icon("sync", class = "fa-spin"),
+      "Loading dashboard data..."
+    )
+  } else {
+    NULL
+  }
+  
+  if (overview_type == "facilities") {
+    # Facilities view - show 6 skeleton boxes (typical facility count)
+    if (is.null(n_boxes)) n_boxes <- 6
+    
+    skeleton_boxes <- lapply(1:n_boxes, function(i) {
+      column(3,
+        div(class = "skeleton-box",
+          div(class = "skeleton-content",
+            div(class = "skeleton-icon"),
+            div(class = "skeleton-value"),
+            div(class = "skeleton-title")
+          )
+        )
+      )
+    })
+    
+    div(
+      loading_indicator,
+      fluidRow(skeleton_boxes)
+    )
+    
+  } else {
+    # District view - show skeleton categories with boxes
+    categories <- c("Treatment Progress", "Site Monitoring", "Quality Control")
+    
+    category_sections <- lapply(categories, function(cat) {
+      # Each category has 2-3 skeleton boxes
+      n_cat_boxes <- sample(2:3, 1)
+      col_width <- floor(12 / n_cat_boxes)
+      
+      skeleton_boxes <- lapply(1:n_cat_boxes, function(i) {
+        column(col_width,
+          div(class = "skeleton-box",
+            div(class = "skeleton-content",
+              div(class = "skeleton-icon"),
+              div(class = "skeleton-value"),
+              div(class = "skeleton-title")
+            )
+          )
+        )
+      })
+      
+      div(class = "category-section skeleton-category",
+        div(class = "skeleton-category-header"),
+        fluidRow(skeleton_boxes)
+      )
+    })
+    
+    div(
+      loading_indicator,
+      div(class = "metrics-by-category", category_sections)
+    )
+  }
+}
+
 # =============================================================================
 # CSS AND JAVASCRIPT (shared across all overview apps)
 # =============================================================================
@@ -201,6 +272,106 @@ get_overview_css <- function() {
     .stat-box-clickable[data-facility]::after {
       content: 'Click for details';
     }
+    
+    /* Loading Skeleton Styles */
+    .skeleton-box {
+      background: linear-gradient(90deg, #f0f0f0 25%, transparent 37%, transparent 63%, #f0f0f0 75%);
+      background-size: 400% 100%;
+      animation: skeleton-shimmer 1.5s ease-in-out infinite;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+      height: 120px; /* Match typical stat-box height */
+      margin-bottom: 15px;
+      position: relative;
+    }
+    @keyframes skeleton-shimmer {
+      0% { background-position: 100% 50%; }
+      100% { background-position: -100% 50%; }
+    }
+    .skeleton-content {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+    }
+    .skeleton-title {
+      width: 80%;
+      height: 16px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+    .skeleton-value {
+      width: 60%;
+      height: 28px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .skeleton-icon {
+      width: 24px;
+      height: 24px;
+      background: #e0e0e0;
+      border-radius: 50%;
+      margin-bottom: 10px;
+    }
+    /* Category skeleton */
+    .skeleton-category {
+      margin-bottom: 25px;
+    }
+    .skeleton-category-header {
+      width: 150px;
+      height: 14px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+    
+    /* Smooth transition between skeleton and real content */
+    #summary_stats_container {
+      min-height: 140px; /* Prevent layout jump */
+      transition: opacity 0.3s ease-in-out;
+    }
+    
+    /* Initial prompt before first Refresh */
+    .initial-prompt {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 30px 20px;
+      color: #888;
+      font-size: 16px;
+      border: 2px dashed #ddd;
+      border-radius: 8px;
+      background: #fafafa;
+      margin: 10px 0;
+    }
+    .initial-prompt i {
+      margin-right: 10px;
+      font-size: 20px;
+      color: #aaa;
+    }
+    
+    /* Loading state visual feedback */
+    .loading-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px;
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 15px;
+    }
+    .loading-indicator i {
+      margin-right: 8px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
     .stat-box-clickable[data-facility].active::after {
       content: 'Click to hide details';
     }
@@ -373,6 +544,18 @@ get_overview_js <- function() {
       // Close all open charts and reset active states
       $('.chart-panel-wrapper.visible').removeClass('visible');
       $('.stat-box-clickable.active').removeClass('active');
+      // Hide initial prompt (first load) and stats, show skeleton
+      $('#initial_prompt_static').hide();
+      $('#summary_stats_wrapper').hide();
+      $('#loading_skeleton_static').fadeIn(150);
+    });
+    
+    // Handler to swap skeleton for real content when data is ready
+    Shiny.addCustomMessageHandler('hideLoadingSkeleton', function(msg) {
+      $('#initial_prompt_static').hide();
+      $('#loading_skeleton_static').fadeOut(200, function() {
+        $('#summary_stats_wrapper').fadeIn(300);
+      });
     });
     
     // Value box click to toggle chart visibility (for district view - metric boxes)
@@ -735,8 +918,26 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       )
     ),
     
-    # Summary Statistics Row
-    uiOutput("summary_stats"),
+    # Summary Statistics Row with Loading Skeleton
+    div(id = "summary_stats_container",
+      # Initial prompt - shown before first Refresh click
+      div(id = "initial_prompt_static",
+        div(class = "initial-prompt",
+          icon("mouse-pointer"),
+          span("Select a date and click "),
+          tags$strong("Refresh Data"),
+          span(" to load the dashboard.")
+        )
+      ),
+      # Loading skeleton - hidden initially, shown after Refresh click while data loads
+      div(id = "loading_skeleton_static", style = "display: none;",
+        create_loading_skeleton(overview_type)
+      ),
+      # Actual stats - hidden until data is ready
+      div(id = "summary_stats_wrapper", style = "display: none;",
+        uiOutput("summary_stats")
+      )
+    ),
     
     # Facility Detail Boxes Container (for facilities view drill-down)
     div(id = "facility_detail_container",

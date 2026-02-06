@@ -13,8 +13,20 @@
 # =============================================================================
 
 suppressPackageStartupMessages({
-  library(sf)
-  library(leaflet)
+  # SF (geospatial) - required for map functionality but optional for testing
+  if (!requireNamespace("sf", quietly = TRUE)) {
+    message("WARNING: sf package not available - spatial functions will be limited")
+  } else {
+    library(sf)
+  }
+  
+  # Leaflet - required for map rendering but optional for testing  
+  if (!requireNamespace("leaflet", quietly = TRUE)) {
+    message("WARNING: leaflet package not available - map rendering will fail")
+  } else {
+    library(leaflet)
+  }
+  
   library(dplyr)
 })
 

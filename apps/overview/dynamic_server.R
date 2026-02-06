@@ -5,6 +5,46 @@
 # =============================================================================
 
 # =============================================================================
+# SHORT-TERM CACHE FOR CURRENT WEEK VALUES
+# Reduces DB load under concurrent multi-user access
+# Cache expires after 60 seconds - data rarely changes within a minute
+# =============================================================================
+
+# In-memory cache (per R process)
+.current_week_cache <- new.env(parent = emptyenv())
+
+#' Get cached current week value, or compute and cache it
+#' @param metric_id Metric ID
+#' @param analysis_date Date for analysis  
+#' @param zone_filter Zones to include
+#' @param ttl_seconds Cache time-to-live in seconds (default 60)
+#' @return Current week's value or NULL
+get_cached_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1", "2"), ttl_seconds = 60) {
+  cache_key <- paste(metric_id, as.character(analysis_date), paste(zone_filter, collapse = "_"), sep = "|")
+  
+  # Check if cached and not expired
+  if (exists(cache_key, envir = .current_week_cache)) {
+    cached <- get(cache_key, envir = .current_week_cache)
+    if (difftime(Sys.time(), cached$timestamp, units = "secs") < ttl_seconds) {
+      return(cached$value)
+    }
+  }
+  
+  # Not cached or expired - compute fresh value
+  value <- get_current_week_value(metric_id, analysis_date, zone_filter)
+  
+  # Store in cache
+  assign(cache_key, list(value = value, timestamp = Sys.time()), envir = .current_week_cache)
+  
+  value
+}
+
+#' Clear the current week cache (call when data might have changed)
+clear_current_week_cache <- function() {
+  rm(list = ls(envir = .current_week_cache), envir = .current_week_cache)
+}
+
+# =============================================================================
 # DYNAMIC DATA LOADERS - Iterate through registry
 # =============================================================================
 
@@ -172,98 +212,353 @@ setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, c
   invisible(NULL)
 }
 
-#' Setup legend outputs for all current metrics
-#' @param output Shiny output object
-#' @param theme_reactive Reactive returning current theme
+# =============================================================================
+# DETAIL VALUE BOXES GENERATOR
+# =============================================================================
+
+#' Generate detail value boxes for a specific facility drill-down
+#' Shows detailed metrics (active, expiring, expired, etc.) for a single facility
+#' 
+#' @param metric_id The metric ID
+#' @param facility The facility name to filter by
+#' @param zone_filter Vector of zones to include
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring
+#' @param theme Current color theme
+#' @param detail_data Optional preloaded detail data frame (avoid reloading)
+#' @return UI element with detail value boxes or NULL if not supported
 #' @export
-setup_legend_outputs <- function(output, theme_reactive) {
-  metrics <- get_active_metrics()
-  registry <- get_metric_registry()
+generate_facility_detail_boxes <- function(metric_id, facility, zone_filter, 
+                                           analysis_date, expiring_days, theme = "MMCD",
+                                           detail_data = NULL) {
+  # Get metric config
+  config <- get_metric_config(metric_id)
+  if (is.null(config)) return(NULL)
   
-  lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    legend_id <- paste0(metric_id, "_legend")
+  # Check if this metric has detail boxes defined
+  detail_boxes <- get_metric_detail_boxes(metric_id)
+  if (is.null(detail_boxes)) return(NULL)
+  
+  # Load detailed data for this specific facility (unless provided)
+  tryCatch({
+    if (is.null(detail_data)) {
+      # Use load_data_by_facility with the facility filter
+      detail_data <- load_data_by_facility(
+        metric = metric_id,
+        analysis_date = analysis_date,
+        expiring_days = expiring_days,
+        zone_filter = zone_filter,
+        separate_zones = FALSE,
+        facility_filter = facility
+      )
+    }
+    if (is.null(detail_data) || nrow(detail_data) == 0) {
+      return(div(
+        class = "alert alert-warning",
+        style = "margin: 10px 0;",
+        icon("exclamation-triangle"), " ",
+        "No data available for ", facility
+      ))
+    }
     
-    # Use local() to capture correct values
-    local({
-      local_metric_id <- metric_id
+    # Normalize column names if needed (fallbacks for *_count or *_acres)
+    if (!"total" %in% names(detail_data)) {
+      if ("total_count" %in% names(detail_data)) {
+        detail_data$total <- detail_data$total_count
+      } else if ("total_acres" %in% names(detail_data)) {
+        detail_data$total <- detail_data$total_acres
+      }
+    }
+    if (!"active" %in% names(detail_data)) {
+      if ("active_count" %in% names(detail_data)) {
+        detail_data$active <- detail_data$active_count
+      } else if ("active_acres" %in% names(detail_data)) {
+        detail_data$active <- detail_data$active_acres
+      }
+    }
+    if (!"expiring" %in% names(detail_data)) {
+      if ("expiring_count" %in% names(detail_data)) {
+        detail_data$expiring <- detail_data$expiring_count
+      } else if ("expiring_acres" %in% names(detail_data)) {
+        detail_data$expiring <- detail_data$expiring_acres
+      }
+    }
+
+    # Get status colors
+    status_colors <- get_status_colors(theme = theme)
+    
+    # Generate detail boxes from config
+    n_boxes <- length(detail_boxes)
+    col_width <- max(2, floor(12 / n_boxes))  # At least 2 columns wide
+    
+    box_elements <- lapply(detail_boxes, function(box_def) {
+      # Get value from data - column names should match (total, active, expiring)
+      value <- if (box_def$column %in% names(detail_data)) {
+        sum(detail_data[[box_def$column]], na.rm = TRUE)
+      } else {
+        NA
+      }
       
-      output[[legend_id]] <- renderUI({
-        create_overview_legend(theme = theme_reactive(), metric_id = local_metric_id)
-      })
+      # Skip this box if no data
+      if (is.na(value)) return(NULL)
+      
+      # Round if it's a decimal (acres)
+      display_value <- if (is.numeric(value) && value %% 1 != 0) {
+        format(round(value, 1), big.mark = ",")
+      } else {
+        format(value, big.mark = ",")
+      }
+      
+      # Get color based on status
+      bg_color <- if (!is.null(box_def$status) && box_def$status %in% names(status_colors)) {
+        unname(status_colors[box_def$status])
+      } else {
+        config$bg_color
+      }
+      
+      column(col_width,
+        create_stat_box(
+          value = display_value,
+          title = box_def$title,
+          bg_color = bg_color,
+          icon = icon(box_def$icon),
+          icon_type = "fontawesome"
+        )
+      )
     })
+    
+    # Remove NULL elements
+    box_elements <- Filter(Negate(is.null), box_elements)
+    
+    if (length(box_elements) == 0) {
+      # Log columns for debugging if detail boxes failed
+      cat("Detail boxes missing columns for", metric_id, "facility", facility, "\n")
+      cat("Available columns:", paste(names(detail_data), collapse = ", "), "\n")
+      return(div(
+        class = "alert alert-info",
+        style = "margin: 10px 0;",
+        icon("info-circle"), " ",
+        "Detail breakdown not available for ", facility
+      ))
+    }
+    
+    # Return container with facility header and detail boxes
+    div(class = "facility-detail-boxes-container",
+      div(class = "facility-detail-header",
+        icon("building"), " ", facility, " - ", config$display_name, " Details"
+      ),
+      fluidRow(class = "facility-detail-boxes", box_elements)
+    )
+    
+  }, error = function(e) {
+    warning(paste("Error generating detail boxes for", metric_id, ":", e$message))
+    return(div(
+      class = "alert alert-danger",
+      style = "margin: 10px 0;",
+      icon("exclamation-circle"), " ",
+      "Error loading details: ", e$message
+    ))
   })
-  
-  invisible(NULL)
 }
 
-#' Setup historical chart outputs for all metrics
-#' @param output Shiny output object
-#' @param data_reactive Reactive returning named list of historical data (each with $average and $current)
-#' @param overview_type One of: "district", "facilities", "fos"
-#' @export
-setup_historical_chart_outputs <- function(output, data_reactive, overview_type) {
-  metrics <- get_historical_metrics()
-  registry <- get_metric_registry()
+# =============================================================================
+# DYNAMIC COLOR LOGIC
+# =============================================================================
+
+# Cache for historical averages (loaded once per session for performance)
+.hist_cache <- new.env(parent = emptyenv())
+
+#' Load historical cache data once per session
+load_hist_cache <- function() {
+  if (is.null(.hist_cache$data)) {
+    tryCatch({
+      cache_file <- file.path(get_cache_dir(), "historical_averages_cache.rds")
+      if (file.exists(cache_file)) {
+        .hist_cache$data <- readRDS(cache_file)
+      }
+    }, error = function(e) NULL)
+  }
+  .hist_cache$data
+}
+
+#' Get historical average for a metric and week (cached for performance)
+#' @param metric_id Metric ID
+#' @param week_num ISO week number
+#' @return Historical average value or NULL if not available
+get_historical_week_avg <- function(metric_id, week_num) {
+  cache <- load_hist_cache()
+  if (is.null(cache)) return(NULL)
   
-  lapply(metrics, function(metric_id) {
+  cache_key <- paste0(metric_id, "_10yr")
+  if (!cache_key %in% names(cache$averages)) return(NULL)
+  
+  hist_data <- cache$averages[[cache_key]]
+  week_data <- hist_data[hist_data$week_num == week_num, ]
+  if (nrow(week_data) == 0) return(NULL)
+  
+  mean(week_data$value, na.rm = TRUE)
+}
+
+#' Get current week's value for a metric from database
+#' Uses the SAME logic as load_current_year_for_cache to match chart values
+#' @param metric_id Metric ID
+#' @param analysis_date Date for analysis
+#' @param zone_filter Zones to include
+#' @return Current week's value or NULL
+get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1", "2")) {
+  tryCatch({
+    registry <- get_metric_registry()
     config <- registry[[metric_id]]
-    output_id <- paste0(metric_id, "_historical_chart")
+    if (is.null(config)) return(NULL)
     
-    # Use local() to capture correct values
-    local({
-      local_metric_id <- metric_id
-      local_config <- config
-      local_overview_type <- overview_type
+    current_year <- lubridate::year(analysis_date)
+    
+    # Get the week's Friday (that's what the chart uses)
+    week_start <- lubridate::floor_date(analysis_date, "week", week_start = 1)
+    week_friday <- week_start + 4
+    week_num <- lubridate::isoweek(week_friday)
+    
+    # Load raw data
+    raw_data <- load_app_historical_data(metric_id, current_year, current_year, zone_filter)
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
+    
+    treatments <- raw_data$treatments
+    treatments$inspdate <- as.Date(treatments$inspdate)
+    
+    # Create value column (same logic as load_current_year_for_cache)
+    has_acres <- isTRUE(config$has_acres)
+    if (has_acres) {
+      acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
+                   else if ("acres" %in% names(treatments)) "acres" else NULL
+      treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
+    } else {
+      treatments$value <- 1
+    }
+    
+    is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
+    
+    if (is_active) {
+      # For active treatments: count what's ACTIVE on that week's Friday
+      if (!"effect_days" %in% names(treatments)) {
+        treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
+      }
+      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
       
-      output[[output_id]] <- renderPlotly({
-        req(data_reactive())
-        hist_data <- data_reactive()[[local_metric_id]]
-        
-        # Expect hist_data to be a list with $average and $current OR $yearly_data
-        if (is.null(hist_data) || 
-            (is.null(hist_data$average) || nrow(hist_data$average) == 0) &&
-            (is.null(hist_data$current) || nrow(hist_data$current) == 0) &&
-            (is.null(hist_data$yearly_data) || nrow(hist_data$yearly_data) == 0)) {
-          return(create_empty_chart(
-            paste(local_config$display_name, "Historical"),
-            "No historical data available"
-          ))
-        }
-        
-        y_label <- if (local_config$has_acres) {
-          paste(local_config$short_name, "Acres")
-        } else {
-          local_config$y_label
-        }
-        
-        # Check if this metric uses yearly grouped chart
-        if (isTRUE(local_config$historical_type == "yearly_grouped")) {
-          # Use yearly grouped bar chart
-          create_yearly_grouped_chart(
-            data = hist_data$yearly_data,
-            title = paste(local_config$display_name, "- Yearly Totals"),
-            y_label = y_label,
-            theme = current_theme(),
-            overview_type = local_overview_type
-          )
-        } else {
-          # Use standard comparison chart with 5-year and 10-year averages
-          create_comparison_chart(
-            avg_data = hist_data$average,
-            current_data = hist_data$current,
-            title = paste(local_config$display_name, "- Historical"),
-            y_label = y_label,
-            bar_color = local_config$bg_color,
-            theme = current_theme(),
-            ten_year_avg_data = hist_data$ten_year_average
-          )
-        }
-      })
-    })
+      # Filter to treatments active on Friday
+      active <- treatments[treatments$inspdate <= week_friday & treatments$treatment_end >= week_friday, ]
+      
+      if (nrow(active) == 0) return(0)
+      sum(active$value, na.rm = TRUE)
+    } else {
+      # For simple counts: sum treatments from that week
+      week_data <- treatments[treatments$inspdate >= week_start & treatments$inspdate <= week_start + 6, ]
+      if (nrow(week_data) == 0) return(0)
+      sum(week_data$value, na.rm = TRUE)
+    }
+  }, error = function(e) {
+    warning(paste("Error getting current week value:", e$message))
+    NULL
   })
+}
+
+#' Determine value box color and get comparison data
+#' Uses weekly comparison: current week value vs 10yr weekly average
+#' OPTIMIZED: Accepts optional weekly_value to avoid duplicate DB loads
+#' @param metric_id Metric ID
+#' @param current_value Current active value (for fallback)
+#' @param analysis_date Date for analysis
+#' @param config Metric configuration
+#' @param zone_filter Zones to filter
+#' @param weekly_value Optional: pre-loaded weekly value from historical data (avoids DB call)
+#' @return List with color, historical_avg, current_week, pct_diff, and status
+#' @export
+get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL) {
+  default_color <- config$bg_color
+  result <- list(
+    color = default_color,
+    historical_avg = NULL,
+    current_week = NULL,
+    pct_diff = NULL,
+    status = "default"
+  )
   
-  invisible(NULL)
+  # Only apply dynamic colors to specific metrics
+  dynamic_metrics <- c("drone", "ground_prehatch", "catch_basin", "structure", 
+                       "mosquito_monitoring", "suco")
+  
+  if (!metric_id %in% dynamic_metrics) return(result)
+  
+  # SUCO has hardcoded capacity logic
+  if (metric_id == "suco") {
+    if (current_value >= 72) {
+      result$color <- "#dc2626"
+      result$status <- "at_capacity"
+    } else if (current_value >= 60) {
+      result$color <- "#eab308"
+      result$status <- "near_capacity"
+    } else {
+      result$color <- "#16a34a"
+      result$status <- "good"
+    }
+    result$historical_avg <- 72  # Capacity threshold for reference
+    return(result)
+  }
+  
+  # Get WEEKLY comparison: current week value vs 10yr weekly average
+  week_num <- lubridate::isoweek(analysis_date)
+  
+  # Get 10-year weekly average from cache (fast - uses file cache)
+  historical_avg <- get_historical_week_avg(metric_id, week_num)
+  if (is.null(historical_avg) || historical_avg == 0) return(result)
+  
+  # Use pre-loaded weekly value if provided, otherwise use short-term cache
+  current_week <- if (!is.null(weekly_value)) {
+    weekly_value
+  } else {
+    # Use cached value (60s TTL) to reduce DB load under concurrent access
+    get_cached_current_week_value(metric_id, analysis_date, zone_filter)
+  }
+  if (is.null(current_week)) {
+    # Fallback: can't get weekly value, use default color
+    return(result)
+  }
+  
+  result$historical_avg <- round(historical_avg, 0)
+  result$current_week <- round(current_week, 0)
+  result$pct_diff <- round(100 * (current_week - historical_avg) / historical_avg, 1)
+  
+  # Mosquito monitoring uses inverse logic (lower is better)
+  if (metric_id == "mosquito_monitoring") {
+    if (current_week <= historical_avg * 1.1) {
+      result$color <- "#16a34a"
+      result$status <- "good"
+    } else if (current_week <= historical_avg * 1.2) {
+      result$color <- "#eab308"
+      result$status <- "warning"
+    } else {
+      result$color <- "#dc2626"
+      result$status <- "alert"
+    }
+  } else {
+    # Standard metrics (higher is better)
+    if (current_week >= historical_avg * 0.9) {
+      result$color <- "#16a34a"
+      result$status <- "good"
+    } else if (current_week >= historical_avg * 0.8) {
+      result$color <- "#eab308"
+      result$status <- "warning"
+    } else {
+      result$color <- "#dc2626"
+      result$status <- "alert"
+    }
+  }
+  
+  result
+}
+
+#' Simple color-only wrapper for backward compatibility
+get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date, config) {
+  get_dynamic_value_box_info(metric_id, current_value, analysis_date, config)$color
 }
 
 # =============================================================================
@@ -274,9 +569,11 @@ setup_historical_chart_outputs <- function(output, data_reactive, overview_type)
 #' @param data Named list of data frames keyed by metric_id
 #' @param metrics_filter Optional filter for which metrics to display
 #' @param overview_type Type of overview (district, facilities, fos)
+#' @param analysis_date Date for analysis (for dynamic color logic)
+#' @param historical_data Optional: pre-loaded historical data to extract weekly values (avoids duplicate DB loads)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district") {
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL) {
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
   registry <- get_metric_registry()
@@ -335,6 +632,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         pct <- if (total_all > 0) ceiling(100 * active_all / total_all) else 0
       }
       
+      # For facilities view, use metric's default color
+      # (We don't have facility-level historical data for comparison)
+      box_color <- config$bg_color
+      
       # Create stat box with facility short name
       column(col_width,
         div(
@@ -343,7 +644,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           create_stat_box(
             value = paste0(pct, "%"),
             title = fac,  # Just show facility short name
-            bg_color = config$bg_color,
+            bg_color = box_color,
             icon = NULL,  # No icon for facility view
             icon_type = "fontawesome"
           )
@@ -354,58 +655,105 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     fluidRow(stat_boxes)
     
   } else {
-    # District view: one value box per metric
-    n_metrics <- length(metrics)
-    col_width <- floor(12 / n_metrics)
+    # District view: metrics grouped by category
+    categories <- get_metric_categories()
+    metrics_by_cat <- get_metrics_grouped_by_category()
     
-    stat_boxes <- lapply(metrics, function(metric_id) {
-      config <- registry[[metric_id]]
-      metric_data <- data[[metric_id]]
-      
-      # Calculate stats
-      if (!is.null(metric_data) && nrow(metric_data) > 0) {
-        total <- sum(metric_data$total, na.rm = TRUE)
-        active <- sum(metric_data$active, na.rm = TRUE)
-        expiring <- sum(metric_data$expiring, na.rm = TRUE)
-        
-        # For cattail_treatments:
-        # treated = active - expiring (active includes expiring in this dataset)
-        # needs_treatment = expiring
-        # Percentage = treated / (treated + needs_treatment)
-        # For display_as_average metrics: show percentage (current / avg * 100)
-        if (metric_id == "cattail_treatments") {
-          treated <- active - expiring
-          needs_treatment <- expiring
-          workload <- treated + needs_treatment
-          pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
-        } else if (isTRUE(config$display_as_average)) {
-          # For display_as_average metrics: current / avg * 100
-          pct <- if (total > 0) round(100 * active / total, 1) else 0
-        } else {
-          pct <- ceiling(100 * active / max(1, total))
+    # Pre-extract weekly values from historical data to avoid duplicate DB loads
+    week_num <- lubridate::isoweek(analysis_date)
+    weekly_values <- list()
+    if (!is.null(historical_data)) {
+      for (metric_id in metrics) {
+        hist <- historical_data[[metric_id]]
+        if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
+          week_row <- hist$current[hist$current$week_num == week_num, ]
+          if (nrow(week_row) > 0) {
+            weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
+          }
         }
-      } else {
-        pct <- 0
       }
+    }
+    
+    # Build category sections
+    category_sections <- lapply(categories, function(cat) {
+      cat_metrics <- intersect(metrics_by_cat[[cat]], metrics)
+      if (length(cat_metrics) == 0) return(NULL)
       
-      # Create clickable stat box with data-metric-id attribute
-      # Just show percentage, no detailed title text
-      column(col_width,
-        div(
-          class = "stat-box-clickable",
-          `data-metric-id` = metric_id,
-          create_stat_box(
-            value = paste0(pct, "%"),
-            title = config$display_name,  # Just metric name, no "X/Y treated"
-            bg_color = config$bg_color,
-            icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+      # Calculate column width based on number of metrics in this category
+      n_metrics <- length(cat_metrics)
+      col_width <- floor(12 / n_metrics)
+      
+      stat_boxes <- lapply(cat_metrics, function(metric_id) {
+        config <- registry[[metric_id]]
+        metric_data <- data[[metric_id]]
+        
+        # Calculate stats
+        if (!is.null(metric_data) && nrow(metric_data) > 0) {
+          total <- sum(metric_data$total, na.rm = TRUE)
+          active <- sum(metric_data$active, na.rm = TRUE)
+          expiring <- sum(metric_data$expiring, na.rm = TRUE)
+          
+          # For cattail_treatments:
+          # treated = active - expiring (active includes expiring in this dataset)
+          # needs_treatment = expiring
+          # Percentage = treated / (treated + needs_treatment)
+          # For display_as_average metrics: show percentage (current / avg * 100)
+          if (metric_id == "cattail_treatments") {
+            treated <- active - expiring
+            needs_treatment <- expiring
+            workload <- treated + needs_treatment
+            pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+          } else if (isTRUE(config$display_as_average)) {
+            # For display_as_average metrics: current / avg * 100
+            pct <- if (total > 0) round(100 * active / total, 1) else 0
+          } else {
+            pct <- ceiling(100 * active / max(1, total))
+          }
+        } else {
+          pct <- 0
+          active <- 0
+        }
+        
+        # Get dynamic color and comparison info
+        # Use pre-loaded weekly value if available (optimization)
+        weekly_val <- weekly_values[[metric_id]]
+        box_info <- get_dynamic_value_box_info(metric_id, active, analysis_date, config, weekly_value = weekly_val)
+        week_num <- lubridate::isoweek(analysis_date)
+        
+        # Create clickable stat box with comparison data attributes
+        column(col_width,
+          div(
+            class = "stat-box-clickable",
+            `data-metric-id` = metric_id,
+            `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
+            `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
+            `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
+            `data-week-num` = week_num,
+            create_stat_box(
+              value = paste0(pct, "%"),
+              title = config$display_name,
+              bg_color = box_info$color,
+              icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+              icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+            )
           )
         )
+      })
+      
+      # Return category section with header and metrics row
+      div(class = "category-section",
+        style = "margin-bottom: 15px;",
+        div(class = "category-header",
+          style = "font-size: 14px; font-weight: bold; color: #666; margin-bottom: 8px; padding-left: 5px; border-left: 3px solid #2c5aa0;",
+          cat
+        ),
+        fluidRow(stat_boxes)
       )
     })
     
-    fluidRow(stat_boxes)
+    # Filter out NULL sections and wrap in a container
+    category_sections <- Filter(Negate(is.null), category_sections)
+    div(class = "metrics-by-category", category_sections)
   }
 }
 
@@ -465,6 +813,12 @@ build_overview_server <- function(input, output, session,
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days)
     )
+  })
+
+  # Cache last refresh inputs so downstream UI can reuse without reloading
+  last_refresh_inputs <- reactiveVal(NULL)
+  observeEvent(input$refresh, {
+    last_refresh_inputs(refresh_inputs())
   })
   
   # =========================================================================
@@ -797,8 +1151,102 @@ build_overview_server <- function(input, output, session,
   
   output$summary_stats <- renderUI({
     req(current_data())
-    generate_summary_stats(current_data(), metrics_filter, overview_type)
+    # Get analysis date from refresh inputs (captured at refresh time)
+    inputs <- refresh_inputs()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    
+    # Pass historical data to avoid duplicate DB loads
+    hist_data <- tryCatch(historical_data(), error = function(e) NULL)
+    generate_summary_stats(current_data(), metrics_filter, overview_type, analysis_date, hist_data)
   })
+  
+  # =========================================================================
+  # FACILITY DETAIL BOXES (for facilities view drill-down)
+  # =========================================================================
+  
+  output$facility_detail_boxes <- renderUI({
+    tryCatch({
+      req(input$selected_facility)
+      req(current_data())
+      
+      facility <- input$selected_facility
+
+      inputs <- last_refresh_inputs()
+      if (is.null(inputs)) {
+        return(div(
+          class = "alert alert-info",
+          style = "margin: 10px 0;",
+          icon("sync"), " ",
+          "Press Refresh to load facility details."
+        ))
+      }
+      
+      if (is.null(metrics_filter) || length(metrics_filter) == 0) {
+        return(div(
+          class = "alert alert-info",
+          "Select a metric category to see facility details."
+        ))
+      }
+      
+      # For now, use the first (should be only) metric in the filter
+      metric_id <- metrics_filter[1]
+      
+      # Check if this metric supports detail boxes
+      if (!has_detail_boxes(metric_id)) {
+        return(div(
+          class = "alert alert-info",
+          style = "margin: 10px 0;",
+          icon("info-circle"), " ",
+          "Detail breakdown not yet available for this metric."
+        ))
+      }
+
+      # Use already-loaded data (avoid reloading)
+      preloaded_detail <- current_data()[[metric_id]]
+      if (!is.null(preloaded_detail) && nrow(preloaded_detail) > 0) {
+        facility_key <- trimws(tolower(facility))
+        
+        # Create facility matching vectors
+        facility_match <- if ("facility" %in% names(preloaded_detail)) {
+          trimws(tolower(as.character(preloaded_detail$facility))) == facility_key
+        } else {
+          rep(FALSE, nrow(preloaded_detail))
+        }
+        
+        display_match <- if ("display_name" %in% names(preloaded_detail)) {
+          trimws(tolower(as.character(preloaded_detail$display_name))) == facility_key
+        } else {
+          rep(FALSE, nrow(preloaded_detail))
+        }
+        
+        # Apply the filter
+        preloaded_detail <- preloaded_detail[facility_match | display_match, , drop = FALSE]
+      }
+
+      # Generate the detail boxes
+      generate_facility_detail_boxes(
+        metric_id = metric_id,
+        facility = facility,
+        zone_filter = inputs$zone_filter,
+        analysis_date = inputs$custom_today,
+        expiring_days = inputs$expiring_days,
+        theme = current_theme(),
+        detail_data = preloaded_detail
+      )
+    }, error = function(e) {
+      # Capture and display actual error message in UI
+      div(
+        class = "alert alert-danger",
+        style = "margin: 10px 0; word-break: break-word;",
+        icon("exclamation-circle"), " ",
+        strong("Error loading facility details:"), br(),
+        code(e$message)
+      )
+    })
+  })
+
+  # Ensure facility detail boxes render even when container is hidden
+  outputOptions(output, "facility_detail_boxes", suspendWhenHidden = FALSE)
   
   # =========================================================================
   # LAST UPDATED TIMESTAMP

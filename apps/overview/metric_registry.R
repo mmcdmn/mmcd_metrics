@@ -71,12 +71,16 @@ get_apps_base_path <- function() {
 #' @export
 get_metric_registry <- function() {
   list(
+    # =========================================================================
+    # VECTOR CATEGORY - Catch basins, structures, SUCO
+    # =========================================================================
     catch_basin = list(
       id = "catch_basin",
       display_name = "Catch Basins",
       short_name = "CB",
       icon = "tint",
       image_path = "assets/catchbasin.png",
+      category = "Vector",
       y_label = "Active Catch Basins",
       bg_color = "#667eea",
       app_folder = "catch_basin_status",
@@ -86,6 +90,13 @@ get_metric_registry <- function() {
       display_metric = "treatments",  # count of treatments
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      # Uses columns from load_data_by_facility: total, active, expiring
+      detail_boxes = list(
+        list(id = "total", title = "Wet CBs", column = "total", icon = "tint", status = "completed"),
+        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Wet catch basins only (status_udw = 'W')<br>
                          • All facilities<br>
@@ -93,12 +104,16 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 7)
     ),
     
+    # =========================================================================
+    # FLOODWATER CATEGORY - Drone, Ground Prehatch
+    # =========================================================================
     drone = list(
       id = "drone",
       display_name = "Drone Acres",
       short_name = "Drone",
       icon = "helicopter",
       image_path = "assets/drone.jpg",
+      category = "Floodwater",
       y_label = "Active Drone Acres",
       bg_color = "#f5576c",
       app_folder = "drone",
@@ -108,6 +123,13 @@ get_metric_registry <- function() {
       display_metric = "treatment_acres",  # use acres for historical
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      # Uses columns from load_data_by_facility: total, active, expiring (as acres for this metric)
+      detail_boxes = list(
+        list(id = "total", title = "Total Acres", column = "total", icon = "expand", status = "completed"),
+        list(id = "active", title = "Active Acres", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring Acres", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Drone types: Y, M, C<br>
                          • All facilities, all foremen<br>
@@ -122,6 +144,7 @@ get_metric_registry <- function() {
       short_name = "Ground",
       icon = "seedling",
       image_path = "assets/ground.png",
+      category = "Floodwater",
       y_label = "Active Prehatch Acres",
       bg_color = "#207010",
       app_folder = "ground_prehatch_progress",
@@ -131,6 +154,13 @@ get_metric_registry <- function() {
       display_metric = "treatment_acres",  # use acres for historical
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      # Uses columns from load_data_by_facility: total, active, expiring
+      detail_boxes = list(
+        list(id = "total", title = "Total Acres", column = "total", icon = "egg", status = "completed"),
+        list(id = "active", title = "Active Acres", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring Acres", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Prehatch sites only<br>
                          • All facilities<br>
@@ -144,6 +174,7 @@ get_metric_registry <- function() {
       short_name = "Struct",
       icon = "building",
       image_path = "assets/layer-group.jpg",
+      category = "Vector",
       y_label = "Active Structures",
       bg_color = "#3851db",
       app_folder = "struct_trt",
@@ -153,6 +184,12 @@ get_metric_registry <- function() {
       display_metric = "treatments",  # count of treatments
       chart_types = c("bar", "pie"),  # Support both bar and pie charts
       default_chart_type = "bar",     # Default to bar chart
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "total", title = "Total Sites", column = "total", icon = "map-marker-alt", status = "completed"),
+        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Expiring", column = "expiring", icon = "exclamation-triangle", status = "planned")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Structure types: All<br>
                          • Status: W, U (Wet, Unknown)<br>
@@ -161,11 +198,16 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 7)
     ),
     
+    # =========================================================================
+    # CATTAIL CATEGORY - Treatments and Inspections
+    # =========================================================================
     cattail_treatments = list(
       id = "cattail_treatments",
-      display_name = "Cattail Treatments", 
+      display_name = "Cattail Treatments",
+      category = "Cattail", 
       short_name = "Cattail",
       icon = "spa",
+      image_path = "assets/cattail_background.png",
       y_label = "Cattail Acres",
       bg_color = "#ff9500",
       app_folder = "cattail_treatments",
@@ -176,6 +218,11 @@ get_metric_registry <- function() {
       historical_year_column = "inspection_year",  # Use this column for year if present (seasonal logic)
       use_active_calculation = TRUE,       # Sites needing treatment or treated
       display_metric = "sites",            # count of active sites
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Needs Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Inspected cattail sites only<br>
                          • Treated: Sites that have been treated<br>
@@ -185,12 +232,16 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
     ),
 
+    # =========================================================================
+    # ADULT SAMPLES CATEGORY - Mosquito surveillance
+    # =========================================================================
     mosquito_monitoring = list(
       id = "mosquito_monitoring",
       display_name = "avg mosquitoes per trap",
       short_name = "Mosquito",
       icon = "bug",
       image_path = "assets/adult.png",
+      category = "Adult Samples",
       y_label = "Avg Mosquitoes per Trap",
       bg_color = "#10b981",
       app_folder = "mosquito-monitoring",
@@ -199,6 +250,11 @@ get_metric_registry <- function() {
       # Display configuration - makes behavior generic (no special case checks needed)
       display_as_average = TRUE,  # Show avg values instead of percentages
       aggregate_as_average = TRUE,  # Use mean instead of sum for weekly aggregation
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "historical", title = "10-Year Average", column = "total", icon = "history", status = "completed"),
+        list(id = "current", title = "Current Avg/Trap", column = "active", icon = "bug", status = "active")
+      ),
       chart_labels = list(
         total = "10-Year Average",
         active = "avg per trap",
@@ -218,7 +274,8 @@ get_metric_registry <- function() {
       display_name = "SUCO Capacity",
       short_name = "SUCO",
       icon = "search",
-      image_path = "assets/adult.png",  # Use adult mosquito icon
+      image_path = "assets/bucket.png",  # Use adult mosquito icon
+      category = "Adult Samples",
       y_label = "SUCOs Completed",
       bg_color = "#6366f1",  # Indigo color
       app_folder = "suco_history",
@@ -229,6 +286,11 @@ get_metric_registry <- function() {
       display_as_average = TRUE,  # Show capacity-style display (not percentage)
       chart_types = c("bar"),
       default_chart_type = "bar",
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "capacity", title = "Weekly Capacity", column = "total", icon = "chart-line", status = "completed"),
+        list(id = "completed", title = "Completed", column = "active", icon = "check-circle", status = "active")
+      ),
       chart_labels = list(
         total = "Weekly Capacity",
         active = "Completed",
@@ -251,6 +313,7 @@ get_metric_registry <- function() {
       display_name = "Cattail Inspections Progress",
       short_name = "Cat Insp",
       icon = "tasks",
+      category = "Cattail",
       y_label = "Sites Inspected vs Goal",
       bg_color = "#8b5cf6",  # Purple color
       app_folder = "cattail_inspections",
@@ -260,6 +323,12 @@ get_metric_registry <- function() {
       display_metric = "progress",  # progress toward goal
       chart_types = c("bar"),
       default_chart_type = "bar",
+      # Detail boxes shown when drilling down to facility level
+      detail_boxes = list(
+        list(id = "goal", title = "Goal", column = "total", icon = "bullseye", status = "completed"),
+        list(id = "inspected", title = "Inspected", column = "active", icon = "check-circle", status = "active"),
+        list(id = "remaining", title = "Remaining", column = "expiring", icon = "clock", status = "planned")
+      ),
       chart_labels = list(
         total = "Goal",
         active = "Inspected",
@@ -276,6 +345,36 @@ get_metric_registry <- function() {
         time_period = "yearly"  # Yearly progress tracking
       )
     )
+  )
+}
+
+#' Get the ordered list of metric categories
+#' Categories are displayed in this order in the UI
+#' @return Character vector of category names
+#' @export
+get_metric_categories <- function() {
+  c("Floodwater", "Vector", "Adult Samples", "Cattail")
+}
+
+#' Get metrics by category
+#' @param category The category name (e.g., "Floodwater", "Vector")
+#' @return Character vector of metric IDs in that category
+#' @export
+get_metrics_by_category <- function(category) {
+  registry <- get_metric_registry()
+  names(registry)[sapply(registry, function(m) {
+    isTRUE(m$category == category)
+  })]
+}
+
+#' Get all metrics grouped by category
+#' @return Named list with categories as keys and metric ID vectors as values
+#' @export
+get_metrics_grouped_by_category <- function() {
+  categories <- get_metric_categories()
+  setNames(
+    lapply(categories, get_metrics_by_category),
+    categories
   )
 }
 
@@ -305,6 +404,28 @@ get_historical_metrics <- function() {
 get_metric_config <- function(metric_id) {
   registry <- get_metric_registry()
   registry[[metric_id]]
+}
+
+#' Get detail boxes configuration for a metric
+#' Returns the list of detail box definitions for drill-down views
+#' 
+#' @param metric_id The metric ID
+#' @return List of detail box configurations or NULL if not defined
+#' @export
+get_metric_detail_boxes <- function(metric_id) {
+  config <- get_metric_config(metric_id)
+  if (!is.null(config) && !is.null(config$detail_boxes)) {
+    return(config$detail_boxes)
+  }
+  return(NULL)
+}
+
+#' Check if a metric has detail boxes available
+#' @param metric_id The metric ID
+#' @return Boolean
+#' @export
+has_detail_boxes <- function(metric_id) {
+  !is.null(get_metric_detail_boxes(metric_id))
 }
 
 #' Add a new metric to the registry
@@ -382,303 +503,4 @@ get_overview_config <- function(type) {
   )
   
   configs[[type]]
-}
-
-# =============================================================================
-# DYNAMIC UI GENERATORS - Iterate through registry automatically
-# =============================================================================
-
-#' Generate metric chart UI elements dynamically from registry
-#' @param metrics Vector of metric IDs to include (defaults to all active)
-#' @param chart_height Height of each chart
-#' @return List of UI elements (fluidRow with chart panels)
-#' @export
-generate_metric_charts_ui <- function(metrics = get_active_metrics(), chart_height = "350px") {
-  registry <- get_metric_registry()
-  
-  # Create a chart panel for each metric
-  chart_panels <- lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    if (is.null(config)) return(NULL)
-    
-    column(6,
-      div(class = "chart-panel",
-        style = "background: white; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-        h4(config$display_name, style = "margin-top: 0;"),
-        plotlyOutput(paste0(metric_id, "_chart"), height = chart_height)
-      )
-    )
-  })
-  
-  # Arrange in rows of 2
-  chart_rows <- split(chart_panels, ceiling(seq_along(chart_panels) / 2))
-  lapply(chart_rows, function(row_panels) {
-    do.call(fluidRow, row_panels)
-  })
-}
-
-#' Generate historical chart UI elements dynamically from registry
-#' @param overview_type One of: "district", "facilities", "fos"
-#' @param chart_height Height of each chart
-#' @return List of UI elements
-#' @export
-generate_historical_charts_ui <- function(overview_type = "district", chart_height = "300px") {
-  metrics <- get_historical_metrics()
-  registry <- get_metric_registry()
-  
-  # Create a chart panel for each metric with historical enabled
-  chart_panels <- lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    if (is.null(config)) return(NULL)
-    
-    column(6,
-      div(class = "chart-panel historical-chart",
-        style = "background: white; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-        h5(paste(config$display_name, "- Historical"), style = "margin-top: 0; color: #666;"),
-        plotlyOutput(paste0(metric_id, "_historical_chart"), height = chart_height)
-      )
-    )
-  })
-  
-  # Arrange in rows of 2
-  chart_rows <- split(chart_panels, ceiling(seq_along(chart_panels) / 2))
-  
-  # Add section header
-  c(
-    list(
-      fluidRow(
-        column(12,
-          h3("Historical Trends (Last 5 Years)", 
-             style = "margin-top: 30px; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 10px;")
-        )
-      )
-    ),
-    lapply(chart_rows, function(row_panels) {
-      do.call(fluidRow, row_panels)
-    })
-  )
-}
-
-#' Generate summary stat boxes dynamically from registry
-#' @param data Named list of data frames keyed by metric_id
-#' @return UI element with stat boxes
-#' @export
-generate_summary_stats_ui <- function(data) {
-  metrics <- get_active_metrics()
-  registry <- get_metric_registry()
-  
-  stat_boxes <- lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    metric_data <- data[[metric_id]]
-    
-    # Calculate stats
-    if (!is.null(metric_data) && nrow(metric_data) > 0) {
-      total <- sum(metric_data$total, na.rm = TRUE)
-      active <- sum(metric_data$active, na.rm = TRUE)
-    } else {
-      total <- 0
-      active <- 0
-    }
-    
-    # Standard treatment progress display for all metrics
-    # For metrics with display_as_average, show percentage: current week avg / 10-year avg * 100
-    if (isTRUE(config$display_as_average)) {
-      pct <- if (total > 0) round(100 * active / total, 1) else 0  # Show percentage
-    } else {
-      pct <- ceiling(100 * active / max(1, total))
-    }
-    
-    # Create progress bar div showing 10-year average background + current week foreground
-    progress_bar <- div(
-      style = "margin-top: 8px; height: 12px; background-color: rgba(255,255,255,0.3); border-radius: 6px; position: relative; overflow: hidden;",
-      div(
-        style = paste0("height: 100%; background-color: rgba(255,255,255,0.6); border-radius: 6px; width: 100%; position: absolute;"),
-        title = paste0("10-year average: ", format(total, big.mark = ","))
-      ),
-      div(
-        style = paste0("height: 100%; background-color: rgba(255,255,255,0.9); border-radius: 6px; width: ", min(100, pct), "%; position: absolute;"),
-        title = paste0("Current week: ", format(active, big.mark = ","))
-      )
-    )
-    
-    column(12 / length(metrics),
-      div(
-        style = paste0(
-          "background-color: ", config$bg_color, "; ",
-          "color: #ffffff; ",
-          "padding: 20px; ",
-          "border-radius: 5px; ",
-          "margin-bottom: 15px; ",
-          "box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
-        ),
-        div(
-          style = "font-size: 24px; font-weight: bold; margin-bottom: 5px;",
-          paste0(pct, "%")
-        ),
-        div(
-          style = "font-size: 14px; opacity: 0.9; margin-bottom: 8px;",
-          config$display_name
-        ),
-        div(
-          style = "font-size: 12px; opacity: 0.8; margin-bottom: 8px;",
-          paste0("Current: ", format(active, big.mark = ","), " | 10yr avg: ", format(total, big.mark = ","))
-        ),
-        progress_bar
-      )
-    )
-  })
-  
-  do.call(fluidRow, stat_boxes)
-}
-
-# =============================================================================
-# DYNAMIC SERVER HELPERS - Iterate through registry automatically
-# =============================================================================
-
-#' Load all metric data dynamically from registry
-#' @param inputs List of input values (zone_filter, custom_today, expiring_days, separate_zones)
-#' @param load_function Function to use for loading (load_data_by_zone, load_data_by_facility, etc.)
-#' @return Named list of data frames keyed by metric_id
-#' @export
-load_all_metrics_dynamic <- function(inputs, load_function) {
-  metrics <- get_active_metrics()
-  registry <- get_metric_registry()
-  
-  results <- setNames(
-    lapply(metrics, function(metric_id) {
-      tryCatch({
-        load_function(
-          metric = metric_id,
-          analysis_date = inputs$custom_today,
-          expiring_days = inputs$expiring_days,
-          zone_filter = inputs$zone_filter,
-          separate_zones = inputs$separate_zones
-        )
-      }, error = function(e) {
-        cat("ERROR loading", metric_id, ":", e$message, "\n")
-        data.frame()
-      })
-    }),
-    metrics
-  )
-  
-  results
-}
-
-#' Load all historical data dynamically from registry
-#' @param overview_type One of: "district", "facilities", "fos"
-#' @param zone_filter Vector of zones
-#' @return Named list of data frames keyed by metric_id
-#' @export
-load_all_historical_dynamic <- function(overview_type, zone_filter = c("1", "2")) {
-  metrics <- get_historical_metrics()
-  registry <- get_metric_registry()
-  overview_config <- get_overview_config(overview_type)
-  
-  # Determine time_period and group_by from overview config
-  time_period <- if (!is.null(overview_config$historical_type)) overview_config$historical_type else "weekly"
-  group_by <- if (!is.null(overview_config$historical_group_by)) overview_config$historical_group_by else "mmcd_all"
-  
-  years <- get_historical_year_range(5)
-  
-  results <- setNames(
-    lapply(metrics, function(metric_id) {
-      config <- registry[[metric_id]]
-      
-      tryCatch({
-        load_historical_metric_data(
-          metric = metric_id,
-          start_year = years$start_year,
-          end_year = years$end_year,
-          group_by = group_by,
-          time_period = time_period,
-          display_metric = config$display_metric,
-          zone_filter = zone_filter
-        )
-      }, error = function(e) {
-        cat("ERROR loading historical", metric_id, ":", e$message, "\n")
-        data.frame()
-      })
-    }),
-    metrics
-  )
-  
-  results
-}
-
-#' Create render outputs for all metric charts dynamically
-#' @param output Shiny output object
-#' @param data_reactive Reactive that returns named list of data
-#' @param theme_reactive Reactive that returns current theme
-#' @param chart_function Function to create charts
-#' @export
-setup_metric_chart_outputs <- function(output, data_reactive, theme_reactive, chart_function) {
-  metrics <- get_active_metrics()
-  registry <- get_metric_registry()
-  
-  lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    output_id <- paste0(metric_id, "_chart")
-    
-    output[[output_id]] <- renderPlotly({
-      req(data_reactive())
-      data <- data_reactive()[[metric_id]]
-      
-      if (is.null(data) || nrow(data) == 0) {
-        return(create_empty_chart(config$display_name, "No data available"))
-      }
-      
-      chart_function(
-        data = data,
-        title = config$display_name,
-        y_label = config$y_label,
-        theme = theme_reactive(),
-        metric_type = metric_id
-      )
-    })
-  })
-}
-
-#' Create render outputs for all historical charts dynamically
-#' @param output Shiny output object
-#' @param data_reactive Reactive that returns named list of historical data
-#' @param overview_type One of: "district", "facilities", "fos"
-#' @export
-setup_historical_chart_outputs <- function(output, data_reactive, overview_type) {
-  metrics <- get_historical_metrics()
-  registry <- get_metric_registry()
-  overview_config <- get_overview_config(overview_type)
-  
-  chart_type <- if (!is.null(overview_config$historical_type) && overview_config$historical_type == "yearly") {
-    "bar"
-  } else {
-    "line"
-  }
-  
-  lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    output_id <- paste0(metric_id, "_historical_chart")
-    
-    output[[output_id]] <- renderPlotly({
-      req(data_reactive())
-      data <- data_reactive()[[metric_id]]
-      
-      if (is.null(data) || nrow(data) == 0) {
-        return(create_empty_chart(paste(config$display_name, "Historical"), "No historical data"))
-      }
-      
-      # Skip metrics with historical_enabled = FALSE
-      if (!isTRUE(config$historical_enabled)) {
-        return(create_empty_chart(config$display_name, "Historical chart not available"))
-      }
-      
-      y_label <- if (config$has_acres) paste(config$short_name, "Acres") else config$y_label
-      
-      if (chart_type == "bar") {
-        create_historical_bar_chart(data, config$display_name, y_label, config$bg_color)
-      } else {
-        create_historical_line_chart(data, config$display_name, y_label, config$bg_color)
-      }
-    })
-  })
 }

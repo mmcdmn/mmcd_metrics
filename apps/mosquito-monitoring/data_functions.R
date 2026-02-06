@@ -145,6 +145,8 @@ load_raw_data <- function(analysis_date = NULL,
   current_week_start <- floor_date(analysis_date, "week", week_start = 1)
   current_week_end <- current_week_start + days(6)
   
+  # Return SUM and TRAP_COUNT for proper weighted averaging in overview
+  # This allows: weighted_avg = sum(total_mosquitoes) / sum(trap_count)
   current_data <- mosquito0 %>%
     filter(
       inspdate >= current_week_start,
@@ -152,25 +154,28 @@ load_raw_data <- function(analysis_date = NULL,
     ) %>%
     group_by(facility) %>%
     summarize(
-      current_avg = round(mean(as.numeric(mosqcount)), 1),
+      current_total = sum(as.numeric(mosqcount)),      # TOTAL mosquitoes (not avg)
+      current_trap_count = n(),                         # Number of traps
       .groups = "drop"
     )
   
-  # Historical average - same week across ALL years (use FULL unfiltered data)
-  # This gives the AVERAGE for this specific week across multiple years
+  # Historical average - same week across PRIOR years only (exclude current year)
+  # This gives the AVERAGE for this specific week across previous years
   current_week_num <- week(analysis_date)
+  current_year <- year(analysis_date)
   
   # Use mosquito0_full for historical data (not the filtered mosquito0)
   historical_source <- if (exists("mosquito0_full")) mosquito0_full else mosquito0
   
   historical_data <- historical_source %>%
     filter(
-      week(inspdate) == current_week_num  # Same week across all years
+      week(inspdate) == current_week_num,  # Same week across all years
+      year(inspdate) < current_year        # EXCLUDE current year from historical
     ) %>%
     group_by(facility) %>%
     summarize(
-      historical_avg = round(mean(as.numeric(mosqcount)), 1),
-      historical_count = n(),
+      historical_total = sum(as.numeric(mosqcount)),    # TOTAL mosquitoes (not avg)
+      historical_trap_count = n(),                       # Total traps over all years
       .groups = "drop"
     )
   
@@ -180,15 +185,22 @@ load_raw_data <- function(analysis_date = NULL,
     mutate(
       # Use zone from filter or default to "1"
       zone = if (!is.null(zone_filter) && length(zone_filter) == 1) zone_filter else "1",
-      # Use overall week average, fallback if no data
-      historical_avg = ifelse(is.na(historical_avg) | historical_avg == 0 | is.na(historical_count) | historical_count < 2, 
-                             current_avg, historical_avg),
-      total_count = round(historical_avg),    # Average for this week across all years
-      active_count = current_avg,            # This specific week in current year
-      # Above average: how much current exceeds historical (only if above)
+      # Handle missing historical data
+      historical_total = ifelse(is.na(historical_total), current_total, historical_total),
+      historical_trap_count = ifelse(is.na(historical_trap_count) | historical_trap_count < 2, 
+                                     current_trap_count, historical_trap_count),
+      # Store TOTALS and TRAP COUNTS for proper weighted averaging
+      total_count = historical_total,           # TOTAL mosquitoes historically
+      active_count = current_total,             # TOTAL mosquitoes this week
+      trap_count = current_trap_count,          # Current week trap count
+      historical_trap_count = historical_trap_count,  # Historical trap count
+      # Above average calculation (using proper per-trap averages)
+      current_avg = current_total / current_trap_count,
+      historical_avg = historical_total / historical_trap_count,
       expiring_count = pmax(0, round(current_avg - historical_avg, 1))
     ) %>%
-    select(facility, zone, total_count, active_count, expiring_count)
+    select(facility, zone, total_count, active_count, trap_count, 
+           historical_trap_count, expiring_count)
 
   if (nrow(sites) == 0) {
     sites <- data.frame(

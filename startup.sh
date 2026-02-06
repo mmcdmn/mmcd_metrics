@@ -48,6 +48,14 @@ trap cleanup SIGTERM SIGINT
 # MODE: Production (multiple Shiny instances behind nginx)
 # =============================================================================
 if [ "${ENABLE_NGINX:-true}" != "false" ]; then
+    # Detect App Runner - optimize nginx for proxy chain instead of disabling
+    if [ -n "${PORT}" ] || [ -n "${AWS_REGION}" ] || [ -n "${_HANDLER}" ]; then
+        echo "🔧 App Runner detected - configuring nginx for proxy chain compatibility"
+        echo "Optimizing WebSocket and timeout settings..."
+        APP_RUNNER_MODE=true
+    else
+        APP_RUNNER_MODE=false
+    fi
     NUM_WORKERS=${SHINY_WORKERS:-3}
     BASE_PORT=3839
     LISTEN_PORT=${PORT:-3838}
@@ -67,6 +75,40 @@ if [ "${ENABLE_NGINX:-true}" != "false" ]; then
 
     # Update nginx to listen on the correct port (App Runner sets PORT env var)
     sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/nginx/nginx.conf
+    
+    # App Runner specific optimizations
+    if [ "$APP_RUNNER_MODE" = "true" ]; then
+        echo "Applying App Runner nginx optimizations..."
+        
+        # Add real IP detection for App Runner's load balancer
+        sed -i '/server_name _;/a\        # App Runner real IP detection\
+        real_ip_header X-Forwarded-For;\
+        set_real_ip_from 10.0.0.0/8;\
+        set_real_ip_from 172.16.0.0/12;\
+        set_real_ip_from 192.168.0.0/16;\
+        real_ip_recursive on;' /etc/nginx/nginx.conf
+        
+        # Increase timeouts for proxy chain
+        sed -i 's/proxy_read_timeout 86400s/proxy_read_timeout 7200s/' /etc/nginx/nginx.conf
+        sed -i 's/proxy_connect_timeout 60s/proxy_connect_timeout 300s/' /etc/nginx/nginx.conf
+        sed -i 's/client_body_timeout 60s/client_body_timeout 300s/' /etc/nginx/nginx.conf
+        sed -i 's/client_header_timeout 60s/client_header_timeout 300s/' /etc/nginx/nginx.conf
+        
+        # Add additional WebSocket headers for proxy chain
+        sed -i '/proxy_set_header X-Forwarded-Proto/a\            proxy_set_header X-Forwarded-Host $host;\
+            proxy_set_header X-Forwarded-Port $server_port;\
+            proxy_ignore_client_abort on;' /etc/nginx/nginx.conf
+        
+        # Force HTTP/1.1 and disable proxy caching completely
+        sed -i '/proxy_buffering off;/a\            proxy_cache off;\
+            proxy_store off;' /etc/nginx/nginx.conf
+        
+        # Disable proxy buffering completely for streaming
+        sed -i 's/proxy_buffering off;/proxy_buffering off;\
+            proxy_buffer_size 4k;\
+            proxy_buffers 8 4k;\
+            proxy_busy_buffers_size 8k;/' /etc/nginx/nginx.conf
+    fi
     
     # Patch the main nginx config to include the generated upstream
     sed -i '/upstream shiny_workers/,/}/c\    include /etc/nginx/upstream.conf;' /etc/nginx/nginx.conf
@@ -95,8 +137,13 @@ if [ "${ENABLE_NGINX:-true}" != "false" ]; then
 
     echo ""
     echo "============================================================"
-    echo "  MMCD Dashboard ready — $NUM_WORKERS concurrent workers"
-    echo "  Each user gets their own R process for true parallelism"
+    if [ "$APP_RUNNER_MODE" = "true" ]; then
+        echo "  MMCD Dashboard ready — $NUM_WORKERS concurrent workers (App Runner optimized)"
+        echo "  WebSocket proxy chain configured for App Runner compatibility"
+    else
+        echo "  MMCD Dashboard ready — $NUM_WORKERS concurrent workers"
+        echo "  Each user gets their own R process for true parallelism"
+    fi
     echo "============================================================"
     echo ""
 

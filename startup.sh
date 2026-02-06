@@ -48,10 +48,10 @@ trap cleanup SIGTERM SIGINT
 # MODE: Production (multiple Shiny instances behind nginx)
 # =============================================================================
 if [ "${ENABLE_NGINX:-true}" != "false" ]; then
-    # Detect App Runner - optimize nginx for proxy chain instead of disabling
+    # Detect App Runner - use special WebSocket-compatible nginx config
     if [ -n "${PORT}" ] || [ -n "${AWS_REGION}" ] || [ -n "${_HANDLER}" ]; then
-        echo "🔧 App Runner detected - configuring nginx for proxy chain compatibility"
-        echo "Optimizing WebSocket and timeout settings..."
+        echo " App Runner detected - using WebSocket-compatible nginx configuration"
+        echo "Configuring nginx to work with App Runner's load balancer..."
         APP_RUNNER_MODE=true
     else
         APP_RUNNER_MODE=false
@@ -66,52 +66,74 @@ if [ "${ENABLE_NGINX:-true}" != "false" ]; then
     {
         echo "    upstream shiny_workers {"
         echo "        least_conn;"
-        echo "        keepalive 32;"  # Connection pooling
+        echo "        keepalive 32;"
         for i in $(seq 1 "$NUM_WORKERS"); do
             echo "        server 127.0.0.1:$((BASE_PORT + i - 1)) max_fails=3 fail_timeout=30s;"
         done
         echo "    }"
     } > /etc/nginx/upstream.conf
 
-    # Update nginx to listen on the correct port (App Runner sets PORT env var)
-    sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/nginx/nginx.conf
-    
-    # App Runner specific optimizations
+    # App Runner WebSocket fix - replace the problematic static nginx.conf
     if [ "$APP_RUNNER_MODE" = "true" ]; then
-        echo "Applying App Runner nginx optimizations..."
-        
-        # Add real IP detection for App Runner's load balancer
-        sed -i '/server_name _;/a\        # App Runner real IP detection\
-        real_ip_header X-Forwarded-For;\
-        set_real_ip_from 10.0.0.0/8;\
-        set_real_ip_from 172.16.0.0/12;\
-        set_real_ip_from 192.168.0.0/16;\
-        real_ip_recursive on;' /etc/nginx/nginx.conf
-        
-        # Increase timeouts for proxy chain
-        sed -i 's/proxy_read_timeout 86400s/proxy_read_timeout 7200s/' /etc/nginx/nginx.conf
-        sed -i 's/proxy_connect_timeout 60s/proxy_connect_timeout 300s/' /etc/nginx/nginx.conf
-        sed -i 's/client_body_timeout 60s/client_body_timeout 300s/' /etc/nginx/nginx.conf
-        sed -i 's/client_header_timeout 60s/client_header_timeout 300s/' /etc/nginx/nginx.conf
-        
-        # Add additional WebSocket headers for proxy chain
-        sed -i '/proxy_set_header X-Forwarded-Proto/a\            proxy_set_header X-Forwarded-Host $host;\
-            proxy_set_header X-Forwarded-Port $server_port;\
-            proxy_ignore_client_abort on;' /etc/nginx/nginx.conf
-        
-        # Force HTTP/1.1 and disable proxy caching completely
-        sed -i '/proxy_buffering off;/a\            proxy_cache off;\
-            proxy_store off;' /etc/nginx/nginx.conf
-        
-        # Disable proxy buffering completely for streaming
-        sed -i 's/proxy_buffering off;/proxy_buffering off;\
-            proxy_buffer_size 4k;\
-            proxy_buffers 8 4k;\
-            proxy_busy_buffers_size 8k;/' /etc/nginx/nginx.conf
-    fi
+        echo "Creating App Runner-optimized nginx configuration..."
+        cat > /etc/nginx/nginx.conf << EOF
+worker_processes 1;
+pid /run/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 512;
+    use epoll;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log off;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 75;
     
-    # Patch the main nginx config to include the generated upstream
-    sed -i '/upstream shiny_workers/,/}/c\    include /etc/nginx/upstream.conf;' /etc/nginx/nginx.conf
+    map \$http_upgrade \$connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+    
+    upstream shiny_workers {
+        least_conn;
+        keepalive 16;
+        server 127.0.0.1:3839 max_fails=1 fail_timeout=10s;
+        server 127.0.0.1:3840 max_fails=1 fail_timeout=10s;
+        server 127.0.0.1:3841 max_fails=1 fail_timeout=10s;
+    }
+    
+    server {
+        listen ${LISTEN_PORT};
+        server_name _;
+        client_max_body_size 50m;
+        
+        location / {
+            proxy_pass http://shiny_workers;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection \$connection_upgrade;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_buffering off;
+            proxy_connect_timeout 60s;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 60s;
+        }
+    }
+}
+EOF
+    else
+        # Use existing nginx.conf for local development
+        sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/nginx/nginx.conf
+        sed -i '/upstream shiny_workers/,/}/c\    include /etc/nginx/upstream.conf;' /etc/nginx/nginx.conf
+    fi
 
     for i in $(seq 1 "$NUM_WORKERS"); do
         PORT=$((BASE_PORT + i - 1))
@@ -155,18 +177,33 @@ if [ "${ENABLE_NGINX:-true}" != "false" ]; then
 fi
 
 # =============================================================================
-# MODE: Direct (single Shiny Server, for debugging only)  
+# MODE: Direct (single Shiny Server - App Runner compatible)  
 # =============================================================================
-echo "WARNING: Running in single-threaded mode!"
-echo "Users will queue behind each other. Use ENABLE_NGINX=true for concurrency."
+if [ -n "${PORT}" ] || [ -n "${AWS_REGION}" ] || [ -n "${_HANDLER}" ]; then
+    # App Runner mode - single optimized Shiny Server
+    echo " App Runner mode: Single optimized Shiny Server per container"
+    echo "App Runner will scale containers for concurrency"
     LISTEN_PORT=${PORT:-3838}
-
+    
+    echo ""
+    echo "============================================================"
+    echo "  MMCD Dashboard — App Runner mode (WebSocket optimized)"
+    echo "  Single Shiny Server per container on port $LISTEN_PORT"  
+    echo "  App Runner handles load balancing between containers"
+    echo "============================================================"
+else
+    # Local debugging mode
+    echo " WARNING: Running in single-threaded mode for debugging!"
+    echo "Users will queue behind each other. Use ENABLE_NGINX=true for concurrency."
+    LISTEN_PORT=${PORT:-3838}
+    
     echo ""
     echo "============================================================"
     echo "  MMCD Dashboard — Single-threaded mode (debugging only)"
     echo "  Listening on port $LISTEN_PORT"  
     echo "  WARNING: Users will queue behind each other!"
     echo "============================================================"
+fi
     echo ""
 
     # If App Runner provides a PORT env var, patch the config

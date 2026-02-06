@@ -2,10 +2,183 @@
 # Helper functions for creating UI components 
 
 library(shiny)
-library(shinydashboard)
 library(shinyWidgets)
 library(DT)
 library(plotly)
+library(leaflet)
+
+#' Create the main UI for the cattail treatments app
+#' @return Shiny UI object
+cattail_treatments_ui <- function() {
+  fluidPage(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
+    
+    # Application title
+    titlePanel("MMCD Cattail Treatments"),
+    
+    # Sidebar with controls
+    sidebarLayout(
+      sidebarPanel(
+        # Refresh button at the top
+        actionButton("refresh_data", "Refresh Data", 
+          icon = icon("refresh"),
+          class = "btn-primary btn-lg",
+          style = "width: 100%; margin-bottom: 20px;"),
+        
+        # Important note about material codes
+        div(style = "background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 10px; margin-bottom: 15px;",
+          icon("info-circle", style = "color: #856404; margin-right: 5px;"),
+          tags$strong("Note:", style = "color: #856404;"),
+          tags$span(style = "color: #856404; font-size: 12px;",
+            "This dashboard only shows treatments entered with cattail-specific material codes (e.g., G3). If a site was treated for cattails but entered with a general larvicide code (e.g., G2, matcode 16), the treatment will not appear here and the site may incorrectly show as 'Need Treatment'."
+          )
+        ),
+        
+        # Progress tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'progress'",
+          dateInput("analysis_date", "Pretend today is:",
+                    value = Sys.Date(),
+                    max = Sys.Date(),
+                    format = "yyyy-mm-dd"),
+          
+          selectInput("progress_chart_type", "Progress Chart Type:",
+                      choices = c("Line Chart" = "line",
+                                  "Grouped Bar Chart" = "bar",
+                                  "Stacked Bar Chart" = "stacked"),
+                      selected = "stacked")
+        ),
+        
+        # Historical tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'historical'",
+          sliderInput("year_range", "Year Range:",
+                      min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
+                      value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
+                      step = 1, sep = ""),
+          
+          selectInput("hist_status_metric", "Status Metric:",
+                      choices = c("Need Treatment (up to December 1)" = "need_treatment",
+                                  "Treated (up to Aug 1)" = "treated",
+                                  "% Treated of Need Treatment (up to Aug 1)" = "pct_treated"),
+                      selected = "need_treatment"),
+          
+          selectInput("hist_chart_type", "Chart Type:",
+                      choices = c("Stacked Bar" = "stacked_bar",
+                                  "Grouped Bar" = "grouped_bar",
+                                  "Line Chart" = "line",
+                                  "Area Chart" = "area"),
+                      selected = "stacked_bar"),
+          
+          actionButton("refresh_historical", "Refresh Historical",
+                      icon = icon("refresh"),
+                      class = "btn-success",
+                      style = "width: 100%; margin-top: 10px;")
+        ),
+        
+        # Map tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'map'",
+          radioButtons("basemap", "Base Map:",
+                      choices = c("Street" = "carto", "Satellite" = "satellite",
+                                  "OpenStreetMap" = "osm"),
+                      selected = "carto")
+        ),
+        
+        # Shared controls
+        hr(),
+        
+        radioButtons("group_by", "Group By:",
+                     choices = c("All MMCD" = "mmcd_all",
+                                 "FOS" = "foreman",
+                                 "Facility" = "facility"),
+                     selected = "facility"),
+        
+        radioButtons("zone_display", "Zone Display:",
+                     choices = c("P1" = "p1",
+                                 "P2" = "p2",
+                                 "P1 and P2 Separate" = "separate",
+                                 "P1 and P2 Combined" = "combined"),
+                     selected = "separate"),
+        
+        selectInput("facility_filter", "Facility:",
+                    choices = NULL),
+        
+        radioButtons("display_metric_type", "Display Metric:",
+                     choices = c("Number of Sites" = "sites",
+                                 "Acres" = "acres"),
+                     selected = "sites"),
+        
+        selectInput("color_theme", "Color Theme:",
+                    choices = c("MMCD (Default)" = "MMCD",
+                                "IBM Design" = "IBM",
+                                "Color-Blind Friendly" = "Wong",
+                                "Scientific" = "Tol",
+                                "Viridis" = "Viridis",
+                                "ColorBrewer" = "ColorBrewer"),
+                    selected = "MMCD"),
+        
+        tags$small(style = "color: #999;", "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug).")
+      ),
+      
+      # Main panel with tabs
+      mainPanel(
+        tabsetPanel(id = "tabs",
+          tabPanel("Progress", value = "progress",
+                   fluidRow(
+                     column(2, uiOutput("sites_inspected_box")),
+                     column(2, uiOutput("under_threshold_box")),
+                     column(2, uiOutput("active_treatments_box")),
+                     column(2, uiOutput("treated_sites_box")),
+                     column(4, uiOutput("treatment_coverage_box"))
+                   ),
+                   br(),
+                   fluidRow(
+                     column(12, 
+                       h4("Cattail Treatment Progress"),
+                       plotlyOutput("progress_chart", height = "500px")
+                     )
+                   ),
+                   br(),
+                   fluidRow(
+                     column(12,
+                       h4("Site Status Details"),
+                       DTOutput("status_table")
+                     )
+                   ),
+                   br(),
+          ),
+          tabPanel("Historical", value = "historical",
+                   br(),
+                   fluidRow(
+                     column(12,
+                       h4("Historical Cattail Treatment Data"),
+                       plotlyOutput("historical_chart", height = "550px")
+                     )
+                   )
+          ),
+          tabPanel("Map", value = "map",
+                   br(),
+                   fluidRow(
+                     column(12,
+                       h4("Cattail Treatment Sites"),
+                       leafletOutput("treatment_map", height = "600px")
+                     )
+                   ),
+                   br(),
+                   fluidRow(
+                     column(12,
+                       h4("Site Details"),
+                       DTOutput("map_details_table")
+                     )
+                   )
+          )
+        )
+      )
+    )
+  )
+}
 
 # Function to create analysis date selector 
 create_analysis_date_selector <- function() {
@@ -175,28 +348,28 @@ create_time_period_selector <- function() {
 create_cattail_value_boxes <- function(aggregated_data, treatments_data = NULL, plans_data = NULL) {
   if (nrow(aggregated_data) == 0) {
     return(list(
-      total_sites = 0, total_acres = 0, total_treatments = 0,
+      total_count = 0, total_acres = 0, total_treatments = 0,
       active_treatments = 0, treatment_coverage = 0, 
       acres_treated = 0
     ))
   }
   
   # Calculate totals
-  total_sites <- sum(aggregated_data$total_sites, na.rm = TRUE)
+  total_count <- sum(aggregated_data$total_count, na.rm = TRUE)
   total_acres <- sum(aggregated_data$total_acres, na.rm = TRUE)
   total_treatments <- sum(aggregated_data$treatments_applied, na.rm = TRUE)
   active_treatments <- sum(aggregated_data$active_treatments, na.rm = TRUE)
   acres_treated <- sum(aggregated_data$acres_treated, na.rm = TRUE)
   
   # Calculate coverage percentage
-  treatment_coverage <- if (total_sites > 0) {
-    round((total_treatments / total_sites) * 100, 1)
+  treatment_coverage <- if (total_count > 0) {
+    round((total_treatments / total_count) * 100, 1)
   } else {
     0
   }
   
   return(list(
-    total_sites = total_sites,
+    total_count = total_count,
     total_acres = total_acres,
     total_treatments = total_treatments,
     active_treatments = active_treatments,

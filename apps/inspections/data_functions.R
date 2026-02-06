@@ -1,60 +1,71 @@
 # Inspections App - Data Functions
+# =============================================================================
+# Core data loading and analysis functions for inspection coverage tracking.
+# Uses load_raw_data() as the primary data loading function.
+# =============================================================================
 
 library(dplyr)
 library(DBI)
 library(RPostgres)
 library(lubridate)
 
-# Get site choices from gis_sectcode
-get_site_choices <- function() {
-  con <- get_db_connection()
-  if (is.null(con)) return(list(facility = NULL, fosarea = NULL, zone = NULL))
-  df <- dbGetQuery(con, "SELECT DISTINCT facility, fosarea, zone FROM gis_sectcode ORDER BY facility, fosarea, zone")
-  dbDisconnect(con)
-  list(
-    facility = sort(unique(df$facility)),
-    fosarea = sort(unique(df$fosarea)),
-    zone = sort(unique(df$zone))
-  )
+# Source shared helpers when loaded outside the app (overview registry)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
 }
 
-# Check if an inspection date is a "spring inspection"
-is_spring_inspection <- function(inspdate, spring_thresholds) {
-  if (is.na(inspdate) || nrow(spring_thresholds) == 0) return(FALSE)
-  
-  insp_year <- year(inspdate)
-  
-  # Find the spring threshold for this year
-  year_threshold <- spring_thresholds[spring_thresholds$year == insp_year, ]
-  
-  if (nrow(year_threshold) == 0) return(FALSE)
-  
-  # Spring inspection: after Jan 1st and before the threshold date
-  spring_cutoff <- year_threshold$date_start[1]
-  year_start <- as.Date(paste0(insp_year, "-01-01"))
-  
-  return(inspdate >= year_start && inspdate < spring_cutoff)
-}
+# =============================================================================
+# LOAD_RAW_DATA - PRIMARY DATA FUNCTION
+# =============================================================================
+# This is the main data loading function used by both the app and overview.
+# Returns detailed inspection data with sites and their inspection records.
 
-# Get all inspection data with filters
-get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NULL, zone_filter = NULL, priority_filter = NULL, drone_filter = "all", spring_only = FALSE, prehatch_only = FALSE) {
+#' Load raw inspection data with all filters
+#' 
+#' @param analysis_date Date for analysis (default Sys.Date())
+#' @param facility_filter Vector of facilities to include (NULL = all)
+#' @param fosarea_filter Vector of FOS areas to include (NULL = all)
+#' @param zone_filter Vector of zones to include (NULL = all)
+#' @param priority_filter Vector of priorities to include (NULL = all)
+#' @param drone_filter "all", "drone_only", "no_drone", or "include_drone"
+#' @param spring_only Boolean - filter to spring inspections only
+#' @param prehatch_only Boolean - filter to prehatch sites only
+#' @param ... Additional parameters for compatibility (expiring_days, etc.)
+#' @return Data frame with site info and inspection records
+#' @export
+load_raw_data <- function(analysis_date = NULL,
+                          facility_filter = NULL,
+                          fosarea_filter = NULL,
+                          zone_filter = NULL,
+                          priority_filter = NULL,
+                          drone_filter = "all",
+                          spring_only = FALSE,
+                          prehatch_only = FALSE,
+                          expiring_days = NULL,
+                          status_types = NULL,
+                          start_year = NULL,
+                          end_year = NULL,
+                          ...) {
+  
+  # Default analysis date
+  analysis_date <- if (is.null(analysis_date)) Sys.Date() else as.Date(analysis_date)
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Build filter conditions
+    # Build filter conditions using shared SQL helpers
     site_filters <- c()
     
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facilities_str <- paste0("'", facility_filter, "'", collapse = ",")
+    if (is_valid_filter(facility_filter)) {
+      facilities_str <- build_sql_in_list(facility_filter)
       site_filters <- c(site_filters, paste0("sc.facility IN (", facilities_str, ")"))
     }
     
-    if (!is.null(fosarea_filter) && length(fosarea_filter) > 0 && !"all" %in% fosarea_filter) {
-      # Map foreman shortnames to their emp_num (which corresponds to fosarea codes in gis_sectcode)
+    if (is_valid_filter(fosarea_filter)) {
+      # Map foreman shortnames to their emp_num (fosarea codes in gis_sectcode)
       foreman_lookup <- get_foremen_lookup()
       if (nrow(foreman_lookup) > 0) {
-        # Convert shortnames to emp_num values (fosarea codes)
         fosarea_codes <- character(0)
         for (fosarea in fosarea_filter) {
           matching_foreman <- foreman_lookup[foreman_lookup$shortname == fosarea, ]
@@ -63,21 +74,20 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
           }
         }
         if (length(fosarea_codes) > 0) {
-          # Format fosarea codes as 4-digit strings to match gis_sectcode format
           fosarea_codes_formatted <- sprintf("%04d", as.numeric(fosarea_codes))
-          fosareas_str <- paste0("'", fosarea_codes_formatted, "'", collapse = ",")
+          fosareas_str <- build_sql_in_list(fosarea_codes_formatted)
           site_filters <- c(site_filters, paste0("sc.fosarea IN (", fosareas_str, ")"))
         }
       }
     }
 
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
-      zones_str <- paste0("'", zone_filter, "'", collapse = ",")
+      zones_str <- build_sql_in_list(zone_filter)
       site_filters <- c(site_filters, paste0("sc.zone IN (", zones_str, ")"))
     }
     
-    if (!is.null(priority_filter) && length(priority_filter) > 0 && !"all" %in% priority_filter) {
-      priorities_str <- paste0("'", priority_filter, "'", collapse = ",")
+    if (is_valid_filter(priority_filter)) {
+      priorities_str <- build_sql_in_list(priority_filter)
       site_filters <- c(site_filters, paste0("b.priority IN (", priorities_str, ")"))
     }
     
@@ -88,6 +98,7 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
       } else if (drone_filter == "no_drone") {
         site_filters <- c(site_filters, "(b.drone IS NULL OR b.drone != 'Y')")
       }
+      # "include_drone" means no additional filter - include all
     }
     
     # Combine filters
@@ -97,7 +108,7 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
       ""
     }
     
-    # SINGLE COMPREHENSIVE QUERY - gets ALL data we need
+    # COMPREHENSIVE QUERY - gets ALL data we need
     qry <- sprintf("
     WITH filtered_sites AS (
       SELECT 
@@ -112,7 +123,7 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
         b.prehatch
       FROM loc_breeding_sites b
       INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-      WHERE b.enddate IS NULL
+      WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
       %s
     ),
     site_years AS (
@@ -151,10 +162,10 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
       FROM dblarv_insptrt_archive
     ) i ON fs.sitecode = i.sitecode
     ORDER BY fs.sitecode, i.inspdate DESC
-    ", where_clause)
+    ", analysis_date, where_clause)
     
     result <- dbGetQuery(con, qry)
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Convert dates
     if (nrow(result) > 0 && "inspdate" %in% names(result)) {
@@ -207,13 +218,50 @@ get_all_inspection_data <- function(facility_filter = NULL, fosarea_filter = NUL
     return(result)
     
   }, error = function(e) {
-    warning(paste("Error in get_all_inspection_data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
+    warning(paste("Error in load_raw_data:", e$message))
+    if (!is.null(con)) safe_disconnect(con)
     return(data.frame())
   })
 }
 
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
+# Get site choices from gis_sectcode
+get_site_choices <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(list(facility = NULL, fosarea = NULL, zone = NULL))
+  df <- dbGetQuery(con, "SELECT DISTINCT facility, fosarea, zone FROM gis_sectcode ORDER BY facility, fosarea, zone")
+  safe_disconnect(con)
+  list(
+    facility = sort(unique(df$facility)),
+    fosarea = sort(unique(df$fosarea)),
+    zone = sort(unique(df$zone))
+  )
+}
+
+# Check if an inspection date is a "spring inspection"
+is_spring_inspection <- function(inspdate, spring_thresholds) {
+  if (is.na(inspdate) || nrow(spring_thresholds) == 0) return(FALSE)
+  
+  insp_year <- year(inspdate)
+  
+  # Find the spring threshold for this year
+  year_threshold <- spring_thresholds[spring_thresholds$year == insp_year, ]
+  
+  if (nrow(year_threshold) == 0) return(FALSE)
+  
+  # Spring inspection: after Jan 1st and before the threshold date
+  spring_cutoff <- year_threshold$date_start[1]
+  year_start <- as.Date(paste0(insp_year, "-01-01"))
+  
+  return(inspdate >= year_start && inspdate < spring_cutoff)
+}
+
+# =============================================================================
+# ANALYSIS FUNCTIONS - Work with data from load_raw_data()
+# =============================================================================
 
 # Get total number of active sites from comprehensive data
 get_total_sites_count_from_data <- function(comprehensive_data, air_gnd_filter = "both") {
@@ -439,5 +487,5 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
   return(gap_sites)
 }
 
-
+message("✓ inspections/data_functions.R loaded")
 

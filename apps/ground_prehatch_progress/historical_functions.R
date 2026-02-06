@@ -15,57 +15,65 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
                                   hist_group_by, hist_zone_display, 
                                   facility_filter = NULL, zone_filter = NULL, foreman_filter = NULL) {
   
-  # Normalize metric names (UI sends "weekly_active_sites", we use "active_sites" internally)
+  # Add NULL/default checks for all parameters
+  if (is.null(hist_time_period)) hist_time_period <- "yearly"
+  if (is.null(hist_display_metric)) hist_display_metric <- "treatments"
+  if (is.null(hist_group_by)) hist_group_by <- "mmcd_all"
+  if (is.null(hist_zone_display)) hist_zone_display <- "combined"
+  if (is.null(zone_filter)) zone_filter <- c("1", "2")
+  if (is.null(start_year)) start_year <- as.numeric(format(Sys.Date(), "%Y"))
+  if (is.null(end_year)) end_year <- as.numeric(format(Sys.Date(), "%Y"))
+  
+  # Normalize metric names (UI sends "weekly_active_count", we use "active_count" internally)
   hist_display_metric <- gsub("weekly_", "", hist_display_metric)
   
   # Set date range
   start_date <- as.Date(paste0(start_year, "-01-01"))
   end_date <- as.Date(paste0(end_year, "-12-31"))
   
-  # Load raw data with archive
+  # Load raw data with archive - use END date as analysis_date so all treatments in range are included
   raw_data <- load_raw_data(
-    analysis_date = start_date, 
+    analysis_date = end_date, 
     include_archive = TRUE, 
     start_year = start_year, 
     end_year = end_year
   )
   
-  if (is.null(raw_data) || is.null(raw_data$ground_treatments) || nrow(raw_data$ground_treatments) == 0) {
+  # Robust check for empty data - handle NULL, empty df, or missing keys
+  if (is.null(raw_data) || 
+      is.null(raw_data$treatments) || 
+      !is.data.frame(raw_data$treatments) ||
+      nrow(raw_data$treatments) == 0 ||
+      is.null(raw_data$sites) ||
+      !is.data.frame(raw_data$sites)) {
     return(data.frame())
   }
   
-  ground_sites <- raw_data$ground_sites
-  ground_treatments <- raw_data$ground_treatments %>%
+  ground_sites <- raw_data$sites
+  ground_treatments <- raw_data$treatments %>%
     filter(inspdate >= start_date & inspdate <= end_date) %>%
     # Treatments already have facility, zone, fosarea from gis_sectcode join in the query
     rename(acres = treated_acres) %>%  # Rename for consistency
     filter(!is.na(facility))  # Remove any treatments without facility info
   
-  # Apply filters to both sites and treatments
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-    ground_sites <- ground_sites %>% filter(facility %in% facility_filter)
-    ground_treatments <- ground_treatments %>% filter(facility %in% facility_filter)
-  }
-  
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    ground_sites <- ground_sites %>% filter(zone %in% zone_filter)
-    ground_treatments <- ground_treatments %>% filter(zone %in% zone_filter)
-  }
-  
-  if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-    # Convert foreman names to emp_nums
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    ground_sites <- ground_sites %>% filter(fosarea %in% selected_emp_nums)
-    ground_treatments <- ground_treatments %>% filter(fosarea %in% selected_emp_nums)
-  }
+  # Apply filters using shared function from data_functions.R
+  filtered_data <- apply_data_filters(
+    list(sites = ground_sites, treatments = ground_treatments, total_count = nrow(ground_sites)),
+    facility_filter = facility_filter,
+    foreman_filter = foreman_filter,
+    zone_filter = zone_filter
+  )
+  ground_sites <- filtered_data$sites
+  ground_treatments <- filtered_data$treatments
   
   # Determine if zones should be shown separately
-  show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
+  show_zones_separately <- !is.null(hist_zone_display) && 
+                           hist_zone_display == "show-both" && 
+                           !is.null(zone_filter) && 
+                           length(zone_filter) > 1
   
   # Special logic for weekly active treatments (active sites and active acres)
-  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_sites", "active_acres")) {
+  if (hist_time_period == "weekly" && hist_display_metric %in% c("active_count", "active_acres")) {
     # Generate all weeks in the range
     all_weeks <- seq.Date(start_date, end_date, by = "week")
     week_data <- data.frame()
@@ -152,108 +160,26 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
     return(data.frame())
   }
   
-  # Handle zone separation and grouping
-  if (show_zones_separately) {
-    # Create combined group labels with zones
-    if (hist_group_by == "facility" && "facility" %in% names(data_source)) {
-      # Map facility names first, then add zones
-      facilities <- get_facility_lookup()
-      facility_map <- setNames(facilities$full_name, facilities$short_name)
-      
-      data_source <- data_source %>%
-        mutate(
-          facility_display = ifelse(
-            facility %in% names(facility_map),
-            facility_map[facility],
-            facility
-          ),
-          group_label = paste0(facility_display, " (P", zone, ")")
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "foreman" && "fosarea" %in% names(data_source)) {
-      # Map foreman numbers to names first, then add zone
-      foremen_lookup <- get_foremen_lookup()
-      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-      
-      data_source <- data_source %>%
-        mutate(
-          foreman_name = ifelse(
-            fosarea %in% names(foreman_map),
-            foreman_map[as.character(fosarea)],
-            paste("FOS", fosarea)
-          ),
-          group_label = paste0(foreman_name, " (P", zone, ")")
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "mmcd_all") {
-      data_source <- data_source %>%
-        mutate(group_label = paste0("All MMCD (P", zone, ")"))
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else {
-      return(data.frame())
-    }
-  } else {
-    # Standard grouping without zone separation
-    if (hist_group_by == "facility" && "facility" %in% names(data_source)) {
-      # Map facility names for display
-      facilities <- get_facility_lookup()
-      facility_map <- setNames(facilities$full_name, facilities$short_name)
-      
-      data_source <- data_source %>%
-        mutate(
-          group_label = ifelse(
-            facility %in% names(facility_map),
-            facility_map[facility],
-            facility
-          )
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "foreman" && "fosarea" %in% names(data_source)) {
-      # Map foreman numbers to names for display
-      foremen_lookup <- get_foremen_lookup()
-      foreman_map <- setNames(foremen_lookup$shortname, foremen_lookup$emp_num)
-      
-      data_source <- data_source %>%
-        mutate(
-          group_label = ifelse(
-            fosarea %in% names(foreman_map),
-            foreman_map[as.character(fosarea)],
-            paste("FOS", fosarea)
-          )
-        )
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else if (hist_group_by == "mmcd_all") {
-      data_source$group_label <- "All MMCD"
-      grouped_data <- data_source %>%
-        group_by(group_label, time_period)
-    } else {
-      return(data.frame())
-    }
+  # Apply group labels using shared function (uses fosarea for foreman column)
+  data_source <- apply_historical_group_labels(
+    data_source, 
+    group_by = hist_group_by, 
+    show_zones_separately = show_zones_separately,
+    foreman_col = "fosarea"
+  )
+  
+  if (!"group_label" %in% names(data_source)) {
+    return(data.frame())
   }
   
-  # Summarize based on metric
-  if (hist_display_metric == "treatments") {
-    summary_data <- grouped_data %>%
-      summarize(value = n(), .groups = "drop")
-  } else if (hist_display_metric == "sites" || hist_display_metric == "active_sites") {
-    summary_data <- grouped_data %>%
-      summarize(value = n_distinct(sitecode), .groups = "drop")
-  } else if (hist_display_metric == "treatment_acres") {
-    # For treatment acres, sum site acres for ALL treatments (not unique)
-    # Each treatment counts the full site acres
-    summary_data <- grouped_data %>%
-      summarize(value = sum(acres, na.rm = TRUE), .groups = "drop")
-  } else if (hist_display_metric == "acres" || hist_display_metric == "site_acres" || hist_display_metric == "active_acres") {
+  # Summarize based on metric (ground uses unique site acres for site_acres metric)
+  if (hist_display_metric %in% c("acres", "site_acres", "active_acres")) {
     # For site acres calculations, sum unique site acres only once
-    summary_data <- grouped_data %>%
+    summary_data <- data_source %>%
+      group_by(group_label, time_period) %>%
       summarize(value = sum(acres[!duplicated(sitecode)], na.rm = TRUE), .groups = "drop")
   } else {
-    summary_data <- data.frame()
+    summary_data <- summarize_historical_data(data_source, hist_display_metric)
   }
   
   return(summary_data)
@@ -292,105 +218,38 @@ create_historical_chart <- function(data, chart_type = "stacked_bar",
                                   display_metric = "treatments",
                                   time_period = "yearly",
                                   group_by = "facility",
-                                  theme = "MMCD") {
+                                  theme = "MMCD",
+                                  show_zones_separately = FALSE) {
   
   if (nrow(data) == 0) {
-    return(plotly_empty() %>% 
-           layout(title = "No data available for the selected filters"))
+    return(plotly_empty() %>% layout(title = "No data available"))
   }
   
-  # Create metric label
+  # Build labels
   metric_label <- switch(display_metric,
     "treatments" = "Number of Treatments",
     "sites" = "Number of Sites Treated",
     "acres" = "Site Acres (Unique Sites)",
     "site_acres" = "Site Acres (Unique Sites)",
     "treatment_acres" = "Treatment Acres (Total)",
-    "weekly_active_sites" = "Number of Active Sites",
+    "weekly_active_count" = "Number of Active Sites",
     "weekly_active_acres" = "Active Site Acres",
     "treatments"
   )
-  
   time_label <- if (time_period == "weekly") "Week" else "Year"
+  chart_title <- paste("Historical", metric_label)
   
-  # Get colors based on grouping
-  colors <- character()
-  
-  if (group_by == "facility") {
-    # Facility colors are keyed by short_name
-    facility_colors <- get_facility_base_colors(theme = theme)
-    
-    # Extract facility short name from group_label (e.g., "East" or "East (P1)")
-    for (label in unique(data$group_label)) {
-      # Remove zone suffix if present
-      base_name <- gsub(" \\(P[12]\\)$", "", label)
-      
-      # Try to find matching facility short_name
-      facilities <- get_facility_lookup()
-      matching_facility <- facilities[facilities$full_name == base_name, ]
-      
-      if (nrow(matching_facility) > 0) {
-        short_name <- matching_facility$short_name[1]
-        if (short_name %in% names(facility_colors)) {
-          colors[label] <- facility_colors[short_name]
-        } else {
-          colors[label] <- "#999999"  # Fallback
-        }
-      } else {
-        colors[label] <- "#999999"  # Fallback
-      }
-    }
+  # Get colors
+  colors <- if (group_by == "facility") {
+    map_facility_display_names_to_colors(unique(data$group_label), theme, handle_zones = show_zones_separately)
   } else if (group_by == "foreman") {
-    # Foreman colors are keyed by shortname
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Extract foreman shortname from group_label (e.g., "Smith J" or "Smith J (P1)")
-    for (label in unique(data$group_label)) {
-      # Remove zone suffix if present
-      base_name <- gsub(" \\(P[12]\\)$", "", label)
-      
-      # The group_label should already be the shortname from our earlier mapping
-      if (base_name %in% names(foreman_colors)) {
-        colors[label] <- foreman_colors[base_name]
-      } else {
-        colors[label] <- "#3498db"  # Fallback blue
-      }
-    }
+    map_foreman_display_names_to_colors(unique(data$group_label), theme, handle_zones = show_zones_separately)
   } else {
-    # For "mmcd_all" or other groupings, use default color
-    colors <- setNames(rep("#3498db", length(unique(data$group_label))), unique(data$group_label))
+    setNames(rep(get_status_colors(theme = theme)["completed"], length(unique(data$group_label))), unique(data$group_label))
   }
   
-  # Create chart
-  if (chart_type == "line") {
-    p <- plot_ly(data, x = ~time_period, y = ~value, color = ~group_label,
-                type = 'scatter', mode = 'lines+markers', colors = colors) %>%
-      layout(
-        title = list(text = paste("Historical", metric_label), font = list(size = 20)),
-        xaxis = list(title = list(text = time_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        yaxis = list(title = list(text = metric_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        legend = list(font = list(size = 16)),
-        font = list(size = 16)
-      )
-  } else {
-    p <- plot_ly(data, x = ~time_period, y = ~value, color = ~group_label,
-                type = 'bar', colors = colors) %>%
-      layout(
-        title = list(text = paste("Historical", metric_label), font = list(size = 20)),
-        xaxis = list(title = list(text = time_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        yaxis = list(title = list(text = metric_label, font = list(size = 18)), 
-                    tickfont = list(size = 16)),
-        legend = list(font = list(size = 16)),
-        font = list(size = 16),
-        barmode = if(chart_type == "grouped_bar") 'group' else 'stack'
-      )
-  }
-  
-  return(p)
+  # Use shared chart function
+  create_trend_chart(data, chart_type, chart_title, time_label, metric_label, colors)
 }
 
 # Create historical details table

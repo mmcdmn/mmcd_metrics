@@ -1,6 +1,181 @@
 # UI helper functions for Catch Basin Status app
 # These functions create reusable UI components and improve code organization
 
+#' Create the main UI for the catch basin status app
+#' @return Shiny UI object
+catch_basin_ui <- function() {
+  fluidPage(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
+    
+    # Application title
+    titlePanel("Catch Basin Status"),
+    
+    # Sidebar with controls
+    sidebarLayout(
+      sidebarPanel(
+        # Refresh button at the top
+        actionButton("refresh", "Refresh Data", 
+          icon = icon("refresh"), 
+          class = "btn-success", 
+          style = "width: 100%;"),
+        hr(),
+        
+        # Current Progress tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'overview' || input.tabs == 'details'",
+          dateInput("custom_today", "Pretend Today is:",
+                   value = Sys.Date(), 
+                   max = Sys.Date(),
+                   format = "yyyy-mm-dd"),
+          
+          sliderInput("expiring_days", "Days Until Expiring:",
+                     min = 1, max = 60, value = 14, step = 1),
+          
+          radioButtons("expiring_filter", "Site Filter:",
+                      choices = c("All Sites" = "all",
+                                 "Expiring Only" = "expiring", 
+                                 "Expiring + Expired" = "expiring_expired"),
+                      selected = "all")
+        ),
+        
+        # Historical Analysis tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'historical'",
+          radioButtons("hist_time_period", "Time Period:",
+                      choices = c("Yearly" = "yearly",
+                                  "Weekly" = "weekly"),
+                      selected = "yearly"),
+          
+          selectInput("hist_chart_type", "Chart Type:",
+                      choices = c("Stacked Bar" = "stacked_bar",
+                                  "Grouped Bar" = "grouped_bar", 
+                                  "Line Chart" = "line",
+                                  "Area Chart" = "area"),
+                      selected = "stacked_bar"),
+          
+          conditionalPanel(
+            condition = "input.hist_time_period == 'yearly'",
+            radioButtons("hist_display_metric", "Display Metric:",
+                        choices = c("Total Treatments" = "treatments",
+                                   "Unique CB Treated" = "sites"),
+                        selected = "treatments")
+          ),
+          conditionalPanel(
+            condition = "input.hist_time_period == 'weekly'",
+            radioButtons("hist_display_metric", "Display Metric:",
+                        choices = c("Active Treatments" = "weekly_active_treatments"),
+                        selected = "weekly_active_treatments")
+          ),
+          
+          sliderInput("hist_year_range", "Year Range:",
+                      min = 2010, max = 2025, 
+                      value = c(2018, 2025), step = 1),
+          
+          actionButton("hist_refresh", "Refresh Historical", 
+            icon = icon("refresh"), 
+            class = "btn-success", 
+            style = "width: 100%; margin-top: 10px;")
+        ),
+        
+        # Shared controls
+        selectInput("color_theme", "Color Theme:",
+                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    selected = "MMCD"),
+        
+        selectInput("zone_filter", "Zone Display:",
+                    choices = c("P1 Only" = "1",
+                                "P2 Only" = "2", 
+                                "P1 and P2 Separate" = "1,2",
+                                "Combined P1+P2" = "combined"),
+                    selected = "1,2"),
+        
+        selectInput("facility_filter", "Facility:",
+                      choices = NULL),
+        
+        selectizeInput("foreman_filter", "FOS Area:",
+                      choices = NULL, multiple = TRUE),
+        
+        # Group by controls
+        conditionalPanel(
+          condition = "input.tabs == 'overview' || input.tabs == 'details'",
+          selectInput("group_by", "Group By:",
+                      choices = c("Facility" = "facility",
+                                  "FOS" = "foreman",
+                                  "Section" = "sectcode",
+                                  "All MMCD" = "mmcd_all"),
+                      selected = "facility")
+        ),
+        
+        conditionalPanel(
+          condition = "input.tabs == 'historical'",
+          selectInput("group_by", "Group By:",
+                      choices = c("Facility" = "facility",
+                                  "FOS" = "foreman",
+                                  "All MMCD" = "mmcd_all"),
+                      selected = "facility")
+        ),
+        
+        # Help button at bottom
+        hr(),
+        tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
+               style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
+               HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
+        div(style = "display: none;",
+          create_help_text()
+        )
+      ),
+      
+      # Main panel with tabs
+      mainPanel(
+        tabsetPanel(
+          id = "tabs",
+          tabPanel("Status Overview", value = "overview", 
+                   br(),
+                   # Summary statistics
+                   h4("Summary Statistics"),
+                   fluidRow(
+                     column(3, uiOutput("total_wet_cb")),
+                     column(3, uiOutput("total_treated")),
+                     column(2, uiOutput("percent_treated")),
+                     column(2, uiOutput("total_expiring")),
+                     column(2, uiOutput("total_expired"))
+                   ),
+                   br(),
+                   h4("Catch Basin Status by Group"),
+                   uiOutput("chart_ui")
+          ),
+          tabPanel("Detailed View", value = "details",
+                   br(),
+                   h4("Catch Basin Details"),
+                   div(
+                     style = "margin-bottom: 15px;",
+                     downloadButton("download_details_data", "Download CSV", class = "btn-primary btn-sm"),
+                     tags$span(style = "margin-left: 15px; color: #666;", 
+                               "Download filtered data as CSV file")
+                   ),
+                   DT::dataTableOutput("details_table")
+          ),
+          tabPanel("Historical Analysis", value = "historical", 
+                   br(),
+                   plotlyOutput("historical_chart", height = "600px"),
+                   br(),
+                   fluidRow(
+                     column(10, h4("Historical Data")),
+                     column(2, downloadButton("download_historical_data", "Download CSV", 
+                                             class = "btn-success btn-sm", 
+                                             style = "margin-top: 20px; float: right;"))
+                   ),
+                   DT::dataTableOutput("historical_details_table")
+          )
+        )
+      )
+    )
+  )
+}
+
+# DEPRECATED FUNCTIONS - kept for compatibility
+
 # Create the main filter panel for dashboard layout
 create_filter_panel <- function() {
   box(
@@ -186,7 +361,7 @@ create_historical_filter_panel <- function() {
           condition = "input.hist_time_period == 'yearly'",
           radioButtons("hist_display_metric_yearly", "Display Metric:",
                      choices = c("Total Treatments" = "treatments",
-                                "Unique Wet CB Treated" = "wet_cb_count"),
+                                "Unique Wet CB Treated" = "total_count"),
                      selected = "treatments",
                      inline = TRUE)
         ),

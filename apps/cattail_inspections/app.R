@@ -16,6 +16,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/server_utilities.R")
 
 # Source the planned treatment functions
 source("planned_treatment_functions.R")
@@ -25,6 +26,19 @@ source("progress_functions.R")
 
 # Source the historical comparison functions
 source("historical_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("cattail_inspections")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[cattail_inspections] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[cattail_inspections] Lookup tables preloaded")
+}, error = function(e) message("[cattail_inspections] Preload warning: ", e$message))
 
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
@@ -39,17 +53,19 @@ ui <- fluidPage(
           selectInput(
             "goal_year",
             "Year:",
-            choices = 2010:2025,
+            choices = 2010:2026,
             selected = as.numeric(format(Sys.Date(), "%Y"))
           ),
           selectInput(
             "goal_column",
-            "Goal Type:",
+            "Zone Filter:",
             choices = c(
-              "P1 Goal (set in current year)" = "p1_totsitecount",
-              "P2 Goal (set in current year)" = "p2_totsitecount"
+              "P1 + P2 Combined (Total)" = "total",
+              "P1 Only (Zone 1)" = "p1",
+              "P2 Only (Zone 2)" = "p2",
+              "P1 and P2 Separate" = "separate"
             ),
-            selected = "p1_totsitecount"
+            selected = "total"
           ),
           dateInput(
             "custom_today",
@@ -174,7 +190,7 @@ ui <- fluidPage(
         ),
         mainPanel(
           h4("Historical Progress Comparison", style = "font-weight: bold; margin-top: 20px;"),
-          plotOutput("historicalProgressPlot", height = "500px"),
+          plotlyOutput("historicalProgressPlot", height = "500px"),
           hr(),
           h4("Site Inspection Details", style = "font-weight: bold; margin-top: 20px;"),
           div(style = "margin-bottom: 10px;",
@@ -266,7 +282,7 @@ server <- function(input, output) {
   
   output$progressPlot <- renderPlotly({
     data <- goal_progress_data()
-    create_progress_plot(data, theme = current_theme_progress())
+    create_progress_plot(data, zone_option = input$goal_column, theme = current_theme_progress())
   })
   
   # Get site details for progress data
@@ -284,16 +300,29 @@ server <- function(input, output) {
       return(data.frame(Message = "No site data available."))
     }
     
-    # Rename columns for display
-    display_data <- site_data %>%
-      select(
-        `Site Code` = sitecode,
-        Facility = facility,
-        `Inspection Date` = inspdate,
-        Wet = wet,
-        `Num Dip` = numdip,
-        Acres = acres
-      )
+    # Rename columns for display - include zone when viewing both or separate
+    if (input$goal_column %in% c("total", "separate") && "zone_label" %in% names(site_data)) {
+      display_data <- site_data %>%
+        select(
+          `Site Code` = sitecode,
+          Facility = facility,
+          Zone = zone_label,
+          `Inspection Date` = inspdate,
+          Wet = wet,
+          `Num Dip` = numdip,
+          Acres = acres
+        )
+    } else {
+      display_data <- site_data %>%
+        select(
+          `Site Code` = sitecode,
+          Facility = facility,
+          `Inspection Date` = inspdate,
+          Wet = wet,
+          `Num Dip` = numdip,
+          Acres = acres
+        )
+    }
     
     DT::datatable(
       display_data,
@@ -324,59 +353,99 @@ server <- function(input, output) {
     }
   )
   
-  # Progress value boxes
+  # Progress value boxes - compact display
   output$progressValueBoxes <- renderUI({
     data <- goal_progress_data()
+    zone_option <- input$goal_column
     
     if (nrow(data) == 0) {
-      return(div(style = "text-align: center; padding: 20px;", "No data available"))
+      return(div(style = "text-align: center; padding: 10px;", "No data available"))
     }
     
-    # Calculate % complete for each facility
-    summary_data <- data %>%
-      tidyr::pivot_wider(names_from = type, values_from = count) %>%
-      mutate(
-        pct_complete = ifelse(Goal > 0, round((`Actual Inspections` / Goal) * 100, 1), 0),
-        status_color = case_when(
-          pct_complete >= 100 ~ "#28a745",  # green
-          pct_complete >= 75 ~ "#ffc107",   # yellow
-          pct_complete >= 50 ~ "#fd7e14",   # orange
-          TRUE ~ "#dc3545"                   # red
-        )
-      )
+    # Helper function to get status color
+    get_status_color <- function(pct) {
+      if (pct >= 100) "#28a745"       # green
+      else if (pct >= 75) "#ffc107"   # yellow
+      else if (pct >= 50) "#fd7e14"   # orange
+      else "#dc3545"                   # red
+    }
     
-    # Create value boxes dynamically
-    value_boxes <- lapply(1:nrow(summary_data), function(i) {
-      row <- summary_data[i, ]
+    # Zone label for display
+    zone_label <- switch(zone_option, 
+      "total" = "Total",
+      "p1" = "P1",
+      "p2" = "P2",
+      "separate" = NULL,  # Will show P1/P2 in box
+      "Total"
+    )
+    
+    if (zone_option == "separate") {
+      # For "separate" - show P1 | P2 in each box
+      summary_data <- data %>%
+        group_by(facility_display) %>%
+        summarise(
+          p1_goal = sum(goal[zone == "P1"], na.rm = TRUE),
+          p1_actual = sum(actual[zone == "P1"], na.rm = TRUE),
+          p2_goal = sum(goal[zone == "P2"], na.rm = TRUE),
+          p2_actual = sum(actual[zone == "P2"], na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          p1_pct = ifelse(p1_goal > 0, round((p1_actual / p1_goal) * 100, 0), 0),
+          p2_pct = ifelse(p2_goal > 0, round((p2_actual / p2_goal) * 100, 0), 0),
+          total_pct = ifelse(p1_goal + p2_goal > 0, 
+                             round(((p1_actual + p2_actual) / (p1_goal + p2_goal)) * 100, 0), 0)
+        )
       
-      div(
-        class = "col-sm-6 col-md-4 col-lg-3",
-        style = "padding: 5px;",
+      # Create compact two-line boxes
+      value_boxes <- lapply(1:nrow(summary_data), function(i) {
+        row <- summary_data[i, ]
         div(
-          style = sprintf(
-            "background-color: %s; color: white; padding: 15px; border-radius: 5px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);",
-            row$status_color
-          ),
+          class = "col-sm-4 col-md-3 col-lg-2",
+          style = "padding: 3px;",
           div(
-            style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
-            sprintf("%.1f%%", row$pct_complete)
-          ),
-          div(
-            style = "font-size: 16px; font-weight: bold; margin-bottom: 3px;",
-            row$facility_display
-          ),
-          div(
-            style = "font-size: 12px; opacity: 0.9;",
-            sprintf("%d / %d sites", row$`Actual Inspections`, row$Goal)
+            style = sprintf(
+              "background-color: %s; color: white; padding: 8px; border-radius: 4px; text-align: center;",
+              get_status_color(row$total_pct)
+            ),
+            div(style = "font-size: 11px; font-weight: bold; margin-bottom: 2px;", row$facility_display),
+            div(style = "font-size: 10px;",
+              sprintf("P1: %d%% | P2: %d%%", row$p1_pct, row$p2_pct)
+            )
           )
         )
-      )
-    })
+      })
+    } else {
+      # Single metric (total, p1, or p2) - compact boxes
+      summary_data <- data %>%
+        tidyr::pivot_wider(names_from = type, values_from = count) %>%
+        mutate(
+          pct_complete = ifelse(Goal > 0, round((`Actual Inspections` / Goal) * 100, 0), 0)
+        )
+      
+      value_boxes <- lapply(1:nrow(summary_data), function(i) {
+        row <- summary_data[i, ]
+        div(
+          class = "col-sm-4 col-md-3 col-lg-2",
+          style = "padding: 3px;",
+          div(
+            style = sprintf(
+              "background-color: %s; color: white; padding: 8px; border-radius: 4px; text-align: center;",
+              get_status_color(row$pct_complete)
+            ),
+            div(style = "font-size: 11px; font-weight: bold; margin-bottom: 2px;", row$facility_display),
+            div(style = "font-size: 14px; font-weight: bold;", sprintf("%d%%", row$pct_complete)),
+            div(style = "font-size: 9px; opacity: 0.9;", 
+                sprintf("%d/%d %s", row$`Actual Inspections`, row$Goal, zone_label))
+          )
+        )
+      })
+    }
     
-    # Wrap in a row
+    # All facilities in a single row
     div(
       class = "row",
-      style = "margin-bottom: 20px;",
+      style = "margin-bottom: 10px;",
       value_boxes
     )
   })
@@ -388,8 +457,8 @@ server <- function(input, output) {
     })
   })
   
-  # Historical progress plot - overlaid bars like drone app
-  output$historicalProgressPlot <- renderPlot({
+  # Historical progress plot - uses shared create_trend_chart
+  output$historicalProgressPlot <- renderPlotly({
     data <- historical_progress_data()
     create_historical_progress_plot(data, input$hist_years, input$hist_metric, theme = current_theme_historical())
   })

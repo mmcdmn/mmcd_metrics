@@ -1,8 +1,9 @@
-# sections-cards DEMO App
+# Section Cards App
 
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
+  library(shinyjs)
   library(DBI)
   library(RPostgres)
   library(dplyr)
@@ -23,6 +24,19 @@ source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("section_cards")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[section_cards] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[section_cards] Lookup tables preloaded")
+}, error = function(e) message("[section_cards] Preload warning: ", e$message))
+
 # Load environment variables
 load_env_vars()
 
@@ -32,14 +46,71 @@ load_env_vars()
 
 ui <- fluidPage(
   
+  # Initialize shinyjs
+  useShinyjs(),
+  
   # Custom CSS for print button and layout
   tags$head(
     tags$style(HTML("
+      body, p, div, span, td, th, label, .help-block {
+        font-size: 16px !important;
+      }
+      h1 { font-size: 32px !important; }
+      h2 { font-size: 28px !important; }
+      h3 { font-size: 24px !important; }
+      h4 { font-size: 20px !important; }
+      .btn { font-size: 16px !important; }
       .print-button {
         position: sticky;
         top: 10px;
         z-index: 1000;
         margin-bottom: 20px;
+      }
+      .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.9);
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 40px;
+        box-sizing: border-box;
+      }
+      .modal-dialog {
+        max-width: none !important;
+        margin: 0 !important;
+        height: 100vh !important;
+        width: 100vw !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      .modal-content {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      .loading-spinner {
+        border: 8px solid #f3f3f3;
+        border-top: 8px solid #3498db;
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .loading-text {
+        margin-top: 20px;
+        font-size: 18px !important;
+        color: #333;
       }
       @media print {
         .sidebar, .print-button, .no-print {
@@ -51,10 +122,34 @@ ui <- fluidPage(
           padding: 0 !important;
         }
       }
+    ")),
+    
+    # JavaScript for scroll position
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('moveUp', function(message) {
+        var element = $('[id$=\"_' + message.id + '\"]').closest('div[style*=\"display: flex\"]');
+        var prev = element.prev();
+        if (prev.length) {
+          var container = $('#column_order_ui')[0];
+          var scroll = container.scrollTop;
+          element.insertBefore(prev);
+          container.scrollTop = scroll;
+        }
+      });
+      
+      Shiny.addCustomMessageHandler('moveDown', function(message) {
+        var element = $('[id$=\"_' + message.id + '\"]').closest('div[style*=\"display: flex\"]');
+        var next = element.next();
+        if (next.length) {
+          var container = $('#column_order_ui')[0];
+          var scroll = container.scrollTop;
+          element.insertAfter(next);
+          container.scrollTop = scroll;
+        }
+      });
     "))
   ),
-  
-  titlePanel("Sections Cards DEMO"),
+
   
   sidebarLayout(
     sidebarPanel(
@@ -82,10 +177,8 @@ ui <- fluidPage(
         class = "help-block",
         style = "margin-top: 10px; font-size: 12px;",
         HTML("<strong>How to Print/Save as PDF:</strong><br/>
-             1. Click 'Generate Cards' to create the cards<br/>
-             2. Use the browser's print function (Ctrl+P / Cmd+P)<br/>
-             3. Select 'Save as PDF' as the destination<br/>
-             4. Or download HTML file and open in browser to print<br/>
+             <strong>Option 1 - Quick Print:</strong> Click 'Generate Cards' then use browser print (Ctrl+P / Cmd+P)<br/>
+             <strong>Option 2 - Download First:</strong> Use 'Download as HTML' button (shows progress), then open file and print<br/>
              <br/>
              <em>The layout is optimized for Letter size paper with 6 cards per page.</em>")
       )
@@ -131,6 +224,72 @@ server <- function(input, output, session) {
   # Reactive values
   cards_data <- reactiveVal(NULL)
   
+  # Dynamic title fields panel based on site type
+  output$title_fields_panel <- renderUI({
+    site_type <- input$site_type
+    
+    if (is.null(site_type) || site_type == "breeding") {
+      # Air/Ground site fields
+      wellPanel(
+        h5("Title Section Fields"),
+        p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
+        checkboxGroupInput(
+          "title_fields",
+          NULL,
+          choices = list(
+            "Priority" = "priority",
+            "Acres" = "acres",
+            "Type" = "type",
+            "Culex" = "culex",
+            "Spring Aedes" = "spr_aedes",
+            "Perturbans" = "perturbans",
+            "Prehatch" = "prehatch",
+            "Prehatch Calculation" = "prehatch_calc",
+            "Sample Site" = "sample",
+            "Section" = "section",
+            "Remarks" = "remarks"
+          ),
+          selected = c("priority", "acres", "type", "remarks")
+        )
+      )
+    } else {
+      # Structure site fields
+      wellPanel(
+        h5("Title Section Fields"),
+        p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
+        checkboxGroupInput(
+          "title_fields",
+          NULL,
+          choices = list(
+            "Priority" = "priority",
+            "Structure Type" = "s_type",
+            "Status (D/W/U)" = "status_udw",
+            "Sq Ft" = "sqft",
+            "Culex" = "culex",
+            "Chambers (PR only)" = "chambers",
+            "Section" = "section",
+            "Remarks" = "remarks"
+          ),
+          selected = c("priority", "s_type", "status_udw", "sqft", "remarks")
+        )
+      )
+    }
+  })
+  
+  # Reset filters when site type changes
+  observeEvent(input$site_type, {
+    # Reset to defaults when switching site types
+    updateSelectInput(session, "filter_facility", selected = "all")
+    updateSelectInput(session, "filter_zone", selected = "all")
+    updateSelectInput(session, "filter_fosarea", selected = "all")
+    updateSelectInput(session, "filter_towncode", choices = c("All Town Codes" = "all"), selected = "all")
+    updateSelectInput(session, "filter_section", choices = c("All Sections" = "all"), selected = "all")
+    updateSelectInput(session, "filter_priority", selected = "all")
+    
+    # Clear generated cards when switching types
+    cards_data(NULL)
+  })
+  
   # Load facility choices on startup using db_helpers
   observe({
     tryCatch({
@@ -143,6 +302,13 @@ server <- function(input, output, session) {
         session,
         "filter_facility",
         choices = facility_choices
+      )
+      
+      # Initialize town code choices as empty - will be populated when facility is selected
+      updateSelectInput(
+        session,
+        "filter_towncode",
+        choices = c("All Town Codes" = "all")
       )
       
     }, error = function(e) {
@@ -175,16 +341,32 @@ server <- function(input, output, session) {
         choices = fos_choices
       )
       
-      # Update sections based on facility
-      filter_opts <- get_filter_options(
-        facility_filter = input$filter_facility,
-        fosarea_filter = NULL
-      )
+      # Use site type specific functions for town codes and sections
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        # Structure-specific cascading
+        town_codes <- get_structure_town_codes(facility_filter = input$filter_facility)
+        sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = NULL
+        )
+      } else {
+        # Breeding site cascading
+        town_codes <- get_town_codes(facility_filter = input$filter_facility)
+        sections <- get_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = NULL
+        )
+      }
+      
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      updateSelectInput(session, "filter_towncode", choices = town_choices)
       
       updateSelectInput(
         session,
         "filter_section",
-        choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
+        choices = c("All Sections" = "all", setNames(sections, sections))
       )
       
     }, error = function(e) {
@@ -195,19 +377,39 @@ server <- function(input, output, session) {
     })
   })
   
-  # Update Section filter when FOS area changes (cascading)
+  # Update Town Code and Section filters when FOS area changes (cascading)
   observeEvent(input$filter_fosarea, {
     tryCatch({
-      # Update sections based on facility AND fosarea
-      filter_opts <- get_filter_options(
-        facility_filter = input$filter_facility,
-        fosarea_filter = input$filter_fosarea
-      )
+      # Use site type specific functions
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        town_codes <- get_structure_town_codes(
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+        sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      } else {
+        town_codes <- get_town_codes(
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+        sections <- get_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      }
+      
+      town_choices <- c("All Town Codes" = "all", setNames(town_codes, town_codes))
+      updateSelectInput(session, "filter_towncode", choices = town_choices)
       
       updateSelectInput(
         session,
         "filter_section",
-        choices = c("All Sections" = "all", setNames(filter_opts$sections, filter_opts$sections))
+        choices = c("All Sections" = "all", setNames(sections, sections))
       )
       
     }, error = function(e) {
@@ -218,112 +420,177 @@ server <- function(input, output, session) {
     })
   })
   
-  # Column ordering system
-  column_choices <- reactiveVal(list(
-    list(id = "date", label = "Date", selected = TRUE),
-    list(id = "wet_pct", label = "Wet %", selected = TRUE),
-    list(id = "emp_num", label = "Emp #", selected = TRUE),
-    list(id = "num_dip", label = "#/Dip", selected = TRUE),
-    list(id = "sample_num", label = "Sample #", selected = FALSE),
-    list(id = "amt", label = "Amt", selected = FALSE),
-    list(id = "mat", label = "Mat", selected = FALSE)
+  # Update Section filter when town code changes (cascading)
+  observeEvent(input$filter_towncode, {
+    tryCatch({
+      # Use site type specific functions
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      } else {
+        sections <- get_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      }
+      
+      updateSelectInput(
+        session,
+        "filter_section",
+        choices = c("All Sections" = "all", setNames(sections, sections))
+      )
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error updating section filter:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
+  # Track column order - this will change when up/down buttons are used
+  column_order <- reactiveVal(c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat"))
+  
+  # Store checkbox states to preserve during re-rendering
+  checkbox_states <- reactiveVal(list(
+    date = TRUE, wet_pct = TRUE, emp_num = TRUE, 
+    num_dip = TRUE, sample_num = TRUE, amt = TRUE, mat = TRUE
   ))
   
-  # Render column ordering UI
+  # Render column ordering UI - updates when order changes
   output$column_order_ui <- renderUI({
-    cols <- column_choices()
+    col_order <- column_order()
+    current_states <- checkbox_states()
+    col_labels <- list(
+      date = "Date", wet_pct = "Wet %", emp_num = "Emp #", 
+      num_dip = "#/Dip", sample_num = "Sample #", amt = "Amt", mat = "Mat"
+    )
     
     tags$div(
+      id = "column_order_ui",
       style = "max-height: 300px; overflow-y: auto;",
-      lapply(seq_along(cols), function(i) {
-        col <- cols[[i]]
+      lapply(seq_along(col_order), function(i) {
+        col_id <- col_order[[i]]
+        col_label <- col_labels[[col_id]]
+        # Alternating background colors
+        bg_color <- if (i %% 2 == 1) "#f8f9fa" else "#e9ecef"
+        
         tags$div(
-          style = "display: flex; align-items: center; margin-bottom: 5px; padding: 5px; border: 1px solid #ddd; border-radius: 3px;",
+          style = paste0("display: flex; align-items: center; margin-bottom: 2px; padding: 3px; ",
+                        "border: 1px solid #ddd; border-radius: 3px; background-color: ", bg_color, ";"),
           checkboxInput(
-            paste0("col_check_", col$id),
+            paste0("col_check_", col_id),
             NULL,
-            value = col$selected,
+            value = current_states[[col_id]],  # Use stored state
             width = "30px"
           ),
-          tags$span(col$label, style = "flex-grow: 1; padding-left: 5px;"),
+          tags$span(col_label, style = "flex-grow: 1; padding-left: 3px; font-weight: 500;"),
           actionButton(
-            paste0("col_up_", col$id),
+            paste0("col_up_", col_id),
             "↑",
-            style = "padding: 2px 8px; margin-right: 2px;",
-            onclick = sprintf("Shiny.setInputValue('move_col_up', '%s', {priority: 'event'})", col$id)
+            style = "padding: 1px 6px; margin-right: 2px; font-size: 12px;",
+            onclick = sprintf("Shiny.setInputValue('move_col_up', '%s', {priority: 'event'})", col_id)
           ),
           actionButton(
-            paste0("col_down_", col$id),
+            paste0("col_down_", col_id),
             "↓",
-            style = "padding: 2px 8px;",
-            onclick = sprintf("Shiny.setInputValue('move_col_down', '%s', {priority: 'event'})", col$id)
+            style = "padding: 1px 6px; font-size: 12px;",
+            onclick = sprintf("Shiny.setInputValue('move_col_down', '%s', {priority: 'event'})", col_id)
           )
         )
       })
     )
   })
   
-  # Update column selected state
-  observe({
-    cols <- column_choices()
-    for (i in seq_along(cols)) {
-      col <- cols[[i]]
-      check_val <- input[[paste0("col_check_", col$id)]]
-      if (!is.null(check_val) && check_val != col$selected) {
-        cols[[i]]$selected <- check_val
-        column_choices(cols)
+  # Helper function to get current column selections in current order
+  get_selected_columns <- function() {
+    # Get current order
+    current_order <- column_order()
+    
+    # Read current checkbox values and return selected IDs in current order
+    selected_ids <- c()
+    for (col_id in current_order) {
+      checkbox_id <- paste0("col_check_", col_id)
+      if (isTruthy(input[[checkbox_id]])) {
+        selected_ids <- c(selected_ids, col_id)
       }
     }
+    return(selected_ids)
+  }
+  
+  # Update stored checkbox states when they change
+  observe({
+    current_states <- checkbox_states()
+    col_ids <- c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat")
+    
+    for (col_id in col_ids) {
+      checkbox_id <- paste0("col_check_", col_id)
+      if (!is.null(input[[checkbox_id]])) {
+        current_states[[col_id]] <- input[[checkbox_id]]
+      }
+    }
+    checkbox_states(current_states)
   })
   
-  # Move column up
+  # Move column up - change actual order
   observeEvent(input$move_col_up, {
-    cols <- column_choices()
+    current_order <- column_order()
     col_id <- input$move_col_up
-    idx <- which(sapply(cols, function(x) x$id == col_id))
-    if (length(idx) > 0 && idx > 1) {
-      cols[c(idx-1, idx)] <- cols[c(idx, idx-1)]
-      column_choices(cols)
+    col_index <- which(current_order == col_id)
+    
+    if (col_index > 1) {
+      # Swap with previous item
+      new_order <- current_order
+      new_order[col_index - 1] <- current_order[col_index]
+      new_order[col_index] <- current_order[col_index - 1]
+      column_order(new_order)
     }
   })
   
-  # Move column down
+  # Move column down - change actual order
   observeEvent(input$move_col_down, {
-    cols <- column_choices()
+    current_order <- column_order()
     col_id <- input$move_col_down
-    idx <- which(sapply(cols, function(x) x$id == col_id))
-    if (length(idx) > 0 && idx < length(cols)) {
-      cols[c(idx, idx+1)] <- cols[c(idx+1, idx)]
-      column_choices(cols)
+    col_index <- which(current_order == col_id)
+    
+    if (col_index < length(current_order)) {
+      # Swap with next item
+      new_order <- current_order
+      new_order[col_index + 1] <- current_order[col_index]
+      new_order[col_index] <- current_order[col_index + 1]
+      column_order(new_order)
     }
   })
   
   # Generate cards when button is clicked
   observeEvent(input$generate_cards, {
     
-    # Show loading notification
-    loading_id <- showNotification(
-      "Loading breeding sites data...",
-      duration = NULL,
-      closeButton = FALSE,
-      type = "message"
-    )
+    # Show loading overlay
+    showModal(modalDialog(
+      div(
+        class = "loading-overlay",
+        div(class = "loading-spinner"),
+        div(class = "loading-text", "Generating section cards, please wait...")
+      ),
+      footer = NULL,
+      easyClose = FALSE
+    ))
     
-    # Load full dataset only when Generate Cards is clicked
+    # Load data based on site type
     tryCatch({
-      data <- get_breeding_sites_with_sections()
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        data <- get_structures_with_sections()
+      } else {
+        data <- get_breeding_sites_with_sections()
+      }
       cards_data(data)
       
-      removeNotification(loading_id)
-      
-      showNotification(
-        paste("Loaded", nrow(data), "breeding sites"),
-        duration = 2,
-        type = "message"
-      )
-      
     }, error = function(e) {
-      removeNotification(loading_id)
+      removeModal()
       showNotification(
         paste("Error loading data:", e$message),
         type = "error",
@@ -347,18 +614,43 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(section == input$filter_section)
     }
     
-    # Apply air/ground filter
-    if (input$filter_air_gnd != "all") {
-      filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
-    }
-    
-    # Apply drone filter
-    if (input$filter_drone == "include") {
-      # All sites (no filter)
-    } else if (input$filter_drone == "exclude") {
-      filtered <- filtered %>% filter(is.na(drone) | drone == "")
-    } else if (input$filter_drone == "only") {
-      filtered <- filtered %>% filter(!is.na(drone) & drone != "")
+    # Site type specific filters
+    if (!is.null(input$site_type) && input$site_type == "structures") {
+      # Structure-specific filters
+      
+      # Apply structure type filter
+      if (!is.null(input$filter_structure_type) && input$filter_structure_type != "all") {
+        st <- toupper(input$filter_structure_type)
+        if (st == "CV") {
+          filtered <- filtered %>% filter(toupper(s_type) == "CV" | grepl("CV/", toupper(s_type)) | grepl("/CV", toupper(s_type)))
+        } else if (st == "PR") {
+          filtered <- filtered %>% filter(toupper(s_type) == "PR" | grepl("PR/", toupper(s_type)) | grepl("/PR", toupper(s_type)))
+        } else {
+          filtered <- filtered %>% filter(toupper(s_type) == st)
+        }
+      }
+      
+      # Apply status (D/W/U) filter
+      if (!is.null(input$filter_status_udw) && input$filter_status_udw != "all") {
+        filtered <- filtered %>% filter(status_udw == input$filter_status_udw)
+      }
+      
+    } else {
+      # Breeding site specific filters
+      
+      # Apply air/ground filter
+      if (input$filter_air_gnd != "all") {
+        filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
+      }
+      
+      # Apply drone filter
+      if (input$filter_drone == "include") {
+        # All sites (no filter)
+      } else if (input$filter_drone == "exclude") {
+        filtered <- filtered %>% filter(is.na(drone) | drone == "")
+      } else if (input$filter_drone == "only") {
+        filtered <- filtered %>% filter(!is.na(drone) & drone != "")
+      }
     }
     
     # Apply zone filter
@@ -376,22 +668,13 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(priority == input$filter_priority)
     }
     
-    if (nrow(filtered) == 0) {
-      showNotification(
-        "No sites match the selected filters.",
-        type = "warning"
-      )
-      output$section_cards <- renderUI({
-        div(
-          style = "text-align: center; padding: 50px;",
-          h4("No sites match the selected filters"),
-          p("Try adjusting your filter settings")
-        )
-      })
-      return()
+    # Apply town code filter (first 4 digits of sitecode)
+    if (input$filter_towncode != "all") {
+      filtered <- filtered %>% filter(substr(sitecode, 1, 4) == input$filter_towncode)
     }
     
     if (nrow(filtered) == 0) {
+      removeModal()
       showNotification(
         "No sites match the selected filters.",
         type = "warning"
@@ -410,8 +693,7 @@ server <- function(input, output, session) {
     title_fields <- c("sitecode", input$title_fields)
     
     # Get table fields from column ordering system (in order, selected only)
-    cols <- column_choices()
-    table_fields <- sapply(cols[sapply(cols, function(x) x$selected)], function(x) x$id)
+    table_fields <- get_selected_columns()
     
     if (length(table_fields) == 0) {
       showNotification(
@@ -422,18 +704,30 @@ server <- function(input, output, session) {
     }
     
     # Generate the HTML
+    # split_by_type only applies to structures
+    split_type <- if (!is.null(input$site_type) && input$site_type == "structures") {
+      isTRUE(input$split_by_type)
+    } else {
+      FALSE
+    }
+    
     cards_html <- generate_section_cards_html(
       filtered,
       title_fields,
       table_fields,
       input$num_rows,
-      input$split_by_section
+      input$split_by_section,
+      input$split_by_priority,
+      split_type
     )
     
     # Render the cards
     output$section_cards <- renderUI({
       HTML(cards_html)
     })
+    
+    # Remove loading overlay
+    removeModal()
     
     showNotification(
       paste("Generated", nrow(filtered), "section cards"),
@@ -450,6 +744,20 @@ server <- function(input, output, session) {
     content = function(file) {
       req(cards_data())
       
+      # Show progress modal
+      showModal(modalDialog(
+        div(
+          class = "loading-overlay",
+          div(class = "loading-spinner"),
+          div(class = "loading-text", "Preparing download, please wait...")
+        ),
+        footer = NULL,
+        easyClose = FALSE
+      ))
+      
+      # Small delay to show progress indicator
+      Sys.sleep(0.5)
+      
       # Apply same filters as generate cards
       filtered <- cards_data()
       
@@ -459,14 +767,35 @@ server <- function(input, output, session) {
       if (input$filter_section != "all") {
         filtered <- filtered %>% filter(section == input$filter_section)
       }
-      if (input$filter_air_gnd != "all") {
-        filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
+      
+      # Site type specific filters
+      if (!is.null(input$site_type) && input$site_type == "structures") {
+        # Structure-specific filters
+        if (!is.null(input$filter_structure_type) && input$filter_structure_type != "all") {
+          st <- toupper(input$filter_structure_type)
+          if (st == "CV") {
+            filtered <- filtered %>% filter(toupper(s_type) == "CV" | grepl("CV/", toupper(s_type)) | grepl("/CV", toupper(s_type)))
+          } else if (st == "PR") {
+            filtered <- filtered %>% filter(toupper(s_type) == "PR" | grepl("PR/", toupper(s_type)) | grepl("/PR", toupper(s_type)))
+          } else {
+            filtered <- filtered %>% filter(toupper(s_type) == st)
+          }
+        }
+        if (!is.null(input$filter_status_udw) && input$filter_status_udw != "all") {
+          filtered <- filtered %>% filter(status_udw == input$filter_status_udw)
+        }
+      } else {
+        # Breeding site filters
+        if (input$filter_air_gnd != "all") {
+          filtered <- filtered %>% filter(air_gnd == input$filter_air_gnd)
+        }
+        if (input$filter_drone == "exclude") {
+          filtered <- filtered %>% filter(is.na(drone) | drone == "")
+        } else if (input$filter_drone == "only") {
+          filtered <- filtered %>% filter(!is.na(drone) & drone != "")
+        }
       }
-      if (input$filter_drone == "exclude") {
-        filtered <- filtered %>% filter(is.na(drone) | drone == "")
-      } else if (input$filter_drone == "only") {
-        filtered <- filtered %>% filter(!is.na(drone) & drone != "")
-      }
+      
       if (input$filter_zone != "all") {
         filtered <- filtered %>% filter(zone == input$filter_zone)
       }
@@ -476,8 +805,63 @@ server <- function(input, output, session) {
       if (input$filter_priority != "all") {
         filtered <- filtered %>% filter(priority == input$filter_priority)
       }
+      if (input$filter_towncode != "all") {
+        filtered <- filtered %>% filter(substr(sitecode, 1, 4) == input$filter_towncode)
+      }
       
       title_fields <- c("sitecode", input$title_fields)
+      
+      # Get table fields from column ordering system (same as main generation)
+      table_fields <- get_selected_columns()
+      
+      if (length(table_fields) == 0) {
+        removeModal()
+        showNotification(
+          "Please select at least one table column.",
+          type = "warning"
+        )
+        return()
+      }
+      
+      # Update progress
+      showModal(modalDialog(
+        div(
+          class = "loading-overlay",
+          div(class = "loading-spinner"),
+          div(class = "loading-text", "Generating HTML content...")
+        ),
+        footer = NULL,
+        easyClose = FALSE
+      ))
+      
+      # Generate HTML with progress tracking
+      # split_by_type only applies to structures
+      split_type <- if (!is.null(input$site_type) && input$site_type == "structures") {
+        isTRUE(input$split_by_type)
+      } else {
+        FALSE
+      }
+      
+      html_cards <- generate_section_cards_html(
+        filtered,
+        title_fields,
+        table_fields,
+        input$num_rows,
+        input$split_by_section,
+        input$split_by_priority,
+        split_type
+      )
+      
+      # Update progress
+      showModal(modalDialog(
+        div(
+          class = "loading-overlay",
+          div(class = "loading-spinner"),
+          div(class = "loading-text", "Creating download file...")
+        ),
+        footer = NULL,
+        easyClose = FALSE
+      ))
       
       # Create complete HTML document
       html_content <- paste0(
@@ -488,23 +872,17 @@ server <- function(input, output, session) {
   <title>Section Cards - ', format(Sys.Date(), "%Y-%m-%d"), '</title>
 </head>
 <body>
-  <h1 style="text-align: center; font-family: Arial;">MMCD Section Cards</h1>
-  <p style="text-align: center; font-family: Arial; color: #666;">
-    Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M"), '
-  </p>
   ',
-        generate_section_cards_html(
-          filtered,
-          title_fields,
-          input$table_fields,
-          input$num_rows
-        ),
+        html_cards,
         '
 </body>
 </html>'
       )
       
       writeLines(html_content, file)
+      
+      # Remove progress modal
+      removeModal()
       
       showNotification(
         "HTML file downloaded. Open in browser and use Ctrl+P to print or save as PDF.",

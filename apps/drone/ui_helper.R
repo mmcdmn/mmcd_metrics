@@ -54,9 +54,9 @@ drone_ui <- function() {
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                         choices = c("Number of Active Sites" = "active_sites",
+                         choices = c("Number of Active Sites" = "active_count",
                                      "Number of Active Acres" = "active_acres"),
-                         selected = "active_sites")
+                         selected = "active_count")
           ),
           sliderInput("hist_year_range", "Year Range:",
                       min = 2010, max = 2025, value = c(2018, 2025), step = 1)
@@ -67,8 +67,7 @@ drone_ui <- function() {
           condition = "input.tabs == 'map'",
           selectInput("map_basemap", "Base Map:",
                       choices = c("Streets" = "carto",
-                                  "Satellite" = "satellite", 
-                                  "Terrain" = "terrain",
+                                  "Satellite" = "satellite",
                                   "OpenStreetMap" = "osm"),
                       selected = "carto"),
           sliderInput("expiring_days", "Days Until Expiration:",
@@ -106,8 +105,8 @@ drone_ui <- function() {
                                 "P1+P2 Combined" = "p1_p2_combined"),
                     selected = "p1_p2_combined"),
         
-        selectizeInput("facility_filter", "Facility:",
-                      choices = NULL, multiple = TRUE),
+        selectInput("facility_filter", "Facility:",
+                      choices = NULL),
         
         selectizeInput("foreman_filter", "FOS:",
                       choices = NULL, multiple = TRUE),
@@ -150,9 +149,16 @@ drone_ui <- function() {
           id = "tabs",
           tabPanel("Current Progress", value = "current", 
                    br(),
+                   fluidRow(
+                     column(3, uiOutput("total_drone_sites")),
+                     column(3, uiOutput("active_count_box")),
+                     column(3, uiOutput("expiring_count_box")),
+                     column(3, uiOutput("active_pct_box"))
+                   ),
+                   br(),
                    textOutput("currentDescription"),
                    br(),
-                   plotOutput("currentPlot", height = "auto"),
+                   plotlyOutput("currentPlot", height = "800px"),
                    br(),
                    fluidRow(
                      column(10, h4("Sitecode Details")),
@@ -177,7 +183,7 @@ drone_ui <- function() {
                    DT::dataTableOutput("mapDataTable")
           ),
           tabPanel("Historical Trends", value = "historical", 
-                   plotOutput("historicalPlot", height = "auto"),
+                   plotlyOutput("historicalPlot", height = "900px"),
                    br(),
                    fluidRow(
                      column(10, h4("Historical Data")),

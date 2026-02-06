@@ -2,7 +2,7 @@
 
 # MMCD Dashboard Deployment Package Creator
 # This script creates a deployment package for the hostdash team using existing Docker setup
-
+# this is deprecated!
 echo "Creating MMCD Dashboard deployment package..."
 
 # Create deployment directory

@@ -1,22 +1,10 @@
 # drone site Status App
 
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(lubridate)
-  library(DT)
-  library(leaflet)
-  library(sf)
-  library(RColorBrewer)
-})
-
-# Source shared helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("ui_helper.R")
@@ -24,8 +12,25 @@ source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("drone")
+
 # Load environment variables
 load_env_vars()
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+# This ensures the first user doesn't experience slow load times
+# Lookups are cached in-memory for 5 minutes, shared across all sessions
+message("[drone] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[drone] Lookup tables preloaded")
+}, error = function(e) {
+  message("[drone] Preload warning: ", e$message)
+})
 
 # =============================================================================
 # USER INTERFACE
@@ -39,12 +44,11 @@ ui <- drone_ui()
 
 server <- function(input, output, session) {
   
-  # Reactive theme handling
+  # Theme handling
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Set global theme option when changed
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -53,10 +57,33 @@ server <- function(input, output, session) {
   observe({
     # Load facility choices from db_helpers
     facility_choices <- get_facility_choices()
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
     
     # Load foreman/FOS choices from db_helpers
     foreman_choices <- get_foreman_choices()
+    updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
+  })
+  
+  # Update FOS choices when facility changes
+  observeEvent(input$facility_filter, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility_filter == "all") {
+      # Show all FOS when "All Facilities" is selected
+      foreman_choices <- get_foreman_choices()
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility_filter, ]
+      foreman_choices <- c("All FOS" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        display_names <- paste0(filtered_foremen$shortname, " (", filtered_foremen$facility, ")")
+        foreman_choices <- c(
+          foreman_choices,
+          setNames(filtered_foremen$shortname, display_names)
+        )
+      }
+    }
+    
     updateSelectizeInput(session, "foreman_filter", choices = foreman_choices, selected = "all")
   })
   
@@ -84,7 +111,7 @@ server <- function(input, output, session) {
     if (input$hist_time_period == "yearly") {
       updateRadioButtons(session, "hist_display_metric", selected = "sites")
     } else if (input$hist_time_period == "weekly") {
-      updateRadioButtons(session, "hist_display_metric", selected = "active_sites")
+      updateRadioButtons(session, "hist_display_metric", selected = "active_count")
     }
   })
   
@@ -147,8 +174,8 @@ server <- function(input, output, session) {
     
     # Process current progress data using captured input values
     processed <- process_current_data(
-      drone_sites = filtered$drone_sites,
-      drone_treatments = filtered$drone_treatments,
+      drone_sites = filtered$sites,
+      drone_treatments = filtered$treatments,
       zone_filter = inputs$zone_filter,
       combine_zones = inputs$combine_zones,
       expiring_days = inputs$expiring_days,
@@ -173,8 +200,69 @@ server <- function(input, output, session) {
     raw_data()$processed
   })
   
+  # Create value boxes for current progress
+  value_boxes <- reactive({
+    req(input$refresh)
+    result <- processed_data()
+    data <- result$data
+    display_metric <- isolate(input$current_display_metric)
+    create_value_boxes(data, display_metric = display_metric)
+  })
+  
+  # Render stat boxes
+  output$total_drone_sites <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$current_display_metric == "treated_acres") "Total Treated Acres" else "Total Drone Sites"
+    create_stat_box(
+      value = data$total_value,
+      title = metric_label,
+      bg_color = status_colors["completed"],
+      icon = icon("helicopter")
+    )
+  })
+  
+  output$active_count_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$current_display_metric == "treated_acres") "Active Acres" else "Active Sites"
+    create_stat_box(
+      value = data$active_value,
+      title = metric_label,
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
+    )
+  })
+  
+  output$expiring_count_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$current_display_metric == "treated_acres") "Expiring Acres" else "Expiring Sites"
+    create_stat_box(
+      value = data$expiring_value,
+      title = metric_label,
+      bg_color = status_colors["planned"],
+      icon = icon("exclamation-triangle")
+    )
+  })
+  
+  output$active_pct_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = paste0(data$active_pct, "%"),
+      title = "Active %",
+      bg_color = status_colors["active"],
+      icon = icon("percent")
+    )
+  })
+  
   # Current progress plot
-  output$currentPlot <- renderPlot({
+  output$currentPlot <- renderPlotly({
     req(input$refresh)  # Only render after refresh button is clicked
     inputs <- refresh_inputs()
     result <- processed_data()
@@ -301,17 +389,41 @@ server <- function(input, output, session) {
     
     # Add y variables based on metric
     if (inputs$current_display_metric == "sites") {
-      data$y_total <- data$total_sites
-      data$y_active <- data$active_sites
-      data$y_expiring <- data$expiring_sites
+      data$y_total <- data$total_count
+      data$y_active <- data$active_count
+      data$y_expiring <- data$expiring_count
     } else {  # treated_acres
-      data$y_total <- data$total_treated_acres
+      data$y_total <- data$total_acres
       data$y_active <- data$active_acres
       data$y_expiring <- data$expiring_acres
     }
-    # For visual stacking via overlay, compute active+expiring layer
-    data$y_active_plus_exp <- data$y_active + data$y_expiring
+    # Calculate expired values for tooltips
+    # NOTE: expiring is a SUBSET of active, NOT separate
+    # So expired = total - active (not total - active - expiring)
+    data$y_expired <- data$y_total - data$y_active
     
+    # Create tooltip text
+    if (inputs$current_display_metric == "sites") {
+      data$tooltip <- paste0(
+        "<b>", data[[x_var]], "</b><br>",
+        "Total Sites: ", data$y_total, "<br>",
+        "Active: ", data$y_active, "<br>", 
+        "Expiring: ", data$y_expiring, "<br>",
+        "Expired/Untreated: ", data$y_expired
+      )
+    } else {
+      data$tooltip <- paste0(
+        "<b>", data[[x_var]], "</b><br>",
+        "Total Acres: ", data$y_total, "<br>",
+        "Active: ", data$y_active, "<br>",
+        "Expiring: ", data$y_expiring, "<br>", 
+        "Expired/Untreated: ", data$y_expired
+      )
+    }
+    
+    # NOTE: expiring is a SUBSET of active, not separate
+    # Visual stacking: gray (total) > green (active) > orange (expiring)
+
     # Create plot - USE STATUS COLORS FOR ALL BARS
     # Create dummy data for legend (ensures all statuses appear)
     legend_data <- data.frame(
@@ -321,12 +433,13 @@ server <- function(input, output, session) {
       x_pos = rep(Inf, 3),
       y_pos = rep(Inf, 3)
     )
-    
-    p <- ggplot(data, aes(x = .data[[x_var]])) +
+
+    p <- ggplot(data, aes(x = .data[[x_var]], text = tooltip)) +
       # Slightly transparent gray background for total
       geom_bar(aes(y = y_total), stat = "identity", fill = "gray70", alpha = 0.4, position = "identity") +
-      # Overlay colored bars to create a stacked look: first active+expiring (green), then expiring (orange)
-      geom_bar(aes(y = y_active_plus_exp), stat = "identity", fill = status_colors["active"], alpha = 1, position = "identity") +
+      # Green bar for active (which INCLUDES expiring)
+      geom_bar(aes(y = y_active), stat = "identity", fill = status_colors["active"], alpha = 1, position = "identity") +
+      # Orange bar for expiring (overlays on green - it's a subset of active)
       geom_bar(aes(y = y_expiring), stat = "identity", fill = status_colors["planned"], alpha = 1, position = "identity") +
       # Add legend items (outside plot area) using FILL mapping to force correct colors
       geom_point(
@@ -362,8 +475,11 @@ server <- function(input, output, session) {
           legend.position = "bottom",
           legend.key.size = unit(1.5, "cm")
       )
-    print(p)
-  }, height = 900)
+    
+    # Convert to plotly for interactive tooltips  
+    ggplotly(p, tooltip = "text") %>%
+      layout(height = 800)
+  })
   
   # Current progress data table - show sitecode details
   # Current progress data table with dynamic sizing
@@ -380,7 +496,7 @@ server <- function(input, output, session) {
       prehatch_only = inputs$prehatch_only
     )
     
-    if (nrow(filtered$drone_treatments) == 0) {
+    if (is.null(filtered$treatments) || nrow(filtered$treatments) == 0) {
       return(DT::datatable(
         data.frame("No data available" = character(0)),
         options = list(pageLength = 15, scrollX = TRUE),
@@ -394,7 +510,7 @@ server <- function(input, output, session) {
     expiring_end_date <- current_date + inputs$expiring_days
     
     # Calculate treatment status
-    treatments_with_status <- filtered$drone_treatments %>%
+    treatments_with_status <- filtered$treatments %>%
       mutate(
         treatment_end_date = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
         is_active = treatment_end_date >= current_date,
@@ -407,10 +523,10 @@ server <- function(input, output, session) {
       )
     
     # Create sitecode summary table - include ALL sites (active, expiring, AND expired)
-    all_sites <- filtered$drone_sites
+    all_sites <- filtered$sites
     
     # Get latest treatment for each site
-    latest_treatments <- filtered$drone_treatments %>%
+    latest_treatments <- filtered$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate)) %>%
       slice(1) %>%
@@ -436,7 +552,7 @@ server <- function(input, output, session) {
       ) %>%
       # Count treatments per site
       left_join(
-        filtered$drone_treatments %>% 
+        filtered$treatments %>% 
           group_by(sitecode) %>% 
           summarise(
             treatments = n(),
@@ -507,12 +623,12 @@ server <- function(input, output, session) {
       TRUE ~ "as a chart"
     )
     
-    # Filter information
+    # Filter information using shared helper
     filter_parts <- c()
-    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+    if (is_valid_filter(inputs$facility_filter)) {
       filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
     }
-    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+    if (is_valid_filter(inputs$foreman_filter)) {
       filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
     }
     if (inputs$prehatch_only) {
@@ -537,12 +653,12 @@ server <- function(input, output, session) {
     }
   })
   
-  # Historical plot output - uses external function
-  output$historicalPlot <- renderPlot({
+  # Historical plot output - uses shared create_trend_chart
+  output$historicalPlot <- renderPlotly({
     req(input$refresh)  # Only render after refresh button is clicked
     inputs <- refresh_inputs()
     
-    p <- create_historical_plot(
+    create_historical_plot(
       zone_filter = inputs$zone_filter,
       combine_zones = inputs$combine_zones,
       zone_option = inputs$zone_option,
@@ -558,12 +674,8 @@ server <- function(input, output, session) {
       foreman_filter = inputs$foreman_filter,
       analysis_date = inputs$analysis_date,
       theme = current_theme()
-    ) +
-      theme(
-        axis.text.x = element_text(size = 14, face = "bold")
-      )
-    print(p)
-  }, height = 900)
+    )
+  })
   
   # Historical data table
   output$historicalDataTable <- DT::renderDataTable({
@@ -820,12 +932,12 @@ server <- function(input, output, session) {
     req(input$refresh)
     inputs <- refresh_inputs()
     
-    # Filter information
+    # Filter information using shared helper
     filter_parts <- c()
-    if (!is.null(inputs$facility_filter) && !"all" %in% inputs$facility_filter) {
+    if (is_valid_filter(inputs$facility_filter)) {
       filter_parts <- c(filter_parts, paste("facilities:", paste(inputs$facility_filter, collapse = ", ")))
     }
-    if (!is.null(inputs$foreman_filter) && !"all" %in% inputs$foreman_filter) {
+    if (is_valid_filter(inputs$foreman_filter)) {
       filter_parts <- c(filter_parts, paste("FOS:", paste(inputs$foreman_filter, collapse = ", ")))
     }
     if (inputs$prehatch_only) {
@@ -995,14 +1107,14 @@ server <- function(input, output, session) {
         prehatch_only = inputs$prehatch_only
       )
       
-      if (nrow(filtered$drone_treatments) > 0) {
+      if (!is.null(filtered$treatments) && nrow(filtered$treatments) > 0) {
         # Get current date for active/expiring calculations
         current_date <- as.Date(inputs$analysis_date)
         expiring_start_date <- current_date
         expiring_end_date <- current_date + inputs$expiring_days
         
         # Calculate treatment status
-        treatments_with_status <- filtered$drone_treatments %>%
+        treatments_with_status <- filtered$treatments %>%
           mutate(
             treatment_end_date = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
             is_active = treatment_end_date >= current_date,
@@ -1015,7 +1127,7 @@ server <- function(input, output, session) {
           )
         
         # Create sitecode summary table
-        all_sites <- filtered$drone_sites
+        all_sites <- filtered$sites
         latest_treatments <- treatments_with_status %>%
           group_by(sitecode) %>%
           slice_max(inspdate, with_ties = FALSE) %>%

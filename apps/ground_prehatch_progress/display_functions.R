@@ -6,7 +6,7 @@ library(leaflet)  # For map functionality
 library(sf)       # For spatial data handling
 
 # Function to create progress chart 
-create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14, return_height_info = FALSE, theme = "MMCD") {
+create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14, return_height_info = FALSE, theme = "MMCD", display_metric = "sites") {
   if (nrow(data) == 0) {
     plot <- ggplot() + 
            geom_text(aes(x = 1, y = 1, label = "No data available"), size = 6) +
@@ -29,58 +29,81 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
   # Get status colors from db_helpers
   status_colors <- get_status_colors(theme = theme)
 
-  # Prepare y variables for layered bars 
-  # Gray background: ALL prehatch sites (treated + expiring + expired + skipped + untreated)
-  # Blue bar: Active + Expiring sites (fills up portion of gray background)  
-  # Yellow overlay: Just expiring sites (on top of blue)
-  data <- data %>%
-    mutate(
-      y_total = prehatch_sites_cnt,                                # ALL prehatch sites (gray background)
-      y_active = ph_treated_cnt + ph_expiring_cnt,                 # Active + Expiring (blue bar)
-      y_expiring = ph_expiring_cnt,                                # Just Expiring (yellow overlay)
-      y_skipped = ph_skipped_cnt,                                  # Skipped sites (separate layer)
-      # Add custom tooltip data for each layer
-      tooltip_total = paste0(display_name, "\nTotal Sites: ", prehatch_sites_cnt,
-                            "\n(Treated: ", ph_treated_cnt,
-                            ", Expiring: ", ph_expiring_cnt, 
-                            ", Expired: ", ph_expired_cnt,
-                            ", Skipped: ", ph_skipped_cnt, ")"),
-      tooltip_active = paste0(display_name, "\nActive Treatment: ", ph_treated_cnt + ph_expiring_cnt,
-                             "\n(Treated: ", ph_treated_cnt, ", Expiring: ", ph_expiring_cnt, ")"),
-      tooltip_expiring = paste0(display_name, "\nExpiring Sites: ", ph_expiring_cnt,
-                               "\n(Within ", expiring_days, " days)"),
-      tooltip_skipped = paste0(display_name, "\nSkipped Sites: ", ph_skipped_cnt,
-                              "\n(Dry inspections)")
-    )
-
-  # Apply filtering if needed - FIXED LOGIC
-  if (expiring_filter == "expiring") {
-    # Show only expiring sites
+  # Prepare y variables for layered bars - use either sites or acres based on display_metric
+  if (display_metric == "acres") {
+    # Gray background: ALL prehatch acres (treated + expiring + expired + skipped + untreated)
+    # Blue bar: Active + Expiring acres (fills up portion of gray background)  
+    # Yellow overlay: Just expiring acres (on top of blue)
     data <- data %>%
       mutate(
-        y_total = ph_expiring_cnt,     # Total = just expiring sites
-        y_active = ph_expiring_cnt,    # Blue bar = expiring sites (fills total)
-        y_expiring = ph_expiring_cnt,  # Yellow overlay = same expiring sites
-        y_skipped = 0                  # No skipped in expiring filter
+        y_total = prehatch_acres,                                      # ALL prehatch acres (gray background)
+        y_active = ph_treated_acres + ph_expiring_acres,              # Active + Expiring (blue bar)
+        y_expiring = ph_expiring_acres,                               # Just Expiring (yellow overlay)
+        y_skipped = ph_skipped_acres,                                 # Skipped acres (separate layer)
+        # Add custom tooltip data for each layer
+        tooltip_total = paste0(display_name, "\nTotal Acres: ", round(prehatch_acres, 1),
+                              "\n(Treated: ", round(ph_treated_acres, 1),
+                              ", Expiring: ", round(ph_expiring_acres, 1), 
+                              ", Expired: ", round(ph_expired_acres, 1),
+                              ", Skipped: ", round(ph_skipped_acres, 1), ")"),
+        tooltip_active = paste0(display_name, "\nActive Treatment: ", round(ph_treated_acres + ph_expiring_acres, 1),
+                               "\n(Treated: ", round(ph_treated_acres, 1), ", Expiring: ", round(ph_expiring_acres, 1), ")"),
+        tooltip_expiring = paste0(display_name, "\nExpiring Acres: ", round(ph_expiring_acres, 1),
+                                 "\n(Within ", expiring_days, " days)"),
+        tooltip_skipped = paste0(display_name, "\nSkipped Acres: ", round(ph_skipped_acres, 1),
+                                "\n(Dry inspections)")
       )
-  } else if (expiring_filter == "expiring_expired") {
-    # Show expiring + expired sites
+  } else {
+    # Sites mode (default)
     data <- data %>%
       mutate(
-        y_total = ph_expiring_cnt + ph_expired_cnt,   # Total = expiring + expired
-        y_active = ph_expiring_cnt,                   # Blue bar = just expiring 
-        y_expiring = ph_expiring_cnt,                 # Yellow overlay = expiring
-        y_skipped = 0                                 # No skipped in this filter
+        y_total = prehatch_sites_cnt,                                # ALL prehatch sites (gray background)
+        y_active = ph_treated_cnt + ph_expiring_cnt,                 # Active + Expiring (blue bar)
+        y_expiring = ph_expiring_cnt,                                # Just Expiring (yellow overlay)
+        y_skipped = ph_skipped_cnt,                                  # Skipped sites (separate layer)
+        # Add custom tooltip data for each layer
+        tooltip_total = paste0(display_name, "\nTotal Sites: ", prehatch_sites_cnt,
+                              "\n(Treated: ", ph_treated_cnt,
+                              ", Expiring: ", ph_expiring_cnt, 
+                              ", Expired: ", ph_expired_cnt,
+                              ", Skipped: ", ph_skipped_cnt, ")"),
+        tooltip_active = paste0(display_name, "\nActive Treatment: ", ph_treated_cnt + ph_expiring_cnt,
+                               "\n(Treated: ", ph_treated_cnt, ", Expiring: ", ph_expiring_cnt, ")"),
+        tooltip_expiring = paste0(display_name, "\nExpiring Sites: ", ph_expiring_cnt,
+                                 "\n(Within ", expiring_days, " days)"),
+        tooltip_skipped = paste0(display_name, "\nSkipped Sites: ", ph_skipped_cnt,
+                                "\n(Dry inspections)")
       )
   }
 
-  # Create title based on filters
-  chart_title <- if (expiring_filter == "expiring") {
-    paste("Ground Prehatch Expiring Sites (Within", expiring_days, "Days)")
+  # Apply filtering if needed - FIXED LOGIC
+  if (expiring_filter == "expiring") {
+    # Show only expiring
+    data <- data %>%
+      mutate(
+        y_total = y_expiring,      # Total = just expiring
+        y_active = y_expiring,     # Blue bar = expiring (fills total)
+        y_skipped = 0              # No skipped in expiring filter
+      )
   } else if (expiring_filter == "expiring_expired") {
-    paste("Ground Prehatch Expiring + Expired Sites (Expiring Within", expiring_days, "Days)")
+    # Show expiring + expired
+    expired_value <- if (display_metric == "acres") ph_expired_acres else ph_expired_cnt
+    data <- data %>%
+      mutate(
+        y_total = y_expiring + expired_value,   # Total = expiring + expired
+        y_active = y_expiring,                   # Blue bar = just expiring 
+        y_skipped = 0                            # No skipped in this filter
+      )
+  }
+
+  # Create title based on filters and display metric
+  metric_label <- if (display_metric == "acres") "Acres" else "Sites"
+  chart_title <- if (expiring_filter == "expiring") {
+    paste("Ground Prehatch Expiring", metric_label, "(Within", expiring_days, "Days)")
+  } else if (expiring_filter == "expiring_expired") {
+    paste("Ground Prehatch Expiring + Expired", metric_label, "(Expiring Within", expiring_days, "Days)")
   } else {
-    "Ground Prehatch Treatment Progress"
+    paste("Ground Prehatch Treatment Progress (", metric_label, ")")
   }
 
   # Create layered plot - USE STATUS COLORS FOR ALL BARS
@@ -122,17 +145,18 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
         group_by == "foreman" ~ "FOS",
         group_by == "sectcode" ~ "Section"
       ),
-      y = "Number of Sites"
+      y = if (display_metric == "acres") "Number of Acres" else "Number of Sites"
     ) +
     theme_minimal() +
     theme(
       plot.title = element_text(face = "bold", size = 18),
       axis.title = element_text(face = "bold", size = 14),
+      axis.title.y = element_text(margin = margin(t = 80), face = "bold", size = 14),
       axis.text = element_text(size = 13),
       legend.title = element_text(face = "bold", size = 16),
       legend.text = element_text(size = 16),
-        legend.position = "bottom",
-        legend.key.size = unit(1.5, "cm")
+      legend.position = "bottom",
+      legend.key.size = unit(1.5, "cm")
     )
   
   # Convert to plotly with custom tooltip
@@ -347,36 +371,69 @@ create_historical_chart <- function(data, hist_time_period, hist_display_metric,
 }
 
 # Function to create all value boxes (like red_air does)
-create_value_boxes <- function(data) {
-  # Calculate totals
-  total_prehatch <- sum(data$prehatch_sites_cnt, na.rm = TRUE)
-  total_treated <- sum(data$ph_treated_cnt, na.rm = TRUE)
-  total_expired <- sum(data$ph_expired_cnt, na.rm = TRUE)
-  total_expiring <- sum(data$ph_expiring_cnt, na.rm = TRUE)
-  total_skipped <- sum(data$ph_skipped_cnt, na.rm = TRUE)
-  
-  # Calculate active sites (treated + expiring)
-  total_active <- total_treated + total_expiring
-  
-  # Calculate inactive sites (not currently active or expiring - includes never treated + expired beyond expiring window)
-  total_inactive <- total_prehatch - total_treated - total_expired - total_expiring - total_skipped
-  total_inactive <- max(0, total_inactive)  # Ensure non-negative
-  
-  # Calculate percentages - treated percentage is active / (active + expired)
-  treated_pct <- if ((total_active + total_expired) > 0) round(100 * total_active / (total_active + total_expired), 1) else 0
-  expiring_pct <- if (total_prehatch > 0) round(100 * total_expiring / total_prehatch, 1) else 0
-  
-  return(list(
-    total_prehatch = total_prehatch,
-    total_treated = total_treated,
-    total_active = total_active,
-    total_expired = total_expired,
-    total_expiring = total_expiring,
-    total_skipped = total_skipped,
-    total_untreated = total_inactive,
-    treated_pct = treated_pct,
-    expiring_pct = expiring_pct
-  ))
+create_value_boxes <- function(data, display_metric = "sites") {
+  if (display_metric == "acres") {
+    # Calculate totals for acres
+    total_prehatch <- sum(data$prehatch_acres, na.rm = TRUE)
+    total_treated <- sum(data$ph_treated_acres, na.rm = TRUE)
+    total_expired <- sum(data$ph_expired_acres, na.rm = TRUE)
+    total_expiring <- sum(data$ph_expiring_acres, na.rm = TRUE)
+    total_skipped <- sum(data$ph_skipped_acres, na.rm = TRUE)
+    
+    # Calculate active acres (treated + expiring)
+    total_active <- total_treated + total_expiring
+    
+    # Calculate inactive acres
+    total_inactive <- total_prehatch - total_treated - total_expired - total_expiring - total_skipped
+    total_inactive <- max(0, total_inactive)
+    
+    # Calculate percentages
+    treated_pct <- if ((total_active + total_expired) > 0) round(100 * total_active / (total_active + total_expired), 1) else 0
+    expiring_pct <- if (total_prehatch > 0) round(100 * total_expiring / total_prehatch, 1) else 0
+    
+    # Round values for display
+    return(list(
+      total_prehatch = round(total_prehatch, 1),
+      total_treated = round(total_treated, 1),
+      total_active = round(total_active, 1),
+      total_expired = round(total_expired, 1),
+      total_expiring = round(total_expiring, 1),
+      total_skipped = round(total_skipped, 1),
+      total_untreated = round(total_inactive, 1),
+      treated_pct = treated_pct,
+      expiring_pct = expiring_pct
+    ))
+  } else {
+    # Calculate totals for sites
+    total_prehatch <- sum(data$prehatch_sites_cnt, na.rm = TRUE)
+    total_treated <- sum(data$ph_treated_cnt, na.rm = TRUE)
+    total_expired <- sum(data$ph_expired_cnt, na.rm = TRUE)
+    total_expiring <- sum(data$ph_expiring_cnt, na.rm = TRUE)
+    total_skipped <- sum(data$ph_skipped_cnt, na.rm = TRUE)
+    
+    # Calculate active sites (treated + expiring)
+    total_active <- total_treated + total_expiring
+    
+    # Calculate inactive sites
+    total_inactive <- total_prehatch - total_treated - total_expired - total_expiring - total_skipped
+    total_inactive <- max(0, total_inactive)
+    
+    # Calculate percentages
+    treated_pct <- if ((total_active + total_expired) > 0) round(100 * total_active / (total_active + total_expired), 1) else 0
+    expiring_pct <- if (total_prehatch > 0) round(100 * total_expiring / total_prehatch, 1) else 0
+    
+    return(list(
+      total_prehatch = total_prehatch,
+      total_treated = total_treated,
+      total_active = total_active,
+      total_expired = total_expired,
+      total_expiring = total_expiring,
+      total_skipped = total_skipped,
+      total_untreated = total_inactive,
+      treated_pct = treated_pct,
+      expiring_pct = expiring_pct
+    ))
+  }
 }
 
 # Function to create details table
@@ -597,8 +654,6 @@ create_ground_map <- function(spatial_data, basemap = "carto", site_filter = "al
   # Choose base tiles
   if (basemap == "satellite") {
     tiles <- "Esri.WorldImagery"
-  } else if (basemap == "terrain") {
-    tiles <- "Esri.WorldTopoMap"  
   } else if (basemap == "osm") {
     tiles <- "OpenStreetMap"
   } else {

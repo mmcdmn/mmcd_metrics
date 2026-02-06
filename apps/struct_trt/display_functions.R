@@ -15,9 +15,9 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
   # Prepare data for plotting with status-based colors
   data <- data %>%
     mutate(
-      y_total = total_structures,
-      y_active = active_structures - expiring_structures,  # Active only (not expiring)
-      y_expiring = expiring_structures
+      y_total = total_count,
+      y_active = active_count - expiring_count,  # Active only (not expiring)
+      y_expiring = expiring_count
     )
   
   # Determine plot group column - always use display_name for consistency

@@ -7,9 +7,26 @@
 #' @param title The title/label for the value box
 #' @param bg_color Background color (hex code)
 #' @param text_color Text color (hex code, default white)
-#' @param icon Shiny icon for the value box
+#' @param icon Icon name (without "fa-" prefix), Shiny icon object, or path to image
+#' @param icon_type Type of icon: "fontawesome" (default) or "image"
 #' @return A Shiny value box UI element
-create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon = NULL) {
+create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon = NULL, icon_type = "fontawesome") {
+  # Convert icon name to icon object or image element
+  icon_element <- NULL
+  if (!is.null(icon)) {
+    if (icon_type == "image") {
+      # Use an image file
+      icon_element <- tags$img(
+        src = icon,
+        style = "width: 48px; height: 48px; opacity: 0.9;"
+      )
+    } else if (is.character(icon)) {
+      icon_element <- shiny::icon(icon)
+    } else {
+      icon_element <- icon
+    }
+  }
+  
   # Create a custom styled div that mimics a shinydashboard value box
   div(
     style = paste0(
@@ -34,10 +51,10 @@ create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon
         title
       )
     ),
-    if (!is.null(icon)) {
+    if (!is.null(icon_element)) {
       div(
         style = "font-size: 36px; opacity: 0.8;",
-        icon
+        icon_element
       )
     }
   )
@@ -55,10 +72,16 @@ create_status_stat_box <- function(value, title, status, icon = NULL, theme = "d
   # Get status colors for the theme
   colors <- get_status_colors(theme = theme)
   
-  # Get the background color for this status
-  bg_color <- colors[[status]]
+  # Safely get the background color for this status
+  # Use named vector access with fallback for unknown statuses
+  bg_color <- if (status %in% names(colors)) {
+    colors[[status]]
+  } else {
+    "#3c8dbc"  # Default blue fallback
+  }
+  
+  # Additional safety check
   if (is.null(bg_color) || length(bg_color) == 0 || is.na(bg_color)) {
-    # Fallback to a default color if status not found
     bg_color <- "#3c8dbc"  # Default blue
   }
   
@@ -70,47 +93,4 @@ create_status_stat_box <- function(value, title, status, icon = NULL, theme = "d
     text_color = "#ffffff",
     icon = icon
   )
-}
-
-#' Format metric values for display
-#'
-#' @param value Numeric value to format
-#' @param metric_type Type of metric ("acres", "sites", etc.)
-#' @return Formatted string
-format_metric <- function(value, metric_type = "sites") {
-  if (is.na(value) || is.null(value)) {
-    return("0")
-  }
-  
-  if (metric_type == "acres") {
-    # Format acres with commas and 1 decimal place
-    return(format(round(value, 1), big.mark = ",", nsmall = 1))
-  } else {
-    # Format counts with commas, no decimals
-    return(format(round(value, 0), big.mark = ","))
-  }
-}
-
-#' Calculate metric value based on type
-#'
-#' @param data Data frame with site data
-#' @param metric_type Type of metric to calculate ("acres" or "sites")
-#' @return Calculated metric value
-calc_metric <- function(data, metric_type = "sites") {
-  if (is.null(data) || nrow(data) == 0) {
-    return(0)
-  }
-  
-  if (metric_type == "acres") {
-    # Sum acres column if it exists
-    if ("acres" %in% names(data)) {
-      return(sum(data$acres, na.rm = TRUE))
-    } else {
-      # Fallback: assume 1 acre per site
-      return(nrow(data))
-    }
-  } else {
-    # Count number of sites
-    return(nrow(data))
-  }
 }

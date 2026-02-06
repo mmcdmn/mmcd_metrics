@@ -13,18 +13,23 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
+  # Determine which tables have data for this analysis_date
+  table_info <- get_table_strategy(analysis_date)
+  if (table_info$query_archive) {
+    include_archive <- TRUE
+  }
+  
   tryCatch({
-    # Build filter conditions with safer checks
-    # Treat NULL, empty, or "all" as no filter
+    # Build filter conditions using shared helpers
     facility_condition <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && all(!is.na(facility_filter)) && !"all" %in% facility_filter) {
-      facility_list <- paste(sprintf("'%s'", facility_filter), collapse=", ")
+    if (is_valid_filter(facility_filter)) {
+      facility_list <- build_sql_in_list(facility_filter)
       facility_condition <- sprintf("AND b.facility IN (%s)", facility_list)
     }
     
     priority_condition <- ""
-    if (!is.null(priority_filter) && length(priority_filter) > 0 && all(!is.na(priority_filter)) && !"all" %in% priority_filter) {
-      priority_list <- paste(sprintf("'%s'", priority_filter), collapse=", ")
+    if (is_valid_filter(priority_filter)) {
+      priority_list <- build_sql_in_list(priority_filter)
       priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
     }
     
@@ -230,7 +235,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
     cat("Error in get_air_sites_data_enhanced:", e$message, "\n")
     return(data.frame())
   }, finally = {
-    if (!is.null(con)) dbDisconnect(con)
+    if (!is.null(con)) safe_disconnect(con)
   })
 }
 

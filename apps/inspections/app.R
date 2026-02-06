@@ -1,7 +1,6 @@
 # Inspections App - Site Inspection Coverage Gaps and Analytics
 
 library(shiny)
-library(shinydashboard)
 library(DT)
 library(dplyr)
 library(lubridate)
@@ -10,9 +9,23 @@ library(ggplot2)
 
 # Source shared database helpers and local functions
 source("../../shared/db_helpers.R")
+source("../../shared/server_utilities.R")
 source("data_functions.R")
 source("display_functions.R")
 source("ui_helper.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("inspections")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[inspections] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[inspections] Lookup tables preloaded")
+}, error = function(e) message("[inspections] Preload warning: ", e$message))
 
 # Define UI
 ui <- create_main_ui()
@@ -30,8 +43,28 @@ server <- function(input, output, session) {
     options(mmcd.color.theme = input$color_theme)
   })
   
-  # Helper for null coalescing
-  `%||%` <- function(x, y) if (is.null(x)) y else x
+  # Update FOS choices when facility changes
+  observeEvent(input$facility, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility == "all") {
+      # Show all FOS when "All Facilities" is selected
+      fosarea_choices <- get_fosarea_display_choices()
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility, ]
+      fosarea_choices <- c("All FOS" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        display_names <- paste0(filtered_foremen$shortname, " (", filtered_foremen$facility, ")")
+        fosarea_choices <- c(
+          fosarea_choices,
+          setNames(filtered_foremen$shortname, display_names)
+        )
+      }
+    }
+    
+    updateSelectizeInput(session, "fosarea", choices = fosarea_choices, selected = "all")
+  })
   
   # ============= SINGLE UNIFIED DATA RETRIEVAL =============
   # Single reactive data source that loads ALL inspection data with shared filters
@@ -58,7 +91,7 @@ server <- function(input, output, session) {
     
     # ONE SINGLE QUERY GETS ALL DATA
     
-    get_all_inspection_data(
+    load_raw_data(
       facility_filter = facility_filter,
       fosarea_filter = fosarea_filter, 
       zone_filter = zone_filter,
@@ -241,8 +274,8 @@ server <- function(input, output, session) {
       
       stats <- get_summary_stats_from_data(comp_data, air_gnd_filter, input$years_back %||% 5)
       
-      # Total active sites value box - use wet analysis data
-      output$total_active_sites <- renderValueBox({
+      # Total active sites stat box - use wet analysis data
+      output$total_active_sites_box <- renderUI({
         if (input$analyze_wet == 0) {
           total_sites <- 0
         } else {
@@ -256,16 +289,20 @@ server <- function(input, output, session) {
           total_sites <- wet_comp_data
         }
         
-        valueBox(
+        # Get theme-based colors
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = format(total_sites, big.mark = ","),
-          subtitle = "Sites Analyzed",
-          icon = icon("map-marker"),
-          color = "blue"
+          title = "Sites Analyzed",
+          bg_color = unname(status_colors["active"]),
+          text_color = "#ffffff",
+          icon = icon("map-marker")
         )
       })
       
-      # Overall wet percentage value box
-      output$overall_wet_percentage <- renderValueBox({
+      # Overall wet percentage stat box
+      output$overall_wet_percentage_box <- renderUI({
         if (input$analyze_wet == 0) {
           wet_pct <- 0
         } else {
@@ -278,32 +315,42 @@ server <- function(input, output, session) {
           }
         }
         
-        valueBox(
+        # Get theme-based colors
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = paste0(wet_pct, "%"),
-          subtitle = "Average Wet Frequency",
-          icon = icon("percentage"),
-          color = "green"
+          title = "Average Wet Frequency",
+          bg_color = unname(status_colors["completed"]),
+          text_color = "#ffffff",
+          icon = icon("percentage")
         )
       })
     } else {
       output$total_sites_count <- renderText("-")
       
-      # Default value boxes when no data
-      output$total_active_sites <- renderValueBox({
-        valueBox(
+      # Default stat boxes when no data
+      output$total_active_sites_box <- renderUI({
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = "-",
-          subtitle = "Sites Analyzed",
-          icon = icon("map-marker"),
-          color = "light-blue"
+          title = "Sites Analyzed",
+          bg_color = unname(status_colors["unknown"]),
+          text_color = "#ffffff",
+          icon = icon("map-marker")
         )
       })
       
-      output$overall_wet_percentage <- renderValueBox({
-        valueBox(
+      output$overall_wet_percentage_box <- renderUI({
+        status_colors <- get_status_colors(theme = current_theme())
+        
+        create_stat_box(
           value = "-",
-          subtitle = "Average Wet Frequency",
-          icon = icon("droplet"),
-          color = "light-blue"
+          title = "Average Wet Frequency",
+          bg_color = unname(status_colors["unknown"]),
+          text_color = "#ffffff",
+          icon = icon("percentage")
         )
       })
     }

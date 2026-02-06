@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMCD Analytics Dashboard</title>
+    <link rel="icon" type="image/png" href="shared/assets/favicon.ico">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -42,6 +43,13 @@
             text-align: center;
             background-color: #fafafa;
             transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .app-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 15px;
+            display: block;
         }
 
         .app-card:hover {
@@ -98,29 +106,44 @@
         <h1>MMCD Analytics Dashboard</h1>
         <p class="description">Metropolitan Mosquito Control District - Data Analysis Applications</p>
 
+        <h2 class="category">Dashboards</h2>
+        <div class="apps-grid">
+            <div class="app-card">
+                <img src="shared/assets/layer-group.jpg" alt="Overview Dashboard" class="app-icon">
+                <h3>Overview Dashboard</h3>
+                <p>Unified dashboard showing MMCD treatment progress. View district-level aggregation by zone (P1 vs P2), or drill down by zone and metric to see facilities-level and facility-specific data. Includes Catch Basin, Drone, Ground Prehatch, Structures, and Cattail metrics.</p>
+                <a href="overview/" class="app-link">Open Dashboard</a>
+            </div>
+        </div>
+
         <h2 class="category">Floodwater</h2>
         <div class="apps-grid">
             <div class="app-card">
-                <h3>Inspections Coverage & Gaps</h3>
+                <img src="shared/assets/larvae.png" alt="Larvae" class="app-icon">
+                <h3>Inspections Coverage</h3>
                 <p>Analyze inspection coverage for all sites, filter by air/ground, FOS area, facility, and zone. Identify sites with no inspection in the last X years using both current and archive records.</p>
                 <a href="inspections/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
+                <img src="shared/assets/ground.png" alt="ground" class="app-icon">
                 <h3>Ground Prehatch Progress</h3>
                 <p>Monitor ground prehatch treatment progress including site counts, treatment status, and coverage metrics. Track treated, expiring, expired, and untreated prehatch sites by facility and zone.</p>
                 <a href="ground_prehatch_progress/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
-                <h3>Red Air Sites</h3>
+                <img src="shared/assets/helicopter-solid-full.svg" alt="Air" class="app-icon">
+                <h3>Air</h3>
                 <p>Air site status tracking and pipeline management for breeding sites. Monitor rainfall, inspections, treatments, and status transitions in the air site workflow.</p>
                 <a href="air_sites_simple/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
+                <img src="shared/assets/drone.jpg" alt="Drone" class="app-icon">
                 <h3>Drone Treatment</h3>
                 <p>Comprehensive drone treatment tracking with real-time progress metrics, historical analysis, and site average calculations. Includes both active treatment monitoring and historical trend visualization.</p>
                 <a href="drone/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
+                <img src="shared/assets/larvae.png" alt="Larvae" class="app-icon">
                 <h3>Air Treatment Checkbacks</h3>
                 <p>Track air treatment efficacy through systematic checkback analysis. Monitor checkback completion rates, treatment-to-checkback timing, and dip count changes to measure control effectiveness.</p>
                 <a href="control_efficacy/" class="app-link">Open Application</a>
@@ -130,17 +153,20 @@
         <h2 class="category">Vector</h2>
         <div class="apps-grid">
             <div class="app-card">
-                <h3>Catch Basin Status</h3>
+                <img src="shared/assets/catchbasin.png" alt="Catch Basin" class="app-icon">
+                <h3>Catch Basin Progress</h3>
                 <p>Monitor catch basin treatment status across facilities. Track wet catch basins, active treatments, and treatment coverage percentages. View summary statistics and detailed breakdowns by facility.</p>
                 <a href="catch_basin_status/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
-                <h3>Structure Treatment</h3>
+                <img src="shared/assets/catchbasin.png" alt="Catch Basin" class="app-icon">
+                <h3>Structure Progress</h3>
                 <p>Comprehensive tracking of structure treatment operations with current progress metrics and historical trends analysis. Includes both active treatment monitoring and historical data visualization.</p>
                 <a href="struct_trt/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
-                <h3>Suco History</h3>
+                <img src="shared/assets/tree-solid-full.svg" alt="SUCO" class="app-icon">
+                <h3>Suco</h3>
                 <p>SUCO historical analysis dashboard with interactive maps, location filtering, and temporal trend analysis. Includes facility and foreman-based grouping.</p>
                 <a href="suco_history/" class="app-link">Open Application</a>
             </div>
@@ -149,11 +175,13 @@
         <h2 class="category">Monday Samples</h2>
         <div class="apps-grid">
             <div class="app-card">
+                <img src="shared/assets/adult.png" alt="Mosquito" class="app-icon">
                 <h3>Mosquito Surveillance Map</h3>
                 <p>Interactive geographic mapping of mosquito surveillance data with species filtering, surveillance type selection, and temporal analysis. Visualize mosquito counts across monitoring locations. This will take some time to load, so be patient.</p>
                 <a href="mosquito_surveillance_map/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
+                <img src="shared/assets/adult.png" alt="Mosquito" class="app-icon">
                 <h3>Mosquito Monitoring</h3>
                 <p>CO2 trap mosquito surveillance data with species analysis, facility comparisons, and zone filtering. Interactive charts with hover details and customizable date ranges.</p>
                 <a href="mosquito-monitoring/" class="app-link">Open Application</a>
@@ -163,14 +191,26 @@
         <h2 class="category">Cattail</h2>
         <div class="apps-grid">
             <div class="app-card">
+                <img src="shared/assets/cattail_background.png" alt="Cattail" class="app-icon">
                 <h3>Cattail Inspections</h3>
                 <p>Track cattail inspection progress versus annual goals. Monitor inspection status, coverage metrics, and planned treatments for cattail management sites.</p>
                 <a href="cattail_inspections/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
+                <img src="shared/assets/cattail_background.png" alt="Cattail" class="app-icon">
                 <h3>Cattail Treatments</h3>
                 <p>Comprehensive cattail treatment tracking dashboard. Monitor treatment progress, material usage, acreage treated, and treatment effectiveness by facility and zone.</p>
                 <a href="cattail_treatments/" class="app-link">Open Application</a>
+            </div>
+        </div>
+
+        <h2 class="category">Utilities</h2>
+        <div class="apps-grid">
+            <div class="app-card">
+                <img src="shared/assets/layer-group.jpg" alt="Section Cards" class="app-icon">
+                <h3>Section Cards</h3>
+                <p>Generate printable section cards for breeding sites and structures with customizable fields and formats.</p>
+                <a href="section-cards/" class="app-link">Open Application</a>
             </div>
         </div>
 
@@ -178,24 +218,21 @@
         <div class="apps-grid">
             <div class="app-card">
                 <h3>Test Application</h3>
-                <p>Simple test application to verify Shiny Server functionality. Uses built-in R datasets without database dependencies.</p>
+                <p>Simple test application to verify Shiny Server functionality. Update cached data when lookups and historical data change.</p>
                 <a href="test-app/" class="app-link">Open Application</a>
             </div>
             <div class="app-card">
+                <img src="shared/assets/adult.png" alt="Mosquito" class="app-icon">
                 <h3>Trap Surveillance Test</h3>
                 <p>Prototype app to compute section vector index using k-nearest traps.</p>
                 <a href="trap_survillance_test/" class="app-link">Open Application</a>
             </div>
-            <div class="app-card">
-                <h3>Sections Cards DEMO</h3>
-                <p>Demo application for sections cards functionality.</p>
-            <a href="/sections-cards/" class="app-link">Open Application</a>
-    </div>
         </div>
 
         <h2 class="category">About</h2>
         <div class="apps-grid">
             <div class="app-card">
+                <img src="shared/assets/adult.png" alt="About" class="app-icon">
                 <h3>About This Platform</h3>
                 <p>Credits and information about the development team behind the MMCD Analytics Platform. Learn about the contributors and technologies used in building these analytical tools.</p>
                 <a href="about/" class="app-link">View Credits</a>

@@ -2,7 +2,6 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(shiny)
-  library(shinydashboard)
   library(shinyWidgets)
   library(DBI)
   library(RPostgres)
@@ -15,11 +14,26 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
+source("ui_helper.R")
 source("data_functions.R")
 source("checkback_functions.R")
 source("display_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("control_efficacy")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[control_efficacy] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[control_efficacy] Lookup tables preloaded")
+}, error = function(e) message("[control_efficacy] Preload warning: ", e$message))
 
 # Suppress R CMD check notes for dplyr/ggplot2 NSE variables
 if (getRversion() >= "2.15.1") {
@@ -31,209 +45,16 @@ if (getRversion() >= "2.15.1") {
   ))
 }
 
-# UI
-ui <- dashboardPage(
-  dashboardHeader(
-    title = "Control Efficacy - Air Treatment Checkbacks",
-    tags$li(class = "dropdown",
-      actionLink("show_help", "Help", icon = icon("question-circle"), 
-                 style = "padding: 15px; color: white; cursor: pointer;")
-    )
-  ),
-  
-  dashboardSidebar(
-    sidebarMenu(
-      menuItem("Checkback Progress", tabName = "progress", icon = icon("chart-bar")),
-      menuItem("Status Tables", tabName = "status_tables", icon = icon("table")),
-      menuItem("Control Efficacy", tabName = "status", icon = icon("tasks"))
-    )
-  ),
-  
-  dashboardBody(
-    # Use universal CSS from db_helpers for consistent text sizing
-    get_universal_text_css(),
-    
-    tags$head(
-      tags$style(HTML("
-        .content-wrapper, .right-side {
-          background-color: #f4f4f4;
-        }
-        .box {
-          border-radius: 8px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
-        }
-        .info-box {
-          border-radius: 8px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.12);
-        }
-        .nav-tabs-custom > .nav-tabs > li.active {
-          border-top-color: #3c8dbc;
-        }
-      "))
-    ),
-    
-    # SHARED CONTROLS - Visible across all tabs
-    fluidRow(
-      box(title = "Controls", status = "primary", solidHeader = TRUE, width = 12, collapsible = TRUE, collapsed = FALSE,
-        fluidRow(
-          column(3,
-            dateRangeInput("date_range_progress", "Select Date Range:",
-              start = as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01")),
-              end = Sys.Date(),
-              max = Sys.Date()
-            )
-          ),
-          column(2,
-            selectInput("facility_filter_progress", "Facility:",
-              choices = get_facility_choices(),
-              selected = "all"
-            )
-          ),
-          column(2,
-            selectInput("matcode_filter_progress", "Material Code:",
-              choices = get_treatment_material_choices(),
-              selected = "all"
-            )
-          ),
-          column(2,
-            selectInput("color_theme_progress", "Color Theme:",
-              choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
-              selected = "MMCD"
-            )
-          ),
-          column(2,
-            br(),
-            actionButton("refresh_data_progress", "Refresh Data", 
-              icon = icon("refresh"),
-              class = "btn-primary",
-              style = "margin-top: 0px; width: 100%;")
-          ),
-          column(3,
-            radioButtons("checkback_type_progress", "Checkback Target:",
-              choices = list("Percentage" = "percent", "Fixed Number" = "number"),
-              selected = "percent",
-              inline = TRUE
-            )
-          )
-        ),
-        fluidRow(
-          column(3,
-            conditionalPanel(
-              condition = "input.checkback_type_progress == 'percent'",
-              numericInput("checkback_percent_progress", "Required Checkback %:",
-                value = 10, min = 0, max = 100, step = 5
-              )
-            ),
-            conditionalPanel(
-              condition = "input.checkback_type_progress == 'number'",
-              numericInput("checkback_number_progress", "Number of Checkbacks Required:",
-                value = 10, min = 1, step = 1
-              )
-            )
-          ),
-          column(3,
-            selectInput("species_filter_progress", "Species Filter:",
-              choices = c("All Species" = "all"),
-              selected = "all"
-            )
-          )
-        )
-      )
-    ),
-    
-    tabItems(
-      # Progress Tab
-      tabItem(tabName = "progress",
-        fluidRow(
-          # Summary Statistics
-          valueBoxOutput("total_checkbacks_needed", width = 3),
-          valueBoxOutput("total_checkbacks_completed", width = 3),
-          valueBoxOutput("overall_completion_rate", width = 3),
-          valueBoxOutput("avg_days_to_checkback", width = 3)
-        ),
-        
-        fluidRow(
-          box(title = "Checkback Progress by Brood", status = "success", solidHeader = TRUE, width = 12,
-            uiOutput("checkback_progress_chart_ui")
-          )
-        )
-      ),
-      
-      # Status Tables Tab (Brood Status + Site Details)
-      tabItem(tabName = "status_tables",
-        fluidRow(
-          box(title = "Brood Status Table", status = "info", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("checkback_status_table")
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Checkback Details Filters", status = "primary", solidHeader = TRUE, width = 12, collapsible = TRUE,
-            fluidRow(
-              column(4,
-                selectInput("site_facility_filter", "Facility:",
-                  choices = NULL,
-                  selected = "all"
-                )
-              ),
-              column(4,
-                numericInput("site_min_acres", "Min Acres:",
-                  value = 0, min = 0, step = 0.1
-                )
-              ),
-              column(4,
-                numericInput("site_min_days", "Min Days to Checkback:",
-                  value = 0, min = 0, step = 1
-                )
-              )
-            )
-          )
-        ),
-        
-        fluidRow(
-          box(title = "Site-Level Treatment and Checkback Details", status = "primary", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("site_details")
-          )
-        )
-      ),
-      
-      # Control Efficacy Tab
-      tabItem(tabName = "status",
-        fluidRow(
-          box(title = "Dip Count Changes (Pre/Post Treatment)", status = "warning", solidHeader = TRUE, width = 12,
-            tags$p(style = "color: #856404; background-color: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 10px;",
-              tags$strong("Note:"),
-              " Chart looks too busy? Try filtering to a single facility or viewing only the most recent broods."
-            ),
-            fluidRow(
-              column(2,
-                actionButton("show_recent_only", "Show Most Recent Brood Only",
-                  icon = icon("filter"),
-                  class = "btn-info",
-                  style = "margin-bottom: 10px;")
-              ),
-              column(2,
-                actionButton("show_all_broods", "Show All Broods",
-                  icon = icon("list"),
-                  class = "btn-default",
-                  style = "margin-bottom: 10px;")
-              )
-            ),
-            plotly::plotlyOutput("dip_changes_plot", height = "800px")
-          )
-        ),
-        
-        fluidRow(
-          box(title = "All Sites with Checkbacks", status = "info", solidHeader = TRUE, width = 12,
-            DT::dataTableOutput("all_checkbacks_table")
-          )
-        )
-      )
-    )
-  )
-)
+# =============================================================================
+# USER INTERFACE
+# =============================================================================
 
-# Server
+ui <- control_efficacy_ui()
+
+# =============================================================================
+# SERVER LOGIC
+# =============================================================================
+
 server <- function(input, output, session) {
   
   # Show help modal when help link is clicked
@@ -329,11 +150,27 @@ server <- function(input, output, session) {
     ))
   })
   
-  # Update material code choices when facility changes
+  # Initialize UI choices on app load - NO DATA QUERIES, ONLY FILTER CHOICES
+  observe({
+    facility_choices <- get_facility_choices()
+    updateSelectInput(session, "facility_filter_progress", choices = facility_choices, selected = "all")
+    updateSelectInput(session, "site_facility_filter", choices = facility_choices, selected = "all")
+  })
+  
+  # Update material code choices on app load
   observe({
     matcodes <- get_treatment_material_choices()
-    updateSelectInput(session, "matcode_filter", choices = matcodes)
-    updateSelectInput(session, "matcode_filter_progress", choices = matcodes)
+    updateSelectInput(session, "matcode_filter_progress", choices = matcodes, selected = "all")
+  })
+  
+  # Update species filter choices on app load from db_helpers
+  observe({
+    species_choices <- get_species_choices(include_all = TRUE)
+    # Add special options for missing data
+    species_choices <- c(species_choices, 
+                        "Sample Missing" = "[Sample Missing]",
+                        "No Species Data" = "[No Species Data]")
+    updateSelectInput(session, "species_filter_progress", choices = species_choices, selected = "all")
   })
   
   # ===== PROGRESS TAB REACTIVES =====
@@ -419,60 +256,71 @@ server <- function(input, output, session) {
     plotlyOutput("checkback_progress_chart", height = paste0(height, "px"))
   })
   
-  output$total_checkbacks_needed <- renderValueBox({
+  output$total_checkbacks_needed <- renderUI({
     status <- checkback_status_progress()
     total <- if (!is.null(status)) sum(status$checkbacks_needed, na.rm = TRUE) else 0
     
-    valueBox(
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
+    create_stat_box(
       value = total,
-      subtitle = "Total Checkbacks Needed",
-      icon = icon("clipboard-list"),
-      color = "blue"
+      title = "Total Checkbacks Needed",
+      bg_color = status_colors["unknown"],
+      icon = icon("clipboard-list")
     )
   })
   
-  output$total_checkbacks_completed <- renderValueBox({
+  output$total_checkbacks_completed <- renderUI({
     status <- checkback_status_progress()
     completed <- if (!is.null(status)) sum(status$checkbacks_completed, na.rm = TRUE) else 0
     
-    valueBox(
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
+    create_stat_box(
       value = completed,
-      subtitle = "Total Checkbacks Completed",
-      icon = icon("check-circle"),
-      color = "green"
+      title = "Total Checkbacks Completed",
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
     )
   })
   
-  output$overall_completion_rate <- renderValueBox({
+  output$overall_completion_rate <- renderUI({
     status <- checkback_status_progress()
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
     
     if (!is.null(status)) {
       needed <- sum(status$checkbacks_needed, na.rm = TRUE)
       completed <- sum(status$checkbacks_completed, na.rm = TRUE)
       rate <- if (needed > 0) round(completed / needed * 100, 1) else 0
-      color <- if (rate >= 80) "green" else if (rate >= 50) "yellow" else "red"
+      # Use theme-aware colors based on completion rate
+      color <- if (rate >= 80) {
+        status_colors["active"]          # Green for good completion
+      } else if (rate >= 50) {
+        status_colors["needs_action"]    # Orange for medium completion
+      } else {
+        status_colors["needs_treatment"] # Red for poor completion
+      }
     } else {
       rate <- 0
-      color <- "red"
+      color <- status_colors["needs_treatment"]
     }
     
-    valueBox(
+    create_stat_box(
       value = paste0(rate, "%"),
-      subtitle = "Overall Completion Rate",
-      icon = icon("percentage"),
-      color = color
+      title = "Overall Completion Rate",
+      bg_color = color,
+      icon = icon("percentage")
     )
   })
   
-  output$avg_days_to_checkback <- renderValueBox({
+  output$avg_days_to_checkback <- renderUI({
     status <- checkback_status_progress()
     avg <- if (!is.null(status)) round(mean(status$avg_days_to_checkback, na.rm = TRUE), 1) else 0
     
-    valueBox(
+    status_colors <- get_status_colors(theme = input$color_theme_progress)
+    create_stat_box(
       value = avg,
-      subtitle = "Avg Days to Checkback",
-      icon = icon("calendar-day"),
-      color = "purple"
+      title = "Avg Days to Checkback",
+      bg_color = status_colors["planned"],
+      icon = icon("calendar-day")
     )
   })
   
@@ -511,31 +359,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Update species filter choices
-  observe({
-    details <- site_details()
-    if (!is.null(details)) {
-      # Extract unique species from species_composition
-      # Parse species strings like "Ae. vexans (90%), Cu. pipiens (10%)"
-      species_set <- unique(unlist(lapply(details$species_composition, function(comp) {
-        if (is.na(comp) || comp == "" || comp == "[Sample Missing]" || comp == "[No Species Data]") {
-          return(NULL)
-        }
-        # Split by comma and extract species names (before the percentage)
-        parts <- strsplit(comp, ",\\s*")[[1]]
-        sapply(parts, function(part) {
-          # Extract just the species name before the percentage
-          gsub("\\s*\\(.*", "", part)
-        })
-      })))
-      
-      species_choices <- c("All Species" = "all", 
-                          "Sample Missing" = "[Sample Missing]",
-                          "No Species Data" = "[No Species Data]",
-                          sort(species_set[!is.na(species_set)]))
-      updateSelectInput(session, "species_filter_progress", choices = species_choices, selected = "all")
-    }
-  })
+
   
   # Filtered site details based on user selections
   filtered_site_details <- reactive({
@@ -602,7 +426,14 @@ server <- function(input, output, session) {
         )
       ),
       rownames = FALSE
-    )
+    ) %>%
+      formatStyle(
+        "Completion Rate (%)",
+        backgroundColor = styleInterval(
+          c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+          c("#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837")
+        )
+      )
   })
   
   # Brood Status Table (legacy output for backward compatibility)
@@ -636,8 +467,8 @@ server <- function(input, output, session) {
       formatStyle(
         "Completion Rate (%)",
         backgroundColor = styleInterval(
-          c(50, 80), 
-          c("#f8d7da", "#fff3cd", "#d4edda")
+          c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+          c("#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837")
         )
       )
   })
@@ -651,6 +482,13 @@ server <- function(input, output, session) {
     }
     
     display_data <- details %>%
+      mutate(
+        `% Reduction` = ifelse(
+          is.na(pre_treatment_dips) | is.na(post_treatment_dips) | pre_treatment_dips == 0,
+          NA,
+          round(((pre_treatment_dips - post_treatment_dips) / pre_treatment_dips) * 100, 1)
+        )
+      ) %>%
       select(
         Site = sitecode,
         Facility = facility,
@@ -660,6 +498,7 @@ server <- function(input, output, session) {
         `Days to Checkback` = days_to_checkback,
         `Pre Dips` = pre_treatment_dips,
         `Post Dips` = post_treatment_dips,
+        `% Reduction`,
         Acres = acres
       )
     
@@ -669,7 +508,14 @@ server <- function(input, output, session) {
         scrollX = TRUE
       ),
       rownames = FALSE
-    )
+    ) %>%
+      formatStyle(
+        "% Reduction",
+        backgroundColor = styleInterval(
+          c(-50, 0, 25, 50, 75, 90, 95),
+          c("#67001f", "#d73027", "#f46d43", "#fee08b", "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850")
+        )
+      )
   })
   
   # Reactive value to track filter state for dip changes chart

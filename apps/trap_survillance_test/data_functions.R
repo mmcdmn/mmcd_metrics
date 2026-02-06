@@ -16,7 +16,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   
   con <- get_db_connection()
   if (is.null(con)) return(NULL)
-  on.exit(dbDisconnect(con))
+  on.exit(safe_disconnect(con))
   
   # Build filters
   trap_type_filter <- paste(sprintf("'%s'", trap_types), collapse = ",")
@@ -24,7 +24,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   # FIX: species_codes are already numeric sppcode IDs (36, 38, etc.) from get_species_choices()
   species_filter_traps <- ""
   species_filter_pools <- ""
-  if (length(species_codes) > 0 && !("all" %in% tolower(species_codes))) {
+  if (is_valid_filter(species_codes)) {
     # Convert to numeric and build IN clause
     species_ids <- paste(as.integer(species_codes), collapse = ",")
     species_filter_traps <- sprintf("AND s.spp IN (%s)", species_ids)
@@ -34,28 +34,55 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
   }
   
   facility_filter_sql <- ""
-  if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% tolower(facility_filter))) {
+  if (is_valid_filter(facility_filter)) {
     facility_filter_sql <- sprintf("AND t.facility IN (%s)", paste(sprintf("'%s'", facility_filter), collapse = ","))
   }
   
   # UNIFIED QUERY - Get traps, pools, and sections in one go
+  # Uses UNION ALL to combine current and archive data
   unified_q <- sprintf(
     "WITH 
+    -- All trap inspections (current + archive)
+    all_trap_inspections AS (
+      SELECT ainspecnum, facility, x, y, survtype, inspdate
+      FROM public.dbadult_insp_current
+      WHERE x IS NOT NULL AND y IS NOT NULL
+      UNION ALL
+      SELECT ainspecnum, facility, x, y, survtype, inspdate
+      FROM public.dbadult_insp_archive
+      WHERE x IS NOT NULL AND y IS NOT NULL
+    ),
+    -- All species data (current + archive)
+    all_trap_species AS (
+      SELECT ainspecnum, spp, cnt
+      FROM public.dbadult_species_current
+      UNION ALL
+      SELECT ainspecnum, spp, cnt
+      FROM public.dbadult_species_archive
+    ),
     -- Latest trap inspections per location
     latest_traps AS (
       SELECT DISTINCT ON (t.x, t.y, t.facility)
         t.ainspecnum, t.facility, t.x, t.y, t.survtype, t.inspdate,
         COALESCE(SUM(s.cnt), 0) as species_count
-      FROM public.dbadult_insp_current t
-      LEFT JOIN public.dbadult_species_current s ON t.ainspecnum = s.ainspecnum %s
+      FROM all_trap_inspections t
+      LEFT JOIN all_trap_species s ON t.ainspecnum = s.ainspecnum %s
       WHERE t.inspdate::date <= '%s'::date 
-        AND t.x IS NOT NULL AND t.y IS NOT NULL
         AND t.survtype IN (%s)
         %s
       GROUP BY t.ainspecnum, t.facility, t.x, t.y, t.survtype, t.inspdate
       ORDER BY t.x, t.y, t.facility, t.inspdate DESC
     ),
-    
+    -- All adult inspection records with geometry (current + archive)
+    all_adult_insp_with_geom AS (
+      SELECT ainspecnum, sitecode, address1, sampnum_yr, loc_code, network_type, 
+             facility, survtype, inspdate, geometry
+      FROM dbadult_insp_current
+      UNION ALL
+      SELECT ainspecnum, sitecode, address1, sampnum_yr, loc_code, network_type, 
+             facility, survtype, inspdate, geometry
+      FROM dbadult_insp_archive
+    ),
     -- Virus pool tests with geometries
     virus_pools AS (
       SELECT 
@@ -76,7 +103,7 @@ fetch_unified_surveillance_data <- function(analysis_date = Sys.Date(),
         c.facility
       FROM dbvirus_pool_test t
       LEFT JOIN dbvirus_pool p ON p.poolnum = t.poolnum
-      LEFT JOIN dbadult_insp_current c ON c.sampnum_yr = p.sampnum_yr
+      LEFT JOIN all_adult_insp_with_geom c ON c.sampnum_yr = p.sampnum_yr
       LEFT JOIN (
         SELECT a.loc_code, n.geom 
         FROM loc_mondaynight_active a 

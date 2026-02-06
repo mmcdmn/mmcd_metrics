@@ -1,7 +1,43 @@
 # Display functions for SUCO History app
 # These functions handle visualization and rendering for both current and all data
+#
+# Uses shared utilities from:
+#   - geometry_helpers.R: shapefile loading, map bounds, leaflet helpers
+#   - db_helpers.R: lookups, colors, vectorized functions
 
 source("../../shared/db_helpers.R")
+source("../../shared/geometry_helpers.R")
+
+# Helper to add all background layers to a leaflet map
+# Uses shared geometry_helpers for loading and rendering
+add_background_layers_to_map <- function(m, facility_filter = NULL, foreman_filter = NULL, load_harborages = FALSE) {
+  # Show loading indicator
+  shiny::incProgress(0.1, message = "Loading map layers...", detail = "Facility boundaries")
+  
+  # Use shared geometry_helpers for loading
+  bg_layers <- load_background_layers()
+  
+  shiny::incProgress(0.2, detail = "Zone boundaries")
+  
+  # Use shared function for adding background layers
+  m <- add_background_layers(m, bg_layers)
+  
+  # Only load harborages if toggle is enabled
+  if (load_harborages) {
+    shiny::incProgress(0.3, detail = "Loading harborages...")
+    harborages <- load_harborage_layers(facility_filter = facility_filter, foreman_filter = foreman_filter)
+    
+    # Use shared function for adding harborage layer
+    if (!is.null(harborages) && nrow(harborages) > 0) {
+      shiny::incProgress(0.2, detail = paste0("Rendering ", nrow(harborages), " harborages..."))
+      m <- add_harborage_layer(m, harborages)
+    }
+  } else {
+    shiny::incProgress(0.5, detail = "Skipping harborages (disabled)...")
+  }
+  
+  return(m)
+}
 
 # Helper function to convert zone UI selection to filter vector
 convert_zone_selection <- function(zone_input) {
@@ -18,7 +54,7 @@ convert_zone_selection <- function(zone_input) {
 
 # Create SUCO map (consolidates map and current_map functionality)
 # Function to create SUCO map with flexible data source
-create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
+create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", group_by = "mmcd_all") {
   # Get marker size multiplier
   size_multiplier <- input$marker_size
   
@@ -29,7 +65,6 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
   basemap <- switch(input$basemap,
                     "osm" = providers$OpenStreetMap,
                     "carto" = providers$CartoDB.Positron,
-                    "terrain" = providers$Stamen.Terrain,
                     "satellite" = providers$Esri.WorldImagery,
                     providers$CartoDB.Positron)
   
@@ -50,54 +85,31 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
     )
   }
   
-  # Create color palette based on field count or facility
+  # Create color palette based on field count, facility, or species
   if (input$group_by == "facility") {
     # Get facility colors and lookup from db_helpers
     facility_colors <- get_facility_base_colors(theme = theme)
     facilities <- get_facility_lookup()
-    foremen_lookup <- get_foremen_lookup()  # Add foremen lookup for popups
-    foremen_lookup$emp_num <- as.character(foremen_lookup$emp_num)  # Ensure string format
+    foremen_lookup <- get_foremen_lookup()
     
-    # Create facility name mapping FIRST
-    facility_names <- setNames(facilities$full_name, facilities$short_name)
-    
-    # Create popup text beforehand to avoid scope issues
+    # Create popup text using vectorized lookups for performance
     data <- data %>%
       mutate(
-        popup_text = {
-          # Get proper foreman names with robust matching
-          foreman_names <- sapply(foreman, function(f) {
-            if (!is.na(f) && f != "" && !is.null(f)) {
-              # Ensure both foreman and emp_num are strings for comparison
-              foreman_str <- trimws(as.character(f))
-              
-              # Find matching foreman in lookup table
-              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
-              
-              if(length(matches) > 0) {
-                foremen_lookup$shortname[matches[1]]
-              } else {
-                # Fallback: show the raw foreman ID if no match found
-                paste0("FOS #", foreman_str)
-              }
-            } else {
-              "No FOS assigned"
-            }
-          })
-          
-          facility_names_vec <- sapply(facility, function(f) {
-            fname <- facility_names[f]
-            if(length(fname) > 0) fname[1] else f
-          })
-          
-          paste0("<b>Date:</b> ", inspdate, "<br>",
-                 "<b>Facility:</b> ", facility_names_vec, "<br>",
-                 "<b>FOS:</b> ", foreman_names, "<br>",
+        # Use vectorized lookup functions from db_helpers
+        foreman_name = get_foreman_display_names(foreman, foremen_lookup),
+        facility_name = get_facility_display_names(facility, facilities),
+        popup_text = paste0("<b>Date:</b> ", inspdate, "<br>",
+                 "<b>Facility:</b> ", facility_name, "<br>",
+                 "<b>FOS:</b> ", foreman_name, "<br>",
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
-                 "<b>Species Found:</b><br>", species_summary)
-        }
+                 "<b>Species Found:</b><br>", species_summary),
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
+    
+    # Create facility name mapping for legend
+    facility_names <- setNames(facilities$full_name, facilities$short_name)
     
     # Create color palette function
     pal <- colorFactor(
@@ -107,22 +119,25 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
     # Create a named vector for legend labels
     legend_labels <- sapply(names(facility_colors), function(code) facility_names[code] %||% code)
     
-    # Create map with facility coloring
-    leaflet(data) %>%
-      addProviderTiles(basemap) %>%
-      fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
-      ) %>%
+    # Create map with facility coloring - use safe bounds calculation
+    bounds <- calculate_map_bounds(data)
+    m <- leaflet(data) %>%
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
+    
+    # Add background layers (facility, zone boundaries, harborages) with filters
+    m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
+    
+    # Add SUCO markers
+    m <- m %>%
       addCircleMarkers(
         radius = ~marker_size,
         color = "black",
-        weight = 1.5,
+        weight = ~marker_weight,
         fillColor = ~pal(facility),
-        fillOpacity = 0.8,
-        popup = ~popup_text
+        fillOpacity = ~marker_fill_opacity,
+        popup = ~popup_text,
+        group = "SUCO Locations"
       ) %>%
       addLegend(
         position = "bottomright",
@@ -130,7 +145,177 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
         colors = facility_colors,
         labels = legend_labels,
         opacity = 0.8
+      ) %>%
+      addLayersControl(
+        overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
+        options = layersControlOptions(collapsed = FALSE)
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #1f77b4; border: 2px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
       )
+    
+    return(m)
+    
+  } else if (input$group_by == "species_name") {
+    # Get species colors and create species-based markers
+    species_colors <- get_species_display_colors()
+    foremen_lookup <- get_foremen_lookup()
+    
+    # Get the species for each location to determine marker color
+    data <- data %>%
+      mutate(
+        dominant_species = case_when(
+          !is.na(species_name) & species_name != "" ~ species_name,
+          TRUE ~ "No species"
+        ),
+        # Use vectorized lookup for foreman names
+        foreman_name = get_foreman_display_names(foreman, foremen_lookup),
+        popup_text = paste0("<b>Date:</b> ", inspdate, "<br>",
+                 "<b>Species:</b> ", ifelse(!is.na(species_name) & species_name != "", species_name, "No species"), "<br>",
+                 "<b>FOS:</b> ", foreman_name, "<br>",
+                 "<b>Location:</b> ", location, "<br>",
+                 "<b>Species Count:</b> ", display_species_count, "<br>",
+                 "<b>Species Found:</b><br>", species_summary),
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
+      )
+    
+    # Aggregate by location to handle multi-species SUCOs
+    coords <- st_coordinates(data)
+    location_summary <- data %>%
+      st_drop_geometry() %>%
+      mutate(longitude = coords[,1], latitude = coords[,2]) %>%
+      group_by(longitude, latitude, location, inspdate, facility, foreman) %>%
+      summarise(
+        # Create species breakdown with counts (e.g., "Aedes triseriatus: 3<br>Culex tarsalis: 2")
+        species_counts = {
+          valid_species <- species_name[species_name != "No species"]
+          valid_counts <- cnt[species_name != "No species"]
+          if (length(valid_species) > 0) {
+            paste(paste0(valid_species, ": ", valid_counts), collapse = "<br>")
+          } else {
+            ""
+          }
+        },
+        species_list = paste(unique(species_name[species_name != "No species"]), collapse = ", "),
+        n_species = n_distinct(species_name[species_name != "No species"]),
+        total_count = sum(cnt, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        # Assign color category based on number of species
+        color_category = case_when(
+          n_species == 0 ~ "No species",
+          n_species == 1 ~ species_list,  # Single species - use that species name
+          TRUE ~ "Multiple species"  # Multiple species
+        ),
+        popup_text = paste0(
+          "<b>Date:</b> ", inspdate, "<br>",
+          "<b>Sitecode:</b> ", location, "<br>",
+          "<b>Species:</b><br>", 
+          ifelse(species_counts == "" | is.na(species_counts), "None found", species_counts)
+        ),
+        marker_size = case_when(
+          total_count == 0 ~ 4,
+          total_count <= 5 ~ 8,
+          total_count <= 10 ~ 10,
+          total_count <= 20 ~ 12,
+          TRUE ~ 14
+        ),
+        marker_opacity = ifelse(total_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(total_count == 0, 4, 1.5)
+      ) %>%
+      # Add small offset for SUCOs at same location to make them clickable
+      group_by(longitude, latitude) %>%
+      mutate(
+        n_at_location = n(),
+        location_idx = row_number(),
+        # Offset in a circle pattern around the original location
+        angle = 2 * pi * (location_idx - 1) / n_at_location,
+        offset_dist = ifelse(n_at_location > 1, 0.0003, 0),  # ~33 meters offset
+        longitude = longitude + offset_dist * cos(angle),
+        latitude = latitude + offset_dist * sin(angle)
+      ) %>%
+      ungroup() %>%
+      select(-n_at_location, -location_idx, -angle, -offset_dist)
+    
+    # Use colors from db_helpers - already includes 'Multiple species' with purple
+    species_colors_extended <- species_colors
+    
+    # Create color palette for species including multi-species
+    species_in_data <- unique(location_summary$color_category)
+    species_in_data <- species_in_data[!is.na(species_in_data)]
+    
+    pal <- colorFactor(
+      palette = species_colors_extended,
+      domain = species_in_data)
+    
+    # Create map with location-aggregated markers - use safe bounds calculation
+    bounds <- calculate_map_bounds(location_summary, lng_col = "longitude", lat_col = "latitude")
+    m <- leaflet(location_summary) %>%
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
+    
+    # Add background layers (facility, zone boundaries, harborages) with filters
+    m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
+    
+    # Add SUCO markers on top
+    m <- m %>%
+      addCircleMarkers(
+        lng = ~longitude,
+        lat = ~latitude,
+        radius = ~marker_size,
+        color = "black", 
+        weight = ~marker_weight,
+        fillColor = ~pal(color_category),
+        fillOpacity = ~marker_opacity,
+        popup = ~popup_text,
+        popupOptions = popupOptions(maxWidth = 300),
+        group = "SUCO Locations"
+      ) %>%
+      addLegend(
+        "topright",
+        pal = pal,
+        values = ~color_category,
+        title = "Species",
+        opacity = 1
+      ) %>%
+      addLayersControl(
+        overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
+        options = layersControlOptions(collapsed = FALSE)
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #2E8B57; border: 1px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
+      )
+    
+    return(m)
+    
   } else if (input$group_by == "foreman") {
     # Filter out records with NA foreman before processing
     data <- data %>% filter(!is.na(foreman) & foreman != "")
@@ -146,36 +331,15 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
       )
     }
     
-    # Get both colors and lookup exactly as documented
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    foremen_lookup <- get_foremen_lookup()
+    # Get foreman colors using shared function
+    emp_colors <- map_foreman_emp_to_colors(theme = theme)
     
-    # Create mapping from foreman NUMBER to facility-based colors (same logic as plot)
+    # Filter to only foremen in data
     foremen_in_data <- unique(na.omit(data$foreman))
-    emp_colors <- character(0)
-    
-    for (foreman_num in foremen_in_data) {
-      foreman_num_str <- trimws(as.character(foreman_num))
-      
-      # Find the shortname for this foreman number
-      matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-      
-      if(length(matches) > 0) {
-        shortname <- foremen_lookup$shortname[matches[1]]
-        facility <- foremen_lookup$facility[matches[1]]
-        
-        # Get the facility-based color for this shortname
-        if(shortname %in% names(foreman_colors)) {
-          emp_colors[foreman_num_str] <- foreman_colors[shortname]
-        }
-      }
-    }
-    
-    # Remove any NA colors
-    emp_colors <- emp_colors[!is.na(emp_colors)]
+    emp_colors <- emp_colors[names(emp_colors) %in% as.character(foremen_in_data)]
     
     # Create ORDERED colors to ensure legend and map match exactly
-    # Order by facility, then by foreman within facility (same as legend)
+    foremen_lookup <- get_foremen_lookup()
     ordered_foremen <- foremen_lookup[order(foremen_lookup$facility, foremen_lookup$shortname), ]
     ordered_emp_colors <- character(0)
     ordered_emp_numbers <- character(0)
@@ -197,60 +361,43 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
       ordered = TRUE  # Maintain order
     )
     
-    # Create popup text beforehand for foreman map too
+    # Get facilities lookup for display names
+    facilities <- get_facility_lookup()
+    
+    # Create popup text using vectorized lookups for performance
     data <- data %>%
       mutate(
-        popup_text_foreman = {
-          # Get proper foreman names with robust matching
-          foreman_names <- sapply(foreman, function(f) {
-            if (!is.na(f) && f != "" && !is.null(f)) {
-              # Ensure both foreman and emp_num are strings for comparison
-              foreman_str <- trimws(as.character(f))
-              
-              # Find matching foreman in lookup table
-              matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
-              
-              if(length(matches) > 0) {
-                foremen_lookup$shortname[matches[1]]
-              } else {
-                # Fallback: show the raw foreman ID if no match found
-                paste0("FOS #", foreman_str)
-              }
-            } else {
-              "No FOS assigned"
-            }
-          })
-          
-          facility_names_vec <- sapply(facility, function(f) {
-            fname <- facilities$full_name[facilities$short_name == f]
-            if(length(fname) > 0) fname[1] else f
-          })
-          
-          paste0("<b>Date:</b> ", inspdate, "<br>",
-                 "<b>Facility:</b> ", facility_names_vec, "<br>",
-                 "<b>FOS:</b> ", foreman_names, "<br>",
+        foreman_name = get_foreman_display_names(foreman, foremen_lookup),
+        facility_name = get_facility_display_names(facility, facilities),
+        popup_text_foreman = paste0("<b>Date:</b> ", inspdate, "<br>",
+                 "<b>Facility:</b> ", facility_name, "<br>",
+                 "<b>FOS:</b> ", foreman_name, "<br>",
                  "<b>Location:</b> ", location, "<br>",
                  "<b>Species Count:</b> ", display_species_count, "<br>",
-                 "<b>Species Found:</b><br>", species_summary)
-        }
+                 "<b>Species Found:</b><br>", species_summary),
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
       )
     
-    # Create map with foreman coloring
-    leaflet(data) %>%
-      addProviderTiles(basemap) %>%
-      fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
-      ) %>%
+    # Create map with foreman coloring - use safe bounds calculation
+    bounds <- calculate_map_bounds(data)
+    m <- leaflet(data) %>%
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
+    
+    # Add background layers (facility, zone boundaries, harborages) with filters
+    m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
+
+    # Add SUCO markers
+    m <- m %>%
       addCircleMarkers(
         radius = ~marker_size,
         color = "black",
-        weight = 1.5,
+        weight = ~marker_weight,
         fillColor = ~pal(foreman),
-        fillOpacity = 0.8,
-        popup = ~popup_text_foreman
+        fillOpacity = ~marker_fill_opacity,
+        popup = ~popup_text_foreman,
+        group = "SUCO Locations"
       ) %>%
       addLegend(
         position = "bottomright",
@@ -269,29 +416,72 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
           ordered_labels
         },
         opacity = 0.8
+      ) %>%
+      addLayersControl(
+        overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
+        options = layersControlOptions(collapsed = FALSE)
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #1f77b4; border: 2px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
       )
+    
+    return(m)
   } else {
     # For MMCD (All) case, use a single color
-    leaflet(data) %>%
-      addProviderTiles(basemap) %>%
-      fitBounds(
-        lng1 = min(st_coordinates(data)[,1]),
-        lat1 = min(st_coordinates(data)[,2]),
-        lng2 = max(st_coordinates(data)[,1]),
-        lat2 = max(st_coordinates(data)[,2])
-      ) %>%
+    # Add marker styling for zero counts
+    data <- data %>%
+      mutate(
+        marker_fill_opacity = ifelse(display_species_count == 0, 0.35, 0.8),
+        marker_weight = ifelse(display_species_count == 0, 4, 1.5)
+      )
+    
+    # Debug: Print data info to console
+    cat("[MMCD All Map Debug] Rows:", nrow(data), "\n")
+    if (nrow(data) > 0) {
+      coords <- sf::st_coordinates(data)
+      cat("[MMCD All Map Debug] Coord range: lng=", 
+          paste(range(coords[,1]), collapse=" to "), 
+          ", lat=", paste(range(coords[,2]), collapse=" to "), "\n")
+      cat("[MMCD All Map Debug] Sample coords:", head(coords, 1), "\n")
+    }
+    
+    # Create base map - use safe bounds calculation for single-point case
+    bounds <- calculate_map_bounds(data)
+    m <- leaflet(data) %>%
+      addProviderTiles(basemap, group = "Base Map")
+    m <- apply_map_bounds(m, bounds)
+    
+    # Add background layers (facility, zone boundaries, harborages) with filters
+    m <- add_background_layers_to_map(m, input$facility_filter, input$foreman_filter, input$load_harborages)
+
+    # Add SUCO markers
+    m <- m %>%
       addCircleMarkers(
         radius = ~marker_size,
         color = "black",
-        weight = 1.5,
+        weight = ~marker_weight,
         fillColor = "#1f77b4", # Standard blue color
-        fillOpacity = 0.8,
+        fillOpacity = ~marker_fill_opacity,
         popup = ~paste0("<b>Date:</b> ", inspdate, "<br>",
                         "<b>Facility:</b> ", facility, "<br>",
                         "<b>Foreman:</b> ", foreman, "<br>",
                         "<b>Location:</b> ", location, "<br>",
                         "<b>Species Count:</b> ", display_species_count, "<br>",
-                        "<b>Species Found:</b><br>", species_summary)
+                        "<b>Species Found:</b><br>", species_summary),
+        group = "SUCO Locations"
       ) %>%
       addLegend(
         position = "bottomright",
@@ -299,7 +489,29 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD") {
         colors = "#1f77b4",
         labels = "All",
         opacity = 0.8
+      ) %>%
+      addLayersControl(
+        overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
+        options = layersControlOptions(collapsed = FALSE)
+      ) %>%
+      addControl(
+        html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
+                <div style="margin-bottom: 3px;">
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: #1f77b4; border: 2px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Target species present</span>
+                </div>
+                <div>
+                  <span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; 
+                              background-color: rgba(31, 119, 180, 0.35); border: 4px solid black; vertical-align: middle;"></span>
+                  <span style="margin-left: 5px;">Zero target species</span>
+                </div>
+              </div>',
+        position = "bottomleft"
       )
+    
+    return(m)
   }
 }
 
@@ -365,6 +577,20 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
   )
   
   # Create stacked bar chart
+  # Calculate date range for legend breaks - handle single point case
+  date_range <- range(top_locations_data$date_numeric, na.rm = TRUE)
+  
+  # Handle case with only one date (breaks and labels would be same length)
+  if (date_range[1] == date_range[2]) {
+    # Single date case - use that date for both breaks and labels
+    date_breaks <- c(date_range[1])
+    date_labels <- format(as.Date(date_breaks, origin = "1970-01-01"), "%m/%d/%y")
+  } else {
+    # Multiple dates - create 5 breaks
+    date_breaks <- seq(date_range[1], date_range[2], length.out = 5)
+    date_labels <- format(as.Date(date_breaks, origin = "1970-01-01"), "%m/%d/%y")
+  }
+  
   p <- ggplot(top_locations_data, aes(x = location, y = .data[[value_col]], 
                                      fill = date_numeric, 
                                      text = paste("Location:", location, "<br>",
@@ -373,7 +599,8 @@ create_location_plotly <- function(top_locations_data, data_source = "all", mode
                                                  "Species Found:<br>",
                                                  gsub("<br>", "<br>", species_summary)))) +
     geom_bar(stat = "identity", position = "stack", na.rm = TRUE) +
-    scale_fill_viridis_c(option = viridis_option, name = "Date") +
+    scale_fill_viridis_c(option = viridis_option, name = "Date",
+                         breaks = date_breaks, labels = date_labels) +
     coord_flip() +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +  # Better scale handling
     labs(title = chart_title, subtitle = chart_subtitle, x = "Location", y = y_label) +
@@ -429,6 +656,8 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   group_col <- input$group_by
   if (group_col == "mmcd_all") {
     group_col <- "mmcd_all"
+  } else if (group_col == "species") {
+    group_col <- "species_name"  # Column name used in species aggregation
   }
   
   # Get facility and foreman lookups for labels
@@ -446,6 +675,7 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     input$group_by == "facility" ~ "Facility",
     input$group_by == "foreman" ~ "FOS", 
     input$group_by == "mmcd_all" ~ "MMCD (All)",
+    input$group_by == "species" ~ "Species",
     TRUE ~ "Group"
   )
   
@@ -472,47 +702,19 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     TRUE ~ "Zone: All"
   )
   
-  # Get color scales from db_helpers based on grouping
+  # Get color scales based on grouping - use shared functions
   custom_colors <- if(group_col == "facility") {
     get_facility_base_colors(theme = theme)
   } else if(group_col == "foreman") {
-    # Get the foreman colors from db_helpers
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Create mapping from foreman NUMBER to facility-based colors
-    foremen_in_data <- unique(na.omit(data[[group_col]]))
-    emp_colors <- character(0)
-    
-    for (foreman_num in foremen_in_data) {
-      foreman_num_str <- trimws(as.character(foreman_num))
-      
-      # Find the shortname for this foreman number
-      matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_num_str)
-      
-      if(length(matches) > 0) {
-        shortname <- foremen_lookup$shortname[matches[1]]
-        facility <- foremen_lookup$facility[matches[1]]
-        
-        # Get the facility-based color for this shortname
-        if(shortname %in% names(foreman_colors)) {
-          emp_colors[foreman_num_str] <- foreman_colors[shortname]
-        }
-      }
-    }
-    
-    # Remove any NA colors
-    emp_colors <- emp_colors[!is.na(emp_colors)]
-    
-    # Return the mapped colors
-    emp_colors
+    map_foreman_emp_to_colors(theme = theme)
+  } else if(group_col == "species_name") {
+    get_species_display_colors()
   } else {
     NULL
   }
   
   # Determine the plotting group column and handle color mapping for combined zones
   # With the current implementation, zones are never shown separately
-  # "P1 + P2" combines zones into single bars/lines
   zones_selected <- convert_zone_selection(input$zone_filter)
   show_zones_separately <- FALSE  # Never show zones separately in this version
   
@@ -520,27 +722,15 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
   
   # Get colors based on grouping - simplified since zones are never shown separately
   if (group_col == "facility") {
-    # Standard facility colors
     custom_colors <- get_facility_base_colors(theme = theme)
     alpha_values <- NULL
   } else if (group_col == "foreman") {
-    # Get foremen lookup for mapping emp_num to shortname
-    foremen_lookup <- get_foremen_lookup()
-    
-    # Standard foreman colors - map from shortname to emp_num
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    emp_colors <- character(0)
-    
-    for (i in 1:nrow(foremen_lookup)) {
-      shortname <- trimws(foremen_lookup$shortname[i])
-      emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
-      
-      if (shortname %in% names(foreman_colors)) {
-        emp_colors[emp_num] <- foreman_colors[shortname]
-      }
-    }
-    
-    custom_colors <- emp_colors
+    # Use shared function for foreman emp_num to colors
+    custom_colors <- map_foreman_emp_to_colors(theme = theme)
+    alpha_values <- NULL
+  } else if (group_col == "species_name") {  # Updated to match column name
+    # Use shared function for species colors with mapping
+    custom_colors <- get_species_display_colors()
     alpha_values <- NULL
   } else {
     custom_colors <- NULL
@@ -562,6 +752,9 @@ create_trend_plot <- function(aggregated_data, aggregated_data_current, input, d
     } else if (group_col == "foreman") {
       # Map emp_num to shortnames for labels
       labels_mapping <- function(x) sapply(x, function(num) foreman_names[as.character(num)] %||% paste0("FOS #", num))
+    } else if (group_col == "species_name") {  # Updated to match column name
+      # Species names are already display-friendly, no mapping needed
+      labels_mapping <- NULL
     } else {
       labels_mapping <- NULL
     }

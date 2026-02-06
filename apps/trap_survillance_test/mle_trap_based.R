@@ -49,11 +49,11 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
     # Original database query logic
     con <- get_db_connection()
     if (is.null(con)) return(data.frame())
-    on.exit(dbDisconnect(con))
+    on.exit(safe_disconnect(con))
 
-    # Handle species filtering - ensure all codes are character strings
+    # Handle species filtering using shared helper
     species_sql <- ""
-    if (!("all" %in% tolower(species_codes))) {
+    if (is_valid_filter(species_codes)) {
       # Force conversion to character and wrap in quotes
       species_codes_char <- as.character(species_codes)
       species_filter <- paste(sprintf("'%s'", species_codes_char), collapse = ",")
@@ -66,8 +66,18 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
     
     # Query to get virus test data grouped by trap (sampnum_yr)
     # Filter by trap types (survtype) to match surveillance parameters
+    # Uses UNION ALL to combine current and archive adult inspection data
     virus_q <- sprintf(
-      "SELECT 
+      "WITH all_adult_insp AS (
+         SELECT ainspecnum, sitecode, address1, sampnum_yr, loc_code, network_type, 
+                facility, survtype, inspdate, geometry
+         FROM dbadult_insp_current
+         UNION ALL
+         SELECT ainspecnum, sitecode, address1, sampnum_yr, loc_code, network_type, 
+                facility, survtype, inspdate, geometry
+         FROM dbadult_insp_archive
+       )
+       SELECT 
         pl.sampnum_yr,
         g.facility,
         ST_X(ST_Transform(g.geometry, 4326)) as lon, 
@@ -94,7 +104,7 @@ compute_section_mle_trap_based <- function(species_codes, analysis_date = Sys.Da
                 c.facility, survtype, inspdate, 
                 CASE WHEN c.network_type IS NOT NULL THEN l.geom
                      ELSE c.geometry END AS geometry
-         FROM dbadult_insp_current c
+         FROM all_adult_insp c
          LEFT JOIN 
          (SELECT a.loc_code, n.geom 
           FROM loc_mondaynight_active a 

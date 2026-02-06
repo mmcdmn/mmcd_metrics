@@ -54,17 +54,16 @@ get_comprehensive_historical_data <- function(start_date = NULL, end_date = NULL
   }
   
   tryCatch({
-    # Build filter conditions for SQL - improved for better performance
-    # Treat NULL, empty, or "all" as no filter
+    # Build filter conditions using shared helpers
     facility_condition <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facility_list <- paste0("'", paste(facility_filter, collapse = "', '"), "'")
+    if (is_valid_filter(facility_filter)) {
+      facility_list <- build_sql_in_list(facility_filter)
       facility_condition <- sprintf("AND (g.facility IN (%s) OR (g.facility IS NULL AND b.facility IN (%s)))", facility_list, facility_list)
     }
     
     priority_condition <- ""
-    if (!is.null(priority_filter) && length(priority_filter) > 0 && !"all" %in% priority_filter) {
-      priority_list <- paste0("'", paste(priority_filter, collapse = "', '"), "'")
+    if (is_valid_filter(priority_filter)) {
+      priority_list <- build_sql_in_list(priority_filter)
       priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
     }
     
@@ -361,7 +360,7 @@ get_comprehensive_historical_data <- function(start_date = NULL, end_date = NULL
       treatment_volumes = data.frame()
     ))
   }, finally = {
-    dbDisconnect(con)
+    safe_disconnect(con)
   })
 }
   

@@ -9,6 +9,7 @@ library(purrr)
 library(shiny)
 
 source("data_functions.R")
+source("../../shared/server_utilities.R")
 
 # Function to get historical cattail inspection and treatment data
 get_historical_cattail_data <- function(time_period = "monthly", display_metric = "need_treatment", 
@@ -181,7 +182,7 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
     # Execute queries
     inspection_data <- dbGetQuery(con, inspection_query, list(start_date, end_date))
     treatment_data <- dbGetQuery(con, treatment_query, list(start_date, end_date))
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Add facility mapping to both datasets
     facility_lookup <- get_facility_lookup()
@@ -241,7 +242,7 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
     
   }, error = function(e) {
     warning(paste("Error loading historical cattail data:", e$message))
-    if (exists("con") && !is.null(con)) dbDisconnect(con)
+    if (exists("con") && !is.null(con)) safe_disconnect(con)
     return(list(inspections = data.frame(), treatments = data.frame()))
   })
 }
@@ -324,18 +325,18 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
       )
   }
   
-  # Apply facility filter AFTER group_label is created
-  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+  # Apply facility filter AFTER group_label is created using shared helper
+  if (is_valid_filter(facility_filter)) {
     if (nrow(inspection_data) > 0) {
-      inspection_data <- inspection_data %>% filter(facility_short %in% facility_filter)
+      inspection_data <- inspection_data %>% filter(facility %in% facility_filter)
     }
     if (nrow(treatment_data) > 0) {
-      treatment_data <- treatment_data %>% filter(facility_short %in% facility_filter)
+      treatment_data <- treatment_data %>% filter(facility %in% facility_filter)
     }
   }
   
-  # Apply foreman filter AFTER group_label is created
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
+  # Apply foreman filter AFTER group_label is created using shared helper
+  if (is_valid_filter(foreman_filter)) {
     if (nrow(inspection_data) > 0) {
       inspection_data <- inspection_data %>% filter(foreman_name %in% foreman_filter)
     }
@@ -475,16 +476,7 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
            theme_void())
   }
   
-  # For bar charts, convert time_group to character year for better display
-  if (chart_type %in% c("bar", "stacked")) {
-    plot_data <- plot_data %>%
-      mutate(
-        year_label = format(time_group, "%Y"),
-        time_group_char = as.character(year(time_group))
-      )
-  }
-  
-  # Create appropriate color mapping based on group_by
+  # Create appropriate color mapping based on group_by BEFORE changing labels
   if (group_by == "facility") {
     # For facility grouping, ensure we have the right color keys
     if (combine_zones) {
@@ -534,68 +526,92 @@ create_historical_analysis_chart <- function(raw_data, group_by = "facility",
     color_mapping <- c("All" = unname(status_colors["active"]))
   }
   
-  # Create base plot
-  if (chart_type == "bar") {
-    # Grouped bar chart
-    p <- ggplot(plot_data, aes(x = year_label, y = value, fill = group_label)) +
-      geom_col(position = "dodge", alpha = 0.8) +
-      scale_fill_manual(values = color_mapping) +
-      scale_x_discrete(name = "Inspection Year (Fall-Summer Season)")
-  } else if (chart_type == "stacked") {
-    # Stacked bar chart
-    p <- ggplot(plot_data, aes(x = year_label, y = value, fill = group_label)) +
-      geom_col(position = "stack", alpha = 0.8) +
-      scale_fill_manual(values = color_mapping) +
-      scale_x_discrete(name = "Inspection Year (Fall-Summer Season)")
-  } else {
-    # Default to line chart
-    p <- ggplot(plot_data, aes(x = time_group, y = value, color = group_label)) +
-      geom_line(linewidth = 1.2) +
-      geom_point(size = 2) +
-      scale_color_manual(values = color_mapping) +
-      scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
-      labs(x = "Inspection Year (Fall-Summer Season)")
+  # NOW replace short codes with full names in group_label for DISPLAY
+  # AND update color_mapping keys to match
+  if (group_by == "facility") {
+    facility_lookup <- get_facility_lookup()
+    if (nrow(facility_lookup) > 0) {
+      fac_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
+      
+      # Create new color mapping with full names as keys
+      new_color_mapping <- setNames(
+        sapply(names(color_mapping), function(old_key) {
+          color_mapping[old_key]
+        }),
+        sapply(names(color_mapping), function(old_key) {
+          # Extract facility short code
+          facility_code <- sub(" - Zone.*", "", old_key)
+          if (facility_code %in% names(fac_map)) {
+            full_name <- fac_map[facility_code]
+            # If key has " - Zone X", append it
+            if (grepl(" - Zone", old_key)) {
+              zone_part <- sub(".*( - Zone \\d+).*", "\\1", old_key)
+              paste0(full_name, zone_part)
+            } else {
+              full_name
+            }
+          } else {
+            old_key
+          }
+        })
+      )
+      color_mapping <- new_color_mapping
+      
+      # Update group_label in data
+      plot_data <- plot_data %>%
+        mutate(
+          group_label = sapply(group_label, function(label) {
+            # Extract facility short code
+            facility_code <- sub(" - Zone.*", "", label)
+            if (facility_code %in% names(fac_map)) {
+              full_name <- fac_map[facility_code]
+              # If label has " - Zone X", append it
+              if (grepl(" - Zone", label)) {
+                zone_part <- sub(".*( - Zone \\d+).*", "\\1", label)
+                paste0(full_name, zone_part)
+              } else {
+                full_name
+              }
+            } else {
+              label
+            }
+          })
+        )
+    }
   }
   
-  # Add labels and theme
-  legend_title <- stringr::str_to_title(group_by)
+  # Prepare data for shared chart function - needs time_period column
+  if (chart_type %in% c("bar", "stacked")) {
+    plot_data$time_period <- format(plot_data$time_group, "%Y")
+  } else {
+    plot_data$time_period <- as.character(year(plot_data$time_group))
+  }
   
+  # Build chart title
   metric_title <- case_when(
     display_metric == "need_treatment" ~ "Sites Need Treatment",
     display_metric == "treated" ~ "Sites Treated (as of Aug 1)",
     display_metric == "pct_treated" ~ "% Sites Treated (as of Aug 1)",
     TRUE ~ "Historical Analysis"
   )
+  chart_title <- paste("Historical Cattail:", metric_title, "by", stringr::str_to_title(group_by))
   
-  if (chart_type %in% c("bar", "stacked")) {
-    p <- p +
-      labs(
-        title = paste("Historical Cattail:", metric_title, "by", stringr::str_to_title(group_by)),
-        y = y_label,
-        fill = legend_title
-      )
-  } else {
-    p <- p +
-      labs(
-        title = paste("Historical Cattail:", metric_title, "by", stringr::str_to_title(group_by)),
-        y = y_label,
-        color = legend_title
-      )
-  }
+  # Map chart types to shared function format
+  shared_chart_type <- switch(chart_type,
+    "bar" = "grouped_bar",
+    "stacked" = "stacked_bar",
+    "line"  # default
+  )
   
-  p <- p +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 20, family = "Arial"),
-      axis.title = element_text(face = "bold", size = 16, family = "Arial"),
-      axis.text = element_text(size = 16, family = "Arial"),
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 16),
-      legend.title = element_text(face = "bold", size = 16, family = "Arial"),
-      legend.text = element_text(size = 16, family = "Arial"),
-      legend.position = "bottom"
-    )
-  
-  return(ggplotly(p, tooltip = c("x", "y", "color")))
+  # Use shared chart function
+  create_trend_chart(
+    data = plot_data,
+    chart_type = shared_chart_type,
+    title = chart_title,
+    x_label = "Inspection Year (Fall-Summer Season)",
+    y_label = y_label,
+    colors = color_mapping
+  )
 }
 
 # UI Helper functions for historical tab

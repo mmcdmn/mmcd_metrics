@@ -16,33 +16,45 @@ load_historical_struct_data <- function(start_year, end_year,
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
+  # Get dynamic year ranges to determine which tables to query
+  year_ranges <- get_historical_year_ranges(con, "dblarv_insptrt_current", "dblarv_insptrt_archive", "inspdate")
+  current_table_years <- year_ranges$current_years
+  archive_table_years <- year_ranges$archive_years
+  
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
   
   tryCatch({
-    # Build filters
-    facility_where <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
-      facility_where <- paste0("AND gis.facility IN (", facility_list, ")")
-    }
+    # Build filters using shared SQL helpers
+    facility_where <- build_sql_in_clause("gis.facility", facility_filter)
     
     zone_where <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       if (length(zone_filter) == 1) {
-        zone_where <- paste0("AND gis.zone = '", zone_filter, "'")
+        zone_where <- build_sql_equals_clause("gis.zone", zone_filter)
       } else {
-        zone_where <- "AND gis.zone IN ('1', '2')"
+        zone_where <- build_sql_in_clause("gis.zone", zone_filter)
       }
     }
     
     foreman_where <- ""
-    if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-      foreman_list <- paste0("'", foreman_filter, "'", collapse = ", ")
-      foreman_where <- paste0("AND gis.fosarea IN (", foreman_list, ")")
+    if (is_valid_filter(foreman_filter)) {
+      # Convert shortnames to emp_num (foreman_filter contains shortnames, but gis.fosarea contains emp_num)
+      shortname_list <- build_sql_in_list(foreman_filter)
+      emp_nums_query <- sprintf("
+        SELECT emp_num 
+        FROM employee_list 
+        WHERE shortname IN (%s)
+      ", shortname_list)
+      
+      emp_nums <- dbGetQuery(con, emp_nums_query)
+      
+      if (nrow(emp_nums) > 0) {
+        foreman_where <- build_sql_in_clause("gis.fosarea", emp_nums$emp_num)
+      }
     }
     
     structure_type_where <- ""
-    if (!is.null(structure_type_filter) && length(structure_type_filter) > 0 && !"all" %in% structure_type_filter) {
+    if (is_valid_filter(structure_type_filter)) {
       # Use the same logic as data_functions.R
       if (length(structure_type_filter) == 1) {
         structure_type_where <- get_structure_type_condition(structure_type_filter)
@@ -61,77 +73,79 @@ load_historical_struct_data <- function(start_year, end_year,
       }
     }
     
-    status_where <- ""
-    if (!is.null(status_types) && length(status_types) > 0) {
-      status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-      status_where <- paste0("AND loc.status_udw IN (", status_list, ")")
+    # Status types don't use "all" check - always applied if provided
+    status_where <- build_sql_in_clause("loc.status_udw", status_types)
+    
+    # Determine which years need current table vs archive table
+    # Query full requested range - database will return what exists
+    current_years_needed <- start_year:end_year
+    # For archive, query all years before current table starts
+    archive_start_year <- start_year
+    archive_end_year <- min(current_table_years, na.rm = TRUE) - 1
+    use_archive <- archive_start_year <= archive_end_year
+    
+    all_data <- data.frame()
+    
+    # Query CURRENT table if needed
+    if (length(current_years_needed) > 0) {
+      current_query <- sprintf("
+        SELECT DISTINCT
+          trt.sitecode,
+          trt.inspdate,
+          COALESCE(mat.effect_days, 30) AS effect_days,
+          loc.s_type,
+          loc.priority,
+          gis.facility,
+          gis.fosarea,
+          gis.zone,
+          EXTRACT(YEAR FROM trt.inspdate) as treatment_year
+        FROM public.dblarv_insptrt_current trt
+        LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
+        LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+        LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+        WHERE EXTRACT(YEAR FROM trt.inspdate) IN (%s)
+          AND trt.list_type = 'STR'
+          AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
+          %s
+          %s
+          %s
+          %s
+          %s
+      ", paste(current_years_needed, collapse = ","), facility_where, zone_where, foreman_where, structure_type_where, status_where)
+      
+      current_data <- dbGetQuery(con, current_query)
+      all_data <- bind_rows(all_data, current_data)
     }
     
-    # Query for CURRENT YEAR treatments
-    current_query <- sprintf("
-      SELECT DISTINCT
-        trt.sitecode,
-        trt.inspdate,
-        COALESCE(mat.effect_days, 30) AS effect_days,
-        loc.s_type,
-        loc.priority,
-        gis.facility,
-        gis.fosarea,
-        gis.zone,
-        EXTRACT(YEAR FROM trt.inspdate) as treatment_year
-      FROM public.dblarv_insptrt_current trt
-      LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
-      LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
-      LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-      WHERE EXTRACT(YEAR FROM trt.inspdate) = %d
-        AND trt.list_type = 'STR'
-        AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
-        %s
-        %s
-        %s
-        %s
-        %s
-    ", current_year, facility_where, zone_where, foreman_where, structure_type_where, status_where)
-    
-    # Query for ARCHIVE treatments
-    archive_query <- sprintf("
-      SELECT DISTINCT
-        trt.sitecode,
-        trt.inspdate,
-        COALESCE(mat.effect_days, 30) AS effect_days,
-        loc.s_type,
-        loc.priority,
-        gis.facility,
-        gis.fosarea,
-        gis.zone,
-        EXTRACT(YEAR FROM trt.inspdate) as treatment_year
-      FROM public.dblarv_insptrt_archive trt
-      LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
-      LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
-      LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-      WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
-        AND EXTRACT(YEAR FROM trt.inspdate) < %d
-        AND trt.list_type = 'STR'
-        AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
-        %s
-        %s
-        %s
-        %s
-        %s
-    ", start_year, end_year, current_year, facility_where, zone_where, foreman_where, structure_type_where, status_where)
-    
-    # Combine current and archive data
-    if (current_year >= start_year && current_year <= end_year) {
-      # Need both current and archive
-      current_data <- dbGetQuery(con, current_query)
+    # Query ARCHIVE table if needed
+    if (use_archive) {
+      archive_query <- sprintf("
+        SELECT DISTINCT
+          trt.sitecode,
+          trt.inspdate,
+          COALESCE(mat.effect_days, 30) AS effect_days,
+          loc.s_type,
+          loc.priority,
+          gis.facility,
+          gis.fosarea,
+          gis.zone,
+          EXTRACT(YEAR FROM trt.inspdate) as treatment_year
+        FROM public.dblarv_insptrt_archive trt
+        LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
+        LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
+        LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
+        WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
+          AND trt.list_type = 'STR'
+          AND (loc.enddate IS NULL OR loc.enddate > trt.inspdate)
+          %s
+          %s
+          %s
+          %s
+          %s
+      ", archive_start_year, archive_end_year, facility_where, zone_where, foreman_where, structure_type_where, status_where)
+      
       archive_data <- dbGetQuery(con, archive_query)
-      all_data <- bind_rows(archive_data, current_data)
-    } else if (current_year > end_year) {
-      # Only need archive
-      all_data <- dbGetQuery(con, archive_query)
-    } else {
-      # Only need current (edge case)
-      all_data <- dbGetQuery(con, current_query)
+      all_data <- bind_rows(all_data, archive_data)
     }
     
     # Add facility and foreman name lookups
@@ -154,7 +168,7 @@ load_historical_struct_data <- function(start_year, end_year,
     warning(paste("Error loading historical structure data:", e$message))
     return(data.frame())
   }, finally = {
-    dbDisconnect(con)
+    safe_disconnect(con)
   })
 }
 
@@ -295,24 +309,20 @@ create_historical_struct_data <- function(start_year, end_year,
     # IMPORTANT: Apply same filters as were used for treatments data
     con <- get_db_connection()
     
-    # Build filter conditions
-    facility_where <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
-      facility_where <- paste0("AND gis.facility IN (", facility_list, ")")
-    }
+    # Build filter conditions using shared SQL helpers
+    facility_where <- build_sql_in_clause("gis.facility", facility_filter)
     
     zone_where <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       if (length(zone_filter) == 1) {
-        zone_where <- paste0("AND gis.zone = '", zone_filter, "'")
+        zone_where <- build_sql_equals_clause("gis.zone", zone_filter)
       } else {
-        zone_where <- "AND gis.zone IN ('1', '2')"
+        zone_where <- build_sql_in_clause("gis.zone", zone_filter)
       }
     }
     
     structure_type_where <- ""
-    if (!is.null(structure_type_filter) && length(structure_type_filter) > 0 && !"all" %in% structure_type_filter) {
+    if (is_valid_filter(structure_type_filter)) {
       if (length(structure_type_filter) == 1) {
         structure_type_where <- get_structure_type_condition(structure_type_filter)
       } else {
@@ -321,11 +331,8 @@ create_historical_struct_data <- function(start_year, end_year,
       }
     }
     
-    status_where <- ""
-    if (!is.null(status_types) && length(status_types) > 0) {
-      status_list <- paste0("'", status_types, "'", collapse = ", ")
-      status_where <- paste0("AND loc.status_udw IN (", status_list, ")")
-    }
+    # Status types don't use "all" check - always applied if provided
+    status_where <- build_sql_in_clause("loc.status_udw", status_types)
     
     # Build query based on grouping
     if (hist_group_by == "facility") {
@@ -334,28 +341,28 @@ create_historical_struct_data <- function(start_year, end_year,
           SELECT 
             gis.facility,
             gis.zone,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.facility, gis.zone
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = c("facility", "zone"))
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = c("facility", "zone"))
       } else {
         query <- paste0("
           SELECT 
             gis.facility,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.facility
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = "facility")
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = "facility")
       }
     } else if (hist_group_by == "foreman") {
       if (show_zones_separately) {
@@ -363,239 +370,93 @@ create_historical_struct_data <- function(start_year, end_year,
           SELECT 
             gis.fosarea,
             gis.zone,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.fosarea, gis.zone
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = c("fosarea", "zone"))
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = c("fosarea", "zone"))
       } else {
         query <- paste0("
           SELECT 
             gis.fosarea,
-            COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+            COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
           FROM loc_cxstruct loc
           INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
           WHERE 1=1
           ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where, "
           GROUP BY gis.fosarea
         ")
-        total_structures <- dbGetQuery(con, query) %>% as_tibble()
-        result <- result %>% left_join(total_structures, by = "fosarea")
+        total_count <- dbGetQuery(con, query) %>% as_tibble()
+        result <- result %>% left_join(total_count, by = "fosarea")
       }
     } else if (hist_group_by == "mmcd_all") {
       query <- paste0("
         SELECT 
-          COUNT(DISTINCT loc.sitecode)::INTEGER as total_structures
+          COUNT(DISTINCT loc.sitecode)::INTEGER as total_count
         FROM loc_cxstruct loc
         INNER JOIN gis_sectcode gis ON loc.sectcode = gis.sectcode
         WHERE 1=1
         ", facility_where, " ", zone_where, " ", structure_type_where, " ", status_where
       )
-      total_structures_count <- dbGetQuery(con, query)[[1]]
-      result <- result %>% mutate(total_structures = total_structures_count)
+      total_count_result <- dbGetQuery(con, query)[[1]]
+      result <- result %>% mutate(total_count = total_count_result)
     }
     
     # Calculate proportion as percentage
-    # treated_structures = count of structures that received treatment
-    # total_structures = count of ALL structures in that group (with filters applied)
     result <- result %>%
       mutate(
-        total_structures = ifelse(is.na(total_structures) | total_structures == 0, treated_structures, total_structures),
-        count = (treated_structures / total_structures) * 100  # Convert to percentage
+        total_count = ifelse(is.na(total_count) | total_count == 0, treated_structures, total_count),
+        count = (treated_structures / total_count) * 100
       ) %>%
-      select(-treated_structures, -total_structures)
+      select(-treated_structures, -total_count)
   }
   
   return(result)
 }
 
-# Create Plotly historical chart for structure treatments
-create_historical_struct_chart <- function(data, 
-                                           hist_time_period, 
-                                           hist_display_metric, 
-                                           hist_group_by, 
-                                           chart_type = "stacked_bar",
-                                           theme = "MMCD") {
-  
+# Create historical chart for structure treatments
+create_historical_struct_chart <- function(data, hist_time_period, hist_display_metric, 
+                                           hist_group_by, chart_type = "stacked_bar",
+                                           theme = "MMCD", show_zones_separately = FALSE) {
   if (is.null(data) || nrow(data) == 0) {
-    # Return empty plot with message
-    return(plot_ly() %>%
-             add_text(x = 0.5, y = 0.5, text = "No historical data available", 
-                     textfont = list(size = 16)) %>%
-             layout(xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)))
+    return(plotly_empty() %>% layout(title = "No historical data available"))
   }
   
-  # Determine colors based on group_by
-  if (hist_group_by == "facility") {
-    # Check if we have zones in the data
-    if (any(grepl(" P[12]$", data$group_name))) {
-      # Zone-aware colors needed
-      zones <- unique(sub(".* P([12])$", "\\1", data$group_name[grepl(" P[12]$", data$group_name)]))
-      group_colors <- get_facility_base_colors(
-        alpha_zones = zones,
-        combined_groups = unique(data$group_name),
-        theme = theme
-      )
-      if (is.list(group_colors)) group_colors <- group_colors$colors
-    } else {
-      # Simple facility colors
-      facility_colors <- get_facility_base_colors(theme = theme)
-      facility_lookup <- get_facility_lookup()
-      
-      group_colors <- setNames(
-        sapply(unique(data$group_name), function(gn) {
-          short_name <- facility_lookup$short_name[facility_lookup$full_name == gn]
-          if (length(short_name) > 0 && short_name %in% names(facility_colors)) {
-            facility_colors[short_name]
-          } else {
-            "#999999"
-          }
-        }),
-        unique(data$group_name)
-      )
-    }
+  # Get colors based on grouping
+  colors <- if (hist_group_by == "facility") {
+    map_facility_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   } else if (hist_group_by == "foreman") {
-    # Check if we have zones in the data
-    if (any(grepl(" P[12]$", data$group_name))) {
-      # Zone-aware foreman colors
-      zones <- unique(sub(".* P([12])$", "\\1", data$group_name[grepl(" P[12]$", data$group_name)]))
-      group_colors <- get_themed_foreman_colors(
-        alpha_zones = zones,
-        combined_groups = unique(data$group_name),
-        theme = theme
-      )
-      if (is.list(group_colors)) group_colors <- group_colors$colors
-    } else {
-      # Simple foreman colors
-      group_colors <- get_themed_foreman_colors(theme = theme)
-    }
+    map_foreman_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   } else {
-    # mmcd_all - use single color
-    group_colors <- c("MMCD" = get_facility_base_colors(theme = theme)["N"])
+    c("MMCD" = get_facility_base_colors(theme = theme)["N"])
   }
   
-  # Prepare y-axis title based on metric
-  if (hist_time_period == "yearly") {
-    y_title <- if (hist_display_metric == "treatments") {
-      "Total Treatments"
-    } else if (hist_display_metric == "structures_count") {
-      "Unique Structures Treated"
-    } else {
-      "Proportion of Structures Treated (%)"
-    }
+  # Build labels
+  y_title <- if (hist_time_period == "yearly") {
+    switch(hist_display_metric, "treatments" = "Total Treatments", 
+           "structures_count" = "Unique Structures Treated", "Proportion (%)")
   } else {
-    y_title <- if (hist_display_metric == "proportion") {
-      "Proportion of Structures (%)"
-    } else {
-      "Active Treatments"
-    }
+    if (hist_display_metric == "proportion") "Proportion (%)" else "Active Treatments"
   }
-  
-  # Prepare x-axis title
   x_title <- if (hist_time_period == "yearly") "Year" else "Week"
+  chart_title <- paste("Historical Structure Treatments -", if (hist_time_period == "yearly") "Yearly" else "Weekly")
   
-  # VALIDATION: Block stacked bar for proportions
-  if (hist_display_metric == "proportion" && chart_type == "stacked_bar") {
-    chart_type <- "grouped_bar"  # Auto-switch to grouped bar
-  }
+  # Block stacked bar for proportions
+  if (hist_display_metric == "proportion" && chart_type == "stacked_bar") chart_type <- "grouped_bar"
   
-  # Ensure colors are in correct format for Plotly (named vector matching group_name)
-  if (is.null(names(group_colors))) {
-    # If unnamed, try to match by position
-    group_names <- unique(data$group_name)
-    if (length(group_colors) >= length(group_names)) {
-      names(group_colors) <- group_names[seq_along(group_colors)]
-    }
-  }
-  
-  # Create the plot based on chart type
+  # Handle pie chart separately (unique to struct_trt)
   if (chart_type == "pie") {
-    # Pie chart - aggregate across all time periods for proportion view
-    pie_data <- data %>%
-      group_by(group_name) %>%
-      summarise(count = mean(count, na.rm = TRUE), .groups = "drop")  # Average proportion across years
-    
-    p <- plot_ly(pie_data, labels = ~group_name, values = ~count, 
-                 type = "pie",
-                 marker = list(colors = group_colors),
-                 textinfo = "label+percent",
-                 textfont = list(size = 16),
-                 hovertemplate = "%{label}<br>%{value:.1f}%<extra></extra>")
-  } else if (chart_type == "stacked_bar") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "bar") %>%
-      layout(barmode = "stack")
-  } else if (chart_type == "grouped_bar") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "bar") %>%
-      layout(barmode = "group")
-  } else if (chart_type == "line") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "scatter", mode = "lines+markers")
-  } else if (chart_type == "area") {
-    p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name, 
-                 colors = group_colors, type = "scatter", mode = "lines", 
-                 fill = "tonexty", stackgroup = "one")
+    pie_data <- data %>% group_by(group_name) %>% summarise(count = mean(count, na.rm = TRUE), .groups = "drop")
+    return(plot_ly(pie_data, labels = ~group_name, values = ~count, type = "pie",
+                   marker = list(colors = colors), textinfo = "label+percent", textfont = list(size = 16)) %>%
+      layout(title = list(text = paste("Avg Proportion (", min(data$time_period), "-", max(data$time_period), ")"), 
+                         font = list(size = 20)), legend = list(font = list(size = 16)), font = list(size = 16)))
   }
   
-  # Layout with larger fonts
-  if (chart_type == "pie") {
-    # Pie chart layout - no axes
-    p <- p %>%
-      layout(
-        title = list(
-          text = paste("Average Proportion of Structures Treated (",
-                      min(data$time_period), "-", max(data$time_period), ")"),
-          font = list(size = 20, family = "Arial, sans-serif")
-        ),
-        showlegend = TRUE,
-        legend = list(
-          font = list(size = 16),
-          orientation = "v",
-          x = 1.02,
-          xanchor = "left",
-          y = 1,
-          yanchor = "top"
-        ),
-        font = list(size = 16, family = "Arial, sans-serif"),
-        margin = list(l = 80, r = 150, t = 80, b = 80)
-      )
-  } else {
-    # Bar/line/area chart layout - with axes
-    p <- p %>%
-      layout(
-        title = list(
-          text = paste("Historical Structure Treatment Trends -", 
-                      if (hist_time_period == "yearly") "Yearly" else "Weekly"),
-          font = list(size = 20, family = "Arial, sans-serif")
-        ),
-        xaxis = list(
-          title = list(text = x_title, font = list(size = 18)),
-          tickfont = list(size = 16)
-        ),
-        yaxis = list(
-          title = list(text = y_title, font = list(size = 18)),
-          tickfont = list(size = 16),
-          ticksuffix = if (hist_display_metric == "proportion") "%" else ""
-        ),
-        hovermode = "x unified",
-        legend = list(
-          title = list(text = "Group", font = list(size = 18)),
-          font = list(size = 16),
-          orientation = "v",
-          x = 1.02,
-          xanchor = "left",
-          y = 1,
-          yanchor = "top"
-        ),
-        font = list(size = 16, family = "Arial, sans-serif"),
-        margin = list(l = 80, r = 150, t = 80, b = 80)
-      )
-  }
-  
-  return(p)
+  # Use shared chart function for other types
+  create_trend_chart(data, chart_type, chart_title, x_title, y_title, colors)
 }

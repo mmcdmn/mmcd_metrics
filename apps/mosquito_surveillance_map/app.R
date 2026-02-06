@@ -27,6 +27,18 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
 })
 
+# Set application name for AWS RDS monitoring
+set_app_name("mosquito_surveillance_map")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[mosquito_surveillance_map] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  message("[mosquito_surveillance_map] Lookup tables preloaded")
+}, error = function(e) message("[mosquito_surveillance_map] Preload warning: ", e$message))
+
 # Load environment variables from .env file (for local development)
 # or from Docker environment variables (for production)
 env_paths <- c(
@@ -59,7 +71,7 @@ dfmap$mosqcount <- as.numeric(dfmap$mosqcount)
 
 dfmapMISS <- dbReadTable(con, "dbadult_mapdata_forr_missing")
 
-dbDisconnect(con)
+safe_disconnect(con)
 
 dfmap4326 = dfmap %>%
   st_as_sf(coords = c("long", "lat"), crs=4326)

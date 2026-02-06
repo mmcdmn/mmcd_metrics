@@ -8,20 +8,14 @@ library(dplyr)
 library(lubridate)
 library(sf)
 
-# Helper function for facility name mapping
-map_facility_names <- function(data, facility_column = "facility") {
-  facility_lookup <- get_facility_lookup()
-  if (nrow(facility_lookup) > 0) {
-    facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
-    matched_facilities <- facility_map[data[[facility_column]]]
-    data[[facility_column]] <- ifelse(!is.na(matched_facilities), matched_facilities, data[[facility_column]])
-  }
-  return(data)
-}
+# NOTE: map_facility_names is defined in shared/db_helpers.R
+# It creates a facility_display column with full names while keeping facility as short codes
 
-# Function to load raw cattail treatment data
-load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
-                              start_year = NULL, end_year = NULL) {
+# Function to load raw cattail treatment data (STANDARD FUNCTION)
+load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
+                          start_year = NULL, end_year = NULL, include_geometry = FALSE,
+                          expiring_days = 7, facility_filter = "all", foreman_filter = "all", 
+                          status_types = character(0), zone_filter = c("1", "2")) {
   
   # Handle NULL analysis_date
   if (is.null(analysis_date)) {
@@ -149,7 +143,7 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
       include_archive          # $3
     ))
     
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     # Create the state column - all sites are inspected, just need treatment_status
     cattail_sites <- cattail_sites %>%
@@ -163,20 +157,11 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
         final_status = treatment_status
       )
     
-    # Add facility mapping
+    # Add facility mapping - creates facility_display with full names, keeps facility as short codes
     cattail_sites <- map_facility_names(cattail_sites, "facility")
     
-    # Add facility_code column - map to actual short codes from lookup
-    facility_lookup <- get_facility_lookup()
-    facility_map <- setNames(facility_lookup$short_name, facility_lookup$full_name)
-    cattail_sites$facility_code <- ifelse(
-      cattail_sites$facility %in% names(facility_map),
-      facility_map[cattail_sites$facility],
-      cattail_sites$facility  # Keep as-is if not in lookup
-    )
-    
-    # Add facility_display for display function compatibility  
-    cattail_sites$facility_display <- cattail_sites$facility
+    # Add facility_code for filtering - same as short code facility
+    cattail_sites$facility_code <- cattail_sites$facility
     
     # Load treatment data for current year (filtered by analysis_date)
     current_year <- if (!is.null(end_year)) end_year else year(analysis_date)
@@ -187,27 +172,62 @@ load_cattail_data <- function(analysis_date = NULL, include_archive = FALSE,
     # Those sites should already be in cattail_sites from the inspection query
     # Any site with treatments but no inspection is incorrectly coded and should not appear
     
-    # Convert to sf object if we have coordinates (we'll add this later for mapping)
-    # For now, return as regular data frame
+    # Add standardized is_active and is_expiring columns
+    # For cattail treatments:
+    # - is_active: Sites that need treatment (numdip > 0) but aren't treated yet
+    # - is_expiring: Sites that were treated but might need retreatment (not really applicable to cattail)
     
-    # Load lookups for return
-    facility_lookup <- get_facility_lookup()
-    foremen_lookup <- get_foremen_lookup()
+    # Get treated sites to update status
+    treated_sites <- character(0)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      # Determine inspection year based on analysis_date
+      analysis_year <- year(analysis_date)
+      analysis_month <- month(analysis_date)
+      
+      if (analysis_month >= 1 && analysis_month <= 7) {
+        inspection_year_filter <- analysis_year - 1
+      } else {
+        inspection_year_filter <- analysis_year
+      }
+      
+      treated_sites <- treatments %>%
+        filter(inspection_year == inspection_year_filter) %>%
+        pull(sitecode) %>%
+        unique()
+    }
     
+    cattail_sites <- cattail_sites %>%
+      mutate(
+        # Update final status based on treatments
+        final_status = case_when(
+          sitecode %in% treated_sites ~ "treated",
+          treatment_status == "need_treatment" ~ "need_treatment", 
+          treatment_status == "under_threshold" ~ "under_threshold",
+          TRUE ~ "under_threshold"
+        ),
+        # Standard columns for overview compatibility
+        is_active = case_when(
+          final_status == "need_treatment" ~ TRUE,
+          final_status == "treated" ~ TRUE,  # Count treated as active for metrics
+          TRUE ~ FALSE
+        ),
+        is_expiring = case_when(
+          final_status == "need_treatment" ~ TRUE,  # Sites needing treatment = "expiring"
+          TRUE ~ FALSE
+        )
+      )
+    
+    # Return STANDARDIZED format
     return(list(
-      cattail_sites = cattail_sites,
+      sites = cattail_sites,
       treatments = treatments,
-      facility_lookup = facility_lookup,
-      foremen_lookup = foremen_lookup,
-      analysis_date = analysis_date,
-      date_range = c(start_date, end_date),
-      current_year = current_year
+      total_count = nrow(cattail_sites)
     ))
     
   }, error = function(e) {
     warning(paste("Error loading cattail data:", e$message))
-    if (!is.null(con)) dbDisconnect(con)
-    return(NULL)
+    if (!is.null(con)) safe_disconnect(con)
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   })
 }
 
@@ -306,7 +326,7 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
     
     # Execute query with analysis_date parameter to filter out future treatments
     treatments <- dbGetQuery(con, treatments_query, list(analysis_date))
-    dbDisconnect(con)
+    safe_disconnect(con)
     
     if (nrow(treatments) == 0) {
       return(data.frame())
@@ -334,14 +354,16 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
           action == 'A' ~ "Treatment",
           action == 'D' ~ "Treatment", 
           TRUE ~ paste("Action", action)
-        )
+        ),
+        # Add inspdate alias for overview system compatibility
+        inspdate = trtdate
       )
     
     return(treatments)
     
   }, error = function(e) {
     warning(paste("Error loading cattail treatments:", e$message))
-    if (exists("con") && !is.null(con)) dbDisconnect(con)
+    if (exists("con") && !is.null(con)) safe_disconnect(con)
     return(data.frame())
   })
 }
@@ -349,7 +371,16 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
 # Function to aggregate cattail treatment data with 3-state metrics
 aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
   
-  if (is.null(cattail_data) || nrow(cattail_data$cattail_sites) == 0) {
+  # Check for data using new standardized structure
+  sites_data <- NULL
+  if (!is.null(cattail_data$sites) && nrow(cattail_data$sites) > 0) {
+    sites_data <- cattail_data$sites
+  } else if (!is.null(cattail_data$cattail_sites) && nrow(cattail_data$cattail_sites) > 0) {
+    # Fallback to old structure for backwards compatibility during transition
+    sites_data <- cattail_data$cattail_sites
+  }
+  
+  if (is.null(sites_data) || nrow(sites_data) == 0) {
     warning("No cattail data to aggregate")
     return(NULL)
   }
@@ -374,7 +405,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
   }
   
   # Filter sites to relevant inspection year
-  sites_data <- cattail_data$cattail_sites %>%
+  sites_data <- sites_data %>%
     filter(inspection_year == inspection_year_filter)
     
   treatments <- cattail_data$treatments
@@ -418,7 +449,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
   # Calculate 3-state metrics using final_status
   total_summary <- data.frame(
     # Basic counts
-    total_sites = nrow(sites_data),
+    total_count = nrow(sites_data),
     total_acres = sum(sites_data$acres, na.rm = TRUE),
     
     # Inspection status
@@ -462,7 +493,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -493,7 +524,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, zone) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -524,7 +555,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, fosarea) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -545,7 +576,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -576,7 +607,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, zone) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -607,7 +638,7 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     group_by(facility, fosarea) %>%
     summarise(
       facility_code = first(facility),
-      total_sites = n(),
+      total_count = n(),
       total_acres = sum(acres, na.rm = TRUE),
       
       # Inspection metrics
@@ -631,54 +662,6 @@ aggregate_cattail_data <- function(cattail_data, analysis_date = NULL) {
     analysis_date = analysis_date
   ))
 }
-
-# Function to filter cattail data based on UI inputs
-filter_cattail_data <- function(raw_data, zone_filter = c("1", "2"), facility_filter = "all",
-                                date_range = NULL) {
-  
-  if (is.null(raw_data) || is.null(raw_data$cattail_sites)) {
-    return(list(cattail_sites = data.frame()))
-  }
-  
-  sites_data <- raw_data$cattail_sites
-  
-  # Apply zone filter
-  if (!is.null(zone_filter) && !"all" %in% zone_filter) {
-    sites_data <- sites_data %>% filter(zone %in% zone_filter)
-  }
-  
-  # Apply facility filter - use facility (short codes) for filtering
-  if (!"all" %in% facility_filter && !is.null(facility_filter)) {
-    # Use facility_code if it exists, otherwise use facility
-    filter_col <- if("facility_code" %in% names(sites_data)) "facility_code" else "facility"
-    sites_data <- sites_data %>% filter(.data[[filter_col]] %in% facility_filter)
-  }
-  
-  # Apply date range filter to inspection data
-  if (!is.null(date_range) && length(date_range) == 2) {
-    sites_data <- sites_data %>% 
-      filter(is.na(inspdate) | (inspdate >= date_range[1] & inspdate <= date_range[2]))
-  }
-  
-  # Filter treatments to match filtered sites
-  treatments_data <- raw_data$treatments
-  if (!is.null(treatments_data) && nrow(sites_data) > 0) {
-    # Only include treatments for sites that passed the filtering
-    site_codes <- unique(sites_data$sitecode)
-    treatments_data <- treatments_data %>%
-      filter(sitecode %in% site_codes)
-  }
-
-  return(list(
-    cattail_sites = sites_data,
-    treatments = treatments_data,  # Include filtered treatments
-    foremen_lookup = raw_data$foremen_lookup,
-    facility_lookup = raw_data$facility_lookup,
-    current_year = raw_data$current_year
-  ))
-}
-
-
 
 # Function to get basic filter choices for startup (before main data load)
 get_basic_filter_choices <- function() {
@@ -718,4 +701,52 @@ get_basic_filter_choices <- function() {
       foremen_lookup = data.frame()
     ))
   })
+}
+
+# STANDARDIZED FUNCTION: Apply data filters to loaded data
+#' Standard function to filter the results from load_raw_data
+#' @param data The result from load_raw_data (list with sites, treatments, total_count)
+#' @param facility_filter Vector of selected facilities (or "all")
+#' @param zone_filter Vector of selected zones
+#' @return Filtered data list with standardized keys
+apply_data_filters <- function(data, facility_filter = NULL,
+                              foreman_filter = NULL, zone_filter = NULL) {
+  # Use standardized keys
+  sites <- data$sites
+  treatments <- data$treatments
+  
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  }
+  
+  # Apply facility filter
+  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+    sites <- sites %>% filter(facility %in% facility_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(facility %in% facility_filter)
+    }
+  }
+  
+  # Apply foreman filter (fosarea)
+  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
+    sites <- sites %>% filter(fosarea %in% foreman_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(fosarea %in% foreman_filter)
+    }
+  }
+  
+  # Apply zone filter  
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    sites <- sites %>% filter(zone %in% zone_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments %>% filter(zone %in% zone_filter)
+    }
+  }
+  
+  # Return STANDARDIZED format
+  return(list(
+    sites = sites,
+    treatments = treatments,
+    total_count = data$total_count  # Keep original total_count from universe
+  ))
 }

@@ -18,97 +18,129 @@ load_historical_cb_data <- function(start_year, end_year,
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
   
   tryCatch({
-    # Build filters
+    # Build filters using shared SQL helpers
     facility_where <- ""
-    if (!is.null(facility_filter) && length(facility_filter) > 0 && !"all" %in% facility_filter) {
-      facility_list <- paste0("'", facility_filter, "'", collapse = ", ")
-      facility_where <- paste0("AND loc_catchbasin.facility IN (", facility_list, ")")
+    if (is_valid_filter(facility_filter)) {
+      # Handle both facility codes ('E') and full names ('East')
+      # Convert full names to codes if needed
+      facility_lookup <- get_facility_lookup()
+      if (!is.null(facility_lookup) && nrow(facility_lookup) > 0) {
+        name_to_code_map <- setNames(facility_lookup$short_name, facility_lookup$full_name)
+        
+        # Convert any full names to codes
+        converted_filters <- sapply(facility_filter, function(f) {
+          if (f %in% names(name_to_code_map)) {
+            return(name_to_code_map[[f]])  # Convert full name to code
+          } else {
+            return(f)  # Already a code
+          }
+        })
+        
+        facility_where <- build_sql_in_clause("loc_catchbasin.facility", converted_filters)
+        cat("DEBUG: Facility filter converted:", paste(facility_filter, "->", converted_filters, collapse = ", "), "\n")
+      } else {
+        # Fallback: assume they're already codes
+        facility_where <- build_sql_in_clause("loc_catchbasin.facility", facility_filter)
+      }
     }
     
     zone_where <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       if (length(zone_filter) == 1) {
-        zone_where <- paste0("AND sc.zone = '", zone_filter, "'")
+        zone_where <- build_sql_equals_clause("sc.zone", zone_filter)
       } else {
-        zone_where <- "AND sc.zone IN ('1', '2')"
+        zone_where <- build_sql_in_clause("sc.zone", zone_filter)
       }
     }
     
-    foreman_where <- ""
-    if (!is.null(foreman_filter) && length(foreman_filter) > 0 && !"all" %in% foreman_filter) {
-      foreman_list <- paste0("'", foreman_filter, "'", collapse = ", ")
-      foreman_where <- paste0("AND sc.fosarea IN (", foreman_list, ")")
-    }
+    foreman_where <- build_sql_in_clause("sc.fosarea", foreman_filter)
+    # Use shared function to determine which years are in which table
+    # This handles March transitions when current data moves to archive
+    year_ranges <- get_historical_year_ranges(con, "dblarv_insptrt_current", "dblarv_insptrt_archive", "inspdate")
+    current_years <- year_ranges$current_years
+    archive_years <- year_ranges$archive_years
     
-    # Query for CURRENT YEAR treatments (from dblarv_insptrt_current)
-    current_query <- sprintf("
-      SELECT 
-        loc_catchbasin.gid as catchbasin_id,
-        loc_catchbasin.sitecode,
-        left(loc_catchbasin.sitecode, 7) as sectcode,
-        loc_catchbasin.facility,
-        sc.zone,
-        sc.fosarea,
-        dblarv_insptrt_current.inspdate,
-        dblarv_treatment_catchbasin.status,
-        mattype_list_targetdose.effect_days,
-        EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate) as treatment_year
-      FROM dblarv_insptrt_current
-      JOIN dblarv_treatment_catchbasin ON dblarv_insptrt_current.pkey_pg = dblarv_treatment_catchbasin.treatment_id
-      JOIN loc_catchbasin ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
-      JOIN mattype_list_targetdose USING (matcode)
-      LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode, 7) = sc.sectcode
-      WHERE EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate) = %d
-        AND loc_catchbasin.status_udw = 'W'
-        AND loc_catchbasin.lettergrp <> 'Z'
-        %s
-        %s
-        %s
-    ", current_year, facility_where, zone_where, foreman_where)
+    data <- data.frame()
     
-    # Query for ARCHIVE treatments (from dblarv_insptrt_archive)
-    # Use same structure as current year query with dblarv_treatment_cb_archive
-    archive_query <- sprintf("
-      SELECT 
-        loc_catchbasin.gid as catchbasin_id,
-        loc_catchbasin.sitecode,
-        left(loc_catchbasin.sitecode, 7) as sectcode,
-        loc_catchbasin.facility,
-        sc.zone,
-        sc.fosarea,
-        dblarv_insptrt_archive.inspdate,
-        dblarv_treatment_cb_archive.status,
-        mattype_list_targetdose.effect_days,
-        EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate) as treatment_year
-      FROM dblarv_insptrt_archive
-      JOIN dblarv_treatment_cb_archive ON dblarv_insptrt_archive.pkey_pg = dblarv_treatment_cb_archive.treatment_id
-      JOIN loc_catchbasin ON dblarv_treatment_cb_archive.catchbasin_id = loc_catchbasin.gid
-      JOIN mattype_list_targetdose USING (matcode)
-      LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode, 7) = sc.sectcode
-      WHERE EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate) BETWEEN %d AND %d
-        AND EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate) < %d
-        AND loc_catchbasin.status_udw = 'W'
-        AND loc_catchbasin.lettergrp <> 'Z'
-        %s
-        %s
-        %s
-    ", start_year, end_year, current_year, facility_where, zone_where, foreman_where)
-    
-    # Combine current and archive data
-    if (current_year >= start_year && current_year <= end_year) {
-      # Need both current and archive
+    # Get data from CURRENT table for recent years (2025+)
+    current_year_range <- start_year:end_year
+    if (length(current_year_range) > 0) {
+      current_query <- sprintf("
+        SELECT 
+          loc_catchbasin.facility,
+          sc.zone,
+          sc.fosarea,
+          left(loc_catchbasin.sitecode, 7) as sectcode,
+          EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate) as treatment_year,
+          COUNT(*) as total_count,
+          COUNT(*) FILTER (WHERE dblarv_treatment_catchbasin.status IN ('A', 'W')) as active_count,
+          COUNT(*) FILTER (WHERE dblarv_treatment_catchbasin.status IN ('A', 'W') 
+                           AND (CURRENT_DATE - dblarv_insptrt_current.inspdate) >= 21 
+                           AND (CURRENT_DATE - dblarv_insptrt_current.inspdate) < 28) as expiring_count,
+          COUNT(*) FILTER (WHERE dblarv_treatment_catchbasin.status IN ('A', 'W') 
+                           AND (CURRENT_DATE - dblarv_insptrt_current.inspdate) >= 28) as expired_count
+        FROM dblarv_insptrt_current
+        JOIN dblarv_treatment_catchbasin ON dblarv_insptrt_current.pkey_pg = dblarv_treatment_catchbasin.treatment_id
+        JOIN loc_catchbasin ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
+        JOIN mattype_list_targetdose USING (matcode)
+        LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode, 7) = sc.sectcode
+        WHERE EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate) BETWEEN %d AND %d
+          AND loc_catchbasin.status_udw = 'W'
+          AND loc_catchbasin.lettergrp <> 'Z'
+          %s
+          %s
+          %s
+        GROUP BY loc_catchbasin.facility, sc.zone, sc.fosarea, left(loc_catchbasin.sitecode, 7), 
+                 EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate)
+      ", min(current_year_range), max(current_year_range), facility_where, zone_where, foreman_where)
+      
+      cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
       current_data <- dbGetQuery(con, current_query)
-      archive_data <- dbGetQuery(con, archive_query)
-      data <- bind_rows(current_data, archive_data)
-    } else if (end_year < current_year) {
-      # Only archive needed
-      data <- dbGetQuery(con, archive_query)
-    } else {
-      # Only current needed
-      data <- dbGetQuery(con, current_query)
+      cat("DEBUG: Current table returned", nrow(current_data), "rows\n")
+      data <- bind_rows(data, current_data)
     }
     
-    dbDisconnect(con)
+    # Get data from ARCHIVE table for historical years (2006-2024)  
+    archive_year_range <- start_year:end_year
+    if (length(archive_year_range) > 0) {
+      archive_query <- sprintf("
+        SELECT 
+          loc_catchbasin.facility,
+          sc.zone,
+          sc.fosarea,
+          left(loc_catchbasin.sitecode, 7) as sectcode,
+          EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate) as treatment_year,
+          COUNT(*) as total_count,
+          COUNT(*) FILTER (WHERE dblarv_treatment_cb_archive.status IN ('A', 'W')) as active_count,
+          COUNT(*) FILTER (WHERE dblarv_treatment_cb_archive.status IN ('A', 'W') 
+                           AND (CURRENT_DATE - dblarv_insptrt_archive.inspdate) >= 21 
+                           AND (CURRENT_DATE - dblarv_insptrt_archive.inspdate) < 28) as expiring_count,
+          COUNT(*) FILTER (WHERE dblarv_treatment_cb_archive.status IN ('A', 'W') 
+                           AND (CURRENT_DATE - dblarv_insptrt_archive.inspdate) >= 28) as expired_count
+        FROM dblarv_insptrt_archive
+        JOIN dblarv_treatment_cb_archive ON dblarv_insptrt_archive.pkey_pg = dblarv_treatment_cb_archive.treatment_id
+        JOIN loc_catchbasin ON dblarv_treatment_cb_archive.catchbasin_id = loc_catchbasin.gid
+        JOIN mattype_list_targetdose USING (matcode)
+        LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode, 7) = sc.sectcode
+        WHERE EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate) BETWEEN %d AND %d
+          AND loc_catchbasin.status_udw = 'W'
+          AND loc_catchbasin.lettergrp <> 'Z'
+          %s
+          %s
+          %s
+        GROUP BY loc_catchbasin.facility, sc.zone, sc.fosarea, left(loc_catchbasin.sitecode, 7), 
+                 EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate)
+      ", min(archive_year_range), max(archive_year_range), facility_where, zone_where, foreman_where)
+      
+      cat("DEBUG: Getting archive table data for years", min(archive_year_range), "-", max(archive_year_range), "\n")
+      archive_data <- dbGetQuery(con, archive_query)
+      cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
+      data <- bind_rows(data, archive_data)
+    }
+    
+    cat("DEBUG: Combined data total:", nrow(data), "rows\n")
+  
+    safe_disconnect(con)
     
     # Map facility and foreman names
     facilities <- get_facility_lookup()
@@ -140,7 +172,7 @@ load_historical_cb_data <- function(start_year, end_year,
   }, error = function(e) {
     warning(paste("Error loading historical catch basin data:", e$message))
     if (exists("con") && !is.null(con)) {
-      dbDisconnect(con)
+      safe_disconnect(con)
     }
     return(data.frame())
   })
@@ -156,87 +188,125 @@ create_historical_cb_data <- function(start_year, end_year,
                                       zone_filter = NULL, 
                                       foreman_filter = NULL) {
   
+  cat("DEBUG CB create_historical_cb_data called!\n")
+  cat("  - hist_time_period:", hist_time_period, "\n")
+  cat("  - hist_display_metric:", hist_display_metric, "\n")
+  cat("  - start_year:", start_year, "end_year:", end_year, "\n")
+  
   # Normalize metric names
   hist_display_metric <- gsub("weekly_", "", hist_display_metric)
-  
-  # Load historical treatment data
-  treatments <- load_historical_cb_data(
-    start_year = start_year,
-    end_year = end_year,
-    facility_filter = facility_filter,
-    zone_filter = zone_filter,
-    foreman_filter = foreman_filter
-  )
-  
-  if (is.null(treatments) || nrow(treatments) == 0) {
-    return(data.frame())
-  }
   
   # Determine if zones should be shown separately
   show_zones_separately <- hist_zone_display == "show-both" && length(zone_filter) > 1
   
   # Process based on time period
   if (hist_time_period == "yearly") {
-    # Yearly aggregation
-    if (hist_display_metric == "treatments") {
-      # Count total treatments per year
-      result <- treatments %>%
-        mutate(time_period = as.character(treatment_year)) %>%
-        group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
-        summarise(count = n(), .groups = "drop")
-    } else {
-      # Count unique wet catch basins per year
-      result <- treatments %>%
-        mutate(time_period = as.character(treatment_year)) %>%
-        group_by(time_period, facility, facility_full, zone, fosarea, foreman_name, catchbasin_id) %>%
-        summarise(.groups = "drop") %>%
-        group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
-        summarise(count = n(), .groups = "drop")
+    # For yearly: use the pre-aggregated function (faster)
+    treatments <- load_historical_cb_data(
+      start_year = start_year,
+      end_year = end_year,
+      facility_filter = facility_filter,
+      zone_filter = zone_filter,
+      foreman_filter = foreman_filter
+    )
+    
+    if (is.null(treatments) || nrow(treatments) == 0) {
+      return(data.frame())
     }
+    
+    result <- treatments %>%
+      mutate(time_period = as.character(treatment_year)) %>%
+      select(time_period, facility, facility_full, zone, fosarea, foreman_name, 
+             count = total_count)
   } else {
-    # Weekly aggregation
+    # For weekly ACTIVE treatments: count catch basins with ACTIVE treatment on each week's Friday
+    # A treatment is active if: inspdate <= week_friday AND inspdate + effect_days >= week_friday
+    
+    raw_data <- load_historical_treatments(
+      start_year = start_year,
+      end_year = end_year,
+      zone_filter = zone_filter
+    )
+    
+    cat("DEBUG CB: raw_data$treatments rows =", 
+        if (!is.null(raw_data$treatments)) nrow(raw_data$treatments) else "NULL", "\n")
+    
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) {
+      cat("DEBUG CB ERROR: No raw_data returned from load_historical_treatments\n")
+      return(data.frame())
+    }
+    
+    treatments <- raw_data$treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        effect_days = ifelse(is.na(effect_days), 28, effect_days),  # Default 28 days for CB
+        treatment_end = inspdate + effect_days
+      )
+    
+    cat("DEBUG CB: After mutate, treatments rows =", nrow(treatments), "\n")
+    
+    # Apply facility filter if provided (and not "all")
+    if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% facility_filter)) {
+      cat("DEBUG CB: Applying facility filter:", paste(facility_filter, collapse = ","), "\n")
+      treatments <- treatments %>% filter(facility %in% facility_filter)
+      cat("DEBUG CB: After facility filter, treatments rows =", nrow(treatments), "\n")
+    }
+    
+    # Build facility_full using lookup
+    facilities <- get_facility_lookup()
+    if (!is.null(facilities) && nrow(facilities) > 0) {
+      facility_map <- setNames(facilities$full_name, facilities$short_name)
+      treatments$facility_full <- ifelse(
+        treatments$facility %in% names(facility_map),
+        facility_map[treatments$facility],
+        treatments$facility
+      )
+    } else {
+      treatments$facility_full <- treatments$facility
+    }
+    
+    # Generate all weeks in the date range
     start_date <- as.Date(paste0(start_year, "-01-01"))
     end_date <- as.Date(paste0(end_year, "-12-31"))
     all_weeks <- seq.Date(start_date, end_date, by = "week")
     
+    cat("DEBUG CB: Loaded", nrow(treatments), "raw treatments\n")
+    cat("DEBUG CB: Processing", length(all_weeks), "weeks\n")
+    
+    # For each week, count ACTIVE catch basins (treatments that are still active on that Friday)
     week_data <- data.frame()
     
     for (week_start in all_weeks) {
-      week_friday <- as.Date(week_start) + 4
+      week_friday <- as.Date(week_start) + 4  # Friday of that week
       week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
       
-      # Find active treatments on that Friday
-      active_treatments <- treatments %>%
-        mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 150, effect_days)
-        ) %>%
+      # Find catch basins with active treatment on that Friday
+      # Active = treatment started on or before Friday AND treatment hasn't expired yet
+      active_on_friday <- treatments %>%
         filter(
-          as.Date(inspdate) <= week_friday,
+          inspdate <= week_friday,
           treatment_end >= week_friday
         )
       
-      if (nrow(active_treatments) > 0) {
-        if (hist_display_metric == "active_treatments") {
-          # Count active treatments
-          week_result <- active_treatments %>%
-            mutate(time_period = week_label) %>%
-            group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
-            summarise(count = n(), .groups = "drop")
-        } else {
-          # Count unique active wet catch basins
-          week_result <- active_treatments %>%
-            mutate(time_period = week_label) %>%
-            group_by(time_period, facility, facility_full, zone, fosarea, foreman_name, catchbasin_id) %>%
-            summarise(.groups = "drop") %>%
-            group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
-            summarise(count = n(), .groups = "drop")
-        }
+      if (nrow(active_on_friday) > 0) {
+        # Count UNIQUE catch basins with active treatment (not total treatments)
+        active_data <- active_on_friday %>%
+          mutate(time_period = week_label) %>%
+          select(catchbasin_id, facility, facility_full, zone, time_period) %>%
+          distinct(catchbasin_id, .keep_all = TRUE)  # One count per catch basin
         
-        week_data <- bind_rows(week_data, week_result)
+        week_data <- bind_rows(week_data, active_data)
       }
     }
     
-    result <- week_data
+    if (nrow(week_data) == 0) {
+      cat("DEBUG CB ERROR: week_data is empty after loop\n")
+      return(data.frame())
+    }
+    
+    # Each row is a unique active catch basin per week
+    result <- week_data %>%
+      mutate(count = 1)
   }
   
   # Apply grouping
@@ -253,16 +323,22 @@ create_historical_cb_data <- function(start_year, end_year,
         mutate(group_name = facility_full)
     }
   } else if (hist_group_by == "foreman") {
-    if (show_zones_separately) {
+    if (show_zones_separately && "fosarea" %in% names(result)) {
       result <- result %>%
-        group_by(time_period, fosarea, foreman_name, zone) %>%
+        group_by(time_period, fosarea, zone) %>%
         summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(group_name = paste0(foreman_name, " P", zone))
+        mutate(group_name = paste0(fosarea, " P", zone))
+    } else if ("fosarea" %in% names(result)) {
+      result <- result %>%
+        group_by(time_period, fosarea) %>%
+        summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+        mutate(group_name = fosarea)
     } else {
+      # No foreman data, fall back to mmcd_all
       result <- result %>%
-        group_by(time_period, fosarea, foreman_name) %>%
+        group_by(time_period) %>%
         summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(group_name = foreman_name)
+        mutate(group_name = "All MMCD")
     }
   } else {
     # mmcd_all
@@ -271,111 +347,36 @@ create_historical_cb_data <- function(start_year, end_year,
       summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
       mutate(group_name = "All MMCD")
   }
-  
+  cat(capture.output(head(result)), sep = "\n")
+  cat("I am here\n")
   return(result)
 }
 
-# Create historical chart
-create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar", theme = "MMCD") {
+# Create historical chart - uses shared create_trend_chart
+create_historical_cb_chart <- function(data, hist_time_period, hist_display_metric, hist_group_by, chart_type = "stacked_bar", theme = "MMCD", show_zones_separately = FALSE) {
   if (is.null(data) || nrow(data) == 0) {
-    return(plot_ly() %>%
-      layout(
-        title = "No historical data available",
-        xaxis = list(title = "Time Period"),
-        yaxis = list(title = "Count")
-      ))
+    return(plotly_empty() %>% layout(title = "No historical data available"))
   }
   
-  # Determine chart title
+  # Build labels
   metric_label <- case_when(
     hist_display_metric %in% c("treatments", "weekly_active_treatments") ~ "Treatments",
-    hist_display_metric %in% c("wet_cb_count", "weekly_active_wet_cb") ~ "Wet Catch Basins",
+    hist_display_metric %in% c("total_count", "weekly_active_wet_cb") ~ "Wet Catch Basins",
     TRUE ~ "Count"
   )
-  
   period_label <- ifelse(hist_time_period == "yearly", "Year", "Week")
-  
   chart_title <- paste("Historical Catch Basin", metric_label, "by", period_label)
   
-  # Get group colors if applicable
-  group_colors <- NULL
-  if (hist_group_by == "facility" && "facility" %in% names(data)) {
-    facility_colors <- get_facility_base_colors(theme = theme)
-    group_colors <- facility_colors
-  } else if (hist_group_by == "foreman" && "fosarea" %in% names(data)) {
-    # Use the new theme-aware foreman colors function
-    foreman_colors <- get_themed_foreman_colors(theme = theme)
-    group_colors <- foreman_colors
+  # Get colors based on grouping
+  colors <- NULL
+  if (hist_group_by == "facility" && "group_name" %in% names(data)) {
+    colors <- map_facility_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
+  } else if (hist_group_by == "foreman" && "group_name" %in% names(data)) {
+    colors <- map_foreman_display_names_to_colors(unique(data$group_name), theme, handle_zones = show_zones_separately)
   }
   
-  # Create plotly chart based on chart_type
-  if (chart_type == "stacked_bar") {
-    # Stacked bar chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar',
-                   colors = group_colors) %>%  # Keep names for proper matching
-        layout(barmode = 'stack')
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar') %>%
-        layout(barmode = 'stack')
-    }
-  } else if (chart_type == "grouped_bar") {
-    # Grouped bar chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar',
-                   colors = group_colors) %>%  # Keep names for proper matching
-        layout(barmode = 'group')
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'bar') %>%
-        layout(barmode = 'group')
-    }
-  } else if (chart_type == "area") {
-    # Area chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines', fill = 'tonexty',
-                   colors = group_colors) %>%  # Keep names for proper matching
-        layout(hovermode = 'x unified')
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines', fill = 'tonexty') %>%
-        layout(hovermode = 'x unified')
-    }
-  } else {
-    # Default: Line chart
-    if (!is.null(group_colors) && length(group_colors) > 0 && hist_group_by != "mmcd_all") {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines+markers',
-                   colors = group_colors)  # Keep names for proper matching
-    } else {
-      p <- plot_ly(data, x = ~time_period, y = ~count, color = ~group_name,
-                   type = 'scatter', mode = 'lines+markers')
-    }
-  }
-  
-  p <- p %>%
-    layout(
-      title = list(text = chart_title, font = list(size = 20)),
-      xaxis = list(
-        title = list(text = period_label, font = list(size = 18)),
-        tickfont = list(size = 16)
-      ),
-      yaxis = list(
-        title = list(text = metric_label, font = list(size = 18)),
-        tickfont = list(size = 16)
-      ),
-      legend = list(
-        font = list(size = 16)
-      ),
-      hovermode = "closest",
-      font = list(size = 16)
-    )
-  
-  return(p)
+  # Use shared chart function
+  create_trend_chart(data, chart_type, chart_title, period_label, metric_label, colors)
 }
 
 # Format historical data table
@@ -394,7 +395,7 @@ format_historical_cb_table <- function(data) {
       Group = group_name,
       Count = count
     )
-  
+    cat("I am here also\n")
   return(display_data)
 } 
 

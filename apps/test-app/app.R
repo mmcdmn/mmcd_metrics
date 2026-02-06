@@ -1,15 +1,17 @@
 # TEST APP
-# mostly used for colors and name mapping between FOS, facility and statuses
+# Admin utilities for colors, name mapping, and cache management
 
 library(shiny)
 library(shinydashboard)
+library(shinyjs)
 library(dplyr)
 library(DT)
 
 source("../../shared/db_helpers.R")
+source("../../shared/cache_utilities.R")
 
 ui <- dashboardPage(
-  dashboardHeader(title = "DB Helpers Info"),
+  dashboardHeader(title = "Admin Utilities"),
   
   dashboardSidebar(
     sidebarMenu(
@@ -29,6 +31,9 @@ ui <- dashboardPage(
         "))
       ),
       hr(style = "margin: 5px 0; border-color: #444;"),
+      menuItem("Cache Manager", tabName = "cache_manager", icon = icon("database")),
+      menuItem("Metric Registry", tabName = "metric_registry", icon = icon("list")),
+      hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Facilities", tabName = "facilities", icon = icon("building")),
       menuItem("FOS", tabName = "fos", icon = icon("users")),
       menuItem("Status Colors", tabName = "status_colors", icon = icon("palette")),
@@ -39,7 +44,97 @@ ui <- dashboardPage(
   ),
   
   dashboardBody(
+    useShinyjs(),
     tabItems(
+      # Cache Manager tab (NEW)
+      tabItem(tabName = "cache_manager",
+        fluidRow(
+          box(
+            title = "Historical Cache Status",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 8,
+            DTOutput("cacheStatusTable"),
+            br(),
+            verbatimTextOutput("cacheInfo")
+          ),
+          box(
+            title = "Cache Actions",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 4,
+            p("Select metrics to regenerate their cache data. This pulls fresh data from the database and recalculates 5-year and 10-year averages."),
+            uiOutput("metricCheckboxes"),
+            hr(),
+            actionButton("regenerateSelected", "Regenerate Selected", 
+                         icon = icon("sync"), class = "btn-primary"),
+            actionButton("regenerateAll", "Regenerate All", 
+                         icon = icon("sync-alt"), class = "btn-success"),
+            hr(),
+            actionButton("clearSelected", "Clear Selected", 
+                         icon = icon("trash"), class = "btn-warning"),
+            actionButton("clearAll", "Clear All Cache", 
+                         icon = icon("trash-alt"), class = "btn-danger"),
+            hr(),
+            actionButton("refreshStatus", "Refresh Status", icon = icon("refresh"))
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Cache Operation Log",
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            verbatimTextOutput("cacheLog")
+          )
+        ),
+        # Lookup Cache Section
+        fluidRow(
+          box(
+            title = "Lookup Cache (In-Memory)",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            p("Cached lookup tables (facilities, foremen, species, etc.) are stored in memory to reduce database queries."),
+            DTOutput("lookupCacheStatus"),
+            br(),
+            actionButton("refreshLookupCaches", "Refresh All Lookups", 
+                         icon = icon("database"), class = "btn-info"),
+            actionButton("clearLookupCaches", "Clear Lookup Cache",
+                         icon = icon("eraser"), class = "btn-warning")
+          ),
+          box(
+            title = "Lookup Cache Info",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            p(strong("Note:"), " Lookup caches are automatically populated on first access and cleared when the server restarts."),
+            tags$ul(
+              tags$li(strong("facilities:"), " Facility codes and names"),
+              tags$li(strong("foremen:"), " Field supervisor employee data"),
+              tags$li(strong("species:"), " Mosquito species codes"),
+              tags$li(strong("structure_types:"), " Structure type codes"),
+              tags$li(strong("spring_thresholds:"), " ACT4-P1 spring date thresholds")
+            ),
+            verbatimTextOutput("lookupCacheLog")
+          )
+        )
+      ),
+      
+      # Metric Registry tab (NEW)
+      tabItem(tabName = "metric_registry",
+        fluidRow(
+          box(
+            title = "Registered Metrics",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            p("All metrics registered in the system. Add new metrics to apps/overview/metric_registry.R"),
+            DTOutput("registryTable")
+          )
+        )
+      ),
+      
       # Facilities tab
       tabItem(tabName = "facilities",
         fluidRow(
@@ -181,6 +276,276 @@ ui <- dashboardPage(
 )
 
 server <- function(input, output, session) {
+  
+  # ==========================================================================
+  # CACHE MANAGER - Reactive values and handlers
+  # ==========================================================================
+  
+  cache_log <- reactiveVal("")
+  cache_trigger <- reactiveVal(0)
+  
+  log_message <- function(msg) {
+    current <- cache_log()
+    timestamp <- format(Sys.time(), "%H:%M:%S")
+    cache_log(paste0(current, "[", timestamp, "] ", msg, "\n"))
+  }
+  
+  # Dynamically generate checkboxes from registry
+  output$metricCheckboxes <- renderUI({
+    cache_trigger()  # Depend on trigger for refresh
+    metrics <- get_cacheable_metrics()
+    
+    if (length(metrics) == 0) {
+      return(p("No cacheable metrics found"))
+    }
+    
+    checkboxGroupInput("selectedMetrics", "Select Metrics:",
+                       choices = metrics,
+                       selected = metrics)
+  })
+  
+  # Cache status table
+  output$cacheStatusTable <- renderDT({
+    cache_trigger()  # Depend on trigger for refresh
+    
+    status_df <- tryCatch({
+      get_cache_status()
+    }, error = function(e) {
+      data.frame(
+        metric_id = character(),
+        status = character(),
+        rows_5yr = integer(),
+        rows_10yr = integer(),
+        last_updated = character()
+      )
+    })
+    
+    if (nrow(status_df) == 0) {
+      return(data.frame(Message = "No cache data available"))
+    }
+    
+    # Format for display
+    display_df <- data.frame(
+      Metric = status_df$metric_id,
+      Status = ifelse(status_df$status == "Complete", 
+                      '<span style="color:green">✓ Complete</span>',
+                      ifelse(status_df$status == "Partial",
+                             '<span style="color:orange">⚠ Partial</span>',
+                             '<span style="color:red">✗ Missing</span>')),
+      `5yr Rows` = status_df$rows_5yr,
+      `10yr Rows` = status_df$rows_10yr,
+      `Last Updated` = status_df$last_updated,
+      check.names = FALSE,
+      stringsAsFactors = FALSE
+    )
+    
+    display_df
+  }, escape = FALSE, options = list(pageLength = 20, dom = 't'))
+  
+  # Cache info text
+  output$cacheInfo <- renderText({
+    cache_trigger()
+    cache_file <- get_cache_file()
+    
+    if (!file.exists(cache_file)) {
+      return("Cache file does not exist. Click 'Regenerate All' to create.")
+    }
+    
+    info <- file.info(cache_file)
+    paste0(
+      "Cache file: ", cache_file, "\n",
+      "File size: ", round(info$size / 1024, 1), " KB\n",
+      "Last modified: ", info$mtime
+    )
+  })
+  
+  # Cache log output
+  output$cacheLog <- renderText({
+    cache_log()
+  })
+  
+  # Regenerate selected metrics
+  observeEvent(input$regenerateSelected, {
+    metrics <- input$selectedMetrics
+    if (is.null(metrics) || length(metrics) == 0) {
+      log_message("No metrics selected")
+      return()
+    }
+    
+    log_message(paste("Starting regeneration for:", paste(metrics, collapse = ", ")))
+    
+    withProgress(message = "Regenerating cache...", value = 0, {
+      for (i in seq_along(metrics)) {
+        metric <- metrics[i]
+        incProgress(1/length(metrics), detail = metric)
+        
+        tryCatch({
+          regenerate_cache(metrics = metric)
+          log_message(paste("  ✓", metric, "complete"))
+        }, error = function(e) {
+          log_message(paste("  ✗", metric, "failed:", e$message))
+        })
+      }
+    })
+    
+    log_message("Regeneration complete")
+    cache_trigger(cache_trigger() + 1)  # Trigger refresh
+  })
+  
+  # Regenerate all metrics
+  observeEvent(input$regenerateAll, {
+    log_message("Starting full cache regeneration...")
+    
+    withProgress(message = "Regenerating all cache...", value = 0, {
+      tryCatch({
+        regenerate_cache()
+        log_message("✓ Full regeneration complete")
+      }, error = function(e) {
+        log_message(paste("✗ Error:", e$message))
+      })
+    })
+    
+    cache_trigger(cache_trigger() + 1)
+  })
+  
+  # Clear selected metrics
+  observeEvent(input$clearSelected, {
+    metrics <- input$selectedMetrics
+    if (is.null(metrics) || length(metrics) == 0) {
+      log_message("No metrics selected to clear")
+      return()
+    }
+    
+    log_message(paste("Clearing cache for:", paste(metrics, collapse = ", ")))
+    clear_cache(metrics)
+    log_message("Cache cleared for selected metrics")
+    cache_trigger(cache_trigger() + 1)
+  })
+  
+  # Clear all cache
+  observeEvent(input$clearAll, {
+    log_message("Clearing entire cache...")
+    clear_cache()
+    log_message("Cache cleared")
+    cache_trigger(cache_trigger() + 1)
+  })
+  
+  # Refresh status
+  observeEvent(input$refreshStatus, {
+    log_message("Refreshing cache status...")
+    cache_trigger(cache_trigger() + 1)
+  })
+  
+  # ==========================================================================
+  # METRIC REGISTRY TABLE
+  # ==========================================================================
+  
+  output$registryTable <- renderDT({
+    # Load registry
+    ensure_registry_loaded()
+    
+    if (!exists("get_metric_registry", mode = "function")) {
+      return(data.frame(Message = "Could not load metric registry"))
+    }
+    
+    registry <- get_metric_registry()
+    
+    # Build table from registry
+    df <- do.call(rbind, lapply(names(registry), function(id) {
+      config <- registry[[id]]
+      data.frame(
+        ID = id,
+        Name = config$display_name %||% id,
+        `App Folder` = config$app_folder %||% "",
+        `Has Acres` = ifelse(isTRUE(config$has_acres), "Yes", "No"),
+        `Historical` = ifelse(isTRUE(config$historical_enabled), "Yes", "No"),
+        `Active Calc` = ifelse(isTRUE(config$use_active_calculation), "Yes", "No"),
+        Cacheable = ifelse(id %in% get_cacheable_metrics(), 
+                          '<span style="color:green">Yes</span>', 
+                          '<span style="color:gray">No</span>'),
+        check.names = FALSE,
+        stringsAsFactors = FALSE
+      )
+    }))
+    
+    df
+  }, escape = FALSE, options = list(pageLength = 20))
+  
+  # ==========================================================================
+  # LOOKUP CACHE MANAGEMENT
+  # ==========================================================================
+  
+  lookup_cache_log <- reactiveVal("")
+  lookup_trigger <- reactiveVal(0)
+  
+  lookup_log_message <- function(msg) {
+    current <- lookup_cache_log()
+    timestamp <- format(Sys.time(), "%H:%M:%S")
+    lookup_cache_log(paste0(current, "[", timestamp, "] ", msg, "\n"))
+  }
+  
+  # Lookup cache status table
+  output$lookupCacheStatus <- renderDT({
+    lookup_trigger()  # Depend on trigger
+    
+    tryCatch({
+      status_df <- get_lookup_cache_status()
+      
+      # Format status with colors
+      status_df$status <- ifelse(
+        status_df$status == "Cached",
+        '<span style="color:green">✓ Cached</span>',
+        '<span style="color:gray">○ Empty</span>'
+      )
+      
+      status_df
+    }, error = function(e) {
+      data.frame(
+        lookup_type = "Error",
+        status = e$message,
+        row_count = NA
+      )
+    })
+  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  
+  # Lookup cache log
+  output$lookupCacheLog <- renderText({
+    lookup_cache_log()
+  })
+  
+  # Refresh lookup caches
+  observeEvent(input$refreshLookupCaches, {
+    lookup_log_message("Refreshing all lookup caches...")
+    
+    withProgress(message = "Refreshing lookups...", value = 0.5, {
+      tryCatch({
+        refresh_lookup_caches()
+        lookup_log_message("✓ All lookups refreshed from database")
+      }, error = function(e) {
+        lookup_log_message(paste("✗ Error:", e$message))
+      })
+    })
+    
+    lookup_trigger(lookup_trigger() + 1)
+  })
+  
+  # Clear lookup caches
+  observeEvent(input$clearLookupCaches, {
+    lookup_log_message("Clearing all lookup caches...")
+    
+    tryCatch({
+      clear_lookup_cache_types()
+      lookup_log_message("✓ Lookup cache cleared - will refetch on next access")
+    }, error = function(e) {
+      lookup_log_message(paste("✗ Error:", e$message))
+    })
+    
+    lookup_trigger(lookup_trigger() + 1)
+  })
+  
+  # ==========================================================================
+  # THEME & COLOR HANDLERS (existing code)
+  # ==========================================================================
   
   # Reactive value for current theme
   current_theme <- reactive({

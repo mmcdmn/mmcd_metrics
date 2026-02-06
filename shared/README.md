@@ -4,14 +4,36 @@ This folder contains shared utilities and resources used across all apps in the 
 
 ## Files
 
-### Database Helpers
+### Database & Data Helpers
 - **`db_helpers.R`** - Common database connection and utility functions
+- **`db_pool.R`** - Database connection pooling with pool package (v1.0.4)
+
+### Cache System
+- **`cache_utilities.R`** - Dynamic cache management for historical averages (registry-driven)
+- **`cache/`** - Cache data files
+  - `historical_averages_cache.rds` - Pre-calculated 5yr/10yr historical averages
+
+### Themes & Colors
+- **`color_themes.R`** - Centralized color theme definitions for consistent UI styling
+
+### Static Assets
+- **`assets/`** - Images, icons, and static resources for apps and landing pages
+  - `adult.png` - Favicon and mosquito app icon
+  - `catchbasin.png` - Catch basin status icon
+  - `cattail_background.png` - Cattail app icon
+  - `drone.jpg` - Drone treatment icon
+  - `favicon.ico` - Site favicon
+  - `helicopter-solid-full.svg` - Air treatment icon
+  - `jedi-order-brands-solid-full.svg` - About section icon
+  - `larvae.png` - Inspection coverage and checkback icon
+  - `tree-solid-full.svg` - SUCO history icon
 
 ### Geospatial Data Export (Q_to_R)
 - **`Q_to_R/`** - PostgreSQL to R geospatial data extraction scripts
   - `extract_geometries_from_db.R` - Direct database to shapefile conversion
   - `extract_to_csv_then_shp.R` - Two-stage CSV then shapefile export
   - `create_section_boundaries.R` - Minimal section boundaries extraction
+  - `data/` - Extracted shapefiles including VectorIndexAreasA2025.shp (12 grouped areas from 3207 sections)
   - See `Q_to_R/README.md` for detailed usage instructions
 
 ### Documentation Sync System
@@ -63,12 +85,18 @@ cd "c:\Users\datatech\Documents\mmcd_metrics\shared\Q_to_R"
 ```
 
 ### Current Apps with Documentation
-- `cattail/` 
+- `air_sites_simple/`
+- `catch_basin_status/`
+- `cattail_inspections/`
+- `cattail_treatments/`
+- `control_efficacy/`
 - `drone/`
 - `ground_prehatch_progress/`
+- `inspections/`
+- `section-cards/`
 - `struct_trt/`
 - `suco_history/`
-- `trap_surveillance_test/`
+- `trap_survillance_test/`
 
 The system automatically discovers new apps when you add `NOTES.md` files - no configuration needed!
 

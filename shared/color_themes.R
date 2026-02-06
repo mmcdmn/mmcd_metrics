@@ -33,14 +33,13 @@ get_theme_palette <- function(theme = "MMCD") {
       primary = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
                   "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"),
       facilities = c(
-        AP = "#1f77b4",  # Blue
-        BD = "#ff7f0e",  # Orange
-        BL = "#2ca02c",  # Green
-        MT = "#d62728",  # Red
-        NM = "#9467bd",  # Purple
-        SH = "#8c564b",  # Brown
-        SP = "#e377c2",  # Pink
-        WB = "#7f7f7f"   # Gray
+        E = "#1f77b4",   # East - Blue
+        MO = "#ff7f0e",  # Main Office - Orange
+        N = "#2ca02c",   # North - Green
+        Sj = "#d62728",  # South Jordan - Red
+        Sr = "#9467bd",  # South Rosemount - Purple
+        Wm = "#8c564b",  # West Maple Grove - Brown
+        Wp = "#e377c2"   # West Plymouth - Pink
       ),
       status = c(
         active = "#187018",         # Forest green for active/in-progress/treatment
@@ -64,14 +63,13 @@ get_theme_palette <- function(theme = "MMCD") {
       primary = c("#0f62fe", "#ff7eb6", "#42be65", "#fa4d56", "#8a3ffc",
                   "#33b1ff", "#d12771", "#198038", "#ba4e00", "#8a3800"),
       facilities = c(
-        AP = "#0f62fe",  # IBM Blue 60
-        BD = "#ff7eb6",  # Magenta 40
-        BL = "#42be65",  # Green 50
-        MT = "#fa4d56",  # Red 50
-        NM = "#8a3ffc",  # Purple 60
-        SH = "#d12771",  # Magenta 70
-        SP = "#ff7eb6",  # Magenta 40
-        WB = "#6f6f6f"   # Gray 60
+        E = "#0f62fe",   # East - IBM Blue 60
+        MO = "#ff7eb6",  # Main Office - Magenta 40
+        N = "#42be65",   # North - Green 50
+        Sj = "#fa4d56",  # South Jordan - Red 50
+        Sr = "#8a3ffc",  # South Rosemount - Purple 60
+        Wm = "#d12771",  # West Maple Grove - Magenta 70
+        Wp = "#6f6f6f"   # West Plymouth - Gray 60
       ),
       status = c(
         active = "#0f62fe",        # Blue 60 for active treatment
@@ -95,14 +93,13 @@ get_theme_palette <- function(theme = "MMCD") {
       primary = c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
                   "#0072B2", "#D55E00", "#CC79A7", "#000000"),
       facilities = c(
-        AP = "#0072B2",  # Blue
-        BD = "#E69F00",  # Orange
-        BL = "#009E73",  # Bluish Green
-        MT = "#D55E00",  # Vermillion (red-orange)
-        NM = "#CC79A7",  # Reddish Purple
-        SH = "#56B4E9",  # Sky Blue
-        SP = "#F0E442",  # Yellow
-        WB = "#000000"   # Black (only when needed)
+        E = "#0072B2",   # East - Blue
+        MO = "#E69F00",  # Main Office - Orange
+        N = "#009E73",   # North - Bluish Green
+        Sj = "#D55E00",  # South Jordan - Vermillion (red-orange)
+        Sr = "#CC79A7",  # South Rosemount - Reddish Purple
+        Wm = "#56B4E9",  # West Maple Grove - Sky Blue
+        Wp = "#F0E442"   # West Plymouth - Yellow
       ),
       status = c(
         active = "#0072B2",        # Blue for active treatment
@@ -124,14 +121,13 @@ get_theme_palette <- function(theme = "MMCD") {
       primary = c("#332288", "#88CCEE", "#44AA99", "#117733", "#999933",
                   "#DDCC77", "#CC6677", "#882255", "#AA4499"),
       facilities = c(
-        AP = "#332288",  # Indigo
-        BD = "#DDCC77",  # Sand
-        BL = "#44AA99",  # Teal
-        MT = "#CC6677",  # Rose
-        NM = "#AA4499",  # Purple
-        SH = "#882255",  # Wine
-        SP = "#88CCEE",  # Cyan
-        WB = "#999933"   # Olive
+        E = "#332288",   # East - Indigo
+        MO = "#DDCC77",  # Main Office - Sand
+        N = "#44AA99",   # North - Teal
+        Sj = "#CC6677",  # South Jordan - Rose
+        Sr = "#AA4499",  # South Rosemount - Purple
+        Wm = "#882255",  # West Maple Grove - Wine
+        Wp = "#88CCEE"   # West Plymouth - Cyan
       ),
       status = c(
         active = "#332288",        # Indigo for active treatment
@@ -153,14 +149,13 @@ get_theme_palette <- function(theme = "MMCD") {
       primary = c("#440154", "#482878", "#3E4A89", "#31688E", "#26828E",
                   "#1F9E89", "#35B779", "#6DCD59", "#B4DE2C", "#FDE724"),
       facilities = c(
-        AP = "#3E4A89",  # Purple-Blue
-        BD = "#FDE724",  # Yellow
-        BL = "#35B779",  # Green
-        MT = "#B4DE2C",  # Yellow-Green
-        NM = "#440154",  # Purple
-        SH = "#26828E",  # Teal
-        SP = "#6DCD59",  # Light Green
-        WB = "#31688E"   # Blue
+        E = "#3E4A89",   # East - Purple-Blue
+        MO = "#FDE724",  # Main Office - Yellow
+        N = "#35B779",   # North - Green
+        Sj = "#B4DE2C",  # South Jordan - Yellow-Green
+        Sr = "#440154",  # South Rosemount - Purple
+        Wm = "#26828E",  # West Maple Grove - Teal
+        Wp = "#6DCD59"   # West Plymouth - Light Green
       ),
       status = c(
         active = "#26828E",        # Teal for active treatment
@@ -182,14 +177,13 @@ get_theme_palette <- function(theme = "MMCD") {
       primary = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",
                   "#FFFF33", "#A65628", "#F781BF", "#999999"),
       facilities = c(
-        AP = "#377EB8",  # Blue
-        BD = "#FF7F00",  # Orange
-        BL = "#4DAF4A",  # Green
-        MT = "#E41A1C",  # Red
-        NM = "#984EA3",  # Purple
-        SH = "#A65628",  # Brown
-        SP = "#F781BF",  # Pink
-        WB = "#999999"   # Gray
+        E = "#377EB8",   # East - Blue
+        MO = "#FF7F00",  # Main Office - Orange
+        N = "#4DAF4A",   # North - Green
+        Sj = "#E41A1C",  # South Jordan - Red
+        Sr = "#984EA3",  # South Rosemount - Purple
+        Wm = "#A65628",  # West Maple Grove - Brown
+        Wp = "#F781BF"   # West Plymouth - Pink
       ),
       status = c(
         active = "#377EB8",        # Blue for active treatment
@@ -274,6 +268,25 @@ generate_distinct_colors <- function(n, theme = "MMCD") {
   colors <- sapply(hues, function(h) {
     hsv(h = h, s = base_hsv[2], v = base_hsv[3])
   })
+  
+  return(colors)
+}
+
+#' Get Consistent Historical Comparison Colors
+#' 
+#' Returns standardized colors for historical comparison charts (5-Year Avg vs Current Year)
+#' 
+#' @param theme Character. Theme name (default "MMCD")
+#' @return Named list with colors for "5-Year Avg" and current year
+get_historical_comparison_colors <- function(theme = "MMCD") {
+  palette <- get_theme_palette(theme)
+  
+  # Use consistent colors across all historical comparison charts
+  # Blue for 5-Year Average, Orange for Current Year
+  colors <- list(
+    "5-Year Avg" = palette$primary[1],  # Blue
+    "current_year" = palette$primary[2]  # Orange
+  )
   
   return(colors)
 }

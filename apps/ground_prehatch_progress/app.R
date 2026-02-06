@@ -1,113 +1,47 @@
 # Ground Prehatch Treatment Progress
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(shinydashboard)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(DT)
-  library(plotly)
-  library(tidyr)
-})
 
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
 source("data_functions.R")
 source("display_functions.R")
-source("ui_helpers.R")
+source("ui_helper.R")
 source("historical_functions.R")
 
-ui <- dashboardPage(
-  dashboardHeader(title = "Ground Prehatch Treatment Progress"),
-  
-  dashboardSidebar(
-    sidebarMenu(
-      id = "sidebar_tabs",
-      menuItem("Progress Overview", tabName = "overview", icon = icon("chart-bar")),
-      menuItem("Detailed View", tabName = "details", icon = icon("table")),
-      menuItem("Historical Analysis", tabName = "historical", icon = icon("history"))
-    )
-  ),
-  
-  dashboardBody(
-    # Use universal CSS from db_helpers for consistent text sizing
-    get_universal_text_css(),
-    
-    # Filter panel - always visible
-    create_filter_panel(),
-    
-    # Help text (collapsible)
-    div(id = "help-section",
-      tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-             style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-             HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-      div(style = "display: none;",
-        create_help_text()
-      )
-    ),
-    
-    tabItems(
-      # Overview tab
-      tabItem(tabName = "overview",
-        br(),
-        
-        # Section info panel
-        create_section_info_panel(),
-        
-        # Summary statistics
-        div(
-          h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
-          create_overview_value_boxes()
-        ),
-        
-        br(),
-        
-        # Progress chart
-        create_progress_chart_box()
-      ),
-      
-      # Details tab  
-      tabItem(tabName = "details",
-        br(),
-        
-        # Section info panel
-        create_section_info_panel(),
-        
-        # Details table
-        create_details_table_box()
-      ),
-      
-      # Historical Analysis tab
-      tabItem(tabName = "historical",
-        br(),
-        
-        # Section info panel
-        create_section_info_panel(),
-        
-        # Historical chart
-        create_historical_chart_box(),
-        
-        br(),
-        
-        # Historical details table
-        create_historical_details_table_box()
-      )
-    )
-  )
-)
+# Set application name for AWS RDS monitoring
+set_app_name("ground_prehatch_progress")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[ground_prehatch_progress] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[ground_prehatch_progress] Lookup tables preloaded")
+}, error = function(e) message("[ground_prehatch_progress] Preload warning: ", e$message))
+
+# =============================================================================
+# USER INTERFACE
+# =============================================================================
+
+ui <- ground_prehatch_ui()
+
+# =============================================================================
+# SERVER LOGIC
+# =============================================================================
 
 server <- function(input, output, session) {
   
-  # Reactive theme handling
+  # Theme handling
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Set global theme option when changed
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -128,12 +62,18 @@ server <- function(input, output, session) {
       zone_value  # Single zone
     }
     
+    # Safely handle foreman_filter (can be NULL or empty with multiple=TRUE)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- "all"
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
@@ -146,7 +86,7 @@ server <- function(input, output, session) {
     if (input$hist_time_period == "yearly") {
       updateRadioButtons(session, "hist_display_metric", selected = "sites")
     } else if (input$hist_time_period == "weekly") {
-      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_sites")
+      updateRadioButtons(session, "hist_display_metric", selected = "weekly_active_count")
     }
   })
   
@@ -163,12 +103,18 @@ server <- function(input, output, session) {
       zone_value  # Single zone
     }
     
+    # Safely handle foreman_filter (can be NULL or empty with multiple=TRUE)
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0) {
+      foreman_val <- "all"
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
       combine_zones = (zone_value == "combined"),
       facility_filter = isolate(input$facility_filter),
-      foreman_filter = isolate(input$foreman_filter),
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       hist_time_period = isolate(input$hist_time_period),
       hist_display_metric = isolate(input$hist_display_metric),
@@ -180,7 +126,7 @@ server <- function(input, output, session) {
   # Initialize facility choices from db_helpers - runs immediately on app load
   observe({
     facility_choices <- get_facility_choices()
-    updateSelectizeInput(session, "facility_filter", choices = facility_choices, selected = "all")
+    updateSelectInput(session, "facility_filter", choices = facility_choices, selected = "all")
   })
   
   # Initialize foreman choices from db_helpers - runs immediately on app load
@@ -194,10 +140,36 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
   
+  # Update FOS choices when facility changes
+  observeEvent(input$facility_filter, {
+    foremen_lookup <- get_foremen_lookup()
+    
+    if (input$facility_filter == "all") {
+      # Show all FOS when "All Facilities" is selected
+      foremen_choices <- c("All" = "all")
+      foremen_choices <- c(
+        foremen_choices,
+        setNames(foremen_lookup$emp_num, foremen_lookup$shortname)
+      )
+    } else {
+      # Filter FOS by selected facility
+      filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility_filter, ]
+      foremen_choices <- c("All" = "all")
+      if (nrow(filtered_foremen) > 0) {
+        foremen_choices <- c(
+          foremen_choices,
+          setNames(filtered_foremen$emp_num, filtered_foremen$shortname)
+        )
+      }
+    }
+    
+    updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
+  })
+  
   # Update chart type default when zone filter changes to P1 and P2 separate
   observeEvent(input$zone_filter, {
     # Only update if on historical tab and switching to P1 and P2 separate
-    if (input$sidebar_tabs == "historical" && input$zone_filter == "1,2") {
+    if (input$tabs == "historical" && input$zone_filter == "1,2") {
       # Default to grouped_bar but user can still change it
       updateSelectInput(session, "hist_chart_type", selected = "grouped_bar")
     }
@@ -208,10 +180,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
     withProgress(message = "Loading ground prehatch data...", value = 0.5, {
-      get_ground_prehatch_data(inputs$zone_filter, simulation_date)
+      get_ground_prehatch_data(inputs$zone_filter, analysis_date, inputs$expiring_days)
     })
   })
   
@@ -220,10 +192,10 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Use custom date if provided, otherwise use current date
-    simulation_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
     withProgress(message = "Loading site details...", value = 0.5, {
-      get_site_details_data(inputs$expiring_days, simulation_date)
+      get_site_details_data(inputs$expiring_days, analysis_date)
     })
   })
   
@@ -280,111 +252,91 @@ server <- function(input, output, session) {
     req(input$refresh)  # Require refresh button click
     
     data <- aggregated_data()
-    create_value_boxes(data)
+    display_metric <- input$display_metric  # Not isolated - changes trigger update
+    create_value_boxes(data, display_metric = display_metric)
   })
   
-  # Render value boxes using colors from db_helpers
-  output$total_sites <- renderValueBox({
+  # Render metric boxes
+  output$prehatch_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
-      value = data$total_ground,
-      subtitle = "Total Ground Sites",
-      icon = icon("map-marker"),
-      color = shiny_colors["completed"]
-    )
-  })
-  
-  output$prehatch_sites <- renderValueBox({
-    req(input$refresh)  # Only render after refresh button clicked
-    
-    data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Prehatch Acres" else "Prehatch Sites"
+    create_stat_box(
       value = data$total_prehatch,
-      subtitle = "Prehatch Sites",
-      icon = icon("egg"),
-      color = shiny_colors["planned"]
+      title = metric_label,
+      bg_color = status_colors["completed"],
+      icon = icon("egg")
     )
   })
   
-  output$treated_sites <- renderValueBox({
+  output$treated_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Active Acres" else "Active Sites"
+    create_stat_box(
       value = data$total_active,
-      subtitle = "Active Sites",
-      icon = icon("check-circle"),
-      color = shiny_colors["active"]
+      title = metric_label,
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
     )
   })
   
-  output$sites_expiring <- renderValueBox({
+  output$sites_expiring <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Acres Expiring" else "Sites Expiring"
+    create_stat_box(
       value = data$total_expiring,
-      subtitle = "Sites Expiring",
-      icon = icon("exclamation-triangle"),
-      color = shiny_colors["needs_action"]
+      title = metric_label,
+      bg_color = status_colors["planned"],
+      icon = icon("exclamation-triangle")
     )
   })
   
-  output$expired_sites <- renderValueBox({
+  output$expired_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Expired Acres" else "Expired Sites"
+    create_stat_box(
       value = data$total_expired,
-      subtitle = "Expired Sites",
-      icon = icon("clock"),
-      color = shiny_colors["somthing_else"]
+      title = metric_label,
+      bg_color = status_colors["unknown"],
+      icon = icon("clock")
     )
   })
   
-  output$skipped_sites <- renderValueBox({
+  output$skipped_sites <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    status_colors <- get_status_colors(theme = current_theme())
+    metric_label <- if (input$display_metric == "acres") "Skipped Acres" else "Skipped Sites"
+    create_stat_box(
       value = data$total_skipped,
-      subtitle = "Skipped Sites",
-      icon = icon("ban"),
-      color = shiny_colors["needs_treatment"]
+      title = metric_label,
+      bg_color = status_colors["needs_treatment"],
+      icon = icon("ban")
     )
   })
   
-  output$treated_pct <- renderValueBox({
+  output$treated_pct <- renderUI({
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
       value = paste0(data$treated_pct, "%"),
-      subtitle = "Treated %",
-      icon = icon("percent"),
-      color = shiny_colors["active"]
-    )
-  })
-  
-  output$expiring_pct <- renderValueBox({
-    req(input$refresh)  # Only render after refresh button clicked
-    
-    data <- value_boxes()
-    shiny_colors <- get_shiny_colors()
-    valueBox(
-      value = paste0(data$expiring_pct, "%"),
-      subtitle = "Expiring %",
-      icon = icon("clock"),
-      color = shiny_colors["needs_action"]
+      title = "Treated %",
+      bg_color = status_colors["active"],
+      icon = icon("percent")
     )
   })
   
@@ -393,7 +345,9 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only calculate after refresh button clicked
     inputs <- refresh_inputs()
     data <- aggregated_data()
-    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, return_height_info = TRUE, theme = current_theme())
+    display_metric <- input$display_metric  # Not isolated - changes trigger update
+    create_progress_chart(data, inputs$group_by, inputs$expiring_filter, inputs$expiring_days, 
+                         return_height_info = TRUE, theme = current_theme(), display_metric = display_metric)
   })
   
   # Render progress chart with dynamic height
@@ -453,18 +407,37 @@ server <- function(input, output, session) {
     # Determine zone display mode from zone_filter_raw
     hist_zone_display <- if(inputs$zone_filter_raw == "1,2") "show-both" else "combined"
     
-    # Call create_historical_data directly
-    create_historical_data(
-      start_year = inputs$hist_year_range[1],
-      end_year = inputs$hist_year_range[2],
-      hist_time_period = inputs$hist_time_period,
-      hist_display_metric = inputs$hist_display_metric,
-      hist_group_by = inputs$group_by,
-      hist_zone_display = hist_zone_display,
-      facility_filter = inputs$facility_filter,
-      zone_filter = inputs$zone_filter,
-      foreman_filter = inputs$foreman_filter
-    )
+    # Call create_historical_data with progress indicators
+    withProgress(message = "Loading historical data...", value = 0, {
+      incProgress(0.1, detail = "Connecting to database...")
+      Sys.sleep(0.1)  # Brief pause for user to see progress
+      
+      incProgress(0.2, detail = "Loading ground site data...")
+      Sys.sleep(0.1)
+      
+      incProgress(0.3, detail = "Loading treatment records...")
+      Sys.sleep(0.1)
+      
+      incProgress(0.2, detail = "Applying filters...")
+      Sys.sleep(0.1)
+      
+      incProgress(0.1, detail = "Aggregating data...")
+      
+      result <- create_historical_data(
+        start_year = inputs$hist_year_range[1],
+        end_year = inputs$hist_year_range[2],
+        hist_time_period = inputs$hist_time_period,
+        hist_display_metric = inputs$hist_display_metric,
+        hist_group_by = inputs$group_by,
+        hist_zone_display = hist_zone_display,
+        facility_filter = inputs$facility_filter,
+        zone_filter = inputs$zone_filter,
+        foreman_filter = inputs$foreman_filter
+      )
+      
+      incProgress(0.1, detail = "Finalizing...")
+      result
+    })
   })
   
   # Render historical chart
@@ -479,7 +452,8 @@ server <- function(input, output, session) {
       display_metric = inputs$hist_display_metric,
       time_period = inputs$hist_time_period,
       group_by = inputs$group_by,
-      theme = current_theme()
+      theme = current_theme(),
+      show_zones_separately = !inputs$combine_zones
     )
   })
   

@@ -1,28 +1,29 @@
 # struct status App
 
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(DBI)
-  library(RPostgres)
-  library(dplyr)
-  library(ggplot2)
-  library(lubridate)
-  library(rlang)
-  library(purrr)  # For map_dfr function
-  library(tibble) # For deframe function
-  library(scales) # For percentage and number formatting
-  library(DT)     # For data tables
-  library(plotly) # For interactive plots
-})
-
-# Source the shared database helper functions
+# Load shared libraries and utilities
+source("../../shared/app_libraries.R")
+source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
+source("../../shared/stat_box_helpers.R")
 
 # Source external function files
+source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
+
+# Set application name for AWS RDS monitoring
+set_app_name("struct_trt")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[struct_trt] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[struct_trt] Lookup tables preloaded")
+}, error = function(e) message("[struct_trt] Preload warning: ", e$message))
 
 # Load environment variables from .env file
 env_paths <- c(
@@ -40,215 +41,81 @@ for (path in env_paths) {
   }
 }
 
-# Create help text for historical metrics
-create_help_text <- function() {
-  div(
-    style = "margin: 10px; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; font-size: 16px;",
-    h4("Understanding Historical Metrics", style = "margin-top: 0; font-size: 20px;"),
-    
-    p(style = "margin-bottom: 15px; font-size: 16px;",
-      "The historical trends chart shows structure treatment coverage over time. You can view the data in two different ways:"
-    ),
-    
-    hr(style = "margin: 15px 0;"),
-    
-    h5("Metric Definitions", style = "font-size: 18px;"),
-    
-    p(style = "margin-bottom: 10px; font-size: 16px;",
-      strong("Proportion (%):"), " The percentage of all structures (within your selected filters) that had active treatments during each time period.",
-      br(),
-      em("Example: If there are 1,000 structures total and 250 had active treatments in a given week, the proportion is 25%.")
-    ),
-    
-    p(style = "margin-bottom: 10px; font-size: 16px;",
-      strong("Number of Structures:"), " The absolute count of structures that had active treatments during each time period.",
-      br(),
-      em("Example: If 250 structures had active treatments in a given week, this metric shows 250.")
-    ),
-    
-    hr(style = "margin: 15px 0;"),
-    
-    h5("Chart Options", style = "font-size: 18px;"),
-    
-    p(style = "margin-bottom: 10px; font-size: 16px;",
-      strong("Average Lines:"), " You can overlay 5-year or 10-year average lines to compare current performance against historical trends. These averages use all available historical data, regardless of the selected date range."
-    ),
-    
-    p(style = "margin-bottom: 10px; font-size: 16px;",
-      strong("Chart Types:"), " Choose from line, area, step, stacked bar, or grouped bar charts to visualize the data in different ways."
-    )
-  )
-}
+ui <- struct_trt_ui()
 
-ui <- fluidPage(
-  # Use universal CSS from db_helpers for consistent text sizing
-  get_universal_text_css(),
-  titlePanel("Structures with Active and Expiring Treatments"),
+server <- function(input, output, session) {
   
-  sidebarLayout(
-    sidebarPanel(
-      actionButton("refresh", "Refresh Data", 
-                   icon = icon("refresh"),
-                   class = "btn-primary btn-lg",
-                   style = "width: 100%; margin-bottom: 20px;"),
+  # =============================================================================
+  # INITIALIZE FILTERS
+  # =============================================================================
+  
+  # Load foremen lookup table
+  foremen_lookup <- get_foremen_lookup()
+  
+  # Initialize facility filter choices
+  observe({
+    facility_choices <- c("All Facilities" = "all", get_facility_choices())
+    updateSelectInput(session, "facility_filter", 
+                      choices = facility_choices,
+                      selected = "all")
+  })
+  
+  # Initialize FOS filter choices using existing function
+  observe({
+    fos_choices <- get_foreman_choices(include_all = TRUE)
+    updateSelectizeInput(session, "foreman_filter",
+                        choices = fos_choices,
+                        selected = NULL)
+  })
+  
+  # Update FOS choices when facility changes
+  observeEvent(input$facility_filter, {
+    if (!is.null(input$facility_filter)) {
+      if (input$facility_filter == "all") {
+        # Show all FOS using the existing function
+        fos_choices <- get_foreman_choices(include_all = TRUE)
+      } else {
+        # Filter FOS by facility
+        filtered_foremen <- foremen_lookup %>%
+          filter(facility == input$facility_filter) %>%
+          pull(shortname) %>%
+          unique()
+        
+        # Create choices with shortname (facility) format
+        filtered_display <- foremen_lookup %>%
+          filter(facility == input$facility_filter) %>%
+          mutate(display = paste0(shortname, " (", facility, ")")) %>%
+          select(shortname, display) %>%
+          distinct()
+        
+        fos_choices <- c("All FOS" = "all", setNames(filtered_display$shortname, filtered_display$display))
+      }
       
-      sliderInput("expiring_days", "Days Until Expiration:",
-                  min = 1, max = 30, value = 7, step = 1),
+      # Preserve current selection if it's still valid
+      current_selection <- input$foreman_filter
+      if (!is.null(current_selection)) {
+        valid_selection <- current_selection[current_selection %in% c("all", fos_choices)]
+        if (length(valid_selection) == 0) {
+          valid_selection <- NULL
+        }
+      } else {
+        valid_selection <- NULL
+      }
       
-      dateInput("custom_today", "Pretend Today is:",
-                value = Sys.Date(), 
-                format = "yyyy-mm-dd"),
-      
-      checkboxGroupInput("status_types", "Include Structure Status:",
-                         choices = c("Dry (D)" = "D",
-                                     "Wet (W)" = "W", 
-                                     "Unknown (U)" = "U"),
-                         selected = c("D", "W", "U")),
-      
-      selectizeInput("facility_filter", "Facility:",
-                    choices = get_facility_choices(),
-                    selected = "all", multiple = TRUE),
-      
-      selectInput("group_by", "Group by:",
-                  choices = c("Facility" = "facility",
-                              "FOS" = "foreman", 
-                              "All MMCD" = "mmcd_all"),
-                  selected = "facility"),
-      
-      radioButtons("zone_filter", "Zone Display:",
-                   choices = c("P1 Only" = "1", 
-                              "P2 Only" = "2", 
-                              "P1 and P2 Separate" = "1,2", 
-                              "Combined P1+P2" = "combined"),
-                   selected = "1,2"),
-      
-      selectizeInput("structure_type_filter", "Structure Type:",
-                  choices = get_structure_type_choices(include_all = TRUE),
-                  selected = "all", multiple = TRUE),
-      # we removed priority filter for now because data is incomplete
-      # not all facilities have priorities for the structures
-      
-      selectInput("color_theme", "Color Theme:",
-                  choices = c("MMCD" = "MMCD",
-                              "IBM Design" = "IBM",
-                              "Wong (Color Blind Safe)" = "Wong",
-                              "Tol (Color Blind Safe)" = "Tol",
-                              "Viridis" = "Viridis",
-                              "ColorBrewer Set2" = "ColorBrewer"),
-                  selected = "MMCD"),
-      
-      helpText(tags$b("Structure Status:"),
-               tags$br(),
-               tags$ul(
-                 tags$li(tags$b("D:"), "Dry - Structure is dry"),
-                 tags$li(tags$b("W:"), "Wet - Structure has water"),
-                 tags$li(tags$b("U:"), "Unknown - Status not determined")
-               )),
-      
-      # Help text for historical metrics (collapsible)
-      hr(),
-      div(id = "help-section",
-        tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-               style = "color: #17a2b8; text-decoration: none; font-size: 15px;",
-               HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-        div(style = "display: none;",
-          create_help_text()
-        )
-      )
-    ),
-    
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Current Progress", 
-                 plotOutput("structureGraph", height = "800px"),
-                 br(),
-                 fluidRow(
-                   column(10, h4("Current Structure Details")),
-                   column(2, downloadButton("download_current_data", "Download CSV", 
-                                           class = "btn-success btn-sm", 
-                                           style = "margin-top: 20px; float: right;"))
-                 ),
-                 DT::dataTableOutput("currentStructureTable")
-        ),
-        tabPanel("Historical Trends",
-                 br(),
-                 fluidRow(
-                   column(3,
-                          radioButtons("hist_time_period", "Time Period:",
-                                      choices = c("Yearly" = "yearly", "Weekly" = "weekly"),
-                                      selected = "yearly")
-                   ),
-                   column(3,
-                          conditionalPanel(
-                            condition = "input.hist_time_period == 'yearly' && input.hist_display_metric_yearly == 'proportion'",
-                            selectInput("hist_chart_type_prop", "Chart Type:",
-                                        choices = c("Grouped Bar" = "grouped_bar",
-                                                    "Line Chart" = "line",
-                                                    "Pie Chart" = "pie"),
-                                        selected = "grouped_bar")
-                          ),
-                          conditionalPanel(
-                            condition = "!(input.hist_time_period == 'yearly' && input.hist_display_metric_yearly == 'proportion')",
-                            selectInput("hist_chart_type_regular", "Chart Type:",
-                                        choices = c("Stacked Bar" = "stacked_bar",
-                                                    "Grouped Bar" = "grouped_bar",
-                                                    "Line Chart" = "line",
-                                                    "Area Chart" = "area"),
-                                        selected = "stacked_bar")
-                          )
-                   ),
-                   column(3,
-                          conditionalPanel(
-                            condition = "input.hist_time_period == 'yearly'",
-                            radioButtons("hist_display_metric_yearly", "Display Metric:",
-                                       choices = c("Total Treatments" = "treatments",
-                                                  "Unique Structures Treated" = "structures_count",
-                                                  "Proportion of Structures (%)" = "proportion"),
-                                       selected = "treatments",
-                                       inline = TRUE)
-                          ),
-                          conditionalPanel(
-                            condition = "input.hist_time_period == 'weekly'",
-                            radioButtons("hist_display_metric_weekly", "Display Metric:",
-                                       choices = c("Active Treatments" = "weekly_active_treatments"),
-                                       selected = "weekly_active_treatments",
-                                       inline = TRUE)
-                          )
-                   ),
-                   column(3,
-                          sliderInput("hist_year_range", "Year Range:",
-                                     min = 2010, max = as.numeric(format(Sys.Date(), "%Y")),
-                                     value = c(2020, as.numeric(format(Sys.Date(), "%Y"))),
-                                     step = 1, sep = "")
-                   )
-                 ),
-                 plotlyOutput("historicalGraph", height = "600px"),
-                 br(),
-                 fluidRow(
-                   column(10, h4("Historical Treatment Data")),
-                   column(2, downloadButton("download_historical_data", "Download CSV", 
-                                           class = "btn-success btn-sm", 
-                                           style = "margin-top: 20px; float: right;"))
-                 ),
-                 DT::dataTableOutput("historicalStructureTable")
-        )
-      )
-    )
-  )
-)
-
-server <- function(input, output) {
+      updateSelectizeInput(session, "foreman_filter",
+                          choices = fos_choices,
+                          selected = valid_selection)
+    }
+  })
   
   # =============================================================================
   # THEME HANDLING
   # =============================================================================
   
-  # Reactive for current theme
   current_theme <- reactive({
     input$color_theme
   })
   
-  # Update global option when theme changes
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
@@ -269,6 +136,18 @@ server <- function(input, output) {
       zone_value  # Single zone
     }
     
+    # Get facility filter value (handle "all" case)
+    facility_val <- isolate(input$facility_filter)
+    if (is.null(facility_val) || facility_val == "all") {
+      facility_val <- "all"
+    }
+    
+    # Get foreman filter value with defensive handling
+    foreman_val <- isolate(input$foreman_filter)
+    if (is.null(foreman_val) || length(foreman_val) == 0 || "all" %in% foreman_val) {
+      foreman_val <- "all"
+    }
+    
     list(
       zone_filter_raw = zone_value,
       zone_filter = parsed_zones,
@@ -276,7 +155,8 @@ server <- function(input, output) {
       expiring_days = isolate(input$expiring_days),
       custom_today = isolate(input$custom_today),
       status_types = isolate(input$status_types),
-      facility_filter = isolate(input$facility_filter),
+      facility_filter = facility_val,
+      foreman_filter = foreman_val,
       group_by = isolate(input$group_by),
       structure_type_filter = isolate(input$structure_type_filter),
       priority_filter = "all",  # Default value since priority filter was removed from UI
@@ -319,14 +199,15 @@ server <- function(input, output) {
     inputs <- refresh_inputs()
     
     withProgress(message = "Loading structure treatment data...", value = 0.5, {
-      get_current_structure_data(
-        inputs$custom_today,
-        inputs$expiring_days,
-        inputs$facility_filter,
-        inputs$structure_type_filter,
-        inputs$priority_filter,
-        inputs$status_types,
-        inputs$zone_filter
+      load_raw_data(
+        analysis_date = inputs$custom_today,
+        expiring_days = inputs$expiring_days,
+        facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
+        structure_type_filter = inputs$structure_type_filter,
+        priority_filter = inputs$priority_filter,
+        status_types = inputs$status_types,
+        zone_filter = inputs$zone_filter
       )
     })
   })
@@ -338,6 +219,7 @@ server <- function(input, output) {
     withProgress(message = "Loading structures...", value = 0.5, {
       get_all_structures(
         inputs$facility_filter,
+        inputs$foreman_filter,
         inputs$structure_type_filter,
         inputs$priority_filter,
         inputs$status_types,
@@ -361,6 +243,7 @@ server <- function(input, output) {
         hist_group_by = inputs$group_by,
         hist_zone_display = if (inputs$combine_zones) "combined" else "show-both",
         facility_filter = inputs$facility_filter,
+        foreman_filter = inputs$foreman_filter,
         zone_filter = inputs$zone_filter,
         structure_type_filter = inputs$structure_type_filter,
         status_types = inputs$status_types
@@ -386,6 +269,82 @@ server <- function(input, output) {
       inputs$group_by,
       inputs$zone_filter,
       inputs$combine_zones
+    )
+  })
+  
+  # Create value boxes for summary statistics
+  value_boxes <- reactive({
+    req(input$refresh)
+    data <- aggregated_current()
+    
+    if (is.null(data) || nrow(data) == 0) {
+      return(list(
+        total_count = 0,
+        active_count = 0,
+        expiring_count = 0,
+        active_pct = 0
+      ))
+    }
+    
+    total <- sum(data$total_count, na.rm = TRUE)
+    active <- sum(data$active_count, na.rm = TRUE)
+    expiring <- sum(data$expiring_count, na.rm = TRUE)
+    active_pct <- if (total > 0) round(100 * active / total, 1) else 0
+    
+    list(
+      total_count = total,
+      active_count = active,
+      expiring_count = expiring,
+      active_pct = active_pct
+    )
+  })
+  
+  # Render stat boxes
+  output$total_count_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(data$total_count, big.mark = ","),
+      title = "Total Structures",
+      bg_color = status_colors["unknown"],
+      icon = icon("building")
+    )
+  })
+  
+  output$active_count_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(data$active_count, big.mark = ","),
+      title = "Active Treatments",
+      bg_color = status_colors["active"],
+      icon = icon("check-circle")
+    )
+  })
+  
+  output$expiring_count_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = format(data$expiring_count, big.mark = ","),
+      title = "Expiring Soon",
+      bg_color = status_colors["planned"],
+      icon = icon("clock")
+    )
+  })
+  
+  output$active_pct_box <- renderUI({
+    req(input$refresh)
+    data <- value_boxes()
+    status_colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = paste0(data$active_pct, "%"),
+      title = "Active %",
+      bg_color = status_colors["active"],
+      icon = icon("percent")
     )
   })
   
@@ -428,7 +387,8 @@ server <- function(input, output) {
       hist_display_metric = inputs$hist_display_metric,
       hist_group_by = inputs$group_by,
       chart_type = inputs$hist_chart_type,
-      theme = current_theme_value
+      theme = current_theme_value,
+      show_zones_separately = !inputs$combine_zones
     )
   })
   
@@ -437,6 +397,7 @@ server <- function(input, output) {
     req(input$refresh)  # Only render after refresh button clicked
     
     all_structs <- all_structures()
+    current_treatments <- current_data()
     
     if (nrow(all_structs) == 0) {
       return(DT::datatable(
@@ -446,16 +407,41 @@ server <- function(input, output) {
       ))
     }
     
-    # Show structure data with better column names
+    # Calculate treatment status for each structure
+    treatment_status_data <- current_treatments$treatments
+    if (nrow(treatment_status_data) > 0) {
+      treatment_status_data <- treatment_status_data %>%
+        select(sitecode, is_active, is_expiring) %>%
+        mutate(
+          treatment_status = case_when(
+            is_active & is_expiring ~ "Expiring",
+            is_active ~ "Treated", 
+            TRUE ~ "Expired"
+          )
+        ) %>%
+        select(sitecode, treatment_status)
+    } else {
+      treatment_status_data <- data.frame(
+        sitecode = character(0),
+        treatment_status = character(0)
+      )
+    }
+    
+    # Join structures with treatment status
     display_data <- all_structs %>%
-      select(sitecode, facility, zone, s_type, foreman, status) %>%
+      left_join(treatment_status_data, by = "sitecode") %>%
+      mutate(
+        treatment_status = ifelse(is.na(treatment_status), "No Treatment", treatment_status)
+      ) %>%
+      select(sitecode, facility, zone, s_type, foreman, status, treatment_status) %>%
       rename(
         "Sitecode" = sitecode,
         "Facility" = facility,
         "Zone" = zone,
         "Structure Type" = s_type,
         "FOS" = foreman,
-        "Status" = status
+        "Wet/Dry" = status,
+        "Treatment Status" = treatment_status
       )
     
     DT::datatable(

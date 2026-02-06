@@ -7,61 +7,91 @@
 A comprehensive analytics platform for the Metropolitan Mosquito Control District, providing interactive dashboards for mosquito surveillance, treatment analysis, and operational metrics.
 
 
-## Important Bug Fixes
-
-### **Zone Assignment Fix (November 2025)**
-**CRITICAL FIX**: Corrected ambiguous JOIN logic in `apps/drone/data_functions.R` that was causing incorrect zone assignments.
-
-**Problem**: Sites were showing wrong zones due to broad pattern matching in SQL JOINs. For example:
-- Site `191819-045` was incorrectly showing zone 2 instead of zone 1
-- Root cause: JOIN matched both `191819-` (zone 1) and `191819E` (zone 2) sectcodes
-
-**Solution**: Changed from broad OR-based pattern matching to precise sectcode matching:
-```sql
--- OLD (incorrect - would match multiple sectcodes)
-LEFT JOIN public.gis_sectcode g ON LEFT(sitecode, 6) || '-' = g.sectcode
-  OR LEFT(sitecode, 6) || 'N' = g.sectcode
-  OR LEFT(sitecode, 6) || 'E' = g.sectcode
-  OR LEFT(sitecode, 6) || 'W' = g.sectcode
-
--- NEW (correct - exact match only)  
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
-```
-
 
 
 ## Table of Contents
 
+- [Documentation Resources](#documentation-resources)
+- [Common Filter & Grouping Options](#common-filter--grouping-options)
 - [Architecture](#architecture)
-- [Centralized Helpers Module](#centralized-helpers-module-shareddb_helpersr)
+- [Centralized Shared Resources](#centralized-shared-resources-shared)
 - [Applications](#applications)
-  - [Mosquito Monitoring](#mosquito-monitoring)
-  - [SUCO History](#suco-history) - [Notes](apps/suco_history/NOTES.md)
-  - [Drone Treatment](#drone-treatment) -[Notes](apps/drone/NOTES.md)
+  - [Inspections Coverage](#inspections-coverage) - [Notes](apps/inspections/NOTES.md)
+  - [Ground Prehatch Progress](#ground-prehatch-progress) - [Notes](apps/ground_prehatch_progress/NOTES.md)
+  - [Air Sites Simple](#air-sites-simple) - [Notes](apps/air_sites_simple/NOTES.md)
+  - [Drone Treatment](#drone-treatment) - [Notes](apps/drone/NOTES.md)
+  - [Air Treatment Checkbacks](#air-treatment-checkbacks) - [Notes](apps/control_efficacy/NOTES.md)
+  - [Catch Basin Status](#catch-basin-status) - [Notes](apps/catch_basin_status/NOTES.md)
   - [Structural Treatment](#structural-treatment) - [Notes](apps/struct_trt/NOTES.md)
+  - [SUCO History](#suco-history) - [Notes](apps/suco_history/NOTES.md)
+  - [Mosquito Surveillance Map](#mosquito-surveillance-map)
+  - [Mosquito Monitoring](#mosquito-monitoring)
   - [Cattail Inspections](#cattail-inspections) - [Notes](apps/cattail_inspections/NOTES.md)
   - [Cattail Treatments](#cattail-treatments) - [Notes](apps/cattail_treatments/NOTES.md)
-  - [Ground Prehatch Progress](#ground-prehatch-progress) - [Notes](apps/ground_prehatch_progress/NOTES.md)
-  - [Red Air Pipeline](#red-air-pipeline)
-  - [Mosquito Surveillance Map](#mosquito-surveillance-map)
+  - [Trap Surveillance Test](#trap-surveillance-test) - [Notes](apps/trap_survillance_test/NOTES.md)
+  - [Section Cards](#section-cards) - [Notes](apps/section-cards/NOTES.md)
   - [Test Application](#test-application)
-  - [Control Efficacy](#control-efficacy)
-  - [Treatment Analysis](#treatment-analysis)
-  - [Trap Surveillance Test](#trap-surveillance-test)
-  - [Air Sites Simple](#air-sites-simple) - [Notes](apps/air_sites_simple/NOTES.md)
-  - [Red Air Legacy](#red-air-legacy)
 - [Installation & Deployment](#installation--deployment)
   - [Prerequisites - System Dependencies](#prerequisites---system-dependencies)
   - [R Package Installation](#r-package-installation)
   - [Shiny Server Setup](#shiny-server-setup)
-  - [Quick Local Testing](#quick-local-testing)
   - [Running Apps Individually with R (Without Docker)](#running-apps-individually-with-r-without-docker)
   - [Production Deployment](#production-deployment)
-- [Application URLs](#application-urls)
-- [Adding New Applications](#adding-new-applications)
-- [Troubleshooting](#troubleshooting)
-- [Development Workflow](#development-workflow)
-- [Contributing](#contributing)
+- [Git Workflow for Contributors](#git-workflow-for-contributors)
+  - [Getting Started - Cloning the Repository](#getting-started---cloning-the-repository)
+  - [Branch Strategy](#branch-strategy)
+  - [Basic Git Commands](#basic-git-commands)
+  - [Typical Workflow for Making Changes](#typical-workflow-for-making-changes)
+  - [Common Scenarios](#common-scenarios)
+  - [Best Practices](#best-practices)
+  - [Handling Merge Conflicts](#handling-merge-conflicts)
+- [Important Bug Fixes](#important-bug-fixes)
+
+## Documentation Resources
+
+Comprehensive technical documentation and performance reports:
+
+### Database & Schema
+- **[Database Schema Reference](documents/DATABASE_SCHEMA_REFERENCE.md)** - Comprehensive guide to all database tables, columns, relationships, and common join patterns used across applications
+
+### Performance & Optimization
+- **[Connection Pooling Performance Report](documents/CONNECTION_POOLING_PERFORMANCE_REPORT.md)** - Before/after analysis of database connection pooling implementation showing 22% reduction in errors and improved reliability
+- **[Optimization Analysis](documents/OPTIMIZATION_ANALYSIS.md)** - Comprehensive performance optimization opportunities and implementation strategies
+- **[Before and After Data Pooling Tests](documents/before%20and%20after%20data%20pooling%20tests.pdf)** - Visual comparison of stress test results
+
+### UI Customization
+- **[Color Themes Configuration](documents/COLOR_THEMES_README.md)** - Centralized color theme system where one change in `shared/db_helpers.R` automatically updates colors across all apps
+- **[Theme Configuration Guide](documents/THEME_CONFIGURATION.md)** - Detailed theme customization instructions
+
+### Development Resources
+- **[Shared Resources README](shared/README.md)** - Documentation for shared utilities, database helpers, geospatial data extraction (Q_to_R), and documentation sync system
+- **[User Feedback Backlog](documents/USER_FEEDBACK_BACKLOG.md)** - Feature requests and improvements from user feedback
+
+## Common Filter & Grouping Options
+
+Apps share consistent filter and grouping controls for unified user experience:
+
+**Standard Filters (used when appropriate for each app):**
+- **Facility** - Filter by facility location (Sr, Sj, N, E, MO, etc)
+- **FOS Area** - Filter by Field Operations Supervisor (foreman) assignment
+- **Zone** - P1 only, P2 only, P1+P2 separate, or Combined P1+P2
+- **Priority** - Filter by site priority level (RED, YELLOW, BLUE, GREEN, PURPLE)
+- **Treatment Type** - Air, Ground, or Drone (note: drone can be subcategorized as ground or air depending on application)
+- **Pretend Today Is** - Simulate a different analysis date to see what status/progress would have been on that date (useful for testing, historical analysis, or planning)
+- **Days Until Expiring** - For treatment progress apps, set threshold for sites approaching treatment expiration
+- **Color Theme** - Choose from 6 themes (MMCD default, IBM, Wong, Tol, Viridis, ColorBrewer) - changes all charts and maps
+
+**Display Metric Options:**
+- **Sites vs Acres** - Toggle between count of sites or total acres for all visualizations and summaries
+
+**Group By Options:**
+- **All MMCD** - Show aggregate data across entire district
+- **Facility** - Group results by facility
+- **FOS** - Group results by Field Operations Supervisor
+- **Section** - Group results by geographic section (available in some apps)
+
+**How "Pretend Today Is" Works:** This date control allows you to run the analysis as if today were a different date. For example, setting it to a past date shows what the status would have looked like then, while setting it to a future date can help with planning. All status calculations, expiration logic, and "days until expiring" filters use this date instead of the actual current date.
+NOTE: "Pretend Today Is" will only work if the query includes the same join with the archive as it does with the current
 
 ## Architecture
 
@@ -70,15 +100,32 @@ This platform hosts multiple R Shiny applications in an organized, scalable stru
 ```
 mmcd_metrics/
 ├── shared/
-│   └── db_helpers.R              # Centralized hub for all apps
-│       ├── Database connectivity functions
-│       ├── Shared facility and FOS data lookups
-│       ├── Centralized color definitions (update here changes colors everywhere)
-│       └── Common utility functions used across all applications
+│   ├── db_helpers.R              # Centralized hub for all apps
+│   ├── db_pool.R                 # Database connection pooling for performance
+│   ├── color_themes.R            # Centralized color definitions
+│   ├── stat_box_helpers.R        # Reusable stat box UI components
+│   ├── assets/                   # Shared icons and images
+│   └── Q_to_R/                   # Geospatial data extraction scripts
+│       └── data/                 # Extracted shapefiles and boundaries
 ├── apps/
 │   ├── index.html                # Main landing page
 │   ├── about/                    # About page
 │   │   └── index.html
+│   ├── inspections/              # Inspection coverage analysis (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing and database queries
+│   │   ├── display_functions.R   # Visualization and chart generation
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
+│   ├── catch_basin_status/       # Catch basin treatment tracking (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   ├── historical_functions.R # Historical analysis functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── mosquito-monitoring/      # CO2 trap surveillance data
 │   │   └── app.R
 │   ├── suco_history/             # SUCO surveillance analysis (modular structure)
@@ -90,80 +137,244 @@ mmcd_metrics/
 │   │   └── NOTES.html            # HTML documentation
 │   ├── drone/                    # Comprehensive drone treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
-│   │   ├── historical_functions.R  # Historical data analysis functions
+│   │   ├── data_functions.R      # Data processing functions
+│   │   ├── historical_functions.R # Historical data analysis functions
 │   │   ├── display_functions.R   # Visualization functions
-│   │   └── ui_helper.R           # UI component functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── struct_trt/               # Structure treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
 │   │   ├── display_functions.R   # Visualization functions
+│   │   ├── historical_functions.R # Historical analysis functions
+│   │   ├── ui_helper.R           # UI component functions
 │   │   ├── NOTES.md              # Technical documentation
 │   │   └── NOTES.html            # HTML documentation
 │   ├── ground_prehatch_progress/ # Ground prehatch treatment (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
 │   │   ├── display_functions.R   # Visualization functions
+│   │   ├── historical_functions.R # Historical analysis functions
 │   │   ├── ui_helpers.R          # UI component functions
 │   │   ├── NOTES.md              # Technical documentation
 │   │   └── NOTES.html            # HTML documentation
-  ├── cattail_inspections/          # Cattail inspection tracking (modular structure)
-  │   ├── app.R                 # Main application logic
-  │   ├── data_functions.R      # Data processing and database queries
-  │   ├── display_functions.R   # Visualization and chart generation
-  │   ├── historical_functions.R # Historical analysis functions
-  │   ├── ui_helper.R           # UI component functions
-  │   ├── NOTES.md              # Technical documentation
-  │   └── NOTES.html            # HTML documentation
-  ├── cattail_treatments/       # Cattail treatment tracking (modular structure)
-  │   ├── app.R                 # Main application logic
-  │   ├── data_functions.R      # Data processing and database queries
-  │   ├── display_functions.R   # Visualization and chart generation
-  │   ├── historical_functions.R # Historical analysis with DOY-based inspection years
-  │   ├── ui_helper.R           # UI component functions
-  │   ├── NOTES.md              # Technical documentation
-  │   └── NOTES.html            # HTML documentation
+│   ├── cattail_inspections/      # Cattail inspection tracking (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing and database queries
+│   │   ├── display_functions.R   # Visualization and chart generation
+│   │   ├── historical_functions.R # Historical analysis functions
+│   │   ├── planned_treatment_functions.R # Treatment planning functions
+│   │   ├── progress_functions.R  # Progress tracking functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
+│   ├── cattail_treatments/       # Cattail treatment tracking (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing and database queries
+│   │   ├── display_functions.R   # Visualization and chart generation
+│   │   ├── historical_functions.R # Historical analysis with DOY-based inspection years
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── red_air_legacy/           # Legacy air treatment pipeline
 │   │   ├── app.R                 # Main application logic
 │   │   ├── air_status_functions.R # Air site status processing
 │   │   ├── legacy_air_status_functions.R # Legacy status functions
 │   │   ├── optimized_air_status_functions.R # Optimized functions
+│   │   ├── flow_testing_functions.R # Flow testing utilities
 │   │   └── test_14_day_persistence.R # Testing functions
 │   ├── air_sites_simple/         # Air sites simple (modular structure)
 │   │   ├── app.R                 # Main application logic
-│   │   ├── air_status_functions_enhanced.R # Enhanced status functions
-│   │   ├── air_status_functions.R # Air site status processing
-│   │   └── ui_helper.R           # UI component functions
+│   │   ├── data_functions.R      # Data processing functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   ├── historical_functions.R # Historical analysis functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── mosquito_surveillance_map/ # Mosquito surveillance mapping
 │   │   ├── app.R                 # Main application logic
 │   │   └── shp/                  # Shapefile data (geographic boundaries)
-│   ├── control_efficacy/         # Air treatment checkback efficacy
-│   │   └── app.R                 # Main application logic
-│   ├── treatment-analysis/       # Treatment analysis dashboard
-│   │   └── app.R                 # Main application logic
+│   ├── control_efficacy/         # Air treatment checkback efficacy (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   ├── checkback_functions.R # Checkback analysis functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   ├── trap_survillance_test/    # Trap surveillance test (modular structure)
 │   │   ├── app.R                 # Main application logic
 │   │   ├── data_functions.R      # Data processing functions
 │   │   ├── display_functions.R   # Visualization functions
+│   │   ├── mle_trap_based.R      # MLE calculation functions
 │   │   ├── ui_helper.R           # UI component functions
-│   │   └── test-sql.R            # SQL testing utilities
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
+│   ├── section-cards/            # Section Cards (modular structure)
+│   │   ├── app.R                 # Main application logic
+│   │   ├── data_functions.R      # Data processing functions
+│   │   ├── display_functions.R   # Visualization functions
+│   │   ├── ui_helper.R           # UI component functions
+│   │   ├── NOTES.md              # Technical documentation
+│   │   └── NOTES.html            # HTML documentation
 │   └── test-app/                 # Test application 
 │       └── app.R                 # Main application logic
+├── documents/                    # Technical documentation and reports
+│   ├── CONNECTION_POOLING_PERFORMANCE_REPORT.md
+│   ├── OPTIMIZATION_ANALYSIS.md
+│   ├── COLOR_THEMES_README.md
+│   ├── THEME_CONFIGURATION.md
+│   ├── USER_FEEDBACK_BACKLOG.md
+│   └── before and after data pooling tests.pdf
+├── dockerfile                    # Docker container configuration
+├── index.html                    # Main landing page
+├── README.md                     # This file
+└── shiny-server.conf            # Shiny Server configuration
 ```
 
+## Centralized Shared Resources (`shared/`)
 
+All apps source `shared/db_helpers.R` which provides centralized utilities and automatically loads all other shared modules.
+
+**Core Files:**
+- **`db_helpers.R`** - Central hub: database connections, facility/FOS lookups, date thresholds, priority choices
+- **`color_themes.R`** - **ALL colors in ALL apps come from ONE location!** Change colors here to update everywhere. Supports 6 themes: MMCD (default), IBM, Wong, Tol, Viridis, ColorBrewer. See [Color Themes Configuration](documents/COLOR_THEMES_README.md)
+- **`db_pool.R`** - Connection pooling for 22% fewer errors and 81% faster queries. See [Performance Report](documents/CONNECTION_POOLING_PERFORMANCE_REPORT.md)
+- **`stat_box_helpers.R`** - Reusable UI components for consistent value boxes
+
+**Usage in apps:**
+```r
+source("../../shared/db_helpers.R")  # Loads all shared modules
+conn <- get_pool()                    # Get connection pool
+palette <- get_theme_palette()        # Get current theme colors
+```
+
+**Additional Resources:**
+- **`assets/`** - Shared icons and images for landing pages
+- **`Q_to_R/`** - Geospatial data extraction scripts (PostgreSQL to shapefiles)
+
+See [Shared Resources README](shared/README.md) for complete documentation.
 
 
 ## Applications
 
-### Mosquito Monitoring
-- **Path**: `/mosquito-monitoring/`
-- **Purpose**: CO2 trap mosquito surveillance analysis
-- **Features**: 
-  - Species-specific analysis with 50+ mosquito species
-  - Facility and zone comparisons
-  - Interactive time series with hover tooltips
-  - Standard error visualization
-  - Logarithmic scale options
+### Inspections Coverage
+- **Path**: `/inspections/`
+- **Purpose**: Analyze inspection coverage for all sites across facilities
+- **Documentation**: [Technical Notes](apps/inspections/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with tabbed interface
+  - **`data_functions.R`**: Database queries and coverage calculations
+  - **`display_functions.R`**: Visualization and chart generation
+  - **`ui_helper.R`**: UI component functions
+- **Features**:
+  - **Site Analytics**: Total sites, wet frequency analysis, and summary statistics
+  - **Larvae Threshold Analysis**: Sites exceeding larvae counts with frequency tracking
+  - **Coverage Gaps**: Identify sites with inspection gaps or never inspected
+  - Uses both current and archive records for complete history
+
+### Ground Prehatch Progress
+- **Path**: `/ground_prehatch_progress/`
+- **Purpose**: Track and analyze ground prehatch treatment progress and performance
+- **Documentation**: [Technical Notes](apps/ground_prehatch_progress/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with clean tabbed interface
+  - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
+  - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
+  - **`historical_functions.R`**: Historical trend analysis functions
+  - **`ui_helpers.R`**: UI component functions and reusable interface elements
+- **Features**:
+  - **Progress Overview Tab**: Sites with active/expiring treatments aggregated by facility, FOS, or section
+  - **Detailed View Tab**: Individual site details with treatment status and download
+  - **Map Tab**: Interactive map with color-coded treatment status markers
+  - **Historical Analysis Tab**: Multi-year trends (sites, treatments, or acres by year/week)
+  - Prehatch-specific filtering with dry site detection
+
+### Air Sites Simple
+- **Path**: `/air_sites_simple/`
+- **Purpose**: Monitor air site status and treatment pipeline (no rainfall tracking)
+- **Documentation**: [Technical Notes](apps/air_sites_simple/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with tabbed interface
+  - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
+  - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
+  - **`historical_functions.R`**: Historical trend analysis functions
+  - **`ui_helper.R`**: UI component functions and reusable interface elements
+- **Features**:
+  - Interactive map with color-coded site status dots
+  - Treatment lifecycle: Needs Inspection → Under Threshold → Needs Treatment → Active Treatment
+  - BTI material effect days tracking
+  - Larvae threshold monitoring
+  - Red bug detection tracking
+
+### Drone Treatment
+- **Path**: `/drone/`
+- **Documentation**: [Technical Notes](apps/drone/NOTES.md)
+- **Purpose**: Comprehensive drone treatment tracking with real-time progress and historical analysis
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with multi-tab interface
+  - **`data_functions.R`**: Database queries and treatment calculations
+  - **`historical_functions.R`**: Historical trend analysis and data processing functions
+  - **`display_functions.R`**: Visualization and chart generation
+  - **`ui_helper.R`**: UI component functions
+- **Features**:
+  - **Current Progress Tab**: Active treatments and expiring treatments summary
+  - **Map Tab**: Leaflet map with color-coded markers and popup details
+  - **Historical Trends Tab**: Multi-year trends analyzing sites, treatments, or acres treated
+  - **Site Statistics Tab**: Average site size, largest sites, smallest sites analysis
+  - Prehatch toggle filter for seasonal analysis
+
+### Air Treatment Checkbacks
+- **Path**: `/control_efficacy/`
+- **Purpose**: Air treatment checkback analysis and efficacy monitoring
+- **Documentation**: [Technical Notes](apps/control_efficacy/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with tabbed interface
+  - **`data_functions.R`**: Database queries and treatment data processing
+  - **`display_functions.R`**: Visualization and chart generation
+  - **`checkback_functions.R`**: Checkback analysis and efficacy calculations
+  - **`ui_helper.R`**: UI component functions
+- **Features**:
+  - **Checkback Progress Tab**: Brood completion progress and outstanding checkbacks tracking
+  - **Status Tables Tab**: Brood status overview and detailed checkback results with larvae counts
+  - **Control Efficacy Tab**: Pre-treatment vs post-treatment dip count efficacy analysis
+  - Species composition in checkback samples
+  - Treatment-to-checkback timing validation
+
+### Catch Basin Status
+- **Path**: `/catch_basin_status/`
+- **Purpose**: Monitor catch basin treatment status across facilities
+- **Documentation**: [Technical Notes](apps/catch_basin_status/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with tabbed interface
+  - **`data_functions.R`**: Database queries and status calculations
+  - **`display_functions.R`**: Chart generation and progress visualizations
+  - **`historical_functions.R`**: Historical trend analysis functions
+  - **`ui_helper.R`**: UI component functions
+- **Features**:
+  - **Status Overview Tab**: High-level summary metrics and treatment status charts
+  - **Detailed View Tab**: Granular site-by-site breakdown with last treatment dates
+  - **Historical Analysis Tab**: Multi-year treatment trends and patterns
+  - Focus on wet catch basins only (status_udw = 'W')
+  - Treatment expiration tracking with days until expiring filter
+
+### Structural Treatment
+- **Path**: `/struct_trt/`
+- **Purpose**: Comprehensive structure treatment tracking with current progress and historical analysis
+- **Documentation**: [Technical Notes](apps/struct_trt/NOTES.md)
+- **Modular Structure**:
+  - **`app.R`**: Main application logic with dual-tab interface
+  - **`data_functions.R`**: Database queries, treatment calculations, and data processing
+  - **`display_functions.R`**: Chart generation, progress visualizations, and historical analysis displays
+  - **`historical_functions.R`**: Historical trend analysis functions
+  - **`ui_helper.R`**: UI component functions
+- **Features**:
+  - **Progress Tab**: Real-time active structure treatment monitoring
+  - **History Tab**: Multi-year historical trends and patterns
+  - Customizable treatment effect_days parameter for expiration calculations
+  - Structure type categorization and filtering
+  - Proportion of structures under active treatment tracking
 
 ### SUCO History
 - **Path**: `/suco_history/`
@@ -175,50 +386,28 @@ mmcd_metrics/
   - **`display_functions.R`**: Interactive maps with leaflet, trend charts, and plotly visualizations
   - **`ui_helpers.R`**: UI component functions and interface helpers
 - **Features**:
-  - Interactive maps with leaflet and custom marker sizing
-  - Facility and foreman filtering with consistent colors from `db_helpers.R`
-  - Temporal trend analysis (weekly/monthly with epidemiological weeks)
-  - Top locations identification with species-based analysis
-  - Spatial data visualization with P1/P2 zone support
-  - Species filtering and detailed popup information
-  - Comprehensive tooltip customization and stacked bar charts
+  - **Graph Tab**: Time series visualization of SUCO trends over time
+  - **Map Tab**: Spatial distribution with dynamic marker sizing based on counts
+  - **Summary Table Tab**: Aggregated statistics grouped by facility or FOS
+  - **Detailed Samples Tab**: Raw SUCO inspection records with full details
+  - **Top Locations Tab**: Rankings by visit frequency or species 
 
-### Drone Treatment
-- **Path**: `/drone/`
-- **Documentation**: [Technical Notes](apps/drone/NOTES.md)
-- **Purpose**: Comprehensive drone treatment tracking with real-time progress and historical analysis
-- **Modular Structure**:
-  - **`app.R`**: Main application logic with multi-tab interface
-  - **`historical_functions.R`**: Historical trend analysis and data processing functions
-  - **`site_average_functions.R`**: Site-level average calculations and statistical analysis
+### Mosquito Surveillance Map
+- **Path**: `/mosquito_surveillance_map/`
+- **Purpose**: Interactive geographic mapping of mosquito surveillance data
 - **Features**:
-  - **Progress Tab**: Real-time tracking of drone-based treatment operations
-  - **Historical Tab**: Historical trend analysis with percentage and count views (powered by `historical_functions.R`)
-  - **Site Average Tab**: Site-level average calculations and trend analysis (powered by `site_average_functions.R`)
-  - Active treatment area monitoring and coverage analysis
-  - P1/P2 zone filtering with alpha transparency
-  - Multiple display metrics (sites, treatments, acres)
-  - Facility, FOS, and section grouping options
-  - Interactive date range selection and customizable time periods
-  - Modular external function files for maintainable code
+  - Species filtering and surveillance type selection
+  - Temporal analysis with date range controls
+  - Visualize mosquito counts across monitoring locations
+  - Note: Application takes time to load due to data volume
 
-
-### Structural Treatment
-- **Path**: `/struct_trt/`
-- **Purpose**: Comprehensive structural treatment tracking with current progress and historical analysis
-- **Documentation**: [Technical Notes](apps/struct_trt/NOTES.md)
-- **Modular Structure**:
-  - **`app.R`**: Main application logic with dual-tab interface
-  - **`data_functions.R`**: Database queries, treatment calculations, and data processing
-  - **`display_functions.R`**: Chart generation, progress visualizations, and historical analysis displays
-- **Features**:
-  - **Progress Tab**: Monitor current structural treatment activities (powered by `data_functions.R`)
-  - **History Tab**: Historical analysis of structure treatment activities (powered by `display_functions.R`)
-  - Proportion of structures under treatment tracking
-  - Customizable treatment duration settings and real-time calculations
-  - Historical time series and breakdowns by facility, type, and priority
-  - Date simulation ("pretend today is") functionality
-  - Snapshot and priority breakdowns for comprehensive analysis
+### Mosquito Monitoring
+- **Path**: `/mosquito-monitoring/`
+- **Purpose**: CO2 trap mosquito surveillance analysis
+- **Features**: 
+  - Species-specific analysis with 50+ mosquito species
+  - Facility and zone comparisons
+  - Interactive time series with hover tooltips
 
 ### Cattail Inspections
 - **Path**: `/cattail_inspections/`
@@ -229,14 +418,15 @@ mmcd_metrics/
   - **`data_functions.R`**: Database queries, site calculations, and inspection data processing
   - **`display_functions.R`**: Chart generation, progress visualizations, and map displays
   - **`historical_functions.R`**: Historical trend analysis functions
+  - **`planned_treatment_functions.R`**: Treatment planning functions
+  - **`progress_functions.R`**: Progress tracking functions
   - **`ui_helper.R`**: UI component functions and interface helpers
 - **Features**:
-  - Real-time inspection progress tracking
-  - Site assessment and status monitoring
-  - Facility and zone filtering
-  - Historical inspection trend analysis
-  - Interactive maps showing inspection status
-  - Progress metrics and completion rates
+  - Progress tracking against goals with historical comparison
+  - Single inspection per site counting (most recent only)
+  - Site count goals by facility (p1_totsitecount, p2_totsitecount)
+  - Wet/dry site status and larvae dip count tracking
+  - Action code '9' filtering for cattail inspections only
 
 ### Cattail Treatments
 - **Path**: `/cattail_treatments/`
@@ -249,52 +439,47 @@ mmcd_metrics/
   - **`historical_functions.R`**: Historical analysis with DOY-based inspection year calculation (Fall-Summer seasonal cycles)
   - **`ui_helper.R`**: UI component functions and reusable interface elements
 - **Features**:
-  - **Progress Tab**: Current treatment status with 3 chart types and zone separation
-  - **Historical Tab**: Multi-year trends using DOY-based inspection years (Fall Year N + Summer Year N+1)
-  - **Inspection Year Logic**: DOY 244-365 (Fall) and DOY 135-213 (Summer) seasonal definitions
-  - Multiple display metrics: Sites Treated (as of Aug 1), % Treated, Sites Need Treatment
-  - Chart type options: Line charts, grouped bar charts, stacked bar charts
-  - Zone filtering: P1/P2 separate or combined display
-  - Facility and foreman grouping options
-  - Treatment effectiveness tracking
-  - Consistent color schemes from centralized `db_helpers.R`
+  - **Progress Tab**: Current treatment status with 3 chart types
+  - **Historical Tab**: Multi-year trends using DOY-based inspection years
+  - **Inspection Year Logic**: Fall (DOY 244-365) + Summer (DOY 135-213) seasonal cycles
+  - Multiple display metrics: Sites Treated, % Treated, Sites Need Treatment
+  - Chart type options: Line, grouped bar, stacked bar
+  - Action '9' inspections + Action '3'/'A' treatments
+  - Cattail material code filtering
 
-### Ground Prehatch Progress
-- **Path**: `/ground_prehatch_progress/`
-- **Purpose**: Track and analyze ground prehatch treatment progress and performance
-- **Documentation**: [Technical Notes](apps/ground_prehatch_progress/NOTES.md)
+### Trap Surveillance Test
+- **Path**: `/trap_survillance_test/`
+- **Purpose**: Prototype app to compute section vector index using k-nearest traps
+- **Documentation**: [Technical Notes](apps/trap_survillance_test/NOTES.md)
 - **Modular Structure**:
-  - **`app.R`**: Main application logic with clean tabbed interface
-  - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
-  - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
-  - **`ui_helpers.R`**: UI component functions and reusable interface elements
+  - **`app.R`**: Main application logic
+  - **`data_functions.R`**: Data processing functions
+  - **`display_functions.R`**: Visualization functions
+  - **`mle_trap_based.R`**: MLE calculation functions using PooledInfRate package
+  - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - **Clean persistent filter panel**: All controls stay visible when switching between tabs
-  - **Responsive design**: Modern layout with gradient headers and improved spacing
-  - **Progress Overview Tab**: Real-time progress tracking with summary value boxes
-  - **Detailed View Tab**: Comprehensive site details table with download functionality
-  - **Modular UI components**: Reusable UI functions in ui_helpers.R for maintainable code
-  - Performance metrics and completion rate analysis (powered by `data_functions.R`)
-  - Interactive visualizations and progress charts (powered by `display_functions.R`)
-  - Facility-level performance comparisons with P1/P2 zone support
-  - Treatment timeline analysis and goal tracking with date simulation
-  - Consistent color schemes from centralized `db_helpers.R`
+  - **Trap-based MLE**: Maximum Likelihood Estimation for virus infection risk
+  - **k-NN Distance-Weighted Averaging**: Spatial interpolation across sections
+  - Population Index, MLE, and Vector Index calculations using PooledInfRate package
+  - Interactive leaflet map with section polygons, trap markers, and Vector Index Areas
+  - Unified SQL query with CTEs for optimal performance
+  - Species filtering for targeted analysis
 
-### Red Air Pipeline
-- **Path**: `/air_sites_simple/`
-- **Purpose**: Monitor air site status, rainfall impact, and treatment pipeline
-- **Documentation**: [Technical Notes](apps/air_sites_simple/NOTES.md)
+### Section Cards
+- **Path**: `/section-cards/`
+- **Purpose**: Demo application for section cards functionality
+- **Documentation**: [Technical Notes](apps/section-cards/NOTES.md)
 - **Modular Structure**:
-  - **`data_functions.R`**: Database queries, progress calculations, and performance metrics
-  - **`display_functions.R`**: Chart generation, progress visualizations, and dashboard displays
-  - **`ui_helpers.R`**: UI component functions and reusable interface elements
+  - **`app.R`**: Main application logic
+  - **`data_functions.R`**: Data processing functions
+  - **`display_functions.R`**: Card generation and layout functions
+  - **`ui_helper.R`**: UI component functions
 - **Features**:
-  - Interactive map showing site status with color-coded dots (powered by `air_status_functions.R`)
-  - Rainfall tracking and analysis
-  - Treatment lifecycle management: Needs Inspection → Under Threshold → Needs Treatment → Active Treatment
-  - Real-time status summary chart
-  - Detailed site information table
-  - **Uses centralized colors from `db_helpers.R`**: Changing colors in db_helpers automatically updates the map, chart, and table
+  - **Printable Field Cards**: 6 cards per page optimized for standard printing
+  - **Configurable Content**: Select which site fields to display in header vs table
+  - **Section Grouping**: Option to group cards by section (prevents mixing on pages)
+  - **Download as HTML**: Export standalone file for printing
+  - Active sites only (enddate IS NULL)
 
 ### Test Application
 - **Path**: `/test-app/`
@@ -302,37 +487,13 @@ mmcd_metrics/
 - **Features**:
   - Useful for verifying application links on the dashboard
   - Testing environment for new features
-
-### Control Efficacy
-- **Path**: `/control_efficacy/`
-- **Purpose**: Air treatment checkback analysis and efficacy monitoring
-- **Features**:
-  - Air treatment campaign identification (multi-day treatments grouped)
-  - Configurable checkback requirements (percentage or fixed number)
-  - Checkback completion rate tracking by facility
-  - Treatment-to-checkback timing analysis
-  - Dip count change visualization (pre vs post treatment)
-  - Site-level treatment and checkback details
-  - Multi-day treatment campaign support
+  - Uses built-in R datasets without database dependencies
 
 ## Installation & Deployment
 
-### Workspace Setup
-Before starting, set up your workspace path. Throughout this guide, replace `/path/to/your/workspace` with your actual workspace directory:
-
-```bash
-# Example workspace paths:
-# /home/username/Documents/mmcd
-# /opt/mmcd
-# /var/www/mmcd
-export MMCD_WORKSPACE="/path/to/your/workspace/mmcd"
-```
-
-For the remainder of this guide, we'll use `$MMCD_WORKSPACE` to refer to your workspace directory.
-
 ### System Requirements
 - **Operating System**: Ubuntu 18.04+ or similar Debian-based Linux distribution
-- **R Version**: R 4.0+ (tested with R 4.5.1)
+- **R Version**: R 4.0+ (tested with R 4.5.2)
 - **Memory**: Minimum 4GB RAM (8GB recommended for production)
 - **Storage**: At least 2GB free space for dependencies and applications
 - **Network**: Internet access for package installation and database connectivity
@@ -358,33 +519,35 @@ sudo apt install -y libfontconfig1-dev libfreetype-dev libpng-dev \
     libharfbuzz-dev libfribidi-dev
 
 # Install compilation tools (required for R package compilation)
-sudo apt install -y gfortran cmake libabsl-dev
+sudo apt install -y gfortran cmake
+
+# Install additional graphics and computation libraries
+sudo apt install -y libgl1-mesa-dev libglu1-mesa libx11-dev libxt-dev libxft-dev \
+    libtiff-dev libjpeg-dev libgeos-dev libgmp-dev libgsl-dev \
+    libv8-dev libpoppler-cpp-dev libmagick++-dev
 ```
 
 #### R Package Installation
 Install R packages in the correct order to handle dependencies. For Shiny Server deployment, packages must be installed system-wide to be accessible to the shiny user:
 
 ```bash
-# Install ALL required packages in one command (user-level)
-R -e "install.packages(c( \
-  'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
-  'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
-  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
-  'classInt', 's2', \
-  'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
-  'plotly', 'purrr', 'tibble' \
-), repos='https://cran.rstudio.com/')"
-
-# IMPORTANT: For Shiny Server deployment, also install packages system-wide
-# This ensures the shiny user can access all required packages
+# Install core packages (system-wide for Shiny Server)
 sudo R -e "install.packages(c( \
   'shiny', 'shinydashboard', 'shinyWidgets', 'DBI', 'RPostgreSQL', 'RPostgres', \
   'dplyr', 'ggplot2', 'lubridate', 'scales', 'stringr', 'DT', \
-  'plotrix', 'dtplyr', 'vroom', 'tidyverse', \
+  'plotrix', 'dtplyr', 'vroom', 'tidyverse', 'tidyr', \
   'classInt', 's2', \
   'sf', 'leaflet', 'terra', 'textshaping', 'units', 'raster', \
-  'plotly', 'purrr', 'tibble' \
+  'plotly', 'purrr', 'tibble', 'pool' \
 ), lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
+# Install additional visualization packages for SF mapping
+sudo R -e "install.packages(c('viridis', 'gridExtra', 'ggspatial', 'rosm', 'prettymapr'), \
+  lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
+# Install PooledInfRate for MLE calculations (trap_survillance_test app)
+sudo R -e "install.packages('remotes', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/'); \
+  remotes::install_github('CDCgov/PooledInfRate')"
 ```
 
 ### Shiny Server Setup
@@ -398,8 +561,9 @@ wget https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-1.5.22.1017-
 # Install Shiny Server
 sudo gdebi -n shiny-server-1.5.22.1017-amd64.deb
 
-# Copy applications to Shiny Server directory
-sudo cp -r $MMCD_WORKSPACE/apps/* /srv/shiny-server/
+# Copy applications and shared resources to Shiny Server directory
+sudo cp -r apps/* /srv/shiny-server/
+sudo cp -r shared /srv/shiny-server/
 
 # Set proper ownership
 sudo chown -R shiny:shiny /srv/shiny-server
@@ -420,6 +584,7 @@ You can run any Shiny app directly using R without Docker or Shiny Server. This 
 
 #### Windows Setup
 
+#**NOTE:** Has not actualy worked yet but theoretically it can
 **Step 1: Install R**
 
 Download and install R from [CRAN](https://cran.r-project.org/bin/windows/base/):
@@ -562,25 +727,6 @@ To stop a running Shiny app:
 - Press `Ctrl+C` in the terminal/PowerShell window
 - Or close the terminal window
 
-#### Troubleshooting
-
-**"Package not found" errors:**
-```powershell
-# Install the missing package
-& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "install.packages('package-name', repos='https://cran.rstudio.com/', lib=Sys.getenv('R_LIBS_USER'))"
-```
-
-**"Cannot connect to database" errors:**
-- Verify your `.env` file exists and contains correct credentials
-- Ensure you have network access to the database server
-- Check that the database server allows connections from your IP
-
-**Port already in use:**
-```powershell
-# Use a different port
-& "C:\Program Files\R\R-4.5.2\bin\R.exe" -e "shiny::runApp(port=4000, host='127.0.0.1')"
-```
-
 ### Production Deployment
 
 For a complete production setup on a fresh Ubuntu machine:
@@ -607,15 +753,16 @@ R -e "install.packages(c( \
 ), repos='https://cran.rstudio.com/')"
 
 # Step 4: Clone repository
-git clone https://github.com/ablepacifist/mmcd_metrics_1.git
-cd mmcd_metrics_1
+git clone https://github.com/ablepacifist/mmcd_metrics_1.git mmcd_metrics
+cd mmcd_metrics
 
 # Step 5: Install Shiny Server
 wget https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-1.5.22.1017-amd64.deb
 sudo gdebi -n shiny-server-1.5.22.1017-amd64.deb
 
 # Step 6: Deploy applications
-sudo cp -r $MMCD_WORKSPACE/apps/* /srv/shiny-server/
+sudo cp -r apps/* /srv/shiny-server/
+sudo cp -r shared /srv/shiny-server/
 sudo chown -R shiny:shiny /srv/shiny-server
 
 # Step 7: Start services
@@ -623,124 +770,6 @@ sudo systemctl start shiny-server
 sudo systemctl enable shiny-server
 ```
 
-### Centralized Helpers Module (`shared/db_helpers.R`)
-
-The `shared/db_helpers.R` file serves as the central hub for shared functionality across all applications:
-
-**Key Features:**
-- **Centralized Color Definitions**: All color assignments (hex colors for maps/tables, Shiny named colors for dashboards) are defined once here. Changing a color updates it everywhere in the program.
-- **Facility Data**: Shared lookups for facility names and properties
-- **FOS (Field Operations Supervisor) Data**: Centralized FOS name and assignment management
-- **Database Connectivity**: Shared database connection utilities
-- **Common Utility Functions**: Shared formatting, date handling, and data transformation functions
-
-**Color System:**
-- `get_status_colors()`: Returns hex color codes for all status types
-- `get_shiny_colors()`: Returns Shiny dashboard named colors (for valueBox, charts)
-- `get_status_color_map()`: Maps status display names to hex colors for visualizations (maps, tables)
-
-**How to Use in Your App:**
-```r
-# Source the helpers at the top of your app.R
-source("../../shared/db_helpers.R")
-
-# In your server function
-source_colors <- get_status_colors()
-shiny_colors <- get_shiny_colors()
-color_map <- get_status_color_map()
-
-# Access facility or FOS data
-facilities <- get_facility_choices(include_all = TRUE)
-```
-
-## Application URLs
-
-### Local Development
-- **Main Dashboard**: `http://localhost:3838/`
-- **Mosquito Monitoring**: `http://localhost:3838/mosquito-monitoring/`
-- **SUCO History**: `http://localhost:3838/suco_history/`
-- **Drone Treatment**: `http://localhost:3838/drone/`
-- **Structural Treatment**: `http://localhost:3838/struct_trt/`
-- **Cattail Inspections**: `http://localhost:3838/cattail_inspections/`
-- **Cattail Treatments**: `http://localhost:3838/cattail_treatments/`
-- **Control Efficacy**: `http://localhost:3838/control_efficacy/`
-- **Ground Prehatch Progress**: `http://localhost:3838/ground_prehatch_progress/`
-- **Red Air Pipeline**: `http://localhost:3838/red_air/`
-
-### Production Server
-Replace `your-server.com` with your actual server address:
-- **Main Dashboard**: `http://your-server.com:3838/`
-- **Applications**: `http://your-server.com:3838/app-name/`
-
-## Adding New Applications
-
-### Step 1: Create Application Directory
-```bash
-mkdir -p $MMCD_WORKSPACE/apps/your-new-app
-```
-
-### Step 2: Create Modular App Structure
-
-
-```bash
-# Create the application directory structure
-mkdir -p $MMCD_WORKSPACE/apps/your-new-app
-cd $MMCD_WORKSPACE/apps/your-new-app
-```
-
-#### Create `app.R` (Main Application File)
-```r
-# Load required libraries
-suppressPackageStartupMessages({
-  library(shiny)
-  library(shinydashboard)
-  library(DBI)
-  library(dplyr)
-  # ... other libraries as needed
-})
-
-# Source the shared database helper functions
-source("../../shared/db_helpers.R")
-
-
-server <- function(input, output, session) {
-
-  # Get centralized colors
-  source_colors <- get_status_colors()
-  shiny_colors <- get_shiny_colors()
-  color_map <- get_status_color_map()
-  
-  # Get facility choices
-  facilities <- get_facility_choices(include_all = TRUE)
-  
-
-```
-
-### Step 3: Update Landing Page
-Add your new application to `$MMCD_WORKSPACE/apps/index.html`:
-
-```html
-<div class="app-card">
-    <h3>Your New App</h3>
-    <p>Description of what your new application does.</p>
-    <a href="/your-new-app/" class="app-link" target="_blank">Open Application</a>
-</div>
-```
-
-
-### Step 4: Deploy to Shiny Server
-```bash
-# Copy the entire application directory to Shiny Server
-sudo cp -r $MMCD_WORKSPACE/apps/your-new-app /srv/shiny-server/
-sudo chown -R shiny:shiny /srv/shiny-server/your-new-app
-
-# IMPORTANT: Always copy updated index.html after making changes
-sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
-
-# Restart Shiny Server to ensure new applications are loaded
-sudo systemctl restart shiny-server
-
-```
 
 ### Environment Variables Setup
 
@@ -790,29 +819,6 @@ docker run -p 3838:3838 \
 
 Access the dashboard at: `http://localhost:3838`
 
-#### Docker Troubleshooting
-
-If you encounter "port already in use" errors:
-
-1. **Check what's using the port**:
-   ```bash
-   sudo lsof -i :3838
-   ```
-
-2. **Kill processes using the port**:
-   ```bash
-   sudo kill -9 <PID>
-   ```
-
-3. **Use a different port**:
-   ```bash
-   docker run -p 4000:3838 mmcd-dashboard
-   ```
-
-4. **Clean up Docker resources**:
-   ```bash
-   docker system prune
-   ```
 
 #### AWS Deployment with Secure Environment Variables
 
@@ -848,119 +854,250 @@ cp .env.example .env
 docker run -p 3838:3838 --env-file .env mmcd-dashboard
 ```
 
-### **CRITICAL DEPLOYMENT NOTE**
-**Always copy `index.html` to Shiny Server after making changes!**
 
-Shiny Server serves files from `/srv/shiny-server/`, not from your development directory. Any changes to `apps/index.html` in your workspace will NOT be visible until you copy them:
-
-```bash
-# This command is REQUIRED after ANY change to index.html
-sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
 ```
 
-**When to run this command:**
-- After adding new applications to the dashboard
-- After updating application descriptions or links  
-- After changing any HTML/CSS in the landing page
-- After modifying button links or layout
+## Git Workflow for Contributors
 
-**Why this is necessary:**
-- The development files are in `$MMCD_WORKSPACE/apps/`
-- Shiny Server serves files from `/srv/shiny-server/`
-- These are separate directories - changes in one don't automatically appear in the other
+**Repository**: [https://github.com/mmcdmn/mmcd_metrics](https://github.com/mmcdmn/mmcd_metrics)
 
-## Troubleshooting
+> **Access Required**: You must have repository access rights to push changes. Contact the administrator if you need access.
 
-### Common Issues and Solutions
+### Getting Started - Cloning the Repository
 
-#### Application Not Loading
+If you're starting fresh, clone the repository and checkout the dev branch:
+
 ```bash
-# Check if Shiny Server is running
-sudo systemctl status shiny-server
+# Clone the repository
+git clone https://github.com/mmcdmn/mmcd_metrics.git
 
-# Check application logs
-sudo tail -f /var/log/shiny-server/*.log
+# Navigate into the project
+cd mmcd_metrics
 
-# Verify file permissions
-ls -la /srv/shiny-server/
+# Switch to dev branch (where you'll do your work)
+git checkout dev
+
+# Verify you're on dev branch
+git branch
 ```
 
-#### R Package Installation Errors
+### Branch Strategy
+
+This repository uses a two-branch workflow:
+
+- **`dev`** - Development branch for testing and review
+  - All contributors should push their changes here first
+  - Used for testing new features and bug fixes
+  - Safe environment for experimentation
+
+- **`main`** - Production branch deployed to AWS
+  - Protected branch
+  - Automatically deployed to AWS App Runner for production use
+  - Only stable, tested code should be merged here
+  - **Merging to main is done via GitHub Pull Request, not locally**
+
+### Basic Git Commands
+
+#### Check Current Status
+See what files you've changed and current branch:
 ```bash
-# For sf package compilation issues
-sudo apt install -y libgdal-dev libudunits2-dev libproj-dev
-
-# For database connectivity issues
-sudo apt install -y libpq-dev
-
-# For text rendering issues
-sudo apt install -y libfontconfig1-dev libfreetype-dev
+git status
 ```
 
-#### Database Connection Issues
+#### Switch Between Branches
 ```bash
-# Test database connectivity (using environment variables)
-R -e "
-if (file.exists('.env')) readRenviron('.env');
-library(DBI); library(RPostgreSQL);
-con <- dbConnect(PostgreSQL(), 
-  host=Sys.getenv('DB_HOST'), 
-  dbname=Sys.getenv('DB_NAME'), 
-  user=Sys.getenv('DB_USER'), 
-  password=Sys.getenv('DB_PASSWORD')); 
-dbListTables(con); dbDisconnect(con)"
+# Switch to dev branch (where you should work)
+git checkout dev
 
-# If database connection fails, check network connectivity
-ping your-database-host.com
+# Switch to main branch (to review production code)
+git checkout main
 
-# For development/testing without database access, you can modify app.R files to use sample data
-# instead of live database connections
+# Create and switch to a new feature branch
+git checkout -b feature-name
 ```
 
-#### Button Click Issues on Dashboard
-If application buttons on the main dashboard don't respond when clicked:
+#### Stage Your Changes
+Add files you want to commit:
+```bash
+# Add specific file
+git add path/to/file.R
 
-1. **Check if index.html changes were deployed**: 
+# Add all changed files in a directory
+git add apps/my-app/
+
+# Add all changed files (use carefully!)
+git add .
+```
+
+#### Commit Your Changes
+Save your changes with a descriptive message:
+```bash
+git commit -m "Brief description of what you changed"
+
+# Example commit messages:
+git commit -m "Fix zone assignment bug in drone app"
+git commit -m "Add archive data support to trap surveillance"
+git commit -m "Update README with Git workflow instructions"
+```
+
+#### Push to Remote Repository
+```bash
+# Push your changes to dev branch
+git push origin dev
+
+# Push changes to a feature branch
+git push origin feature-name
+```
+
+### Typical Workflow for Making Changes
+
+1. **Start on dev branch**
    ```bash
-   # ALWAYS run this after changing index.html
-   sudo cp $MMCD_WORKSPACE/apps/index.html /srv/shiny-server/
+   git checkout dev
+   git pull origin dev  # Get latest changes
    ```
 
-2. **Browser pop-up blocking**: If links have `target="_blank"`, browsers may block pop-ups
-   - Remove `target="_blank"` from links in index.html
-   - Or allow pop-ups for localhost in browser settings
+2. **Make your changes**
+   - Edit files in your preferred editor
+   - Test your changes locally
 
-3. **Check browser console for JavaScript errors**: Press F12 and look for errors in Console tab
+3. **Stage and commit**
+   ```bash
+   git status                    # See what changed
+   git add apps/my-app/app.R     # Stage your files
+   git commit -m "Description of changes"
+   ```
 
-4. **Verify application availability**: Test individual app URLs directly (e.g., `http://localhost:3838/test-app/`)
+4. **Push to dev**
+   ```bash
+   git push origin dev
+   ```
 
-5. **Check Shiny Server logs**: `sudo tail -f /var/log/shiny-server.log`
+5. **Test on dev environment**
+   - Verify your changes work as expected
+   - Have others review if needed
 
-6. **Common causes**:
-   - Database connectivity issues (applications timeout during initialization)
-   - Missing R packages for the shiny user
-   - Network firewall blocking database connections
-   - Applications taking too long to load due to large datasets
-   - Outdated index.html in Shiny Server directory
+6. **Merge to main (when ready for production)**
+   
+   **Merging is done on GitHub, not locally:**
+   
+   a. Go to the repository on GitHub: [https://github.com/mmcdmn/mmcd_metrics](https://github.com/mmcdmn/mmcd_metrics)
+   
+   b. Click "Pull requests" tab
+   
+   c. Click "New pull request"
+   
+   d. Set base branch to `main` and compare branch to `dev`
+   
+   e. Review the changes, add a description
+   
+   f. Click "Create pull request"
+   
+   g. Wait for review/approval (if required)
+   
+   h. Click "Merge pull request" to deploy to production
+   
+   i. Once merged, the changes automatically deploy to AWS App Runner
 
-7. **Test with the Test Application**: The test app should always work since it doesn't require database connectivity
+### Common Scenarios
 
-#### Network Connectivity for Database Access
-The MMCD applications require access to your database server on port 5432. If you're experiencing connection timeouts:
-
+#### Pulling Latest Changes
+Before starting work, always pull the latest code:
 ```bash
-# Test if the database server is reachable (replace with your actual host)
-ping your-database-host.com
-telnet your-database-host.com 5432
-
-# Check firewall rules
-sudo ufw status
-
-# For testing purposes, you can modify applications to use sample data instead of live connections
+git fetch
+git checkout dev
+git pull origin dev
 ```
 
-
-# One line remove all used ports and run new
+#### Viewing Your Changes
+See what you've modified:
 ```bash
-docker stop mmcd-dashboard && docker rm mmcd-dashboard && cd /home/alex/Documents/mmcd/mmcd_metrics && docker build -t mmcd-dashboard . 2>&1 | tail -2 && docker run -d --name mmcd-dashboard -p 3838:3838 -e DB_HOST=rds-readonly.mmcd.org -e DB_PORT=5432 -e DB_USER=mmcd_read -e DB_PASSWORD=mmcd2012 -e DB_NAME=mmcd_data mmcd-dashboard
+git status                    # Files changed
+git diff                      # See line-by-line changes
+git diff apps/my-app/app.R   # Changes in specific file
+```
+
+#### Undoing Changes
+If you made a mistake:
+```bash
+# Discard changes to a specific file
+git checkout -- path/to/file.R
+
+# Discard all uncommitted changes (careful!)
+git reset --hard
+```
+
+#### Viewing Commit History
+```bash
+git log                       # Full history
+git log --oneline             # Compact view
+git log --graph --oneline     # Visual branch history
+```
+
+### Best Practices
+
+1. **Always work on `dev` first** - Never push directly to `main`
+2. **Pull before you push** - Get latest changes to avoid conflicts
+3. **Commit often** - Small, focused commits are easier to review
+4. **Write clear commit messages** - Future you will thank present you
+5. **Test before merging to main** - Production should always be stable
+6. **Communicate with team** - Let others know about major changes
+
+### Handling Merge Conflicts
+
+If Git can't automatically merge your changes:
+
+1. **Identify conflicted files**
+   ```bash
+   git status
+   ```
+
+2. **Open conflicted files** - Look for conflict markers:
+   ```
+   <<<<<<< HEAD
+   Your changes
+   =======
+   Someone else's changes
+   >>>>>>> branch-name
+   ```
+
+3. **Resolve conflicts** - Edit files to keep the correct code
+
+4. **Mark as resolved and commit**
+   ```bash
+   git add conflicted-file.R
+   git commit -m "Resolve merge conflicts"
+   ```
+
+### Getting Help
+
+```bash
+git help                     # General help
+git help commit             # Help for specific command
+git status                  # Shows current state and helpful hints
+```
+
+For more information, see the [Git documentation](https://git-scm.com/doc) or contact a team member with Git experience.
+
+---
+
+## Important Bug Fixes
+
+### **Zone Assignment Fix (November 2025)**
+**CRITICAL FIX**: Corrected ambiguous JOIN logic in `apps/drone/data_functions.R` that was causing incorrect zone assignments.
+
+**Problem**: Sites were showing wrong zones due to broad pattern matching in SQL JOINs. For example:
+- Site `191819-045` was incorrectly showing zone 2 instead of zone 1
+- Root cause: JOIN matched both `191819-` (zone 1) and `191819E` (zone 2) sectcodes
+
+**Solution**: Changed from broad OR-based pattern matching to precise sectcode matching:
+```sql
+-- OLD (incorrect - would match multiple sectcodes)
+LEFT JOIN public.gis_sectcode g ON LEFT(sitecode, 6) || '-' = g.sectcode
+  OR LEFT(sitecode, 6) || 'N' = g.sectcode
+  OR LEFT(sitecode, 6) || 'E' = g.sectcode
+  OR LEFT(sitecode, 6) || 'W' = g.sectcode
+
+-- NEW (correct - exact match only)  
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(sitecode,7)
 ```

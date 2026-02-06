@@ -1,164 +1,173 @@
 # UI helper functions for Ground Prehatch Progress app
 # These functions create reusable UI components and improve code organization
 
-# Create the main filter panel for dashboard layout
-create_filter_panel <- function() {
-  box(
-    title = "Filters & Controls",
-    status = "primary",
-    solidHeader = TRUE,
-    width = 12,
+#' Create the main UI for the ground prehatch progress app
+#' @return Shiny UI object
+ground_prehatch_ui <- function() {
+  fluidPage(
+    # Use universal CSS from db_helpers for consistent text sizing
+    get_universal_text_css(),
+    # Application title
+    titlePanel("Ground Prehatch Treatment Progress"),
     
-    fluidRow(
-      column(3,
-        selectizeInput("facility_filter", "Facility:",
-                      choices = c("All" = "all"),
-                      selected = "all", 
-                      multiple = TRUE,
-                      options = list(placeholder = "Select facilities..."))
-      ),
-      column(3,
-        selectizeInput("foreman_filter", "FOS:",
-                      choices = c("All" = "all"),
-                      selected = "all",
-                      multiple = TRUE,
-                      options = list(placeholder = "Select FOS..."))
-      ),
-      column(3,
-        radioButtons("zone_filter", "Zone Display:",
-                     choices = c("P1 Only" = "1", 
-                                "P2 Only" = "2", 
-                                "P1 and P2 Separate" = "1,2", 
-                                "Combined P1+P2" = "combined"),
-                     selected = "1,2",
-                     inline = TRUE)
-      ),
-      column(2,
-        radioButtons("group_by", "Group by:",
-                    choices = c("All MMCD" = "mmcd_all",
-                               "Facility" = "facility", 
-                               "FOS" = "foreman",
-                               "Section" = "sectcode"),
-                    selected = "mmcd_all",
-                    inline = TRUE)
-      ),
-      column(2,
-        selectInput("color_theme", "Color Theme:",
-                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
-                    selected = "MMCD")
-      )
-    ),
-    
-    # Current analysis controls (hidden on historical tab)
-    conditionalPanel(
-      condition = "input.sidebar_tabs != 'historical'",
-      fluidRow(
-        column(3,
-          div(style = "padding-top: 200px;",
-            dateInput("custom_today", "Pretend Today is:",
-                     value = Sys.Date(), 
-                     format = "yyyy-mm-dd")
-          )
-        ),
-        column(3,
+    # Sidebar with controls
+    sidebarLayout(
+      sidebarPanel(
+        # Refresh button at the top
+        actionButton("refresh", "Refresh Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;"),
+        hr(),
+        
+        # Current Progress and Detailed View tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'overview' || input.tabs == 'details'",
+          radioButtons("display_metric", "Display Metric:",
+                      choices = c("Sites" = "sites",
+                                  "Acres" = "acres"),
+                      selected = "sites"),
+          
+          dateInput("custom_today", "Pretend Today is:",
+                   value = Sys.Date(), 
+                   max = Sys.Date(),
+                   format = "yyyy-mm-dd"),
+          
           sliderInput("expiring_days", "Days Until Expiring:",
-                     min = 1, max = 60, value = 14, step = 1)
+                     min = 1, max = 60, value = 14, step = 1),
+          
+          radioButtons("expiring_filter", "Site Filter:",
+                      choices = c("All Sites" = "all",
+                                 "Expiring Only" = "expiring", 
+                                 "Expiring + Expired" = "expiring_expired"),
+                      selected = "all")
         ),
-        column(3,
-          div(style = "margin-top: 5px;",
-            radioButtons("expiring_filter", "Site Filter:",
-                        choices = c("All Sites" = "all",
-                                   "Expiring Only" = "expiring", 
-                                   "Expiring + Expired" = "expiring_expired"),
-                        selected = "all",
-                        inline = FALSE)
-          )
-        ),
-        column(3,
-          div(style = "margin-top: 25px;",
-            actionButton("refresh", "Refresh Data", 
-                        icon = icon("refresh"),
-                        class = "btn-primary btn-lg",
-                        style = "width: 100%;")
-          )
-        )
-      )
-    ),
-    
-    # Historical analysis controls (shown only on historical tab)
-    conditionalPanel(
-      condition = "input.sidebar_tabs == 'historical'",
-      fluidRow(
-        column(3,
+        
+        # Historical Analysis tab controls
+        conditionalPanel(
+          condition = "input.tabs == 'historical'",
+          actionButton("hist_refresh", "Refresh Historical", icon = icon("refresh"), class = "btn-success", style = "width: 100%; margin-bottom: 10px;"),
+          
           radioButtons("hist_time_period", "Time Period:",
-                      choices = c("Yearly" = "yearly", 
+                      choices = c("Yearly" = "yearly",
                                   "Weekly" = "weekly"),
-                      selected = "yearly",
-                      inline = TRUE)
-        ),
-        column(3,
+                      selected = "yearly"),
+          
           selectInput("hist_chart_type", "Chart Type:",
                       choices = c("Stacked Bar" = "stacked_bar",
                                   "Grouped Bar" = "grouped_bar", 
                                   "Line Chart" = "line",
                                   "Area Chart" = "area"),
-                      selected = "stacked_bar")
-        ),
-        column(3,
-          # Conditional metric selector based on time period
+                      selected = "stacked_bar"),
+          
+          # Conditional metric choices based on time period
           conditionalPanel(
             condition = "input.hist_time_period == 'yearly'",
             radioButtons("hist_display_metric", "Display Metric:",
                         choices = c("Sites Treated" = "sites",
                                    "Site Acres (Unique)" = "acres",
                                    "Treatment Acres (Total)" = "treatment_acres"),
-                        selected = "sites",
-                        inline = TRUE)
+                        selected = "sites")
           ),
           conditionalPanel(
             condition = "input.hist_time_period == 'weekly'",
             radioButtons("hist_display_metric", "Display Metric:",
-                        choices = c("Active Sites" = "weekly_active_sites",
+                        choices = c("Active Sites" = "weekly_active_count",
                                    "Active Acres" = "weekly_active_acres"),
-                        selected = "weekly_active_sites",
-                        inline = TRUE)
-          )
-        ),
-        column(3,
+                        selected = "weekly_active_count")
+          ),
+          
           sliderInput("hist_year_range", "Year Range:",
-                      min = as.numeric(format(Sys.Date(), "%Y")) - 20, 
-                      max = as.numeric(format(Sys.Date(), "%Y")), 
-                      value = c(as.numeric(format(Sys.Date(), "%Y")) - 4, as.numeric(format(Sys.Date(), "%Y"))), 
-                      step = 1)
+                      min = 2010, max = 2025, 
+                      value = c(2018, 2025), step = 1)
+        ),
+        
+        # Shared controls
+        selectInput("color_theme", "Color Theme:",
+                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    selected = "MMCD"),
+        
+        selectInput("zone_filter", "Zone Display:",
+                    choices = c("P1 Only" = "1",
+                                "P2 Only" = "2", 
+                                "P1 and P2 Separate" = "1,2",
+                                "Combined P1+P2" = "combined"),
+                    selected = "1,2"),
+        
+        selectInput("facility_filter", "Facility:",
+                      choices = NULL),
+        
+        selectizeInput("foreman_filter", "FOS:",
+                      choices = NULL, multiple = TRUE),
+        
+        # Group by controls (dynamic based on tab)
+        conditionalPanel(
+          condition = "input.tabs == 'overview' || input.tabs == 'details'",
+          selectInput("group_by", "Group By:",
+                      choices = c("Facility" = "facility",
+                                  "FOS" = "foreman",
+                                  "Section" = "sectcode",
+                                  "All MMCD" = "mmcd_all"),
+                      selected = "mmcd_all")
+        ),
+        
+        conditionalPanel(
+          condition = "input.tabs == 'historical'",
+          selectInput("group_by", "Group By:",
+                      choices = c("Facility" = "facility",
+                                  "FOS" = "foreman",
+                                  "All MMCD" = "mmcd_all"),
+                      selected = "mmcd_all")
+        ),
+        
+        # Help text (collapsible)
+        hr(),
+        div(id = "help-section",
+          tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
+                 style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
+                 HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
+          div(style = "display: none;",
+            create_help_text()
+          )
         )
       ),
-      fluidRow(
-        column(12,
-          div(style = "margin-top: 15px;",
-            actionButton("hist_refresh", "Refresh Historical Data", 
-                        icon = icon("refresh"),
-                        class = "btn-primary btn-lg",
-                        style = "width: 220px;")
-          )
-        )
-      )
-    ),
-    
-    # Map controls (shown only on map tab)
-    conditionalPanel(
-      condition = "input.sidebar_menu == 'map'",
-      fluidRow(
-        column(6,
-          selectInput("map_basemap", "Base Map:",
-                      choices = c("Streets" = "carto",
-                                  "Satellite" = "satellite", 
-                                  "Terrain" = "terrain",
-                                  "OpenStreetMap" = "osm"),
-                      selected = "carto")
-        ),
-        column(6,
-          div(style = "margin-top: 5px;",
-            p("Map uses the same filters and analysis date as other tabs.")
+      
+      # Main panel with tabs
+      mainPanel(
+        tabsetPanel(
+          id = "tabs",
+          tabPanel("Progress Overview", value = "overview", 
+                   br(),
+                   create_important_note(),
+                   # Summary statistics
+                   div(
+                     h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
+                     create_overview_value_boxes()
+                   ),
+                   br(),
+                   # Progress chart
+                   uiOutput("dynamic_chart_ui")
+          ),
+          tabPanel("Detailed View", value = "details",
+                   br(),
+                   create_important_note(),
+                   h4("Site Details"),
+                   div(
+                     style = "margin-bottom: 15px;",
+                     downloadButton("download_details_data", "Download CSV", class = "btn-primary btn-sm"),
+                     tags$span(style = "margin-left: 15px; color: #666;", 
+                               "Download filtered data as CSV file")
+                   ),
+                   DT::dataTableOutput("details_table")
+          ),
+          tabPanel("Historical Analysis", value = "historical", 
+                   br(),
+                   plotlyOutput("historical_chart", height = "600px"),
+                   br(),
+                   fluidRow(
+                     column(10, h4("Historical Data")),
+                     column(2, downloadButton("download_historical_data", "Download CSV", 
+                                             class = "btn-success btn-sm", 
+                                             style = "margin-top: 20px; float: right;"))
+                   ),
+                   DT::dataTableOutput("historical_details_table")
           )
         )
       )
@@ -166,15 +175,16 @@ create_filter_panel <- function() {
   )
 }
 
+
 # Create the overview value boxes (like red_air does)
 create_overview_value_boxes <- function() {
   fluidRow(
-    valueBoxOutput("prehatch_sites", width = 2),
-    valueBoxOutput("treated_sites", width = 2),
-    valueBoxOutput("sites_expiring", width = 2),
-    valueBoxOutput("expired_sites", width = 2),
-    valueBoxOutput("skipped_sites", width = 2),
-    valueBoxOutput("treated_pct", width = 2)
+    column(2, uiOutput("prehatch_sites")),
+    column(2, uiOutput("treated_sites")),
+    column(2, uiOutput("sites_expiring")),
+    column(2, uiOutput("expired_sites")),
+    column(2, uiOutput("skipped_sites")),
+    column(2, uiOutput("treated_pct"))
   )
 }
 
@@ -333,11 +343,9 @@ create_historical_filter_panel <- function() {
     
     fluidRow(
       column(3,
-        selectizeInput("hist_facility_filter", "Facility:",
-                      choices = c("All" = "all"),
-                      selected = "all", 
-                      multiple = TRUE,
-                      options = list(placeholder = "Select facilities..."))
+        selectInput("hist_facility_filter", "Facility:",
+                      choices = c("All Facilities" = "all"),
+                      selected = "all")
       ),
       column(3,
         selectizeInput("hist_foreman_filter", "FOS:",
@@ -388,9 +396,9 @@ create_historical_filter_panel <- function() {
         conditionalPanel(
           condition = "input.hist_time_period == 'weekly'",
           radioButtons("hist_display_metric", "Display Metric:",
-                      choices = c("Active Sites" = "weekly_active_sites",
+                      choices = c("Active Sites" = "weekly_active_count",
                                  "Active Site Acres" = "weekly_active_acres"),
-                      selected = "weekly_active_sites",
+                      selected = "weekly_active_count",
                       inline = TRUE)
         )
       ),

@@ -37,6 +37,19 @@ source("data_functions.R")
 source("display_functions.R")
 source("historical_functions.R")
 
+# Set application name for AWS RDS monitoring
+set_app_name("air_sites_simple")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[air_sites_simple] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  get_foremen_lookup()
+  message("[air_sites_simple] Lookup tables preloaded")
+}, error = function(e) message("[air_sites_simple] Preload warning: ", e$message))
+
 # Functions are now loaded from data_functions.R and display_functions.R
 
 # Define UI
@@ -82,10 +95,9 @@ ui <- fluidPage(
                   value = Sys.Date(),
                   max = Sys.Date()),
         
-        selectizeInput("facility_filter", "Facilities:",
+        selectInput("facility_filter", "Facility:",
                       choices = c("Loading..." = "LOADING"),
-                      selected = "LOADING",
-                      multiple = TRUE),
+                      selected = "LOADING"),
         
         selectizeInput("priority_filter", "Priorities:",
                       choices = c("Loading..." = "LOADING"),
@@ -153,10 +165,9 @@ ui <- fluidPage(
                   value = Sys.Date(),
                   max = Sys.Date()),
         
-        selectizeInput("process_facility_filter", "Facilities:",
+        selectInput("process_facility_filter", "Facility:",
                       choices = c("Loading..." = "LOADING"),
-                      selected = "LOADING",
-                      multiple = TRUE),
+                      selected = "LOADING"),
         
         radioButtons("process_zone_filter", "Zones:",
                     choices = c("Loading..." = "LOADING"),
@@ -214,10 +225,9 @@ ui <- fluidPage(
         
         h4("Historical Filters"),
         
-        selectizeInput("hist_facility_filter", "Facilities:",
+        selectInput("hist_facility_filter", "Facility:",
                       choices = c("Loading..." = "LOADING"),
-                      selected = "LOADING",
-                      multiple = TRUE),
+                      selected = "LOADING"),
         
         selectizeInput("hist_priority_filter", "Priorities:",
                       choices = c("Loading..." = "LOADING"),
@@ -557,13 +567,13 @@ server <- function(input, output, session) {
   
   # Update all filter inputs ONCE on startup
   observe({
-    # Update facility filters - start empty
-    updateSelectizeInput(session, "facility_filter", 
+    # Update facility filters - start with 'all'
+    updateSelectInput(session, "facility_filter", 
                         choices = facility_choices,
-                        selected = NULL)
-    updateSelectizeInput(session, "process_facility_filter", 
+                        selected = "all")
+    updateSelectInput(session, "process_facility_filter", 
                         choices = facility_choices,
-                        selected = NULL)
+                        selected = "all")
     
     # Update priority filter - start empty
     updateSelectizeInput(session, "priority_filter", 
@@ -684,18 +694,18 @@ server <- function(input, output, session) {
   
   # Synchronize facility filters between Status and Process tabs
   observeEvent(input$facility_filter, {
-    updateSelectizeInput(session, "process_facility_filter", selected = input$facility_filter)
-    updateSelectizeInput(session, "hist_facility_filter", selected = input$facility_filter)
+    updateSelectInput(session, "process_facility_filter", selected = input$facility_filter)
+    updateSelectInput(session, "hist_facility_filter", selected = input$facility_filter)
   })
   
   observeEvent(input$process_facility_filter, {
-    updateSelectizeInput(session, "facility_filter", selected = input$process_facility_filter)
-    updateSelectizeInput(session, "hist_facility_filter", selected = input$process_facility_filter)
+    updateSelectInput(session, "facility_filter", selected = input$process_facility_filter)
+    updateSelectInput(session, "hist_facility_filter", selected = input$process_facility_filter)
   })
   
   observeEvent(input$hist_facility_filter, {
-    updateSelectizeInput(session, "facility_filter", selected = input$hist_facility_filter)
-    updateSelectizeInput(session, "process_facility_filter", selected = input$hist_facility_filter)
+    updateSelectInput(session, "facility_filter", selected = input$hist_facility_filter)
+    updateSelectInput(session, "process_facility_filter", selected = input$hist_facility_filter)
   })
   
   # ============ AIR SITE STATUS TAB LOGIC ============
@@ -725,8 +735,8 @@ server <- function(input, output, session) {
       data <- data[data$site_status == input$status_filter, ]
     }
     
-    # Apply material filter for active treatments
-    if (!is.null(input$material_filter) && length(input$material_filter) > 0 && !"all" %in% input$material_filter) {
+    # Apply material filter for active treatments using shared helper
+    if (is_valid_filter(input$material_filter)) {
       # Filter active treatments by material using matcode, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
                                (!is.na(data$matcode) & 
@@ -947,8 +957,8 @@ server <- function(input, output, session) {
       bti_effect_days_override = input$process_bti_effect_days_override
     )
     
-    # Apply material filter for active treatments
-    if (!is.null(input$process_material_filter) && length(input$process_material_filter) > 0 && !"all" %in% input$process_material_filter) {
+    # Apply material filter for active treatments using shared helper
+    if (is_valid_filter(input$process_material_filter)) {
       # Filter active treatments by material using matcode, keep all other statuses
       active_treatments <- data[data$site_status == "Active Treatment" & 
                                (!is.na(data$matcode) & 
@@ -1215,9 +1225,9 @@ server <- function(input, output, session) {
       facility_lookup <- get_facility_lookup()
       if (nrow(facility_lookup) > 0) {
         facility_choices_hist <- c("All Facilities" = "all", setNames(facility_lookup$short_name, facility_lookup$full_name))
-        updateSelectizeInput(session, "hist_facility_filter", 
+        updateSelectInput(session, "hist_facility_filter", 
                             choices = facility_choices_hist,
-                            selected = NULL)
+                            selected = "all")
       }
       
       # Load priority choices for historical tab

@@ -15,6 +15,18 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
 })
 
+# Set application name for AWS RDS monitoring
+set_app_name("mosquito_monitoring")
+
+# =============================================================================
+# STARTUP OPTIMIZATION: Preload lookup tables into cache
+# =============================================================================
+message("[mosquito_monitoring] Preloading lookup tables...")
+tryCatch({
+  get_facility_lookup()
+  message("[mosquito_monitoring] Lookup tables preloaded")
+}, error = function(e) message("[mosquito_monitoring] Preload warning: ", e$message))
+
 # Mosquito-specific database connection function with integer64 handling
 get_mosquito_db_connection <- function() {
   # First try the centralized connection (in case env vars are set for mosquito DB)
@@ -62,7 +74,7 @@ mosquito0NAS <- convert_integer64_columns(mosquito0NAS)
 
 mosquito0 <- na.omit(mosquito0NAS)
 
-dbDisconnect(con)
+safe_disconnect(con)
 #mosquito0 <- vroom::vroom("Mosquito0Test.csv")
 
 #mosquito1 <- mosquito0 %>% 

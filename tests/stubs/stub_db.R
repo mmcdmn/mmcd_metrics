@@ -23,6 +23,57 @@ mock_db_result <- function(...) {
   )
 }
 
+# Mock leaflet functions for testing
+if (!requireNamespace("leaflet", quietly = TRUE)) {
+  # Create mock leaflet objects
+  leaflet <- function(...) {
+    structure(list(type = "mock_leaflet", calls = list()), class = "mock_leaflet")
+  }
+  
+  addTiles <- function(map, ...) {
+    map$calls <- c(map$calls, "addTiles")
+    map
+  }
+  
+  addProviderTiles <- function(map, provider, ...) {
+    map$calls <- c(map$calls, paste("addProviderTiles", provider))
+    map
+  }
+  
+  addCircleMarkers <- function(map, ...) {
+    map$calls <- c(map$calls, "addCircleMarkers")
+    map
+  }
+  
+  setView <- function(map, ...) {
+    map$calls <- c(map$calls, "setView")
+    map
+  }
+  
+  fitBounds <- function(map, ...) {
+    map$calls <- c(map$calls, "fitBounds")
+    map
+  }
+  
+  # Mock providers object
+  providers <- list(
+    OpenStreetMap = "OpenStreetMap",
+    CartoDB.Positron = "CartoDB.Positron",
+    Esri.WorldImagery = "Esri.WorldImagery"
+  )
+  
+  # Make these available globally
+  assign("leaflet", leaflet, envir = .GlobalEnv)
+  assign("addTiles", addTiles, envir = .GlobalEnv)
+  assign("addProviderTiles", addProviderTiles, envir = .GlobalEnv)
+  assign("addCircleMarkers", addCircleMarkers, envir = .GlobalEnv)
+  assign("setView", setView, envir = .GlobalEnv)
+  assign("fitBounds", fitBounds, envir = .GlobalEnv)
+  assign("providers", providers, envir = .GlobalEnv)
+  
+  cat("Mock leaflet functions created\n")
+}
+
 # Mock lookup functions
 get_foremen_lookup <- function() {
   data.frame(

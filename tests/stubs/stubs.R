@@ -39,83 +39,60 @@
 #   - get_stub_facilities()             # Facility code lookup
 #
 # Get the directory where this script lives
-# First try to get the path from sys.frame (works when sourced directly)
-stub_dir <- tryCatch({
-  script_path <- sys.frame(1)$ofile
-  if (!is.null(script_path) && script_path != "") {
-    dirname(normalizePath(script_path, mustWork = FALSE))
-  } else {
-    NULL
-  }
-}, error = function(e) {
-  NULL
-})
-
-if (is.null(stub_dir) || stub_dir == "" || stub_dir == ".") {
-  # Fallback for sourcing from different contexts - check multiple possible paths
-  possible_paths <- c(
-    "tests/stubs",           # From project root
-    "../stubs",              # From tests/apps or tests/shared
-    "stubs",                 # From tests/
-    ".",                     # Already in stubs directory
-    "../../tests/stubs"      # From apps/*/
+# Use a more robust approach that works from different calling contexts
+get_stub_directory <- function() {
+  # Multiple fallback strategies for finding the stub directory
+  possible_dirs <- c(
+    # If called from project root
+    file.path(getwd(), "tests/stubs"),
+    # If called from tests/ directory  
+    file.path(getwd(), "stubs"),
+    # If called from tests/apps/ or tests/shared/
+    file.path(getwd(), "../stubs"),
+    file.path(getwd(), "../../tests/stubs"),
+    # Absolute path based on this file's location
+    tryCatch({
+      script_path <- sys.frame(1)$ofile
+      if (!is.null(script_path) && script_path != "") {
+        file.path(dirname(script_path), ".")
+      } else {
+        NULL
+      }
+    }, error = function(e) NULL),
+    # Last resort - try to find any tests directory
+    file.path(find.package("base"), "..", "..", "..", "tests/stubs")
   )
   
-  for (path in possible_paths) {
-    if (file.exists(file.path(path, "stub_treatments.R"))) {
-      stub_dir <- normalizePath(path, mustWork = FALSE)
-      break
+  for (dir in possible_dirs) {
+    if (!is.null(dir) && dir != "" && file.exists(file.path(dir, "stub_treatments.R"))) {
+      return(normalizePath(dir, mustWork = FALSE))
     }
   }
   
-  # Final fallback - use absolute path from working directory
-  if (is.null(stub_dir) || stub_dir == "" || stub_dir == ".") {
-    # Try to find project root and build path
-    if (file.exists("tests/stubs/stub_treatments.R")) {
-      stub_dir <- normalizePath("tests/stubs", mustWork = FALSE)
-    } else if (file.exists("../stubs/stub_treatments.R")) {
-      stub_dir <- normalizePath("../stubs", mustWork = FALSE)
-    } else {
-      stub_dir <- "tests/stubs"
-    }
-  }
+  # Ultimate fallback - return a reasonable default
+  return("tests/stubs")
 }
 
-# Source all stub files
-tryCatch({
-  source(file.path(stub_dir, "stub_loc_cxstruct.R"))
-}, error = function(e) {
-  warning("Failed to load stub_loc_cxstruct.R from ", stub_dir, ": ", e$message)
-})
+stub_dir <- get_stub_directory()
 
-tryCatch({
-  source(file.path(stub_dir, "stub_treatments.R"))
-}, error = function(e) {
-  warning("Failed to load stub_treatments.R: ", e$message)
-})
+# Source all stub files with better error reporting
+cat("Loading stubs from directory:", stub_dir, "\n")
 
-tryCatch({
-  source(file.path(stub_dir, "stub_breeding_sites.R"))
-}, error = function(e) {
-  warning("Failed to load stub_breeding_sites.R: ", e$message)
-})
+stub_files <- c("stub_loc_cxstruct.R", "stub_treatments.R", "stub_breeding_sites.R", 
+                "stub_catchbasin.R", "stub_employees.R", "stub_suco_data.R")
 
-tryCatch({
-  source(file.path(stub_dir, "stub_catchbasin.R"))
-}, error = function(e) {
-  warning("Failed to load stub_catchbasin.R: ", e$message)
-})
-
-tryCatch({
-  source(file.path(stub_dir, "stub_employees.R"))
-}, error = function(e) {
-  warning("Failed to load stub_employees.R: ", e$message)
-})
-
-tryCatch({
-  source(file.path(stub_dir, "stub_suco_data.R"))
-}, error = function(e) {
-  warning("Failed to load stub_suco_data.R: ", e$message)
-})
+for (stub_file in stub_files) {
+  stub_path <- file.path(stub_dir, stub_file)
+  if (file.exists(stub_path)) {
+    tryCatch({
+      source(stub_path)
+      cat("✓ Loaded", stub_file, "\n")
+    }, error = function(e) {
+      cat("✗ Failed to load", stub_file, ":", e$message, "\n")
+    })
+  } else {
+    cat("✗ File not found:", stub_path, "\n")
+  }
+}
 
 message("Stub data loaded. Use get_stub_*() functions to access test data.")

@@ -97,7 +97,7 @@ get_suco_data <- function(data_source = "all", date_range = NULL, return_species
   
   if (table_strategy$query_current) {
     queries$current <- sprintf("
-SELECT
+SELECT DISTINCT ON (s.id)
 s.id, s.ainspecnum, 
 COALESCE(g.facility, h.facility, s.facility) as facility,
 COALESCE(g.fosarea, h.foreman, s.foreman) as foreman,
@@ -115,12 +115,13 @@ LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
 LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
+ORDER BY s.id, h.startdate DESC NULLS LAST
 ", start_date, end_date)
   }
   
   if (table_strategy$query_archive) {
     queries$archive <- sprintf("
-SELECT
+SELECT DISTINCT ON (s.id)
 s.id, s.ainspecnum, 
 COALESCE(g.facility, h.facility, s.facility) as facility,
 COALESCE(g.fosarea, h.foreman, s.foreman) as foreman,
@@ -138,6 +139,7 @@ LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
 LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
 WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
+ORDER BY s.id, h.startdate DESC NULLS LAST
 ", start_date, end_date)
   }
   

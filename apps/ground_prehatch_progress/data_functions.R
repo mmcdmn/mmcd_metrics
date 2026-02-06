@@ -9,6 +9,12 @@ if (!exists("get_db_connection", mode = "function")) {
 # Unified function to load raw ground prehatch data 
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
                          start_year = NULL, end_year = NULL, include_geometry = FALSE) {
+  # Determine which tables have data for this analysis_date
+  table_info <- get_table_strategy(analysis_date)
+  if (table_info$query_archive) {
+    include_archive <- TRUE
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
@@ -28,11 +34,11 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
            sc.fosarea as foreman%s
     FROM loc_breeding_sites b
     LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
-    WHERE (b.enddate IS NULL OR b.enddate>'%s-05-01')
+    WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
       AND b.air_gnd='G'
       AND b.prehatch IN ('PREHATCH','BRIQUET')
     ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
-    ", geom_select, analysis_year)
+    ", geom_select, as.character(analysis_date))
     
     ground_sites <- dbGetQuery(con, sites_query)
     
@@ -89,37 +95,32 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     }
     
     # Calculate site-level status from latest treatment per site
-    # STANDARDIZED: sites MUST have is_active, is_expiring, and treated_acres columns
-    # treated_acres = the acres from the LATEST treatment (not site.acres)
+    # STANDARDIZED: sites MUST have is_active and is_expiring columns
     if (nrow(ground_treatments) > 0) {
       current_date <- as.Date(analysis_date)
       expiring_days <- 7  # Default expiring window
       
-      # Get the LATEST treatment per site with its treated_acres
-      # A new treatment OVERWRITES the old one - no double counting
       site_status <- ground_treatments %>%
         mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days),
-          is_active = treatment_end >= current_date & as.Date(inspdate) <= current_date,
+          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
+          is_active = treatment_end >= current_date,
           is_expiring = is_active & treatment_end <= (current_date + expiring_days)
         ) %>%
         group_by(sitecode) %>%
         arrange(desc(inspdate)) %>%
         slice(1) %>%
         ungroup() %>%
-        select(sitecode, is_active, is_expiring, treated_acres)
+        select(sitecode, is_active, is_expiring)
       
       ground_sites <- ground_sites %>%
         left_join(site_status, by = "sitecode") %>%
         mutate(
           is_active = ifelse(is.na(is_active), FALSE, is_active),
-          is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring),
-          treated_acres = ifelse(is.na(treated_acres), 0, treated_acres)
+          is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
         )
     } else {
       ground_sites$is_active <- FALSE
       ground_sites$is_expiring <- FALSE
-      ground_sites$treated_acres <- 0
     }
     
     # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring

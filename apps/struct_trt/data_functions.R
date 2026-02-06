@@ -138,6 +138,12 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
   con <- get_db_connection()
   if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
+  # Determine which tables have data for this analysis_date
+  table_info <- get_table_strategy(analysis_date)
+  if (table_info$query_archive) {
+    include_archive <- TRUE
+  }
+  
   tryCatch({
     # Current mode: First get ALL structures from loc_cxstruct (the universe)
     # This ensures total_count matches what the individual app shows
@@ -162,13 +168,14 @@ SELECT
   gis.fosarea as foreman
 FROM public.loc_cxstruct loc
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
-WHERE (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+WHERE (loc.enddate IS NULL OR loc.enddate > '%s'::date)
 %s
 %s
 %s
 %s
 %s
 ",
+      analysis_date,
       zone_condition,
       get_facility_condition(facility_filter),
       get_structure_type_condition(structure_type_filter),
@@ -196,7 +203,7 @@ LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE trt.list_type = 'STR'
-  AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+  AND (loc.enddate IS NULL OR loc.enddate > '%s'::date)
   AND trt.inspdate <= '%s'::date
   AND loc.startdate <= '%s'::date
 %s
@@ -205,6 +212,7 @@ WHERE trt.list_type = 'STR'
 %s
 %s
 ",
+      analysis_date,
       analysis_date,
       analysis_date,
       zone_condition,
@@ -241,14 +249,17 @@ LEFT JOIN public.mattype_list_targetdose mat ON trt.matcode = mat.matcode
 LEFT JOIN public.loc_cxstruct loc ON trt.sitecode = loc.sitecode
 LEFT JOIN public.gis_sectcode gis ON loc.sectcode = gis.sectcode
 WHERE trt.list_type = 'STR'
-  AND (loc.enddate IS NULL OR loc.enddate > CURRENT_DATE)
+  AND (loc.enddate IS NULL OR loc.enddate > '%s'::date)
   AND trt.inspdate <= '%s'::date
+  AND loc.startdate <= '%s'::date
 %s
 %s
 %s
 %s
 %s
 ",
+        analysis_date,
+        analysis_date,
         analysis_date,
         zone_condition,
         get_facility_condition(facility_filter),

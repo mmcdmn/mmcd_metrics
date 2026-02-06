@@ -13,6 +13,12 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
+  # Determine which tables have data for this analysis_date
+  table_info <- get_table_strategy(analysis_date)
+  if (table_info$query_archive) {
+    include_archive <- TRUE
+  }
+  
   tryCatch({
     # Build filter conditions using shared helpers
     facility_condition <- ""

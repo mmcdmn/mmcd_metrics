@@ -7,7 +7,7 @@
 # =============================================================================
 # SHORT-TERM CACHE FOR CURRENT WEEK VALUES
 # Reduces DB load under concurrent multi-user access
-# Cache expires after 60 seconds - data rarely changes within a minute
+# Cache expires after 120 seconds - data rarely changes within two minutes
 # =============================================================================
 
 # In-memory cache (per R process)
@@ -17,9 +17,9 @@
 #' @param metric_id Metric ID
 #' @param analysis_date Date for analysis  
 #' @param zone_filter Zones to include
-#' @param ttl_seconds Cache time-to-live in seconds (default 60)
+#' @param ttl_seconds Cache time-to-live in seconds (default 120)
 #' @return Current week's value or NULL
-get_cached_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1", "2"), ttl_seconds = 60) {
+get_cached_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1", "2"), ttl_seconds = 120) {
   cache_key <- paste(metric_id, as.character(analysis_date), paste(zone_filter, collapse = "_"), sep = "|")
   
   # Check if cached and not expired
@@ -515,7 +515,7 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   current_week <- if (!is.null(weekly_value)) {
     weekly_value
   } else {
-    # Use cached value (60s TTL) to reduce DB load under concurrent access
+    # Use cached value (120s TTL) to reduce DB load under concurrent access
     get_cached_current_week_value(metric_id, analysis_date, zone_filter)
   }
   if (is.null(current_week)) {
@@ -1148,6 +1148,11 @@ build_overview_server <- function(input, output, session,
   # =========================================================================
   # SUMMARY STATS OUTPUT
   # =========================================================================
+  
+  # When current data is ready, tell the client to swap skeleton for real content
+  observeEvent(current_data(), {
+    session$sendCustomMessage("hideLoadingSkeleton", TRUE)
+  })
   
   output$summary_stats <- renderUI({
     req(current_data())

@@ -123,7 +123,7 @@ load_raw_data <- function(analysis_date = NULL,
         b.prehatch
       FROM loc_breeding_sites b
       INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-      WHERE b.enddate IS NULL
+      WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
       %s
     ),
     site_years AS (
@@ -162,7 +162,7 @@ load_raw_data <- function(analysis_date = NULL,
       FROM dblarv_insptrt_archive
     ) i ON fs.sitecode = i.sitecode
     ORDER BY fs.sitecode, i.inspdate DESC
-    ", where_clause)
+    ", analysis_date, where_clause)
     
     result <- dbGetQuery(con, qry)
     safe_disconnect(con)

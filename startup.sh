@@ -1,20 +1,25 @@
 #!/bin/bash
 # =============================================================================
-# MMCD Dashboard - Multi-Instance Startup Script
+# MMCD Dashboard - Smart Startup Script
 # =============================================================================
-# Shiny Server Open Source runs ONE R process per app (single-threaded).
-# To achieve true concurrency we spin up multiple Shiny Server instances
-# on different internal ports and let nginx load-balance across them.
+# Two modes controlled by the ENABLE_NGINX environment variable:
 #
-# Set SHINY_WORKERS env var to control the number of instances (default: 3).
+#   ENABLE_NGINX=true  (local development)
+#     → Runs multiple Shiny Server instances behind nginx for true
+#       concurrency from a single machine.
+#
+#   ENABLE_NGINX=false or unset  (production / AWS App Runner)
+#     → Runs a single Shiny Server directly on port 3838.
+#       App Runner handles concurrency by spinning up multiple
+#       container instances, so nginx is unnecessary and actually
+#       breaks WebSocket connections (double-proxy issue).
+#
+# Additional env vars:
+#   SHINY_WORKERS  – number of Shiny Server instances (default: 3)
+#   PORT           – override the listen port (App Runner sets this)
 # =============================================================================
 
 set -e
-
-# --------------- Configuration ---------------
-NUM_WORKERS=${SHINY_WORKERS:-3}
-BASE_PORT=3839
-PIDS=()
 
 # --------------- Create .env file from Docker env vars ---------------
 echo "# Environment variables for MMCD Dashboard" > /srv/shiny-server/.env
@@ -28,6 +33,7 @@ chown shiny:shiny /srv/shiny-server/.env
 echo "Created .env file with environment variables"
 
 # --------------- Signal handling for clean shutdown ---------------
+PIDS=()
 cleanup() {
     echo "Shutting down all processes..."
     for pid in "${PIDS[@]}"; do
@@ -38,11 +44,37 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
-# --------------- Generate per-instance configs & start workers ---------------
+# =============================================================================
+# MODE: Production (single Shiny Server, no nginx)
+# =============================================================================
+if [ "${ENABLE_NGINX}" != "true" ]; then
+    LISTEN_PORT=${PORT:-3838}
+
+    echo ""
+    echo "============================================================"
+    echo "  MMCD Dashboard — Direct mode (no nginx)"
+    echo "  Listening on port $LISTEN_PORT"
+    echo "  Concurrency is handled by the hosting platform"
+    echo "============================================================"
+    echo ""
+
+    # If App Runner provides a PORT env var, patch the config
+    if [ "$LISTEN_PORT" != "3838" ]; then
+        sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/shiny-server/shiny-server.conf
+    fi
+
+    exec /usr/bin/shiny-server
+fi
+
+# =============================================================================
+# MODE: Local development (multiple instances behind nginx)
+# =============================================================================
+NUM_WORKERS=${SHINY_WORKERS:-3}
+BASE_PORT=3839
+
 echo "Starting $NUM_WORKERS Shiny Server worker instances..."
 
-# Build the nginx upstream block dynamically based on NUM_WORKERS
-# Write a small include file with the server list
+# Build the nginx upstream block dynamically
 {
     echo "    upstream shiny_workers {"
     echo "        least_conn;"
@@ -63,7 +95,6 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     mkdir -p "$LOG_DIR"
     chown -R shiny:shiny "$LOG_DIR"
 
-    # Generate config: swap the listen port and give each instance its own log dir
     sed "s/listen 3838/listen ${PORT}/" /etc/shiny-server/shiny-server.conf \
         | sed "s|log_dir /var/log/shiny-server;|log_dir ${LOG_DIR};|g" \
         > "$CONF"
@@ -73,7 +104,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     echo "  ✓ Instance $i  →  port $PORT  (PID ${PIDS[-1]})"
 done
 
-# --------------- Start nginx (load balancer on :3838) ---------------
+# Start nginx (load balancer on :3838)
 nginx -g 'daemon off;' &
 PIDS+=($!)
 echo "  ✓ nginx load balancer on port 3838 (PID ${PIDS[-1]})"

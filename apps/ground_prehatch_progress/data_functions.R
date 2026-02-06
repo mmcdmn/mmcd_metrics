@@ -89,32 +89,37 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     }
     
     # Calculate site-level status from latest treatment per site
-    # STANDARDIZED: sites MUST have is_active and is_expiring columns
+    # STANDARDIZED: sites MUST have is_active, is_expiring, and treated_acres columns
+    # treated_acres = the acres from the LATEST treatment (not site.acres)
     if (nrow(ground_treatments) > 0) {
       current_date <- as.Date(analysis_date)
       expiring_days <- 7  # Default expiring window
       
+      # Get the LATEST treatment per site with its treated_acres
+      # A new treatment OVERWRITES the old one - no double counting
       site_status <- ground_treatments %>%
         mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
-          is_active = treatment_end >= current_date,
+          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days),
+          is_active = treatment_end >= current_date & as.Date(inspdate) <= current_date,
           is_expiring = is_active & treatment_end <= (current_date + expiring_days)
         ) %>%
         group_by(sitecode) %>%
         arrange(desc(inspdate)) %>%
         slice(1) %>%
         ungroup() %>%
-        select(sitecode, is_active, is_expiring)
+        select(sitecode, is_active, is_expiring, treated_acres)
       
       ground_sites <- ground_sites %>%
         left_join(site_status, by = "sitecode") %>%
         mutate(
           is_active = ifelse(is.na(is_active), FALSE, is_active),
-          is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
+          is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring),
+          treated_acres = ifelse(is.na(treated_acres), 0, treated_acres)
         )
     } else {
       ground_sites$is_active <- FALSE
       ground_sites$is_expiring <- FALSE
+      ground_sites$treated_acres <- 0
     }
     
     # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring

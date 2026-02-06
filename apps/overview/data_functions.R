@@ -263,8 +263,24 @@ load_metric_data <- function(metric,
         .groups = "drop"
       )
     
-    # Add acres columns if they exist
-    if ("acres" %in% names(sites)) {
+    # Add acres columns - prefer treated_acres from latest treatment over site.acres
+    # treated_acres = the actual acres treated (from the LATEST treatment per site)
+    # site.acres = the site's defined size (may differ from treatment acres)
+    if ("treated_acres" %in% names(sites)) {
+      # Use treated_acres from latest treatment (correct for ground_prehatch, drone)
+      acres_data <- sites %>%
+        filter(zone %in% zone_filter) %>%
+        group_by(facility, zone) %>%
+        summarize(
+          total_acres = sum(acres, na.rm = TRUE),  # Site acres for total
+          active_acres = sum(ifelse(is_active, treated_acres, 0), na.rm = TRUE),
+          expiring_acres = sum(ifelse(is_expiring, treated_acres, 0), na.rm = TRUE),
+          .groups = "drop"
+        )
+      result <- base_result %>%
+        left_join(acres_data, by = c("facility", "zone"))
+    } else if ("acres" %in% names(sites)) {
+      # Fallback to site.acres for metrics without treated_acres (cattail)
       acres_data <- sites %>%
         filter(zone %in% zone_filter) %>%
         group_by(facility, zone) %>%

@@ -46,30 +46,66 @@ get_overview_css <- function() {
     .chart-panel-wrapper {
       height: 0;
       overflow: hidden;
-      transition: height 0.3s ease-out;
-      max-width: 400px;
-      margin: 0 auto 20px auto;
+      transition: all 0.3s ease-out;
+      opacity: 0;
+      max-width: 0;
+      flex: 0 0 0;
+      margin: 0;
+      padding: 0;
     }
     .chart-panel-wrapper.visible {
       height: auto;
       overflow: visible;
+      opacity: 1;
+      max-width: none;
+      flex: 1 1 400px;
+      margin: 0 0 20px 0;
+      padding: 10px;
     }
     .charts-flex-container {
       display: flex;
       flex-wrap: wrap;
       gap: 15px;
       justify-content: flex-start;
-      align-items: flex-start;
+      align-items: stretch;
+    }
+    /* Dynamic sizing based on visible chart count */
+    .charts-flex-container .chart-panel-wrapper.visible:only-child {
+      flex: 1 1 100%;
+      max-width: 100%;
     }
     .inline-chart {
-      flex: 0 1 calc(50% - 8px);
       min-width: 350px;
+    }
+    .inline-chart.visible {
+      flex: 1 1 calc(50% - 8px);
     }
     .drilldown-chart {
       max-width: 100% !important;
       width: 100%;
       margin: 20px 0;
     }
+    /* Comparison banner shown when chart is expanded */
+    .comparison-banner {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 15px;
+      padding: 10px 15px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      background: #f0f4f8;
+      border: 1px solid #d0d7de;
+    }
+    .comparison-banner .separator { color: #999; }
+    .comparison-banner .current { color: #333; }
+    .comparison-banner .historical { color: #666; }
+    .comparison-banner .diff.positive { color: #16a34a; font-weight: 600; }
+    .comparison-banner .diff.negative { color: #dc2626; font-weight: 600; }
+    .comparison-banner.positive { background: #dcfce7; border-color: #86efac; }
+    .comparison-banner.negative { background: #fee2e2; border-color: #fca5a5; }
     @media (max-width: 768px) {
       .inline-chart {
         flex: 1 1 100%;
@@ -330,31 +366,74 @@ get_overview_js <- function() {
       window.location.href = url;
     });
     
+    // Clear banners and reset active states when refresh is clicked
+    $(document).on('click', '#refresh', function() {
+      // Remove all comparison banners (they will be stale after refresh)
+      $('.comparison-banner').remove();
+      // Close all open charts and reset active states
+      $('.chart-panel-wrapper.visible').removeClass('visible');
+      $('.stat-box-clickable.active').removeClass('active');
+    });
+    
     // Value box click to toggle chart visibility (for district view - metric boxes)
     $(document).on('click', '.stat-box-clickable[data-metric-id]', function() {
       var metricId = $(this).data('metric-id');
       var chartWrapper = $('#chart_wrapper_' + metricId);
       var statBox = $(this);
       
+      // Get comparison data from data attributes
+      var currentWeek = statBox.data('current-week');
+      var historicalAvg = statBox.data('historical-avg');
+      var pctDiff = statBox.data('pct-diff');
+      var weekNum = statBox.data('week-num');
+      
       // Toggle visibility
       chartWrapper.toggleClass('visible');
       statBox.toggleClass('active');
       
+      // Update comparison banner in chart wrapper
+      var comparisonBanner = chartWrapper.find('.comparison-banner');
+      if (chartWrapper.hasClass('visible') && historicalAvg && currentWeek !== undefined && currentWeek !== '') {
+        var diffClass = pctDiff >= 0 ? 'positive' : 'negative';
+        var diffSign = pctDiff >= 0 ? '+' : '';
+        var bannerHtml = '<div class=\"comparison-banner ' + diffClass + '\">' +
+          '<span class=\"current\">Current: ' + Math.round(currentWeek).toLocaleString() + '</span>' +
+          '<span class=\"separator\">|</span>' +
+          '<span class=\"historical\">10yr Week Avg: ' + Math.round(historicalAvg).toLocaleString() + '</span>' +
+          '<span class=\"separator\">|</span>' +
+          '<span class=\"diff ' + diffClass + '\">' + diffSign + pctDiff + '%</span>' +
+          '</div>';
+        if (comparisonBanner.length) {
+          comparisonBanner.replaceWith(bannerHtml);
+        } else {
+          chartWrapper.prepend(bannerHtml);
+        }
+      } else {
+        comparisonBanner.remove();
+      }
+      
       // Scroll to chart if now visible and resize Plotly
       if (chartWrapper.hasClass('visible')) {
-        // Wait for CSS transition to complete, then resize plotly
         setTimeout(function() {
-          // Find all plotly charts in this wrapper and resize them
-          chartWrapper.find('.plotly').each(function() {
+          // Resize all visible Plotly charts to fit new layout
+          $('.charts-flex-container .chart-panel-wrapper.visible .plotly').each(function() {
             if (window.Plotly && this.layout) {
               window.Plotly.Plots.resize(this);
             }
           });
-          // Scroll to chart after resize
           $('html, body').animate({
             scrollTop: chartWrapper.offset().top - 100
           }, 300);
-        }, 350); // Wait slightly longer than CSS transition
+        }, 350);
+      } else {
+        // Also resize remaining charts when one is hidden
+        setTimeout(function() {
+          $('.charts-flex-container .chart-panel-wrapper.visible .plotly').each(function() {
+            if (window.Plotly && this.layout) {
+              window.Plotly.Plots.resize(this);
+            }
+          });
+        }, 350);
       }
       
       // Send visibility state to server
@@ -438,7 +517,13 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
       paste0(config$display_name, " ", y_suffix, " (Historical)")
     }
   } else {
-    paste0(config$display_name, " Progress")
+    # For current progress charts
+    # Metrics with display_as_average don't show "Progress" - they show status/comparison
+    if (isTRUE(config$display_as_average)) {
+      config$display_name  # Just the metric name (e.g., "avg mosquitoes per trap")
+    } else {
+      paste0(config$display_name, " Progress")  # Traditional progress metrics
+    }
   }
   
   filter_id <- paste0(metric_id, "_filters")

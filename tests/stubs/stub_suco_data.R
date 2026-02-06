@@ -82,9 +82,9 @@ get_stub_suco_inspections <- function(n = 10) {
       "No species identified",
       "Aedes triseriatus: 10",
       "Multiple species: 15",
-      rep("Aedes japonicus: 1<br>Culex tarsalis: 1", n - 5)
+      if (n > 5) rep("Aedes japonicus: 1<br>Culex tarsalis: 1", n - 5) else NULL
     )[1:n],
-    total_species_count = c(8, 2, 0, 10, 15, rep(2, n - 5))[1:n],
+    total_species_count = c(8, 2, 0, 10, 15, if (n > 5) rep(2, n - 5) else NULL)[1:n],
     stringsAsFactors = FALSE
   )
 }

@@ -82,10 +82,40 @@ if (is.null(stub_dir) || stub_dir == "" || stub_dir == ".") {
 }
 
 # Source all stub files
-source(file.path(stub_dir, "stub_loc_cxstruct.R"))
-source(file.path(stub_dir, "stub_treatments.R"))
-source(file.path(stub_dir, "stub_breeding_sites.R"))
-source(file.path(stub_dir, "stub_catchbasin.R"))
-source(file.path(stub_dir, "stub_employees.R"))
+tryCatch({
+  source(file.path(stub_dir, "stub_loc_cxstruct.R"))
+}, error = function(e) {
+  warning("Failed to load stub_loc_cxstruct.R from ", stub_dir, ": ", e$message)
+})
+
+tryCatch({
+  source(file.path(stub_dir, "stub_treatments.R"))
+}, error = function(e) {
+  warning("Failed to load stub_treatments.R: ", e$message)
+})
+
+tryCatch({
+  source(file.path(stub_dir, "stub_breeding_sites.R"))
+}, error = function(e) {
+  warning("Failed to load stub_breeding_sites.R: ", e$message)
+})
+
+tryCatch({
+  source(file.path(stub_dir, "stub_catchbasin.R"))
+}, error = function(e) {
+  warning("Failed to load stub_catchbasin.R: ", e$message)
+})
+
+tryCatch({
+  source(file.path(stub_dir, "stub_employees.R"))
+}, error = function(e) {
+  warning("Failed to load stub_employees.R: ", e$message)
+})
+
+tryCatch({
+  source(file.path(stub_dir, "stub_suco_data.R"))
+}, error = function(e) {
+  warning("Failed to load stub_suco_data.R: ", e$message)
+})
 
 message("Stub data loaded. Use get_stub_*() functions to access test data.")

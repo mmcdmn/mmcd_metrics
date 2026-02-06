@@ -11,35 +11,55 @@ library(testthat)
 use_stubs <- Sys.getenv("USE_STUBS", "TRUE") == "TRUE"
 
 # Load shared libraries
+# Resolve paths: tests run from tests/apps/ via test_dir, or from project root
+.resolve_shared <- function(rel_path) {
+  candidates <- c(
+    file.path("../../shared", rel_path),   # from tests/apps/
+    file.path("shared", rel_path)          # from project root
+  )
+  for (p in candidates) if (file.exists(p)) return(p)
+  stop("Cannot find shared/", rel_path)
+}
+.resolve_app <- function(rel_path) {
+  candidates <- c(
+    file.path("../../apps", rel_path),     # from tests/apps/
+    file.path("apps", rel_path)            # from project root
+  )
+  for (p in candidates) if (file.exists(p)) return(p)
+  stop("Cannot find apps/", rel_path)
+}
+
 tryCatch({
-  source("../../shared/app_libraries.R")
-  source("../../shared/db_helpers.R")
-  source("../../shared/geometry_helpers.R")
+  source(.resolve_shared("app_libraries.R"))
+  source(.resolve_shared("db_helpers.R"))
+  source(.resolve_shared("geometry_helpers.R"))
 }, error = function(e) {
-  # Fallback paths when running from project root
-  source("shared/app_libraries.R")
-  source("shared/db_helpers.R")
-  source("shared/geometry_helpers.R")
+  warning("Could not load shared libraries: ", e$message)
 })
 
 # Load app-specific functions
 tryCatch({
-  source("../../apps/suco_history/data_functions.R")
-  source("../../apps/suco_history/display_functions.R")
+  source(.resolve_app("suco_history/data_functions.R"))
+  source(.resolve_app("suco_history/display_functions.R"))
 }, error = function(e) {
-  source("apps/suco_history/data_functions.R")
-  source("apps/suco_history/display_functions.R")
+  warning("Could not load suco_history app functions: ", e$message)
 })
 
 # Load stubs if in isolated mode
 if (use_stubs) {
-  tryCatch({
-    source("../stubs/stub_suco_data.R")
-    source("../stubs/stub_db.R")
-  }, error = function(e) {
-    source("tests/stubs/stub_suco_data.R")
-    source("tests/stubs/stub_db.R")
-  })
+  .resolve_stub <- function(rel_path) {
+    candidates <- c(
+      file.path("../stubs", rel_path),   # from tests/apps/
+      file.path("tests/stubs", rel_path) # from project root
+    )
+    for (p in candidates) if (file.exists(p)) return(p)
+    warning("Cannot find stubs/", rel_path)
+    return(NULL)
+  }
+  for (.stub in c("stub_suco_data.R", "stub_db.R")) {
+    .sp <- .resolve_stub(.stub)
+    if (!is.null(.sp)) tryCatch(source(.sp), error = function(e) warning("Could not load stub ", .stub, ": ", e$message))
+  }
 }
 
 # =============================================================================

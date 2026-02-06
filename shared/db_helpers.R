@@ -40,7 +40,13 @@
 # Load required libraries
 suppressPackageStartupMessages({
   library(DBI)
-  library(RPostgres)
+  # RPostgres may not be installed in test environments;
+  # load conditionally so all function definitions still get processed
+  if (!requireNamespace("RPostgres", quietly = TRUE)) {
+    message("Note: RPostgres not available - database connections will not work")
+  } else {
+    library(RPostgres)
+  }
   library(dplyr)
 })
 
@@ -451,6 +457,125 @@ get_historical_year_ranges <- function(con, current_table, archive_table, date_c
     warning(paste("Error getting historical year ranges:", e$message))
     return(list(current_years = c(), archive_years = c()))
   })
+}
+
+# =============================================================================
+# TABLE STRATEGY: Determine which tables to query based on ACTUAL data
+# =============================================================================
+# Instead of comparing analysis_date year vs Sys.Date() year, this queries
+# the database to see what years actually exist in current vs archive tables.
+# Caches the result per table pair for 300 seconds (5 min) to avoid repeated
+# DB queries within the same session.
+#
+# Usage:
+#   strategy <- get_table_strategy(analysis_date)
+#   # strategy$query_current   - TRUE/FALSE
+#   # strategy$query_archive   - TRUE/FALSE
+#   # strategy$insptrt_source  - SQL fragment: table name or UNION ALL
+#
+# For custom table pairs (e.g., dbadult_insp_*):
+#   strategy <- get_table_strategy(analysis_date,
+#     current_table = "dbadult_insp_current",
+#     archive_table = "dbadult_insp_archive")
+# =============================================================================
+
+.table_strategy_cache <- new.env(parent = emptyenv())
+
+get_table_strategy <- function(analysis_date,
+                               current_table = "dblarv_insptrt_current",
+                               archive_table = "dblarv_insptrt_archive",
+                               date_column = "inspdate",
+                               ttl_seconds = 300) {
+  
+  # Default: both tables, covers the common case
+  default_result <- function() {
+    list(
+      query_current = TRUE,
+      query_archive = TRUE,
+      current_years = integer(0),
+      archive_years = integer(0),
+      insptrt_source = sprintf("(SELECT * FROM %s UNION ALL SELECT * FROM %s)",
+                               current_table, archive_table)
+    )
+  }
+  
+  # Cache key based on table pair (not date — year ranges don't change often)
+  cache_key <- paste(current_table, archive_table, sep = "|")
+  
+  # Check cache
+  if (exists(cache_key, envir = .table_strategy_cache)) {
+    cached <- get(cache_key, envir = .table_strategy_cache)
+    if (difftime(Sys.time(), cached$timestamp, units = "secs") < ttl_seconds) {
+      # Use cached year ranges, just re-evaluate which tables needed for THIS date
+      return(evaluate_strategy(cached$current_years, cached$archive_years,
+                               analysis_date, current_table, archive_table))
+    }
+  }
+  
+  # Query database for actual year ranges
+  con <- get_db_connection()
+  if (is.null(con)) return(default_result())
+  
+  tryCatch({
+    year_ranges <- get_historical_year_ranges(con, current_table, archive_table, date_column)
+    safe_disconnect(con)
+    
+    # Cache the year ranges
+    assign(cache_key, list(
+      current_years = year_ranges$current_years,
+      archive_years = year_ranges$archive_years,
+      timestamp = Sys.time()
+    ), envir = .table_strategy_cache)
+    
+    evaluate_strategy(year_ranges$current_years, year_ranges$archive_years,
+                      analysis_date, current_table, archive_table)
+    
+  }, error = function(e) {
+    warning(paste("get_table_strategy error:", e$message))
+    tryCatch(safe_disconnect(con), error = function(e2) NULL)
+    default_result()
+  })
+}
+
+# Internal: Given known year ranges, decide which tables to query for a date
+evaluate_strategy <- function(current_years, archive_years,
+                              analysis_date, current_table, archive_table) {
+  target_year <- as.integer(format(as.Date(analysis_date), "%Y"))
+  
+  in_current <- target_year %in% current_years
+  in_archive <- target_year %in% archive_years
+  
+  query_current <- in_current
+  query_archive <- in_archive
+  
+  # Fallback: if the target year isn't in either table, query both
+  if (!in_current && !in_archive) {
+    query_current <- TRUE
+    query_archive <- TRUE
+  }
+  
+  # Build SQL source fragment
+  if (query_current && query_archive) {
+    insptrt_source <- sprintf("(SELECT * FROM %s UNION ALL SELECT * FROM %s)",
+                              current_table, archive_table)
+  } else if (query_archive) {
+    insptrt_source <- archive_table
+  } else {
+    insptrt_source <- current_table
+  }
+  
+  list(
+    query_current  = query_current,
+    query_archive  = query_archive,
+    current_years  = current_years,
+    archive_years  = archive_years,
+    insptrt_source = insptrt_source
+  )
+}
+
+# Convenience: clear cached table strategy (call after data migration)
+clear_table_strategy_cache <- function() {
+  rm(list = ls(envir = .table_strategy_cache), envir = .table_strategy_cache)
 }
 
 # Facility lookup functions (CACHED - in-memory first, then file-based)

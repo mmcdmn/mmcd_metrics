@@ -16,6 +16,12 @@ if (!exists("get_db_connection", mode = "function")) {
 load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Date(), 
                          include_archive = FALSE, start_year = NULL, end_year = NULL,
                          include_geometry = FALSE) {
+  # Determine which tables have data for this analysis_date
+  table_info <- get_table_strategy(analysis_date)
+  if (table_info$query_archive) {
+    include_archive <- TRUE
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   
@@ -50,9 +56,9 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
     AND e.emp_type = 'FieldSuper' 
     AND e.active = true
   WHERE (b.drone IN (%s) OR b.air_gnd = 'D')
-  AND b.enddate IS NULL
+  AND (b.enddate IS NULL OR b.enddate > '%s'::date)
   AND b.startdate <= '%s'::date %s
-  ", geom_select, drone_types_str, analysis_date, geom_where)
+  ", geom_select, drone_types_str, analysis_date, analysis_date, geom_where)
   
   drone_sites <- dbGetQuery(con, drone_sites_query)
   
@@ -124,29 +130,26 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   drone_treatments <- drone_treatments %>%
     mutate(
       inspdate = as.Date(inspdate),
-      effect_days = ifelse(is.na(effect_days), 14, effect_days),
+      effect_days = ifelse(is.na(effect_days), 0, effect_days),
       treatment_end_date = inspdate + effect_days,
-      is_active = treatment_end_date >= current_date & inspdate <= current_date,
+      is_active = treatment_end_date >= current_date,
       is_expiring = is_active & treatment_end_date <= (current_date + 7)
     )
   
   # Calculate site-level status from latest treatment per site
-  # STANDARDIZED: sites MUST have is_active, is_expiring, and treated_acres columns
-  # treated_acres = the acres from the LATEST treatment (not site.acres)
-  # A new treatment OVERWRITES the old one - no double counting
+  # STANDARDIZED: sites MUST have is_active and is_expiring columns
   site_status <- drone_treatments %>%
     group_by(sitecode) %>%
     arrange(desc(inspdate)) %>%
     slice(1) %>%
     ungroup() %>%
-    select(sitecode, is_active, is_expiring, treated_acres)
+    select(sitecode, is_active, is_expiring)
   
   drone_sites <- drone_sites %>%
     left_join(site_status, by = "sitecode") %>%
     mutate(
       is_active = ifelse(is.na(is_active), FALSE, is_active),
-      is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring),
-      treated_acres = ifelse(is.na(treated_acres), 0, treated_acres)
+      is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
     )
   
   # Return STANDARDIZED format - sites ALWAYS has is_active, is_expiring
@@ -512,7 +515,9 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
     )
   
   # Join sites with treatment status
+  # Drop treated_acres from sites first to avoid column name collision with treatments
   spatial_data <- filtered_data$sites %>%
+    select(-any_of(c("treated_acres", "is_active", "is_expiring"))) %>%
     left_join(latest_treatments, by = "sitecode") %>%
     mutate(
       treatment_status = if_else(is.na(treatment_status), "No Treatment", treatment_status),

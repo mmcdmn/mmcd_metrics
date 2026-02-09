@@ -226,24 +226,32 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
   # Create one row per checkback
   checkback_list <- list()
   
+  get_species_info <- function(sample_id, species_data) {
+    if (is.null(species_data) || is.null(sample_id) || is.na(sample_id) || sample_id == "") {
+      return(list(comp = NA_character_, redblue = NA, missing = NA))
+    }
+    species_match <- species_data %>% filter(sampnum_yr == !!sample_id)
+    if (nrow(species_match) > 0) {
+      return(list(
+        comp = species_match$species_composition[1],
+        redblue = species_match$redblue[1],
+        missing = species_match$missing[1]
+      ))
+    }
+    return(list(comp = NA_character_, redblue = NA, missing = NA))
+  }
+  
   for (i in 1:nrow(checkbacks)) {
     checkback <- checkbacks[i, ]
     site <- checkback$sitecode
     checkback_date <- checkback$inspdate
     sampnum_yr <- checkback$sampnum_yr
     
-    # Get species composition for this checkback if available
-    species_comp <- ""
-    redblue_val <- NA
-    missing_val <- NA
-    if (!is.null(species_data) && !is.null(sampnum_yr) && !is.na(sampnum_yr) && sampnum_yr != "") {
-      species_match <- species_data %>% filter(sampnum_yr == !!sampnum_yr)
-      if (nrow(species_match) > 0) {
-        species_comp <- species_match$species_composition[1]
-        redblue_val <- species_match$redblue[1]
-        missing_val <- species_match$missing[1]
-      }
-    }
+    # Get species composition for this checkback (post-treatment) if available
+    post_info <- get_species_info(sampnum_yr, species_data)
+    post_species_comp <- post_info$comp
+    redblue_val <- post_info$redblue
+    missing_val <- post_info$missing
     
     # Find all treatments at this site BEFORE this checkback
     site_treatments <- treatments %>%
@@ -259,6 +267,12 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
       matcode <- site_treatments$matcode[last_treatment_idx]
       mattype <- site_treatments$mattype[last_treatment_idx]
       effect_days <- site_treatments$effect_days[last_treatment_idx]
+      pre_sampnum_yr <- site_treatments$presamp_yr[last_treatment_idx]
+      if (is.null(pre_sampnum_yr) || is.na(pre_sampnum_yr) || pre_sampnum_yr == "") {
+        pre_sampnum_yr <- site_treatments$sampnum_yr[last_treatment_idx]
+      }
+      pre_info <- get_species_info(pre_sampnum_yr, species_data)
+      pre_species_comp <- pre_info$comp
       
       # Find the inspection date (could be same as treatment or earlier)
       inspection_date <- site_treatments$inspdate[last_treatment_idx]
@@ -278,7 +292,9 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
         mattype = mattype,
         effect_days = effect_days,
         days_to_checkback = days_diff,
-        species_composition = species_comp,
+        pre_species_composition = pre_species_comp,
+        post_species_composition = post_species_comp,
+        species_composition = post_species_comp,
         redblue = redblue_val,
         missing = missing_val,
         stringsAsFactors = FALSE

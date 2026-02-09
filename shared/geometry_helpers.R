@@ -517,4 +517,176 @@ add_marker_type_legend <- function(map, position = "bottomleft",
     )
 }
 
+# =============================================================================
+# 6. AIR SITE LAYER HELPERS
+# =============================================================================
+
+#' Load air site shapefiles with optional facility filtering
+#' 
+#' Scans facility subfolders under the air_sites directory for *_airsites.shp
+#' files and combines them. Structure mirrors harborage loading.
+#'
+#' @param base_path Path to air_sites directory
+#' @param facility_filter Facility code to filter by (or NULL/"all" for all)
+#' @return Combined sf object or NULL if no air sites found
+#' @export
+load_airsite_layers <- function(base_path = NULL, facility_filter = NULL) {
+  # Default path
+  if (is.null(base_path)) {
+    base_path <- file.path("..", "..", "shared", "Q_to_R", "data", "air_sites")
+  }
+  
+  if (!dir.exists(base_path)) {
+    message("Air sites directory not found: ", base_path)
+    return(NULL)
+  }
+  
+  # Get facility folders
+  facility_folders <- list.dirs(base_path, full.names = TRUE, recursive = FALSE)
+  
+  # Filter by facility if specified
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    facility_folders <- facility_folders[tolower(basename(facility_folders)) == tolower(facility_filter)]
+  }
+  
+  all_airsites <- list()
+  
+  for (folder in facility_folders) {
+    facility_code <- basename(folder)
+    shp_files <- list.files(folder, pattern = "_airsites\\.shp$", full.names = TRUE)
+    
+    for (shp_file in shp_files) {
+      # Extract emp_num from filename (e.g., "8202_airsites.shp" -> "8202")
+      emp_num <- gsub("_airsites\\.shp$", "", basename(shp_file))
+      
+      air_sf <- load_shapefile(shp_file)
+      
+      if (!is.null(air_sf)) {
+        # Standardize columns
+        air_sf <- standardize_airsite_columns(air_sf, facility_code, emp_num)
+        all_airsites[[paste0(facility_code, "_", emp_num)]] <- air_sf
+      }
+    }
+  }
+  
+  # Combine all air sites
+  if (length(all_airsites) > 0) {
+    return(do.call(rbind, all_airsites))
+  }
+  
+  return(NULL)
+}
+
+#' Standardize air site column names for consistent display
+#' 
+#' @param air_sf sf object with air site data
+#' @param facility_code Facility code to add if missing
+#' @param emp_num Employee number from filename
+#' @return sf object with standardized columns
+standardize_airsite_columns <- function(air_sf, facility_code = NULL, emp_num = NULL) {
+  # Essential columns for air site display
+  essential_cols <- c("Sitecode", "Priority", "Acres", "Facility", "Emp_num")
+  
+  # Map common alternative column names
+  col_names <- names(air_sf)
+  col_names_lower <- tolower(col_names)
+  
+  # Try to find Sitecode
+  if (!"Sitecode" %in% col_names) {
+    sitecode_idx <- which(col_names_lower %in% c("sitecode", "site_code", "siteid", "site_id", "name"))
+    if (length(sitecode_idx) > 0) {
+      air_sf$Sitecode <- air_sf[[col_names[sitecode_idx[1]]]]
+    } else {
+      air_sf$Sitecode <- NA_character_
+    }
+  }
+  
+  # Try to find Priority
+  if (!"Priority" %in% col_names) {
+    priority_idx <- which(col_names_lower %in% c("priority", "pri", "prio"))
+    if (length(priority_idx) > 0) {
+      air_sf$Priority <- air_sf[[col_names[priority_idx[1]]]]
+    } else {
+      air_sf$Priority <- NA_character_
+    }
+  }
+  
+  # Try to find Acres
+  if (!"Acres" %in% col_names) {
+    acres_idx <- which(col_names_lower %in% c("acres", "area", "acreage"))
+    if (length(acres_idx) > 0) {
+      air_sf$Acres <- air_sf[[col_names[acres_idx[1]]]]
+    } else {
+      air_sf$Acres <- NA_real_
+    }
+  }
+  
+  # Add facility code if not present
+  if (!"Facility" %in% col_names && !is.null(facility_code)) {
+    air_sf$Facility <- toupper(facility_code)
+  }
+  
+  # Add emp_num if not present
+  if (!"Emp_num" %in% col_names && !is.null(emp_num)) {
+    air_sf$Emp_num <- emp_num
+  }
+  
+  # Keep only essential columns + geometry
+  geom_col <- attr(air_sf, "sf_column")
+  keep_cols <- intersect(essential_cols, names(air_sf))
+  air_sf[, c(keep_cols, geom_col)]
+}
+
+#' Add air site polygons to a map
+#' 
+#' @param map Leaflet map object
+#' @param airsites sf object with air site polygons
+#' @param color Fill/stroke color
+#' @param group Layer group name
+#' @return Leaflet map with air sites added
+#' @export
+add_airsite_layer <- function(map, airsites, color = "#3498db", group = "Air Sites") {
+  if (is.null(airsites) || nrow(airsites) == 0) {
+    return(map)
+  }
+  
+  # Build popup with available columns
+  popup_parts <- list()
+  if ("Sitecode" %in% names(airsites)) {
+    popup_parts <- c(popup_parts, paste0("<b>Site:</b> ", airsites$Sitecode))
+  }
+  if ("Priority" %in% names(airsites)) {
+    popup_parts <- c(popup_parts, paste0("<b>Priority:</b> ", airsites$Priority))
+  }
+  if ("Acres" %in% names(airsites)) {
+    popup_parts <- c(popup_parts, paste0("<b>Acres:</b> ", round(as.numeric(airsites$Acres), 2)))
+  }
+  if ("Facility" %in% names(airsites)) {
+    popup_parts <- c(popup_parts, paste0("<b>Facility:</b> ", airsites$Facility))
+  }
+  if ("Emp_num" %in% names(airsites)) {
+    popup_parts <- c(popup_parts, paste0("<b>Emp #:</b> ", airsites$Emp_num))
+  }
+  
+  air_popup <- do.call(paste, c(popup_parts, sep = "<br>"))
+  
+  map %>%
+    addPolygons(
+      data = airsites,
+      color = color,
+      weight = 1.5,
+      opacity = 0.7,
+      fillColor = color,
+      fillOpacity = 0.15,
+      popup = air_popup,
+      highlightOptions = highlightOptions(
+        weight = 3,
+        color = color,
+        fillOpacity = 0.3,
+        bringToFront = FALSE
+      ),
+      group = group
+    )
+}
+
 message("geometry_helpers.R loaded - Shared geometry utilities available")

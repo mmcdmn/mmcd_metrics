@@ -15,6 +15,7 @@ CACHE_ENABLED <- TRUE
 get_cache_dir <- function() {
   paths <- c(
     "/srv/shiny-server/shared/cache",
+    "../../../shared/cache",
     "../../shared/cache",
     "../shared/cache", 
     "./shared/cache"

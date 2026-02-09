@@ -107,7 +107,8 @@ server <- function(input, output, session) {
       metric_type = isolate(input$metric_type),
       material_filter = isolate(input$material_filter),
       status_filter = isolate(input$status_filter),
-      process_status_filter = isolate(input$process_status_filter)
+      process_status_filter = isolate(input$process_status_filter),
+      load_air_site_polygons = isolate(input$load_air_site_polygons)
     )
   })
 
@@ -280,10 +281,28 @@ server <- function(input, output, session) {
   output$status_map <- renderLeaflet({
     req(input$refresh)
     data <- status_data()
+    inputs <- refresh_inputs()
     if (nrow(data) == 0) {
       return(leaflet() %>% addTiles() %>% setView(lng = -93.2, lat = 44.9, zoom = 10))
     }
-    create_site_map(data, theme = current_theme())
+    withProgress(message = "Building map...", value = 0, {
+      create_site_map(data, theme = current_theme(),
+                      facility_filter = inputs$facility_filter,
+                      load_air_site_polygons = inputs$load_air_site_polygons)
+    })
+  })
+
+  # Zoom observer for air site polygons - show/hide based on zoom level
+  observe({
+    zoom <- input$status_map_zoom
+    if (!is.null(zoom)) {
+      proxy <- leafletProxy("status_map")
+      if (zoom >= 13) {
+        proxy %>% showGroup("Air Sites")
+      } else {
+        proxy %>% hideGroup("Air Sites")
+      }
+    }
   })
 
   # Status Chart

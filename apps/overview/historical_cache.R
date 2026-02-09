@@ -21,10 +21,14 @@ CACHE_DIR <- tryCatch({
   # Try shared/cache directory first (actual location)
   if (dir.exists("/srv/shiny-server/shared/cache")) {
     "/srv/shiny-server/shared/cache"
+  } else if (dir.exists("../../../shared/cache")) {
+    "../../../shared/cache"  # Relative path from unified/ subfolder
   } else if (dir.exists("../../shared/cache")) {
     "../../shared/cache"  # Relative path from overview app  
   } else if (dir.exists("/srv/shiny-server/shared")) {
     "/srv/shiny-server/shared"
+  } else if (dir.exists("../../../shared")) {
+    "../../../shared"  # Relative path from unified/ subfolder
   } else if (dir.exists("../../shared")) {
     "../../shared"  # Relative path from overview app
   } else {

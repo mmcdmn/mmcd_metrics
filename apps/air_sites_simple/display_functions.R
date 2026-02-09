@@ -10,8 +10,38 @@ suppressPackageStartupMessages({
   library(shiny)
 })
 
+# Load shared geometry helpers for background layers and air site polygons
+source("../../shared/geometry_helpers.R")
+
+# Helper to add all background layers to an air sites leaflet map
+# Uses shared geometry_helpers for loading and rendering
+add_background_layers_to_airsite_map <- function(m, facility_filter = NULL, load_air_site_polygons = FALSE) {
+  # Use shared geometry_helpers for loading facility/zone boundaries
+  shiny::incProgress(0.1, message = "Loading map layers...", detail = "Facility boundaries")
+  bg_layers <- load_background_layers()
+  
+  shiny::incProgress(0.2, detail = "Zone boundaries")
+  m <- add_background_layers(m, bg_layers)
+  
+  # Only load air site polygons if toggle is enabled
+  if (load_air_site_polygons) {
+    shiny::incProgress(0.3, detail = "Loading air site polygons...")
+    airsites <- load_airsite_layers(facility_filter = facility_filter)
+    
+    if (!is.null(airsites) && nrow(airsites) > 0) {
+      shiny::incProgress(0.2, detail = paste0("Rendering ", nrow(airsites), " air site polygons..."))
+      m <- add_airsite_layer(m, airsites)
+    }
+  } else {
+    shiny::incProgress(0.5, detail = "Skipping air site polygons (disabled)...")
+  }
+  
+  return(m)
+}
+
 # Create interactive site map with status colors
-create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD")) {
+create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"),
+                            facility_filter = NULL, load_air_site_polygons = FALSE) {
   if (nrow(data) == 0) {
     return(leaflet() %>% 
       addTiles() %>%
@@ -41,7 +71,12 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
   
   # Create map
   map <- leaflet(data) %>%
-    addTiles() %>%
+    addProviderTiles(providers$CartoDB.Positron, group = "Base Map")
+  
+  # Add background layers (facility boundaries, zone boundaries, air site polygons)
+  map <- add_background_layers_to_airsite_map(map, facility_filter, load_air_site_polygons)
+  
+  map <- map %>%
     addCircleMarkers(
       lng = ~longitude,
       lat = ~latitude,
@@ -62,14 +97,20 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
         "Last Treatment: ", last_treatment_date_display, "<br/>",
         "Material Used: ", ifelse(is.na(last_treatment_material), "None", last_treatment_material)
       ),
-      layerId = ~sitecode
+      layerId = ~sitecode,
+      group = "Air Site Markers"
     ) %>%
     addLegend(
       position = "bottomright",
       colors = legend_colors,
       labels = legend_labels,
       title = "Site Status"
-    )
+    ) %>%
+    addLayersControl(
+      overlayGroups = c("Air Site Markers", "Air Sites", "Facility Boundaries", "Zone Boundaries"),
+      options = layersControlOptions(collapsed = FALSE)
+    ) %>%
+    hideGroup("Air Sites")
   
   # Fit bounds to data
   if (nrow(data) > 0) {

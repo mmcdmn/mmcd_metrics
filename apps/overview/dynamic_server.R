@@ -373,17 +373,37 @@ load_hist_cache <- function() {
   if (is.null(.hist_cache$data)) {
     tryCatch({
       cache_file <- file.path(get_cache_dir(), "historical_averages_cache.rds")
+      if (!file.exists(cache_file)) {
+        # Try additional fallback paths for unified/ directory depth
+        alt_paths <- c(
+          "../../../shared/cache/historical_averages_cache.rds",
+          "../../shared/cache/historical_averages_cache.rds",
+          "../shared/cache/historical_averages_cache.rds"
+        )
+        for (alt in alt_paths) {
+          if (file.exists(alt)) {
+            cache_file <- alt
+            break
+          }
+        }
+      }
       if (file.exists(cache_file)) {
         .hist_cache$data <- readRDS(cache_file)
+        cat("[CACHE] Historical cache loaded from:", normalizePath(cache_file), "\n")
+      } else {
+        cat("[CACHE] WARNING: Historical cache file not found\n")
       }
-    }, error = function(e) NULL)
+    }, error = function(e) {
+      cat("[CACHE] ERROR loading historical cache:", e$message, "\n")
+      NULL
+    })
   }
   .hist_cache$data
 }
 
 #' Get historical average for a metric and week (cached for performance)
 #' @param metric_id Metric ID
-#' @param week_num ISO week number
+#' @param week_num Week number (from lubridate::week(), matching cache data)
 #' @return Historical average value or NULL if not available
 get_historical_week_avg <- function(metric_id, week_num) {
   cache <- load_hist_cache()
@@ -416,7 +436,7 @@ get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1"
     # Get the week's Friday (that's what the chart uses)
     week_start <- lubridate::floor_date(analysis_date, "week", week_start = 1)
     week_friday <- week_start + 4
-    week_num <- lubridate::isoweek(week_friday)
+    week_num <- lubridate::week(week_friday)
     
     # Load raw data
     raw_data <- load_app_historical_data(metric_id, current_year, current_year, zone_filter)
@@ -505,7 +525,7 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   }
   
   # Get WEEKLY comparison: current week value vs 10yr weekly average
-  week_num <- lubridate::isoweek(analysis_date)
+  week_num <- lubridate::week(analysis_date)
   
   # Get 10-year weekly average from cache (fast - uses file cache)
   historical_avg <- get_historical_week_avg(metric_id, week_num)
@@ -672,7 +692,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     cat("[DEBUG] Metrics by category loaded\n")
     
     # Pre-extract weekly values from historical data to avoid duplicate DB loads
-    week_num <- lubridate::isoweek(analysis_date)
+    week_num <- lubridate::week(analysis_date)
     cat("[DEBUG] Week number:", week_num, "\n")
     
     weekly_values <- list()
@@ -765,7 +785,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
           }
         )
-        week_num <- tryCatch(lubridate::isoweek(analysis_date), error = function(e) {
+        week_num <- tryCatch(lubridate::week(analysis_date), error = function(e) {
           cat("[DEBUG] Error getting week number:", e$message, "\n")
           return(NA)
         })

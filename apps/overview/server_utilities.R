@@ -180,10 +180,11 @@ create_overview_server <- function(input, output, session,
   # SUMMARY STATS
   # ==========================================================================
   
-  output$summary_stats <- renderUI({
-    req(overview_data())
-    create_summary_stats_ui(overview_data(), registry)
-  })
+  # DISABLED: This conflicts with the main summary_stats in dynamic_server.R
+  # output$summary_stats <- renderUI({
+  #   req(overview_data())
+  #   create_summary_stats_ui(overview_data(), registry)
+  # })
   
   # ==========================================================================
   # LAST UPDATED

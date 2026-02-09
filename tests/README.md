@@ -33,7 +33,7 @@ tests/
 
 ```bash
 cd mmcd_metrics
-Rscript tests/testthat.R
+& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe" -e "testthat::test_file('testthat.R', reporter = 'summary')"
 ```
 
 ### From R Console

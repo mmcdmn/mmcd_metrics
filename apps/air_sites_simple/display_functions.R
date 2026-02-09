@@ -35,8 +35,9 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
   unique_statuses <- unique(data$site_status)
   legend_colors <- status_colors[unique_statuses]
   
-  # Replace "Unknown" with "Not Insp" for legend display
-  legend_labels <- ifelse(unique_statuses == "Unknown", "Not Insp", unique_statuses)
+  # Replace "Unknown" with "Not Insp" and "Inspected" with "Insp - Under Threshold" for legend display
+  legend_labels <- ifelse(unique_statuses == "Unknown", "Not Insp", 
+                         ifelse(unique_statuses == "Inspected", "Insp - Under Threshold", unique_statuses))
   
   # Create map
   map <- leaflet(data) %>%
@@ -114,17 +115,13 @@ create_site_details_panel <- function(site_data) {
     return(data.frame())
   }
   
-  # Format larvae count for display
-  site_data$larvae_count_display <- ifelse(
-    is.na(site_data$last_larvae_count), 
-    "N/A", 
-    as.character(site_data$last_larvae_count)
-  )
+  # Keep larvae count as numeric for proper sorting - NA will be handled by DT
+  site_data$larvae_count_numeric <- site_data$last_larvae_count
   
   # Select and rename columns for display (using pre-formatted date fields)
   display_data <- site_data[, c(
     "sitecode", "facility", "priority", "zone", "acres", 
-    "site_status", "last_inspection_date_display", "larvae_count_display",
+    "site_status", "last_inspection_date_display", "larvae_count_numeric",
     "lab_status_display", "last_treatment_date_display", "last_treatment_material"
   )]
   
@@ -183,7 +180,7 @@ create_treatment_process_summary <- function(data, metric_type = "sites") {
       select(facility_display, total_acres, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
     
     colnames(process_summary_display) <- c(
-      "Facility", "Total Acres", "Not Insp", "Insp", "Needs Treatment", 
+      "Facility", "Total Acres", "Not Insp", "Insp - Under Threshold", "Needs Treatment", 
       "Active Treatment", "Treatment Rate"
     )
   } else {
@@ -216,7 +213,7 @@ create_treatment_process_summary <- function(data, metric_type = "sites") {
       select(facility_display, total_sites, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
     
     colnames(process_summary_display) <- c(
-      "Facility", "Total Sites", "Not Insp", "Insp", "Needs Treatment", 
+      "Facility", "Total Sites", "Not Insp", "Insp - Under Threshold", "Needs Treatment", 
       "Active Treatment", "Treatment Rate"
     )
   }
@@ -276,7 +273,7 @@ create_treatment_flow_chart <- function(data, metric_type = "sites", theme = "MM
   # Create stacked bar chart (ordered: Not Insp, Insp, Needs ID, Needs Treatment, Active Treatment)
   p <- plot_ly(facility_summary, x = ~facility_display, y = ~Unknown, type = 'bar', 
                name = 'Not Insp', marker = list(color = colors$Unknown)) %>%
-    add_trace(y = ~Inspected, name = 'Insp', 
+    add_trace(y = ~Inspected, name = 'Insp - Under Threshold', 
               marker = list(color = colors$Inspected)) %>%
     add_trace(y = ~`Needs ID`, name = 'Needs ID', 
               marker = list(color = colors$`Needs ID`)) %>%

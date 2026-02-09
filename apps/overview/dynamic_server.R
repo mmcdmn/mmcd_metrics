@@ -574,9 +574,17 @@ get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date,
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
 generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL) {
+  cat("[DEBUG] generate_summary_stats called with:")
+  cat(" overview_type=", overview_type)
+  cat(" metrics_filter=", if (is.null(metrics_filter)) "NULL" else paste(metrics_filter, collapse = ","))
+  cat(" analysis_date=", as.character(analysis_date), "\n")
+  
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
+  cat("[DEBUG] Using metrics:", paste(metrics, collapse = ", "), "\n")
+  
   registry <- get_metric_registry()
+  cat("[DEBUG] Got metric registry with", length(registry), "entries\n")
   
   # For facilities view, generate one value box per facility instead of per metric
   if (overview_type == "facilities" && length(metrics) > 0) {
@@ -655,14 +663,21 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     fluidRow(stat_boxes)
     
   } else {
+    cat("[DEBUG] District view - processing categories\n")
     # District view: metrics grouped by category
     categories <- get_metric_categories()
+    cat("[DEBUG] Categories:", paste(categories, collapse = ", "), "\n")
+    
     metrics_by_cat <- get_metrics_grouped_by_category()
+    cat("[DEBUG] Metrics by category loaded\n")
     
     # Pre-extract weekly values from historical data to avoid duplicate DB loads
     week_num <- lubridate::isoweek(analysis_date)
+    cat("[DEBUG] Week number:", week_num, "\n")
+    
     weekly_values <- list()
     if (!is.null(historical_data)) {
+      cat("[DEBUG] Processing historical data for weekly values...\n")
       for (metric_id in metrics) {
         hist <- historical_data[[metric_id]]
         if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
@@ -672,26 +687,46 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           }
         }
       }
+      cat("[DEBUG] Weekly values extracted for", length(weekly_values), "metrics\n")
+    } else {
+      cat("[DEBUG] No historical data provided\n")
     }
     
     # Build category sections
+    cat("[DEBUG] Building category sections...\n")
     category_sections <- lapply(categories, function(cat) {
+      cat("[DEBUG] Processing category:", cat, "\n")
       cat_metrics <- intersect(metrics_by_cat[[cat]], metrics)
-      if (length(cat_metrics) == 0) return(NULL)
+      cat("[DEBUG] Category", cat, "has metrics:", paste(cat_metrics, collapse = ", "), "\n")
+      
+      if (length(cat_metrics) == 0) {
+        cat("[DEBUG] No metrics for category", cat, "- returning NULL\n")
+        return(NULL)
+      }
       
       # Calculate column width based on number of metrics in this category
       n_metrics <- length(cat_metrics)
       col_width <- floor(12 / n_metrics)
+      cat("[DEBUG] Category", cat, "will use column width", col_width, "for", n_metrics, "metrics\n")
       
       stat_boxes <- lapply(cat_metrics, function(metric_id) {
+        cat("[DEBUG] Creating stat box for metric:", metric_id, "\n")
+        
         config <- registry[[metric_id]]
+        if (is.null(config)) {
+          cat("[DEBUG] ERROR: No config found for metric", metric_id, "\n")
+          return(NULL)
+        }
+        
         metric_data <- data[[metric_id]]
+        cat("[DEBUG] Metric", metric_id, "data:", if (is.null(metric_data)) "NULL" else paste(nrow(metric_data), "rows"), "\n")
         
         # Calculate stats
         if (!is.null(metric_data) && nrow(metric_data) > 0) {
           total <- sum(metric_data$total, na.rm = TRUE)
           active <- sum(metric_data$active, na.rm = TRUE)
           expiring <- sum(metric_data$expiring, na.rm = TRUE)
+          cat("[DEBUG] Metric", metric_id, "stats: total=", total, "active=", active, "expiring=", expiring, "\n")
           
           # For cattail_treatments:
           # treated = active - expiring (active includes expiring in this dataset)
@@ -703,57 +738,126 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             needs_treatment <- expiring
             workload <- treated + needs_treatment
             pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+            cat("[DEBUG] Cattail: treated=", treated, "needs_treatment=", needs_treatment, "pct=", pct, "\n")
           } else if (isTRUE(config$display_as_average)) {
             # For display_as_average metrics: current / avg * 100
             pct <- if (total > 0) round(100 * active / total, 1) else 0
+            cat("[DEBUG] Display as average: pct=", pct, "\n")
           } else {
             pct <- ceiling(100 * active / max(1, total))
+            cat("[DEBUG] Regular percentage: pct=", pct, "\n")
           }
         } else {
+          cat("[DEBUG] No data for metric", metric_id, "- using defaults\n")
           pct <- 0
           active <- 0
         }
         
+        cat("[DEBUG] About to get dynamic value box info for", metric_id, "\n")
+        
         # Get dynamic color and comparison info
         # Use pre-loaded weekly value if available (optimization)
         weekly_val <- weekly_values[[metric_id]]
-        box_info <- get_dynamic_value_box_info(metric_id, active, analysis_date, config, weekly_value = weekly_val)
-        week_num <- lubridate::isoweek(analysis_date)
+        box_info <- tryCatch(
+          get_dynamic_value_box_info(metric_id, active, analysis_date, config, weekly_value = weekly_val),
+          error = function(e) {
+            cat("WARNING: get_dynamic_value_box_info failed for", metric_id, ":", e$message, "\n")
+            list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
+          }
+        )
+        week_num <- tryCatch(lubridate::isoweek(analysis_date), error = function(e) {
+          cat("[DEBUG] Error getting week number:", e$message, "\n")
+          return(NA)
+        })
+        
+        cat("[DEBUG] Creating stat box with pct=", pct, "title=", config$display_name, "color=", box_info$color, "\n")
         
         # Create clickable stat box with comparison data attributes
-        column(col_width,
-          div(
-            class = "stat-box-clickable",
-            `data-metric-id` = metric_id,
-            `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
-            `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
-            `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
-            `data-week-num` = week_num,
-            create_stat_box(
-              value = paste0(pct, "%"),
-              title = config$display_name,
-              bg_color = box_info$color,
-              icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-              icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+        result_box <- tryCatch(
+          column(col_width,
+            div(
+              class = "stat-box-clickable",
+              `data-metric-id` = metric_id,
+              `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
+              `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
+              `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
+              `data-week-num` = week_num,
+              create_stat_box(
+                value = paste0(pct, "%"),
+                title = config$display_name,
+                bg_color = box_info$color,
+                icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+                icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+              )
             )
-          )
+          ),
+          error = function(e) {
+            cat("[DEBUG] ERROR creating stat box for", metric_id, ":", e$message, "\n")
+            return(NULL)
+          }
         )
+        
+        cat("[DEBUG] Stat box created for", metric_id, "\n")
+        return(result_box)
       })
       
+      cat("[DEBUG] Created", length(stat_boxes), "stat boxes for category", cat, "\n")
+      stat_boxes <- Filter(Negate(is.null), stat_boxes)
+      cat("[DEBUG] After filtering nulls:", length(stat_boxes), "stat boxes remain\n")
+      
+      if (length(stat_boxes) == 0) {
+        cat("[DEBUG] No stat boxes created for category", cat, "\n")
+        return(NULL)
+      }
+      
       # Return category section with header and metrics row
-      div(class = "category-section",
-        style = "margin-bottom: 15px;",
-        div(class = "category-header",
-          style = "font-size: 14px; font-weight: bold; color: #666; margin-bottom: 8px; padding-left: 5px; border-left: 3px solid #2c5aa0;",
-          cat
+      cat("[DEBUG] Creating category section for", cat, "\n")
+      section_result <- tryCatch(
+        div(class = "category-section",
+          style = "margin-bottom: 15px;",
+          div(class = "category-header",
+            style = "font-size: 14px; font-weight: bold; color: #666; margin-bottom: 8px; padding-left: 5px; border-left: 3px solid #2c5aa0;",
+            cat
+          ),
+          fluidRow(stat_boxes)
         ),
-        fluidRow(stat_boxes)
+        error = function(e) {
+          cat("[DEBUG] ERROR creating category section for", cat, ":", e$message, "\n")
+          return(NULL)
+        }
       )
+      
+      cat("[DEBUG] Category section created for", cat, "\n")
+      return(section_result)
     })
+    
+    cat("[DEBUG] Created", length(category_sections), "category sections\n")
     
     # Filter out NULL sections and wrap in a container
     category_sections <- Filter(Negate(is.null), category_sections)
-    div(class = "metrics-by-category", category_sections)
+    cat("[DEBUG] After filtering nulls:", length(category_sections), "category sections remain\n")
+    
+    if (length(category_sections) == 0) {
+      cat("[DEBUG] ERROR: No category sections created!\n")
+      return(div(
+        class = "alert alert-warning",
+        "No metrics data available to display."
+      ))
+    }
+    
+    final_result <- tryCatch(
+      div(class = "metrics-by-category", category_sections),
+      error = function(e) {
+        cat("[DEBUG] ERROR creating final metrics container:", e$message, "\n")
+        return(div(
+          class = "alert alert-danger",
+          "Error assembling metrics display: ", e$message
+        ))
+      }
+    )
+    
+    cat("[DEBUG] Final result created successfully\n")
+    return(final_result)
   }
 }
 
@@ -1150,19 +1254,80 @@ build_overview_server <- function(input, output, session,
   # =========================================================================
   
   # When current data is ready, tell the client to swap skeleton for real content
-  observeEvent(current_data(), {
-    session$sendCustomMessage("hideLoadingSkeleton", TRUE)
-  })
+  # NOTE: hideLoadingSkeleton is now sent from renderUI below so the swap
+  # only happens AFTER value boxes are generated (prevents empty wrapper).
   
+  cat("\\n=== [DEBUG] ABOUT TO DEFINE summary_stats renderUI ===\\n")
+  flush.console()
+
   output$summary_stats <- renderUI({
-    req(current_data())
-    # Get analysis date from refresh inputs (captured at refresh time)
-    inputs <- refresh_inputs()
+    message("[RENDER-UI] === summary_stats renderUI ENTERED ===")
+    
+    # Try to get current_data
+    data_result <- tryCatch({
+      cd <- current_data()
+      message("[RENDER-UI] current_data() returned ", length(cd), " items")
+      cd
+    }, error = function(e) {
+      message("[RENDER-UI] current_data() ERROR: ", e$message)
+      NULL
+    })
+    
+    if (is.null(data_result) || length(data_result) == 0) {
+      message("[RENDER-UI] No data - showing fallback")
+      session$sendCustomMessage("hideLoadingSkeleton", TRUE)
+      return(div(class = "alert alert-warning", "No data loaded yet. Click Refresh to load data."))
+    }
+    
+    # Get analysis date
+    inputs <- tryCatch(refresh_inputs(), error = function(e) {
+      message("[RENDER-UI] refresh_inputs() ERROR: ", e$message)
+      list(custom_today = Sys.Date())
+    })
     analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    # Pass historical data to avoid duplicate DB loads
-    hist_data <- tryCatch(historical_data(), error = function(e) NULL)
-    generate_summary_stats(current_data(), metrics_filter, overview_type, analysis_date, hist_data)
+    # Get historical data
+    hist_data <- tryCatch(historical_data(), error = function(e) {
+      message("[RENDER-UI] historical_data() ERROR: ", e$message)
+      NULL
+    })
+    
+    message("[RENDER-UI] About to call generate_summary_stats")
+    
+    # Generate value boxes
+    result <- tryCatch({
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data)
+      message("[RENDER-UI] generate_summary_stats SUCCESS")
+      stats
+    }, error = function(e) {
+      message("[RENDER-UI] generate_summary_stats ERROR: ", e$message)
+      div(
+        class = "alert alert-danger",
+        style = "margin: 10px 0;",
+        icon("exclamation-circle"),
+        strong(" Dashboard rendering error: "),
+        e$message
+      )
+    })
+    
+    # Hide skeleton and show content
+    session$sendCustomMessage("hideLoadingSkeleton", TRUE)
+    message("[RENDER-UI] hideLoadingSkeleton sent, returning result")
+    
+    result
+  })
+  
+  # CRITICAL: The summary_stats_wrapper div starts with display:none,
+  # which causes Shiny to suspend this output and never render it.
+  # This tells Shiny to always render it regardless of visibility.
+  outputOptions(output, "summary_stats", suspendWhenHidden = FALSE)
+  
+  # Fallback: if summary_stats renderUI fails before sending hideLoadingSkeleton
+  # (e.g., req(current_data()) throws because the reactive errored),
+  # this observer ensures the skeleton is eventually hidden so the user isn't stuck.
+  observeEvent(current_data(), {
+    message("[FALLBACK] current_data() has fired! Data has ", length(current_data()), " metrics")
+    session$sendCustomMessage("hideLoadingSkeleton", TRUE)
   })
   
   # =========================================================================

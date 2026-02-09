@@ -15,6 +15,8 @@ library(lubridate)
 cache_utilities_file <- tryCatch({
   if (file.exists("/srv/shiny-server/shared/cache_utilities.R")) {
     "/srv/shiny-server/shared/cache_utilities.R"
+  } else if (file.exists("../../../shared/cache_utilities.R")) {
+    "../../../shared/cache_utilities.R"
   } else if (file.exists("../../shared/cache_utilities.R")) {
     "../../shared/cache_utilities.R"
   } else {
@@ -34,6 +36,8 @@ cache_file <- tryCatch({
     "/srv/shiny-server/shared/historical_cache.R"
   } else if (file.exists("../../shared/historical_cache.R")) {
     "../../shared/historical_cache.R"
+  } else if (file.exists("../historical_cache.R")) {
+    "../historical_cache.R"
   } else if (file.exists("historical_cache.R")) {
     "historical_cache.R"
   } else {

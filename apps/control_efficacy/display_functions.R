@@ -2,11 +2,8 @@
 # Chart and visualization functions for control efficacy app
 #
 # Functions:
-# - create_checkback_progress_chart() - NEW: Progress bars for checkback completion by brood
-# - create_treatment_timeline_chart() - Timeline of treatment activity
-# - create_checkback_timing_chart() - Distribution of days to checkback
-# - create_efficacy_scatter_chart() - Pre vs post treatment dip counts
-# - create_dip_changes_chart() - Interactive pre/post comparison
+# - create_checkback_progress_chart() - Progress bars for checkback completion by brood
+# - create_reduction_boxplot() - Box plots of % reduction by genus/season/year
 
 library(ggplot2)
 library(plotly)
@@ -93,335 +90,110 @@ create_checkback_progress_chart <- function(checkback_status, theme = "MMCD") {
   ))
 }
 
-#' Create treatment timeline chart
-#'
-#' Shows daily treatment activity by facility over time.
-#'
-#' @param treatments Data frame from load_treatment_data()
-#' @param theme Character. Color theme
-#'
-#' @return ggplot object
-create_treatment_timeline_chart <- function(treatments, theme = "MMCD") {
-  
-  if (is.null(treatments) || nrow(treatments) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0, y = 0, label = "No treatment data available"), size = 6) +
-           theme_void())
-  }
-  
-  # Daily site counts by facility
-  daily_summary <- treatments %>%
-    group_by(inspdate, facility) %>%
-    summarise(sites_treated = n(), .groups = "drop") %>%
-    map_facility_names()
-  
-  # Get facility colors with theme
-  facility_colors <- get_facility_base_colors(theme = theme)
-  facilities <- get_facility_lookup()
-  facility_map <- setNames(facilities$full_name, facilities$short_name)
-  display_colors <- setNames(facility_colors, facility_map[names(facility_colors)])
-  
-  p <- ggplot(daily_summary, aes(x = inspdate, y = sites_treated, fill = facility_display)) +
-    geom_col(position = "dodge") +
-    scale_fill_manual(values = display_colors) +
-    labs(
-      title = "Air Treatment Activity Over Time",
-      x = "Date",
-      y = "Sites Treated",
-      fill = "Facility"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
-      axis.title.x = element_text(size = 18, face = "bold"),
-      axis.title.y = element_text(size = 18, face = "bold"),
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
-      axis.text.y = element_text(size = 15),
-      legend.title = element_text(size = 16, face = "bold"),
-      legend.text = element_text(size = 15)
-    )
-  
-  return(p)
-}
+# =============================================================================
+# EFFICACY TAB: Box plots for % Reduction by Genus
+# =============================================================================
 
-#' Create checkback timing distribution chart
+#' Create box plots of % reduction grouped by Year, Season, and Genus
 #'
-#' Histogram showing days between treatment and first checkback.
+#' Each combination of Year × Season × Genus gets its own box.
+#' X-axis: "Year Season" category
+#' Y-axis: % Reduction (can be negative if post > pre)
+#' Fill color: Genus (Aedes = red/warm, Culex = blue/cool)
 #'
-#' @param treatments Treatment data frame
-#' @param checkbacks Checkback data frame
-#' @param theme Character. Color theme
-#'
-#' @return ggplot object
-create_checkback_timing_chart <- function(treatments, checkbacks, theme = "MMCD") {
-  
-  if (is.null(treatments) || is.null(checkbacks) || nrow(treatments) == 0 || nrow(checkbacks) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0, y = 0, label = "No checkback data"), size = 4) +
-           theme_void())
-  }
-  
-  # Calculate days between treatment and checkback
-  timing_data <- list()
-  
-  for (site in unique(treatments$sitecode)) {
-    site_treatments <- treatments[treatments$sitecode == site, ]
-    site_checkbacks <- checkbacks[checkbacks$sitecode == site, ]
-    
-    if (nrow(site_checkbacks) > 0) {
-      for (i in 1:nrow(site_treatments)) {
-        treatment_date <- site_treatments$inspdate[i]
-        future_checkbacks <- site_checkbacks[site_checkbacks$inspdate > treatment_date, ]
-        
-        if (nrow(future_checkbacks) > 0) {
-          first_checkback <- future_checkbacks[which.min(future_checkbacks$inspdate), ]
-          days_diff <- as.numeric(first_checkback$inspdate - treatment_date)
-          
-          timing_data[[length(timing_data) + 1]] <- data.frame(
-            sitecode = site,
-            facility = site_treatments$facility[i],
-            days_to_checkback = days_diff
-          )
-        }
-      }
-    }
-  }
-  
-  if (length(timing_data) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0, y = 0, label = "No checkbacks found"), size = 4) +
-           theme_void())
-  }
-  
-  timing_df <- do.call(rbind, timing_data)
-  
-  # Get colors with theme
-  status_colors <- get_status_colors(theme = theme)
-  
-  p <- ggplot(timing_df, aes(x = days_to_checkback)) +
-    geom_histogram(binwidth = 2, fill = status_colors["active"], alpha = 0.7) +
-    labs(
-      title = "Days to Checkback",
-      x = "Days After Treatment",
-      y = "Count"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
-      axis.title.x = element_text(size = 18, face = "bold"),
-      axis.title.y = element_text(size = 18, face = "bold"),
-      axis.text = element_text(size = 15)
-    )
-  
-  return(p)
-}
-
-#' Create efficacy scatter plot
-#'
-#' Scatter plot of pre-treatment vs post-treatment dip counts.
-#'
-#' @param site_details Data frame from create_site_details()
-#' @param theme Character. Color theme
-#'
-#' @return ggplot object
-create_efficacy_scatter_chart <- function(site_details, theme = "MMCD") {
-  
-  if (is.null(site_details) || nrow(site_details) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0, y = 0, label = "No data available"), size = 6) +
-           theme_void())
-  }
-  
-  # Filter to sites with both pre and post treatment data
-  efficacy_df <- site_details %>%
-    filter(!is.na(pre_treatment_dips) & !is.na(post_treatment_dips))
-  
-  if (nrow(efficacy_df) == 0) {
-    return(ggplot() + 
-           geom_text(aes(x = 0, y = 0, label = "No sites with complete data"), size = 5) +
-           theme_void())
-  }
-  
-  # Get facility colors with theme
-  facility_colors <- get_facility_base_colors(theme = theme)
-  facilities <- get_facility_lookup()
-  facility_map <- setNames(facilities$full_name, facilities$short_name)
-  display_colors <- setNames(facility_colors, facility_map[names(facility_colors)])
-  
-  # Map facility names
-  efficacy_df <- efficacy_df %>%
-    map_facility_names()
-  
-  # Add reference line data
-  max_val <- max(c(efficacy_df$pre_treatment_dips, efficacy_df$post_treatment_dips), na.rm = TRUE)
-  
-  p <- ggplot(efficacy_df, aes(x = pre_treatment_dips, y = post_treatment_dips, 
-                                color = facility_display, text = sitecode)) +
-    geom_point(size = 3, alpha = 0.7) +
-    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
-    scale_color_manual(values = display_colors) +
-    labs(
-      title = "Treatment Efficacy: Pre vs Post Dip Counts",
-      x = "Pre-Treatment Dip Count",
-      y = "Post-Treatment Dip Count",
-      color = "Facility"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
-      axis.title.x = element_text(size = 18, face = "bold"),
-      axis.title.y = element_text(size = 18, face = "bold"),
-      axis.text = element_text(size = 15),
-      legend.title = element_text(size = 16, face = "bold"),
-      legend.text = element_text(size = 15)
-    )
-  
-  return(p)
-}
-
-#' Create interactive dip changes chart (plotly)
-#'
-#' Shows pre/post treatment dip counts for each site with connecting lines.
-#'
-#' @param site_details Data frame from create_site_details()
-#' @param theme Character. Color theme
+#' @param efficacy_data Data frame from load_efficacy_data() (long format)
+#' @param theme Character. Color theme ("MMCD", "IBM", "Wong", etc.)
 #'
 #' @return plotly object
-#' Create dip changes chart (Enhanced)
-#'
-#' Shows pre-treatment vs post-treatment dip counts with:
-#' - Boxplot overlays for distribution
-#' - Dumbbell plot connecting paired observations
-#' - Color gradient by days to checkback
-#' - Interactive tooltips with site details
-#'
-#' @param site_details Data frame from create_site_details()
-#' @param theme Character. Color theme
-#'
-#' @return plotly object
-create_dip_changes_chart <- function(site_details, theme = "MMCD") {
+create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
   
-  if (is.null(site_details) || nrow(site_details) == 0) {
-    p <- ggplot() + 
-      geom_text(aes(x = 0, y = 0, label = "No data available"), size = 5) +
+  if (is.null(efficacy_data) || nrow(efficacy_data) == 0) {
+    p <- ggplot() +
+      geom_text(aes(x = 1, y = 1, label = "No efficacy data available"), size = 6) +
       theme_void()
     return(ggplotly(p))
   }
   
-  # Filter to sites with valid dip counts (all rows already have checkbacks)
-  plot_data <- site_details %>%
-    filter(!is.na(pre_treatment_dips), 
-           !is.na(post_treatment_dips))
+  # Filter to rows with valid % reduction and season
+  plot_data <- efficacy_data %>%
+    filter(!is.na(pct_reduction), !is.na(season))
   
   if (nrow(plot_data) == 0) {
-    p <- ggplot() + 
-      geom_text(aes(x = 0, y = 0, label = "No sites with complete checkback data"), size = 5) +
+    p <- ggplot() +
+      geom_text(aes(x = 1, y = 1, label = "No valid reduction data\n(need species data for both pre and post samples)"), size = 5) +
       theme_void()
     return(ggplotly(p))
   }
   
-  # Check if we have enough data for boxplot (need at least 2 sites)
-  num_sites <- length(unique(plot_data$sitecode))
-  show_boxplot <- num_sites >= 2
-  
-  # Reshape for pre/post comparison (dumbbell plot needs long format)
-  plot_df <- plot_data %>%
-    select(sitecode, facility, pre_treatment_dips, post_treatment_dips, 
-           days_to_checkback, acres) %>%
-    tidyr::pivot_longer(
-      cols = c(pre_treatment_dips, post_treatment_dips),
-      names_to = "type",
-      values_to = "dip"
-    ) %>%
+  # Create category label: "2024 Spring", "2024 Summer", etc.
+  plot_data <- plot_data %>%
     mutate(
-      type = ifelse(type == "pre_treatment_dips", "Pre-Treatment", "First Checkback"),
-      type = factor(type, levels = c("Pre-Treatment", "First Checkback")),
-      # Create tooltip text
-      tooltip_text = paste0(
-        "Site: ", sitecode, "<br>",
-        "Facility: ", facility, "<br>",
-        "Dips: ", dip, "<br>",
-        ifelse(type == "First Checkback", 
-               paste0("Days to Checkback: ", round(days_to_checkback, 1), "<br>"),
-               ""),
-        "Acres: ", round(acres, 1)
-      )
+      category = paste(year, season),
+      category = factor(category, levels = sort(unique(category)))
     )
   
-  # Calculate quartiles for smart y-axis limiting (only if enough data)
-  if (show_boxplot) {
-    q1_pre <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.25, na.rm = TRUE)
-    q3_pre <- quantile(plot_df$dip[plot_df$type == "Pre-Treatment"], 0.75, na.rm = TRUE)
-    iqr_pre <- q3_pre - q1_pre
-    
-    q1_post <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.25, na.rm = TRUE)
-    q3_post <- quantile(plot_df$dip[plot_df$type == "First Checkback"], 0.75, na.rm = TRUE)
-    iqr_post <- q3_post - q1_post
-    
-    # Use the higher Q3 and IQR for upper limit
-    y_top <- max(q3_pre, q3_post, na.rm = TRUE)
-    iqr_top <- max(iqr_pre, iqr_post, na.rm = TRUE)
-    y_lim_top <- ceiling(y_top + max(0.25 * iqr_top, 2))
-  } else {
-    # For single site, just use the max value plus some padding
-    y_lim_top <- ceiling(max(plot_df$dip, na.rm = TRUE) * 1.2 + 2)
+  # Genus colors - warm for Aedes, cool for Culex
+  genus_colors <- c("Aedes" = "#D32F2F", "Culex" = "#1976D2")
+  
+  # ---------------------------------------------------------------------------
+  # Smart y-axis limits: clip to [-100%, 110%] so the IQR boxes are clearly
+  # visible even when extreme outliers exist. Points outside this range are
+  # simply clipped (not removed) by coord_cartesian.
+  # ---------------------------------------------------------------------------
+  y_lo <- -100
+  y_hi <- 110
+  
+  # Count outliers that will be hidden
+  n_below <- sum(plot_data$pct_reduction < y_lo, na.rm = TRUE)
+  n_above <- sum(plot_data$pct_reduction > y_hi, na.rm = TRUE)
+  
+  subtitle_text <- "Dashed = 0% (no change) | Dotted green = 80% target"
+  if (n_below + n_above > 0) {
+    subtitle_text <- paste0(subtitle_text, "  |  ",
+                            n_below + n_above, " outlier(s) beyond axis limits")
   }
   
-  # Get theme colors
-  status_colors <- get_status_colors(theme = theme)
-  
-  # Create base plot
-  p <- ggplot(plot_df, aes(x = type, y = dip, group = sitecode))
-  
-  # Add boxplot only if we have enough data
-  if (show_boxplot) {
-    p <- p + geom_boxplot(aes(group = type), 
-                          color = "gray40", 
-                          fill = NA, 
-                          width = 0.3, 
-                          position = position_nudge(x = -0.30),
-                          outlier.shape = NA,
-                          coef = Inf)
-  }
-  
-  # Add connecting lines and points
-  p <- p +
-    # Connecting lines (colored by days to checkback)
-    geom_line(aes(color = days_to_checkback), 
-              alpha = 0.5, 
-              linewidth = 1) +
-    # Points with tooltips
-    geom_point(aes(color = days_to_checkback, text = tooltip_text), 
-               size = 3, 
-               alpha = 0.8) +
-    # Color gradient: red (soon) to blue (later) to purple (much later)
-    scale_color_gradientn(
-      colors = c("red", "orange", "yellow", "green", "blue", "purple"),
-      na.value = "gray50",
-      name = "Days to\nCheckback"
+  p <- ggplot(plot_data, aes(x = category, y = pct_reduction, fill = genus)) +
+    geom_boxplot(
+      position = position_dodge(width = 0.8),
+      alpha = 0.7,
+      outlier.shape = 16,
+      outlier.alpha = 0.4,
+      outlier.size = 1.5,
+      width = 0.7
     ) +
-    scale_y_continuous(limits = c(-2, y_lim_top), oob = scales::oob_keep) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", linewidth = 0.5) +
+    geom_hline(yintercept = 80, linetype = "dotted", color = "forestgreen", linewidth = 0.7, alpha = 0.7) +
+    scale_fill_manual(values = genus_colors, name = "Genus") +
+    scale_y_continuous(
+      breaks = seq(-100, 100, by = 20),
+      labels = function(x) paste0(x, "%")
+    ) +
+    coord_cartesian(ylim = c(y_lo, y_hi)) +
     labs(
-      title = paste0("Dip Count Change: Pre-Treatment vs First Checkback", 
-                     if(!show_boxplot) " (Single Site)" else ""),
+      title = "% Reduction by Genus, Season, and Year",
+      subtitle = subtitle_text,
       x = "",
-      y = "Dip Count"
+      y = "% Reduction"
     ) +
     theme_minimal() +
     theme(
       plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray40"),
       axis.title.y = element_text(size = 16, face = "bold"),
-      axis.text = element_text(size = 14),
+      axis.text.x = element_text(size = 14, angle = 30, hjust = 1),
+      axis.text.y = element_text(size = 13),
       legend.title = element_text(size = 14, face = "bold"),
-      legend.text = element_text(size = 12)
+      legend.text = element_text(size = 13),
+      panel.grid.minor = element_blank()
     )
   
-  # Convert to plotly for interactivity
-  p_plotly <- ggplotly(p, tooltip = "text") %>%
+  p_plotly <- ggplotly(p) %>%
     layout(
       hovermode = "closest",
-      showlegend = TRUE
+      boxmode = "group"
     )
   
   return(p_plotly)
 }
+

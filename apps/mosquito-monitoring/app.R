@@ -35,19 +35,10 @@ get_mosquito_db_connection <- function() {
     return(con)
   }
   
-  # Fallback to mosquito-specific hardcoded connection
-  tryCatch({
-    host_db <- 'data.mmcd.org'
-    db_port <- '5432'
-    db_user <- 'mmcd_read'
-    db_password <- 'mmcd2012'
-    drv <- dbDriver("PostgreSQL")
-    con <- dbConnect(drv, dbname = "mmcd_data", host=host_db, port=db_port, user=db_user, password=db_password)
-    return(con)
-  }, error = function(e) {
+   error = function(e) {
     warning(paste("Mosquito database connection failed:", e$message))
     return(NULL)
-  })
+  }
 }
 
 # Function to handle integer64 conversion

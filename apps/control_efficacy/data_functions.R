@@ -4,6 +4,7 @@
 # Functions:
 # - load_treatment_data() - Get air treatment records (action='A')
 # - load_checkback_data() - Get checkback inspections for treated sites
+# - load_species_data_for_samples() - Get species composition for sample IDs
 
 library(DBI)
 library(RPostgres)
@@ -46,6 +47,8 @@ load_treatment_data <- function(start_date, end_date, facility_filter = "all", m
         insp.diphabitat,
         insp.acres,
         insp.matcode,
+        insp.sampnum_yr,
+        insp.presamp_yr,
         mat.mattype,
         mat.effect_days,
         insp.pkey_pg,
@@ -178,24 +181,22 @@ load_checkback_data <- function(treated_sites, start_date, end_date) {
   })
 }
 
-#' Load species data for checkbacks
+#' Load species data for a list of sample IDs
 #'
-#' @param checkbacks Data frame with checkback data containing sampnum_yr
+#' @param sample_ids Character vector of sampnum_yr values
 #' @param start_date Start date for query (character YYYY-MM-DD)
 #' @param end_date End date for query (character YYYY-MM-DD)
 #'
 #' @return Data frame with sampnum_yr and species composition string
-load_species_data_for_checkbacks <- function(checkbacks, start_date, end_date) {
+load_species_data_for_samples <- function(sample_ids, start_date, end_date) {
   
-  if (is.null(checkbacks) || nrow(checkbacks) == 0) {
+  if (is.null(sample_ids) || length(sample_ids) == 0) {
     return(NULL)
   }
   
-  # Filter to only checkbacks with sampnum_yr
-  checkbacks_with_samples <- checkbacks %>%
-    filter(!is.na(sampnum_yr) & sampnum_yr != "")
-  
-  if (nrow(checkbacks_with_samples) == 0) {
+  # Filter to valid sample IDs
+  sample_ids <- sample_ids[!is.na(sample_ids) & sample_ids != ""]
+  if (length(sample_ids) == 0) {
     return(NULL)
   }
   
@@ -212,7 +213,7 @@ load_species_data_for_checkbacks <- function(checkbacks, start_date, end_date) {
     need_current <- end_year >= current_year
     
     # Build sample list for IN clause
-    sample_list <- paste0("'", paste(unique(checkbacks_with_samples$sampnum_yr), collapse = "','"), "'")
+    sample_list <- paste0("'", paste(unique(sample_ids), collapse = "','"), "'")
     
     # Build query with UNION ALL when needed
     base_select <- "
@@ -307,5 +308,3 @@ load_species_data_for_checkbacks <- function(checkbacks, start_date, end_date) {
   })
 }
 
-# Note: get_facility_choices() and get_treatment_material_choices() are
-# available from db_helpers.R - no need to reimplement here

@@ -104,9 +104,9 @@ ui <- fluidPage(
                       selected = "LOADING",
                       multiple = TRUE),
         
-        radioButtons("zone_filter", "Zones:",
-                    choices = c("Loading..." = "LOADING"),
-                    selected = "LOADING"),
+        selectInput("zone_filter", "Zones:",
+                   choices = c("Loading..." = "LOADING"),
+                   selected = "LOADING"),
         
         numericInput("larvae_threshold", "Larvae Threshold:",
                     value = 2,
@@ -122,7 +122,7 @@ ui <- fluidPage(
         selectInput("status_filter", "Status Filter:",
                    choices = c("All Statuses" = "all",
                               "Not Insp" = "Unknown",
-                              "Insp" = "Inspected", 
+                              "Insp - Under Threshold" = "Inspected", 
                               "Needs ID" = "Needs ID",
                               "Needs Treatment" = "Needs Treatment",
                               "Active Treatment" = "Active Treatment"),
@@ -169,9 +169,9 @@ ui <- fluidPage(
                       choices = c("Loading..." = "LOADING"),
                       selected = "LOADING"),
         
-        radioButtons("process_zone_filter", "Zones:",
-                    choices = c("Loading..." = "LOADING"),
-                    selected = "LOADING"),
+        selectInput("process_zone_filter", "Zones:",
+                   choices = c("Loading..." = "LOADING"),
+                   selected = "LOADING"),
         
         numericInput("process_larvae_threshold", "Larvae Threshold:",
                     value = 2,
@@ -203,7 +203,7 @@ ui <- fluidPage(
         
         checkboxGroupInput("process_status_filter", "Status Filter:",
                           choices = c("Not Insp" = "Unknown",
-                                     "Insp" = "Inspected", 
+                                     "Insp - Under Threshold" = "Inspected", 
                                      "Needs ID" = "Needs ID",
                                      "Needs Treatment" = "Needs Treatment",
                                      "Active Treatment" = "Active Treatment"),
@@ -234,9 +234,9 @@ ui <- fluidPage(
                       selected = "LOADING",
                       multiple = TRUE),
         
-        radioButtons("hist_zone_filter", "Zones:",
-                    choices = c("Loading..." = "LOADING"),
-                    selected = "LOADING"),
+        selectInput("hist_zone_filter", "Zones:",
+                   choices = c("Loading..." = "LOADING"),
+                   selected = "LOADING"),
         
         numericInput("hist_larvae_threshold", "Larvae Threshold:",
                     value = 2,
@@ -581,14 +581,14 @@ server <- function(input, output, session) {
                         selected = NULL)
     
     # Update zone filter
-    updateRadioButtons(session, "zone_filter", 
-                       choices = zone_display,
-                       selected = zone_choices[1])
+    updateSelectInput(session, "zone_filter", 
+                      choices = zone_display,
+                      selected = zone_choices[1])
     
     # Update process zone filter
-    updateRadioButtons(session, "process_zone_filter", 
-                       choices = zone_display,
-                       selected = zone_choices[1])
+    updateSelectInput(session, "process_zone_filter", 
+                      choices = zone_display,
+                      selected = zone_choices[1])
     
     # Update material filters
     updateSelectizeInput(session, "material_filter", 
@@ -630,18 +630,18 @@ server <- function(input, output, session) {
   
   # Synchronize zone filters between tabs
   observeEvent(input$zone_filter, {
-    updateRadioButtons(session, "process_zone_filter", selected = input$zone_filter)
-    updateRadioButtons(session, "hist_zone_filter", selected = input$zone_filter)
+    updateSelectInput(session, "process_zone_filter", selected = input$zone_filter)
+    updateSelectInput(session, "hist_zone_filter", selected = input$zone_filter)
   })
   
   observeEvent(input$process_zone_filter, {
-    updateRadioButtons(session, "zone_filter", selected = input$process_zone_filter)
-    updateRadioButtons(session, "hist_zone_filter", selected = input$process_zone_filter)
+    updateSelectInput(session, "zone_filter", selected = input$process_zone_filter)
+    updateSelectInput(session, "hist_zone_filter", selected = input$process_zone_filter)
   })
   
   observeEvent(input$hist_zone_filter, {
-    updateRadioButtons(session, "zone_filter", selected = input$hist_zone_filter)
-    updateRadioButtons(session, "process_zone_filter", selected = input$hist_zone_filter)
+    updateSelectInput(session, "zone_filter", selected = input$hist_zone_filter)
+    updateSelectInput(session, "process_zone_filter", selected = input$hist_zone_filter)
   })
   
   # Synchronize priority filters between Status and Historical tabs (Process doesn't have priority filter)
@@ -896,7 +896,7 @@ server <- function(input, output, session) {
     # Map internal status names to display labels
     status_display_map <- c(
       "Unknown" = "Not Insp",
-      "Inspected" = "Insp",
+      "Inspected" = "Insp - Under Threshold",
       "Needs ID" = "Needs ID",
       "Needs Treatment" = "Needs Treatment",
       "Active Treatment" = "Active Treatment"
@@ -904,7 +904,7 @@ server <- function(input, output, session) {
     status_summary$display_status <- status_display_map[status_summary$site_status]
     
     # Define desired order
-    status_order <- c("Not Insp", "Insp", "Needs ID", "Needs Treatment", "Active Treatment")
+    status_order <- c("Not Insp", "Insp - Under Threshold", "Needs ID", "Needs Treatment", "Active Treatment")
     status_summary$display_status <- factor(status_summary$display_status, levels = status_order)
     
     # Get colors from db_helpers to match the map - use reactive theme
@@ -940,8 +940,23 @@ server <- function(input, output, session) {
       return(DT::datatable(data.frame(), options = list(pageLength = 15)))
     }
     
-    # Use create_site_details_panel function (returns formatted datatable)
-    create_site_details_panel(data)
+    # Use create_site_details_panel function (returns formatted data)
+    display_data <- create_site_details_panel(data)
+    
+    # Create DT datatable with proper column types for sorting
+    DT::datatable(
+      display_data,
+      options = list(
+        pageLength = 15,
+        columnDefs = list(
+          list(type = "num", targets = which(colnames(display_data) == "Larvae Count") - 1)
+        )
+      )
+    ) %>%
+    DT::formatStyle(
+      "Larvae Count",
+      color = DT::styleInterval(c(0), c("black", "red"))
+    )
   })
   
   # ============ TREATMENT PROCESS TAB LOGIC ============
@@ -1239,9 +1254,9 @@ server <- function(input, output, session) {
       
       # Load zone choices for historical tab
       zone_choices_hist <- get_available_zones()
-      updateRadioButtons(session, "hist_zone_filter", 
-                              choices = setNames(zone_choices_hist, zone_choices_hist),
-                              selected = zone_choices_hist[1])
+      updateSelectInput(session, "hist_zone_filter", 
+                        choices = setNames(zone_choices_hist, zone_choices_hist),
+                        selected = zone_choices_hist[1])
       
     }, error = function(e) {
       warning(paste("Error loading historical filter choices:", e$message))

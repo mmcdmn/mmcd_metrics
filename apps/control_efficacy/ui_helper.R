@@ -1,4 +1,4 @@
-﻿# UI Helper Functions for Control Efficacy App
+# UI Helper Functions for Control Efficacy App
 # Reusable UI components for consistent layout
 
 #' Create the main UI for the control efficacy app

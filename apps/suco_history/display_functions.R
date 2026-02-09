@@ -150,6 +150,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
         overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
         options = layersControlOptions(collapsed = FALSE)
       ) %>%
+      hideGroup("Harborages") %>%
       addControl(
         html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
                 <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
@@ -297,6 +298,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
         overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
         options = layersControlOptions(collapsed = FALSE)
       ) %>%
+      hideGroup("Harborages") %>%
       addControl(
         html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
                 <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
@@ -421,6 +423,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
         overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
         options = layersControlOptions(collapsed = FALSE)
       ) %>%
+      hideGroup("Harborages") %>%
       addControl(
         html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
                 <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>
@@ -494,6 +497,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
         overlayGroups = c("SUCO Locations", "Harborages", "Facility Boundaries", "Zone Boundaries"),
         options = layersControlOptions(collapsed = FALSE)
       ) %>%
+      hideGroup("Harborages") %>%
       addControl(
         html = '<div style="background: white; padding: 10px; border: 2px solid grey; border-radius: 5px;">
                 <div style="font-weight: bold; margin-bottom: 5px;">Marker Type</div>

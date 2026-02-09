@@ -441,6 +441,19 @@ server <- function(input, output, session) {
     })
   })
   
+  # Zoom-gated harborage visibility: only show polygons when zoomed in
+  observe({
+    zoom <- input$suco_map_zoom
+    if (!is.null(zoom)) {
+      proxy <- leafletProxy("suco_map")
+      if (zoom >= 13) {
+        proxy %>% showGroup("Harborages")
+      } else {
+        proxy %>% hideGroup("Harborages")
+      }
+    }
+  })
+  
   # ===========================================================================
   # OUTPUT: DETAILED TABLE
   # ===========================================================================

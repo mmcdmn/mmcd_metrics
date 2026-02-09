@@ -122,6 +122,12 @@ air_sites_simple_ui <- function() {
                      value = NA, min = 1, max = 60, step = 1),
         tags$small(class = "text-muted", "Leave empty to use default from database"),
 
+        hr(),
+        checkboxInput("load_air_site_polygons", 
+                      tags$span(icon("map"), "Load Air Site Polygons"),
+                      value = FALSE),
+        tags$small(class = "text-muted", "Shows air site boundary polygons on the map (zoom in to see)"),
+
         # Help section
         hr(),
         div(id = "help-section",

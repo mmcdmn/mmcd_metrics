@@ -220,8 +220,8 @@ get_metric_registry <- function() {
       display_metric = "sites",            # count of active sites
       # Detail boxes shown when drilling down to facility level
       detail_boxes = list(
-        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
-        list(id = "expiring", title = "Needs Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
+        list(id = "treated", title = "Acres Treated", column = "treated", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Acres Need Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
       ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Inspected cattail sites only<br>

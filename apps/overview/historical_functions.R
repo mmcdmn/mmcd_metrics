@@ -169,6 +169,13 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
       start_date <- as.Date(paste0(analysis_year, "-01-01"))
       end_date <- min(as.Date(paste0(analysis_year, "-12-31")), Sys.Date())
       
+      # Use sitecode/catchbasin_id for dedup (same logic as historical calculation)
+      if ("sitecode" %in% names(treatments)) {
+        treatments$treatment_id <- treatments$sitecode
+      } else if ("catchbasin_id" %in% names(treatments)) {
+        treatments$treatment_id <- treatments$catchbasin_id
+      }
+      
       for (week_start in seq.Date(start_date, end_date, by = "week")) {
         # Convert back to Date (R for loop strips Date class)
         week_start <- as.Date(week_start, origin = "1970-01-01")
@@ -177,6 +184,12 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
         active <- treatments %>% filter(inspdate <= week_friday, treatment_end >= week_friday)
         
         if (nrow(active) > 0) {
+          # Dedup: keep treatment lasting longest per site (consistent with historical calc)
+          if ("treatment_id" %in% names(active)) {
+            active <- active %>%
+              arrange(desc(treatment_end)) %>%
+              distinct(treatment_id, .keep_all = TRUE)
+          }
           week_value <- sum(active$value, na.rm = TRUE)
           weekly_data <- bind_rows(weekly_data, data.frame(
             year = analysis_year, week_num = week_num, value = week_value
@@ -462,7 +475,21 @@ load_historical_comparison_data <- function(metric,
     cached_10yr <- tryCatch(get_cached_average(metric, "10yr"), error = function(e) NULL)
     
     if (!is.null(cached_10yr) && !is.null(cached_5yr)) {
-      # Load current year data fresh
+      # Aggregate cached zone-level data for the requested zone_filter
+      if ("zone" %in% names(cached_5yr)) {
+        cached_5yr <- cached_5yr %>%
+          filter(zone %in% zone_filter) %>%
+          group_by(week_num, time_period, group_label) %>%
+          summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+      }
+      if ("zone" %in% names(cached_10yr)) {
+        cached_10yr <- cached_10yr %>%
+          filter(zone %in% zone_filter) %>%
+          group_by(week_num, time_period, group_label) %>%
+          summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+      }
+      
+      # Load current year data fresh (already filtered by zone_filter)
       years <- get_historical_year_range(10, analysis_date)
       analysis_year <- years$end_year
       current_formatted <- load_current_year_for_cache(metric, analysis_year, zone_filter, config)
@@ -471,6 +498,25 @@ load_historical_comparison_data <- function(metric,
         average = cached_5yr,
         ten_year_average = cached_10yr,
         current = current_formatted
+      ))
+    }
+  }
+  
+  # ==========================================================================
+  # CACHE PATH: Yearly grouped metrics (e.g., cattail_treatments)
+  # ==========================================================================
+  if (isTRUE(config$historical_type == "yearly_grouped") &&
+      exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES) {
+    cache_key <- paste0(metric, "_yearly_", overview_type)
+    cached_yearly <- tryCatch(get_cached_average(metric, paste0("yearly_", overview_type)), error = function(e) NULL)
+    
+    if (!is.null(cached_yearly) && nrow(cached_yearly) > 0) {
+      cat("Using cached yearly grouped data for", metric, "(", overview_type, ")\n")
+      return(list(
+        yearly_data = cached_yearly,
+        average = data.frame(),
+        current = data.frame(),
+        total_count = nrow(cached_yearly)
       ))
     }
   }
@@ -569,6 +615,9 @@ load_historical_comparison_data <- function(metric,
       treatments$treatment_id <- seq_len(nrow(treatments))
     }
     
+    # Determine if zone-level reporting is possible
+    has_zone_data <- "zone" %in% names(treatments)
+    
     # Generate weeks for all years in range
     weekly_data <- data.frame()
     
@@ -581,6 +630,10 @@ load_historical_comparison_data <- function(metric,
         # Convert back to Date (R for loop strips Date class)
         week_start <- as.Date(week_start, origin = "1970-01-01")
         week_friday <- week_start + 4
+        
+        # Skip if Friday spills into next year (avoids duplicate week_num=1)
+        if (year(week_friday) != yr) next
+        
         week_num <- week(week_friday)
         
         # Find treatments ACTIVE on this Friday
@@ -590,24 +643,46 @@ load_historical_comparison_data <- function(metric,
             treatment_end >= week_friday
           )
         
+        # Always emit a row — zero-activity weeks count toward the average
         if (nrow(active_on_friday) > 0) {
-          # Sum value (acres for has_acres, count otherwise)
-          # For unique sites, only count each site once per week
+          # Dedup: keep treatment lasting longest per site (most future coverage)
           if ("treatment_id" %in% names(active_on_friday)) {
-            week_value <- active_on_friday %>%
-              arrange(desc(inspdate)) %>%
-              distinct(treatment_id, .keep_all = TRUE) %>%
-              summarize(value = sum(value, na.rm = TRUE)) %>%
-              pull(value)
-          } else {
-            week_value <- sum(active_on_friday$value, na.rm = TRUE)
+            active_on_friday <- active_on_friday %>%
+              arrange(desc(treatment_end)) %>%
+              distinct(treatment_id, .keep_all = TRUE)
           }
           
-          weekly_data <- bind_rows(weekly_data, data.frame(
-            year = yr,
-            week_num = week_num,
-            value = week_value
-          ))
+          if (has_zone_data) {
+            # Aggregate by zone for zone-level cache
+            zone_values <- active_on_friday %>%
+              group_by(zone) %>%
+              summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+            
+            # Ensure all zones in zone_filter have a row (zero-fill missing zones)
+            all_zones <- data.frame(zone = zone_filter, stringsAsFactors = FALSE)
+            zone_row <- all_zones %>%
+              left_join(zone_values, by = "zone") %>%
+              mutate(value = ifelse(is.na(value), 0, value),
+                     year = yr, week_num = week_num)
+            weekly_data <- bind_rows(weekly_data, zone_row)
+          } else {
+            week_value <- sum(active_on_friday$value, na.rm = TRUE)
+            weekly_data <- bind_rows(weekly_data, data.frame(
+              year = yr, week_num = week_num, value = week_value
+            ))
+          }
+        } else {
+          # No active treatments — emit zeros (zone-aware or single row)
+          if (has_zone_data) {
+            weekly_data <- bind_rows(weekly_data, data.frame(
+              zone = zone_filter, year = yr, week_num = week_num, value = 0,
+              stringsAsFactors = FALSE
+            ))
+          } else {
+            weekly_data <- bind_rows(weekly_data, data.frame(
+              year = yr, week_num = week_num, value = 0
+            ))
+          }
         }
       }
     }
@@ -621,12 +696,31 @@ load_historical_comparison_data <- function(metric,
         week_num = week(inspdate)
       )
     
+    has_zone_data <- "zone" %in% names(treatments)
+    
     # Use mean for metrics where values are already averages (e.g., mosquito monitoring)
     # Use sum for metrics counting treatments or acres
     if (isTRUE(config$aggregate_as_average)) {
+      # Averaged metrics (mosquito monitoring): keep MMCD-wide, no zone split
+      # Zone-level means can't be simply summed for correct combined average
       weekly_data <- treatments %>%
         group_by(year, week_num) %>%
         summarize(value = mean(value, na.rm = TRUE), .groups = "drop")
+      
+      # Zero-fill: include all year-week combos so zero-activity weeks
+      # count toward the average (consistent with active-treatment metrics)
+      all_year_weeks <- expand.grid(
+        year = start_year:end_year,
+        week_num = sort(unique(weekly_data$week_num))
+      )
+      weekly_data <- merge(all_year_weeks, weekly_data, by = c("year", "week_num"), all.x = TRUE)
+      weekly_data$value[is.na(weekly_data$value)] <- 0
+      weekly_data <- tibble::as_tibble(weekly_data)
+    } else if (has_zone_data) {
+      # Treatment count/acres metrics: aggregate by zone for zone-level cache
+      weekly_data <- treatments %>%
+        group_by(year, week_num, zone) %>%
+        summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
     } else {
       weekly_data <- treatments %>%
         group_by(year, week_num) %>%
@@ -647,45 +741,83 @@ load_historical_comparison_data <- function(metric,
   previous_5yr <- previous_data %>% filter(year >= five_year_cutoff)
   previous_10yr <- previous_data  # Use ALL available historical data for 10-year average
 
+  has_zone_col <- "zone" %in% names(weekly_data)
 
-  # Calculate 5-year average by week
-  average_data <- if (!is.null(cached_5yr)) cached_5yr else previous_5yr %>%
+  # Calculate averages — zone-aware when zone data exists
+  if (!is.null(cached_5yr)) {
+    average_data <- cached_5yr
+  } else if (has_zone_col) {
+    average_data <- previous_5yr %>%
+      group_by(week_num, zone) %>%
+      summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(time_period = sprintf("W%02d", week_num), group_label = "5-Year Avg")
+  } else {
+    average_data <- previous_5yr %>%
       group_by(week_num) %>%
-      summarize(
-        value = mean(value, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(
-        time_period = sprintf("W%02d", week_num),
-        group_label = "5-Year Avg"
-      ) %>%
+      summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(time_period = sprintf("W%02d", week_num), group_label = "5-Year Avg") %>%
       select(time_period, week_num, value, group_label)
+  }
   
-  # Calculate 10-year average by week
-  ten_year_avg_data <- if (!is.null(cached_10yr)) cached_10yr else previous_data %>%
+  if (!is.null(cached_10yr)) {
+    ten_year_avg_data <- cached_10yr
+  } else if (has_zone_col) {
+    ten_year_avg_data <- previous_data %>%
+      group_by(week_num, zone) %>%
+      summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(time_period = sprintf("W%02d", week_num), group_label = "10-Year Avg")
+  } else {
+    ten_year_avg_data <- previous_data %>%
       group_by(week_num) %>%
-      summarize(
-        value = mean(value, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(
-        time_period = sprintf("W%02d", week_num),
-        group_label = "10-Year Avg"
-      ) %>%
+      summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(time_period = sprintf("W%02d", week_num), group_label = "10-Year Avg") %>%
       select(time_period, week_num, value, group_label)
+  }
   
-  # Format current year data
-  current_formatted <- current_data %>%
-    mutate(
-      time_period = sprintf("W%02d", week_num),
-      group_label = as.character(current_year)
-    ) %>%
-    select(time_period, week_num, value, group_label)
+  # Save zone-level data for cache storage (before aggregation)
+  average_by_zone <- if ("zone" %in% names(average_data)) average_data else NULL
+  ten_year_by_zone <- if ("zone" %in% names(ten_year_avg_data)) ten_year_avg_data else NULL
+  
+  # Aggregate zone-level data for display (sum across zones in filter)
+  if ("zone" %in% names(average_data)) {
+    display_5yr <- average_data %>%
+      group_by(week_num, time_period, group_label) %>%
+      summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+  } else {
+    display_5yr <- average_data
+  }
+  
+  if ("zone" %in% names(ten_year_avg_data)) {
+    display_10yr <- ten_year_avg_data %>%
+      group_by(week_num, time_period, group_label) %>%
+      summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+  } else {
+    display_10yr <- ten_year_avg_data
+  }
+  
+  # Format current year data — aggregate zones for display
+  if (has_zone_col && nrow(current_data) > 0) {
+    current_formatted <- current_data %>%
+      group_by(week_num) %>%
+      summarize(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(time_period = sprintf("W%02d", week_num),
+             group_label = as.character(current_year))
+  } else {
+    current_formatted <- current_data %>%
+      mutate(time_period = sprintf("W%02d", week_num),
+             group_label = as.character(current_year))
+  }
+  if (nrow(current_formatted) > 0) {
+    current_formatted <- current_formatted %>%
+      select(time_period, week_num, value, group_label)
+  }
   
   list(
-    average = average_data,
-    ten_year_average = ten_year_avg_data,
-    current = current_formatted
+    average = display_5yr,
+    ten_year_average = display_10yr,
+    current = current_formatted,
+    average_by_zone = average_by_zone,
+    ten_year_by_zone = ten_year_by_zone
   )
 }
 

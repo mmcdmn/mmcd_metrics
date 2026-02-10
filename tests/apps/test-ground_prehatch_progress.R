@@ -22,7 +22,7 @@ test_that("apply_data_filters works with facility filter", {
       sitecode = c("020207-001", "700407-010", "021335-005"),
       facility = c("N", "Sj", "N"),
       acres = c(0.50, 0.25, 1.20),
-      prehatch = c("PREHATCH", "PREHATCH", "BRIQUET"),
+      prehatch = c("PREHATCH", "PREHATCH", "BRIQUET","PELLET"),
       fosarea = c("0204", "7002", "0206"),
       zone = c("1", "1", "2"),
       stringsAsFactors = FALSE

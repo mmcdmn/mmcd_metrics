@@ -416,7 +416,9 @@ get_historical_week_avg <- function(metric_id, week_num) {
   week_data <- hist_data[hist_data$week_num == week_num, ]
   if (nrow(week_data) == 0) return(NULL)
   
-  mean(week_data$value, na.rm = TRUE)
+  # Sum across zones — zone-level cache stores per-zone averages that must
+  # be added together for the total. For non-zone data this is equivalent to mean.
+  sum(week_data$value, na.rm = TRUE)
 }
 
 #' Get current week's value for a metric from database

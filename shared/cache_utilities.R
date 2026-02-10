@@ -68,7 +68,7 @@ ensure_registry_loaded <- function() {
 get_cacheable_metrics <- function() {
   if (!ensure_registry_loaded()) {
     # Fallback to hardcoded list if registry unavailable
-    return(c("catch_basin", "drone", "ground_prehatch", "structure"))
+    return(c("catch_basin", "drone", "ground_prehatch", "structure", "cattail_treatments"))
   }
   
   registry <- get_metric_registry()
@@ -76,8 +76,7 @@ get_cacheable_metrics <- function() {
   # Filter to metrics that support caching (have historical charts)
   cacheable <- sapply(names(registry), function(id) {
     config <- registry[[id]]
-    isTRUE(config$historical_enabled) && 
-      !isTRUE(config$historical_type == "yearly_grouped")  # yearly_grouped doesn't need cache
+    isTRUE(config$historical_enabled)
   })
   
   names(cacheable)[cacheable]
@@ -91,7 +90,7 @@ get_cached_metrics <- function() {
   
   cache <- readRDS(cache_file)
   keys <- names(cache$averages)
-  unique(gsub("_(5yr|10yr)$", "", keys))
+  unique(gsub("_(5yr|10yr|yearly_facilities|yearly_district)$", "", keys))
 }
 
 #' Check if a metric supports caching
@@ -131,27 +130,55 @@ get_cache_status <- function() {
   }
   
   # Build status for each metric
+  registry <- if (ensure_registry_loaded()) get_metric_registry() else list()
+  
   do.call(rbind, lapply(all_metrics, function(metric_id) {
-    key_5yr <- paste0(metric_id, "_5yr")
-    key_10yr <- paste0(metric_id, "_10yr")
+    config <- registry[[metric_id]]
+    is_yearly <- isTRUE(config$historical_type == "yearly_grouped")
     
-    has_5yr <- key_5yr %in% names(cache_info$averages)
-    has_10yr <- key_10yr %in% names(cache_info$averages)
-    
-    rows_5yr <- if (has_5yr) nrow(cache_info$averages[[key_5yr]]) else 0
-    rows_10yr <- if (has_10yr) nrow(cache_info$averages[[key_10yr]]) else 0
-    
-    data.frame(
-      metric_id = metric_id,
-      cacheable = TRUE,
-      has_5yr = has_5yr,
-      has_10yr = has_10yr,
-      rows_5yr = rows_5yr,
-      rows_10yr = rows_10yr,
-      status = if (has_5yr && has_10yr) "Complete" else if (has_5yr || has_10yr) "Partial" else "Missing",
-      last_updated = as.character(cache_info$generated_date),
-      stringsAsFactors = FALSE
-    )
+    if (is_yearly) {
+      key_fac <- paste0(metric_id, "_yearly_facilities")
+      key_dist <- paste0(metric_id, "_yearly_district")
+      
+      has_fac <- key_fac %in% names(cache_info$averages)
+      has_dist <- key_dist %in% names(cache_info$averages)
+      
+      rows_fac <- if (has_fac) nrow(cache_info$averages[[key_fac]]) else 0
+      rows_dist <- if (has_dist) nrow(cache_info$averages[[key_dist]]) else 0
+      
+      data.frame(
+        metric_id = metric_id,
+        cacheable = TRUE,
+        has_5yr = has_fac,
+        has_10yr = has_dist,
+        rows_5yr = rows_fac,
+        rows_10yr = rows_dist,
+        status = if (has_fac && has_dist) "Complete" else if (has_fac || has_dist) "Partial" else "Missing",
+        last_updated = as.character(cache_info$generated_date),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      key_5yr <- paste0(metric_id, "_5yr")
+      key_10yr <- paste0(metric_id, "_10yr")
+      
+      has_5yr <- key_5yr %in% names(cache_info$averages)
+      has_10yr <- key_10yr %in% names(cache_info$averages)
+      
+      rows_5yr <- if (has_5yr) nrow(cache_info$averages[[key_5yr]]) else 0
+      rows_10yr <- if (has_10yr) nrow(cache_info$averages[[key_10yr]]) else 0
+      
+      data.frame(
+        metric_id = metric_id,
+        cacheable = TRUE,
+        has_5yr = has_5yr,
+        has_10yr = has_10yr,
+        rows_5yr = rows_5yr,
+        rows_10yr = rows_10yr,
+        status = if (has_5yr && has_10yr) "Complete" else if (has_5yr || has_10yr) "Partial" else "Missing",
+        last_updated = as.character(cache_info$generated_date),
+        stringsAsFactors = FALSE
+      )
+    }
   }))
 }
 
@@ -202,26 +229,59 @@ regenerate_cache <- function(metrics = NULL, zone_filter = c("1", "2")) {
       old_cache_setting <- if (exists("USE_CACHED_AVERAGES")) USE_CACHED_AVERAGES else FALSE
       assign("USE_CACHED_AVERAGES", FALSE, envir = .GlobalEnv)
       
-      result <- load_historical_comparison_data(
-        metric = metric_id,
-        start_year = current_year - 9,
-        end_year = current_year,
-        zone_filter = zone_filter
-      )
+      # Check metric type from registry
+      registry <- get_metric_registry()
+      config <- registry[[metric_id]]
+      is_yearly_grouped <- isTRUE(config$historical_type == "yearly_grouped")
+      
+      if (is_yearly_grouped) {
+        # Yearly grouped metrics: cache yearly_data for both overview types
+        for (ov_type in c("facilities", "district")) {
+          result <- load_historical_comparison_data(
+            metric = metric_id,
+            start_year = current_year - 9,
+            end_year = current_year,
+            zone_filter = zone_filter,
+            overview_type = ov_type
+          )
+          
+          if (!is.null(result$yearly_data) && nrow(result$yearly_data) > 0) {
+            cache_key <- paste0(metric_id, "_yearly_", ov_type)
+            cache$averages[[cache_key]] <- result$yearly_data
+            cat("  ", ov_type, ":", nrow(result$yearly_data), "rows,",
+                length(unique(result$yearly_data$year)), "years\n")
+          }
+        }
+      } else {
+        # Standard metrics: cache 5yr and 10yr averages
+        result <- load_historical_comparison_data(
+          metric = metric_id,
+          start_year = current_year - 9,
+          end_year = current_year,
+          zone_filter = zone_filter
+        )
+        
+        # Store 5-year and 10-year averages
+        # Store zone-level data if available (for zone-specific retrieval)
+        # Otherwise fall back to aggregated data
+        avg_to_store <- if (!is.null(result$average_by_zone)) result$average_by_zone else result$average
+        ten_to_store <- if (!is.null(result$ten_year_by_zone)) result$ten_year_by_zone else result$ten_year_average
+        
+        if (!is.null(avg_to_store) && nrow(avg_to_store) > 0) {
+          cache$averages[[paste0(metric_id, "_5yr")]] <- avg_to_store
+          zone_info <- if ("zone" %in% names(avg_to_store)) paste0(" (", nrow(avg_to_store), " zone-level rows)") else ""
+          cat("  5yr:", nrow(avg_to_store), "rows, avg:", round(mean(avg_to_store$value, na.rm = TRUE), 1), zone_info, "\n")
+        }
+        
+        if (!is.null(ten_to_store) && nrow(ten_to_store) > 0) {
+          cache$averages[[paste0(metric_id, "_10yr")]] <- ten_to_store
+          zone_info <- if ("zone" %in% names(ten_to_store)) paste0(" (", nrow(ten_to_store), " zone-level rows)") else ""
+          cat("  10yr:", nrow(ten_to_store), "rows, avg:", round(mean(ten_to_store$value, na.rm = TRUE), 1), zone_info, "\n")
+        }
+      }
       
       # Restore cache setting
       assign("USE_CACHED_AVERAGES", old_cache_setting, envir = .GlobalEnv)
-      
-      # Store 5-year and 10-year averages
-      if (!is.null(result$average) && nrow(result$average) > 0) {
-        cache$averages[[paste0(metric_id, "_5yr")]] <- result$average
-        cat("  5yr:", nrow(result$average), "rows, avg:", round(mean(result$average$value, na.rm = TRUE), 1), "\n")
-      }
-      
-      if (!is.null(result$ten_year_average) && nrow(result$ten_year_average) > 0) {
-        cache$averages[[paste0(metric_id, "_10yr")]] <- result$ten_year_average
-        cat("  10yr:", nrow(result$ten_year_average), "rows, avg:", round(mean(result$ten_year_average$value, na.rm = TRUE), 1), "\n")
-      }
       
     }, error = function(e) {
       cat("  ERROR:", e$message, "\n")
@@ -254,8 +314,12 @@ clear_cache <- function(metrics = NULL) {
   } else {
     cache <- readRDS(cache_file)
     for (metric_id in metrics) {
+      # Clear standard 5yr/10yr keys
       cache$averages[[paste0(metric_id, "_5yr")]] <- NULL
       cache$averages[[paste0(metric_id, "_10yr")]] <- NULL
+      # Clear yearly grouped keys
+      cache$averages[[paste0(metric_id, "_yearly_facilities")]] <- NULL
+      cache$averages[[paste0(metric_id, "_yearly_district")]] <- NULL
       cat("Cleared cache for:", metric_id, "\n")
     }
     saveRDS(cache, cache_file)

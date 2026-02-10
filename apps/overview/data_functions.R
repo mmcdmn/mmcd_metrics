@@ -392,8 +392,9 @@ load_data_by_zone <- function(metric,
   }
   
   # Determine if this metric should use acres data
-  # Only drone and ground_prehatch have acres - struct_trt and catch_basin use site counts
-  acres_metrics <- c("drone", "ground_prehatch")
+  # Metrics that use acres: drone, ground_prehatch, cattail_treatments
+  # struct_trt and catch_basin use site counts
+  acres_metrics <- c("drone", "ground_prehatch", "cattail_treatments")
   use_acres <- metric %in% acres_metrics && "total_acres" %in% names(data)
   
   if (separate_zones) {
@@ -517,7 +518,9 @@ load_data_by_facility <- function(metric,
     return(result)
   }
   
-  use_acres <- isTRUE(config$has_acres) &&
+  # Match load_data_by_zone: drone, ground_prehatch, and cattail_treatments use acres
+  acres_metrics <- c("drone", "ground_prehatch", "cattail_treatments")
+  use_acres <- metric %in% acres_metrics &&
     all(c("total_acres", "active_acres", "expiring_acres") %in% names(data))
   
   if (separate_zones && length(zone_filter) == 2) {

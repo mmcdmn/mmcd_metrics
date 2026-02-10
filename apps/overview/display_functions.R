@@ -749,6 +749,18 @@ create_yearly_grouped_chart <- function(data, title, y_label, theme = "MMCD", ov
     group_by(year_num) %>%
     summarise(yearly_total = sum(value, na.rm = TRUE), .groups = "drop")
   
+  # For facilities view: divide by number of facilities with data
+  # so that the avg line is comparable to per-facility bars
+  if (overview_type == "facilities") {
+    n_facilities_per_year <- data %>%
+      group_by(year_num) %>%
+      summarise(n_fac = n_distinct(group_label), .groups = "drop")
+    yearly_totals <- yearly_totals %>%
+      left_join(n_facilities_per_year, by = "year_num") %>%
+      mutate(yearly_total = yearly_total / pmax(n_fac, 1)) %>%
+      select(-n_fac)
+  }
+  
   # 5-year average (last 5 years including current) - average of yearly totals
   five_year_data <- yearly_totals %>% 
     filter(year_num >= (current_year - 4))

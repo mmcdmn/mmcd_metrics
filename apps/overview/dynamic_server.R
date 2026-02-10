@@ -284,6 +284,12 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
       }
     }
 
+    # For cattail_treatments: compute 'treated' = active - expiring
+    # active = treated + need_treatment, expiring = need_treatment only
+    if (metric_id == "cattail_treatments") {
+      detail_data$treated <- detail_data$active - detail_data$expiring
+    }
+    
     # Get status colors
     status_colors <- get_status_colors(theme = theme)
     
@@ -405,7 +411,7 @@ load_hist_cache <- function() {
 #' @param metric_id Metric ID
 #' @param week_num Week number (from lubridate::week(), matching cache data)
 #' @return Historical average value or NULL if not available
-get_historical_week_avg <- function(metric_id, week_num) {
+get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2")) {
   cache <- load_hist_cache()
   if (is.null(cache)) return(NULL)
   
@@ -416,7 +422,13 @@ get_historical_week_avg <- function(metric_id, week_num) {
   week_data <- hist_data[hist_data$week_num == week_num, ]
   if (nrow(week_data) == 0) return(NULL)
   
-  # Sum across zones — zone-level cache stores per-zone averages that must
+  # Filter by zone when cache has zone-level data
+  if ("zone" %in% names(week_data) && length(zone_filter) > 0) {
+    week_data <- week_data[week_data$zone %in% zone_filter, ]
+    if (nrow(week_data) == 0) return(NULL)
+  }
+  
+  # Sum across matching zones — zone-level cache stores per-zone averages that must
   # be added together for the total. For non-zone data this is equivalent to mean.
   sum(week_data$value, na.rm = TRUE)
 }
@@ -530,7 +542,7 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   week_num <- lubridate::week(analysis_date)
   
   # Get 10-year weekly average from cache (fast - uses file cache)
-  historical_avg <- get_historical_week_avg(metric_id, week_num)
+  historical_avg <- get_historical_week_avg(metric_id, week_num, zone_filter)
   if (is.null(historical_avg) || historical_avg == 0) return(result)
   
   # Use pre-loaded weekly value if provided, otherwise use short-term cache
@@ -595,7 +607,7 @@ get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date,
 #' @param historical_data Optional: pre-loaded historical data to extract weekly values (avoids duplicate DB loads)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL) {
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2")) {
   cat("[DEBUG] generate_summary_stats called with:")
   cat(" overview_type=", overview_type)
   cat(" metrics_filter=", if (is.null(metrics_filter)) "NULL" else paste(metrics_filter, collapse = ","))
@@ -781,7 +793,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         # Use pre-loaded weekly value if available (optimization)
         weekly_val <- weekly_values[[metric_id]]
         box_info <- tryCatch(
-          get_dynamic_value_box_info(metric_id, active, analysis_date, config, weekly_value = weekly_val),
+          get_dynamic_value_box_info(metric_id, active, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
           error = function(e) {
             cat("WARNING: get_dynamic_value_box_info failed for", metric_id, ":", e$message, "\n")
             list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
@@ -1318,7 +1330,7 @@ build_overview_server <- function(input, output, session,
     
     # Generate value boxes
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data)
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter)
       message("[RENDER-UI] generate_summary_stats SUCCESS")
       stats
     }, error = function(e) {

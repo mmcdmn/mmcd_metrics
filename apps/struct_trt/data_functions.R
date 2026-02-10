@@ -225,7 +225,7 @@ WHERE trt.list_type = 'STR'
     # Add year filtering for historical analysis (same pattern as drone)
     if (!is.null(start_year) && !is.null(end_year)) {
       treatments_query <- paste0(treatments_query, sprintf(
-        " AND EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d", start_year, end_year))
+        " AND EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d", start_year - 1, end_year))
     }
     
     current_treatments <- dbGetQuery(con, treatments_query)
@@ -271,7 +271,7 @@ WHERE trt.list_type = 'STR'
       # Add year filtering for archive
       if (!is.null(start_year) && !is.null(end_year)) {
         archive_query <- paste0(archive_query, sprintf(
-          " AND EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d", start_year, end_year))
+          " AND EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d", start_year - 1, end_year))
       }
       
       archive_treatments <- dbGetQuery(con, archive_query)

@@ -447,7 +447,7 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", min(current_year_range), max(current_year_range), zone_condition)
+      ", min(current_year_range) - 1, max(current_year_range), zone_condition)
       
       cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
       current_data <- dbGetQuery(con, query_current)
@@ -474,9 +474,9 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", start_year, end_year, zone_condition)
+      ", start_year - 1, end_year, zone_condition)
       
-      cat("DEBUG: Getting archive table data for years", start_year, "-", end_year, "\n")
+      cat("DEBUG: Getting archive table data for years", start_year - 1, "-", end_year, "\n")
       archive_data <- dbGetQuery(con, query_archive)
       cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
       treatments <- bind_rows(treatments, archive_data)

@@ -36,7 +36,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
     WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
       AND b.air_gnd='G'
-      AND b.prehatch IN ('PREHATCH','BRIQUET')
+      AND b.prehatch IN ('PREHATCH','BRIQUET','PELLET')
     ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
     ", geom_select, as.character(analysis_date))
     
@@ -52,12 +52,15 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     JOIN mattype_list_targetdose p ON c.matcode = p.matcode
     WHERE p.prehatch IS TRUE
       AND c.inspdate <= '%s'::date
+      AND EXISTS (SELECT 1 FROM loc_breeding_sites b WHERE b.sitecode = c.sitecode AND b.prehatch IS NOT NULL)
     ", format(analysis_date, "%Y-%m-%d"))
     
-    # Add year filtering for historical analysis (same pattern as drone)
+    # Add year filtering for historical analysis
+    # Use start_year - 1 to capture long-lasting treatments (up to 150-day briquettes)
+    # that were applied late in the prior year but remain active into start_year
     if (!is.null(start_year) && !is.null(end_year)) {
       treatments_query <- paste0(treatments_query, sprintf(
-        " AND EXTRACT(YEAR FROM c.inspdate) BETWEEN %d AND %d", start_year, end_year))
+        " AND EXTRACT(YEAR FROM c.inspdate) BETWEEN %d AND %d", start_year - 1, end_year))
     }
     
     ground_treatments <- dbGetQuery(con, treatments_query)
@@ -73,12 +76,13 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
       JOIN mattype_list_targetdose p ON c.matcode = p.matcode
       WHERE p.prehatch IS TRUE
         AND c.inspdate <= '%s'::date
+        AND EXISTS (SELECT 1 FROM loc_breeding_sites b WHERE b.sitecode = c.sitecode AND b.prehatch IS NOT NULL)
       ", format(analysis_date, "%Y-%m-%d"))
       
-      # Add year filtering for archive
+      # Add year filtering for archive (buffer start_year - 1 for long-lasting treatments)
       if (!is.null(start_year) && !is.null(end_year)) {
         archive_query <- paste0(archive_query, sprintf(
-          " AND EXTRACT(YEAR FROM c.inspdate) BETWEEN %d AND %d", start_year, end_year))
+          " AND EXTRACT(YEAR FROM c.inspdate) BETWEEN %d AND %d", start_year - 1, end_year))
       }
       
       archive_treatments <- dbGetQuery(con, archive_query)
@@ -329,7 +333,7 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
       prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status)
     ) %>%
     # Filter to only prehatch sites
-    filter(prehatch %in% c("PREHATCH", "BRIQUET")) %>%
+    filter(prehatch %in% c("PREHATCH", "BRIQUET", "PELLET")) %>%
     arrange(facility, sectcode, sitecode)
   
   return(result)

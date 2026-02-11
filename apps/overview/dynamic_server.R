@@ -284,9 +284,9 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
       }
     }
 
-    # For cattail_treatments: compute 'treated' = active - expiring
+    # For cattail_treatments and air_sites: compute 'treated' = active - expiring
     # active = treated + need_treatment, expiring = need_treatment only
-    if (metric_id == "cattail_treatments") {
+    if (metric_id %in% c("cattail_treatments", "air_sites")) {
       detail_data$treated <- detail_data$active - detail_data$expiring
     }
     
@@ -639,11 +639,27 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     # For other counts, distribute evenly
     col_width <- if (n_facilities == 7) 3 else floor(12 / min(n_facilities, 6))
     
+    # Pre-extract zone-level weekly values from historical data for facility comparison
+    week_num <- lubridate::week(analysis_date)
+    fac_weekly_values <- list()
+    if (!is.null(historical_data)) {
+      for (metric_id in metrics) {
+        hist <- historical_data[[metric_id]]
+        if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
+          week_row <- hist$current[hist$current$week_num == week_num, ]
+          if (nrow(week_row) > 0) {
+            fac_weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
+          }
+        }
+      }
+    }
+    
     stat_boxes <- lapply(all_facilities, function(fac) {
       # For this facility, aggregate across all metrics
       total_all <- 0
       active_all <- 0
       expiring_all <- 0
+      fac_zone <- NULL
       
       for (metric_id in metrics) {
         metric_data <- data[[metric_id]]
@@ -653,6 +669,11 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             total_all <- total_all + sum(fac_data$total, na.rm = TRUE)
             active_all <- active_all + sum(fac_data$active, na.rm = TRUE)
             expiring_all <- expiring_all + sum(fac_data$expiring, na.rm = TRUE)
+            # Determine this facility's zone (first non-NA value)
+            if (is.null(fac_zone) && "zone" %in% names(fac_data)) {
+              z <- unique(fac_data$zone[!is.na(fac_data$zone)])
+              if (length(z) > 0) fac_zone <- as.character(z[1])
+            }
           }
         }
       }
@@ -663,7 +684,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       # For other metrics, use active / total
       config <- registry[[metrics[1]]]
       
-      if (metrics[1] == "cattail_treatments") {
+      if (metrics[1] %in% c("cattail_treatments", "air_sites")) {
         treated_all <- active_all - expiring_all
         workload <- treated_all + expiring_all
         pct <- if (workload > 0) ceiling(100 * treated_all / workload) else 0
@@ -674,15 +695,39 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         pct <- if (total_all > 0) ceiling(100 * active_all / total_all) else 0
       }
       
-      # For facilities view, use metric's default color
-      # (We don't have facility-level historical data for comparison)
+      # Use zone-level cached historical data for dynamic coloring
+      # Each facility inherits its zone's performance comparison
       box_color <- config$bg_color
+      box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
+      
+      if (!is.null(fac_zone)) {
+        fac_zone_filter <- fac_zone
+        for (metric_id in metrics) {
+          weekly_val <- fac_weekly_values[[metric_id]]
+          info <- tryCatch(
+            get_dynamic_value_box_info(metric_id, active_all, analysis_date, 
+                                       registry[[metric_id]], 
+                                       zone_filter = fac_zone_filter, 
+                                       weekly_value = weekly_val),
+            error = function(e) NULL
+          )
+          if (!is.null(info) && info$status != "default") {
+            box_color <- info$color
+            box_info <- info
+            break
+          }
+        }
+      }
       
       # Create stat box with facility short name
       column(col_width,
         div(
           class = "stat-box-clickable",
           `data-facility` = fac,
+          `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
+          `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
+          `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
+          `data-week-num` = week_num,
           create_stat_box(
             value = paste0(pct, "%"),
             title = fac,  # Just show facility short name
@@ -767,12 +812,12 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           # needs_treatment = expiring
           # Percentage = treated / (treated + needs_treatment)
           # For display_as_average metrics: show percentage (current / avg * 100)
-          if (metric_id == "cattail_treatments") {
+          if (metric_id %in% c("cattail_treatments", "air_sites")) {
             treated <- active - expiring
             needs_treatment <- expiring
             workload <- treated + needs_treatment
             pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
-            cat("[DEBUG] Cattail: treated=", treated, "needs_treatment=", needs_treatment, "pct=", pct, "\n")
+            cat("[DEBUG]", metric_id, ": treated=", treated, "needs_treatment=", needs_treatment, "pct=", pct, "\n")
           } else if (isTRUE(config$display_as_average)) {
             # For display_as_average metrics: current / avg * 100
             pct <- if (total > 0) round(100 * active / total, 1) else 0

@@ -8,6 +8,120 @@ suppressPackageStartupMessages({
   library(DBI)
 })
 
+# Source shared helpers (only if not already loaded - allows use from overview)
+if (!exists("get_db_connection", mode = "function")) {
+  source("../../shared/db_helpers.R")
+}
+
+# =============================================================================
+# STANDARD LOAD FUNCTION FOR OVERVIEW INTEGRATION
+# =============================================================================
+# Returns standardized format: list(sites = df, treatments = df, total_count = int)
+# Where sites has: sitecode, facility, zone, acres, is_active, is_expiring
+#
+# Status mapping for overview metrics:
+#   Active Treatment → is_active = TRUE  (currently being treated)
+#   Needs Treatment  → is_expiring = TRUE (needs treatment intervention)
+#   Both is_active and is_expiring → treated + need_treatment = "active" in overview
+#   Overview percentage: active / (active + need_treatment)
+# =============================================================================
+
+load_raw_data <- function(analysis_date = Sys.Date(),
+                          include_archive = FALSE,
+                          start_year = NULL, end_year = NULL,
+                          expiring_days = 7,
+                          facility_filter = NULL, foreman_filter = NULL,
+                          status_types = character(0),
+                          zone_filter = c("1", "2")) {
+  
+  # Convert zone_filter from overview format ("1","2") to air app format
+  air_zone_filter <- if (length(zone_filter) >= 2) {
+    "P1 + P2 Combined"
+  } else if ("1" %in% zone_filter) {
+    "P1"
+  } else if ("2" %in% zone_filter) {
+    "P2"
+  } else {
+    NULL
+  }
+  
+  # Convert facility_filter for air app
+  air_facility_filter <- if (!is.null(facility_filter) && length(facility_filter) > 0 &&
+                              !all(facility_filter %in% c("all", ""))) {
+    facility_filter
+  } else {
+    NULL
+  }
+  
+  # Load air sites with full status logic
+  raw_data <- get_air_sites_data(
+    analysis_date = analysis_date,
+    facility_filter = air_facility_filter,
+    zone_filter = air_zone_filter,
+    include_archive = include_archive,
+    start_year = start_year,
+    end_year = end_year
+  )
+  
+  if (is.null(raw_data) || nrow(raw_data) == 0) {
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  }
+  
+  # Map site_status to standard is_active/is_expiring columns
+  # Follows same pattern as cattail_treatments:
+  #   is_active = TRUE for sites that are actively in the program (treated + needs treatment)
+  #   is_expiring = TRUE for sites that specifically need treatment
+  sites <- raw_data %>%
+    mutate(
+      is_active = (site_status == "Active Treatment" | site_status == "Needs Treatment"),
+      is_expiring = (site_status == "Needs Treatment"),
+      acres = ifelse(is.na(acres), 0, as.numeric(acres))
+    )
+  
+  # Add facility mapping if not already present
+  if (!"facility_display" %in% names(sites)) {
+    sites <- tryCatch(map_facility_names(sites), error = function(e) sites)
+  }
+  
+  # Return STANDARDIZED format
+  return(list(
+    sites = sites,
+    treatments = data.frame(),
+    total_count = nrow(sites)
+  ))
+}
+
+#' Apply filters to air sites data - STANDARDIZED FORMAT
+#' @param data List containing sites and treatments (standardized keys)
+#' @param facility_filter Vector of selected facilities
+#' @param foreman_filter Vector of selected foremen
+#' @param zone_filter Vector of selected zones ("1", "2")
+#' @return Filtered data list with standardized keys
+apply_data_filters <- function(data, facility_filter = NULL,
+                                foreman_filter = NULL, zone_filter = NULL) {
+  sites <- data$sites
+  
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  }
+  
+  # Apply facility filter
+  if (is_valid_filter(facility_filter)) {
+    sites <- sites %>% filter(facility %in% facility_filter)
+  }
+  
+  # Apply zone filter
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    sites <- sites %>% filter(zone %in% zone_filter)
+  }
+  
+  return(list(
+    sites = sites,
+    treatments = data.frame(),
+    total_count = nrow(sites)
+  ))
+}
+
 # Get air sites data with filtering and status logic
 get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NULL, priority_filter = NULL, zone_filter = NULL, larvae_threshold = 2, bti_effect_days_override = NULL, include_archive = FALSE, start_year = NULL, end_year = NULL) {
   con <- get_db_connection()

@@ -126,7 +126,7 @@ air_sites_simple_ui <- function() {
         checkboxInput("load_air_site_polygons", 
                       tags$span(icon("map"), "Load Air Site Polygons"),
                       value = FALSE),
-        tags$small(class = "text-muted", "Shows air site boundary polygons on the map (zoom in to see)"),
+        tags$small(class = "text-muted", "loads site polygons for map display (may slow down loading)"),
 
         # Help section
         hr(),

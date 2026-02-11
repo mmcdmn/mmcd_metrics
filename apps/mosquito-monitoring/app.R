@@ -644,7 +644,7 @@ server <- function(input, output, session) {
   dataONE <- reactive({
     datafilterONE() %>% 
       group_by(inspdate, spp_name) %>% 
-      summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = Year)
+      summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = first(Year), .groups = "drop")
   })
   
   # Looping through each group of year and species

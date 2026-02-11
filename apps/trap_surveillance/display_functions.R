@@ -74,21 +74,44 @@ render_surveillance_map <- function(combined_data, areas_sf,
   # Get theme palette
   theme_palette <- get_theme_palette(color_theme)
   
-  # Color palette
+  # FIXED LEGEND BREAKS FOR EACH METRIC TYPE
+  # Based on actual data analysis:
+  # - Abundance: 0 to 219, p95 = 21.5
+  # - MLE: 0 to 0.108, p95 = 0.05  
+  # - Vector Index: 0 to 2.01, p95 = 0.52
+  
+  if (metric_type == "abundance") {
+    fixed_domain <- c(0, 30)  # Covers p95+, clips outliers
+    fixed_breaks <- c(0, 5, 10, 15, 20, 25, 30)
+  } else if (metric_type == "infection") {
+    fixed_domain <- c(0, 0.06)  # Covers p95+
+    fixed_breaks <- c(0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06)
+  } else if (metric_type == "vector_index") {
+    fixed_domain <- c(0, 2.0)  # Covers max
+    fixed_breaks <- c(0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
+  } else {
+    fixed_domain <- c(0, 30)
+    fixed_breaks <- c(0, 5, 10, 15, 20, 25, 30)
+  }
+  
+  # Color palette - Custom pale to yellow to red heat map
   if (has_data) {
     valid_vals <- metric_values[!is.na(metric_values)]
-    if (length(valid_vals) > 0 && max(valid_vals) > min(valid_vals)) {
-      color_pal <- if (metric_type %in% c("infection", "vector_index") && !is.null(theme_palette$sequential_heat)) {
-        theme_palette$sequential_heat
-      } else {
-        theme_palette$sequential
-      }
-      pal <- colorNumeric(palette = color_pal, domain = valid_vals, na.color = "#C0C0C0")
+    if (length(valid_vals) > 0) {
+      # Custom pale-to-yellow-to-red palette for all metrics
+      color_pal <- c("#fff7f3", "#fde2d3", "#fcc5c0", "#fa9fb5", "#f768a1", 
+                     "#dd3497", "#ae017e", "#7a0177", "#49006a")
+      # Alternative: yellow-red heat palette
+      color_pal <- c("#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c", 
+                     "#fc4e2a", "#e31a1c", "#bd0026", "#800026")
+      
+      # Use metric-specific fixed domain
+      pal <- colorNumeric(palette = color_pal, domain = fixed_domain, na.color = "#C0C0C0")
     } else {
-      pal <- colorNumeric(palette = c("#ffffcc", "#fd8d3c"), domain = c(0, max(valid_vals, 1)), na.color = "#C0C0C0")
+      pal <- colorNumeric(palette = c("#ffffcc", "#fd8d3c", "#800026"), domain = fixed_domain, na.color = "#C0C0C0")
     }
   } else {
-    pal <- colorNumeric(palette = c("#ffffcc", "#fd8d3c"), domain = c(0, 1), na.color = "#C0C0C0")
+    pal <- colorNumeric(palette = c("#ffffcc", "#fd8d3c", "#800026"), domain = fixed_domain, na.color = "#C0C0C0")
   }
   
   # Build popup text
@@ -159,13 +182,26 @@ render_surveillance_map <- function(combined_data, areas_sf,
       )
   }
   
-  # Legend
+  # Legend - Use colors and labels directly for full control over order
   if (has_data) {
+    # Generate colors for each break value (highest to lowest)
+    legend_values <- rev(fixed_breaks)  # 30, 25, 20... down to 0
+    legend_colors <- sapply(legend_values, function(v) pal(v))
+    
+    # Format labels based on metric type
+    legend_labels <- if (metric_type == "infection") {
+      sprintf("%.2f", legend_values)
+    } else if (metric_type == "vector_index") {
+      sprintf("%.2f", legend_values)
+    } else {
+      sprintf("%.0f", legend_values)
+    }
+    
     m <- m %>%
       addLegend(
         position = "bottomright",
-        pal = pal,
-        values = ~get(metric_col),
+        colors = legend_colors,  # Explicitly set colors in order
+        labels = legend_labels,  # Explicitly set labels in order
         title = metric_label,
         opacity = 0.7
       )

@@ -43,10 +43,12 @@ server <- function(input, output, session) {
     req(input$year)
     weeks_data <- fetch_available_weeks(as.integer(input$year))
     if (!is.null(weeks_data) && nrow(weeks_data) > 0) {
-      # Build nice labels: "202537 (Wk 37)" 
+      # Build nice labels with actual dates when available
       week_choices <- setNames(
         as.character(weeks_data$yrwk),
-        sprintf("%s (Wk %s)", weeks_data$yrwk, weeks_data$epiweek)
+        ifelse(!is.na(weeks_data$week_days) & weeks_data$week_days != "",
+               sprintf(" %s (Wk %s)", weeks_data$week_days, weeks_data$epiweek),
+               sprintf(" (Wk %s)",  weeks_data$epiweek))
       )
       updateSelectInput(session, "yrwk", choices = week_choices, selected = week_choices[1])
     }

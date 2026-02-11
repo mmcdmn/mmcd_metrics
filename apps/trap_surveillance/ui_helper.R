@@ -24,7 +24,7 @@ trap_surveillance_ui <- function() {
               selectInput("year", "Year:",
                          choices = NULL,
                          selected = NULL),
-              selectInput("yrwk", "Week (yrwk):",
+              selectInput("yrwk", "Week:",
                          choices = NULL,
                          selected = NULL),
               selectInput("species", "Species:",

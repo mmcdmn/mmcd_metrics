@@ -364,14 +364,15 @@ fetch_available_weeks <- function(year = NULL) {
   on.exit(safe_disconnect(con))
   
   where_clause <- if (!is.null(year)) {
-    sprintf("WHERE year = %s", as.integer(year))
+    sprintf("WHERE a.year = %s", as.integer(year))
   } else ""
   
   q <- sprintf(
-    "SELECT DISTINCT yrwk, epiweek, year 
-     FROM dbadult_mon_nt_co2_forvectorabundance
+    "SELECT DISTINCT a.yrwk, a.epiweek, a.year, l.week_days
+     FROM dbadult_mon_nt_co2_forvectorabundance a
+     LEFT JOIN lookup_weeknum l ON a.yrwk::text = l.wknumyr::text
      %s
-     ORDER BY yrwk DESC",
+     ORDER BY a.yrwk DESC",
     where_clause
   )
   
@@ -380,7 +381,20 @@ fetch_available_weeks <- function(year = NULL) {
     data
   }, error = function(e) {
     warning(paste("Available weeks query failed:", e$message))
-    NULL
+    # Fallback without date ranges if lookup table doesn't exist
+    q_fallback <- sprintf(
+      "SELECT DISTINCT yrwk, epiweek, year, NULL as week_days
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       %s
+       ORDER BY yrwk DESC",
+      where_clause
+    )
+    tryCatch({
+      dbGetQuery(con, q_fallback)
+    }, error = function(e2) {
+      warning(paste("Fallback weeks query also failed:", e2$message))
+      NULL
+    })
   })
 }
 

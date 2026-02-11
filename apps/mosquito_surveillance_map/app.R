@@ -210,7 +210,7 @@ LABELdataAvg0 <- reactive({
 
 LABELdataAvg <- reactive({
   LABELdataAvg0() %>%
-    summarise(Avg = round(Avg, 0),  geometry = geometry)
+    summarise(Avg = round(first(Avg), 0), geometry = first(geometry), .groups = "drop")
   
 })
 
@@ -382,7 +382,7 @@ mosqdateFilterMISS <- reactive({
 MAPdataMISS0 <- reactive({
   mosqdateFilterMISS() %>%
     group_by(loc_code) %>%
-    summarise(Missing = "Missing", geometry = geometry, spp_name = spp_name, loc_code = loc_code)
+    summarise(Missing = "Missing", geometry = first(geometry), spp_name = first(spp_name), loc_code = first(loc_code), .groups = "drop")
 })  
 
 MAPdataMISS <- reactive({

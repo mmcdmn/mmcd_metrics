@@ -68,7 +68,7 @@ ensure_registry_loaded <- function() {
 get_cacheable_metrics <- function() {
   if (!ensure_registry_loaded()) {
     # Fallback to hardcoded list if registry unavailable
-    return(c("catch_basin", "drone", "ground_prehatch", "structure", "cattail_treatments"))
+    return(c("catch_basin", "drone", "ground_prehatch", "structure", "cattail_treatments", "air_sites"))
   }
   
   registry <- get_metric_registry()

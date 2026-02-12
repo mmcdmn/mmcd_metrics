@@ -13,19 +13,6 @@ if (!exists("get_db_connection", mode = "function")) {
   source("../../shared/db_helpers.R")
 }
 
-# =============================================================================
-# STANDARD LOAD FUNCTION FOR OVERVIEW INTEGRATION
-# =============================================================================
-# Returns standardized format: list(sites = df, treatments = df, total_count = int)
-# Where sites has: sitecode, facility, zone, acres, is_active, is_expiring
-#
-# Status mapping for overview metrics:
-#   Active Treatment → is_active = TRUE  (currently being treated)
-#   Needs Treatment  → is_expiring = TRUE (needs treatment intervention)
-#   Both is_active and is_expiring → treated + need_treatment = "active" in overview
-#   Overview percentage: active / (active + need_treatment)
-# =============================================================================
-
 load_raw_data <- function(analysis_date = Sys.Date(),
                           include_archive = FALSE,
                           start_year = NULL, end_year = NULL,
@@ -34,6 +21,17 @@ load_raw_data <- function(analysis_date = Sys.Date(),
                           status_types = character(0),
                           zone_filter = c("1", "2"),
                           priority_filter = c("RED")) {
+  
+  # For historical analysis (include_archive=TRUE with year range), 
+  # only load treatment records — the heavy site-status CTE is not needed
+  if (include_archive && !is.null(start_year) && !is.null(end_year)) {
+    treatments <- load_air_treatments(start_year, end_year, zone_filter, priority_filter)
+    return(list(
+      sites = data.frame(),
+      treatments = treatments,
+      total_count = nrow(treatments)
+    ))
+  }
   
   # Convert zone_filter from overview format ("1","2") to air app format
   air_zone_filter <- if (length(zone_filter) >= 2) {
@@ -54,25 +52,19 @@ load_raw_data <- function(analysis_date = Sys.Date(),
     NULL
   }
   
-  # Load air sites with full status logic
+  # Load air sites with full status logic (point-in-time analysis)
   raw_data <- get_air_sites_data(
     analysis_date = analysis_date,
     facility_filter = air_facility_filter,
     priority_filter = priority_filter,
-    zone_filter = air_zone_filter,
-    include_archive = include_archive,
-    start_year = start_year,
-    end_year = end_year
+    zone_filter = air_zone_filter
   )
   
   if (is.null(raw_data) || nrow(raw_data) == 0) {
     return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   }
   
-  # Map site_status to standard is_active/is_expiring columns
-  # Follows same pattern as cattail_treatments:
-  #   is_active = TRUE for sites that are actively in the program (treated + needs treatment)
-  #   is_expiring = TRUE for sites that specifically need treatment
+  # Map site_status to is_active/is_expiring columns
   sites <- raw_data %>%
     mutate(
       is_active = (site_status == "Active Treatment" | site_status == "Needs Treatment"),
@@ -85,7 +77,6 @@ load_raw_data <- function(analysis_date = Sys.Date(),
     sites <- tryCatch(map_facility_names(sites), error = function(e) sites)
   }
   
-  # Return STANDARDIZED format
   return(list(
     sites = sites,
     treatments = data.frame(),
@@ -93,46 +84,32 @@ load_raw_data <- function(analysis_date = Sys.Date(),
   ))
 }
 
-# =============================================================================
-# HISTORICAL TREATMENTS LOADER - For overview historical charts
-# =============================================================================
-#' Load ALL air site treatments over a year range for historical analysis.
-#' Returns treatment records with inspdate and acres for weekly active calculation.
-#' @param start_year Start year
-#' @param end_year End year
-#' @param zone_filter Zones to include (numeric strings "1","2")
-#' @return List with $treatments data frame containing inspdate, facility, zone, acres, effect_days, sitecode
-#' @export
-load_historical_treatments <- function(start_year, end_year, zone_filter = c("1", "2")) {
+# Load treatment records from current/archive tables for historical analysis
+load_air_treatments <- function(start_year, end_year, zone_filter = c("1", "2"), priority_filter = c("RED")) {
+  if (is.null(start_year) || is.null(end_year)) return(data.frame())
+  
   con <- get_db_connection()
-  if (is.null(con)) return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+  if (is.null(con)) return(data.frame())
   
   tryCatch({
-    # Build zone filter
     zone_condition <- ""
     if (!is.null(zone_filter) && length(zone_filter) > 0) {
       zone_list <- paste0("'", paste(zone_filter, collapse = "','"), "'")
       zone_condition <- sprintf("AND g.zone IN (%s)", zone_list)
     }
     
-    # Priority filter - default to RED only (matches overview registry)
-    priority_condition <- "AND b.priority = 'RED'"
+    priority_condition <- ""
+    if (!is.null(priority_filter) && length(priority_filter) > 0) {
+      priority_list <- paste0("'", paste(priority_filter, collapse = "','"), "'")
+      priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
+    }
     
-    # Use shared function to determine which years are in which table
     year_ranges <- get_historical_year_ranges(con, "dblarv_insptrt_current", "dblarv_insptrt_archive", "inspdate")
     current_years <- year_ranges$current_years
     
-    treatments <- data.frame()
-    
-    # Query template for air site treatments
-    # Actions: 3=Treatment, A=Aerial treatment, D=Direct treatment
     query_template <- "
       SELECT 
-        t.inspdate,
-        b.facility,
-        g.zone,
-        b.sitecode,
-        b.acres,
+        t.inspdate, b.facility, g.zone, b.sitecode, b.acres,
         COALESCE(mt.effect_days, 14) as effect_days
       FROM %s t
       JOIN loc_breeding_sites b ON t.sitecode = b.sitecode
@@ -142,28 +119,21 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
         AND t.matcode IS NOT NULL AND t.matcode != ''
         AND b.air_gnd = 'A'
         AND b.geom IS NOT NULL
-        %s
-        %s
+        %s %s
         AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d
     "
     
-    # Get data from CURRENT table
+    treatments <- data.frame()
+    
     query_current <- sprintf(query_template,
       "dblarv_insptrt_current", priority_condition, zone_condition, start_year, end_year)
-    
-    cat("DEBUG air_sites load_historical_treatments: querying current table for years", start_year, "-", end_year, "\n")
     current_data <- dbGetQuery(con, query_current)
-    cat("DEBUG: Current table returned", nrow(current_data), "rows\n")
     treatments <- bind_rows(treatments, current_data)
     
-    # Get data from ARCHIVE table for historical years
     if (start_year < min(current_years, na.rm = TRUE)) {
       query_archive <- sprintf(query_template,
         "dblarv_insptrt_archive", priority_condition, zone_condition, start_year, end_year)
-      
-      cat("DEBUG: Querying archive table for years", start_year, "-", end_year, "\n")
       archive_data <- dbGetQuery(con, query_archive)
-      cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
       treatments <- bind_rows(treatments, archive_data)
     }
     
@@ -177,27 +147,15 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
         )
     }
     
-    cat("DEBUG: Total air site treatments loaded:", nrow(treatments), "\n")
-    
-    list(
-      sites = data.frame(),
-      treatments = treatments,
-      total_count = nrow(treatments)
-    )
-    
+    treatments
   }, error = function(e) {
-    cat("ERROR in air_sites load_historical_treatments:", e$message, "\n")
+    cat("ERROR in load_air_treatments:", e$message, "\n")
     if (!is.null(con)) safe_disconnect(con)
-    list(sites = data.frame(), treatments = data.frame(), total_count = 0)
+    data.frame()
   })
 }
 
-#' Apply filters to air sites data - STANDARDIZED FORMAT
-#' @param data List containing sites and treatments (standardized keys)
-#' @param facility_filter Vector of selected facilities
-#' @param foreman_filter Vector of selected foremen
-#' @param zone_filter Vector of selected zones ("1", "2")
-#' @return Filtered data list with standardized keys
+#' Apply filters to air sites data
 apply_data_filters <- function(data, facility_filter = NULL,
                                 foreman_filter = NULL, zone_filter = NULL) {
   sites <- data$sites

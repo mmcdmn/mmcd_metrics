@@ -32,9 +32,10 @@ create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon
     style = paste0(
       "background-color: ", bg_color, "; ",
       "color: ", text_color, "; ",
-      "padding: 20px; ",
-      "border-radius: 5px; ",
+      "padding: 20px 24px; ",
+      "border-radius: 8px; ",
       "margin-bottom: 15px; ",
+      "min-height: 100px; ",
       "box-shadow: 0 2px 4px rgba(0,0,0,0.1); ",
       "display: flex; ",
       "align-items: center; ",
@@ -43,7 +44,7 @@ create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon
     div(
       style = "flex: 1;",
       div(
-        style = "font-size: 24px; font-weight: bold; margin-bottom: 5px;",
+        style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
         value
       ),
       div(

@@ -126,13 +126,23 @@ server <- function(input, output, session) {
           "A correction method commonly used in entomology. Without an untreated control group,",
           " the simplified version is:",
           tags$br(),
-          tags$code("% Reduction = 100 - (post_genus_dips / pre_genus_dips) \u00D7 100"),
+          tags$code("% Reduction = 100 - (post_genus_dips / pre_genus_dips) × 100"),
           tags$br(),
-          "With a control: % Reduction = 100 - (T2/T1 \u00D7 C1/C2) \u00D7 100",
+          "With a control: % Reduction = 100 - (T2/T1 × C1/C2) × 100",
           tags$br(),
           "Where T = treated, C = control, 1 = pre, 2 = post.",
           tags$br(),
           "Note: Without control data, both formulas are mathematically equivalent."
+        ),
+
+        tags$dt(style = "font-size: 16px; margin-top: 15px; color: #d63031;", "Graph Display"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          tags$b("Important:"), " Negative % reduction values are displayed as 0% in the box plot graph only.",
+          " This affects the visual representation, median lines, box quartiles, and summary statistics",
+          " (median reduction, mean reduction values shown above the graph).",
+          tags$br(), tags$br(),
+          tags$b("Data tables"), " continue to show the original negative values unchanged.",
+          " This ensures you can still access the raw data while having a cleaner graph visualization."
         ),
 
         tags$dt(style = "font-size: 16px; margin-top: 15px;", "Season Classification"),

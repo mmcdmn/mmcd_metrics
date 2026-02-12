@@ -129,7 +129,7 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
   on.exit(USE_CACHED_AVERAGES <<- old_cache_setting)
   
   # Metrics to cache - weekly average metrics
-  metrics_to_cache <- c("catch_basin", "drone", "ground_prehatch", "structure", "mosquito_monitoring")
+  metrics_to_cache <- c("catch_basin", "drone", "ground_prehatch", "structure", "mosquito_monitoring", "air_sites")
   
   # Yearly grouped metrics (cached differently - store yearly_data per overview_type)
   yearly_grouped_metrics <- c("cattail_treatments")

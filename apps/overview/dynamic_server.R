@@ -428,9 +428,15 @@ get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2
     if (nrow(week_data) == 0) return(NULL)
   }
   
-  # Sum across matching zones — zone-level cache stores per-zone averages that must
-  # be added together for the total. For non-zone data this is equivalent to mean.
-  sum(week_data$value, na.rm = TRUE)
+  # For average-based metrics (e.g., mosquito monitoring avg/trap), average across zones.
+  # For count/acres-based metrics, sum across zones.
+  registry <- get_metric_registry()
+  config <- registry[[metric_id]]
+  if (isTRUE(config$aggregate_as_average)) {
+    mean(week_data$value, na.rm = TRUE)
+  } else {
+    sum(week_data$value, na.rm = TRUE)
+  }
 }
 
 #' Get current week's value for a metric from database
@@ -446,48 +452,22 @@ get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1"
     if (is.null(config)) return(NULL)
     
     current_year <- lubridate::year(analysis_date)
+    week_num <- lubridate::week(analysis_date)
     
-    # Get the week's Friday (that's what the chart uses)
-    week_start <- lubridate::floor_date(analysis_date, "week", week_start = 1)
-    week_friday <- week_start + 4
-    week_num <- lubridate::week(week_friday)
+    # Reuse load_current_year_for_cache to avoid duplicating value column logic
+    current_data <- load_current_year_for_cache(metric_id, current_year, zone_filter, config)
     
-    # Load raw data
-    raw_data <- load_app_historical_data(metric_id, current_year, current_year, zone_filter)
-    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
+    if (is.null(current_data) || nrow(current_data) == 0) return(NULL)
     
-    treatments <- raw_data$treatments
-    treatments$inspdate <- as.Date(treatments$inspdate)
+    # Find the matching week
+    week_row <- current_data[current_data$week_num == week_num, ]
+    if (nrow(week_row) == 0) return(0)
     
-    # Create value column (same logic as load_current_year_for_cache)
-    has_acres <- isTRUE(config$has_acres)
-    if (has_acres) {
-      acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                   else if ("acres" %in% names(treatments)) "acres" else NULL
-      treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
+    # Average across zones for avg-based metrics, sum for count/acres
+    if (isTRUE(config$aggregate_as_average)) {
+      mean(week_row$value, na.rm = TRUE)
     } else {
-      treatments$value <- 1
-    }
-    
-    is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
-    
-    if (is_active) {
-      # For active treatments: count what's ACTIVE on that week's Friday
-      if (!"effect_days" %in% names(treatments)) {
-        treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
-      }
-      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
-      
-      # Filter to treatments active on Friday
-      active <- treatments[treatments$inspdate <= week_friday & treatments$treatment_end >= week_friday, ]
-      
-      if (nrow(active) == 0) return(0)
-      sum(active$value, na.rm = TRUE)
-    } else {
-      # For simple counts: sum treatments from that week
-      week_data <- treatments[treatments$inspdate >= week_start & treatments$inspdate <= week_start + 6, ]
-      if (nrow(week_data) == 0) return(0)
-      sum(week_data$value, na.rm = TRUE)
+      sum(week_row$value, na.rm = TRUE)
     }
   }, error = function(e) {
     warning(paste("Error getting current week value:", e$message))
@@ -519,6 +499,61 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   # Only apply dynamic colors to specific metrics
   dynamic_metrics <- c("drone", "ground_prehatch", "catch_basin", "structure", 
                        "mosquito_monitoring", "suco")
+  
+  # Fixed percentage-based coloring (e.g., air_sites coverage %)
+  if (isTRUE(config$color_mode == "fixed_pct")) {
+    thresholds <- config$color_thresholds
+    # current_value is passed as the treatment coverage percentage
+    pct_val <- current_value
+    if (pct_val >= thresholds$good) {
+      result$color <- "#16a34a"
+      result$status <- "good"
+    } else if (pct_val >= thresholds$warning) {
+      result$color <- "#eab308"
+      result$status <- "warning"
+    } else {
+      result$color <- "#dc2626"
+      result$status <- "alert"
+    }
+    return(result)
+  }
+  
+  # Percent-of-average coloring (e.g., mosquito monitoring current vs historical)
+  # current_value = pct from value box (e.g., 76.5 means current is 76.5% of historical)
+  if (isTRUE(config$color_mode == "pct_of_average")) {
+    thresholds <- config$color_thresholds
+    pct_val <- current_value
+    pct_diff_val <- round(pct_val - 100, 1)
+    
+    if (isTRUE(config$inverse_color)) {
+      # Inverse: lower is better (mosquitoes - fewer = good)
+      if (pct_val <= thresholds$good) {
+        result$color <- "#16a34a"
+        result$status <- "good"
+      } else if (pct_val <= thresholds$warning) {
+        result$color <- "#eab308"
+        result$status <- "warning"
+      } else {
+        result$color <- "#dc2626"
+        result$status <- "alert"
+      }
+    } else {
+      # Standard: higher is better
+      if (pct_val >= (200 - thresholds$good)) {
+        result$color <- "#16a34a"
+        result$status <- "good"
+      } else if (pct_val >= (200 - thresholds$warning)) {
+        result$color <- "#eab308"
+        result$status <- "warning"
+      } else {
+        result$color <- "#dc2626"
+        result$status <- "alert"
+      }
+    }
+    
+    result$pct_diff <- pct_diff_val
+    return(result)
+  }
   
   if (!metric_id %in% dynamic_metrics) return(result)
   
@@ -635,9 +670,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     if (length(all_facilities) == 0) return(fluidRow())
     
     n_facilities <- length(all_facilities)
-    # For 7 facilities, use 4 columns in first row, 3 in second (col_width = 3)
-    # For other counts, distribute evenly
-    col_width <- if (n_facilities == 7) 3 else floor(12 / min(n_facilities, 6))
+    # Max 3 facilities per row for more spacious boxes
+    max_fac_per_row <- 3
+    col_width <- max(4, floor(12 / min(n_facilities, max_fac_per_row)))
     
     # Pre-extract zone-level weekly values from historical data for facility comparison
     week_num <- lubridate::week(analysis_date)
@@ -648,7 +683,12 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
           week_row <- hist$current[hist$current$week_num == week_num, ]
           if (nrow(week_row) > 0) {
-            fac_weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
+            config_m <- registry[[metric_id]]
+            if (isTRUE(config_m$aggregate_as_average)) {
+              fac_weekly_values[[metric_id]] <- mean(week_row$value, na.rm = TRUE)
+            } else {
+              fac_weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
+            }
           }
         }
       }
@@ -704,9 +744,12 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         fac_zone_filter <- fac_zone
         for (metric_id in metrics) {
           weekly_val <- fac_weekly_values[[metric_id]]
+          fac_config <- registry[[metric_id]]
+          fac_cm <- if (!is.null(fac_config$color_mode)) fac_config$color_mode else ""
+          color_value <- if (fac_cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
           info <- tryCatch(
-            get_dynamic_value_box_info(metric_id, active_all, analysis_date, 
-                                       registry[[metric_id]], 
+            get_dynamic_value_box_info(metric_id, color_value, analysis_date, 
+                                       fac_config, 
                                        zone_filter = fac_zone_filter, 
                                        weekly_value = weekly_val),
             error = function(e) NULL
@@ -739,7 +782,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       )
     })
     
-    fluidRow(stat_boxes)
+    # Split facility boxes into rows
+    fac_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_fac_per_row))
+    row_elements <- lapply(fac_rows, function(row_boxes) fluidRow(row_boxes))
+    div(class = "facility-stat-boxes", row_elements)
     
   } else {
     cat("[DEBUG] District view - processing categories\n")
@@ -762,7 +808,12 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
           week_row <- hist$current[hist$current$week_num == week_num, ]
           if (nrow(week_row) > 0) {
-            weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
+            config_m <- registry[[metric_id]]
+            if (isTRUE(config_m$aggregate_as_average)) {
+              weekly_values[[metric_id]] <- mean(week_row$value, na.rm = TRUE)
+            } else {
+              weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
+            }
           }
         }
       }
@@ -783,9 +834,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         return(NULL)
       }
       
-      # Calculate column width based on number of metrics in this category
+      # Calculate column width - use fixed width of 3 (3-4 per row max) to prevent crowding
       n_metrics <- length(cat_metrics)
-      col_width <- floor(12 / n_metrics)
+      max_per_row <- 3
+      col_width <- max(4, floor(12 / min(n_metrics, max_per_row)))
       cat("[DEBUG] Category", cat, "will use column width", col_width, "for", n_metrics, "metrics\n")
       
       stat_boxes <- lapply(cat_metrics, function(metric_id) {
@@ -836,9 +888,12 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         
         # Get dynamic color and comparison info
         # Use pre-loaded weekly value if available (optimization)
+        # For fixed_pct and pct_of_average metrics, pass the percentage as current_value
         weekly_val <- weekly_values[[metric_id]]
+        cm <- if (!is.null(config$color_mode)) config$color_mode else ""
+        color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
         box_info <- tryCatch(
-          get_dynamic_value_box_info(metric_id, active, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
+          get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
           error = function(e) {
             cat("WARNING: get_dynamic_value_box_info failed for", metric_id, ":", e$message, "\n")
             list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
@@ -889,16 +944,49 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         return(NULL)
       }
       
-      # Return category section with header and metrics row
+      # Return category section with header and metrics in rows of max_per_row
       cat("[DEBUG] Creating category section for", cat, "\n")
+      
+      # Split stat boxes into chunks for multiple rows
+      box_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_per_row))
+      row_elements <- lapply(box_rows, function(row_boxes) fluidRow(row_boxes))
+      
+      # Build charts for this category's metrics
+      cat_charts <- lapply(cat_metrics, function(metric_id) {
+        config <- registry[[metric_id]]
+        div(
+          id = paste0("chart_wrapper_", metric_id),
+          class = "chart-panel-wrapper category-chart",
+          tryCatch(
+            # Use a smaller initial plot height so pre-rendered Plotly canvases
+            # fit within the category chart containers without being clipped.
+            # The dynamic sizing classes and JS resize logic will adjust as needed
+            # after the chart is shown.
+            create_chart_panel(metric_id, config, chart_height = "180px", is_historical = FALSE),
+            error = function(e) {
+              cat("[DEBUG] ERROR creating chart for", metric_id, ":", e$message, "\n")
+              div(class = "alert alert-warning", "Error loading chart")
+            }
+          )
+        )
+      })
+      
+      # Wrap charts in a row for grid layout (3 per row)
+      charts_row <- if (length(cat_charts) > 0) {
+        div(class = "charts-grid-row", do.call(tagList, cat_charts))
+      } else {
+        NULL
+      }
+      
       section_result <- tryCatch(
         div(class = "category-section",
-          style = "margin-bottom: 15px;",
+          style = "margin-bottom: 25px;",
           div(class = "category-header",
             style = "font-size: 14px; font-weight: bold; color: #666; margin-bottom: 8px; padding-left: 5px; border-left: 3px solid #2c5aa0;",
             cat
           ),
-          fluidRow(stat_boxes)
+          do.call(tagList, row_elements),
+          charts_row
         ),
         error = function(e) {
           cat("[DEBUG] ERROR creating category section for", cat, ":", e$message, "\n")
@@ -925,7 +1013,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     }
     
     final_result <- tryCatch(
-      div(class = "metrics-by-category", category_sections),
+      div(class = "metrics-by-category", 
+        do.call(tagList, category_sections)
+      ),
       error = function(e) {
         cat("[DEBUG] ERROR creating final metrics container:", e$message, "\n")
         return(div(
@@ -1192,6 +1282,10 @@ build_overview_server <- function(input, output, session,
           )
         }
       })
+      
+      # CRITICAL: Don't suspend rendering when chart is hidden
+      # This ensures charts in hidden category sections still render
+      outputOptions(output, output_id, suspendWhenHidden = FALSE)
     })
   })
   
@@ -1264,6 +1358,9 @@ build_overview_server <- function(input, output, session,
             ten_year_avg_data = hist_data$ten_year_average
           )
         })
+        
+        # CRITICAL: Don't suspend rendering when chart is hidden
+        outputOptions(output, output_id, suspendWhenHidden = FALSE)
       })
     })
   }

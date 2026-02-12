@@ -127,6 +127,32 @@ load_current_year_efficiently <- function(metric_id, current_year, zone_filter =
   })
 }
 
+# =============================================================================
+# SHARED VALUE COLUMN HELPER
+# =============================================================================
+#' Assign the 'value' column to a treatments data frame based on metric config.
+#' Used by load_current_year_for_cache, load_yearly_grouped_data, and the main
+#' historical calculation. Centralizes the logic to avoid drift between callers.
+#' @param treatments Data frame of treatment records
+#' @param config Metric config from registry
+#' @return treatments with a 'value' column added/updated
+assign_value_column <- function(treatments, config) {
+  aggregate_as_avg <- isTRUE(config$aggregate_as_average)
+  has_acres <- isTRUE(config$has_acres)
+  
+  if (aggregate_as_avg && "value" %in% names(treatments)) {
+    # Keep existing pre-aggregated values (e.g., avg mosquitoes per trap)
+    treatments$value <- as.numeric(treatments$value)
+  } else if (has_acres) {
+    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres"
+                 else if ("acres" %in% names(treatments)) "acres" else NULL
+    treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
+  } else {
+    treatments$value <- 1
+  }
+  treatments
+}
+
 #' Load current year data for cache path (helper function)
 #' Handles both active treatment metrics and simple count metrics
 #' @param metric Metric ID
@@ -148,15 +174,10 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
     
     has_acres <- isTRUE(config$has_acres)
     is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
+    aggregate_as_avg <- isTRUE(config$aggregate_as_average)
     
-    # Create value column
-    if (has_acres) {
-      acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                   else if ("acres" %in% names(treatments)) "acres" else NULL
-      treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
-    } else {
-      treatments$value <- 1
-    }
+    # Assign value column using shared helper
+    treatments <- assign_value_column(treatments, config)
     
     # Calculate weekly data
     if (is_active) {
@@ -200,7 +221,7 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
       weekly_data <- treatments %>%
         mutate(year = year(inspdate), week_num = week(inspdate)) %>%
         group_by(year, week_num) %>%
-        summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+        summarize(value = if (aggregate_as_avg) mean(value, na.rm = TRUE) else sum(value, na.rm = TRUE), .groups = "drop")
     }
     
     # Format output
@@ -240,8 +261,7 @@ get_historical_year_range <- function(n_years = 5, analysis_date = NULL) {
 #' Load raw historical treatments from an app's data_functions.R
 #' 
 #' This is THE ONLY place that loads data. It dynamically sources the app's
-#' data_functions.R and calls either load_raw_data (with include_archive=TRUE)
-#' or load_historical_treatments if available.
+#' data_functions.R and calls load_raw_data (with include_archive=TRUE).
 #' 
 #' @param metric_id The metric ID from registry
 #' @param start_year Start year
@@ -277,15 +297,7 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
   source(data_file, local = env, chdir = TRUE)
   
   tryCatch({
-    # Try load_historical_treatments first (returns raw treatment data with inspdate)
-    if ("load_historical_treatments" %in% names(env)) {
-      result <- env$load_historical_treatments(
-        start_year = start_year,
-        end_year = end_year,
-        zone_filter = zone_filter
-      )
-    } else if ("load_raw_data" %in% names(env)) {
-      # Use standard load_raw_data with include_archive
+    if ("load_raw_data" %in% names(env)) {
       end_date <- as.Date(paste0(end_year, "-12-31"))
       result <- env$load_raw_data(
         analysis_date = end_date,
@@ -294,7 +306,7 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
         end_year = end_year
       )
     } else {
-      cat("ERROR: No historical loading function found for", metric_id, "\n")
+      cat("ERROR: load_raw_data not found for", metric_id, "\n")
       return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
     }
     
@@ -329,22 +341,8 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
 load_yearly_grouped_data <- function(metric, treatments, config, overview_type = "facilities",
                                     start_year = NULL, end_year = NULL) {
   
-  has_acres <- isTRUE(config$has_acres)
-  
-  # Determine value column
-  if (has_acres) {
-    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                 else if ("acres" %in% names(treatments)) "acres"
-                 else NULL
-    
-    if (!is.null(acres_col)) {
-      treatments$value <- treatments[[acres_col]]
-    } else {
-      treatments$value <- 1
-    }
-  } else {
-    treatments$value <- 1
-  }
+  # Assign value column using shared helper
+  treatments <- assign_value_column(treatments, config)
   
   # Add year column - use config-specified column if available, otherwise inspdate year
   year_col <- config$historical_year_column
@@ -476,17 +474,23 @@ load_historical_comparison_data <- function(metric,
     
     if (!is.null(cached_10yr) && !is.null(cached_5yr)) {
       # Aggregate cached zone-level data for the requested zone_filter
+      # For average-based metrics (e.g., avg/trap), take mean across zones
+      # For count/acres-based metrics, sum across zones
+      agg_fn <- if (isTRUE(config$aggregate_as_average)) "mean" else "sum"
+      
       if ("zone" %in% names(cached_5yr)) {
         cached_5yr <- cached_5yr %>%
           filter(zone %in% zone_filter) %>%
           group_by(week_num, time_period, group_label) %>%
-          summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+          summarize(value = if (agg_fn == "mean") mean(value, na.rm = TRUE) 
+                           else sum(value, na.rm = TRUE), .groups = "drop")
       }
       if ("zone" %in% names(cached_10yr)) {
         cached_10yr <- cached_10yr %>%
           filter(zone %in% zone_filter) %>%
           group_by(week_num, time_period, group_label) %>%
-          summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+          summarize(value = if (agg_fn == "mean") mean(value, na.rm = TRUE) 
+                           else sum(value, na.rm = TRUE), .groups = "drop")
       }
       
       # Load current year data fresh (already filtered by zone_filter)
@@ -566,24 +570,8 @@ load_historical_comparison_data <- function(metric,
     return(load_yearly_grouped_data(metric, treatments, config, overview_type, start_year, end_year))
   }
   
-  # Determine value column based on metric type
-  # If data already has a 'value' column and uses aggregate_as_average, keep it
-  if ("value" %in% names(treatments) && isTRUE(config$aggregate_as_average)) {
-    # Keep existing value column - data is pre-aggregated (e.g., mosquito monitoring)
-  } else if (has_acres && display_metric == "treatment_acres") {
-    # Use acres if available
-    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                 else if ("acres" %in% names(treatments)) "acres"
-                 else NULL
-    
-    if (!is.null(acres_col)) {
-      treatments$value <- treatments[[acres_col]]
-    } else {
-      treatments$value <- 1
-    }
-  } else {
-    treatments$value <- 1
-  }
+  # Assign value column using shared helper (reduces duplication)
+  treatments <- assign_value_column(treatments, config)
   
   current_year <- end_year
   n_prior_years <- current_year - start_year + 1

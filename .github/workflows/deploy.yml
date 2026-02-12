@@ -82,8 +82,8 @@ jobs:
           access-role-arn: ${{ secrets.AWS_ROLE }}
           instance-role-arn: ${{ secrets.AWS_ROLE }}
           region: us-east-2
-          cpu: 2
-          memory: 4
+          cpu: 4
+          memory: 8
           wait-for-service-stability-seconds: 1200
 
       - name: App Runner URL

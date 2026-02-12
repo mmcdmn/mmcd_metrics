@@ -18,6 +18,11 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
                           start_year = NULL, end_year = NULL, include_geometry = FALSE,
                           facility_filter = "all", foreman_filter = "all", 
                           zone_filter = c("1", "2"), expiring_days = 14) {
+  # Historical archive mode: return individual treatment rows for cache/charts
+  if (isTRUE(include_archive) && !is.null(start_year) && !is.null(end_year)) {
+    return(load_historical_treatments(start_year, end_year, zone_filter))
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   

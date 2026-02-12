@@ -5,18 +5,18 @@
 # Two modes controlled by the ENABLE_NGINX environment variable:
 #
 #   ENABLE_NGINX=true  (local development)
-#     → Runs multiple Shiny Server instances behind nginx for true
+#      Runs multiple Shiny Server instances behind nginx for true
 #       concurrency from a single machine.
 #
-#   ENABLE_NGINX=false or unset  (production / AWS App Runner)
-#     → Runs a single Shiny Server directly on port 3838.
+#   ENABLE_NGINX=false or unset  (production ) 
+#      Runs a single Shiny Server directly on port 3838.
 #       App Runner handles concurrency by spinning up multiple
 #       container instances, so nginx is unnecessary and actually
 #       breaks WebSocket connections (double-proxy issue).
 #
 # Additional env vars:
 #   SHINY_WORKERS  – number of Shiny Server instances (default: 3)
-#   PORT           – override the listen port (App Runner sets this)
+#   PORT           – override the listen port ( sets this)
 # =============================================================================
 
 set -e

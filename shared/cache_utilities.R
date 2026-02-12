@@ -431,6 +431,11 @@ refresh_lookup_caches <- function() {
     cat("  structure_types:", length(results$structure_types), "items\n")
   }, error = function(e) cat("  structure_types: ERROR -", e$message, "\n"))
   
+  tryCatch({
+    results$spring_thresholds <- get_spring_date_thresholds()
+    cat("  spring_thresholds:", if (is.data.frame(results$spring_thresholds)) nrow(results$spring_thresholds) else length(results$spring_thresholds), "items\n")
+  }, error = function(e) cat("  spring_thresholds: ERROR -", e$message, "\n"))
+  
   cat("Lookup cache refresh complete\n")
   invisible(results)
 }

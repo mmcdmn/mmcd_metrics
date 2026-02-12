@@ -78,21 +78,36 @@ render_surveillance_map <- function(combined_data, areas_sf,
   # Based on actual data analysis:
   # - Abundance: 0 to 219, p95 = 21.5
   # - MLE: 0 to 0.108, p95 = 0.05  
+  # - MIR: 0 to 100+ per 1000 mosquitoes
   # - Vector Index: 0 to 2.01, p95 = 0.52
-  
+
   if (metric_type == "abundance") {
-    fixed_domain <- c(0, 30)  # Covers p95+, clips outliers
+    legend_max <- 30     # Legend tops out at 30
     fixed_breaks <- c(0, 5, 10, 15, 20, 25, 30)
   } else if (metric_type == "infection") {
-    fixed_domain <- c(0, 0.06)  # Covers p95+
-    fixed_breaks <- c(0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06)
+    if (infection_metric == "mle") {
+      legend_max <- 0.06
+      fixed_breaks <- c(0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06)
+    } else {
+      legend_max <- 100
+      fixed_breaks <- c(0, 10, 20, 30, 50, 75, 100)
+    }
   } else if (metric_type == "vector_index") {
-    fixed_domain <- c(0, 2.0)  # Covers max
+    legend_max <- 2.0
     fixed_breaks <- c(0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
   } else {
-    fixed_domain <- c(0, 30)
+    legend_max <- 30
     fixed_breaks <- c(0, 5, 10, 15, 20, 25, 30)
   }
+  
+  # Domain matches legend range — values beyond max get clamped to max color
+  fixed_domain <- c(0, legend_max)
+  
+  # Clamp metric values so anything beyond legend_max still gets the darkest color
+  map_sf[[paste0(metric_col, "_clamped")]] <- pmin(
+    ifelse(is.na(map_sf[[metric_col]]), NA_real_, map_sf[[metric_col]]),
+    legend_max
+  )
   
   # Color palette - Custom pale to yellow to red heat map
   if (has_data) {
@@ -114,8 +129,11 @@ render_surveillance_map <- function(combined_data, areas_sf,
     pal <- colorNumeric(palette = c("#ffffcc", "#fd8d3c", "#800026"), domain = fixed_domain, na.color = "#C0C0C0")
   }
   
-  # Build popup text
+  # Build popup text (uses real unclamped values)
   popup_text <- build_area_popups(map_sf, metric_type, infection_metric)
+  
+  # Use the clamped column name for coloring
+  clamped_col <- paste0(metric_col, "_clamped")
   
   # Load background layers
   bg_layers <- load_background_layers()
@@ -129,12 +147,12 @@ render_surveillance_map <- function(combined_data, areas_sf,
   # Add area polygons
   m <- m %>%
     addPolygons(
-      fillColor = ~pal(get(metric_col)),
+      fillColor = ~pal(get(clamped_col)),
       fillOpacity = 0.65,
       color = "#333",
       weight = 2,
       popup = popup_text,
-      label = ~paste0(viarea, ": ", ifelse(is.na(get(metric_col)), "No data", format_fn(get(metric_col)))),
+      label = ~paste0(viarea, ": ", ifelse(is.na(get(metric_col)), "No data available", format_fn(get(metric_col)))),  # 0 is valid data, only NA means no data
       highlightOptions = highlightOptions(
         weight = 4,
         color = "#000",
@@ -188,13 +206,19 @@ render_surveillance_map <- function(combined_data, areas_sf,
     legend_values <- rev(fixed_breaks)  # 30, 25, 20... down to 0
     legend_colors <- sapply(legend_values, function(v) pal(v))
     
-    # Format labels based on metric type
-    legend_labels <- if (metric_type == "infection") {
-      sprintf("%.2f", legend_values)
+    # Format labels based on metric type — highest break always shows "+" to indicate no cap
+    if (metric_type == "infection" && infection_metric == "mir") {
+      legend_labels <- sprintf("%.0f", legend_values)
+    } else if (metric_type == "infection") {
+      legend_labels <- sprintf("%.2f", legend_values)
     } else if (metric_type == "vector_index") {
-      sprintf("%.2f", legend_values)
+      legend_labels <- sprintf("%.2f", legend_values)
     } else {
-      sprintf("%.0f", legend_values)
+      legend_labels <- sprintf("%.0f", legend_values)
+    }
+    # Mark the highest break with "+" to show values beyond are included
+    if (length(legend_labels) > 0 && legend_values[1] == max(fixed_breaks)) {
+      legend_labels[1] <- paste0(legend_labels[1], "+")
     }
     
     m <- m %>%

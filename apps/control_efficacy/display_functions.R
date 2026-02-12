@@ -116,7 +116,9 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
   
   # Filter to rows with valid % reduction and season
   plot_data <- efficacy_data %>%
-    filter(!is.na(pct_reduction), !is.na(season))
+    filter(!is.na(pct_reduction), !is.na(season)) %>%
+    # Clamp negative reductions to 0 FOR GRAPH ONLY (tables keep original values)
+    mutate(pct_reduction = pmax(pct_reduction, 0))
   
   if (nrow(plot_data) == 0) {
     p <- ggplot() +
@@ -136,11 +138,11 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
   genus_colors <- c("Aedes" = "#D32F2F", "Culex" = "#1976D2")
   
   # ---------------------------------------------------------------------------
-  # Smart y-axis limits: clip to [-100%, 110%] so the IQR boxes are clearly
-  # visible even when extreme outliers exist. Points outside this range are
-  # simply clipped (not removed) by coord_cartesian.
+  # Smart y-axis limits: clip to [-5%, 110%]. Negatives are clamped to 0 but 
+  # use -5% lower bound for extra protection in case any slip through.
+  # Points above 110% are clipped (not removed) by coord_cartesian.
   # ---------------------------------------------------------------------------
-  y_lo <- -100
+  y_lo <- -5
   y_hi <- 110
   
   # Count outliers that will be hidden
@@ -166,7 +168,7 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
     geom_hline(yintercept = 80, linetype = "dotted", color = "forestgreen", linewidth = 0.7, alpha = 0.7) +
     scale_fill_manual(values = genus_colors, name = "Genus") +
     scale_y_continuous(
-      breaks = seq(-100, 100, by = 20),
+      breaks = seq(-10, 100, by = 10),
       labels = function(x) paste0(x, "%")
     ) +
     coord_cartesian(ylim = c(y_lo, y_hi)) +

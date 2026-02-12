@@ -958,11 +958,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           id = paste0("chart_wrapper_", metric_id),
           class = "chart-panel-wrapper category-chart",
           tryCatch(
-            # Use a smaller initial plot height so pre-rendered Plotly canvases
-            # fit within the category chart containers without being clipped.
-            # The dynamic sizing classes and JS resize logic will adjust as needed
-            # after the chart is shown.
-            create_chart_panel(metric_id, config, chart_height = "180px", is_historical = FALSE),
+            # Compact chart height for category grid - no scrolling
+            create_chart_panel(metric_id, config, chart_height = "150px", is_historical = FALSE),
             error = function(e) {
               cat("[DEBUG] ERROR creating chart for", metric_id, ":", e$message, "\n")
               div(class = "alert alert-warning", "Error loading chart")
@@ -1238,6 +1235,12 @@ build_overview_server <- function(input, output, session,
         create_overview_legend(theme = current_theme(), metric_id = local_metric_id)
       })
     })
+  })
+  
+  # Enable legend rendering even when hidden (charts start hidden)
+  lapply(metrics, function(metric_id) {
+    legend_id <- paste0(metric_id, "_legend")
+    outputOptions(output, legend_id, suspendWhenHidden = FALSE)
   })
   
   # Setup current charts - each watches the current_data reactive

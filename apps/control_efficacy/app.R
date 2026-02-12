@@ -529,7 +529,7 @@ server <- function(input, output, session) {
     }
 
     # Material type filter (dropdown: "All Materials" or "Bti Only")
-    if (!is.null(input$material_type_filter) && input$material_type_filter == "Bti Only") {
+    if (!is.null(input$material_type_filter) && input$material_type_filter == "bti") {
       # Get Bti matcodes and filter
       con <- get_db_connection()
       if (!is.null(con)) {

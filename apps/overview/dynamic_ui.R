@@ -257,9 +257,8 @@ get_overview_css <- function() {
       background: #f9f9f9;
       border: 1px solid #ddd;
       border-radius: 5px;
-      padding: 15px;
+      padding: 8px;
       display: none;
-      overflow: hidden;
       min-width: 0;
       max-width: 100%;
       box-sizing: border-box;
@@ -268,32 +267,41 @@ get_overview_css <- function() {
       display: block !important;
       animation: fadeIn 0.3s ease-in;
     }
-    /* Dynamic sizing classes */
-    .category-chart-small { 
-      height: 200px;
-      min-height: 200px;
-    }
-    .category-chart-medium { 
-      height: 260px;
-      min-height: 260px;
-    }
-    .category-chart-large { 
-      height: 310px;
-      min-height: 310px;
-    }
+    /* Remove all size classes - let content determine height */
     .category-section .category-chart .plotly {
       width: 100% !important;
       max-width: 100% !important;
-      overflow: hidden !important;
     }
     .category-section .category-chart .chart-panel {
       width: 100%;
       max-width: 100%;
-      overflow: hidden;
     }
-    .category-chart-small .plotly { height: 170px !important; }
-    .category-chart-medium .plotly { height: 230px !important; }
-    .category-chart-large .plotly { height: 280px !important; }
+    /* Force plotly to not scroll */
+    .category-chart .js-plotly-plot,
+    .category-chart .plot-container,
+    .category-chart .svg-container {
+      overflow: visible !important;
+    }
+    /* Ensure legend is visible - uiOutput creates shiny-html-output wrapper */
+    .category-chart .shiny-html-output {
+      display: block !important;
+      visibility: visible !important;
+      min-height: 20px;
+    }
+    .category-chart .chart-legend {
+      display: flex !important;
+      visibility: visible !important;
+      font-size: 11px !important;
+      padding: 4px 0 !important;
+      gap: 12px !important;
+      justify-content: center;
+    }
+    /* Compact chart title for category charts */
+    .category-chart .chart-title {
+      font-size: 12px;
+      margin-bottom: 4px;
+      padding-bottom: 3px;
+    }
     .category-header {
       font-size: 13px;
       font-weight: 600;
@@ -609,7 +617,7 @@ get_overview_js <- function() {
       // Remove all comparison banners (they will be stale after refresh)
       $('.comparison-banner').remove();
       // Close all open charts and reset active states
-      $('.chart-panel-wrapper.visible').removeClass('visible category-chart-small category-chart-medium category-chart-large');
+      $('.chart-panel-wrapper.visible').removeClass('visible');
       $('.stat-box-clickable.active').removeClass('active');
       // Hide initial prompt (first load) and stats, show skeleton
       $('#initial_prompt_static').hide();
@@ -647,28 +655,9 @@ get_overview_js <- function() {
       var pctDiff = statBox.data('pct-diff');
       var weekNum = statBox.data('week-num');
       
-      // Toggle visibility and dynamic sizing
+      // Toggle visibility
       chartWrapper.toggleClass('visible');
       statBox.toggleClass('active');
-      
-      // Dynamic sizing based on category section content
-      if (chartWrapper.hasClass('visible')) {
-        var categorySection = chartWrapper.closest('.category-section');
-        var visibleChartsInSection = categorySection.find('.category-chart.visible').length;
-        var statBoxRows = categorySection.find('.row').length;
-        
-        // Remove existing size classes
-        chartWrapper.removeClass('category-chart-small category-chart-medium category-chart-large');
-        
-        // Add appropriate size class based on content density
-        if (visibleChartsInSection <= 1 && statBoxRows <= 1) {
-          chartWrapper.addClass('category-chart-large');
-        } else if (visibleChartsInSection <= 2 || statBoxRows <= 1) {
-          chartWrapper.addClass('category-chart-medium');
-        } else {
-          chartWrapper.addClass('category-chart-small');
-        }
-      }
       
       // Update comparison banner in chart wrapper
       var comparisonBanner = chartWrapper.find('.comparison-banner');

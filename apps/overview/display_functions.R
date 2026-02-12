@@ -52,10 +52,10 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL, metric_conf
   }
   
   HTML(paste0(
-    '<div style="display: flex; gap: 20px; justify-content: center; padding: 8px 0; font-size: 16px; font-weight: 600;">',
-    '<span><span style="display: inline-block; width: 16px; height: 16px; background: #D32F2F; opacity: 0.3; margin-right: 8px; border: 1px solid #999;"></span>', total_label, '</span>',
-    '<span><span style="display: inline-block; width: 16px; height: 16px; background: ', unname(status_colors["active"]), '; margin-right: 8px; border: 1px solid #999;"></span>', active_label, '</span>',
-    '<span><span style="display: inline-block; width: 16px; height: 16px; background: ', unname(status_colors["planned"]), '; margin-right: 8px; border: 1px solid #999;"></span>', expiring_label, '</span>',
+    '<div class="chart-legend" style="display: flex; gap: 15px; justify-content: center; padding: 4px 0; font-size: 11px; font-weight: 600;">',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: #D32F2F; opacity: 0.3; margin-right: 5px; border: 1px solid #999;"></span>', total_label, '</span>',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["active"]), '; margin-right: 5px; border: 1px solid #999;"></span>', active_label, '</span>',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["planned"]), '; margin-right: 5px; border: 1px solid #999;"></span>', expiring_label, '</span>',
     '</div>'
   ))
 }
@@ -173,14 +173,15 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   # Convert to plotly with custom tooltip
   plotly_chart <- ggplotly(p, tooltip = "text") %>%
     layout(
-      margin = list(l = 80, r = 20, t = 10, b = 50),
+      autosize = TRUE,
+      margin = list(l = 80, r = 10, t = 5, b = 40),
       hoverlabel = list(
         bgcolor = "white",
         font = list(size = 12),
         bordercolor = "black"
       )
     ) %>%
-    config(displayModeBar = FALSE)
+    config(displayModeBar = FALSE, scrollZoom = FALSE)
   
   return(plotly_chart)
 }
@@ -272,14 +273,15 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type 
   # Convert to plotly with custom tooltip and click event source
   plotly_chart <- ggplotly(p, tooltip = "text", source = metric_type) %>%
     layout(
-      margin = list(l = 50, r = 20, t = 20, b = 50),
+      autosize = TRUE,
+      margin = list(l = 50, r = 10, t = 10, b = 40),
       hoverlabel = list(
         bgcolor = "white",
         font = list(size = 12),
         bordercolor = "black"
       )
     ) %>%
-    config(displayModeBar = FALSE) %>%
+    config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
     event_register("plotly_click")
   
   return(plotly_chart)

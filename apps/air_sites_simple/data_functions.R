@@ -32,7 +32,8 @@ load_raw_data <- function(analysis_date = Sys.Date(),
                           expiring_days = 7,
                           facility_filter = NULL, foreman_filter = NULL,
                           status_types = character(0),
-                          zone_filter = c("1", "2")) {
+                          zone_filter = c("1", "2"),
+                          priority_filter = c("RED")) {
   
   # Convert zone_filter from overview format ("1","2") to air app format
   air_zone_filter <- if (length(zone_filter) >= 2) {
@@ -57,6 +58,7 @@ load_raw_data <- function(analysis_date = Sys.Date(),
   raw_data <- get_air_sites_data(
     analysis_date = analysis_date,
     facility_filter = air_facility_filter,
+    priority_filter = priority_filter,
     zone_filter = air_zone_filter,
     include_archive = include_archive,
     start_year = start_year,

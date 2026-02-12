@@ -148,9 +148,14 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
     
     has_acres <- isTRUE(config$has_acres)
     is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
+    aggregate_as_avg <- isTRUE(config$aggregate_as_average)
     
     # Create value column
-    if (has_acres) {
+    # For aggregate_as_average metrics (e.g., mosquito_monitoring): preserve existing value column
+    if (aggregate_as_avg && "value" %in% names(treatments)) {
+      # Keep existing pre-aggregated values (e.g., avg mosquitoes per trap)
+      treatments$value <- as.numeric(treatments$value)
+    } else if (has_acres) {
       acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
                    else if ("acres" %in% names(treatments)) "acres" else NULL
       treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
@@ -200,7 +205,7 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
       weekly_data <- treatments %>%
         mutate(year = year(inspdate), week_num = week(inspdate)) %>%
         group_by(year, week_num) %>%
-        summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+        summarize(value = if (aggregate_as_avg) mean(value, na.rm = TRUE) else sum(value, na.rm = TRUE), .groups = "drop")
     }
     
     # Format output

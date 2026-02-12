@@ -783,9 +783,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         return(NULL)
       }
       
-      # Calculate column width based on number of metrics in this category
+      # Calculate column width - use fixed width of 3 (4 per row max) to prevent crowding
       n_metrics <- length(cat_metrics)
-      col_width <- floor(12 / n_metrics)
+      max_per_row <- 4
+      col_width <- max(3, floor(12 / min(n_metrics, max_per_row)))
       cat("[DEBUG] Category", cat, "will use column width", col_width, "for", n_metrics, "metrics\n")
       
       stat_boxes <- lapply(cat_metrics, function(metric_id) {
@@ -889,8 +890,13 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         return(NULL)
       }
       
-      # Return category section with header and metrics row
+      # Return category section with header and metrics in rows of max_per_row
       cat("[DEBUG] Creating category section for", cat, "\n")
+      
+      # Split stat boxes into chunks for multiple rows
+      box_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_per_row))
+      row_elements <- lapply(box_rows, function(row_boxes) fluidRow(row_boxes))
+      
       section_result <- tryCatch(
         div(class = "category-section",
           style = "margin-bottom: 15px;",
@@ -898,7 +904,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             style = "font-size: 14px; font-weight: bold; color: #666; margin-bottom: 8px; padding-left: 5px; border-left: 3px solid #2c5aa0;",
             cat
           ),
-          fluidRow(stat_boxes)
+          row_elements
         ),
         error = function(e) {
           cat("[DEBUG] ERROR creating category section for", cat, ":", e$message, "\n")

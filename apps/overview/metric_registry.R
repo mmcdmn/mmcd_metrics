@@ -170,8 +170,8 @@ get_metric_registry <- function() {
     
     air_sites = list(
       id = "air_sites",
-      display_name = "Air Sites",
-      short_name = "Air",
+      display_name = "Red Air Sites",
+      short_name = "Red Air",
       icon = "helicopter",
       category = "Floodwater",
       y_label = "Air Site Acres",
@@ -191,10 +191,11 @@ get_metric_registry <- function() {
       ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Air breeding sites (air_gnd = 'A')<br>
+                         • Priority: RED only<br>
                          • Active Treatment + Needs Treatment<br>
                          • All facilities<br>
                          • Zone filter from dropdown"),
-      load_params = list(expiring_days = 7)
+      load_params = list(expiring_days = 7, priority_filter = c("RED"))
     ),
     
     structure = list(

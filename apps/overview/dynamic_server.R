@@ -956,7 +956,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         config <- registry[[metric_id]]
         div(
           id = paste0("chart_wrapper_", metric_id),
-          class = "chart-panel-wrapper category-chart col-md-4",
+          class = "chart-panel-wrapper category-chart",
           tryCatch(
             # Use a smaller initial plot height so pre-rendered Plotly canvases
             # fit within the category chart containers without being clipped.
@@ -973,7 +973,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       
       # Wrap charts in a row for grid layout (3 per row)
       charts_row <- if (length(cat_charts) > 0) {
-        div(class = "row", do.call(tagList, cat_charts))
+        div(class = "charts-grid-row", do.call(tagList, cat_charts))
       } else {
         NULL
       }

@@ -220,11 +220,15 @@ get_overview_css <- function() {
     /* Category grouping styles */
     .metrics-by-category {
       width: 100%;
+      max-width: 100%;
       display: block;
+      overflow-x: hidden;
     }
     .category-section {
       width: 100%;
+      max-width: 100%;
       margin-bottom: 20px;
+      overflow-x: hidden;
     }
     .category-section .row {
       display: flex;
@@ -239,26 +243,26 @@ get_overview_css <- function() {
       padding-right: 15px;
       margin-bottom: 15px;
     }
-    /* Charts within category sections */
-    .category-section .row {
-      display: flex;
-      flex-wrap: wrap;
-      margin: 15px -15px 0 -15px;
-      width: calc(100% + 30px);
+    /* Charts within category sections - use specific class to avoid Bootstrap .row conflict */
+    .category-section .charts-grid-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin-top: 15px;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
     }
     .category-section .category-chart {
       background: #f9f9f9;
       border: 1px solid #ddd;
       border-radius: 5px;
       padding: 15px;
-      margin-top: 0px;
       display: none;
-      overflow: visible;
-      margin-left: 15px;
-      margin-right: 15px;
-      margin-bottom: 15px;
-      position: relative;
-      width: calc(33.333% - 30px);
+      overflow: hidden;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
     }
     .category-section .category-chart.visible {
       display: block !important;
@@ -279,6 +283,13 @@ get_overview_css <- function() {
     }
     .category-section .category-chart .plotly {
       width: 100% !important;
+      max-width: 100% !important;
+      overflow: hidden !important;
+    }
+    .category-section .category-chart .chart-panel {
+      width: 100%;
+      max-width: 100%;
+      overflow: hidden;
     }
     .category-chart-small .plotly { height: 170px !important; }
     .category-chart-medium .plotly { height: 230px !important; }

@@ -116,19 +116,50 @@ server <- function(input, output, session) {
     # Extract week number for x-axis
     trend_data$week <- as.numeric(substr(as.character(trend_data$yrwk), 5, 6))
     
+    # Fetch 5-year and 10-year averages
+    avg_5yr  <- fetch_mle_avg_by_epiweek(input$year, 5)
+    avg_10yr <- fetch_mle_avg_by_epiweek(input$year, 10)
+    
     p <- ggplot(trend_data, aes(x = week, y = mle)) +
-      geom_ribbon(aes(ymin = mle_lower, ymax = mle_upper), alpha = 0.2, fill = "#2c5aa0") +
-      geom_line(color = "#2c5aa0", linewidth = 1) +
+      geom_ribbon(aes(ymin = mle_lower, ymax = mle_upper), alpha = 0.2, fill = "#2c5aa0")
+    
+    # Add 10-year avg line (behind 5-year)
+    if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) {
+      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_mle, linetype = "10-yr Avg"),
+                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
+    }
+    # Add 5-year avg line
+    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
+      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_mle, linetype = "5-yr Avg"),
+                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
+    }
+    
+    p <- p +
+      geom_line(aes(linetype = paste0(input$year)), color = "#2c5aa0", linewidth = 1) +
       geom_point(color = "#2c5aa0", size = 2) +
+      scale_linetype_manual(
+        name = "",
+        values = c(setNames("solid", input$year), "5-yr Avg" = "dashed", "10-yr Avg" = "dotted"),
+        guide = guide_legend(override.aes = list(
+          color = c("#2c5aa0", "#27ae60", "#e67e22")
+        ))
+      ) +
       labs(
         title = sprintf("District-Wide MLE — %s", input$year),
         x = "Epiweek",
         y = "MLE (Infection Rate)"
       ) +
       theme_minimal() +
-      theme(text = element_text(size = 13))
+      theme(text = element_text(size = 13),
+            legend.position = "bottom",
+            legend.margin = margin(t = 5, b = 0),
+            plot.margin = margin(b = 40))
     
-    plotly::ggplotly(p, tooltip = c("x", "y"))
+    plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      plotly::layout(
+        legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
+        margin = list(b = 80)
+      )
   })
   
   output$abundance_trend_plot <- plotly::renderPlotly({
@@ -144,7 +175,18 @@ server <- function(input, output, session) {
                plotly::layout(title = "No abundance data available"))
     }
     
-    # Aggregate by yrwk and viarea
+    # Aggregate by yrwk (district-wide for cleaner chart with avg lines)
+    trend_district <- abundance_data %>%
+      dplyr::group_by(yrwk) %>%
+      dplyr::summarise(
+        total_count = sum(mosqcount, na.rm = TRUE),
+        num_traps = dplyr::n_distinct(loc_code),
+        avg_per_trap = total_count / max(num_traps, 1),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
+    
+    # Also aggregate by area for the colored lines
     trend_agg <- abundance_data %>%
       dplyr::group_by(yrwk, viarea) %>%
       dplyr::summarise(
@@ -155,21 +197,53 @@ server <- function(input, output, session) {
       ) %>%
       dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
     
+    # Fetch 5-year and 10-year averages
+    avg_5yr  <- fetch_abundance_avg_by_epiweek(input$year, 5, input$species)
+    avg_10yr <- fetch_abundance_avg_by_epiweek(input$year, 10, input$species)
+    
     p <- ggplot(trend_agg, aes(x = week, y = avg_per_trap, color = viarea)) +
-      geom_line(linewidth = 0.8) +
-      geom_point(size = 1.5) +
+      geom_line(linewidth = 0.8, alpha = 0.6) +
+      geom_point(size = 1.5, alpha = 0.6)
+    
+    # Add 10-year avg line
+    if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) {
+      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_per_trap, color = NULL),
+                         color = "#e67e22", linewidth = 1.2, linetype = "dotted",
+                         inherit.aes = FALSE)
+    }
+    # Add 5-year avg line
+    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
+      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_per_trap, color = NULL),
+                         color = "#27ae60", linewidth = 1.2, linetype = "dashed",
+                         inherit.aes = FALSE)
+    }
+    # Add district-wide average as a bold black line
+    p <- p + geom_line(data = trend_district, aes(x = week, y = avg_per_trap, color = NULL),
+                       color = "#2c3e50", linewidth = 1.3, linetype = "solid",
+                       inherit.aes = FALSE)
+    
+    p <- p +
       labs(
         title = sprintf("Abundance by Area — %s — %s", input$year, 
                         SPECIES_MAP[[input$species]]$label %||% input$species),
+        subtitle = "Solid black = district avg | Dashed green = 5-yr avg | Dotted orange = 10-yr avg",
         x = "Epiweek",
         y = "Avg Mosquitoes/Trap",
         color = "VI Area"
       ) +
       theme_minimal() +
       theme(text = element_text(size = 12),
-            legend.position = "right")
+            legend.position = "right",
+            plot.subtitle = element_text(size = 10, color = "#666"))
     
-    plotly::ggplotly(p, tooltip = c("x", "y", "colour"))
+    plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      plotly::layout(
+        annotations = list(
+          list(text = "Dashed green = 5-yr avg | Dotted orange = 10-yr avg | Bold black = district avg",
+               x = 0.5, y = 1.05, xref = "paper", yref = "paper",
+               showarrow = FALSE, font = list(size = 11, color = "#666"))
+        )
+      )
   })
   
   # =========================================================================

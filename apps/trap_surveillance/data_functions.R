@@ -193,6 +193,70 @@ fetch_mle_trend <- function(year = NULL) {
   })
 }
 
+# MLE multi-year average by epiweek (for 5yr/10yr avg lines on trend chart)
+# Returns avg MLE per epiweek across the given year range
+fetch_mle_avg_by_epiweek <- function(current_year, n_years) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  start_year <- as.integer(current_year) - n_years
+  end_year   <- as.integer(current_year) - 1  # exclude current year
+  
+  # Extract epiweek from yrwk (last 2 digits) and average across years
+  q <- sprintf(
+    "SELECT (yrwk::integer %% 100) AS week,
+            AVG(p::numeric) AS avg_mle
+     FROM dbvirus_mle_yrwk
+     WHERE (yrwk::integer / 100) BETWEEN %d AND %d
+     GROUP BY (yrwk::integer %% 100)
+     ORDER BY week",
+    start_year, end_year
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(data$week)  # Ensure numeric for ggplot scale
+    message(sprintf("MLE %d-yr avg: %d weeks from %d-%d", n_years, nrow(data), start_year, end_year))
+    data
+  }, error = function(e) {
+    warning(paste("MLE avg query failed:", e$message))
+    NULL
+  })
+}
+
+# Abundance multi-year average by epiweek for a species (for 5yr/10yr avg lines)
+# Returns avg abundance per trap per epiweek across the given year range
+fetch_abundance_avg_by_epiweek <- function(current_year, n_years, spp_name = "Total_Cx_vectors") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  start_year <- as.integer(current_year) - n_years
+  end_year   <- as.integer(current_year) - 1
+  
+  q <- sprintf(
+    "SELECT epiweek AS week,
+            SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+     FROM dbadult_mon_nt_co2_forvectorabundance
+     WHERE year BETWEEN %d AND %d
+       AND spp_name = '%s'
+     GROUP BY epiweek
+     ORDER BY epiweek",
+    start_year, end_year, spp_name
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(data$week)  # Ensure numeric for ggplot scale
+    message(sprintf("Abundance %d-yr avg: %d weeks from %d-%d", n_years, nrow(data), start_year, end_year))
+    data
+  }, error = function(e) {
+    warning(paste("Abundance avg query failed:", e$message))
+    NULL
+  })
+}
+
 # =============================================================================
 # MIR DATA - Fetch pre-calculated MIR values
 # =============================================================================
@@ -464,19 +528,43 @@ fetch_combined_area_data <- function(yrwk, spp_name = "Total_Cx_vectors",
     combined <- combined %>%
       left_join(infection, by = "viarea")
   } else {
-    combined$infection_rate <- NA_real_
+    # No infection data at all for this week/species - set all to 0
+    combined$infection_rate <- 0
+  }
+  
+  # For areas with abundance but no infection data, treat as 0 infection rate (not NA!)
+  # 0 is a real value meaning "no infection detected" — NOT "no data"
+  combined <- combined %>%
+    mutate(
+      infection_rate = ifelse(is.na(infection_rate) & !is.na(total_count), 0, infection_rate)
+    )
+  
+  # Ensure mir_raw is 0 (not NA) for areas with abundance but no MIR match
+  if ("mir_raw" %in% names(combined)) {
+    combined <- combined %>%
+      mutate(mir_raw = ifelse(is.na(mir_raw) & !is.na(total_count), 0, mir_raw))
+  }
+  # Ensure MLE columns are 0 (not NA) for areas with abundance but no MLE match
+  if ("rate_lower" %in% names(combined)) {
+    combined <- combined %>%
+      mutate(
+        rate_lower = ifelse(is.na(rate_lower) & !is.na(total_count), 0, rate_lower),
+        rate_upper = ifelse(is.na(rate_upper) & !is.na(total_count), 0, rate_upper)
+      )
   }
   
   # 4) Calculate Vector Index = avg_per_trap × infection_rate
   combined <- combined %>%
     mutate(
+      # Now calculate vector index - use 0 infection rate when available
       vector_index = ifelse(!is.na(avg_per_trap) & !is.na(infection_rate),
                             avg_per_trap * infection_rate, NA_real_)
     )
   
-  message(sprintf("Combined data: %d areas, %d with infection data, %d with vector index",
+  message(sprintf("Combined data: %d areas, %d with infection data, %d with zero infection rate, %d with vector index",
                   nrow(combined),
-                  sum(!is.na(combined$infection_rate)),
+                  sum(!is.na(combined$infection_rate) & combined$infection_rate > 0),
+                  sum(!is.na(combined$infection_rate) & combined$infection_rate == 0),
                   sum(!is.na(combined$vector_index))))
   
   combined

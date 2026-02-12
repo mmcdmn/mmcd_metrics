@@ -194,6 +194,8 @@ get_metric_registry <- function() {
         active = "Treated",
         expiring = "Needs Treatment"
       ),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 85, warning = 60),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Air breeding sites (air_gnd = 'A')<br>
                          • Priority: RED only<br>
@@ -285,6 +287,10 @@ get_metric_registry <- function() {
       # Display configuration - makes behavior generic (no special case checks needed)
       display_as_average = TRUE,  # Show avg values instead of percentages
       aggregate_as_average = TRUE,  # Use mean instead of sum for weekly aggregation
+      # Color: current vs historical avg percentage (inverse = lower is better)
+      color_mode = "pct_of_average",
+      inverse_color = TRUE,
+      color_thresholds = list(good = 110, warning = 130),
       # Detail boxes shown when drilling down to facility level
       detail_boxes = list(
         list(id = "historical", title = "10-Year Average", column = "total", icon = "history", status = "completed"),

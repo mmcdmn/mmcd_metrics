@@ -261,8 +261,7 @@ get_historical_year_range <- function(n_years = 5, analysis_date = NULL) {
 #' Load raw historical treatments from an app's data_functions.R
 #' 
 #' This is THE ONLY place that loads data. It dynamically sources the app's
-#' data_functions.R and calls either load_raw_data (with include_archive=TRUE)
-#' or load_historical_treatments if available.
+#' data_functions.R and calls load_raw_data (with include_archive=TRUE).
 #' 
 #' @param metric_id The metric ID from registry
 #' @param start_year Start year
@@ -298,15 +297,7 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
   source(data_file, local = env, chdir = TRUE)
   
   tryCatch({
-    # Try load_historical_treatments first (returns raw treatment data with inspdate)
-    if ("load_historical_treatments" %in% names(env)) {
-      result <- env$load_historical_treatments(
-        start_year = start_year,
-        end_year = end_year,
-        zone_filter = zone_filter
-      )
-    } else if ("load_raw_data" %in% names(env)) {
-      # Use standard load_raw_data with include_archive
+    if ("load_raw_data" %in% names(env)) {
       end_date <- as.Date(paste0(end_year, "-12-31"))
       result <- env$load_raw_data(
         analysis_date = end_date,
@@ -315,7 +306,7 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
         end_year = end_year
       )
     } else {
-      cat("ERROR: No historical loading function found for", metric_id, "\n")
+      cat("ERROR: load_raw_data not found for", metric_id, "\n")
       return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
     }
     
@@ -483,17 +474,23 @@ load_historical_comparison_data <- function(metric,
     
     if (!is.null(cached_10yr) && !is.null(cached_5yr)) {
       # Aggregate cached zone-level data for the requested zone_filter
+      # For average-based metrics (e.g., avg/trap), take mean across zones
+      # For count/acres-based metrics, sum across zones
+      agg_fn <- if (isTRUE(config$aggregate_as_average)) "mean" else "sum"
+      
       if ("zone" %in% names(cached_5yr)) {
         cached_5yr <- cached_5yr %>%
           filter(zone %in% zone_filter) %>%
           group_by(week_num, time_period, group_label) %>%
-          summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+          summarize(value = if (agg_fn == "mean") mean(value, na.rm = TRUE) 
+                           else sum(value, na.rm = TRUE), .groups = "drop")
       }
       if ("zone" %in% names(cached_10yr)) {
         cached_10yr <- cached_10yr %>%
           filter(zone %in% zone_filter) %>%
           group_by(week_num, time_period, group_label) %>%
-          summarize(value = sum(value, na.rm = TRUE), .groups = "drop")
+          summarize(value = if (agg_fn == "mean") mean(value, na.rm = TRUE) 
+                           else sum(value, na.rm = TRUE), .groups = "drop")
       }
       
       # Load current year data fresh (already filtered by zone_filter)

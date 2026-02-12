@@ -127,6 +127,32 @@ load_current_year_efficiently <- function(metric_id, current_year, zone_filter =
   })
 }
 
+# =============================================================================
+# SHARED VALUE COLUMN HELPER
+# =============================================================================
+#' Assign the 'value' column to a treatments data frame based on metric config.
+#' Used by load_current_year_for_cache, load_yearly_grouped_data, and the main
+#' historical calculation. Centralizes the logic to avoid drift between callers.
+#' @param treatments Data frame of treatment records
+#' @param config Metric config from registry
+#' @return treatments with a 'value' column added/updated
+assign_value_column <- function(treatments, config) {
+  aggregate_as_avg <- isTRUE(config$aggregate_as_average)
+  has_acres <- isTRUE(config$has_acres)
+  
+  if (aggregate_as_avg && "value" %in% names(treatments)) {
+    # Keep existing pre-aggregated values (e.g., avg mosquitoes per trap)
+    treatments$value <- as.numeric(treatments$value)
+  } else if (has_acres) {
+    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres"
+                 else if ("acres" %in% names(treatments)) "acres" else NULL
+    treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
+  } else {
+    treatments$value <- 1
+  }
+  treatments
+}
+
 #' Load current year data for cache path (helper function)
 #' Handles both active treatment metrics and simple count metrics
 #' @param metric Metric ID
@@ -150,18 +176,8 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
     is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
     aggregate_as_avg <- isTRUE(config$aggregate_as_average)
     
-    # Create value column
-    # For aggregate_as_average metrics (e.g., mosquito_monitoring): preserve existing value column
-    if (aggregate_as_avg && "value" %in% names(treatments)) {
-      # Keep existing pre-aggregated values (e.g., avg mosquitoes per trap)
-      treatments$value <- as.numeric(treatments$value)
-    } else if (has_acres) {
-      acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                   else if ("acres" %in% names(treatments)) "acres" else NULL
-      treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
-    } else {
-      treatments$value <- 1
-    }
+    # Assign value column using shared helper
+    treatments <- assign_value_column(treatments, config)
     
     # Calculate weekly data
     if (is_active) {
@@ -334,22 +350,8 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
 load_yearly_grouped_data <- function(metric, treatments, config, overview_type = "facilities",
                                     start_year = NULL, end_year = NULL) {
   
-  has_acres <- isTRUE(config$has_acres)
-  
-  # Determine value column
-  if (has_acres) {
-    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                 else if ("acres" %in% names(treatments)) "acres"
-                 else NULL
-    
-    if (!is.null(acres_col)) {
-      treatments$value <- treatments[[acres_col]]
-    } else {
-      treatments$value <- 1
-    }
-  } else {
-    treatments$value <- 1
-  }
+  # Assign value column using shared helper
+  treatments <- assign_value_column(treatments, config)
   
   # Add year column - use config-specified column if available, otherwise inspdate year
   year_col <- config$historical_year_column
@@ -571,24 +573,8 @@ load_historical_comparison_data <- function(metric,
     return(load_yearly_grouped_data(metric, treatments, config, overview_type, start_year, end_year))
   }
   
-  # Determine value column based on metric type
-  # If data already has a 'value' column and uses aggregate_as_average, keep it
-  if ("value" %in% names(treatments) && isTRUE(config$aggregate_as_average)) {
-    # Keep existing value column - data is pre-aggregated (e.g., mosquito monitoring)
-  } else if (has_acres && display_metric == "treatment_acres") {
-    # Use acres if available
-    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                 else if ("acres" %in% names(treatments)) "acres"
-                 else NULL
-    
-    if (!is.null(acres_col)) {
-      treatments$value <- treatments[[acres_col]]
-    } else {
-      treatments$value <- 1
-    }
-  } else {
-    treatments$value <- 1
-  }
+  # Assign value column using shared helper (reduces duplication)
+  treatments <- assign_value_column(treatments, config)
   
   current_year <- end_year
   n_prior_years <- current_year - start_year + 1

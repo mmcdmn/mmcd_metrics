@@ -189,6 +189,11 @@ get_metric_registry <- function() {
         list(id = "treated", title = "Acres Treated", column = "treated", icon = "check-circle", status = "active"),
         list(id = "expiring", title = "Acres Need Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
       ),
+      chart_labels = list(
+        total = "Total Red Air Acres",
+        active = "Treated",
+        expiring = "Needs Treatment"
+      ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Air breeding sites (air_gnd = 'A')<br>
                          • Priority: RED only<br>

@@ -446,49 +446,18 @@ get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1"
     if (is.null(config)) return(NULL)
     
     current_year <- lubridate::year(analysis_date)
+    week_num <- lubridate::week(analysis_date)
     
-    # Get the week's Friday (that's what the chart uses)
-    week_start <- lubridate::floor_date(analysis_date, "week", week_start = 1)
-    week_friday <- week_start + 4
-    week_num <- lubridate::week(week_friday)
+    # Reuse load_current_year_for_cache to avoid duplicating value column logic
+    current_data <- load_current_year_for_cache(metric_id, current_year, zone_filter, config)
     
-    # Load raw data
-    raw_data <- load_app_historical_data(metric_id, current_year, current_year, zone_filter)
-    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
+    if (is.null(current_data) || nrow(current_data) == 0) return(NULL)
     
-    treatments <- raw_data$treatments
-    treatments$inspdate <- as.Date(treatments$inspdate)
+    # Find the matching week
+    week_row <- current_data[current_data$week_num == week_num, ]
+    if (nrow(week_row) == 0) return(0)
     
-    # Create value column (same logic as load_current_year_for_cache)
-    has_acres <- isTRUE(config$has_acres)
-    if (has_acres) {
-      acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                   else if ("acres" %in% names(treatments)) "acres" else NULL
-      treatments$value <- if (!is.null(acres_col)) treatments[[acres_col]] else 1
-    } else {
-      treatments$value <- 1
-    }
-    
-    is_active <- isTRUE(config$is_active_treatment) || isTRUE(config$use_active_calculation)
-    
-    if (is_active) {
-      # For active treatments: count what's ACTIVE on that week's Friday
-      if (!"effect_days" %in% names(treatments)) {
-        treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
-      }
-      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
-      
-      # Filter to treatments active on Friday
-      active <- treatments[treatments$inspdate <= week_friday & treatments$treatment_end >= week_friday, ]
-      
-      if (nrow(active) == 0) return(0)
-      sum(active$value, na.rm = TRUE)
-    } else {
-      # For simple counts: sum treatments from that week
-      week_data <- treatments[treatments$inspdate >= week_start & treatments$inspdate <= week_start + 6, ]
-      if (nrow(week_data) == 0) return(0)
-      sum(week_data$value, na.rm = TRUE)
-    }
+    sum(week_row$value, na.rm = TRUE)
   }, error = function(e) {
     warning(paste("Error getting current week value:", e$message))
     NULL
@@ -518,7 +487,7 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   
   # Only apply dynamic colors to specific metrics
   dynamic_metrics <- c("drone", "ground_prehatch", "catch_basin", "structure", 
-                       "mosquito_monitoring", "suco")
+                       "mosquito_monitoring", "suco", "air_sites")
   
   if (!metric_id %in% dynamic_metrics) return(result)
   
@@ -739,7 +708,11 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       )
     })
     
-    fluidRow(stat_boxes)
+    # Split facility boxes into rows of max 4
+    max_fac_per_row <- 4
+    fac_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_fac_per_row))
+    row_elements <- lapply(fac_rows, function(row_boxes) fluidRow(row_boxes))
+    div(class = "facility-stat-boxes", row_elements)
     
   } else {
     cat("[DEBUG] District view - processing categories\n")

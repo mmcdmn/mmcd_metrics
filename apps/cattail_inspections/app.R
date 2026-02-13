@@ -324,8 +324,12 @@ server <- function(input, output) {
         )
     }
     
+    # Link sitecodes to data.mmcd.org map
+    display_data$`Site Code` <- make_sitecode_link(display_data$`Site Code`)
+    
     DT::datatable(
       display_data,
+      escape = FALSE,
       options = list(
         pageLength = 25,
         order = list(list(1, 'asc'), list(2, 'desc')),
@@ -489,8 +493,12 @@ server <- function(input, output) {
         Acres = acres
       )
     
+    # Link sitecodes to data.mmcd.org map
+    display_data$`Site Code` <- make_sitecode_link(display_data$`Site Code`)
+    
     DT::datatable(
       display_data,
+      escape = FALSE,
       options = list(
         pageLength = 15,
         scrollX = TRUE,

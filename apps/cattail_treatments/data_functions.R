@@ -116,7 +116,6 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
         b.foreman,
         -- Add display and calculated fields
         b.facility as facility_display,  -- We'll map this later
-        0 as treated_acres,  -- Placeholder for display functions
         -- Determine treatment state - all sites are inspected since we use INNER JOIN
         CASE 
           WHEN i.sitecode IS NOT NULL THEN 'inspected'
@@ -216,6 +215,13 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
           TRUE ~ FALSE
         )
       )
+    
+    # Use inspection acres_plan as primary acres source for overview display
+    # b.acres from loc_breeding_sites is often NULL for active cattail sites,
+    # while acres_plan from inspections is more reliably populated
+    cattail_sites <- cattail_sites %>%
+      mutate(acres = ifelse(!is.na(acres_plan) & acres_plan > 0, acres_plan,
+                            ifelse(!is.na(acres) & acres > 0, acres, 0)))
     
     # Return STANDARDIZED format
     return(list(

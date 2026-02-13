@@ -70,7 +70,7 @@ calculate_treatment_rounds <- function(treatments, checkback_type = "percent",
 #' @return Data frame with columns: facility, round_name, start_date, end_date,
 #'         sites_treated, checkbacks_needed, checkbacks_completed, 
 #'         completion_rate, avg_days_to_checkback
-calculate_checkback_status <- function(rounds, checkbacks, treatments) {
+calculate_checkback_status <- function(rounds, checkbacks, treatments, all_inspections = NULL) {
   
   # Validate required data exists
   if (is.null(rounds) || nrow(rounds) == 0 || is.null(treatments) || nrow(treatments) == 0) {
@@ -121,6 +121,25 @@ calculate_checkback_status <- function(rounds, checkbacks, treatments) {
             next_treatment_date <- min(future_treatments$inspdate)
             site_checkbacks <- site_checkbacks %>%
               filter(inspdate < next_treatment_date)
+          }
+          
+          # Exclude control checkbacks: no treatments occurred between
+          # the pre-inspection and the post (checkback) inspection.
+          # Use pre-filtered site data for speed.
+          if (!is.null(all_inspections) && nrow(all_inspections) > 0 && nrow(site_checkbacks) > 0) {
+            site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
+            site_trt_dates <- treatments$inspdate[treatments$sitecode == site]
+
+            keep_mask <- vapply(seq_len(nrow(site_checkbacks)), function(j) {
+              cb_date <- site_checkbacks$inspdate[j]
+              # Most recent non-posttrt inspection before this checkback
+              pre_dates <- site_insps$inspdate[site_insps$inspdate < cb_date]
+              if (length(pre_dates) == 0) return(TRUE)
+              pre_date <- max(pre_dates)
+              # Any treatments between pre and post?
+              any(site_trt_dates > pre_date & site_trt_dates < cb_date)
+            }, logical(1))
+            site_checkbacks <- site_checkbacks[keep_mask, , drop = FALSE]
           }
           
           # Take only the first valid checkback
@@ -213,7 +232,7 @@ find_multiple_checkbacks <- function(checkbacks, treatments) {
 #'
 #' @return Data frame with site-level details including treatment dates,
 #'         checkback dates, and dip counts
-create_site_details <- function(treatments, checkbacks, species_data = NULL) {
+create_site_details <- function(treatments, checkbacks, species_data = NULL, all_inspections = NULL) {
   
   if (is.null(checkbacks) || nrow(checkbacks) == 0) {
     return(NULL)
@@ -226,24 +245,32 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
   # Create one row per checkback
   checkback_list <- list()
   
+  get_species_info <- function(sample_id, species_data) {
+    if (is.null(species_data) || is.null(sample_id) || is.na(sample_id) || sample_id == "") {
+      return(list(comp = NA_character_, redblue = NA, missing = NA))
+    }
+    species_match <- species_data %>% filter(sampnum_yr == !!sample_id)
+    if (nrow(species_match) > 0) {
+      return(list(
+        comp = species_match$species_composition[1],
+        redblue = species_match$redblue[1],
+        missing = species_match$missing[1]
+      ))
+    }
+    return(list(comp = NA_character_, redblue = NA, missing = NA))
+  }
+  
   for (i in 1:nrow(checkbacks)) {
     checkback <- checkbacks[i, ]
     site <- checkback$sitecode
     checkback_date <- checkback$inspdate
     sampnum_yr <- checkback$sampnum_yr
     
-    # Get species composition for this checkback if available
-    species_comp <- ""
-    redblue_val <- NA
-    missing_val <- NA
-    if (!is.null(species_data) && !is.null(sampnum_yr) && !is.na(sampnum_yr) && sampnum_yr != "") {
-      species_match <- species_data %>% filter(sampnum_yr == !!sampnum_yr)
-      if (nrow(species_match) > 0) {
-        species_comp <- species_match$species_composition[1]
-        redblue_val <- species_match$redblue[1]
-        missing_val <- species_match$missing[1]
-      }
-    }
+    # Get species composition for this checkback (post-treatment) if available
+    post_info <- get_species_info(sampnum_yr, species_data)
+    post_species_comp <- post_info$comp
+    redblue_val <- post_info$redblue
+    missing_val <- post_info$missing
     
     # Find all treatments at this site BEFORE this checkback
     site_treatments <- treatments %>%
@@ -259,11 +286,31 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
       matcode <- site_treatments$matcode[last_treatment_idx]
       mattype <- site_treatments$mattype[last_treatment_idx]
       effect_days <- site_treatments$effect_days[last_treatment_idx]
+      pre_sampnum_yr <- site_treatments$presamp_yr[last_treatment_idx]
+      if (is.null(pre_sampnum_yr) || is.na(pre_sampnum_yr) || pre_sampnum_yr == "") {
+        pre_sampnum_yr <- site_treatments$sampnum_yr[last_treatment_idx]
+      }
+      pre_info <- get_species_info(pre_sampnum_yr, species_data)
+      pre_species_comp <- pre_info$comp
       
       # Find the inspection date (could be same as treatment or earlier)
       inspection_date <- site_treatments$inspdate[last_treatment_idx]
       
       days_diff <- as.numeric(checkback_date - treatment_date)
+      
+      # Detect control checkbacks: no treatments occurred between the
+      # pre-inspection and the post (checkback) inspection.
+      is_control <- FALSE
+      pre_inspection_date <- NA
+      if (!is.null(all_inspections) && nrow(all_inspections) > 0) {
+        site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
+        pre_dates <- site_insps$inspdate[site_insps$inspdate < checkback_date]
+        if (length(pre_dates) > 0) {
+          pre_inspection_date <- max(pre_dates)
+          site_trt_dates <- treatments$inspdate[treatments$sitecode == site]
+          is_control <- !any(site_trt_dates > pre_inspection_date & site_trt_dates < checkback_date)
+        }
+      }
       
       checkback_list[[i]] <- data.frame(
         sitecode = site,
@@ -278,9 +325,13 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
         mattype = mattype,
         effect_days = effect_days,
         days_to_checkback = days_diff,
-        species_composition = species_comp,
+        pre_species_composition = pre_species_comp,
+        post_species_composition = post_species_comp,
+        species_composition = post_species_comp,
         redblue = redblue_val,
         missing = missing_val,
+        is_control = is_control,
+        pre_inspection_date = pre_inspection_date,
         stringsAsFactors = FALSE
       )
     }

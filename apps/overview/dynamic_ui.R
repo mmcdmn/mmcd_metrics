@@ -219,13 +219,88 @@ get_overview_css <- function() {
     }
     /* Category grouping styles */
     .metrics-by-category {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
+      width: 100%;
+      max-width: 100%;
+      display: block;
+      overflow-x: hidden;
     }
     .category-section {
-      flex: 1 1 auto;
-      min-width: 280px;
+      width: 100%;
+      max-width: 100%;
+      margin-bottom: 20px;
+      overflow-x: hidden;
+    }
+    .category-section .row {
+      display: flex;
+      flex-wrap: wrap;
+      margin-left: -15px;
+      margin-right: -15px;
+    }
+    .category-section .col-md-4 {
+      display: flex;
+      flex-direction: column;
+      padding-left: 15px;
+      padding-right: 15px;
+      margin-bottom: 15px;
+    }
+    /* Charts within category sections - use specific class to avoid Bootstrap .row conflict */
+    .category-section .charts-grid-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin-top: 15px;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .category-section .category-chart {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 8px;
+      display: none;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .category-section .category-chart.visible {
+      display: block !important;
+      animation: fadeIn 0.3s ease-in;
+    }
+    /* Remove all size classes - let content determine height */
+    .category-section .category-chart .plotly {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+    .category-section .category-chart .chart-panel {
+      width: 100%;
+      max-width: 100%;
+    }
+    /* Force plotly to not scroll */
+    .category-chart .js-plotly-plot,
+    .category-chart .plot-container,
+    .category-chart .svg-container {
+      overflow: visible !important;
+    }
+    /* Ensure legend is visible - uiOutput creates shiny-html-output wrapper */
+    .category-chart .shiny-html-output {
+      display: block !important;
+      visibility: visible !important;
+      min-height: 20px;
+    }
+    .category-chart .chart-legend {
+      display: flex !important;
+      visibility: visible !important;
+      font-size: 11px !important;
+      padding: 4px 0 !important;
+      gap: 12px !important;
+      justify-content: center;
+    }
+    /* Compact chart title for category charts */
+    .category-chart .chart-title {
+      font-size: 12px;
+      margin-bottom: 4px;
+      padding-bottom: 3px;
     }
     .category-header {
       font-size: 13px;
@@ -555,6 +630,16 @@ get_overview_js <- function() {
       $('#initial_prompt_static').hide();
       $('#loading_skeleton_static').fadeOut(200, function() {
         $('#summary_stats_wrapper').fadeIn(300);
+        
+        // Force all pre-rendered Plotly charts to resize after layout is applied
+        setTimeout(function() {
+          $('.category-chart .plotly').each(function() {
+            if (window.Plotly && this.layout) {
+              window.Plotly.Plots.resize(this);
+              window.Plotly.redraw(this);
+            }
+          });
+        }, 250);
       });
     });
     
@@ -598,20 +683,37 @@ get_overview_js <- function() {
       // Scroll to chart if now visible and resize Plotly
       if (chartWrapper.hasClass('visible')) {
         setTimeout(function() {
-          // Resize all visible Plotly charts to fit new layout
-          $('.charts-flex-container .chart-panel-wrapper.visible .plotly').each(function() {
-            if (window.Plotly && this.layout) {
-              window.Plotly.Plots.resize(this);
+          // Force the chart to fully show first
+          chartWrapper.show();
+          
+          // Find and resize plotly charts in this specific wrapper
+          chartWrapper.find('.plotly').each(function() {
+            var plotElement = this;
+            
+            if (window.Plotly) {
+              // Force plotly to detect the new dimensions
+              if (plotElement.layout) {
+                window.Plotly.Plots.resize(plotElement);
+              }
+              
+              // If chart still not visible, try to redraw
+              setTimeout(function() {
+                if (window.Plotly && plotElement.layout) {
+                  window.Plotly.redraw(plotElement);
+                }
+              }, 200);
             }
           });
+          
+          // Scroll to the visible chart
           $('html, body').animate({
-            scrollTop: chartWrapper.offset().top - 100
+            scrollTop: chartWrapper.offset().top - 80
           }, 300);
-        }, 350);
+        }, 100);
       } else {
         // Also resize remaining charts when one is hidden
         setTimeout(function() {
-          $('.charts-flex-container .chart-panel-wrapper.visible .plotly').each(function() {
+          $('.chart-panel-wrapper.visible .plotly').each(function() {
             if (window.Plotly && this.layout) {
               window.Plotly.Plots.resize(this);
             }
@@ -946,7 +1048,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       uiOutput("facility_detail_boxes")
     ),
     
-    # Main Charts Container
+    # Main Charts Container (only for drill-down views - district charts are now in category sections)
     div(class = "dashboard-container",
       # For drill-down view, show current progress and historical side-by-side
       if (include_historical && !is.null(metrics_filter)) {
@@ -962,12 +1064,8 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
             )
           )
         )
-      } else {
-        # For district view, just show current progress charts
-        div(
-          generate_current_charts_ui(metrics_filter = metrics_filter)
-        )
       }
+      # District view charts are now embedded in category sections
     )
   )
 }

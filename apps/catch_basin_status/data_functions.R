@@ -18,6 +18,11 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
                           start_year = NULL, end_year = NULL, include_geometry = FALSE,
                           facility_filter = "all", foreman_filter = "all", 
                           zone_filter = c("1", "2"), expiring_days = 14) {
+  # Historical archive mode: return individual treatment rows for cache/charts
+  if (isTRUE(include_archive) && !is.null(start_year) && !is.null(end_year)) {
+    return(load_historical_treatments(start_year, end_year, zone_filter))
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   
@@ -447,7 +452,7 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", min(current_year_range), max(current_year_range), zone_condition)
+      ", min(current_year_range) - 1, max(current_year_range), zone_condition)
       
       cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
       current_data <- dbGetQuery(con, query_current)
@@ -474,9 +479,9 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", start_year, end_year, zone_condition)
+      ", start_year - 1, end_year, zone_condition)
       
-      cat("DEBUG: Getting archive table data for years", start_year, "-", end_year, "\n")
+      cat("DEBUG: Getting archive table data for years", start_year - 1, "-", end_year, "\n")
       archive_data <- dbGetQuery(con, query_archive)
       cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
       treatments <- bind_rows(treatments, archive_data)

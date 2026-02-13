@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trap Surveillance Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: #7f8c8d;
+            margin-top: 20px;
+        }
+        h4 {
+            color: #95a5a6;
+            margin-top: 15px;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #e74c3c;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid #34495e;
+        }
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+            padding: 0;
+            border-radius: 0;
+            font-size: 0.85em;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 5px 0;
+        }
+        blockquote {
+            border-left: 4px solid #3498db;
+            background-color: #f8f9fa;
+            padding: 10px 20px;
+            margin: 20px 0;
+            font-style: italic;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        hr {
+            border: none;
+            height: 2px;
+            background-color: #ecf0f1;
+            margin: 20px 0;
+        }
+        p {
+            margin: 10px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+    <!-- KaTeX for LaTeX math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+        onload="renderMathInElement(document.body, {
+          delimiters: [
+            {left: '$$', right: '$$', display: true},
+            {left: '$', right: '$', display: false},
+            {left: '\\[', right: '\\]', display: true},
+            {left: '\\(', right: '\\)', display: false}
+          ]
+        });"></script>
+</head>
+<body>
+    <div class="container">
+<h1>Trap Surveillance Dashboard</h1>
+
+<h2>Overview</h2>
+<p>Displays mosquito vector abundance, MLE/MIR infection rates, and Vector Index by <strong>Vector Index Area</strong> using pre-calculated database views. This is the production version — the legacy <code>trap<em>survillance</em>test</code> app used in-app KNN calculations; this version reads directly from materialized views.</p>
+
+<h2>Data Sources</h2>
+
+<p>| View/Table                           | Purpose                                                                                   |</p>
+<p>|--------------------------------------|-------------------------------------------------------------------------------------------|</p>
+<p>| <code>dbadult<em>mon</em>nt<em>co2</em>forvectorabundance</code> | Monday night CO₂ trap counts by species, trap location, and yrwk                       |</p>
+<p>| <code>dbvirus<em>mle</em>yrwk_area</code>              | Pre-calculated MLE by week × VI area (all Cx species combined)                            |</p>
+<p>| <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code>          | Pre-calculated MLE by week × VI area × species                                            |</p>
+<p>| <code>dbvirus<em>mir</em>yrwk_area</code>              | Pre-calculated MIR by week × VI area                                                      |</p>
+<p>| <code>dbvirus<em>mir</em>yrwk<em>area</em>spp</code>          | Pre-calculated MIR by week × VI area × species                                            |</p>
+<p>| <code>dbvirus<em>mle</em>yrwk</code>                   | District-wide MLE by week (for trend chart)                                               |</p>
+<p>| <code>loc<em>vectorindexareas</em>sections_a</code>    | Section polygons with <code>viareaa</code> grouping, dissolved into 12 VI areas                      |</p>
+
+<h2>Metrics</h2>
+
+<ul>
+<li><strong>Abundance (N):</strong> Average mosquitoes per trap per night for the selected week</li>
+<li><strong>MLE:</strong> Maximum Likelihood Estimate of infection rate (pre-calculated, Firth method)</li>
+<li><strong>MIR:</strong> Minimum Infection Rate = (positive pools / total mosquitoes) × 1000</li>
+<li><strong>Vector Index (VI):</strong> N × P where P = infection rate (MLE or MIR/1000)</li>
+</ul>
+
+<h2>Species</h2>
+<ul>
+<li><strong>Total Cx Vectors</strong> — all Culex combined; uses <code>dbvirus<em>mle</em>yrwk_area</code> (no species filter)</li>
+<li><strong>Cx. pipiens (33)</strong> — uses <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code> with <code>spp_code = '33'</code></li>
+<li><strong>Cx. restuans (34)</strong> — spp_code = '34'</li>
+<li><strong>Cx. tarsalis (36)</strong> — spp_code = '36'</li>
+<li><strong>Cx. restuans/pipiens (372)</strong> — spp_code = '372'</li>
+</ul>
+
+<h2>Key Differences from Legacy App (<code>trap<em>survillance</em>test</code>)</h2>
+<ol>
+<li><strong>No KNN calculations</strong> — legacy computed per-section k-NN weighted averages; this uses area-level pre-calculated data</li>
+<li><strong>No PooledInfRate dependency</strong> — MLE is pre-calculated in the database</li>
+<li><strong>Area-based, not section-based</strong> — displays 12 VI areas instead of ~3,200 individual sections</li>
+<li><strong>Much faster</strong> — simple SELECT queries vs. heavy spatial computation</li>
+<li><strong>Week-based navigation</strong> — browse by yrwk instead of analysis date</li>
+</ul>
+
+<h2>Files</h2>
+<ul>
+<li><code>app.R</code> — Shiny app entry point</li>
+<li><code>ui_helper.R</code> — Dashboard UI layout</li>
+<li><code>data_functions.R</code> — All database queries and data fetching</li>
+<li><code>display_functions.R</code> — Leaflet map rendering</li>
+<li><code>NOTES.md</code> — This file</li>
+</ul>
+    </div>
+</body>
+</html>

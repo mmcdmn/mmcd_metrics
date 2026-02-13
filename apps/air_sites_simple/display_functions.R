@@ -10,8 +10,38 @@ suppressPackageStartupMessages({
   library(shiny)
 })
 
+# Load shared geometry helpers for background layers and air site polygons
+source("../../shared/geometry_helpers.R")
+
+# Helper to add all background layers to an air sites leaflet map
+# Uses shared geometry_helpers for loading and rendering
+add_background_layers_to_airsite_map <- function(m, facility_filter = NULL, load_air_site_polygons = FALSE) {
+  # Use shared geometry_helpers for loading facility/zone boundaries
+  shiny::incProgress(0.1, message = "Loading map layers...", detail = "Facility boundaries")
+  bg_layers <- load_background_layers()
+  
+  shiny::incProgress(0.2, detail = "Zone boundaries")
+  m <- add_background_layers(m, bg_layers)
+  
+  # Only load air site polygons if toggle is enabled
+  if (load_air_site_polygons) {
+    shiny::incProgress(0.3, detail = "Loading air site polygons...")
+    airsites <- load_airsite_layers(facility_filter = facility_filter)
+    
+    if (!is.null(airsites) && nrow(airsites) > 0) {
+      shiny::incProgress(0.2, detail = paste0("Rendering ", nrow(airsites), " air site polygons..."))
+      m <- add_airsite_layer(m, airsites)
+    }
+  } else {
+    shiny::incProgress(0.5, detail = "Skipping air site polygons (disabled)...")
+  }
+  
+  return(m)
+}
+
 # Create interactive site map with status colors
-create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD")) {
+create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"),
+                            facility_filter = NULL, load_air_site_polygons = FALSE) {
   if (nrow(data) == 0) {
     return(leaflet() %>% 
       addTiles() %>%
@@ -35,12 +65,18 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
   unique_statuses <- unique(data$site_status)
   legend_colors <- status_colors[unique_statuses]
   
-  # Replace "Unknown" with "Not Insp" for legend display
-  legend_labels <- ifelse(unique_statuses == "Unknown", "Not Insp", unique_statuses)
+  # Replace "Unknown" with "Not Insp" and "Inspected" with "Insp - Under Threshold" for legend display
+  legend_labels <- ifelse(unique_statuses == "Unknown", "Not Insp", 
+                         ifelse(unique_statuses == "Inspected", "Insp - Under Threshold", unique_statuses))
   
   # Create map
   map <- leaflet(data) %>%
-    addTiles() %>%
+    addProviderTiles(providers$CartoDB.Positron, group = "Base Map")
+  
+  # Add background layers (facility boundaries, zone boundaries, air site polygons)
+  map <- add_background_layers_to_airsite_map(map, facility_filter, load_air_site_polygons)
+  
+  map <- map %>%
     addCircleMarkers(
       lng = ~longitude,
       lat = ~latitude,
@@ -61,14 +97,20 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"))
         "Last Treatment: ", last_treatment_date_display, "<br/>",
         "Material Used: ", ifelse(is.na(last_treatment_material), "None", last_treatment_material)
       ),
-      layerId = ~sitecode
+      layerId = ~sitecode,
+      group = "Air Site Markers"
     ) %>%
     addLegend(
       position = "bottomright",
       colors = legend_colors,
       labels = legend_labels,
       title = "Site Status"
-    )
+    ) %>%
+    addLayersControl(
+      overlayGroups = c("Air Site Markers", "Air Sites", "Facility Boundaries", "Zone Boundaries"),
+      options = layersControlOptions(collapsed = FALSE)
+    ) %>%
+    hideGroup("Air Sites")
   
   # Fit bounds to data
   if (nrow(data) > 0) {
@@ -114,17 +156,13 @@ create_site_details_panel <- function(site_data) {
     return(data.frame())
   }
   
-  # Format larvae count for display
-  site_data$larvae_count_display <- ifelse(
-    is.na(site_data$last_larvae_count), 
-    "N/A", 
-    as.character(site_data$last_larvae_count)
-  )
+  # Keep larvae count as numeric for proper sorting - NA will be handled by DT
+  site_data$larvae_count_numeric <- site_data$last_larvae_count
   
   # Select and rename columns for display (using pre-formatted date fields)
   display_data <- site_data[, c(
     "sitecode", "facility", "priority", "zone", "acres", 
-    "site_status", "last_inspection_date_display", "larvae_count_display",
+    "site_status", "last_inspection_date_display", "larvae_count_numeric",
     "lab_status_display", "last_treatment_date_display", "last_treatment_material"
   )]
   
@@ -133,6 +171,9 @@ create_site_details_panel <- function(site_data) {
     "Status", "Last Inspection", "Larvae Count", "Lab Status",
     "Last Treatment", "Treatment Material"
   )
+  
+  # Link sitecodes to data.mmcd.org map
+  display_data$`Site Code` <- make_sitecode_link(display_data$`Site Code`)
   
   return(display_data)
 }
@@ -183,7 +224,7 @@ create_treatment_process_summary <- function(data, metric_type = "sites") {
       select(facility_display, total_acres, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
     
     colnames(process_summary_display) <- c(
-      "Facility", "Total Acres", "Not Insp", "Insp", "Needs Treatment", 
+      "Facility", "Total Acres", "Not Insp", "Insp - Under Threshold", "Needs Treatment", 
       "Active Treatment", "Treatment Rate"
     )
   } else {
@@ -216,7 +257,7 @@ create_treatment_process_summary <- function(data, metric_type = "sites") {
       select(facility_display, total_sites, unknown, inspected, needs_treatment, active_treatment, treatment_rate_display)
     
     colnames(process_summary_display) <- c(
-      "Facility", "Total Sites", "Not Insp", "Insp", "Needs Treatment", 
+      "Facility", "Total Sites", "Not Insp", "Insp - Under Threshold", "Needs Treatment", 
       "Active Treatment", "Treatment Rate"
     )
   }
@@ -276,7 +317,7 @@ create_treatment_flow_chart <- function(data, metric_type = "sites", theme = "MM
   # Create stacked bar chart (ordered: Not Insp, Insp, Needs ID, Needs Treatment, Active Treatment)
   p <- plot_ly(facility_summary, x = ~facility_display, y = ~Unknown, type = 'bar', 
                name = 'Not Insp', marker = list(color = colors$Unknown)) %>%
-    add_trace(y = ~Inspected, name = 'Insp', 
+    add_trace(y = ~Inspected, name = 'Insp - Under Threshold', 
               marker = list(color = colors$Inspected)) %>%
     add_trace(y = ~`Needs ID`, name = 'Needs ID', 
               marker = list(color = colors$`Needs ID`)) %>%

@@ -75,9 +75,11 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   ", analysis_date)
   
   # Add year filtering for historical analysis
+  # Use start_year - 1 to capture treatments applied late in prior year
+  # that remain active into start_year (effect_days can extend across year boundary)
   if (!is.null(start_year) && !is.null(end_year)) {
     treatments_query <- paste0(treatments_query, sprintf(
-      " AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year, end_year))
+      " AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year - 1, end_year))
   }
   
   treatments <- dbGetQuery(con, treatments_query)
@@ -95,10 +97,10 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
       AND t.inspdate <= '%s'::date
     ", analysis_date)
     
-    # Add same year filtering for archive
+    # Add same year filtering for archive (buffer start_year - 1)
     if (!is.null(start_year) && !is.null(end_year)) {
       archive_query <- paste0(archive_query, sprintf(
-        " AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year, end_year))
+        " AND EXTRACT(YEAR FROM t.inspdate) BETWEEN %d AND %d", start_year - 1, end_year))
     }
     
     archive_treatments <- dbGetQuery(con, archive_query)

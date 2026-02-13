@@ -21,10 +21,14 @@ CACHE_DIR <- tryCatch({
   # Try shared/cache directory first (actual location)
   if (dir.exists("/srv/shiny-server/shared/cache")) {
     "/srv/shiny-server/shared/cache"
+  } else if (dir.exists("../../../shared/cache")) {
+    "../../../shared/cache"  # Relative path from unified/ subfolder
   } else if (dir.exists("../../shared/cache")) {
     "../../shared/cache"  # Relative path from overview app  
   } else if (dir.exists("/srv/shiny-server/shared")) {
     "/srv/shiny-server/shared"
+  } else if (dir.exists("../../../shared")) {
+    "../../../shared"  # Relative path from unified/ subfolder
   } else if (dir.exists("../../shared")) {
     "../../shared"  # Relative path from overview app
   } else {
@@ -118,8 +122,17 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
     averages = list()
   )
   
-  # Metrics to cache
-  metrics_to_cache <- c("catch_basin", "drone", "ground_prehatch", "structure")
+  # CRITICAL: Disable cache reads during regeneration to avoid circular dependency
+  # (load_historical_comparison_data would return stale cached values otherwise)
+  old_cache_setting <- USE_CACHED_AVERAGES
+  USE_CACHED_AVERAGES <<- FALSE
+  on.exit(USE_CACHED_AVERAGES <<- old_cache_setting)
+  
+  # Metrics to cache - weekly average metrics
+  metrics_to_cache <- c("catch_basin", "drone", "ground_prehatch", "structure", "mosquito_monitoring", "air_sites")
+  
+  # Yearly grouped metrics (cached differently - store yearly_data per overview_type)
+  yearly_grouped_metrics <- c("cattail_treatments")
   
   for (metric_id in metrics_to_cache) {
     if (!metric_id %in% names(registry)) {
@@ -138,18 +151,55 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
         zone_filter = zone_filter
       )
       
+      # Store zone-level data if available (for zone-specific retrieval)
+      avg_to_store <- if (!is.null(result$average_by_zone)) result$average_by_zone else result$average
+      ten_to_store <- if (!is.null(result$ten_year_by_zone)) result$ten_year_by_zone else result$ten_year_average
+      
       # Store 5-year average
-      if (!is.null(result$average) && nrow(result$average) > 0) {
-        cache$averages[[paste0(metric_id, "_5yr")]] <- result$average
-        cat("  - 5-year average: ", round(mean(result$average$value, na.rm = TRUE), 1), "\n")
+      if (!is.null(avg_to_store) && nrow(avg_to_store) > 0) {
+        cache$averages[[paste0(metric_id, "_5yr")]] <- avg_to_store
+        zone_info <- if ("zone" %in% names(avg_to_store)) paste0(" (", nrow(avg_to_store), " zone-level rows)") else ""
+        cat("  - 5-year average: ", round(mean(avg_to_store$value, na.rm = TRUE), 1), zone_info, "\n")
       }
       
       # Store 10-year average
-      if (!is.null(result$ten_year_average) && nrow(result$ten_year_average) > 0) {
-        cache$averages[[paste0(metric_id, "_10yr")]] <- result$ten_year_average
-        cat("  - 10-year average:", round(mean(result$ten_year_average$value, na.rm = TRUE), 1), "\n")
+      if (!is.null(ten_to_store) && nrow(ten_to_store) > 0) {
+        cache$averages[[paste0(metric_id, "_10yr")]] <- ten_to_store
+        zone_info <- if ("zone" %in% names(ten_to_store)) paste0(" (", nrow(ten_to_store), " zone-level rows)") else ""
+        cat("  - 10-year average:", round(mean(ten_to_store$value, na.rm = TRUE), 1), zone_info, "\n")
       }
       
+    }, error = function(e) {
+      cat("  ERROR:", e$message, "\n")
+    })
+  }
+  
+  # Cache yearly grouped metrics (cattail_treatments, etc.)
+  for (metric_id in yearly_grouped_metrics) {
+    if (!metric_id %in% names(registry)) {
+      cat("Skipping unknown yearly grouped metric:", metric_id, "\n")
+      next
+    }
+    
+    cat("Caching yearly grouped data for:", metric_id, "...\n")
+    
+    tryCatch({
+      for (ov_type in c("facilities", "district")) {
+        result <- load_historical_comparison_data(
+          metric = metric_id,
+          start_year = current_year - 9,
+          end_year = current_year,
+          zone_filter = zone_filter,
+          overview_type = ov_type
+        )
+        
+        if (!is.null(result$yearly_data) && nrow(result$yearly_data) > 0) {
+          cache_key <- paste0(metric_id, "_yearly_", ov_type)
+          cache$averages[[cache_key]] <- result$yearly_data
+          cat("  -", ov_type, ":", nrow(result$yearly_data), "rows,",
+              n_distinct(result$yearly_data$year), "years\n")
+        }
+      }
     }, error = function(e) {
       cat("  ERROR:", e$message, "\n")
     })

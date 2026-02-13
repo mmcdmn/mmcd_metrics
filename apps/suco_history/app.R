@@ -441,6 +441,19 @@ server <- function(input, output, session) {
     })
   })
   
+  # Zoom-gated harborage visibility: only show polygons when zoomed in
+  observe({
+    zoom <- input$suco_map_zoom
+    if (!is.null(zoom)) {
+      proxy <- leafletProxy("suco_map")
+      if (zoom >= 13) {
+        proxy %>% showGroup("Harborages")
+      } else {
+        proxy %>% hideGroup("Harborages")
+      }
+    }
+  })
+  
   # ===========================================================================
   # OUTPUT: DETAILED TABLE
   # ===========================================================================
@@ -458,7 +471,8 @@ server <- function(input, output, session) {
                       render = JS("function(data, type, row) {
                         return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
                       }")
-                    ))))
+                    ))),
+  escape = FALSE)
   
   # ===========================================================================
   # OUTPUT: TOP LOCATIONS

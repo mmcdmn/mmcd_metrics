@@ -357,9 +357,15 @@ load_data_by_zone <- function(metric,
       result <- data %>%
         group_by(zone) %>%
         summarize(
-          # Weighted average: sum(totals) / sum(trap_counts)
-          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
-          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          # Weighted average: sum(totals) / sum(trap_counts) with division-by-zero guard
+          total = {
+            denom <- sum(historical_trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
+          },
+          active = {
+            denom <- sum(trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
+          },
           expiring = round(mean(expiring_count, na.rm = TRUE), 1),  # Already per-trap difference
           .groups = "drop"
         ) %>%
@@ -368,9 +374,15 @@ load_data_by_zone <- function(metric,
     } else {
       result <- data %>%
         summarize(
-          # Weighted average across ALL traps
-          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
-          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          # Weighted average across ALL traps with division-by-zero guard
+          total = {
+            denom <- sum(historical_trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
+          },
+          active = {
+            denom <- sum(trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
+          },
           expiring = round(mean(expiring_count, na.rm = TRUE), 1)
         ) %>%
         mutate(zone = "all", display_name = "District Total")
@@ -380,8 +392,9 @@ load_data_by_zone <- function(metric,
   }
   
   # Determine if this metric should use acres data
-  # Only drone and ground_prehatch have acres - struct_trt and catch_basin use site counts
-  acres_metrics <- c("drone", "ground_prehatch")
+  # Metrics that use acres: drone, ground_prehatch, cattail_treatments, air_sites
+  # struct_trt and catch_basin use site counts
+  acres_metrics <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites")
   use_acres <- metric %in% acres_metrics && "total_acres" %in% names(data)
   
   if (separate_zones) {
@@ -467,9 +480,15 @@ load_data_by_facility <- function(metric,
       result <- data %>%
         group_by(facility, facility_display, zone) %>%
         summarize(
-          # Weighted average per facility per zone
-          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
-          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          # Weighted average per facility per zone with division-by-zero guard
+          total = {
+            denom <- sum(historical_trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
+          },
+          active = {
+            denom <- sum(trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
+          },
           expiring = round(mean(expiring_count, na.rm = TRUE), 1),
           .groups = "drop"
         ) %>%
@@ -479,9 +498,15 @@ load_data_by_facility <- function(metric,
       result <- data %>%
         group_by(facility, facility_display) %>%
         summarize(
-          # Weighted average per facility (across all zones)
-          total = round(sum(total_count, na.rm = TRUE) / sum(historical_trap_count, na.rm = TRUE), 1),
-          active = round(sum(active_count, na.rm = TRUE) / sum(trap_count, na.rm = TRUE), 1),
+          # Weighted average per facility (across all zones) with division-by-zero guard
+          total = {
+            denom <- sum(historical_trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
+          },
+          active = {
+            denom <- sum(trap_count, na.rm = TRUE)
+            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
+          },
           expiring = round(mean(expiring_count, na.rm = TRUE), 1),
           .groups = "drop"
         ) %>%
@@ -493,7 +518,9 @@ load_data_by_facility <- function(metric,
     return(result)
   }
   
-  use_acres <- isTRUE(config$has_acres) &&
+  # Match load_data_by_zone: drone, ground_prehatch, cattail_treatments, air_sites use acres
+  acres_metrics <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites")
+  use_acres <- metric %in% acres_metrics &&
     all(c("total_acres", "active_acres", "expiring_acres") %in% names(data))
   
   if (separate_zones && length(zone_filter) == 2) {

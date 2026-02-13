@@ -35,19 +35,10 @@ get_mosquito_db_connection <- function() {
     return(con)
   }
   
-  # Fallback to mosquito-specific hardcoded connection
-  tryCatch({
-    host_db <- 'data.mmcd.org'
-    db_port <- '5432'
-    db_user <- 'mmcd_read'
-    db_password <- 'mmcd2012'
-    drv <- dbDriver("PostgreSQL")
-    con <- dbConnect(drv, dbname = "mmcd_data", host=host_db, port=db_port, user=db_user, password=db_password)
-    return(con)
-  }, error = function(e) {
+   error = function(e) {
     warning(paste("Mosquito database connection failed:", e$message))
     return(NULL)
-  })
+  }
 }
 
 # Function to handle integer64 conversion
@@ -208,7 +199,7 @@ server <- function(input, output, session) {
   data <- reactive({
     datafilter() %>% 
     group_by(inspdate, spp_name) %>% 
-    summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = Year)
+    summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = first(Year), .groups = "drop")
   })
   
   # Looping through each group of year and species
@@ -218,11 +209,15 @@ server <- function(input, output, session) {
   new_data = data.frame()
   
   Dummy <- reactive({
-  lapply(unique_year(), function(i) {
-    
-      new_row <- data.frame(Year = i, spp_name = input$species, avg = NA, sd = NA, inspdate = as.Date(paste(i, "-05-01", sep = "")))
-      new_data <- rbind(new_data, new_row)
+    dummy_list <- lapply(unique_year(), function(i) {
+      new_row <- data.frame(Year = i, spp_name = input$species, avg = NA, sd = NA, sum = NA, inspdate = as.Date(paste(i, "-05-01", sep = "")))
+      return(new_row)
     })
+    if (length(dummy_list) > 0) {
+      do.call(rbind, dummy_list)
+    } else {
+      data.frame(Year = integer(0), spp_name = character(0), avg = numeric(0), sd = numeric(0), sum = numeric(0), inspdate = as.Date(character(0)))
+    }
   })
   # Combining the original data with the new rows
   RealData <- reactive({
@@ -237,18 +232,22 @@ server <- function(input, output, session) {
   data1 <- reactive({
     datafilter1() %>% 
       group_by(inspdate, spp_name) %>% 
-      summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = Year)
+      summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = first(Year), .groups = "drop")
   })
   
   unique_year1 <- reactive({unique(datafilter1()$Year)})
   new_data1 = data.frame()
   
   Dummy1 <- reactive({
-    lapply(unique_year1(), function(i) {
-      
-      new_row1 <- data.frame(Year = i, spp_name = input$species, avg = NA, sd = NA, inspdate = as.Date(paste(i, "-05-01", sep = "")))
-      new_data1 <- rbind(new_data1, new_row1)
+    dummy_list1 <- lapply(unique_year1(), function(i) {
+      new_row1 <- data.frame(Year = i, spp_name = input$species, avg = NA, sd = NA, sum = NA, inspdate = as.Date(paste(i, "-05-01", sep = "")))
+      return(new_row1)
     })
+    if (length(dummy_list1) > 0) {
+      do.call(rbind, dummy_list1)
+    } else {
+      data.frame(Year = integer(0), spp_name = character(0), avg = numeric(0), sd = numeric(0), sum = numeric(0), inspdate = as.Date(character(0)))
+    }
   })
   
   RealData1 <- reactive({
@@ -645,7 +644,7 @@ server <- function(input, output, session) {
   dataONE <- reactive({
     datafilterONE() %>% 
       group_by(inspdate, spp_name) %>% 
-      summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = Year)
+      summarise(avg = round(mean(mosqcount), 1), sd = std.error(mosqcount), sum = sum(mosqcount), Year = first(Year), .groups = "drop")
   })
   
   # Looping through each group of year and species

@@ -168,6 +168,43 @@ get_metric_registry <- function() {
       load_params = list(expiring_days = 7)
     ),
     
+    air_sites = list(
+      id = "air_sites",
+      display_name = "Red Air Sites",
+      short_name = "Red Air",
+      icon = "helicopter",
+      category = "Floodwater",
+      y_label = "Air Site Acres",
+      bg_color = "#0ea5e9",
+      app_folder = "air_sites_simple",
+      has_acres = TRUE,
+      historical_enabled = TRUE,
+      use_active_calculation = TRUE,
+      display_metric = "treatment_acres",
+      chart_types = c("bar", "pie"),
+      default_chart_type = "bar",
+      # Detail boxes: same pattern as cattail (treated + needs treatment)
+      # treated = active - expiring (computed in dynamic_server.R)
+      detail_boxes = list(
+        list(id = "treated", title = "Acres Treated", column = "treated", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Acres Need Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
+      ),
+      chart_labels = list(
+        total = "Total Red Air Acres",
+        active = "Treated",
+        expiring = "Needs Treatment"
+      ),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 85, warning = 60),
+      filter_info = HTML("<b>Filters Applied:</b><br>
+                         • Air breeding sites (air_gnd = 'A')<br>
+                         • Priority: RED only<br>
+                         • Active Treatment + Needs Treatment<br>
+                         • All facilities<br>
+                         • Zone filter from dropdown"),
+      load_params = list(expiring_days = 7, priority_filter = c("RED"))
+    ),
+    
     structure = list(
       id = "structure",
       display_name = "Structures",
@@ -220,8 +257,8 @@ get_metric_registry <- function() {
       display_metric = "sites",            # count of active sites
       # Detail boxes shown when drilling down to facility level
       detail_boxes = list(
-        list(id = "active", title = "Treated", column = "active", icon = "check-circle", status = "active"),
-        list(id = "expiring", title = "Needs Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
+        list(id = "treated", title = "Acres Treated", column = "treated", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Acres Need Treatment", column = "expiring", icon = "exclamation-triangle", status = "needs_treatment")
       ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Inspected cattail sites only<br>
@@ -250,6 +287,10 @@ get_metric_registry <- function() {
       # Display configuration - makes behavior generic (no special case checks needed)
       display_as_average = TRUE,  # Show avg values instead of percentages
       aggregate_as_average = TRUE,  # Use mean instead of sum for weekly aggregation
+      # Color: current vs historical avg percentage (inverse = lower is better)
+      color_mode = "pct_of_average",
+      inverse_color = TRUE,
+      color_thresholds = list(good = 110, warning = 130),
       # Detail boxes shown when drilling down to facility level
       detail_boxes = list(
         list(id = "historical", title = "10-Year Average", column = "total", icon = "history", status = "completed"),

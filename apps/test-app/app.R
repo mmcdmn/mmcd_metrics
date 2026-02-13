@@ -324,16 +324,30 @@ server <- function(input, output, session) {
       return(data.frame(Message = "No cache data available"))
     }
     
+    # Determine descriptive data labels based on metric type
+    registry <- tryCatch(get_metric_registry(), error = function(e) list())
+    
+    data1_labels <- sapply(status_df$metric_id, function(mid) {
+      config <- registry[[mid]]
+      is_yearly <- isTRUE(config$historical_type == "yearly_grouped")
+      if (is_yearly) "Facilities" else "5yr Avg"
+    })
+    data2_labels <- sapply(status_df$metric_id, function(mid) {
+      config <- registry[[mid]]
+      is_yearly <- isTRUE(config$historical_type == "yearly_grouped")
+      if (is_yearly) "District" else "10yr Avg"
+    })
+    
     # Format for display
     display_df <- data.frame(
       Metric = status_df$metric_id,
       Status = ifelse(status_df$status == "Complete", 
-                      '<span style="color:green">✓ Complete</span>',
+                      '<span style="color:green">&#10003; Complete</span>',
                       ifelse(status_df$status == "Partial",
-                             '<span style="color:orange">⚠ Partial</span>',
-                             '<span style="color:red">✗ Missing</span>')),
-      `5yr Rows` = status_df$rows_5yr,
-      `10yr Rows` = status_df$rows_10yr,
+                             '<span style="color:orange">&#9888; Partial</span>',
+                             '<span style="color:red">&#10007; Missing</span>')),
+      `5 year Data` = paste0(data1_labels, ": ", status_df$rows_5yr, " rows"),
+      `10 year Data` = paste0(data2_labels, ": ", status_df$rows_10yr, " rows"),
       `Last Updated` = status_df$last_updated,
       check.names = FALSE,
       stringsAsFactors = FALSE

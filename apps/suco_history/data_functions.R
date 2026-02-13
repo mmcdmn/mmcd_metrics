@@ -933,6 +933,9 @@ create_detailed_samples_table <- function(data, species_filter = "All") {
     ) %>%
     arrange(desc(Species_Count), Date)
   
+  # Link sitecodes to data.mmcd.org map
+  detailed_table$Sitecode <- make_sitecode_link(detailed_table$Sitecode)
+  
   return(detailed_table)
 }
 # =============================================================================
@@ -951,9 +954,12 @@ create_detailed_samples_table <- function(data, species_filter = "All") {
 #' @export
 load_raw_data <- function(analysis_date = Sys.Date(),
                           expiring_days = 7,
+                          zone_filter = NULL,
+                          status_types = NULL,
                           include_archive = FALSE,
                           start_year = NULL,
-                          end_year = NULL) {
+                          end_year = NULL,
+                          ...) {
   
   # Determine date range based on parameters
   if (!is.null(start_year) && !is.null(end_year)) {

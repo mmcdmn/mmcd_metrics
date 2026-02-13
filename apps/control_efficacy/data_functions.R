@@ -5,6 +5,9 @@
 # - load_treatment_data() - Get air treatment records (action='A')
 # - load_checkback_data() - Get checkback inspections for treated sites
 # - load_species_data_for_samples() - Get species composition for sample IDs
+# - load_site_inspections() - Get all inspections at treated sites
+# - get_matcodes_by_ingredient() - Look up matcodes by active ingredient
+# - load_dosage_options() - Get available dosage options for a material
 
 library(DBI)
 library(RPostgres)
@@ -306,5 +309,126 @@ load_species_data_for_samples <- function(sample_ids, start_date, end_date) {
     }
     return(NULL)
   })
+}
+
+
+#' Load all inspection records for treated sites (for control checkback detection)
+#'
+#' Returns action='4' inspections (both posttrt_p and non-posttrt_p) for treated sites.
+#' Used to find pre-inspection dates relative to treatments to identify
+#' control checkbacks (where treatment_date < pre_inspection_date).
+#'
+#' @param treated_sites Vector of sitecodes that were treated
+#' @param start_date Start date for query (character YYYY-MM-DD)
+#' @param end_date End date for query (character YYYY-MM-DD)
+#'
+#' @return Data frame with inspdate, facility, sitecode, numdip, sampnum_yr, posttrt_p, pkey_pg
+load_site_inspections <- function(treated_sites, start_date, end_date) {
+
+  if (is.null(treated_sites) || length(treated_sites) == 0) return(NULL)
+
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+
+  tryCatch({
+    current_year <- as.integer(format(Sys.Date(), "%Y"))
+    start_year <- as.integer(format(as.Date(start_date), "%Y"))
+    end_year <- as.integer(format(as.Date(end_date), "%Y"))
+
+    need_archive <- start_year < current_year
+    need_current <- end_year >= current_year
+
+    site_list <- paste0("'", paste(treated_sites, collapse = "','"), "'")
+
+    base_select <- "
+      SELECT
+        insp.inspdate,
+        COALESCE(gis.facility, insp.facility) AS facility,
+        insp.sitecode,
+        insp.action,
+        insp.numdip,
+        insp.sampnum_yr,
+        insp.posttrt_p,
+        insp.pkey_pg
+      FROM %s insp
+      LEFT JOIN gis_sectcode gis ON gis.sectcode = LEFT(insp.sitecode, 7)
+      WHERE insp.sitecode IN (%s)
+        AND insp.action IN ('4', '2', '1')
+        AND insp.inspdate >= '%s'
+        AND insp.inspdate <= '%s'
+    "
+
+    queries <- c()
+    if (need_current) {
+      queries <- c(queries, sprintf(base_select, "dblarv_insptrt_current", site_list, start_date, end_date))
+    }
+    if (need_archive) {
+      queries <- c(queries, sprintf(base_select, "dblarv_insptrt_archive", site_list, start_date, end_date))
+    }
+
+    query <- paste(queries, collapse = " UNION ALL ")
+    inspections <- dbGetQuery(con, query)
+    safe_disconnect(con)
+
+    if (nrow(inspections) > 0) {
+      inspections$inspdate <- as.Date(inspections$inspdate)
+      return(inspections)
+    } else {
+      return(NULL)
+    }
+
+  }, error = function(e) {
+    message("Error loading site inspections: ", e$message)
+    if (exists("con") && !is.null(con)) try(safe_disconnect(con), silent = TRUE)
+    return(NULL)
+  })
+}
+
+
+# =============================================================================
+# Material code and dosage lookup functions
+# =============================================================================
+
+#' Get larvicide matcodes by active ingredient name
+#'
+#' @param con Database connection
+#' @param ingredient Character string to match against active_ingredient (case-insensitive)
+#' @return Character vector of matcodes
+get_matcodes_by_ingredient <- function(con, ingredient) {
+  query <- sprintf("
+    SELECT DISTINCT t.matcode
+    FROM mattype_list_targetdose t
+    JOIN mattype_list m ON t.mattype = m.mattype
+    WHERE m.active_ingredient ILIKE '%%%s%%'
+      AND m.physinv_list = '(1) Larvicide'
+  ", ingredient)
+  result <- dbGetQuery(con, query)
+  if (is.null(result) || nrow(result) == 0) return(character(0))
+  return(result$matcode)
+}
+
+
+#' Load dosage options for a given active ingredient
+#'
+#' @param con Database connection
+#' @param ingredient Active ingredient filter (NULL or "all" = all ingredients)
+#' @return Data frame with matcode, tdose, unit, area, active_ingredient, dosage_label
+load_dosage_options <- function(con, ingredient = NULL) {
+  where_clause <- "WHERE m.physinv_list = '(1) Larvicide'"
+  if (!is.null(ingredient) && ingredient != "all") {
+    where_clause <- sprintf("%s AND m.active_ingredient ILIKE '%%%s%%'", where_clause, ingredient)
+  }
+  query <- sprintf("
+    SELECT DISTINCT t.matcode, t.tdose, t.unit, t.area, m.active_ingredient
+    FROM mattype_list_targetdose t
+    JOIN mattype_list m ON t.mattype = m.mattype
+    %s
+    ORDER BY m.active_ingredient, t.tdose
+  ", where_clause)
+  result <- dbGetQuery(con, query)
+  if (is.null(result) || nrow(result) == 0) return(NULL)
+
+  result$dosage_label <- paste(result$tdose, result$unit, "/", result$area)
+  return(result)
 }
 

@@ -105,7 +105,7 @@ create_checkback_progress_chart <- function(checkback_status, theme = "MMCD") {
 #' @param theme Character. Color theme ("MMCD", "IBM", "Wong", etc.)
 #'
 #' @return plotly object
-create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
+create_reduction_boxplot <- function(efficacy_data, theme = "MMCD", comparison_mode = "genus") {
   
   if (is.null(efficacy_data) || nrow(efficacy_data) == 0) {
     p <- ggplot() +
@@ -127,35 +127,43 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
     return(ggplotly(p))
   }
   
-  # Create category label: "2024 Spring", "2024 Summer", etc.
-  plot_data <- plot_data %>%
-    mutate(
-      category = paste(year, season),
-      category = factor(category, levels = sort(unique(category)))
-    )
-  
-  # Genus colors - warm for Aedes, cool for Culex
-  genus_colors <- c("Aedes" = "#D32F2F", "Culex" = "#1976D2")
-  
-  # ---------------------------------------------------------------------------
-  # Smart y-axis limits: clip to [-5%, 110%]. Negatives are clamped to 0 but 
-  # use -5% lower bound for extra protection in case any slip through.
-  # Points above 110% are clipped (not removed) by coord_cartesian.
-  # ---------------------------------------------------------------------------
-  y_lo <- -5
-  y_hi <- 110
-  
-  # Count outliers that will be hidden
-  n_below <- sum(plot_data$pct_reduction < y_lo, na.rm = TRUE)
-  n_above <- sum(plot_data$pct_reduction > y_hi, na.rm = TRUE)
-  
-  subtitle_text <- "Dashed = 0% (no change) | Dotted green = 80% target"
-  if (n_below + n_above > 0) {
-    subtitle_text <- paste0(subtitle_text, "  |  ",
-                            n_below + n_above, " outlier(s) beyond axis limits")
+  # Determine fill variable and colors based on comparison mode
+  fill_colors <- NULL
+  if (comparison_mode == "material" && "active_ingredient" %in% names(plot_data)) {
+    plot_data$fill_var <- ifelse(is.na(plot_data$active_ingredient), "Unknown", plot_data$active_ingredient)
+    fill_label <- "Material"
+  } else if (comparison_mode == "dosage" && "dosage_label" %in% names(plot_data)) {
+    plot_data$fill_var <- ifelse(is.na(plot_data$dosage_label), "Unknown", plot_data$dosage_label)
+    fill_label <- "Dosage"
+  } else {
+    plot_data$fill_var <- plot_data$genus
+    fill_label <- "Genus"
+    fill_colors <- c("Aedes" = "#D32F2F", "Culex" = "#1976D2")
   }
   
-  p <- ggplot(plot_data, aes(x = category, y = pct_reduction, fill = genus)) +
+  # Build x-axis categories with sample counts
+  plot_data$base_cat <- paste(plot_data$year, plot_data$season)
+  cat_counts <- plot_data %>%
+    group_by(base_cat) %>%
+    summarise(cat_n = dplyr::n(), .groups = "drop")
+  sorted_cats <- sort(unique(plot_data$base_cat))
+  label_map <- setNames(
+    paste0(sorted_cats, "\n(n=", cat_counts$cat_n[match(sorted_cats, cat_counts$base_cat)], ")"),
+    sorted_cats
+  )
+  plot_data$category <- factor(label_map[plot_data$base_cat], levels = label_map)
+  
+  # Smart y-axis limits
+  y_lo <- -5
+  y_hi <- 110
+  n_outside <- sum(plot_data$pct_reduction < y_lo | plot_data$pct_reduction > y_hi, na.rm = TRUE)
+  
+  subtitle_text <- "Dashed = 0% (no change) | Dotted green = 80% target"
+  if (n_outside > 0) {
+    subtitle_text <- paste0(subtitle_text, "  |  ", n_outside, " outlier(s) beyond axis limits")
+  }
+  
+  p <- ggplot(plot_data, aes(x = category, y = pct_reduction, fill = fill_var)) +
     geom_boxplot(
       position = position_dodge(width = 0.8),
       alpha = 0.7,
@@ -166,14 +174,13 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
     ) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", linewidth = 0.5) +
     geom_hline(yintercept = 80, linetype = "dotted", color = "forestgreen", linewidth = 0.7, alpha = 0.7) +
-    scale_fill_manual(values = genus_colors, name = "Genus") +
     scale_y_continuous(
       breaks = seq(-10, 100, by = 10),
       labels = function(x) paste0(x, "%")
     ) +
     coord_cartesian(ylim = c(y_lo, y_hi)) +
     labs(
-      title = "% Reduction by Genus, Season, and Year",
+      title = paste("% Reduction by", fill_label, "/ Season / Year"),
       subtitle = subtitle_text,
       x = "",
       y = "% Reduction"
@@ -189,6 +196,13 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD") {
       legend.text = element_text(size = 13),
       panel.grid.minor = element_blank()
     )
+  
+  # Apply fill colors
+  if (!is.null(fill_colors)) {
+    p <- p + scale_fill_manual(values = fill_colors, name = fill_label)
+  } else {
+    p <- p + labs(fill = fill_label)
+  }
   
   p_plotly <- ggplotly(p) %>%
     layout(

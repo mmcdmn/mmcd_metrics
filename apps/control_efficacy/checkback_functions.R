@@ -70,7 +70,7 @@ calculate_treatment_rounds <- function(treatments, checkback_type = "percent",
 #' @return Data frame with columns: facility, round_name, start_date, end_date,
 #'         sites_treated, checkbacks_needed, checkbacks_completed, 
 #'         completion_rate, avg_days_to_checkback
-calculate_checkback_status <- function(rounds, checkbacks, treatments) {
+calculate_checkback_status <- function(rounds, checkbacks, treatments, all_inspections = NULL) {
   
   # Validate required data exists
   if (is.null(rounds) || nrow(rounds) == 0 || is.null(treatments) || nrow(treatments) == 0) {
@@ -121,6 +121,25 @@ calculate_checkback_status <- function(rounds, checkbacks, treatments) {
             next_treatment_date <- min(future_treatments$inspdate)
             site_checkbacks <- site_checkbacks %>%
               filter(inspdate < next_treatment_date)
+          }
+          
+          # Exclude control checkbacks: no treatments occurred between
+          # the pre-inspection and the post (checkback) inspection.
+          # Use pre-filtered site data for speed.
+          if (!is.null(all_inspections) && nrow(all_inspections) > 0 && nrow(site_checkbacks) > 0) {
+            site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
+            site_trt_dates <- treatments$inspdate[treatments$sitecode == site]
+
+            keep_mask <- vapply(seq_len(nrow(site_checkbacks)), function(j) {
+              cb_date <- site_checkbacks$inspdate[j]
+              # Most recent non-posttrt inspection before this checkback
+              pre_dates <- site_insps$inspdate[site_insps$inspdate < cb_date]
+              if (length(pre_dates) == 0) return(TRUE)
+              pre_date <- max(pre_dates)
+              # Any treatments between pre and post?
+              any(site_trt_dates > pre_date & site_trt_dates < cb_date)
+            }, logical(1))
+            site_checkbacks <- site_checkbacks[keep_mask, , drop = FALSE]
           }
           
           # Take only the first valid checkback
@@ -213,7 +232,7 @@ find_multiple_checkbacks <- function(checkbacks, treatments) {
 #'
 #' @return Data frame with site-level details including treatment dates,
 #'         checkback dates, and dip counts
-create_site_details <- function(treatments, checkbacks, species_data = NULL) {
+create_site_details <- function(treatments, checkbacks, species_data = NULL, all_inspections = NULL) {
   
   if (is.null(checkbacks) || nrow(checkbacks) == 0) {
     return(NULL)
@@ -279,6 +298,20 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
       
       days_diff <- as.numeric(checkback_date - treatment_date)
       
+      # Detect control checkbacks: no treatments occurred between the
+      # pre-inspection and the post (checkback) inspection.
+      is_control <- FALSE
+      pre_inspection_date <- NA
+      if (!is.null(all_inspections) && nrow(all_inspections) > 0) {
+        site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
+        pre_dates <- site_insps$inspdate[site_insps$inspdate < checkback_date]
+        if (length(pre_dates) > 0) {
+          pre_inspection_date <- max(pre_dates)
+          site_trt_dates <- treatments$inspdate[treatments$sitecode == site]
+          is_control <- !any(site_trt_dates > pre_inspection_date & site_trt_dates < checkback_date)
+        }
+      }
+      
       checkback_list[[i]] <- data.frame(
         sitecode = site,
         facility = checkback$facility,
@@ -297,6 +330,8 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL) {
         species_composition = post_species_comp,
         redblue = redblue_val,
         missing = missing_val,
+        is_control = is_control,
+        pre_inspection_date = pre_inspection_date,
         stringsAsFactors = FALSE
       )
     }

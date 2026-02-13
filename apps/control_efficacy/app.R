@@ -110,6 +110,26 @@ server <- function(input, output, session) {
         tags$dd(style = "font-size: 14px; margin-left: 20px;",
           "Filters treatments to only those using Bti-based larvicide materials.",
           "Uses the mattype_list table: active_ingredient LIKE '%Bti%' AND physinv_list = '(1) Larvicide'."
+        ),
+
+        tags$dt(style = "font-size: 16px; margin-top: 15px; color: #856404;", "Control Checkbacks"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          "A ", tags$b("control checkback"), " occurs when ", tags$b("no treatments happened between"),
+          " the pre-inspection and the post (checkback) inspection. The pre and post",
+          " measurements are a natural population change baseline.",
+          tags$br(), tags$br(),
+          tags$b("How they affect results:"),
+          tags$ul(
+            tags$li("Control checkbacks are ", tags$b("excluded"), " from valid checkback counts and the efficacy display."),
+            tags$li("They appear in a separate Control Checkback Details table in the Control Efficacy tab."),
+            tags$li("When Mulla's formula is enabled, all control observations within a season and genus",
+                     " are ", tags$b("averaged"), " to produce a single C1/C2 correction ratio.",
+                     " This averaged ratio is then applied to every treated checkback in that season.",
+                     " Individual controls are NOT matched 1-to-1 with treated checkbacks."),
+            tags$li("If natural populations declined between control observations (C1/C2 > 1),",
+                     " standard reductions were overstated — Mulla's will lower them.",
+                     " If populations increased (C1/C2 < 1), Mulla's will raise them.")
+          )
         )
       ),
 
@@ -124,16 +144,17 @@ server <- function(input, output, session) {
 
         tags$dt(style = "font-size: 16px; margin-top: 15px;", "Mulla's Formula"),
         tags$dd(style = "font-size: 14px; margin-left: 20px;",
-          "A correction method commonly used in entomology. Without an untreated control group,",
-          " the simplified version is:",
+          "When control data is available (checkbacks where treatment happened before",
+          " the pre-inspection), the full correction is applied:",
           tags$br(),
-          tags$code("% Reduction = 100 - (post_genus_dips / pre_genus_dips) × 100"),
+          tags$code("% Reduction = 100 - (T2/T1) × (C1/C2) × 100"),
           tags$br(),
-          "With a control: % Reduction = 100 - (T2/T1 × C1/C2) × 100",
+          "Where T = treated site, C = control site, 1 = pre count, 2 = post count.",
           tags$br(),
-          "Where T = treated, C = control, 1 = pre, 2 = post.",
+          "C1/C2 corrects for natural population change between observations.",
           tags$br(),
-          "Note: Without control data, both formulas are mathematically equivalent."
+          "Control data is matched by season and genus. Without control data,",
+          " the simplified version is used (mathematically equivalent to standard)."
         ),
 
         tags$dt(style = "font-size: 16px; margin-top: 15px; color: #d63031;", "Graph Display"),
@@ -245,6 +266,25 @@ server <- function(input, output, session) {
     updateSelectInput(session, "matcode_filter_progress", choices = matcodes, selected = "all")
   })
 
+  # Update dosage filter choices when material type changes
+  observeEvent(input$material_type_filter, {
+    ingredient <- input$material_type_filter
+    con <- get_db_connection()
+    if (!is.null(con)) {
+      dosages <- load_dosage_options(con, if (ingredient == "all") NULL else ingredient)
+      safe_disconnect(con)
+      if (!is.null(dosages) && nrow(dosages) > 0) {
+        labels <- unique(dosages$dosage_label)
+        choices <- c("All Dosages" = "all", setNames(labels, labels))
+      } else {
+        choices <- c("All Dosages" = "all")
+      }
+    } else {
+      choices <- c("All Dosages" = "all")
+    }
+    updateSelectInput(session, "dosage_filter", choices = choices, selected = "all")
+  })
+
   # ===========================================================================
   # PROGRESS TAB REACTIVES
   # ===========================================================================
@@ -279,6 +319,24 @@ server <- function(input, output, session) {
     })
   })
 
+  # Load ALL inspections for control checkback detection
+  site_inspections_data <- eventReactive(input$refresh_data_progress, {
+    req(treatment_data_progress())
+    dr <- date_range()
+
+    withProgress(message = "Loading inspection data for control detection...", value = 0.5, {
+      treatments <- treatment_data_progress()
+      if (is.null(treatments) || nrow(treatments) == 0) return(NULL)
+
+      treated_sites <- unique(treatments$sitecode)
+      load_site_inspections(
+        treated_sites = treated_sites,
+        start_date = dr$start,
+        end_date = dr$end
+      )
+    })
+  })
+
   treatment_rounds_progress <- eventReactive(input$refresh_data_progress, {
     req(treatment_data_progress())
 
@@ -299,7 +357,8 @@ server <- function(input, output, session) {
       calculate_checkback_status(
         rounds = treatment_rounds_progress(),
         checkbacks = checkback_data_progress(),
-        treatments = treatment_data_progress()
+        treatments = treatment_data_progress(),
+        all_inspections = site_inspections_data()
       )
     })
   })
@@ -405,33 +464,9 @@ server <- function(input, output, session) {
     create_site_details(
       treatments = treatment_data_progress(),
       checkbacks = checkback_data_progress(),
-      species_data = species_data_for_checkbacks()
+      species_data = species_data_for_checkbacks(),
+      all_inspections = site_inspections_data()
     )
-  })
-
-  # Filtered site details
-  filtered_site_details <- reactive({
-    details <- site_details()
-    if (is.null(details)) return(NULL)
-
-    filtered <- details
-
-    # Facility filter (shared)
-    if (!is.null(input$facility_filter) && input$facility_filter != "all") {
-      filtered <- filtered %>% filter(facility == input$facility_filter)
-    }
-
-    # Min acres filter
-    if (!is.null(input$site_min_acres) && input$site_min_acres > 0) {
-      filtered <- filtered %>% filter(acres >= input$site_min_acres)
-    }
-
-    # Min days to checkback filter
-    if (!is.null(input$site_min_days) && input$site_min_days > 0) {
-      filtered <- filtered %>% filter(days_to_checkback >= input$site_min_days)
-    }
-
-    return(filtered)
   })
 
   # Brood Status Table
@@ -465,38 +500,52 @@ server <- function(input, output, session) {
             "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837")))
   })
 
-  # Site Details Table
-  output$site_details <- DT::renderDataTable({
-    details <- filtered_site_details()
-
-    if (is.null(details) || nrow(details) == 0) {
-      return(data.frame(Message = "No data available with current filters"))
+  # Control Checkback Details Table (same format as efficacy table)
+  output$control_details <- DT::renderDataTable({
+    data <- efficacy_data_raw()
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No control checkbacks found"))
     }
 
-    display_data <- details %>%
+    control_data <- data[data$is_control == TRUE, ]
+    if (is.null(control_data) || nrow(control_data) == 0) {
+      return(data.frame(Message = "No control checkbacks found - all checkbacks had treatments between pre and post inspections"))
+    }
+
+    # Filter to rows with valid data, deduplicate to one genus per display
+    display_data <- control_data %>%
+      filter(!is.na(pct_reduction)) %>%
+      mutate(
+        `% Reduction` = round(pct_reduction, 1),
+        `Pre Genus Dips` = round(pre_genus_dips, 2),
+        `Post Genus Dips` = round(post_genus_dips, 2),
+        `Pre Genus %` = round(pre_genus_pct, 0),
+        `Post Genus %` = round(post_genus_pct, 0),
+        Acres = round(acres, 1)
+      ) %>%
       select(
         Site = sitecode, Facility = facility,
-        `Inspection Date` = inspection_date,
-        `Treatment Date` = treatment_date,
-        `Checkback Date` = checkback_date,
-        `Pre-Trt Dips` = pre_treatment_dips,
-        `Post-Trt Dips` = post_treatment_dips,
-        Acres = acres,
-        `Mat Code` = matcode, `Material Type` = mattype,
-        `Effect Days` = effect_days,
-        `Days to Checkback` = days_to_checkback,
-        `Red/Blue` = redblue,
-        `Species Composition` = species_composition
+        Year = year, Season = season, Genus = genus,
+        `Trt Type` = trt_type, `Mat Code` = trt_matcode,
+        `Trt Date` = trt_date, `Pre Date` = pre_date, `Post Date` = post_date,
+        `Days from Trt` = days_from_trt,
+        `Pre Dips` = pre_numdip, `Post Dips` = post_numdip,
+        `Pre Genus %`, `Post Genus %`,
+        `Pre Genus Dips`, `Post Genus Dips`,
+        `% Reduction`, Acres
       ) %>%
-      mutate(Acres = round(Acres, 1))
+      arrange(desc(`Trt Date`), Site, Genus)
 
-    # Link sitecodes to data.mmcd.org map
     display_data$Site <- make_sitecode_link(display_data$Site)
 
     datatable(display_data,
       escape = FALSE,
-      options = list(pageLength = 25, scrollX = TRUE),
-      rownames = FALSE)
+      options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE,
+                     columnDefs = list(list(className = 'dt-center', targets = '_all'))),
+      rownames = FALSE, filter = 'top'
+    ) %>%
+      formatStyle(columns = names(display_data),
+                  backgroundColor = "#fff3cd")
   })
 
   # ===========================================================================
@@ -524,6 +573,12 @@ server <- function(input, output, session) {
 
     filtered <- data
 
+    # Exclude control checkbacks from the display
+    # (they are used internally for Mulla's correction but not shown)
+    if ("is_control" %in% names(filtered)) {
+      filtered <- filtered[filtered$is_control == FALSE, ]
+    }
+
     # Season filter
     if (!is.null(input$season_filter) && length(input$season_filter) > 0) {
       filtered <- filtered %>% filter(season %in% input$season_filter)
@@ -543,15 +598,15 @@ server <- function(input, output, session) {
       return(NULL)
     }
 
-    # Material type filter (dropdown: "All Materials" or "Bti Only")
-    if (!is.null(input$material_type_filter) && input$material_type_filter == "bti") {
-      # Get Bti matcodes and filter
+    # Material type filter
+    mat_filter <- input$material_type_filter
+    if (!is.null(mat_filter) && mat_filter != "all") {
       con <- get_db_connection()
       if (!is.null(con)) {
-        bti_codes <- get_bti_matcodes(con)
+        mat_codes <- get_matcodes_by_ingredient(con, mat_filter)
         safe_disconnect(con)
-        if (length(bti_codes) > 0) {
-          filtered <- filtered %>% filter(trt_matcode %in% bti_codes)
+        if (length(mat_codes) > 0) {
+          filtered <- filtered %>% filter(trt_matcode %in% mat_codes)
         }
       }
     }
@@ -561,6 +616,11 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(facility == input$facility_filter)
     }
 
+    # Dosage filter
+    if (!is.null(input$dosage_filter) && input$dosage_filter != "all" && "dosage_label" %in% names(filtered)) {
+      filtered <- filtered %>% filter(dosage_label == input$dosage_filter)
+    }
+
     if (nrow(filtered) == 0) return(NULL)
     return(filtered)
   })
@@ -568,9 +628,11 @@ server <- function(input, output, session) {
   # Box plot output
   output$reduction_boxplot <- renderPlotly({
     withProgress(message = "Rendering box plots...", value = 0.5, {
+      comp_mode <- if (!is.null(input$comparison_mode)) input$comparison_mode else "genus"
       create_reduction_boxplot(
         efficacy_data = efficacy_data_filtered(),
-        theme = input$color_theme
+        theme = input$color_theme,
+        comparison_mode = comp_mode
       )
     })
   })
@@ -586,9 +648,12 @@ server <- function(input, output, session) {
 
   output$efficacy_median_reduction <- renderUI({
     data <- efficacy_data_filtered()
-    med <- if (!is.null(data) && any(!is.na(data$pct_reduction))) {
-      round(median(data$pct_reduction, na.rm = TRUE), 1)
-    } else 0
+    med <- 0
+    if (!is.null(data) && any(!is.na(data$pct_reduction))) {
+      plot_values <- data$pct_reduction[!is.na(data$pct_reduction)]
+      plot_values <- pmax(plot_values, 0)
+      med <- round(median(plot_values, na.rm = TRUE), 1)
+    }
     status_colors <- get_status_colors(theme = input$color_theme)
     color <- if (med >= 80) status_colors["active"] else if (med >= 50) status_colors["needs_action"] else status_colors["needs_treatment"]
     create_stat_box(value = paste0(med, "%"), title = "Median % Reduction",
@@ -597,9 +662,12 @@ server <- function(input, output, session) {
 
   output$efficacy_mean_reduction <- renderUI({
     data <- efficacy_data_filtered()
-    avg <- if (!is.null(data) && any(!is.na(data$pct_reduction))) {
-      round(mean(data$pct_reduction, na.rm = TRUE), 1)
-    } else 0
+    avg <- 0
+    if (!is.null(data) && any(!is.na(data$pct_reduction))) {
+      plot_values <- data$pct_reduction[!is.na(data$pct_reduction)]
+      plot_values <- pmax(plot_values, 0)
+      avg <- round(mean(plot_values, na.rm = TRUE), 1)
+    }
     status_colors <- get_status_colors(theme = input$color_theme)
     color <- if (avg >= 80) status_colors["active"] else if (avg >= 50) status_colors["needs_action"] else status_colors["needs_treatment"]
     create_stat_box(value = paste0(avg, "%"), title = "Mean % Reduction",
@@ -609,8 +677,9 @@ server <- function(input, output, session) {
   output$efficacy_pct_above_80 <- renderUI({
     data <- efficacy_data_filtered()
     if (!is.null(data) && any(!is.na(data$pct_reduction))) {
-      valid_data <- data$pct_reduction[!is.na(data$pct_reduction)]
-      pct_above <- round(sum(valid_data >= 80) / length(valid_data) * 100, 1)
+      plot_values <- data$pct_reduction[!is.na(data$pct_reduction)]
+      plot_values <- pmax(plot_values, 0)
+      pct_above <- round(sum(plot_values >= 80) / length(plot_values) * 100, 1)
     } else {
       pct_above <- 0
     }

@@ -19,7 +19,7 @@ if (!exists("get_db_connection", mode = "function")) {
 #' @param lookback_days Integer, number of days to look back for inspections (default 2)
 #' @param analysis_date Date to use as "today" (default Sys.Date())
 #' @param zone_filter Character vector of zones to include (default "1")
-#' @param include_active_treatment Logical, include sites with active treatment (default FALSE)
+#' @param include_active_treatment Logical, include prehatch treatment sites (default FALSE)
 #' @return Data frame with one row per RED air site and inspection status
 get_checklist_data <- function(facility_filter = NULL,
                                foreman_filter = NULL,
@@ -35,7 +35,7 @@ get_checklist_data <- function(facility_filter = NULL,
     facility_condition <- ""
     if (is_valid_filter(facility_filter)) {
       facility_list <- build_sql_in_list(facility_filter)
-      facility_condition <- sprintf("AND b.facility IN (%s)", facility_list)
+      facility_condition <- sprintf("AND sc.facility IN (%s)", facility_list)
     }
 
     foreman_condition <- ""
@@ -63,7 +63,7 @@ get_checklist_data <- function(facility_filter = NULL,
         SELECT DISTINCT ON (b.sitecode)
           b.sitecode,
           b.acres,
-          b.facility,
+          sc.facility,
           sc.zone,
           sc.fosarea,
           sc.sectcode
@@ -102,6 +102,7 @@ get_checklist_data <- function(facility_filter = NULL,
           t.mattype,
           COALESCE(mt.effect_days, 14) AS effect_days,
           t.inspdate + INTERVAL '1 day' * COALESCE(mt.effect_days, 14) AS treatment_expiry,
+          COALESCE(mt.prehatch, FALSE) AS is_prehatch,
           ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC) AS rn
         FROM %s t
         LEFT JOIN mattype_list_targetdose mt ON t.matcode = mt.matcode
@@ -113,7 +114,8 @@ get_checklist_data <- function(facility_filter = NULL,
       ActiveTreatmentSites AS (
         SELECT sitecode, mattype AS active_material,
                last_treatment_date AS active_trt_date,
-               treatment_expiry AS active_trt_expiry
+               treatment_expiry AS active_trt_expiry,
+               is_prehatch
         FROM RecentTreatments
         WHERE rn = 1 AND treatment_expiry > '%s'::date
       ),
@@ -145,7 +147,8 @@ get_checklist_data <- function(facility_filter = NULL,
         CASE WHEN ats.sitecode IS NOT NULL THEN TRUE ELSE FALSE END AS has_active_treatment,
         ats.active_material,
         ats.active_trt_date,
-        ats.active_trt_expiry
+        ats.active_trt_expiry,
+        COALESCE(ats.is_prehatch, FALSE) AS is_prehatch
       FROM RedAirSites s
       LEFT JOIN RecentInspections i ON s.sitecode = i.sitecode AND i.rn = 1
       LEFT JOIN LabResults lr ON i.sampnum_yr = lr.sampnum_yr
@@ -170,9 +173,9 @@ get_checklist_data <- function(facility_filter = NULL,
 
     if (nrow(result) == 0) return(data.frame())
 
-    # Filter out active treatment sites unless toggle is on
+    # Filter out prehatch treatment sites unless toggle is on
     if (!include_active_treatment) {
-      result <- result[!result$has_active_treatment, ]
+      result <- result[!(result$has_active_treatment & result$is_prehatch), ]
       if (nrow(result) == 0) return(data.frame())
     }
 

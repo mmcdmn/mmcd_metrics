@@ -29,6 +29,41 @@ tryCatch({
 }, error = function(e) message("[air_inspection_checklist] Preload warning: ", e$message))
 
 # =============================================================================
+# GENERATE STATIC JSON FILES FOR ROOT INDEX.HTML
+# =============================================================================
+message("[air_inspection_checklist] Generating filter JSON files...")
+tryCatch({
+  # Get facility and FOS choices with lookup table for facility mapping
+  facility_choices <- get_facility_choices(include_all = FALSE)
+  foremen_lookup <- get_foremen_lookup()
+  
+  # Convert facilities to list format
+  facilities <- lapply(names(facility_choices), function(name) {
+    list(code = unname(facility_choices[[name]]), label = name)
+  })
+  
+  # Convert foremen to list format WITH facility information for filtering
+  foremen <- lapply(seq_len(nrow(foremen_lookup)), function(i) {
+    row <- foremen_lookup[i, ]
+    display_name <- paste0(row$shortname, " (", row$facility, ")")
+    list(
+      code = row$shortname,
+      label = display_name,
+      facility = row$facility
+    )
+  })
+  
+  # Write JSON files to www directory so they're web-accessible
+  if (!dir.exists("www")) dir.create("www")
+  writeLines(jsonlite::toJSON(facilities, auto_unbox = TRUE), "www/facilities.json")
+  writeLines(jsonlite::toJSON(foremen, auto_unbox = TRUE), "www/foremen.json")
+  
+  message("[air_inspection_checklist] Filter JSON files generated successfully")
+}, error = function(e) {
+  message("[air_inspection_checklist] Error generating JSON files: ", e$message)
+})
+
+# =============================================================================
 # USER INTERFACE
 # =============================================================================
 
@@ -41,55 +76,39 @@ ui <- air_inspection_checklist_ui()
 server <- function(input, output, session) {
 
   # ===========================================================================
-  # URL PARAMETER PARSING
+  # URL PARAMETER PARSING (synchronous, runs once via isolate)
   # ===========================================================================
-  url_params <- reactiveValues(
-    facility = NULL,
-    fos = NULL,
-    lookback = NULL
-  )
+  query <- isolate(parseQueryString(session$clientData$url_search))
 
-  observe({
-    query <- parseQueryString(session$clientData$url_search)
+  url_facility <- if (!is.null(query$facility) && query$facility != "" && query$facility != "all") query$facility else NULL
+  url_fos      <- if (!is.null(query$fos) && query$fos != "") query$fos else NULL
+  url_lookback <- NULL
+  if (!is.null(query$lookback) && query$lookback != "") {
+    lb <- as.integer(query$lookback)
+    if (!is.na(lb) && lb >= 1 && lb <= 7) url_lookback <- lb
+  }
 
-    if (!is.null(query$facility) && query$facility != "" && query$facility != "all") {
-      url_params$facility <- query$facility
-    }
-    if (!is.null(query$fos) && query$fos != "") {
-      url_params$fos <- query$fos
-    }
-    if (!is.null(query$lookback) && query$lookback != "") {
-      lb <- as.integer(query$lookback)
-      if (!is.na(lb) && lb >= 1 && lb <= 7) {
-        url_params$lookback <- lb
-      }
-    }
-  })
+  # Flag: has the URL FOS parameter been consumed yet?
+  url_fos_pending <- reactiveVal(!is.null(url_fos))
 
   # ===========================================================================
-  # INITIALIZE FILTER CHOICES
+  # INITIALIZE FACILITY + LOOKBACK (runs once, FOS is handled below)
   # ===========================================================================
   observe({
-    # Facility choices
     facility_choices <- get_facility_choices()
-    selected_facility <- if (!is.null(url_params$facility)) url_params$facility else "all"
+    selected_facility <- if (!is.null(url_facility)) url_facility else "all"
     updateSelectInput(session, "facility_filter",
                       choices = facility_choices, selected = selected_facility)
 
-    # FOS choices
-    foreman_choices <- get_foreman_choices()
-    selected_fos <- if (!is.null(url_params$fos)) url_params$fos else "all"
-    updateSelectInput(session, "foreman_filter",
-                      choices = foreman_choices, selected = selected_fos)
-
-    # Lookback days from URL
-    if (!is.null(url_params$lookback)) {
-      updateSliderInput(session, "lookback_days", value = url_params$lookback)
+    if (!is.null(url_lookback)) {
+      updateSliderInput(session, "lookback_days", value = url_lookback)
     }
   })
 
   # ===========================================================================
   # UPDATE FOS CHOICES WHEN FACILITY CHANGES
+  # This is the SINGLE place that manages the FOS dropdown.
+  # On the first fire it also applies any URL fos parameter.
   # ===========================================================================
   observeEvent(input$facility_filter, {
     foremen_lookup <- get_foremen_lookup()
@@ -108,8 +127,16 @@ server <- function(input, output, session) {
       }
     }
 
+    # If a URL fos parameter is waiting to be applied, use it (once)
+    if (url_fos_pending() && !is.null(url_fos) && url_fos %in% foreman_choices) {
+      selected_fos <- url_fos
+      url_fos_pending(FALSE)
+    } else {
+      selected_fos <- "all"
+    }
+
     updateSelectInput(session, "foreman_filter",
-                      choices = foreman_choices, selected = "all")
+                      choices = foreman_choices, selected = selected_fos)
   })
 
   # ===========================================================================

@@ -137,7 +137,7 @@ air_inspection_checklist_ui <- function() {
         checkboxInput("show_unfinished_only", "Show Only Unfinished",
                       value = FALSE),
 
-        checkboxInput("show_active_treatment", "Show Active Treatment Sites",
+        checkboxInput("show_active_treatment", "Show Prehatch Treatment Sites",
                       value = FALSE),
 
         hr(),

@@ -370,6 +370,7 @@ server <- function(input, output, session) {
 
     DT::datatable(
       display_data,
+      escape = FALSE,
       options = list(
         pageLength = 15,
         columnDefs = list(
@@ -618,8 +619,12 @@ server <- function(input, output, session) {
     colnames(display_data) <- c("Site Code", "Facility", "Priority", "Zone", "Acres",
                                  "Total Inspections", "Red Bug Inspections", "Red Bug Ratio (%)", "Years Active")
 
+    # Link sitecodes to data.mmcd.org map
+    display_data$`Site Code` <- make_sitecode_link(display_data$`Site Code`)
+
     DT::datatable(
       display_data,
+      escape = FALSE,
       options = list(
         pageLength = 15, scrollX = TRUE,
         columnDefs = list(

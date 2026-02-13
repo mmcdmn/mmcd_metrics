@@ -146,28 +146,17 @@ control_efficacy_ui <- function() {
                 )
               ),
               
-              # Status Tables Filters
-              conditionalPanel(
-                condition = "input.tabs == 'status_tables'",
-                hr(),
-                h5("Details Filters"),
-                
-                numericInput(
-                  "site_min_acres", "Min Acres:",
-                  value = 0, min = 0, step = 0.1
-                ),
-                
-                numericInput(
-                  "site_min_days", "Min Days to Checkback:",
-                  value = 0, min = 0, step = 1
-                )
-              ),
-              
               # Efficacy Filters
               conditionalPanel(
                 condition = "input.tabs == 'efficacy'",
                 hr(),
                 h5("Efficacy Filters"),
+                
+                selectInput(
+                  "comparison_mode", "Compare By:",
+                  choices = c("By Genus" = "genus", "By Material" = "material", "By Dosage" = "dosage"),
+                  selected = "genus"
+                ),
                 
                 selectInput(
                   "genus_filter", "Genus:",
@@ -191,7 +180,18 @@ control_efficacy_ui <- function() {
                 
                 selectInput(
                   "material_type_filter", "Material Type:",
-                  choices = c("All Materials" = "all", "Bti Only" = "bti"),
+                  choices = c(
+                    "All Materials" = "all",
+                    "Bti Only" = "bti",
+                    "Methoprene Only" = "methoprene",
+                    "Spinosad Only" = "spinosad"
+                  ),
+                  selected = "all"
+                ),
+                
+                selectInput(
+                  "dosage_filter", "Target Dosage:",
+                  choices = c("All Dosages" = "all"),
                   selected = "all"
                 ),
                 
@@ -232,7 +232,19 @@ control_efficacy_ui <- function() {
               plotly::plotlyOutput("reduction_boxplot", height = "600px"),
               br(),
               h4("Efficacy Data Table"),
-              DT::dataTableOutput("efficacy_table")
+              DT::dataTableOutput("efficacy_table"),
+              br(),
+              h4("Control Checkback Details", style = "color: #856404;"),
+              div(style = "padding: 10px; background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; margin-bottom: 15px;",
+                tags$i(class = "fa fa-info-circle", style = "color: #856404;"),
+                tags$span(style = "font-size: 0.9em;",
+                  " Control checkbacks: no treatments occurred between the pre-inspection",
+                  " and the post (checkback) inspection.",
+                  " These show natural population change and are used for",
+                  " Mulla's formula correction when enabled above."
+                )
+              ),
+              DT::dataTableOutput("control_details")
             ),
             
             # --- Checkback Progress ---
@@ -256,9 +268,7 @@ control_efficacy_ui <- function() {
               br(),
               h4("Brood Status Table"),
               DT::dataTableOutput("checkback_status_table"),
-              br(),
-              h4("Site-Level Treatment and Checkback Details"),
-              DT::dataTableOutput("site_details")
+              br()
             )
           ) # end tabsetPanel
         ) # end main content column

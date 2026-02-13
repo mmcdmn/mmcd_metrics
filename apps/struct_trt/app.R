@@ -444,8 +444,12 @@ server <- function(input, output, session) {
         "Treatment Status" = treatment_status
       )
     
+    # Link sitecodes to data.mmcd.org map
+    display_data$Sitecode <- make_sitecode_link(display_data$Sitecode)
+    
     DT::datatable(
       display_data,
+      escape = FALSE,
       options = list(
         pageLength = 15,
         scrollX = TRUE

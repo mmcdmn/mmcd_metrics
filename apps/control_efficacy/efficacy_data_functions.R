@@ -1,22 +1,7 @@
 # =============================================================================
 # EFFICACY TAB: Genus-level % reduction analysis
+# Depends on: data_functions.R (get_matcodes_by_ingredient, load_dosage_options)
 # =============================================================================
-
-#' Get Bti larvicide matcodes by joining mattype_list_targetdose → mattype_list
-#'
-#' @param con Database connection
-#' @return Character vector of matcodes
-get_bti_matcodes <- function(con) {
-  bti <- dbGetQuery(con, "
-    SELECT DISTINCT t.matcode
-    FROM mattype_list_targetdose t
-    JOIN mattype_list m ON t.mattype = m.mattype
-    WHERE m.active_ingredient ILIKE '%Bti%'
-      AND m.physinv_list = '(1) Larvicide'
-  ")
-  if (is.null(bti) || nrow(bti) == 0) return(character(0))
-  return(bti$matcode)
-}
 
 #' Load complete efficacy data for % reduction box plots
 #'
@@ -41,11 +26,11 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
   
   tryCatch({
     # -------------------------------------------------------------------
-    # BTI MATCODE FILTER (optional)
+    # BTI MATCODE FILTER 
     # -------------------------------------------------------------------
     bti_codes <- NULL
     if (bti_only) {
-      bti_codes <- get_bti_matcodes(con)
+      bti_codes <- get_matcodes_by_ingredient(con, "Bti")
       if (length(bti_codes) == 0) {
         message("[efficacy] No Bti matcodes found")
         safe_disconnect(con)
@@ -133,7 +118,7 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     }
     
     pre_checks_all <- all_records %>%
-      filter(action %in% c('4', '2', '1')) %>%
+      filter(action %in% c('4', '2', '1'), is.na(posttrt_p)) %>%
       arrange(sitecode, desc(inspdate), desc(insptime))
     
     # Give post_checks a unique row_id to track through the join
@@ -211,6 +196,34 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     message(sprintf("[efficacy] Matched %d post-checks to treatments", nrow(matched)))
     
     # -------------------------------------------------------------------
+    # STEP 2b: Look up material details (active_ingredient, dosage)
+    # -------------------------------------------------------------------
+    mat_codes_unique <- unique(matched$trt_matcode[!is.na(matched$trt_matcode)])
+    if (length(mat_codes_unique) > 0) {
+      mat_list <- paste0("'", paste(mat_codes_unique, collapse = "','"), "'")
+      mat_detail_sql <- sprintf("
+        SELECT DISTINCT t.matcode, t.tdose, t.unit, t.area, m.active_ingredient
+        FROM mattype_list_targetdose t
+        JOIN mattype_list m ON t.mattype = m.mattype
+        WHERE t.matcode IN (%s)
+      ", mat_list)
+      mat_details <- dbGetQuery(con, mat_detail_sql)
+      if (!is.null(mat_details) && nrow(mat_details) > 0) {
+        mat_details$dosage_label <- paste(mat_details$tdose, mat_details$unit, "/", mat_details$area)
+        matched <- merge(matched, mat_details[, c("matcode", "tdose", "dosage_label", "active_ingredient")],
+                         by.x = "trt_matcode", by.y = "matcode", all.x = TRUE)
+      } else {
+        matched$tdose <- NA_real_
+        matched$dosage_label <- NA_character_
+        matched$active_ingredient <- NA_character_
+      }
+    } else {
+      matched$tdose <- NA_real_
+      matched$dosage_label <- NA_character_
+      matched$active_ingredient <- NA_character_
+    }
+    
+    # -------------------------------------------------------------------
     # STEP 3: Bulk-load species genus percentages
     # -------------------------------------------------------------------
     all_samples <- unique(c(matched$post_sampnum_yr, matched$pre_sampnum_yr))
@@ -245,7 +258,42 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     safe_disconnect(con)
     
     # -------------------------------------------------------------------
-    # STEP 4: Compute genus dip counts + % reduction (vectorized)
+    # STEP 4: Season, treatment type, and control checkback classification
+    # (moved before genus loop so control data is available for Mulla's)
+    # -------------------------------------------------------------------
+    spring_thresholds <- get_spring_date_thresholds()
+    thr_year <- spring_thresholds$year
+    thr_date <- spring_thresholds$date_start
+    
+    matched$season <- vapply(seq_len(nrow(matched)), function(i) {
+      idx <- match(matched$year[i], thr_year)
+      if (is.na(idx) || is.na(matched$trt_date[i])) return(NA_character_)
+      if (matched$trt_date[i] < thr_date[idx]) "Spring" else "Summer"
+    }, character(1))
+    
+    matched$trt_type <- dplyr::case_when(
+      matched$trt_action == "A" ~ "Air",
+      matched$trt_action == "D" ~ "Drone",
+      matched$trt_action == "3" ~ "Ground",
+      TRUE ~ "Other"
+    )
+    
+    # Flag control checkbacks: no treatments occurred between the pre and post
+    # inspections. If the most recent treatment before the post-check is
+    # on or before the pre-inspection, then no treatment happened between.
+    matched$is_control <- !is.na(matched$pre_date) &
+                (is.na(matched$trt_date) | matched$trt_date <= matched$pre_date)
+    
+    n_control <- sum(matched$is_control, na.rm = TRUE)
+    n_valid <- sum(!matched$is_control, na.rm = TRUE)
+    message(sprintf("[efficacy] Control checkbacks: %d, Valid checkbacks: %d", n_control, n_valid))
+    
+    # -------------------------------------------------------------------
+    # STEP 5: Compute genus dip counts + % reduction (vectorized)
+    # When use_mullas=TRUE and control data exists, apply full Mulla's:
+    #   % Reduction = 100 - (T2/T1) x (C1/C2) x 100
+    # Where T=treated, C=control, 1=pre, 2=post
+    # C1/C2 corrects for natural population change between observations.
     # -------------------------------------------------------------------
     result_list <- vector("list", 2)
     names(result_list) <- c("Aedes", "Culex")
@@ -274,10 +322,46 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       
       valid <- !is.na(gm$pre_genus_dips) & gm$pre_genus_dips > 0
       gm$pct_reduction <- NA_real_
+      gm$n_controls <- NA_integer_
+      gm$control_ratio <- NA_real_
       
       if (use_mullas) {
+        # Compute standard reduction for ALL rows first (simplified Mulla's)
         gm$pct_reduction[valid] <-
           100 - (gm$post_genus_dips[valid] / gm$pre_genus_dips[valid]) * 100
+        
+        # If control data exists, compute correction factor and apply to treated rows
+        control_mask <- gm$is_control == TRUE
+        control_rows <- gm[control_mask & valid & gm$post_genus_dips > 0, ]
+        
+        if (nrow(control_rows) > 0) {
+          # Compute C1/C2 ratio per season (natural population change factor)
+          control_summary <- control_rows %>%
+            mutate(ratio = pre_genus_dips / post_genus_dips) %>%
+            group_by(season) %>%
+            summarise(avg_control_ratio = mean(ratio, na.rm = TRUE),
+                      n_control = n(), .groups = 'drop')
+          
+          # Apply full Mulla's formula to treated rows by season
+          for (s in unique(control_summary$season)) {
+            if (is.na(s)) next
+            season_ctrl <- control_summary[control_summary$season == s, ]
+            treated_season <- !control_mask & valid & gm$season == s & !is.na(gm$season)
+            
+            gm$pct_reduction[treated_season] <-
+              100 - (gm$post_genus_dips[treated_season] /
+                     gm$pre_genus_dips[treated_season]) *
+                    season_ctrl$avg_control_ratio * 100
+            
+            gm$n_controls[treated_season] <- season_ctrl$n_control
+            gm$control_ratio[treated_season] <- round(season_ctrl$avg_control_ratio, 4)
+          }
+          
+          message(sprintf("[efficacy] Mulla's control correction applied for genus %s: %d control obs across %d seasons",
+                          g, nrow(control_rows), nrow(control_summary)))
+        } else {
+          message(sprintf("[efficacy] No control data for genus %s - using simplified Mulla's", g))
+        }
       } else {
         gm$pct_reduction[valid] <-
           (gm$pre_genus_dips[valid] - gm$post_genus_dips[valid]) /
@@ -290,30 +374,11 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     result <- do.call(rbind, result_list)
     rownames(result) <- NULL
     
-    # -------------------------------------------------------------------
-    # STEP 5: Season classification
-    # -------------------------------------------------------------------
-    spring_thresholds <- get_spring_date_thresholds()
-    thr_year <- spring_thresholds$year
-    thr_date <- spring_thresholds$date_start
-    
-    result$season <- vapply(seq_len(nrow(result)), function(i) {
-      idx <- match(result$year[i], thr_year)
-      if (is.na(idx) || is.na(result$trt_date[i])) return(NA_character_)
-      if (result$trt_date[i] < thr_date[idx]) "Spring" else "Summer"
-    }, character(1))
-    
-    result$trt_type <- dplyr::case_when(
-      result$trt_action == "A" ~ "Air",
-      result$trt_action == "D" ~ "Drone",
-      result$trt_action == "3" ~ "Ground",
-      TRUE ~ "Other"
-    )
-    
-    message(sprintf("[efficacy] Final: %d rows (%d Aedes, %d Culex) | Bti=%s Mulla=%s",
+    message(sprintf("[efficacy] Final: %d rows (%d Aedes, %d Culex, %d control) | Bti=%s Mulla=%s",
                     nrow(result),
                     sum(result$genus == "Aedes"),
                     sum(result$genus == "Culex"),
+                    sum(result$is_control, na.rm = TRUE),
                     bti_only, use_mullas))
     
     return(result)

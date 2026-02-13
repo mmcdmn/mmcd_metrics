@@ -13,7 +13,7 @@ format_inspection_gaps <- function(data) {
   }
   
   # Format the data for display
-  data %>%
+  result <- data %>%
     mutate(
       `Site Code` = sitecode,
       `Facility` = facility,
@@ -40,6 +40,10 @@ format_inspection_gaps <- function(data) {
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
            `Drone Site`, `Last Inspection`, `Dip Count`, `Days Since`, `Status`)
+  
+  # Link sitecodes to data.mmcd.org map
+  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
+  result
 }
 
 # Render the inspection gap table
@@ -56,6 +60,7 @@ render_gap_table <- function(data, theme = "MMCD") {
 
   DT::datatable(
     formatted_data,
+    escape = FALSE,
     rownames = FALSE,
     options = list(
       pageLength = 25, 
@@ -103,7 +108,7 @@ format_wet_frequency_data <- function(data) {
     return(data.frame())
   }
   
-  data %>%
+  result <- data %>%
     mutate(
       `Site Code` = sitecode,
       `Facility` = facility,
@@ -121,6 +126,10 @@ format_wet_frequency_data <- function(data) {
     ) %>%
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
            `Acres`, `Years with Data`, `Total Inspections`, `Wet Count`, `Water Present`, `Flooded Count`, `Flooded %`)
+  
+  # Link sitecodes to data.mmcd.org map
+  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
+  result
 }
 
 # Render wet frequency table
@@ -137,6 +146,7 @@ render_wet_frequency_table <- function(data, theme = "MMCD") {
   
   DT::datatable(
     formatted_data,
+    escape = FALSE,
     rownames = FALSE,
     options = list(
       pageLength = 25, 
@@ -176,7 +186,7 @@ format_high_larvae_data <- function(data) {
     return(data.frame())
   }
   
-  data %>%
+  result <- data %>%
     mutate(
       `Site Code` = sitecode,
       `Facility` = facility,
@@ -203,6 +213,10 @@ format_high_larvae_data <- function(data) {
     select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
            `Acres`, `Years with Data`, `Total Inspections`, `Exceedances`, `Exceedance Frequency`, 
            `Max Dip Count`, `Avg Dip Count`, `First High Date`, `Last High Date`)
+  
+  # Link sitecodes to data.mmcd.org map
+  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
+  result
 }
 
 # Render high larvae table
@@ -219,6 +233,7 @@ render_high_larvae_table <- function(data, theme = "MMCD") {
   
   DT::datatable(
     formatted_data,
+    escape = FALSE,
     rownames = FALSE,
     options = list(
       pageLength = 25, 

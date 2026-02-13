@@ -211,4 +211,23 @@ create_distribution_chart <- function(x_values, y_values, title, x_label,
     standard_plotly_layout(title, x_label, y_label)
 }
 
+# =============================================================================
+# SITECODE LINK HELPER
+# =============================================================================
+
+#' Convert sitecode values to clickable HTML links to data.mmcd.org map
+#' @param sitecode Character vector of sitecode values
+#' @return Character vector with HTML anchor tags linking to the map
+make_sitecode_link <- function(sitecode) {
+  ifelse(
+    is.na(sitecode) | nchar(trimws(as.character(sitecode))) == 0,
+    as.character(sitecode),
+    paste0(
+      '<a href="https://data.mmcd.org/m1/map?search=', sitecode,
+      '" target="_blank" style="color: #1a73e8; text-decoration: none; font-weight: 500;">',
+      sitecode, '</a>'
+    )
+  )
+}
+
 cat(" Common server utilities loaded successfully\n")

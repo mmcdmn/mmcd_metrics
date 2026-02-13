@@ -471,7 +471,8 @@ server <- function(input, output, session) {
                       render = JS("function(data, type, row) {
                         return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
                       }")
-                    ))))
+                    ))),
+  escape = FALSE)
   
   # ===========================================================================
   # OUTPUT: TOP LOCATIONS

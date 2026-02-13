@@ -570,7 +570,10 @@ server <- function(input, output, session) {
         ) %>%
         arrange(Facility, Sitecode)
       
-      datatable(table_data, options = list(pageLength = 15, scrollX = TRUE), rownames = FALSE)
+      # Link sitecodes to data.mmcd.org map
+      table_data$Sitecode <- make_sitecode_link(table_data$Sitecode)
+      
+      datatable(table_data, escape = FALSE, options = list(pageLength = 15, scrollX = TRUE), rownames = FALSE)
     } else {
       datatable(data.frame(Message = "No site data available"), options = list(dom = 't'), rownames = FALSE)
     }

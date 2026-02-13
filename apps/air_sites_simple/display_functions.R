@@ -172,6 +172,9 @@ create_site_details_panel <- function(site_data) {
     "Last Treatment", "Treatment Material"
   )
   
+  # Link sitecodes to data.mmcd.org map
+  display_data$`Site Code` <- make_sitecode_link(display_data$`Site Code`)
+  
   return(display_data)
 }
 

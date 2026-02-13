@@ -577,8 +577,12 @@ server <- function(input, output, session) {
         "Status" = status
       )
     
+    # Link sitecodes to data.mmcd.org map
+    sitecode_table$Sitecode <- make_sitecode_link(sitecode_table$Sitecode)
+    
     DT::datatable(
       sitecode_table,
+      escape = FALSE,
       options = list(
         pageLength = 15,
         scrollX = TRUE,
@@ -1078,8 +1082,12 @@ server <- function(input, output, session) {
         `Treated Acres` = ifelse(is.na(`Treated Acres`), 0, `Treated Acres`)
       )
     
+    # Link sitecodes to data.mmcd.org map
+    table_data$Sitecode <- make_sitecode_link(table_data$Sitecode)
+    
     DT::datatable(
       table_data,
+      escape = FALSE,
       options = list(
         pageLength = 15,
         scrollX = TRUE,

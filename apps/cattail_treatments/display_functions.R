@@ -364,12 +364,16 @@ create_treatments_table <- function(treatments_data, foremen_lookup) {
     ) %>%
     arrange(desc(`Treatment Date`), Facility, Sitecode)
   
+  # Link sitecodes to data.mmcd.org map
+  display_data$Sitecode <- make_sitecode_link(display_data$Sitecode)
+  
   # Round numeric columns
   numeric_cols <- c("Acres Treated", "Effect Days", "Days Since")
   display_data[numeric_cols] <- lapply(display_data[numeric_cols], function(x) round(as.numeric(x), 1))
   
   datatable(
     display_data,
+    escape = FALSE,
     options = list(
       pageLength = 15,
       scrollX = TRUE,
@@ -414,11 +418,15 @@ create_plans_table <- function(plans_data, foremen_lookup) {
     ) %>%
     arrange(`Planned Date`, Facility, Sitecode)
   
+  # Link sitecodes to data.mmcd.org map
+  display_data$Sitecode <- make_sitecode_link(display_data$Sitecode)
+  
   # Round numeric columns
   display_data$`Planned Acres` <- round(as.numeric(display_data$`Planned Acres`), 1)
   
   datatable(
     display_data,
+    escape = FALSE,
     options = list(
       pageLength = 15,
       scrollX = TRUE,
@@ -725,9 +733,13 @@ create_status_table <- function(sites_data, treatments_data, analysis_date = NUL
     ) %>%
     arrange(Status, Facility, Sitecode)
   
+  # Link sitecodes to data.mmcd.org map
+  table_data$Sitecode <- make_sitecode_link(table_data$Sitecode)
+  
   # Create datatable with status-based row styling
   datatable(
     table_data,
+    escape = FALSE,
     options = list(
       pageLength = 25,
       scrollX = TRUE,

@@ -15,6 +15,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/server_utilities.R")
 source("../../shared/stat_box_helpers.R")
 
 # Source external function files
@@ -489,7 +490,11 @@ server <- function(input, output, session) {
       ) %>%
       mutate(Acres = round(Acres, 1))
 
+    # Link sitecodes to data.mmcd.org map
+    display_data$Site <- make_sitecode_link(display_data$Site)
+
     datatable(display_data,
+      escape = FALSE,
       options = list(pageLength = 25, scrollX = TRUE),
       rownames = FALSE)
   })
@@ -646,7 +651,11 @@ server <- function(input, output, session) {
       ) %>%
       arrange(desc(`Trt Date`), Site, Genus)
 
+    # Link sitecodes to data.mmcd.org map
+    display_data$Site <- make_sitecode_link(display_data$Site)
+
     datatable(display_data,
+      escape = FALSE,
       options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE,
                      columnDefs = list(list(className = 'dt-center', targets = '_all'))),
       rownames = FALSE, filter = 'top'

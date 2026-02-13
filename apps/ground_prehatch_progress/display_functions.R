@@ -486,8 +486,12 @@ create_details_table <- function(data, foremen_lookup) {
     display_data$Acres <- round(as.numeric(display_data$Acres), 2)
   }
   
+  # Link sitecodes to data.mmcd.org map
+  display_data$Sitecode <- make_sitecode_link(display_data$Sitecode)
+  
   datatable(
     display_data,
+    escape = FALSE,
     options = list(
       pageLength = 15,
       scrollX = TRUE,

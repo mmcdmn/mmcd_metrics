@@ -933,6 +933,9 @@ create_detailed_samples_table <- function(data, species_filter = "All") {
     ) %>%
     arrange(desc(Species_Count), Date)
   
+  # Link sitecodes to data.mmcd.org map
+  detailed_table$Sitecode <- make_sitecode_link(detailed_table$Sitecode)
+  
   return(detailed_table)
 }
 # =============================================================================

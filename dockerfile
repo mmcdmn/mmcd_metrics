@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
     libv8-dev libpoppler-cpp-dev libmagick++-dev \
     nginx
 
+# Install libsodium for plumber API
+RUN apt-get install -y libsodium-dev
+
 # Install required R packages
 RUN R -e "install.packages(c( \
   'shiny', 'shinydashboard', 'shinyWidgets', 'shinyjs', 'DBI', 'RPostgreSQL', 'RPostgres', \
@@ -33,10 +36,14 @@ RUN R -e "install.packages(c('tidyr'), lib='/usr/local/lib/R/site-library', repo
 # Install pool package for database connection pooling
 RUN R -e "install.packages('pool', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
+# Install plumber for API server
+RUN R -e "install.packages('plumber', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
 # Copy app files and config to correct locations
 COPY apps /srv/shiny-server/apps
 COPY shared /srv/shiny-server/shared
 COPY tests /srv/shiny-server/tests
+COPY api /srv/api
 COPY index.html /srv/shiny-server/
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 COPY nginx.conf /etc/nginx/nginx.conf

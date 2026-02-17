@@ -71,7 +71,7 @@ test_that("get_priority_condition builds correct SQL", {
   
   # Test with specific priority
   result <- get_priority_condition("RED")
-  expect_match(result, "priority = 'RED'")
+  expect_match(result, "priority IN \\('RED'\\)")
 })
 
 test_that("get_status_condition handles status types", {

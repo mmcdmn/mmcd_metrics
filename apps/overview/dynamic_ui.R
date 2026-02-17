@@ -646,6 +646,14 @@ get_overview_js <- function() {
     // Value box click to toggle chart visibility (for district view - metric boxes)
     $(document).on('click', '.stat-box-clickable[data-metric-id]', function() {
       var metricId = $(this).data('metric-id');
+      
+      // Check if this metric has a redirect URL (e.g., vector_index -> trap surveillance map)
+      var redirectUrl = $(this).data('redirect');
+      if (redirectUrl && redirectUrl !== '') {
+        window.location.href = redirectUrl;
+        return;
+      }
+      
       var chartWrapper = $('#chart_wrapper_' + metricId);
       var statBox = $(this);
       

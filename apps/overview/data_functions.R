@@ -212,13 +212,16 @@ load_metric_data <- function(metric,
     
     # For metrics with display_as_average (like mosquito_monitoring) - DON'T aggregate, use as-is
     # Also preserve trap_count columns for proper weighted averaging
-    if (isTRUE(config$display_as_average)) {
-      # Select all available columns including trap_count if present
-      available_cols <- intersect(
-        c("facility", "zone", "total_count", "active_count", "expiring_count", 
-          "trap_count", "historical_trap_count"),
-        names(sites)
-      )
+    # For display_raw_value metrics (like vector_index) - preserve extra columns too
+    if (isTRUE(config$display_as_average) || isTRUE(config$display_raw_value)) {
+      # Select all available columns including extra metric-specific columns
+      standard_cols <- c("facility", "zone", "total_count", "active_count", "expiring_count", 
+                         "trap_count", "historical_trap_count")
+      # Also preserve raw_value_column if defined
+      if (!is.null(config$raw_value_column)) {
+        standard_cols <- c(standard_cols, config$raw_value_column)
+      }
+      available_cols <- intersect(standard_cols, names(sites))
       result <- sites %>%
         filter(zone %in% zone_filter) %>%
         select(all_of(available_cols))
@@ -345,6 +348,44 @@ load_data_by_zone <- function(metric,
           display_name = "MMCD (All)",
           zone = "1,2"
         )
+    }
+    
+    return(result)
+  }
+  
+  # Special handling for display_raw_value metrics (like vector_index)
+  # These are district-wide metrics - just pass through the pre-aggregated data
+  if (isTRUE(config$display_raw_value)) {
+    raw_col <- if (!is.null(config$raw_value_column)) config$raw_value_column else NULL
+    
+    if (separate_zones) {
+      # VI is district-wide, show as single zone
+      result <- data %>%
+        summarize(
+          total = sum(total_count, na.rm = TRUE),
+          active = sum(active_count, na.rm = TRUE),
+          expiring = sum(expiring_count, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(zone = "1", display_name = "District")
+      
+      # Preserve raw value column
+      if (!is.null(raw_col) && raw_col %in% names(data)) {
+        result[[raw_col]] <- max(data[[raw_col]], na.rm = TRUE)
+      }
+    } else {
+      result <- data %>%
+        summarize(
+          total = sum(total_count, na.rm = TRUE),
+          active = sum(active_count, na.rm = TRUE),
+          expiring = sum(expiring_count, na.rm = TRUE)
+        ) %>%
+        mutate(zone = "all", display_name = "District Total")
+      
+      # Preserve raw value column
+      if (!is.null(raw_col) && raw_col %in% names(data)) {
+        result[[raw_col]] <- max(data[[raw_col]], na.rm = TRUE)
+      }
     }
     
     return(result)

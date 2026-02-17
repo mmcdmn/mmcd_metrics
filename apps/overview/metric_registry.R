@@ -109,7 +109,7 @@ get_metric_registry <- function() {
     # =========================================================================
     drone = list(
       id = "drone",
-      display_name = "Drone Acres",
+      display_name = "Drone ",
       short_name = "Drone",
       icon = "helicopter",
       image_path = "assets/drone.jpg",
@@ -140,7 +140,7 @@ get_metric_registry <- function() {
     
     ground_prehatch = list(
       id = "ground_prehatch",
-      display_name = "Ground Prehatch Acres",
+      display_name = "Ground Prehatch",
       short_name = "Ground",
       icon = "seedling",
       image_path = "assets/ground.png",
@@ -233,6 +233,52 @@ get_metric_registry <- function() {
                          • Priority: All<br>
                          • Zone filter from dropdown"),
       load_params = list(expiring_days = 7)
+    ),
+    
+    vector_index = list(
+      id = "vector_index",
+      display_name = "Vector Index",
+      short_name = "VI",
+      icon = "virus",
+      category = "Vector",
+      y_label = "Max Vector Index",
+      bg_color = "#dc2626",
+      app_folder = "trap_surveillance",
+      has_acres = FALSE,
+      historical_enabled = FALSE,  # VI uses its own trend charts in the trap_surveillance app
+      use_active_calculation = FALSE,
+      display_metric = "vector_index",
+      display_raw_value = TRUE,   # Show the actual max VI value, not a percentage
+      raw_value_column = "max_vector_index",  # Column in pre_aggregated data with the display value
+      raw_value_suffix = "",      # No suffix (just the number)
+      chart_types = c("bar"),
+      default_chart_type = "bar",
+      # Detail boxes: show max VI, areas with positive VI, total areas
+      detail_boxes = list(
+        list(id = "total", title = "Areas Monitored", column = "total", icon = "map-marked-alt", status = "completed"),
+        list(id = "active", title = "Areas with VI > 0", column = "active", icon = "exclamation-circle", status = "needs_treatment")
+      ),
+      # Color: higher VI = worse (red). Use fixed thresholds.
+      color_mode = "fixed_pct",
+      inverse_color = TRUE,
+      color_thresholds = list(good = 30, warning = 60),
+      chart_labels = list(
+        total = "Areas Monitored",
+        active = "Areas with VI > 0",
+        expiring = ""
+      ),
+      filter_info = HTML("<b>Vector Index:</b><br>
+                         • VI = Avg Mosquitoes/Trap × Infection Rate (MLE)<br>
+                         • Shows highest VI across all vector index areas<br>
+                         • Species: Total Culex Vectors<br>
+                         • Latest available week of current year<br>
+                         • Click to open trap surveillance map"),
+      click_redirect = "/trap_survillance_test/",  # Redirect to trap surveillance app on click
+      load_params = list(
+        expiring_days = 0,
+        spp_name = "Total_Cx_vectors",
+        infection_metric = "mle"
+      )
     ),
     
     # =========================================================================
@@ -385,6 +431,49 @@ get_metric_registry <- function() {
         zone_filter = c("1", "2"),  # Default to both zones (total)
         time_period = "yearly"  # Yearly progress tracking
       )
+    ),
+    
+    # =========================================================================
+    # FLOODWATER - Inspection Gap Analysis
+    # =========================================================================
+    inspection_gaps = list(
+      id = "inspection_gaps",
+      display_name = "Inspection Gaps",
+      short_name = "Gaps",
+      icon = "calendar-times",
+      category = "Floodwater",
+      y_label = "Sites with Gaps",
+      bg_color = "#b91c1c",
+      app_folder = "inspections",
+      has_acres = FALSE,
+      historical_enabled = FALSE,  # Gap analysis is point-in-time, not trended
+      use_active_calculation = FALSE,
+      display_metric = "gap_sites",
+      chart_types = c("bar"),
+      default_chart_type = "bar",
+      # Detail boxes: total sites, recently inspected, gap sites
+      detail_boxes = list(
+        list(id = "total", title = "Total Sites", column = "total", icon = "map-marker-alt", status = "completed"),
+        list(id = "active", title = "Recently Inspected", column = "active", icon = "check-circle", status = "active"),
+        list(id = "expiring", title = "Inspection Gaps", column = "expiring", icon = "calendar-times", status = "needs_treatment")
+      ),
+      # Color: fewer gaps = better. Higher % inspected = green.
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 85, warning = 60),
+      chart_labels = list(
+        total = "Total Sites",
+        active = "Recently Inspected",
+        expiring = "Inspection Gaps (≥3 yrs)"
+      ),
+      filter_info = HTML("<b>Inspection Gap Analysis:</b><br>
+                         • Ground sites only (prehatch)<br>
+                         • Drone sites included<br>
+                         • Gap threshold: 3 years<br>
+                         • Includes never-inspected sites<br>
+                         • Action filtering: 1, 2, 4, or 3 with dry<br>
+                         • Zone filter from dropdown<br>
+                         • Click for detailed inspection coverage app"),
+      load_params = list(expiring_days = 0)
     )
   )
 }

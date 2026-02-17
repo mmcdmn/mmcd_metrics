@@ -569,3 +569,156 @@ fetch_combined_area_data <- function(yrwk, spp_name = "Total_Cx_vectors",
   
   combined
 }
+
+# =============================================================================
+# OVERVIEW-COMPATIBLE INTERFACE
+# =============================================================================
+# load_raw_data() provides an adapter for the overview metric registry.
+# Returns pre-aggregated data showing the HIGHEST vector index across all areas,
+# broken down by facility (mapped from viarea).
+#
+# The overview displays:
+#   total   = number of VI areas with trapping data
+#   active  = number of areas with vector_index > 0
+#   expiring = the maximum vector index value (used as the display value)
+#
+# Since viarea doesn't map to facility/zone, we report district-wide.
+# =============================================================================
+
+#' Get the most recent yrwk with data for a given year
+#' @param year Integer year (default: current year)
+#' @return The latest yrwk value, or NULL
+fetch_latest_yrwk <- function(year = NULL) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  if (is.null(year)) year <- as.integer(format(Sys.Date(), "%Y"))
+  
+  q <- sprintf(
+    "SELECT MAX(yrwk) as latest_yrwk
+     FROM dbadult_mon_nt_co2_forvectorabundance
+     WHERE year = %d",
+    as.integer(year)
+  )
+  
+  tryCatch({
+    result <- dbGetQuery(con, q)
+    if (nrow(result) > 0 && !is.na(result$latest_yrwk[1])) {
+      return(result$latest_yrwk[1])
+    }
+    NULL
+  }, error = function(e) {
+    warning(paste("fetch_latest_yrwk failed:", e$message))
+    NULL
+  })
+}
+
+#' Overview-compatible data loader for Vector Index
+#' 
+#' Returns pre-aggregated data compatible with the overview metric registry.
+#' Shows vector index per area with the max VI highlighted.
+#' 
+#' @param analysis_date Date for analysis (used to determine year/week)
+#' @param expiring_days Not used for VI (kept for interface compatibility)
+#' @param zone_filter Not used for VI (areas don't map to zones)
+#' @param status_types Not used for VI
+#' @param spp_name Species to query (default: Total Culex Vectors)
+#' @param infection_metric "mle" or "mir" (default: "mle")
+#' @param ... Additional parameters for compatibility
+#' @return list(sites = df, treatments = df, pre_aggregated = TRUE)
+#' @export
+load_raw_data <- function(analysis_date = NULL,
+                          expiring_days = NULL,
+                          zone_filter = NULL,
+                          status_types = NULL,
+                          spp_name = "Total_Cx_vectors",
+                          infection_metric = "mle",
+                          start_year = NULL,
+                          end_year = NULL,
+                          ...) {
+  
+  analysis_date <- if (is.null(analysis_date)) Sys.Date() else as.Date(analysis_date)
+  current_year <- as.integer(format(analysis_date, "%Y"))
+  
+  # Get the latest available week — try current year first, then fall back to most recent year
+
+  latest_yrwk <- fetch_latest_yrwk(current_year)
+  if (is.null(latest_yrwk)) {
+    # No data for current year — try previous year
+    latest_yrwk <- fetch_latest_yrwk(current_year - 1)
+  }
+  if (is.null(latest_yrwk)) {
+    message("[vector_index] No data found for years ", current_year, " or ", current_year - 1)
+    return(list(
+      sites = data.frame(
+        facility = character(), zone = character(),
+        total_count = integer(), active_count = integer(), expiring_count = integer()
+      ),
+      treatments = data.frame(),
+      pre_aggregated = TRUE
+    ))
+  }
+  
+  # Historical mode: return empty sites, treatments for weekly trending
+  if (!is.null(start_year) && !is.null(end_year)) {
+    # Return empty - VI doesn't have historical trending in the overview
+    return(list(
+      sites = data.frame(
+        facility = character(), zone = character(),
+        total_count = integer(), active_count = integer(), expiring_count = integer()
+      ),
+      treatments = data.frame(),
+      total_count = 0,
+      pre_aggregated = TRUE
+    ))
+  }
+  
+  # Get combined area data for the latest week
+  combined <- fetch_combined_area_data(latest_yrwk, spp_name, infection_metric)
+  
+  if (is.null(combined) || nrow(combined) == 0) {
+    return(list(
+      sites = data.frame(
+        facility = character(), zone = character(),
+        total_count = integer(), active_count = integer(), expiring_count = integer()
+      ),
+      treatments = data.frame(),
+      pre_aggregated = TRUE
+    ))
+  }
+  
+  # Calculate district-level summary
+  # total_count  = max vector index value (the headline number)
+  # active_count = number of areas with VI > 0 (positive activity)
+  # expiring_count = total areas with data
+  max_vi <- max(combined$vector_index, na.rm = TRUE)
+  if (is.infinite(max_vi)) max_vi <- 0
+  
+  areas_with_vi <- sum(!is.na(combined$vector_index) & combined$vector_index > 0)
+  total_areas <- sum(!is.na(combined$vector_index))
+  
+  # Return as a single "district" row — VI is district-wide, not per-facility
+  # Use zone "1" as default since VI doesn't use zones
+  sites <- data.frame(
+    facility = "MMCD",
+    zone = "1",
+    total_count = total_areas,
+    active_count = areas_with_vi,
+    expiring_count = 0,
+    max_vector_index = round(max_vi, 4),
+    latest_yrwk = latest_yrwk,
+    stringsAsFactors = FALSE
+  )
+  
+  message(sprintf("[vector_index] Overview: max VI = %.4f, %d/%d areas with VI > 0, yrwk = %s",
+                  max_vi, areas_with_vi, total_areas, latest_yrwk))
+  
+  return(list(
+    sites = sites,
+    treatments = data.frame(),
+    pre_aggregated = TRUE
+  ))
+}
+
+message("✓ trap_surveillance/data_functions.R loaded")

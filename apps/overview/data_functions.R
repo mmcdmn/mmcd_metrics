@@ -305,6 +305,99 @@ load_metric_data <- function(metric,
 }
 
 # =============================================================================
+# SHARED AGGREGATION HELPER
+# =============================================================================
+
+# Metrics that use acres instead of counts for total/active/expiring
+ACRES_METRICS <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites")
+
+#' Aggregate metric data by grouping columns into total/active/expiring
+#' Handles all metric-type dispatch: SUCO capacity, raw_value, weighted average, acres vs counts
+#' @param data Pre-loaded metric data from load_metric_data
+#' @param config Registry config for this metric
+#' @param metric Metric ID string
+#' @param group_cols Character vector of columns to group by (e.g. c("zone") or c("facility","facility_display","zone"))
+#' @param separate_zones Whether zones should be separate rows
+#' @return Data frame with total, active, expiring, display_name columns
+aggregate_metric_data <- function(data, config, metric, group_cols, separate_zones = TRUE) {
+  
+  # --- SUCO: capacity-based ---
+  if (metric == "suco") {
+    capacity_total <- config$load_params$capacity_total  # 72
+    if (separate_zones) {
+      return(data %>%
+        group_by(zone) %>%
+        summarize(total = capacity_total / 2, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
+        mutate(expiring = pmax(0, active - total), display_name = paste0("P", zone)))
+    } else {
+      return(data %>%
+        summarize(total = capacity_total, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
+        mutate(expiring = pmax(0, active - total), display_name = "MMCD (All)", zone = "1,2"))
+    }
+  }
+  
+  # --- display_raw_value (vector_index): district-wide passthrough ---
+  if (isTRUE(config$display_raw_value)) {
+    raw_col <- config$raw_value_column
+    dn <- if (separate_zones) "District" else "District Total"
+    zn <- if (separate_zones) "1" else "all"
+    result <- data %>%
+      summarize(total = sum(total_count, na.rm = TRUE), active = sum(active_count, na.rm = TRUE),
+                expiring = sum(expiring_count, na.rm = TRUE), .groups = "drop") %>%
+      mutate(zone = zn, display_name = dn)
+    if (!is.null(raw_col) && raw_col %in% names(data)) result[[raw_col]] <- max(data[[raw_col]], na.rm = TRUE)
+    return(result)
+  }
+  
+  # --- Weighted average metrics (mosquito_monitoring) ---
+  if (isTRUE(config$display_as_average) && "trap_count" %in% names(data)) {
+    weighted_avg_summarize <- function(df) {
+      df %>% summarize(
+        total = { d <- sum(historical_trap_count, na.rm = TRUE); if (d > 0) round(sum(total_count, na.rm = TRUE) / d, 1) else 0 },
+        active = { d <- sum(trap_count, na.rm = TRUE); if (d > 0) round(sum(active_count, na.rm = TRUE) / d, 1) else 0 },
+        expiring = round(mean(expiring_count, na.rm = TRUE), 1),
+        .groups = "drop"
+      )
+    }
+    if (separate_zones && "zone" %in% group_cols) {
+      grp <- intersect(group_cols, names(data))
+      result <- data %>% group_by(across(all_of(grp))) %>% weighted_avg_summarize()
+    } else {
+      grp <- setdiff(group_cols, c("zone"))
+      grp <- intersect(grp, names(data))
+      if (length(grp) > 0) {
+        result <- data %>% group_by(across(all_of(grp))) %>% weighted_avg_summarize()
+      } else {
+        result <- weighted_avg_summarize(data) %>% mutate(zone = "all")
+      }
+    }
+    return(result)
+  }
+  
+  # --- Standard metrics: use acres or counts ---
+  use_acres <- metric %in% ACRES_METRICS && "total_acres" %in% names(data)
+  total_col <- if (use_acres) "total_acres" else "total_count"
+  active_col <- if (use_acres) "active_acres" else "active_count"
+  expiring_col <- if (use_acres) "expiring_acres" else "expiring_count"
+  
+  grp <- intersect(group_cols, names(data))
+  if (length(grp) > 0) {
+    result <- data %>%
+      group_by(across(all_of(grp))) %>%
+      summarize(total = sum(.data[[total_col]], na.rm = TRUE),
+                active = sum(.data[[active_col]], na.rm = TRUE),
+                expiring = sum(.data[[expiring_col]], na.rm = TRUE), .groups = "drop")
+  } else {
+    result <- data %>%
+      summarize(total = sum(.data[[total_col]], na.rm = TRUE),
+                active = sum(.data[[active_col]], na.rm = TRUE),
+                expiring = sum(.data[[expiring_col]], na.rm = TRUE))
+  }
+  
+  result
+}
+
+# =============================================================================
 # AGGREGATION FUNCTIONS BY GROUP TYPE
 # =============================================================================
 
@@ -319,170 +412,19 @@ load_data_by_zone <- function(metric,
   data <- load_metric_data(metric, analysis_date, expiring_days, zone_filter)
   if (nrow(data) == 0) return(data.frame())
   
-  # Get registry config for metric-specific handling
   registry <- get_metric_registry()
   config <- registry[[metric]]
   
-  # Special handling for SUCO - capacity-based at district level
-  if (metric == "suco") {
-    capacity_total <- config$load_params$capacity_total  # 72
-    
-    if (separate_zones) {
-      result <- data %>%
-        group_by(zone) %>%
-        summarize(
-          total = capacity_total / 2,  # Split capacity between P1 and P2
-          active = sum(active_count, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          # "Above Capacity" = how many SUCOs exceed the capacity line
-          expiring = pmax(0, active - total),
-          display_name = paste0("P", zone)
-        )
-    } else {
-      result <- data %>%
-        summarize(
-          total = capacity_total,  # Full district capacity
-          active = sum(active_count, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          expiring = pmax(0, active - total),
-          display_name = "MMCD (All)",
-          zone = "1,2"
-        )
-    }
-    
-    return(result)
-  }
+  result <- aggregate_metric_data(data, config, metric,
+                                  group_cols = c("zone"),
+                                  separate_zones = separate_zones)
   
-  # Special handling for display_raw_value metrics (like vector_index)
-  # These are district-wide metrics - just pass through the pre-aggregated data
-  if (isTRUE(config$display_raw_value)) {
-    raw_col <- if (!is.null(config$raw_value_column)) config$raw_value_column else NULL
-    
-    if (separate_zones) {
-      # VI is district-wide, show as single zone
-      result <- data %>%
-        summarize(
-          total = sum(total_count, na.rm = TRUE),
-          active = sum(active_count, na.rm = TRUE),
-          expiring = sum(expiring_count, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(zone = "1", display_name = "District")
-      
-      # Preserve raw value column
-      if (!is.null(raw_col) && raw_col %in% names(data)) {
-        result[[raw_col]] <- max(data[[raw_col]], na.rm = TRUE)
-      }
+  # Add display_name if not already set by aggregate_metric_data
+  if (!"display_name" %in% names(result)) {
+    if (separate_zones && "zone" %in% names(result)) {
+      result <- result %>% mutate(display_name = paste0("P", zone)) %>% arrange(zone)
     } else {
-      result <- data %>%
-        summarize(
-          total = sum(total_count, na.rm = TRUE),
-          active = sum(active_count, na.rm = TRUE),
-          expiring = sum(expiring_count, na.rm = TRUE)
-        ) %>%
-        mutate(zone = "all", display_name = "District Total")
-      
-      # Preserve raw value column
-      if (!is.null(raw_col) && raw_col %in% names(data)) {
-        result[[raw_col]] <- max(data[[raw_col]], na.rm = TRUE)
-      }
-    }
-    
-    return(result)
-  }
-  
-  # Special handling for mosquito_monitoring - use weighted averages
-  # trap_count is available for proper weighting
-  if (isTRUE(config$display_as_average) && "trap_count" %in% names(data)) {
-    if (separate_zones) {
-      result <- data %>%
-        group_by(zone) %>%
-        summarize(
-          # Weighted average: sum(totals) / sum(trap_counts) with division-by-zero guard
-          total = {
-            denom <- sum(historical_trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          active = {
-            denom <- sum(trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          expiring = round(mean(expiring_count, na.rm = TRUE), 1),  # Already per-trap difference
-          .groups = "drop"
-        ) %>%
-        mutate(display_name = paste0("P", zone)) %>%
-        arrange(zone)
-    } else {
-      result <- data %>%
-        summarize(
-          # Weighted average across ALL traps with division-by-zero guard
-          total = {
-            denom <- sum(historical_trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          active = {
-            denom <- sum(trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          expiring = round(mean(expiring_count, na.rm = TRUE), 1)
-        ) %>%
-        mutate(zone = "all", display_name = "District Total")
-    }
-    
-    return(result)
-  }
-  
-  # Determine if this metric should use acres data
-  # Metrics that use acres: drone, ground_prehatch, cattail_treatments, air_sites
-  # struct_trt and catch_basin use site counts
-  acres_metrics <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites")
-  use_acres <- metric %in% acres_metrics && "total_acres" %in% names(data)
-  
-  if (separate_zones) {
-    if (use_acres) {
-      result <- data %>%
-        group_by(zone) %>%
-        summarize(
-          total = sum(total_acres, na.rm = TRUE),
-          active = sum(active_acres, na.rm = TRUE),
-          expiring = sum(expiring_acres, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(display_name = paste0("P", zone)) %>%
-        arrange(zone)
-    } else {
-      result <- data %>%
-        group_by(zone) %>%
-        summarize(
-          total = sum(total_count, na.rm = TRUE),
-          active = sum(active_count, na.rm = TRUE),
-          expiring = sum(expiring_count, na.rm = TRUE),
-          .groups = "drop"
-        ) %>%
-        mutate(display_name = paste0("P", zone)) %>%
-        arrange(zone)
-    }
-  } else {
-    if (use_acres) {
-      result <- data %>%
-        summarize(
-          total = sum(total_acres, na.rm = TRUE),
-          active = sum(active_acres, na.rm = TRUE),
-          expiring = sum(expiring_acres, na.rm = TRUE)
-        ) %>%
-        mutate(zone = "all", display_name = "District Total")
-    } else {
-      result <- data %>%
-        summarize(
-          total = sum(total_count, na.rm = TRUE),
-          active = sum(active_count, na.rm = TRUE),
-          expiring = sum(expiring_count, na.rm = TRUE)
-        ) %>%
-        mutate(zone = "all", display_name = "District Total")
+      result <- result %>% mutate(zone = "all", display_name = "District Total")
     }
   }
   
@@ -515,81 +457,27 @@ load_data_by_facility <- function(metric,
       filter(facility == facility_filter | facility_display == facility_filter)
   }
   
-  # Get registry config for metric-specific handling
   registry <- get_metric_registry()
   config <- registry[[metric]]
   
-  # Special handling for mosquito_monitoring - use weighted averages per facility
-  if (isTRUE(config$display_as_average) && "trap_count" %in% names(data)) {
-    if (separate_zones && length(zone_filter) == 2) {
-      result <- data %>%
-        group_by(facility, facility_display, zone) %>%
-        summarize(
-          # Weighted average per facility per zone with division-by-zero guard
-          total = {
-            denom <- sum(historical_trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          active = {
-            denom <- sum(trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          expiring = round(mean(expiring_count, na.rm = TRUE), 1),
-          .groups = "drop"
-        ) %>%
-        mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>%
-        select(-facility_display)
-    } else {
-      result <- data %>%
-        group_by(facility, facility_display) %>%
-        summarize(
-          # Weighted average per facility (across all zones) with division-by-zero guard
-          total = {
-            denom <- sum(historical_trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(total_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          active = {
-            denom <- sum(trap_count, na.rm = TRUE)
-            if (denom > 0) round(sum(active_count, na.rm = TRUE) / denom, 1) else 0
-          },
-          expiring = round(mean(expiring_count, na.rm = TRUE), 1),
-          .groups = "drop"
-        ) %>%
-        mutate(display_name = facility_display) %>%
-        select(-facility_display)
-    }
-    
-    result <- order_facilities(result, separate_zones)
-    return(result)
+  # Determine grouping columns
+  grp <- if (separate_zones && length(zone_filter) == 2) {
+    c("facility", "facility_display", "zone")
+  } else {
+    c("facility", "facility_display")
   }
   
-  # Match load_data_by_zone: drone, ground_prehatch, cattail_treatments, air_sites use acres
-  acres_metrics <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites")
-  use_acres <- metric %in% acres_metrics &&
-    all(c("total_acres", "active_acres", "expiring_acres") %in% names(data))
+  result <- aggregate_metric_data(data, config, metric, group_cols = grp, separate_zones = separate_zones)
   
-  if (separate_zones && length(zone_filter) == 2) {
-    result <- data %>%
-      group_by(facility, facility_display, zone) %>%
-      summarize(
-        total = if (use_acres) sum(total_acres, na.rm = TRUE) else sum(total_count, na.rm = TRUE),
-        active = if (use_acres) sum(active_acres, na.rm = TRUE) else sum(active_count, na.rm = TRUE),
-        expiring = if (use_acres) sum(expiring_acres, na.rm = TRUE) else sum(expiring_count, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>%
-      select(-facility_display)
-  } else {
-    result <- data %>%
-      group_by(facility, facility_display) %>%
-      summarize(
-        total = if (use_acres) sum(total_acres, na.rm = TRUE) else sum(total_count, na.rm = TRUE),
-        active = if (use_acres) sum(active_acres, na.rm = TRUE) else sum(active_count, na.rm = TRUE),
-        expiring = if (use_acres) sum(expiring_acres, na.rm = TRUE) else sum(expiring_count, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(display_name = facility_display) %>%
-      select(-facility_display)
+  # Add display_name from facility_display
+  if (!"display_name" %in% names(result)) {
+    if ("facility_display" %in% names(result) && "zone" %in% names(result) && separate_zones) {
+      result <- result %>% mutate(display_name = paste0(facility_display, " (P", zone, ")")) %>% select(-facility_display)
+    } else if ("facility_display" %in% names(result)) {
+      result <- result %>% mutate(display_name = facility_display) %>% select(-facility_display)
+    }
+  } else if ("facility_display" %in% names(result)) {
+    result <- result %>% select(-facility_display)
   }
   
   result <- order_facilities(result, separate_zones)

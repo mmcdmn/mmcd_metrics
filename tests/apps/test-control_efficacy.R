@@ -25,6 +25,7 @@ source(file.path(root, "tests/stubs/stub_control_efficacy.R"), local = TRUE)
 
 # Source all required files
 test_that("all control efficacy source files load correctly", {
+  skip_if_not_installed("RPostgres")
   expect_no_error({
     source(file.path(root, "shared/app_libraries.R"), local = TRUE)
     source(file.path(root, "shared/server_utilities.R"), local = TRUE) 
@@ -38,6 +39,9 @@ test_that("all control efficacy source files load correctly", {
 })
 
 # Setup: Source files and create stubs
+if (!requireNamespace("RPostgres", quietly = TRUE)) {
+  skip("RPostgres is not installed")
+}
 source(file.path(root, "shared/app_libraries.R"), local = TRUE)
 source(file.path(root, "shared/server_utilities.R"), local = TRUE)
 source(file.path(root, "shared/db_helpers.R"), local = TRUE)

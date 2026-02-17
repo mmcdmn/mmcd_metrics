@@ -569,3 +569,217 @@ fetch_combined_area_data <- function(yrwk, spp_name = "Total_Cx_vectors",
   
   combined
 }
+
+# =============================================================================
+# OVERVIEW-COMPATIBLE INTERFACE
+# =============================================================================
+# load_raw_data() provides an adapter for the overview metric registry.
+# Returns pre-aggregated data showing the HIGHEST vector index across all areas,
+# broken down by facility (mapped from viarea).
+#
+# The overview displays:
+#   total   = number of VI areas with trapping data
+#   active  = number of areas with vector_index > 0
+#   expiring = the maximum vector index value (used as the display value)
+#
+# Since viarea doesn't map to facility/zone, we report district-wide.
+# =============================================================================
+
+#' Get the most recent yrwk with data for a given year
+#' @param year Integer year (default: current year)
+#' @return The latest yrwk value, or NULL
+fetch_latest_yrwk <- function(year = NULL) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  if (is.null(year)) year <- as.integer(format(Sys.Date(), "%Y"))
+  
+  q <- sprintf(
+    "SELECT MAX(yrwk) as latest_yrwk
+     FROM dbadult_mon_nt_co2_forvectorabundance
+     WHERE year = %d",
+    as.integer(year)
+  )
+  
+  tryCatch({
+    result <- dbGetQuery(con, q)
+    if (nrow(result) > 0 && !is.na(result$latest_yrwk[1])) {
+      return(result$latest_yrwk[1])
+    }
+    NULL
+  }, error = function(e) {
+    warning(paste("fetch_latest_yrwk failed:", e$message))
+    NULL
+  })
+}
+
+#' Overview-compatible data loader for Vector Index
+#' 
+#' Returns pre-aggregated data compatible with the overview metric registry.
+#' Scans ALL weeks for the current year to find the PEAK vector index value,
+#' not just the latest week (which may be end-of-season with VI=0).
+#' 
+#' @param analysis_date Date for analysis (used to determine year/week)
+#' @param expiring_days Not used for VI (kept for interface compatibility)
+#' @param zone_filter Not used for VI (areas don't map to zones)
+#' @param status_types Not used for VI
+#' @param spp_name Species to query (default: Total Culex Vectors)
+#' @param infection_metric "mle" or "mir" (default: "mle")
+#' @param ... Additional parameters for compatibility
+#' @return list(sites = df, treatments = df, pre_aggregated = TRUE)
+#' @export
+load_raw_data <- function(analysis_date = NULL,
+                          expiring_days = NULL,
+                          zone_filter = NULL,
+                          status_types = NULL,
+                          spp_name = "Total_Cx_vectors",
+                          infection_metric = "mle",
+                          start_year = NULL,
+                          end_year = NULL,
+                          ...) {
+  
+  analysis_date <- if (is.null(analysis_date)) Sys.Date() else as.Date(analysis_date)
+  current_year <- as.integer(format(analysis_date, "%Y"))
+  
+  # Historical mode: return empty - VI doesn't have historical trending in the overview
+  if (!is.null(start_year) && !is.null(end_year)) {
+    return(list(
+      sites = data.frame(
+        facility = character(), zone = character(),
+        total_count = integer(), active_count = integer(), expiring_count = integer()
+      ),
+      treatments = data.frame(),
+      total_count = 0,
+      pre_aggregated = TRUE
+    ))
+  }
+  
+  # ===========================================================================
+  # Single-query approach: compute VI for ALL weeks of the year in SQL,
+  # then find the peak. This avoids calling fetch_combined_area_data per-week.
+  # VI = avg_per_trap * infection_rate (MLE)
+  # ===========================================================================
+  con <- get_db_connection()
+  if (is.null(con)) {
+    message("[vector_index] No database connection")
+    return(list(
+      sites = data.frame(
+        facility = character(), zone = character(),
+        total_count = integer(), active_count = integer(), expiring_count = integer()
+      ),
+      treatments = data.frame(),
+      pre_aggregated = TRUE
+    ))
+  }
+  
+  empty_result <- list(
+    sites = data.frame(
+      facility = character(), zone = character(),
+      total_count = integer(), active_count = integer(), expiring_count = integer()
+    ),
+    treatments = data.frame(),
+    pre_aggregated = TRUE
+  )
+  
+  tryCatch({
+    # Find the most recent yrwk with data on or before analysis_date
+    query_year <- current_year
+    
+    # Step 1: find the relevant yrwk (latest week with trapping data <= analysis_date)
+    yrwk_row <- dbGetQuery(con, sprintf("
+      SELECT MAX(yrwk) as yrwk
+      FROM dbadult_mon_nt_co2_forvectorabundance
+      WHERE year = %d AND inspdate <= '%s'::date
+    ", query_year, as.character(analysis_date)))
+    
+    target_yrwk <- if (!is.null(yrwk_row) && nrow(yrwk_row) > 0 && !is.na(yrwk_row$yrwk[1])) {
+      yrwk_row$yrwk[1]
+    } else {
+      # No data for current year up to analysis_date — try previous year latest
+      query_year <- current_year - 1
+      prev <- dbGetQuery(con, sprintf("
+        SELECT MAX(yrwk) as yrwk
+        FROM dbadult_mon_nt_co2_forvectorabundance
+        WHERE year = %d
+      ", query_year))
+      if (!is.null(prev) && nrow(prev) > 0 && !is.na(prev$yrwk[1])) prev$yrwk[1] else NULL
+    }
+    
+    if (is.null(target_yrwk)) {
+      safe_disconnect(con)
+      message("[vector_index] No yrwk found for analysis_date ", analysis_date)
+      return(empty_result)
+    }
+    
+    # Step 2: compute VI for that ONE week — same calc as fetch_combined_area_data()
+    vi_data <- dbGetQuery(con, sprintf("
+      WITH abundance AS (
+        SELECT viarea,
+               SUM(mosqcount) AS total_count,
+               COUNT(DISTINCT loc_code) AS num_traps,
+               CASE WHEN COUNT(DISTINCT loc_code) > 0
+                    THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code)
+                    ELSE 0 END AS avg_per_trap
+        FROM dbadult_mon_nt_co2_forvectorabundance
+        WHERE yrwk = %s AND spp_name = '%s'
+        GROUP BY viarea
+      ),
+      infection AS (
+        SELECT viarea,
+               CASE WHEN p IS NOT NULL AND p::text <> 'NULL' AND p::text <> ''
+                    THEN p::numeric ELSE 0 END AS mle
+        FROM dbvirus_mle_yrwk_area
+        WHERE yrwk = '%s'
+      )
+      SELECT a.viarea, a.avg_per_trap,
+             COALESCE(i.mle, 0) AS mle,
+             a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
+      FROM abundance a
+      LEFT JOIN infection i ON a.viarea = i.viarea
+      ORDER BY vector_index DESC NULLS LAST
+    ", as.integer(target_yrwk), spp_name, as.character(as.integer(target_yrwk))))
+    
+    safe_disconnect(con)
+    
+    if (is.null(vi_data) || nrow(vi_data) == 0) {
+      message("[vector_index] No VI data for yrwk ", target_yrwk)
+      return(empty_result)
+    }
+    
+    # Max VI across all areas for this week
+    max_vi <- max(vi_data$vector_index, na.rm = TRUE)
+    if (is.infinite(max_vi)) max_vi <- 0
+    
+    areas_with_vi <- sum(!is.na(vi_data$vector_index) & vi_data$vector_index > 0)
+    total_areas <- nrow(vi_data)
+    
+    # Return as a single "district" row — VI is district-wide, not per-facility
+    sites <- data.frame(
+      facility = "MMCD",
+      zone = "1",
+      total_count = total_areas,
+      active_count = areas_with_vi,
+      expiring_count = 0,
+      max_vector_index = round(max_vi, 4),
+      latest_yrwk = as.integer(target_yrwk),
+      stringsAsFactors = FALSE
+    )
+    
+    message(sprintf("[vector_index] Overview: yrwk %s (analysis_date %s) — max VI = %.4f (%d/%d areas with VI > 0)",
+                    target_yrwk, analysis_date, max_vi, areas_with_vi, total_areas))
+    
+    return(list(
+      sites = sites,
+      treatments = data.frame(),
+      pre_aggregated = TRUE
+    ))
+    
+  }, error = function(e) {
+    warning(paste("[vector_index] Overview query failed:", e$message))
+    tryCatch(safe_disconnect(con), error = function(e2) NULL)
+    return(empty_result)
+  })
+}
+
+message("✓ trap_surveillance/data_functions.R loaded")

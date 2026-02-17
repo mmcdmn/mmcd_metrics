@@ -870,6 +870,17 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             workload <- treated + needs_treatment
             pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
             cat("[DEBUG]", metric_id, ": treated=", treated, "needs_treatment=", needs_treatment, "pct=", pct, "\n")
+          } else if (isTRUE(config$display_raw_value)) {
+            # For display_raw_value metrics (e.g., vector_index): show a raw value, not percentage
+            # The raw_value_column specifies which column has the value to display
+            raw_col <- if (!is.null(config$raw_value_column)) config$raw_value_column else "max_vector_index"
+            if (raw_col %in% names(metric_data)) {
+              pct <- max(metric_data[[raw_col]], na.rm = TRUE)
+              if (is.infinite(pct)) pct <- 0
+            } else {
+              pct <- if (total > 0) round(active / total * 100, 1) else 0
+            }
+            cat("[DEBUG] Display raw value:", raw_col, "=", pct, "\n")
           } else if (isTRUE(config$display_as_average)) {
             # For display_as_average metrics: current / avg * 100
             pct <- if (total > 0) round(100 * active / total, 1) else 0
@@ -904,20 +915,32 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           return(NA)
         })
         
+        # Format the display value: raw value metrics show the value directly, others show percentage
+        display_value <- if (isTRUE(config$display_raw_value)) {
+          # Show raw value with optional suffix (e.g., "0.42" for vector index)
+          suffix <- if (!is.null(config$raw_value_suffix)) config$raw_value_suffix else ""
+          paste0(round(pct, 2), suffix)
+        } else {
+          paste0(pct, "%")
+        }
+        
         cat("[DEBUG] Creating stat box with pct=", pct, "title=", config$display_name, "color=", box_info$color, "\n")
         
         # Create clickable stat box with comparison data attributes
+        # Check if this metric has a redirect URL
+        redirect_url <- if (!is.null(config$click_redirect)) config$click_redirect else ""
         result_box <- tryCatch(
           column(col_width,
             div(
               class = "stat-box-clickable",
               `data-metric-id` = metric_id,
+              `data-redirect` = redirect_url,
               `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
               `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
               `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
               `data-week-num` = week_num,
               create_stat_box(
-                value = paste0(pct, "%"),
+                value = display_value,
                 title = config$display_name,
                 bg_color = box_info$color,
                 icon = if (!is.null(config$image_path)) config$image_path else config$icon,

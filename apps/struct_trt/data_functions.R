@@ -6,15 +6,10 @@ if (!exists("get_db_connection", mode = "function")) {
   source("../../shared/db_helpers.R")
 }
 
-# Helper function to construct facility filter condition for SQL
-get_facility_condition <- function(facility_filter) {
-  if (is.null(facility_filter) || ("all" %in% facility_filter)) {
-    return("") # No filtering
-  } else {
-    facility_list <- paste0("'", paste(facility_filter, collapse = "','"), "'")
-    return(sprintf("AND gis.facility IN (%s)", facility_list))
-  }
-}
+# SQL condition helpers - thin wrappers around shared build_sql_in_clause()
+get_facility_condition <- function(facility_filter) build_sql_in_clause("gis.facility", facility_filter)
+get_priority_condition <- function(priority) build_sql_in_clause("loc.priority", priority)
+get_status_condition <- function(status_types) build_sql_in_clause("loc.status_udw", status_types)
 
 # Function to construct structure type filter condition for SQL
 get_structure_type_condition <- function(structure_type) {
@@ -35,98 +30,24 @@ get_structure_type_condition <- function(structure_type) {
   }
 }
 
-# Function to construct priority filter condition for SQL
-get_priority_condition <- function(priority) {
-  if (priority == "all") {
-    return("")
-  } else {
-    return(sprintf("AND loc.priority = '%s'", priority))
-  }
-}
 
-# Function to construct status condition for SQL
-# Empty list = get ALL statuses (for overview)
-# Specific list = filter to those statuses (for individual app)
-get_status_condition <- function(status_types) {
-  if (is.null(status_types) || length(status_types) == 0) {
-    return("") # Empty = get ALL statuses (no filter)
-  } else {
-    status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-    return(sprintf("AND loc.status_udw IN (%s)", status_list))
-  }
-}
-
-# Function to construct foreman (FOS) filter condition for SQL
+# Function to construct foreman (FOS) filter condition for SQL - uses cached foremen lookup
 get_foreman_condition <- function(foreman_filter) {
-  if (is.null(foreman_filter) || ("all" %in% foreman_filter) || length(foreman_filter) == 0) {
-    return("") # No filtering
-  } else {
-    # Map shortnames to emp_num using employee_list
-    # foreman_filter contains shortnames, but gis.fosarea contains emp_num
-    # We need to query to get emp_num for the selected shortnames
-    con <- get_db_connection()
-    if (is.null(con)) return("")
-    
-    tryCatch({
-      shortname_list <- paste0("'", paste(foreman_filter, collapse = "','"), "'")
-      emp_nums <- dbGetQuery(con, sprintf("
-        SELECT emp_num 
-        FROM employee_list 
-        WHERE shortname IN (%s)
-      ", shortname_list))
-      safe_disconnect(con)
-      
-      if (nrow(emp_nums) > 0) {
-        emp_num_list <- paste0("'", paste(emp_nums$emp_num, collapse = "','"), "'")
-        return(sprintf("AND gis.fosarea IN (%s)", emp_num_list))
-      } else {
-        return("")
-      }
-    }, error = function(e) {
-      if (!is.null(con)) safe_disconnect(con)
-      return("")
-    })
-  }
+  if (!is_valid_filter(foreman_filter)) return("")
+  lkp <- get_foremen_lookup()
+  emp_nums <- lkp$emp_num[lkp$shortname %in% foreman_filter]
+  build_sql_in_clause("gis.fosarea", emp_nums)
 }
 
-# Helper function for total structures query conditions
+# Helper function for total structures query conditions - uses shared SQL builders
 get_facility_condition_total <- function(facility_filter, structure_type_filter, priority_filter, status_types) {
-  conditions <- character(0)
-  
-  # Facility condition using shared helper
-  if (is_valid_filter(facility_filter)) {
-    facility_list <- build_sql_in_list(facility_filter)
-    conditions <- c(conditions, sprintf("AND gis.facility IN (%s)", facility_list))
-  }
-  
-  # Structure type condition
-  if (structure_type_filter != "all") {
-    # Handle case-insensitive matching and combinations like CV/PR
-    if (toupper(structure_type_filter) == "CV") {
-      # Match CV, cv, and CV/PR, cv/pr combinations (case-insensitive)
-      conditions <- c(conditions, "AND (UPPER(loc.s_type) = 'CV' OR UPPER(loc.s_type) LIKE 'CV/%' OR UPPER(loc.s_type) LIKE '%/CV')")
-    } else if (toupper(structure_type_filter) == "PR") {
-      # Match PR and PR combinations like CV/PR (case-insensitive)
-      conditions <- c(conditions, "AND (UPPER(loc.s_type) = 'PR' OR UPPER(loc.s_type) LIKE 'PR/%' OR UPPER(loc.s_type) LIKE '%/PR')")
-    } else {
-      # For other types, use case-insensitive exact match
-      conditions <- c(conditions, sprintf("AND UPPER(loc.s_type) = UPPER('%s')", structure_type_filter))
-    }
-  }
-  
-  # Priority condition
-  if (priority_filter != "all") {
-    conditions <- c(conditions, sprintf("AND loc.priority = '%s'", priority_filter))
-  }
-  
-  # Status condition - only filter if status_types is specified
-  # Empty list means get ALL (for overview), non-empty list means filter (for app)
-  if (!is.null(status_types) && length(status_types) > 0) {
-    status_list <- paste0("'", paste(status_types, collapse = "','"), "'")
-    conditions <- c(conditions, sprintf("AND loc.status_udw IN (%s)", status_list))
-  }
-  
-  return(paste(conditions, collapse = " "))
+  conditions <- c(
+    build_sql_in_clause("gis.facility", facility_filter),
+    get_structure_type_condition(structure_type_filter),
+    build_sql_in_clause("loc.priority", priority_filter),
+    build_sql_in_clause("loc.status_udw", status_types)
+  )
+  paste(conditions[conditions != ""], collapse = " ")
 }
 
 # Function to get current structure treatment data (STANDARD FUNCTION - renamed from get_current_structure_data)
@@ -330,8 +251,7 @@ WHERE trt.list_type = 'STR'
   })
 }
 
-#' Apply filters to structure data - STANDARDIZED FORMAT
-#' Standard function to filter structure data
+#' Apply filters to structure data - delegates to shared apply_standard_data_filters
 #' @param data The result from load_raw_data (list with sites, treatments, total_count)
 #' @param facility_filter Vector of selected facilities
 #' @param foreman_filter Vector of selected foremen  
@@ -339,38 +259,11 @@ WHERE trt.list_type = 'STR'
 #' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL,
                               foreman_filter = NULL, zone_filter = NULL) {
-  # Use standardized keys
-  sites <- data$sites
-  treatments <- data$treatments
-  
-  if (is.null(sites) || nrow(sites) == 0) {
-    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
-  }
-  
-  # Apply facility filter
-  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
-    sites <- sites %>% filter(facility %in% facility_filter)
-    treatments <- treatments %>% filter(facility %in% facility_filter)
-  }
-  
-  # Apply foreman filter
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
-    sites <- sites %>% filter(foreman %in% foreman_filter)
-    treatments <- treatments %>% filter(foreman %in% foreman_filter)
-  }
-  
-  # Apply zone filter  
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    sites <- sites %>% filter(zone %in% zone_filter)
-    treatments <- treatments %>% filter(zone %in% zone_filter)
-  }
-  
-  # Return STANDARDIZED format
-  return(list(
-    sites = sites,
-    treatments = treatments,
-    total_count = data$total_count  # Keep original total_count from universe
-  ))
+  apply_standard_data_filters(
+    data, facility_filter = facility_filter,
+    foreman_filter = foreman_filter, zone_filter = zone_filter,
+    foreman_col = "foreman", keep_original_total = TRUE
+  )
 }
 
 # Function to get historical structure treatment data

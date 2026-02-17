@@ -646,6 +646,14 @@ get_overview_js <- function() {
     // Value box click to toggle chart visibility (for district view - metric boxes)
     $(document).on('click', '.stat-box-clickable[data-metric-id]', function() {
       var metricId = $(this).data('metric-id');
+      
+      // Check if this metric has a redirect URL (e.g., vector_index -> trap surveillance map)
+      var redirectUrl = $(this).data('redirect');
+      if (redirectUrl && redirectUrl !== '') {
+        window.location.href = redirectUrl;
+        return;
+      }
+      
       var chartWrapper = $('#chart_wrapper_' + metricId);
       var statBox = $(this);
       
@@ -705,10 +713,7 @@ get_overview_js <- function() {
             }
           });
           
-          // Scroll to the visible chart
-          $('html, body').animate({
-            scrollTop: chartWrapper.offset().top - 80
-          }, 300);
+          // Chart revealed in-place, no auto-scroll
         }, 100);
       } else {
         // Also resize remaining charts when one is hidden

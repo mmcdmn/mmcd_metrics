@@ -422,6 +422,122 @@ normalize_filter_input <- function(input_value) {
   return(input_value)
 }
 
+# =============================================================================
+# STANDARDIZED DATA FILTER
+# =============================================================================
+# Shared apply_data_filters() used by all apps to filter sites/treatments
+# after load_raw_data(). Replaces 6 nearly-identical per-app copies.
+
+#' Apply standard filters to a sites+treatments data list
+#'
+#' Works with the standardized list(sites, treatments, total_count, ...)
+#' returned by every app's load_raw_data().
+#'
+#' @param data       List with $sites, $treatments, $total_count (and any extras)
+#' @param facility_filter  Character vector of facility codes, or NULL/"all"
+#' @param foreman_filter   Character vector, or NULL/"all"
+#' @param zone_filter      Character vector of zone codes, or NULL
+#' @param foreman_col      Column name used for foreman in sites & treatments
+#'                         ("foreman" for drone/struct_trt, "fosarea" for others)
+#' @param convert_foreman_shortnames  If TRUE, treat foreman_filter values as
+#'                         shortnames and map to emp_num via get_foremen_lookup()
+#'                         before filtering. Used only by drone.
+#' @param filter_treatments_by How to filter treatments:
+#'   "direct"   – apply same column filters to treatments (default)
+#'   "sitecode" – filter treatments to sitecode %in% filtered sites$sitecode
+#'   "none"     – don't touch treatments (e.g. air_sites has none)
+#' @param keep_original_total If TRUE, total_count = data$total_count (universe).
+#'                            If FALSE (default), total_count = nrow(filtered sites).
+#' @param extra_filters Named list of column=values for app-specific filters
+#'                      (e.g. list(prehatch = "PREHATCH") for drone prehatch_only)
+#' @return Filtered data list preserving all extra fields from input
+apply_standard_data_filters <- function(data,
+                               facility_filter = NULL,
+                               foreman_filter  = NULL,
+                               zone_filter     = NULL,
+                               foreman_col     = "foreman",
+                               convert_foreman_shortnames = FALSE,
+                               filter_treatments_by = "direct",
+                               keep_original_total  = FALSE,
+                               extra_filters        = NULL) {
+
+  sites      <- data$sites
+  treatments <- data$treatments
+
+  # Early return on empty data — preserve any extra fields
+  if (is.null(sites) || nrow(sites) == 0) {
+    out <- list(sites = data.frame(), treatments = data.frame(), total_count = 0)
+    # Carry through extra fields (e.g. pre_aggregated)
+    extras <- setdiff(names(data), c("sites", "treatments", "total_count"))
+    for (nm in extras) out[[nm]] <- data[[nm]]
+    return(out)
+  }
+
+  # --- helper: filter a df on a column if it exists --------------------------
+  filter_col <- function(df, col, vals) {
+    if (!is.null(df) && nrow(df) > 0 && col %in% names(df)) {
+      df %>% dplyr::filter(.data[[col]] %in% vals)
+    } else {
+      df
+    }
+  }
+
+  # --- Facility filter -------------------------------------------------------
+  if (is_valid_filter(facility_filter)) {
+    sites <- filter_col(sites, "facility", facility_filter)
+    if (filter_treatments_by == "direct") {
+      treatments <- filter_col(treatments, "facility", facility_filter)
+    }
+  }
+
+  # --- Zone filter ------------------------------------------------------------
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    sites <- filter_col(sites, "zone", zone_filter)
+    if (filter_treatments_by == "direct") {
+      treatments <- filter_col(treatments, "zone", zone_filter)
+    }
+  }
+
+  # --- Foreman filter ---------------------------------------------------------
+  if (is_valid_filter(foreman_filter)) {
+    actual_values <- foreman_filter
+    if (convert_foreman_shortnames) {
+      lkp <- get_foremen_lookup()
+      actual_values <- lkp$emp_num[lkp$shortname %in% foreman_filter]
+    }
+    sites <- filter_col(sites, foreman_col, actual_values)
+    if (filter_treatments_by == "direct") {
+      treatments <- filter_col(treatments, foreman_col, actual_values)
+    }
+  }
+
+  # --- Extra app-specific column filters (e.g. prehatch) ----------------------
+  if (!is.null(extra_filters) && is.list(extra_filters)) {
+    for (col in names(extra_filters)) {
+      sites <- filter_col(sites, col, extra_filters[[col]])
+      if (filter_treatments_by == "direct") {
+        treatments <- filter_col(treatments, col, extra_filters[[col]])
+      }
+    }
+  }
+
+  # --- sitecode-based treatment matching (ground_prehatch) --------------------
+  if (filter_treatments_by == "sitecode" &&
+      !is.null(treatments) && nrow(treatments) > 0 && nrow(sites) > 0) {
+    treatments <- treatments %>% dplyr::filter(sitecode %in% sites$sitecode)
+  }
+
+  # --- Build return list preserving extra fields ------------------------------
+  out <- list(
+    sites      = sites,
+    treatments = if (is.null(treatments)) data.frame() else treatments,
+    total_count = if (keep_original_total) data$total_count else nrow(sites)
+  )
+  extras <- setdiff(names(data), c("sites", "treatments", "total_count"))
+  for (nm in extras) out[[nm]] <- data[[nm]]
+  out
+}
+
 # Get year ranges from current and archive tables for historical data
 # This handles March transitions when data moves between tables
 get_historical_year_ranges <- function(con, current_table, archive_table, date_column = "inspdate") {

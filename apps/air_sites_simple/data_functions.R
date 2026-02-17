@@ -18,9 +18,12 @@ load_raw_data <- function(analysis_date = Sys.Date(),
                           start_year = NULL, end_year = NULL,
                           expiring_days = 7,
                           facility_filter = NULL, foreman_filter = NULL,
-                          status_types = character(0),
+                          status_types = NULL,
                           zone_filter = c("1", "2"),
-                          priority_filter = c("RED")) {
+                          priority_filter = c("RED"),
+                          ...) {
+  
+  analysis_date <- as.Date(analysis_date)
   
   # For historical analysis (include_archive=TRUE with year range), 
   # only load treatment records — the heavy site-status CTE is not needed
@@ -155,30 +158,14 @@ load_air_treatments <- function(start_year, end_year, zone_filter = c("1", "2"),
   })
 }
 
-#' Apply filters to air sites data
+#' Apply filters to air sites data - delegates to shared apply_standard_data_filters
 apply_data_filters <- function(data, facility_filter = NULL,
                                 foreman_filter = NULL, zone_filter = NULL) {
-  sites <- data$sites
-  
-  if (is.null(sites) || nrow(sites) == 0) {
-    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
-  }
-  
-  # Apply facility filter
-  if (is_valid_filter(facility_filter)) {
-    sites <- sites %>% filter(facility %in% facility_filter)
-  }
-  
-  # Apply zone filter
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    sites <- sites %>% filter(zone %in% zone_filter)
-  }
-  
-  return(list(
-    sites = sites,
-    treatments = data.frame(),
-    total_count = nrow(sites)
-  ))
+  apply_standard_data_filters(
+    data, facility_filter = facility_filter,
+    zone_filter = zone_filter,
+    filter_treatments_by = "none"
+  )
 }
 
 # Get air sites data with filtering and status logic

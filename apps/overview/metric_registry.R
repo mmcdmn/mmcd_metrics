@@ -269,9 +269,8 @@ get_metric_registry <- function() {
       ),
       filter_info = HTML("<b>Vector Index:</b><br>
                          • VI = Avg Mosquitoes/Trap × Infection Rate (MLE)<br>
-                         • Shows highest VI across all vector index areas<br>
+                         • Shows highest VI across all areas for the current week<br>
                          • Species: Total Culex Vectors<br>
-                         • Peak value across all weeks of current year<br>
                          • Click to open trap surveillance map"),
       click_redirect = "/trap_surveillance/",  # Redirect to trap surveillance app on click
       load_params = list(

@@ -683,95 +683,76 @@ load_raw_data <- function(analysis_date = NULL,
   )
   
   tryCatch({
-    # Try current year first, fall back to previous year
+    # Find the most recent yrwk with data on or before analysis_date
     query_year <- current_year
     
+    # Step 1: find the relevant yrwk (latest week with trapping data <= analysis_date)
+    yrwk_row <- dbGetQuery(con, sprintf("
+      SELECT MAX(yrwk) as yrwk
+      FROM dbadult_mon_nt_co2_forvectorabundance
+      WHERE year = %d AND inspdate <= '%s'::date
+    ", query_year, as.character(analysis_date)))
+    
+    target_yrwk <- if (!is.null(yrwk_row) && nrow(yrwk_row) > 0 && !is.na(yrwk_row$yrwk[1])) {
+      yrwk_row$yrwk[1]
+    } else {
+      # No data for current year up to analysis_date — try previous year latest
+      query_year <- current_year - 1
+      prev <- dbGetQuery(con, sprintf("
+        SELECT MAX(yrwk) as yrwk
+        FROM dbadult_mon_nt_co2_forvectorabundance
+        WHERE year = %d
+      ", query_year))
+      if (!is.null(prev) && nrow(prev) > 0 && !is.na(prev$yrwk[1])) prev$yrwk[1] else NULL
+    }
+    
+    if (is.null(target_yrwk)) {
+      safe_disconnect(con)
+      message("[vector_index] No yrwk found for analysis_date ", analysis_date)
+      return(empty_result)
+    }
+    
+    # Step 2: compute VI for that ONE week — same calc as fetch_combined_area_data()
     vi_data <- dbGetQuery(con, sprintf("
       WITH abundance AS (
-        SELECT yrwk, viarea,
+        SELECT viarea,
+               SUM(mosqcount) AS total_count,
+               COUNT(DISTINCT loc_code) AS num_traps,
                CASE WHEN COUNT(DISTINCT loc_code) > 0
                     THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code)
                     ELSE 0 END AS avg_per_trap
         FROM dbadult_mon_nt_co2_forvectorabundance
-        WHERE year = %d AND spp_name = '%s'
-        GROUP BY yrwk, viarea
+        WHERE yrwk = %s AND spp_name = '%s'
+        GROUP BY viarea
       ),
       infection AS (
-        SELECT yrwk, viarea,
+        SELECT viarea,
                CASE WHEN p IS NOT NULL AND p::text <> 'NULL' AND p::text <> ''
                     THEN p::numeric ELSE 0 END AS mle
         FROM dbvirus_mle_yrwk_area
-        WHERE yrwk::text LIKE '%d%%'
-      ),
-      vi_calc AS (
-        SELECT a.yrwk, a.viarea,
-               a.avg_per_trap,
-               COALESCE(i.mle, 0) AS mle,
-               a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
-        FROM abundance a
-        LEFT JOIN infection i ON a.yrwk = i.yrwk::integer AND a.viarea = i.viarea
+        WHERE yrwk = '%s'
       )
-      SELECT yrwk, viarea, avg_per_trap, mle, vector_index
-      FROM vi_calc
+      SELECT a.viarea, a.avg_per_trap,
+             COALESCE(i.mle, 0) AS mle,
+             a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
+      FROM abundance a
+      LEFT JOIN infection i ON a.viarea = i.viarea
       ORDER BY vector_index DESC NULLS LAST
-    ", query_year, spp_name, query_year))
-    
-    # If no data for current year, try previous year
-    if (is.null(vi_data) || nrow(vi_data) == 0) {
-      query_year <- current_year - 1
-      vi_data <- dbGetQuery(con, sprintf("
-        WITH abundance AS (
-          SELECT yrwk, viarea,
-                 CASE WHEN COUNT(DISTINCT loc_code) > 0
-                      THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code)
-                      ELSE 0 END AS avg_per_trap
-          FROM dbadult_mon_nt_co2_forvectorabundance
-          WHERE year = %d AND spp_name = '%s'
-          GROUP BY yrwk, viarea
-        ),
-        infection AS (
-          SELECT yrwk, viarea,
-                 CASE WHEN p IS NOT NULL AND p::text <> 'NULL' AND p::text <> ''
-                      THEN p::numeric ELSE 0 END AS mle
-          FROM dbvirus_mle_yrwk_area
-          WHERE yrwk::text LIKE '%d%%'
-        ),
-        vi_calc AS (
-          SELECT a.yrwk, a.viarea,
-                 a.avg_per_trap,
-                 COALESCE(i.mle, 0) AS mle,
-                 a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
-          FROM abundance a
-          LEFT JOIN infection i ON a.yrwk = i.yrwk::integer AND a.viarea = i.viarea
-        )
-        SELECT yrwk, viarea, avg_per_trap, mle, vector_index
-        FROM vi_calc
-        ORDER BY vector_index DESC NULLS LAST
-      ", query_year, spp_name, query_year))
-    }
+    ", as.integer(target_yrwk), spp_name, as.character(as.integer(target_yrwk))))
     
     safe_disconnect(con)
     
     if (is.null(vi_data) || nrow(vi_data) == 0) {
-      message("[vector_index] No data found for years ", current_year, " or ", current_year - 1)
+      message("[vector_index] No VI data for yrwk ", target_yrwk)
       return(empty_result)
     }
     
-    # Find the peak VI across ALL weeks and areas
+    # Max VI across all areas for this week
     max_vi <- max(vi_data$vector_index, na.rm = TRUE)
     if (is.infinite(max_vi)) max_vi <- 0
     
-    # Find which week had the peak
-    peak_row <- vi_data[which.max(vi_data$vector_index), ]
-    peak_yrwk <- peak_row$yrwk
-    
-    # Count areas with VI > 0 at the peak week
-    peak_week_data <- vi_data[vi_data$yrwk == peak_yrwk, ]
-    areas_with_vi <- sum(!is.na(peak_week_data$vector_index) & peak_week_data$vector_index > 0)
-    total_areas <- nrow(peak_week_data)
-    
-    # Also get the latest yrwk for reference
-    latest_yrwk <- max(vi_data$yrwk, na.rm = TRUE)
+    areas_with_vi <- sum(!is.na(vi_data$vector_index) & vi_data$vector_index > 0)
+    total_areas <- nrow(vi_data)
     
     # Return as a single "district" row — VI is district-wide, not per-facility
     sites <- data.frame(
@@ -781,12 +762,12 @@ load_raw_data <- function(analysis_date = NULL,
       active_count = areas_with_vi,
       expiring_count = 0,
       max_vector_index = round(max_vi, 4),
-      latest_yrwk = peak_yrwk,
+      latest_yrwk = as.integer(target_yrwk),
       stringsAsFactors = FALSE
     )
     
-    message(sprintf("[vector_index] Overview: PEAK VI = %.4f at yrwk %s (%d/%d areas with VI > 0), latest yrwk = %s",
-                    max_vi, peak_yrwk, areas_with_vi, total_areas, latest_yrwk))
+    message(sprintf("[vector_index] Overview: yrwk %s (analysis_date %s) — max VI = %.4f (%d/%d areas with VI > 0)",
+                    target_yrwk, analysis_date, max_vi, areas_with_vi, total_areas))
     
     return(list(
       sites = sites,

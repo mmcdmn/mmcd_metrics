@@ -713,10 +713,7 @@ get_overview_js <- function() {
             }
           });
           
-          // Scroll to the visible chart
-          $('html, body').animate({
-            scrollTop: chartWrapper.offset().top - 80
-          }, 300);
+          // Chart revealed in-place, no auto-scroll
         }, 100);
       } else {
         // Also resize remaining charts when one is hidden

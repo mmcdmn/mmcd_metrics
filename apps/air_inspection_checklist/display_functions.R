@@ -137,7 +137,7 @@ build_checklist_html <- function(data, show_unfinished_only = FALSE) {
 
         item <- div(class = item_css,
                     div(class = "item-status-icon", icon_html),
-                    div(class = "item-sitecode", row$sitecode),
+                    div(class = "item-sitecode", HTML(make_sitecode_link(row$sitecode))),
                     detail_div,
                     HTML(trt_badge))
 

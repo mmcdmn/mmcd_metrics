@@ -273,7 +273,7 @@ get_metric_registry <- function() {
                          • Species: Total Culex Vectors<br>
                          • Latest available week of current year<br>
                          • Click to open trap surveillance map"),
-      click_redirect = "/trap_survillance_test/",  # Redirect to trap surveillance app on click
+      click_redirect = "/trap_survillance/",  # Redirect to trap surveillance app on click
       load_params = list(
         expiring_days = 0,
         spp_name = "Total_Cx_vectors",
@@ -436,36 +436,35 @@ get_metric_registry <- function() {
     # =========================================================================
     # FLOODWATER - Inspection Gap Analysis
     # =========================================================================
-    inspection_gaps = list(
-      id = "inspection_gaps",
-      display_name = "Inspection Gaps",
-      short_name = "Gaps",
-      icon = "calendar-times",
+    prehatch_coverage = list(
+      id = "prehatch_coverage",
+      display_name = "Prehatch Inspection Coverage",
+      short_name = "Coverage",
+      icon = "calendar-check",
       category = "Floodwater",
-      y_label = "Sites with Gaps",
+      y_label = "Sites Inspected",
       bg_color = "#b91c1c",
       app_folder = "inspections",
       has_acres = FALSE,
-      historical_enabled = FALSE,  # Gap analysis is point-in-time, not trended
+      historical_enabled = FALSE,  # Coverage is point-in-time, not trended
       use_active_calculation = FALSE,
-      display_metric = "gap_sites",
+      display_metric = "coverage",
       chart_types = c("bar"),
       default_chart_type = "bar",
-      # Detail boxes: total sites, recently inspected, gap sites
+      # Detail boxes: inspected + gaps (total is redundant since active + gap = total)
       detail_boxes = list(
-        list(id = "total", title = "Total Sites", column = "total", icon = "map-marker-alt", status = "completed"),
-        list(id = "active", title = "Recently Inspected", column = "active", icon = "check-circle", status = "active"),
-        list(id = "expiring", title = "Inspection Gaps", column = "expiring", icon = "calendar-times", status = "needs_treatment")
+        list(id = "inspected", title = "Recently Inspected", column = "active", icon = "check-circle", status = "active"),
+        list(id = "gaps", title = "Inspection Gaps", column = "expiring", icon = "calendar-times", status = "needs_treatment")
       ),
       # Color: fewer gaps = better. Higher % inspected = green.
       color_mode = "fixed_pct",
       color_thresholds = list(good = 85, warning = 60),
       chart_labels = list(
-        total = "Total Sites",
+        total = "Total Prehatch Sites",
         active = "Recently Inspected",
-        expiring = "Inspection Gaps (≥3 yrs)"
+        expiring = "Inspection Gaps (\u22653 yrs)"
       ),
-      filter_info = HTML("<b>Inspection Gap Analysis:</b><br>
+      filter_info = HTML("<b>Prehatch Inspection Coverage:</b><br>
                          • Ground sites only (prehatch)<br>
                          • Drone sites included<br>
                          • Gap threshold: 3 years<br>

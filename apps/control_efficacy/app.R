@@ -562,25 +562,21 @@ server <- function(input, output, session) {
 
     display_data <- invalid_data %>%
       mutate(
-        `Trt Expiry` = treatment_date + ifelse(is.na(effect_days), 14, effect_days),
-        `Days Remaining` = as.numeric(`Trt Expiry` - pre_inspection_date),
         Acres = round(acres, 1)
       ) %>%
       select(
         Site = sitecode, Facility = facility,
-        Material = mattype,
-        `Trt Date` = treatment_date,
+        `Matched Material` = mattype,
+        `Matched Trt Date` = treatment_date,
         `Trt Timestamp` = trt_timestamp,
         `Pre Date` = pre_inspection_date,
         `Pre Timestamp` = pre_timestamp,
         `Post Date` = checkback_date,
         `Post Timestamp` = post_timestamp,
-        `Effect Days` = effect_days,
-        `Trt Expiry`, `Days Remaining`,
         `Pre Dips` = pre_treatment_dips, `Post Dips` = post_treatment_dips,
         Acres, Reason = invalid_reason
       ) %>%
-      arrange(desc(`Trt Date`), Site)
+      arrange(desc(`Matched Trt Date`), Site)
 
     display_data$Site <- make_sitecode_link(display_data$Site)
 

@@ -363,8 +363,11 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
 
           # Check 2: Was there active treatment during the pre-inspection?
           # A prior treatment is "active" if trt_date + effect_days > pre_date
+          # Use <= on dates to include same-day treatments, then refine with
+          # datetime: a same-day treatment counts as "prior" if its timestamp
+          # is at or before the pre-inspection timestamp (trt happened first).
           site_trt_effect <- ifelse(is.na(site_trts$effect_days), 14, site_trts$effect_days)
-          prior_mask <- site_trts$inspdate < pre_inspection_date
+          prior_mask <- site_trts$inspdate <= pre_inspection_date & trt_dts <= pre_dt
           if (any(prior_mask)) {
             prior_trt_dates <- site_trts$inspdate[prior_mask]
             prior_effect <- site_trt_effect[prior_mask]
@@ -379,6 +382,7 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
               prior_trt_material_for_invalid <- mat_val
               days_remaining <- as.numeric(prior_expiry[best] - pre_inspection_date)
               is_invalid <- TRUE
+              is_control <- FALSE  # Invalid takes priority over control
               invalid_reason <- sprintf(
                 "Pre-inspection on %s occurred during active treatment (%s treated %s, %dd effect, expires %s, %dd remaining)",
                 pre_inspection_date, ifelse(is.na(mat_val), "unknown", mat_val),
@@ -391,6 +395,9 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
       }
       
       # Capture timestamps for the invalid checkbacks table
+      cb_time_val <- if ("insptime" %in% names(checkback) && !is.na(checkback$insptime) && checkback$insptime != "") {
+        checkback$insptime
+      } else "23:59:59"
       trt_timestamp <- if ("insptime" %in% names(site_treatments)) {
         paste(treatment_date, ifelse(is.na(site_treatments$insptime[last_treatment_idx]) | site_treatments$insptime[last_treatment_idx] == "", "00:00:00", site_treatments$insptime[last_treatment_idx]))
       } else paste(treatment_date, "00:00:00")
@@ -406,7 +413,7 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
         }
         paste(pre_inspection_date, pre_time_val)
       } else NA_character_
-      post_timestamp <- paste(checkback_date, ifelse(is.na(cb_time) || cb_time == "", "23:59:59", cb_time))
+      post_timestamp <- paste(checkback_date, cb_time_val)
 
       checkback_list[[i]] <- data.frame(
         sitecode = site,
@@ -429,6 +436,9 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
         is_control = is_control,
         is_invalid = is_invalid,
         invalid_reason = invalid_reason,
+        prior_trt_date = prior_trt_date_for_invalid,
+        prior_trt_expiry = prior_trt_expiry_for_invalid,
+        prior_trt_material = prior_trt_material_for_invalid,
         pre_inspection_date = pre_inspection_date,
         trt_timestamp = trt_timestamp,
         pre_timestamp = pre_timestamp,

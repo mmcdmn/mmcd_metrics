@@ -309,15 +309,20 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     # We check all treatments at the site that are BEFORE the pre-inspection date.
     # trt_by_site is available from the matching loop above.
     invalid_info <- vapply(seq_len(nrow(matched)), function(i) {
-      if (is.na(matched$pre_date[i]) || matched$is_control[i]) return(NA_character_)
+      if (is.na(matched$pre_date[i])) return(NA_character_)
       
       site <- matched$sitecode[i]
       pre_date_val <- matched$pre_date[i]
       site_trts <- trt_by_site[[site]]
       if (is.null(site_trts) || nrow(site_trts) == 0) return(NA_character_)
       
-      # Find treatments BEFORE the pre-inspection date
-      prior_mask <- site_trts$inspdate < pre_date_val
+      # Find treatments at or before the pre-inspection (by datetime).
+      # Same-day treatments count as "prior" if their timestamp <= pre timestamp.
+      pre_time_val <- matched$pre_time[i]
+      pre_dt_full <- paste(pre_date_val, pre_time_val)
+      trt_times_local <- ifelse(is.na(site_trts$insptime) | site_trts$insptime == "", "00:00:00", site_trts$insptime)
+      trt_dts_local <- paste(site_trts$inspdate, trt_times_local)
+      prior_mask <- trt_dts_local <= pre_dt_full
       if (!any(prior_mask)) return(NA_character_)
       
       prior_trts <- site_trts[prior_mask, ]
@@ -345,6 +350,8 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     }, character(1))
     
     matched$is_invalid <- !is.na(invalid_info)
+    # If a row is invalid, it can't also be a control — invalid takes priority
+    matched$is_control[matched$is_invalid] <- FALSE
     matched$invalid_reason <- NA_character_
     matched$prior_trt_date <- as.Date(NA)
     matched$prior_trt_material <- NA_character_

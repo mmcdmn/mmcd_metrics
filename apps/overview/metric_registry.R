@@ -271,9 +271,9 @@ get_metric_registry <- function() {
                          • VI = Avg Mosquitoes/Trap × Infection Rate (MLE)<br>
                          • Shows highest VI across all vector index areas<br>
                          • Species: Total Culex Vectors<br>
-                         • Latest available week of current year<br>
+                         • Peak value across all weeks of current year<br>
                          • Click to open trap surveillance map"),
-      click_redirect = "/trap_survillance/",  # Redirect to trap surveillance app on click
+      click_redirect = "/trap_surveillance/",  # Redirect to trap surveillance app on click
       load_params = list(
         expiring_days = 0,
         spp_name = "Total_Cx_vectors",

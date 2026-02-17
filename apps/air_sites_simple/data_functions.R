@@ -18,9 +18,12 @@ load_raw_data <- function(analysis_date = Sys.Date(),
                           start_year = NULL, end_year = NULL,
                           expiring_days = 7,
                           facility_filter = NULL, foreman_filter = NULL,
-                          status_types = character(0),
+                          status_types = NULL,
                           zone_filter = c("1", "2"),
-                          priority_filter = c("RED")) {
+                          priority_filter = c("RED"),
+                          ...) {
+  
+  analysis_date <- as.Date(analysis_date)
   
   # For historical analysis (include_archive=TRUE with year range), 
   # only load treatment records — the heavy site-status CTE is not needed

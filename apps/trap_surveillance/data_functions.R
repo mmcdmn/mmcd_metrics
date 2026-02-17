@@ -617,7 +617,8 @@ fetch_latest_yrwk <- function(year = NULL) {
 #' Overview-compatible data loader for Vector Index
 #' 
 #' Returns pre-aggregated data compatible with the overview metric registry.
-#' Shows vector index per area with the max VI highlighted.
+#' Scans ALL weeks for the current year to find the PEAK vector index value,
+#' not just the latest week (which may be end-of-season with VI=0).
 #' 
 #' @param analysis_date Date for analysis (used to determine year/week)
 #' @param expiring_days Not used for VI (kept for interface compatibility)
@@ -641,28 +642,8 @@ load_raw_data <- function(analysis_date = NULL,
   analysis_date <- if (is.null(analysis_date)) Sys.Date() else as.Date(analysis_date)
   current_year <- as.integer(format(analysis_date, "%Y"))
   
-  # Get the latest available week — try current year first, then fall back to most recent year
-
-  latest_yrwk <- fetch_latest_yrwk(current_year)
-  if (is.null(latest_yrwk)) {
-    # No data for current year — try previous year
-    latest_yrwk <- fetch_latest_yrwk(current_year - 1)
-  }
-  if (is.null(latest_yrwk)) {
-    message("[vector_index] No data found for years ", current_year, " or ", current_year - 1)
-    return(list(
-      sites = data.frame(
-        facility = character(), zone = character(),
-        total_count = integer(), active_count = integer(), expiring_count = integer()
-      ),
-      treatments = data.frame(),
-      pre_aggregated = TRUE
-    ))
-  }
-  
-  # Historical mode: return empty sites, treatments for weekly trending
+  # Historical mode: return empty - VI doesn't have historical trending in the overview
   if (!is.null(start_year) && !is.null(end_year)) {
-    # Return empty - VI doesn't have historical trending in the overview
     return(list(
       sites = data.frame(
         facility = character(), zone = character(),
@@ -674,10 +655,14 @@ load_raw_data <- function(analysis_date = NULL,
     ))
   }
   
-  # Get combined area data for the latest week
-  combined <- fetch_combined_area_data(latest_yrwk, spp_name, infection_metric)
-  
-  if (is.null(combined) || nrow(combined) == 0) {
+  # ===========================================================================
+  # Single-query approach: compute VI for ALL weeks of the year in SQL,
+  # then find the peak. This avoids calling fetch_combined_area_data per-week.
+  # VI = avg_per_trap * infection_rate (MLE)
+  # ===========================================================================
+  con <- get_db_connection()
+  if (is.null(con)) {
+    message("[vector_index] No database connection")
     return(list(
       sites = data.frame(
         facility = character(), zone = character(),
@@ -688,37 +673,132 @@ load_raw_data <- function(analysis_date = NULL,
     ))
   }
   
-  # Calculate district-level summary
-  # total_count  = max vector index value (the headline number)
-  # active_count = number of areas with VI > 0 (positive activity)
-  # expiring_count = total areas with data
-  max_vi <- max(combined$vector_index, na.rm = TRUE)
-  if (is.infinite(max_vi)) max_vi <- 0
-  
-  areas_with_vi <- sum(!is.na(combined$vector_index) & combined$vector_index > 0)
-  total_areas <- sum(!is.na(combined$vector_index))
-  
-  # Return as a single "district" row — VI is district-wide, not per-facility
-  # Use zone "1" as default since VI doesn't use zones
-  sites <- data.frame(
-    facility = "MMCD",
-    zone = "1",
-    total_count = total_areas,
-    active_count = areas_with_vi,
-    expiring_count = 0,
-    max_vector_index = round(max_vi, 4),
-    latest_yrwk = latest_yrwk,
-    stringsAsFactors = FALSE
-  )
-  
-  message(sprintf("[vector_index] Overview: max VI = %.4f, %d/%d areas with VI > 0, yrwk = %s",
-                  max_vi, areas_with_vi, total_areas, latest_yrwk))
-  
-  return(list(
-    sites = sites,
+  empty_result <- list(
+    sites = data.frame(
+      facility = character(), zone = character(),
+      total_count = integer(), active_count = integer(), expiring_count = integer()
+    ),
     treatments = data.frame(),
     pre_aggregated = TRUE
-  ))
+  )
+  
+  tryCatch({
+    # Try current year first, fall back to previous year
+    query_year <- current_year
+    
+    vi_data <- dbGetQuery(con, sprintf("
+      WITH abundance AS (
+        SELECT yrwk, viarea,
+               CASE WHEN COUNT(DISTINCT loc_code) > 0
+                    THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code)
+                    ELSE 0 END AS avg_per_trap
+        FROM dbadult_mon_nt_co2_forvectorabundance
+        WHERE year = %d AND spp_name = '%s'
+        GROUP BY yrwk, viarea
+      ),
+      infection AS (
+        SELECT yrwk, viarea,
+               CASE WHEN p IS NOT NULL AND p::text <> 'NULL' AND p::text <> ''
+                    THEN p::numeric ELSE 0 END AS mle
+        FROM dbvirus_mle_yrwk_area
+        WHERE yrwk::text LIKE '%d%%'
+      ),
+      vi_calc AS (
+        SELECT a.yrwk, a.viarea,
+               a.avg_per_trap,
+               COALESCE(i.mle, 0) AS mle,
+               a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
+        FROM abundance a
+        LEFT JOIN infection i ON a.yrwk = i.yrwk::integer AND a.viarea = i.viarea
+      )
+      SELECT yrwk, viarea, avg_per_trap, mle, vector_index
+      FROM vi_calc
+      ORDER BY vector_index DESC NULLS LAST
+    ", query_year, spp_name, query_year))
+    
+    # If no data for current year, try previous year
+    if (is.null(vi_data) || nrow(vi_data) == 0) {
+      query_year <- current_year - 1
+      vi_data <- dbGetQuery(con, sprintf("
+        WITH abundance AS (
+          SELECT yrwk, viarea,
+                 CASE WHEN COUNT(DISTINCT loc_code) > 0
+                      THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code)
+                      ELSE 0 END AS avg_per_trap
+          FROM dbadult_mon_nt_co2_forvectorabundance
+          WHERE year = %d AND spp_name = '%s'
+          GROUP BY yrwk, viarea
+        ),
+        infection AS (
+          SELECT yrwk, viarea,
+                 CASE WHEN p IS NOT NULL AND p::text <> 'NULL' AND p::text <> ''
+                      THEN p::numeric ELSE 0 END AS mle
+          FROM dbvirus_mle_yrwk_area
+          WHERE yrwk::text LIKE '%d%%'
+        ),
+        vi_calc AS (
+          SELECT a.yrwk, a.viarea,
+                 a.avg_per_trap,
+                 COALESCE(i.mle, 0) AS mle,
+                 a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
+          FROM abundance a
+          LEFT JOIN infection i ON a.yrwk = i.yrwk::integer AND a.viarea = i.viarea
+        )
+        SELECT yrwk, viarea, avg_per_trap, mle, vector_index
+        FROM vi_calc
+        ORDER BY vector_index DESC NULLS LAST
+      ", query_year, spp_name, query_year))
+    }
+    
+    safe_disconnect(con)
+    
+    if (is.null(vi_data) || nrow(vi_data) == 0) {
+      message("[vector_index] No data found for years ", current_year, " or ", current_year - 1)
+      return(empty_result)
+    }
+    
+    # Find the peak VI across ALL weeks and areas
+    max_vi <- max(vi_data$vector_index, na.rm = TRUE)
+    if (is.infinite(max_vi)) max_vi <- 0
+    
+    # Find which week had the peak
+    peak_row <- vi_data[which.max(vi_data$vector_index), ]
+    peak_yrwk <- peak_row$yrwk
+    
+    # Count areas with VI > 0 at the peak week
+    peak_week_data <- vi_data[vi_data$yrwk == peak_yrwk, ]
+    areas_with_vi <- sum(!is.na(peak_week_data$vector_index) & peak_week_data$vector_index > 0)
+    total_areas <- nrow(peak_week_data)
+    
+    # Also get the latest yrwk for reference
+    latest_yrwk <- max(vi_data$yrwk, na.rm = TRUE)
+    
+    # Return as a single "district" row — VI is district-wide, not per-facility
+    sites <- data.frame(
+      facility = "MMCD",
+      zone = "1",
+      total_count = total_areas,
+      active_count = areas_with_vi,
+      expiring_count = 0,
+      max_vector_index = round(max_vi, 4),
+      latest_yrwk = peak_yrwk,
+      stringsAsFactors = FALSE
+    )
+    
+    message(sprintf("[vector_index] Overview: PEAK VI = %.4f at yrwk %s (%d/%d areas with VI > 0), latest yrwk = %s",
+                    max_vi, peak_yrwk, areas_with_vi, total_areas, latest_yrwk))
+    
+    return(list(
+      sites = sites,
+      treatments = data.frame(),
+      pre_aggregated = TRUE
+    ))
+    
+  }, error = function(e) {
+    warning(paste("[vector_index] Overview query failed:", e$message))
+    tryCatch(safe_disconnect(con), error = function(e2) NULL)
+    return(empty_result)
+  })
 }
 
 message("✓ trap_surveillance/data_functions.R loaded")

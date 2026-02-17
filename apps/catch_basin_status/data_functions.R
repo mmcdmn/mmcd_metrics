@@ -17,7 +17,11 @@ if (!exists("get_db_connection", mode = "function")) {
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
                           start_year = NULL, end_year = NULL, include_geometry = FALSE,
                           facility_filter = "all", foreman_filter = "all", 
-                          zone_filter = c("1", "2"), expiring_days = 14) {
+                          zone_filter = c("1", "2"), expiring_days = 14,
+                          status_types = NULL, ...) {
+  
+  analysis_date <- as.Date(analysis_date)
+  
   # Historical archive mode: return individual treatment rows for cache/charts
   if (isTRUE(include_archive) && !is.null(start_year) && !is.null(end_year)) {
     return(load_historical_treatments(start_year, end_year, zone_filter))
@@ -209,44 +213,37 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
 #' Standard function to filter the results from load_raw_data
 #' @param data The result from load_raw_data (list with sites, treatments, total_count)
 #' @param facility_filter Vector of selected facilities  
-#' @param foreman_filter Vector of selected foremen
+#' @param foreman_filter Vector of selected foremen (uses fosarea column)
 #' @param zone_filter Vector of selected zones
 #' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL,
                               foreman_filter = NULL, zone_filter = NULL) {
-  # Use standardized keys
   sites <- data$sites
   treatments <- data$treatments
   
   if (is.null(sites) || nrow(sites) == 0) {
-    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
+    return(list(sites = data.frame(), treatments = data.frame(),
+                total_count = 0, pre_aggregated = data$pre_aggregated))
   }
   
-  # Apply facility filter
-  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
+  if (is_valid_filter(facility_filter)) {
     sites <- sites %>% filter(facility %in% facility_filter)
-    treatments <- treatments %>% filter(facility %in% facility_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0 && "facility" %in% names(treatments))
+      treatments <- treatments %>% filter(facility %in% facility_filter)
   }
-  
-  # Apply foreman filter  
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
-    sites <- sites %>% filter(fosarea %in% foreman_filter)
-    treatments <- treatments %>% filter(fosarea %in% foreman_filter)
-  }
-  
-  # Apply zone filter
   if (!is.null(zone_filter) && length(zone_filter) > 0) {
     sites <- sites %>% filter(zone %in% zone_filter)
-    treatments <- treatments %>% filter(zone %in% zone_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0 && "zone" %in% names(treatments))
+      treatments <- treatments %>% filter(zone %in% zone_filter)
+  }
+  if (is_valid_filter(foreman_filter) && "fosarea" %in% names(sites)) {
+    sites <- sites %>% filter(fosarea %in% foreman_filter)
+    if (!is.null(treatments) && nrow(treatments) > 0 && "fosarea" %in% names(treatments))
+      treatments <- treatments %>% filter(fosarea %in% foreman_filter)
   }
   
-  # Return STANDARDIZED format - preserve pre_aggregated flag
-  return(list(
-    sites = sites,
-    treatments = treatments,
-    total_count = data$total_count,  # Keep original total_count from universe
-    pre_aggregated = data$pre_aggregated  # Preserve pre_aggregated flag
-  ))
+  list(sites = sites, treatments = if (is.null(treatments)) data.frame() else treatments,
+       total_count = data$total_count, pre_aggregated = data$pre_aggregated)
 }
 
 # Process catch basin data for display - aggregates by group_by with standard column names

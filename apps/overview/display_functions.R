@@ -227,6 +227,7 @@ create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type 
           "<b>", display_name, "</b><br>",
           if (!is.null(labels$active)) labels$active else "Current", ": ", format(active, big.mark = ","), "<br>",
           if (!is.null(labels$total)) labels$total else "Avg", ": ", format(total, big.mark = ","), "<br>",
+          if (expiring > 0) paste0(if (!is.null(labels$expiring)) labels$expiring else "Above", ": ", format(expiring, big.mark = ","), "<br>") else "",
           "<i>Click to drill down</i>"
         )
       } else {

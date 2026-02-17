@@ -198,7 +198,8 @@ load_metric_data <- function(metric,
       mutate(
         total_count = capacity_per_facility,  # Capacity per facility
         active_count = ifelse(is.na(active_count), 0, active_count),  # Actual SUCOs
-        expiring_count = 0  # Not applicable for SUCOs
+        # "Above Capacity" = how many SUCOs exceed the capacity line per facility
+        expiring_count = pmax(0, active_count - total_count)
       )
     
     return(result)
@@ -332,19 +333,22 @@ load_data_by_zone <- function(metric,
         summarize(
           total = capacity_total / 2,  # Split capacity between P1 and P2
           active = sum(active_count, na.rm = TRUE),
-          expiring = 0,
           .groups = "drop"
         ) %>%
-        mutate(display_name = paste0("P", zone))
+        mutate(
+          # "Above Capacity" = how many SUCOs exceed the capacity line
+          expiring = pmax(0, active - total),
+          display_name = paste0("P", zone)
+        )
     } else {
       result <- data %>%
         summarize(
           total = capacity_total,  # Full district capacity
           active = sum(active_count, na.rm = TRUE),
-          expiring = 0,
           .groups = "drop"
         ) %>%
         mutate(
+          expiring = pmax(0, active - total),
           display_name = "MMCD (All)",
           zone = "1,2"
         )

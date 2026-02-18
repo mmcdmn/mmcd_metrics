@@ -65,226 +65,105 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL, metric_conf
 #' @param title Chart title
 #' @param y_label Y-axis label
 #' @param theme Color theme name
-#' @param metric_type Type of metric for specific styling
+#' @param metric_type Type of metric for specific styling / plotly click source
 #' @param metric_config Optional registry config for display flags
+#' @param clickable If TRUE, registers plotly_click event and adds drill-down hint
 #' @return Plotly chart object
 #' @export
-create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "default", metric_config = NULL) {
+create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "default",
+                                  metric_config = NULL, clickable = FALSE) {
   if (is.null(data) || nrow(data) == 0) {
     return(create_empty_chart(title, "No data available"))
   }
   
-  # Get status colors from db_helpers with theme support
   status_colors <- get_status_colors(theme = theme)
-  
-  # Check if metric uses average display (from registry flag)
   display_as_average <- isTRUE(metric_config$display_as_average)
-  
-  # Get chart labels from registry or use defaults
   labels <- if (!is.null(metric_config$chart_labels)) {
     metric_config$chart_labels
   } else {
     list(total = "Total", active = "Active", expiring = "Expiring")
   }
   
+  # Build tooltip suffix for clickable charts
+  click_hint <- if (clickable) "\n<i>Click to drill down</i>" else ""
+  
   # Prepare data for layered bars
-  # Gray background: Total (all sites)
-  # Green: Active treatments (not expiring)
-  # Orange: Expiring treatments
   data <- data %>%
     mutate(
       y_total = total,
-      y_active = pmax(0, active - expiring),  # Active only (not including expiring)
+      y_active = pmax(0, active - expiring),
       y_expiring = expiring,
-      # Calculate percentage rounded UP with no decimals for most metrics
-      # For display_as_average metrics, show actual values instead of percentages
-      pct = if (display_as_average) {
-        round(active, 1)  # Show avg values
-      } else {
-        ceiling(100 * active / pmax(1, total))
-      },
-      # Tooltips - use registry labels
+      pct = if (display_as_average) round(active, 1) else ceiling(100 * active / pmax(1, total)),
       tooltip_text = if (display_as_average) {
         paste0(
           display_name, "\n",
           labels$active, ": ", format(active, big.mark = ","), "\n",
-          labels$total, ": ", format(total, big.mark = ","), "\n",
-          labels$expiring, ": ", format(expiring, big.mark = ",")
+          labels$total, ": ", format(total, big.mark = ","),
+          ifelse(expiring > 0, paste0("\n", labels$expiring, ": ", format(expiring, big.mark = ",")), ""),
+          click_hint
         )
       } else {
         paste0(
           display_name, "\n",
           "Total: ", format(total, big.mark = ","), "\n",
-          "Active: ", format(active, big.mark = ","), 
-          " (", pct, "%)\n",
-          "Expiring: ", format(expiring, big.mark = ",")
+          "Active: ", format(active, big.mark = ","), " (", pct, "%)\n",
+          "Expiring: ", format(expiring, big.mark = ","),
+          click_hint
         )
       }
     )
   
-  # Order by total descending (highest total at top) - matches original apps
-  data$display_name <- reorder(data$display_name, -data$y_total)
-  
-  # Create base ggplot with layered bars
-  # For cattail_treatments: Green (treated) at bottom, showing progress "filling up"
-  # For all other metrics: standard layered bars (red total, orange expiring, green active)
-  if (metric_type == "cattail_treatments") {
-    # Cattail: Show treated (green at bottom) + needs treatment (orange at top) on red background (visible around edges)
-    # The red background should show the full total height with less opacity so layers are visible on top
-    p <- ggplot(data, aes(x = display_name)) +
-      # Red background - total sites that need/needed treatment (very light, visible behind)
-      geom_bar(aes(y = y_total, text = tooltip_text), 
-               stat = "identity", fill = "#D32F2F", alpha = 0.15) +
-      # Orange layer - needs treatment (visible above treated)
-      geom_bar(aes(y = y_expiring + y_active), 
-               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-      # Green layer - treated sites (at bottom, covers orange up to treated level)
-      geom_bar(aes(y = y_active), 
-               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-      coord_flip() +
-      labs(x = NULL, y = y_label)
+  # Order: clickable (zone) charts use P1/P2 factor, facility charts sort by total desc
+  if (clickable) {
+    data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
   } else {
-    # Standard: Red total -> Green active on top -> Orange expiring at bottom
-    p <- ggplot(data, aes(x = display_name)) +
-      # Red background - total/untreated
-      geom_bar(aes(y = y_total, text = tooltip_text), 
-               stat = "identity", fill = "#D32F2F", alpha = 0.3) +
-      # Orange layer - expiring (full height including active)
-      geom_bar(aes(y = y_expiring + y_active), 
-               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-      # Green layer - active (at bottom/left of expiring)
-      geom_bar(aes(y = y_active), 
-               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-      coord_flip() +
-      labs(x = NULL, y = y_label)
+    data$display_name <- reorder(data$display_name, -data$y_total)
   }
   
-  p <- p +
+  # Layered bar chart: red background → orange (expiring+active) → green (active)
+  # cattail_treatments uses lighter red background to show progress "filling up"
+  red_alpha <- if (metric_type == "cattail_treatments") 0.15 else 0.3
+  
+  p <- ggplot(data, aes(x = display_name)) +
+    geom_bar(aes(y = y_total, text = tooltip_text),
+             stat = "identity", fill = "#D32F2F", alpha = red_alpha) +
+    geom_bar(aes(y = y_expiring + y_active),
+             stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
+    geom_bar(aes(y = y_active),
+             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
+    coord_flip() +
+    labs(title = NULL, x = NULL, y = y_label) +
     theme_minimal() +
     theme(
       plot.title = element_text(face = "bold", size = 14),
       axis.title = element_text(face = "bold", size = 12),
-      axis.text = element_text(size = 11),
+      axis.text = element_text(size = if (clickable) 14 else 11, face = "bold"),
       axis.text.y = element_text(face = "bold"),
       panel.grid.minor = element_blank(),
       legend.position = "none"
     )
   
-  # Convert to plotly with custom tooltip
-  plotly_chart <- ggplotly(p, tooltip = "text") %>%
+  # Convert to plotly
+  plotly_args <- list(p = p, tooltip = "text")
+  if (clickable) plotly_args$source <- metric_type
+  
+  plotly_chart <- do.call(ggplotly, plotly_args) %>%
     layout(
       autosize = TRUE,
-      margin = list(l = 80, r = 10, t = 5, b = 40),
-      hoverlabel = list(
-        bgcolor = "white",
-        font = list(size = 12),
-        bordercolor = "black"
-      )
+      margin = list(l = if (clickable) 50 else 80, r = 10, t = if (clickable) 10 else 5, b = 40),
+      hoverlabel = list(bgcolor = "white", font = list(size = 12), bordercolor = "black")
     ) %>%
     config(displayModeBar = FALSE, scrollZoom = FALSE)
+  
+  if (clickable) plotly_chart <- plotly_chart %>% event_register("plotly_click")
   
   return(plotly_chart)
 }
 
-
-#' Create a zone-level chart showing P1 vs P2 with click capability
-#' Used by the top-level District Overview dashboard
-#' @param data Data frame with columns: zone, display_name, total, active, expiring
-#' @param title Chart title
-#' @param y_label Y-axis label
-#' @param theme Color theme name
-#' @param metric_type Unique ID for this chart (used for plotly source)
-#' @param metric_config Optional registry config for display flags
-#' @return Plotly chart object with click event support
-#' @export
-create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "chart", metric_config = NULL) {
-  if (is.null(data) || nrow(data) == 0) {
-    return(create_empty_chart(title, "No data available"))
-  }
-  
-  # Get status colors from db_helpers with theme support
-  status_colors <- get_status_colors(theme = theme)
-  
-  # Check if metric uses average display (from registry flag)
-  display_as_average <- isTRUE(metric_config$display_as_average)
-  labels <- if (!is.null(metric_config$chart_labels)) metric_config$chart_labels else list()
-  
-  # Prepare data for layered bars - percentage rounded UP with no decimals
-  data <- data %>%
-    mutate(
-      y_total = total,
-      y_active = pmax(0, active - expiring),  # Active only (not including expiring)
-      y_expiring = expiring,
-      # For display_as_average metrics, show actual values
-      pct = if (display_as_average) {
-        round(active, 1)
-      } else {
-        ceiling(100 * active / pmax(1, total))
-      },
-      # Tooltips - use registry labels if available
-      tooltip_text = if (display_as_average) {
-        paste0(
-          "<b>", display_name, "</b><br>",
-          if (!is.null(labels$active)) labels$active else "Current", ": ", format(active, big.mark = ","), "<br>",
-          if (!is.null(labels$total)) labels$total else "Avg", ": ", format(total, big.mark = ","), "<br>",
-          "<i>Click to drill down</i>"
-        )
-      } else {
-        paste0(
-          "<b>", display_name, "</b><br>",
-          "Total: ", format(total, big.mark = ","), "<br>",
-          "Active: ", format(active, big.mark = ","), 
-          " (", pct, "%)<br>",
-          "Expiring: ", format(expiring, big.mark = ","), "<br>",
-          "<i>Click to drill down</i>"
-        )
-      }
-    )
-  
-  # Ensure display_name is ordered (P1, P2)
-  data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
-  
-  # Create base ggplot with layered bars (horizontal for consistency with facilities)
-  p <- ggplot(data, aes(x = display_name)) +
-    # Red background - total/untreated
-    geom_bar(aes(y = y_total, text = tooltip_text), 
-             stat = "identity", fill = "#D32F2F", alpha = 0.3) +
-    # Orange layer - expiring (full height including active)
-    geom_bar(aes(y = y_expiring + y_active), 
-             stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-    # Green layer - active (at the bottom of the expiring portion)
-    geom_bar(aes(y = y_active), 
-             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-    coord_flip() +
-    labs(
-      title = NULL,
-      x = NULL,
-      y = y_label
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(face = "bold", size = 12),
-      axis.text = element_text(size = 14, face = "bold"),
-      panel.grid.minor = element_blank(),
-      legend.position = "none"
-    )
-  
-  # Convert to plotly with custom tooltip and click event source
-  plotly_chart <- ggplotly(p, tooltip = "text", source = metric_type) %>%
-    layout(
-      autosize = TRUE,
-      margin = list(l = 50, r = 10, t = 10, b = 40),
-      hoverlabel = list(
-        bgcolor = "white",
-        font = list(size = 12),
-        bordercolor = "black"
-      )
-    ) %>%
-    config(displayModeBar = FALSE, scrollZoom = FALSE) %>%
-    event_register("plotly_click")
-  
-  return(plotly_chart)
+# create_zone_chart is now an alias for create_overview_chart with clickable=TRUE
+create_zone_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "chart",
+                              metric_config = NULL, ...) {
+  create_overview_chart(data, title, y_label, theme, metric_type, metric_config, clickable = TRUE)
 }
 
 #' Create pie charts showing treatment progress (Total → Treated → Expiring)
@@ -565,23 +444,14 @@ render_metric_chart <- function(data, metric_config, overview_type = "facilities
     return(create_empty_chart(metric_config$display_name, "No data available"))
   }
   
-  if (overview_type == "district") {
-    create_zone_chart(
-      data = data,
-      title = paste(metric_config$display_name, "Progress"),
-      y_label = metric_config$y_label,
-      theme = theme,
-      chart_id = metric_config$id
-    )
-  } else {
-    create_overview_chart(
-      data = data,
-      title = paste(metric_config$display_name, "Progress"),
-      y_label = metric_config$y_label,
-      theme = theme,
-      metric_type = metric_config$id
-    )
-  }
+  create_overview_chart(
+    data = data,
+    title = paste(metric_config$display_name, "Progress"),
+    y_label = metric_config$y_label,
+    theme = theme,
+    metric_type = metric_config$id,
+    clickable = (overview_type == "district")
+  )
 }
 
 # =============================================================================

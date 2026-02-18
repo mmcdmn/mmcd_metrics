@@ -50,6 +50,143 @@ load_raw_data <- function(analysis_date = NULL,
   # Default analysis date
   analysis_date <- if (is.null(analysis_date)) Sys.Date() else as.Date(analysis_date)
   
+  # =========================================================================
+  # OVERVIEW REGISTRY MODE (fast path) - check BEFORE loading full data
+  # =========================================================================
+  # When called from overview registry, status_types is passed as character(0).
+  # Uses a dedicated 3-query approach (~1-2s vs 60s+ for full data load).
+  # Filters: Ground sites, prehatch only, include drone, 3-year gap threshold.
+  # Action filtering for qualifying inspections: 1, 2, 4, or (3 with wet='0')
+  if (!is.null(status_types) && is.character(status_types) && length(status_types) == 0) {
+    con_overview <- get_db_connection()
+    if (is.null(con_overview)) {
+      return(list(
+        sites = data.frame(
+          facility = character(), zone = character(),
+          total_count = integer(), active_count = integer(), expiring_count = integer()
+        ),
+        treatments = data.frame(),
+        pre_aggregated = TRUE
+      ))
+    }
+    
+    tryCatch({
+      years_gap <- 3
+      gap_cutoff <- analysis_date - lubridate::years(years_gap)
+      gap_cutoff_str <- as.character(gap_cutoff)
+      analysis_date_str <- as.character(analysis_date)
+      
+      # FAST 3-QUERY APPROACH (~1-2 seconds vs 60+ seconds for single CTE)
+      # 1) Get prehatch ground sites with facility+zone
+      # 2) Get latest qualifying inspection from current table (covers current season)
+      # 3) For sites not recently inspected in current, check archive with IN clause
+      
+      # Step 1: Prehatch ground sites
+      prehatch <- dbGetQuery(con_overview, sprintf("
+        SELECT b.sitecode, sc.facility, sc.zone
+        FROM loc_breeding_sites b
+        INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+        WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
+          AND b.air_gnd = 'G'
+          AND b.prehatch IS NOT NULL
+      ", analysis_date_str))
+      
+      if (nrow(prehatch) == 0) {
+        safe_disconnect(con_overview)
+        return(list(
+          sites = data.frame(
+            facility = character(), zone = character(),
+            total_count = integer(), active_count = integer(), expiring_count = integer()
+          ),
+          treatments = data.frame(),
+          pre_aggregated = TRUE
+        ))
+      }
+      
+      # Step 2: Latest qualifying inspection from current table (fast - ~0.3s)
+      current_max <- dbGetQuery(con_overview, "
+        SELECT sitecode, MAX(inspdate) AS last_insp
+        FROM dblarv_insptrt_current
+        WHERE inspdate IS NOT NULL
+          AND (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
+        GROUP BY sitecode
+      ")
+      
+      # Merge current table results
+      sites_with_current <- prehatch %>%
+        left_join(current_max, by = "sitecode")
+      
+      # Step 3: Sites needing archive check (not recently inspected in current table)
+      need_archive_codes <- sites_with_current %>%
+        filter(is.na(last_insp) | last_insp < gap_cutoff) %>%
+        pull(sitecode) %>%
+        unique()
+      
+      # Query archive ONLY for sites that need it, using IN clause (fast - ~0.7s)
+      archive_max <- data.frame(sitecode = character(0), archive_insp = as.Date(character(0)))
+      if (length(need_archive_codes) > 0) {
+        chunk_size <- 5000
+        archive_parts <- list()
+        for (i in seq(1, length(need_archive_codes), by = chunk_size)) {
+          chunk <- need_archive_codes[i:min(i + chunk_size - 1, length(need_archive_codes))]
+          in_clause <- paste0("'", chunk, "'", collapse = ",")
+          q <- sprintf("
+            SELECT sitecode, MAX(inspdate) AS archive_insp
+            FROM dblarv_insptrt_archive
+            WHERE sitecode IN (%s)
+              AND inspdate IS NOT NULL
+              AND inspdate >= '%s'::date - interval '6 years'
+              AND (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
+            GROUP BY sitecode
+          ", in_clause, analysis_date_str)
+          archive_parts[[length(archive_parts) + 1]] <- dbGetQuery(con_overview, q)
+        }
+        archive_max <- do.call(rbind, archive_parts)
+      }
+      safe_disconnect(con_overview)
+      
+      # Combine: use the most recent inspection from either table
+      sites_combined <- sites_with_current %>%
+        left_join(archive_max, by = "sitecode") %>%
+        mutate(
+          final_insp = pmax(last_insp, archive_insp, na.rm = TRUE),
+          is_gap = is.na(final_insp) | final_insp < gap_cutoff
+        )
+      
+      # Aggregate to facility + zone
+      sites <- sites_combined %>%
+        group_by(facility, zone) %>%
+        summarise(
+          total_count = n(),
+          active_count = sum(!is_gap),
+          expiring_count = sum(is_gap),
+          .groups = "drop"
+        )
+      
+      message(sprintf("[inspection_gaps] Overview (fast): %s facilities, %s total sites, %s gaps (%.1f%%)",
+                      nrow(sites), sum(sites$total_count), sum(sites$expiring_count),
+                      100 * sum(sites$expiring_count) / max(1, sum(sites$total_count))))
+      
+      return(list(
+        sites = sites,
+        treatments = data.frame(),
+        pre_aggregated = TRUE
+      ))
+      
+    }, error = function(e) {
+      warning(paste("[inspection_gaps] Overview fast query failed:", e$message))
+      if (!is.null(con_overview)) tryCatch(safe_disconnect(con_overview), error = function(e2) NULL)
+      return(list(
+        sites = data.frame(
+          facility = character(), zone = character(),
+          total_count = integer(), active_count = integer(), expiring_count = integer()
+        ),
+        treatments = data.frame(),
+        pre_aggregated = TRUE
+      ))
+    })
+  }
+  
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
   

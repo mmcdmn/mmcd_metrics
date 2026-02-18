@@ -125,19 +125,29 @@ calculate_checkback_status <- function(rounds, checkbacks, treatments, all_inspe
           
           # Exclude control checkbacks: no treatments occurred between
           # the pre-inspection and the post (checkback) inspection.
-          # Use pre-filtered site data for speed.
+          # Use timestamps for same-day accuracy.
           if (!is.null(all_inspections) && nrow(all_inspections) > 0 && nrow(site_checkbacks) > 0) {
             site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
-            site_trt_dates <- treatments$inspdate[treatments$sitecode == site]
+
+            # Build combined datetime for treatments at this site
+            site_trt <- treatments[treatments$sitecode == site, ]
+            site_trt_dt <- paste(site_trt$inspdate, ifelse(is.na(site_trt$insptime) | site_trt$insptime == "", "00:00:00", site_trt$insptime))
 
             keep_mask <- vapply(seq_len(nrow(site_checkbacks)), function(j) {
               cb_date <- site_checkbacks$inspdate[j]
-              # Most recent non-posttrt inspection before this checkback
-              pre_dates <- site_insps$inspdate[site_insps$inspdate < cb_date]
-              if (length(pre_dates) == 0) return(TRUE)
-              pre_date <- max(pre_dates)
-              # Any treatments between pre and post?
-              any(site_trt_dates > pre_date & site_trt_dates < cb_date)
+              cb_time <- if ("insptime" %in% names(site_checkbacks)) site_checkbacks$insptime[j] else "23:59:59"
+              if (is.na(cb_time) || cb_time == "") cb_time <- "23:59:59"
+              cb_dt <- paste(cb_date, cb_time)
+
+              # Most recent non-posttrt inspection before this checkback (by datetime)
+              pre_times <- ifelse(is.na(site_insps$insptime) | site_insps$insptime == "", "00:00:00", site_insps$insptime)
+              pre_dts <- paste(site_insps$inspdate, pre_times)
+              valid_pre <- pre_dts[pre_dts < cb_dt]
+              if (length(valid_pre) == 0) return(TRUE)
+              pre_dt <- max(valid_pre)
+
+              # Any treatments between pre and post (by datetime)?
+              any(site_trt_dt > pre_dt & site_trt_dt < cb_dt)
             }, logical(1))
             site_checkbacks <- site_checkbacks[keep_mask, , drop = FALSE]
           }
@@ -300,15 +310,33 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
       
       # Detect control checkbacks: no treatments occurred between the
       # pre-inspection and the post (checkback) inspection.
+      # Use timestamps for same-day accuracy.
       is_control <- FALSE
       pre_inspection_date <- NA
       if (!is.null(all_inspections) && nrow(all_inspections) > 0) {
         site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
-        pre_dates <- site_insps$inspdate[site_insps$inspdate < checkback_date]
-        if (length(pre_dates) > 0) {
-          pre_inspection_date <- max(pre_dates)
-          site_trt_dates <- treatments$inspdate[treatments$sitecode == site]
-          is_control <- !any(site_trt_dates > pre_inspection_date & site_trt_dates < checkback_date)
+
+        # Build datetime for checkback
+        cb_time <- if ("insptime" %in% names(checkback)) checkback$insptime else "23:59:59"
+        if (is.na(cb_time) || cb_time == "") cb_time <- "23:59:59"
+        cb_dt <- paste(checkback_date, cb_time)
+
+        # Build datetimes for pre-inspections
+        pre_times <- ifelse(is.na(site_insps$insptime) | site_insps$insptime == "", "00:00:00", site_insps$insptime)
+        pre_dts <- paste(site_insps$inspdate, pre_times)
+        valid_pre <- pre_dts[pre_dts < cb_dt]
+
+        if (length(valid_pre) > 0) {
+          pre_dt <- max(valid_pre)
+          pre_inspection_date <- as.Date(substr(pre_dt, 1, 10))
+
+          # Build datetimes for treatments at this site
+          site_trts <- treatments[treatments$sitecode == site, ]
+          trt_times <- ifelse(is.na(site_trts$insptime) | site_trts$insptime == "", "00:00:00", site_trts$insptime)
+          trt_dts <- paste(site_trts$inspdate, trt_times)
+
+          # Is there any treatment between pre and post (by datetime)?
+          is_control <- !any(trt_dts > pre_dt & trt_dts < cb_dt)
         }
       }
       

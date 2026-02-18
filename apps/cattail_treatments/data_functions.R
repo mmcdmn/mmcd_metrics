@@ -709,50 +709,17 @@ get_basic_filter_choices <- function() {
   })
 }
 
-# STANDARDIZED FUNCTION: Apply data filters to loaded data
-#' Standard function to filter the results from load_raw_data
+# STANDARDIZED FUNCTION: Apply data filters - delegates to shared apply_standard_data_filters
 #' @param data The result from load_raw_data (list with sites, treatments, total_count)
 #' @param facility_filter Vector of selected facilities (or "all")
+#' @param foreman_filter Vector of selected foremen (or "all")
 #' @param zone_filter Vector of selected zones
 #' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL,
                               foreman_filter = NULL, zone_filter = NULL) {
-  # Use standardized keys
-  sites <- data$sites
-  treatments <- data$treatments
-  
-  if (is.null(sites) || nrow(sites) == 0) {
-    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
-  }
-  
-  # Apply facility filter
-  if (!is.null(facility_filter) && !("all" %in% facility_filter) && length(facility_filter) > 0) {
-    sites <- sites %>% filter(facility %in% facility_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(facility %in% facility_filter)
-    }
-  }
-  
-  # Apply foreman filter (fosarea)
-  if (!is.null(foreman_filter) && !("all" %in% foreman_filter) && length(foreman_filter) > 0) {
-    sites <- sites %>% filter(fosarea %in% foreman_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(fosarea %in% foreman_filter)
-    }
-  }
-  
-  # Apply zone filter  
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    sites <- sites %>% filter(zone %in% zone_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(zone %in% zone_filter)
-    }
-  }
-  
-  # Return STANDARDIZED format
-  return(list(
-    sites = sites,
-    treatments = treatments,
-    total_count = data$total_count  # Keep original total_count from universe
-  ))
+  apply_standard_data_filters(
+    data, facility_filter = facility_filter,
+    foreman_filter = foreman_filter, zone_filter = zone_filter,
+    foreman_col = "fosarea", keep_original_total = TRUE
+  )
 }

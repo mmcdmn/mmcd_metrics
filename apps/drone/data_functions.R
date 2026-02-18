@@ -162,67 +162,26 @@ load_raw_data <- function(drone_types = c("Y", "M", "C"), analysis_date = Sys.Da
   ))
 }
 
-#' Apply filters to drone data - STANDARDIZED FORMAT
+#' Apply filters to drone data - delegates to shared apply_data_filters
 #' @param data List containing sites and treatments (standardized keys)
 #' @param facility_filter Vector of selected facilities  
-#' @param foreman_filter Vector of selected foremen
+#' @param foreman_filter Vector of selected foremen (shortnames)
 #' @param zone_filter Vector of selected zones (optional)
 #' @param prehatch_only Boolean for prehatch filter
 #' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL, 
                                foreman_filter = NULL, zone_filter = NULL, 
                                prehatch_only = FALSE) {
+  # Build extra filters for prehatch if needed
+  extras <- if (!is.null(prehatch_only) && prehatch_only) list(prehatch = "PREHATCH") else NULL
   
-  # Use standardized keys
-  sites <- data$sites
-  treatments <- data$treatments
-  
-  if (is.null(sites) || nrow(sites) == 0) {
-    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
-  }
-  
-  # Apply facility filter using shared helper
-  if (is_valid_filter(facility_filter)) {
-    sites <- sites %>% filter(facility %in% facility_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(facility %in% facility_filter)
-    }
-  }
-  
-  # Apply zone filter (zones don't use "all" check)
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    sites <- sites %>% filter(zone %in% zone_filter)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(zone %in% zone_filter)
-    }
-  }
-  
-  # Apply foreman/FOS filter using shared helper
-  if (is_valid_filter(foreman_filter)) {
-    # Convert shortnames to employee numbers for filtering
-    foremen_lookup <- get_foremen_lookup()
-    selected_emp_nums <- foremen_lookup$emp_num[foremen_lookup$shortname %in% foreman_filter]
-    
-    sites <- sites %>% filter(foreman %in% selected_emp_nums)
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(foreman %in% selected_emp_nums)
-    }
-  }
-  
-  # Apply prehatch filter (drone-specific but still returns standard format)
-  if (!is.null(prehatch_only) && prehatch_only) {
-    sites <- sites %>% filter(prehatch == 'PREHATCH')
-    if (!is.null(treatments) && nrow(treatments) > 0) {
-      treatments <- treatments %>% filter(prehatch == 'PREHATCH')
-    }
-  }
-  
-  # Return STANDARDIZED format
-  return(list(
-    sites = sites,
-    treatments = if(is.null(treatments)) data.frame() else treatments,
-    total_count = nrow(sites)
-  ))
+  # Drone uses foreman col with shortname→emp_num conversion
+  apply_standard_data_filters(
+    data, facility_filter = facility_filter,
+    foreman_filter = foreman_filter, zone_filter = zone_filter,
+    foreman_col = "foreman", convert_foreman_shortnames = TRUE,
+    extra_filters = extras
+  )
 }
 
 #' Get individual sitecode treatment data for site statistics

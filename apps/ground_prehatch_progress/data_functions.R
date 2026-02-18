@@ -142,7 +142,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
   })
 }
 
-#' Apply filters to ground prehatch data - STANDARDIZED FORMAT
+#' Apply filters to ground prehatch data - delegates to shared apply_standard_data_filters
 #' @param data List containing sites and treatments (standardized keys)
 #' @param facility_filter Vector of selected facilities  
 #' @param foreman_filter Vector of selected foremen (emp_num values)
@@ -150,42 +150,11 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
 #' @return Filtered data list with standardized keys
 apply_data_filters <- function(data, facility_filter = NULL, 
                                foreman_filter = NULL, zone_filter = NULL) {
-  
-  # Use standardized keys
-  sites <- data$sites
-  treatments <- data$treatments
-  
-  if (is.null(sites) || nrow(sites) == 0) {
-    return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
-  }
-  
-  # Apply facility filter using shared helper
-  if (is_valid_filter(facility_filter)) {
-    sites <- sites %>% filter(facility %in% facility_filter)
-  }
-  
-  # Apply zone filter (zones don't use "all" check)
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    sites <- sites %>% filter(zone %in% zone_filter)
-  }
-  
-  # Apply foreman/FOS filter using shared helper
-  # Note: foreman_filter is already emp_nums in this app, no conversion needed
-  if (is_valid_filter(foreman_filter)) {
-    sites <- sites %>% filter(fosarea %in% foreman_filter)
-  }
-  
-  # Filter treatments to only include those for filtered sites
-  if (!is.null(treatments) && nrow(treatments) > 0 && nrow(sites) > 0) {
-    treatments <- treatments %>% filter(sitecode %in% sites$sitecode)
-  }
-  
-  # Return STANDARDIZED format
-  return(list(
-    sites = sites,
-    treatments = if(is.null(treatments)) data.frame() else treatments,
-    total_count = nrow(sites)
-  ))
+  apply_standard_data_filters(
+    data, facility_filter = facility_filter,
+    foreman_filter = foreman_filter, zone_filter = zone_filter,
+    foreman_col = "fosarea", filter_treatments_by = "sitecode"
+  )
 }
 
 # Function to get ground prehatch data from database

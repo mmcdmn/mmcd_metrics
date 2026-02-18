@@ -151,6 +151,7 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       pre_date <- as.Date(NA)
       pre_numdip <- NA_real_
       pre_sampnum_yr <- NA_character_
+      pre_time_val <- "00:00:00"
       
       if (!is.null(site_pres) && nrow(site_pres) > 0) {
         before_mask_pre <- site_pres$inspdate < pc$post_date |
@@ -160,17 +161,20 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
           pre_date <- pre$inspdate
           pre_numdip <- pre$numdip
           pre_sampnum_yr <- pre$sampnum_yr
+          pre_time_val <- if (!is.na(pre$insptime) && pre$insptime != "") pre$insptime else "00:00:00"
         }
       }
       
       matched_trts[[i]] <- data.frame(
         row_id = pc$row_id,
         trt_date = trt$inspdate,
+        trt_time = ifelse(is.na(trt$insptime) || trt$insptime == "", "00:00:00", trt$insptime),
         trt_action = trt$action,
         trt_matcode = trt$matcode,
         trt_mattype = trt$mattype,
         trt_acres = trt$acres,
         pre_date = pre_date,
+        pre_time = pre_time_val,
         pre_numdip = pre_numdip,
         pre_sampnum_yr = pre_sampnum_yr,
         stringsAsFactors = FALSE
@@ -279,10 +283,16 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     )
     
     # Flag control checkbacks: no treatments occurred between the pre and post
-    # inspections. If the most recent treatment before the post-check is
-    # on or before the pre-inspection, then no treatment happened between.
+    # inspections. Use timestamps for same-day accuracy.
+    # trt_time and pre_time were stored during the matching loop.
+    trt_datetime <- paste(matched$trt_date, matched$trt_time)
+    pre_datetime <- ifelse(is.na(matched$pre_date), NA_character_,
+                           paste(matched$pre_date, matched$pre_time))
+    
+    # Control = treatment datetime is at or before pre-inspection datetime
+    # (meaning no treatment happened between the pre-inspection and the post-check)
     matched$is_control <- !is.na(matched$pre_date) &
-                (is.na(matched$trt_date) | matched$trt_date <= matched$pre_date)
+                (is.na(matched$trt_date) | trt_datetime <= pre_datetime)
     
     n_control <- sum(matched$is_control, na.rm = TRUE)
     n_valid <- sum(!matched$is_control, na.rm = TRUE)

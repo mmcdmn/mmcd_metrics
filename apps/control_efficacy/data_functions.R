@@ -138,6 +138,7 @@ load_checkback_data <- function(treated_sites, start_date, end_date) {
     base_select <- "
       SELECT 
         insp.inspdate,
+        insp.insptime,
         gis.facility,
         gis.zone,
         insp.sitecode,
@@ -343,6 +344,7 @@ load_site_inspections <- function(treated_sites, start_date, end_date) {
     base_select <- "
       SELECT
         insp.inspdate,
+        insp.insptime,
         COALESCE(gis.facility, insp.facility) AS facility,
         insp.sitecode,
         insp.action,

@@ -114,6 +114,24 @@
                 <p>Unified dashboard showing MMCD treatment progress. View district-level aggregation by zone (P1 vs P2), or drill down by zone and metric to see facilities-level and facility-specific data. Includes Catch Basin, Drone, Ground Prehatch, Structures, and Cattail metrics.</p>
                 <a href="overview/" class="app-link">Open Dashboard</a>
             </div>
+            <div class="app-card">
+                <img src="shared/assets/layer-group.jpg" alt="FOS Overview" class="app-icon">
+                <h3>FOS Overview Dashboard</h3>
+                <p>FOS-level dashboard showing treatment progress for a specific Field Operations Supervisor. Select a facility and FOS area, then view metrics for that individual.</p>
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">Facility:</label>
+                        <select id="fos_facility" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                            <option value="" disabled selected>Loading facilities...</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">FOS Area:</label>
+                        <select id="fos_area" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                            <option value="" disabled selected>Loading FOS areas...</option>
+                        </select>
+                    </div>
+                    <button onclick="openFOSOverview()" style="width: 100%; background-color: #2c5aa0; color: white; padding: 8px; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 12px;">Open Dashboard</button>
+            </div>
         </div>
 
         <h2 class="category">Floodwater</h2>
@@ -279,6 +297,10 @@
             
             // Set up facility change handler to filter FOS options
             document.getElementById('air_facility').addEventListener('change', filterFOSByFacility);
+            
+            // Also populate FOS overview dropdowns (reuse same data)
+            populateFOSOverviewDropdowns();
+            document.getElementById('fos_facility').addEventListener('change', filterFOSOverviewByFacility);
         });
 
         // Load REAL facilities from the air_inspection_checklist Shiny app
@@ -396,6 +418,93 @@
             // Redirect to the air inspection checklist app
             const appUrl = 'air_inspection_checklist/' + (params.toString() ? '?' + params.toString() : '');
             console.log('Redirecting to:', appUrl);
+            window.location.href = appUrl;
+        }
+
+        // =====================================================================
+        // FOS Overview Dashboard - reuses same facilities/foremen data
+        // =====================================================================
+        
+        // Populate FOS overview dropdowns from already-loaded data
+        function populateFOSOverviewDropdowns() {
+            const facilitySelect = document.getElementById('fos_facility');
+            
+            // Copy facilities from the air checklist dropdown
+            const airFacilitySelect = document.getElementById('air_facility');
+            facilitySelect.innerHTML = '<option value="" disabled selected>Select Facility</option>';
+            
+            for (let i = 0; i < airFacilitySelect.options.length; i++) {
+                const opt = airFacilitySelect.options[i];
+                if (opt.value && opt.value !== 'all') {
+                    const option = document.createElement('option');
+                    option.value = opt.value;
+                    option.textContent = opt.textContent;
+                    facilitySelect.appendChild(option);
+                }
+            }
+            
+            // Initialize FOS dropdown as empty until facility selected
+            const fosSelect = document.getElementById('fos_area');
+            fosSelect.innerHTML = '<option value="" disabled selected>Select facility first</option>';
+        }
+        
+        // Filter FOS overview areas by selected facility
+        function filterFOSOverviewByFacility() {
+            const facilitySelect = document.getElementById('fos_facility');
+            const fosSelect = document.getElementById('fos_area');
+            const selectedFacility = facilitySelect.value;
+            
+            if (!selectedFacility) {
+                fosSelect.innerHTML = '<option value="" disabled selected>Select facility first</option>';
+                return;
+            }
+            
+            // Filter foremen by selected facility
+            const filteredForemen = allForemen.filter(fos => fos.facility === selectedFacility);
+            
+            fosSelect.innerHTML = '<option value="" disabled selected>Select FOS Area</option>';
+            
+            filteredForemen.forEach(fos => {
+                const option = document.createElement('option');
+                option.value = fos.code;
+                option.textContent = fos.label;
+                fosSelect.appendChild(option);
+            });
+        }
+        
+        // Open FOS Overview Dashboard with selected facility and FOS
+        function openFOSOverview() {
+            const facility = document.getElementById('fos_facility').value;
+            const fos = document.getElementById('fos_area').value;
+            
+            if (!facility) {
+                alert('Please select a Facility');
+                return;
+            }
+            
+            if (!fos) {
+                alert('Please select a FOS Area');
+                return;
+            }
+            
+            // Build URL to overview app with FOS view params
+            // Default metrics for FOS view - easily expandable by adding to this list
+            const fosMetrics = [
+                'catch_basin',
+                'drone',
+                'ground_prehatch',
+                'structure',
+                'prehatch_coverage'
+            ];
+            
+            const params = new URLSearchParams();
+            params.append('view', 'fos');
+            params.append('facility', facility);
+            params.append('fos', fos);
+            params.append('metric', fosMetrics.join(','));
+            
+            const appUrl = 'overview/?' + params.toString();
+            console.log('Opening FOS Overview:', appUrl);
             window.location.href = appUrl;
         }
     </script>

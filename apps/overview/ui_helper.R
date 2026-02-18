@@ -367,37 +367,53 @@ get_overview_css <- function() {
 #' @param analysis_date The current analysis date
 #' @param expiring_days The current expiring days setting
 #' @param color_theme The current color theme
+#' @param metric_id Optional metric to filter by
+#' @param facility_clicked Optional facility to filter by (for FOS drill-down)
 #' @export
-navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days, color_theme = "MMCD", metric_id = NULL) {
+navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days, color_theme = "MMCD", metric_id = NULL, facility_clicked = NULL, zone_filter_raw = NULL) {
+  # Sanitize inputs: convert NA to NULL, handle zero-length vectors
+  if (length(zone_clicked) == 0 || (length(zone_clicked) == 1 && is.na(zone_clicked))) zone_clicked <- NULL
+  if (length(facility_clicked) == 0 || (length(facility_clicked) == 1 && is.na(facility_clicked))) facility_clicked <- NULL
+  if (length(zone_filter_raw) == 0 || (length(zone_filter_raw) == 1 && is.na(zone_filter_raw))) zone_filter_raw <- NULL
+  
   # Debug the input
   cat("DEBUG navigate_to_overview: zone_clicked =", zone_clicked, "class =", class(zone_clicked), "\n")
+  cat("DEBUG navigate_to_overview: target =", target, "facility_clicked =", facility_clicked, "zone_filter_raw =", zone_filter_raw, "\n")
   
-  # Extract zone number from different possible formats
-  zone_num <- NA
-  
-  if (is.character(zone_clicked)) {
-    if (zone_clicked %in% c("P1", "P2")) {
-      # Standard format: "P1" -> "1", "P2" -> "2"
-      zone_num <- gsub("P", "", zone_clicked)
-    } else if (zone_clicked %in% c("1", "2")) {
-      # Already a number string
-      zone_num <- zone_clicked
+  # If zone_filter_raw is "separate", preserve that in the URL
+  # This ensures the target page also renders P1/P2 as separate bars
+  if (!is.null(zone_filter_raw) && zone_filter_raw == "separate") {
+    zone_num <- "separate"
+  } else {
+    # Extract zone number from different possible formats
+    zone_num <- NA
+    
+    if (is.character(zone_clicked)) {
+      if (zone_clicked %in% c("P1", "P2")) {
+        # Standard format: "P1" -> "1", "P2" -> "2"
+        zone_num <- gsub("P", "", zone_clicked)
+      } else if (zone_clicked %in% c("1", "2")) {
+        # Already a number string
+        zone_num <- zone_clicked
+      } else if (zone_clicked == "1,2") {
+        zone_num <- NULL  # Combined - omit from URL (defaults to 1,2)
+      }
+    } else if (is.numeric(zone_clicked)) {
+      # If it's a point number (0, 1), convert to zone
+      if (zone_clicked == 0) {
+        zone_num <- "1"  # First point = P1
+      } else if (zone_clicked == 1) {
+        zone_num <- "2"  # Second point = P2
+      }
     }
-  } else if (is.numeric(zone_clicked)) {
-    # If it's a point number (0, 1), convert to zone
-    if (zone_clicked == 0) {
-      zone_num <- "1"  # First point = P1
-    } else if (zone_clicked == 1) {
-      zone_num <- "2"  # Second point = P2
+    
+    # Fallback: if zone_num is still NA (not NULL or a valid value), clear it
+    if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
+      if (!is.null(zone_clicked)) {
+        cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
+      }
+      zone_num <- NULL
     }
-  }
-  
-  # Fallback: if zone_num is still NA, try to extract from the raw value
-  if (is.na(zone_num) && !is.null(zone_clicked)) {
-    # If zone_clicked is a large number, it's probably the data value, not the zone
-    # In this case, we can't determine the zone, so we'll skip the zone parameter
-    cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
-    zone_num <- NULL
   }
   
   cat("DEBUG: Final zone_num =", zone_num, "\n")
@@ -419,6 +435,10 @@ navigate_to_overview <- function(session, target, zone_clicked, analysis_date, e
   # Add metric filter if specified
   if (!is.null(metric_id)) {
     params$metric <- metric_id
+  }
+  # Add facility filter if specified (for FOS drill-down)
+  if (!is.null(facility_clicked) && facility_clicked != "all") {
+    params$facility <- facility_clicked
   }
   params$date <- as.character(analysis_date)
   params$expiring <- expiring_days

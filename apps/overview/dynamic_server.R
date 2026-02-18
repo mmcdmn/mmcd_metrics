@@ -368,6 +368,76 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
 }
 
 # =============================================================================
+# SHARED HELPERS - Reduce duplication across views
+# =============================================================================
+
+#' Calculate display percentage/value for a metric
+#' Used in facilities, FOS, and district views to avoid triple duplication
+#' @param metric_id The metric ID
+#' @param config The metric config from registry
+#' @param total Total count/acres
+#' @param active Active count/acres
+#' @param expiring Expiring count/acres
+#' @param metric_data Optional full data frame (for raw_value_column)
+#' @return Named list: pct (display value), display_value (formatted string)
+calculate_display_pct <- function(metric_id, config, total, active, expiring, metric_data = NULL) {
+  if (metric_id %in% c("cattail_treatments", "air_sites")) {
+    treated <- active - expiring
+    workload <- treated + expiring
+    pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
+  } else if (isTRUE(config$display_raw_value)) {
+    raw_col <- if (!is.null(config$raw_value_column)) config$raw_value_column else "max_vector_index"
+    if (!is.null(metric_data) && raw_col %in% names(metric_data)) {
+      pct <- max(metric_data[[raw_col]], na.rm = TRUE)
+      if (is.infinite(pct)) pct <- 0
+    } else {
+      pct <- if (total > 0) round(active / total * 100, 1) else 0
+    }
+  } else if (isTRUE(config$display_as_average)) {
+    pct <- if (total > 0) round(100 * active / total, 1) else 0
+  } else {
+    pct <- if (total > 0) ceiling(100 * active / total) else 0
+  }
+  
+  # Format the display value
+  display_value <- if (isTRUE(config$display_raw_value)) {
+    suffix <- if (!is.null(config$raw_value_suffix)) config$raw_value_suffix else ""
+    paste0(round(pct, 2), suffix)
+  } else {
+    paste0(pct, "%")
+  }
+  
+  list(pct = pct, display_value = display_value)
+}
+
+#' Extract weekly values from historical data for a set of metrics
+#' Used in facilities and district views
+#' @param metrics Vector of metric IDs
+#' @param historical_data Historical data list
+#' @param week_num Week number
+#' @param registry Metric registry
+#' @return Named list of weekly values by metric_id
+extract_weekly_values <- function(metrics, historical_data, week_num, registry) {
+  vals <- list()
+  if (is.null(historical_data)) return(vals)
+  for (metric_id in metrics) {
+    hist <- historical_data[[metric_id]]
+    if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
+      week_row <- hist$current[hist$current$week_num == week_num, ]
+      if (nrow(week_row) > 0) {
+        config_m <- registry[[metric_id]]
+        vals[[metric_id]] <- if (isTRUE(config_m$aggregate_as_average)) {
+          mean(week_row$value, na.rm = TRUE)
+        } else {
+          sum(week_row$value, na.rm = TRUE)
+        }
+      }
+    }
+  }
+  vals
+}
+
+# =============================================================================
 # DYNAMIC COLOR LOGIC
 # =============================================================================
 
@@ -642,18 +712,11 @@ get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date,
 #' @param historical_data Optional: pre-loaded historical data to extract weekly values (avoids duplicate DB loads)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2")) {
-  cat("[DEBUG] generate_summary_stats called with:")
-  cat(" overview_type=", overview_type)
-  cat(" metrics_filter=", if (is.null(metrics_filter)) "NULL" else paste(metrics_filter, collapse = ","))
-  cat(" analysis_date=", as.character(analysis_date), "\n")
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL) {
   
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
-  cat("[DEBUG] Using metrics:", paste(metrics, collapse = ", "), "\n")
-  
   registry <- get_metric_registry()
-  cat("[DEBUG] Got metric registry with", length(registry), "entries\n")
   
   # For facilities view, generate one value box per facility instead of per metric
   if (overview_type == "facilities" && length(metrics) > 0) {
@@ -676,23 +739,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     
     # Pre-extract zone-level weekly values from historical data for facility comparison
     week_num <- lubridate::week(analysis_date)
-    fac_weekly_values <- list()
-    if (!is.null(historical_data)) {
-      for (metric_id in metrics) {
-        hist <- historical_data[[metric_id]]
-        if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
-          week_row <- hist$current[hist$current$week_num == week_num, ]
-          if (nrow(week_row) > 0) {
-            config_m <- registry[[metric_id]]
-            if (isTRUE(config_m$aggregate_as_average)) {
-              fac_weekly_values[[metric_id]] <- mean(week_row$value, na.rm = TRUE)
-            } else {
-              fac_weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
-            }
-          }
-        }
-      }
-    }
+    fac_weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
     
     stat_boxes <- lapply(all_facilities, function(fac) {
       # For this facility, aggregate across all metrics
@@ -718,22 +765,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         }
       }
       
-      # For cattail, calculate % treated out of (treated + needs treatment)
-      # treated = active - expiring (active includes expiring)
-      # For metrics with display_as_average, show percentage: current vs avg
-      # For other metrics, use active / total
       config <- registry[[metrics[1]]]
-      
-      if (metrics[1] %in% c("cattail_treatments", "air_sites")) {
-        treated_all <- active_all - expiring_all
-        workload <- treated_all + expiring_all
-        pct <- if (workload > 0) ceiling(100 * treated_all / workload) else 0
-      } else if (isTRUE(config$display_as_average)) {
-        # For display_as_average metrics: current / avg * 100
-        pct <- if (total_all > 0) round(100 * active_all / total_all, 1) else 0
-      } else {
-        pct <- if (total_all > 0) ceiling(100 * active_all / total_all) else 0
-      }
+      pct_info <- calculate_display_pct(metrics[1], config, total_all, active_all, expiring_all)
+      pct <- pct_info$pct
       
       # Use zone-level cached historical data for dynamic coloring
       # Each facility inherits its zone's performance comparison
@@ -787,119 +821,236 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     row_elements <- lapply(fac_rows, function(row_boxes) fluidRow(row_boxes))
     div(class = "facility-stat-boxes", row_elements)
     
-  } else {
-    cat("[DEBUG] District view - processing categories\n")
-    # District view: metrics grouped by category
-    categories <- get_metric_categories()
-    cat("[DEBUG] Categories:", paste(categories, collapse = ", "), "\n")
-    
-    metrics_by_cat <- get_metrics_grouped_by_category()
-    cat("[DEBUG] Metrics by category loaded\n")
-    
-    # Pre-extract weekly values from historical data to avoid duplicate DB loads
+  } else if (overview_type == "fos" && length(metrics) > 0 && !is.null(fos_filter) && fos_filter != "all") {
+    # FOS overview with specific FOS selected (from index.html):
+    # Show per-METRIC value boxes with hidden charts, same pattern as district view
     week_num <- lubridate::week(analysis_date)
-    cat("[DEBUG] Week number:", week_num, "\n")
+    weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
     
-    weekly_values <- list()
-    if (!is.null(historical_data)) {
-      cat("[DEBUG] Processing historical data for weekly values...\n")
+    n_metrics <- length(metrics)
+    max_per_row <- 3
+    col_width <- max(4, floor(12 / min(n_metrics, max_per_row)))
+    
+    stat_boxes <- lapply(metrics, function(metric_id) {
+      config <- registry[[metric_id]]
+      if (is.null(config)) return(NULL)
+      
+      metric_data <- data[[metric_id]]
+      
+      if (!is.null(metric_data) && nrow(metric_data) > 0) {
+        total <- sum(metric_data$total, na.rm = TRUE)
+        active <- sum(metric_data$active, na.rm = TRUE)
+        expiring <- sum(metric_data$expiring, na.rm = TRUE)
+        
+        pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
+        pct <- pct_info$pct
+        display_value <- pct_info$display_value
+      } else {
+        pct <- 0
+        active <- 0
+        display_value <- "0%"
+      }
+      
+      # Get dynamic color
+      weekly_val <- weekly_values[[metric_id]]
+      cm <- if (!is.null(config$color_mode)) config$color_mode else ""
+      color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
+      box_info <- tryCatch(
+        get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
+        error = function(e) list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
+      )
+      
+      column(col_width,
+        div(
+          class = "stat-box-clickable",
+          `data-metric-id` = metric_id,
+          `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
+          `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
+          `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
+          `data-week-num` = week_num,
+          create_stat_box(
+            value = display_value,
+            title = config$display_name,
+            bg_color = box_info$color,
+            icon = if (!is.null(config$image_path)) config$image_path else config$icon,
+            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+          )
+        )
+      )
+    })
+    
+    stat_boxes <- Filter(Negate(is.null), stat_boxes)
+    if (length(stat_boxes) == 0) return(fluidRow())
+    
+    # Split into rows
+    box_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_per_row))
+    row_elements <- lapply(box_rows, function(row_boxes) fluidRow(row_boxes))
+    
+    # Build hidden chart panels for each metric (current progress + historical side by side)
+    chart_panels <- lapply(metrics, function(metric_id) {
+      config <- registry[[metric_id]]
+      
+      # Current progress chart
+      current_panel <- create_chart_panel(metric_id, config, chart_height = "250px", is_historical = FALSE)
+      
+      # Historical chart (if available)
+      all_historical <- get_historical_metrics()
+      has_hist <- metric_id %in% all_historical
+      
+      if (has_hist) {
+        hist_panel <- create_chart_panel(metric_id, config, chart_height = "250px", is_historical = TRUE)
+        chart_content <- fluidRow(
+          column(6, div(style = "padding-right: 5px;", current_panel)),
+          column(6, div(style = "padding-left: 5px;", hist_panel))
+        )
+      } else {
+        chart_content <- current_panel
+      }
+      
+      div(
+        id = paste0("chart_wrapper_", metric_id),
+        class = "chart-panel-wrapper category-chart",
+        chart_content
+      )
+    })
+    
+    charts_row <- div(class = "charts-grid-row", do.call(tagList, chart_panels))
+    
+    div(class = "fos-metric-boxes",
+      do.call(tagList, row_elements),
+      charts_row
+    )
+    
+  } else if (overview_type == "fos" && length(metrics) > 0) {
+    # FOS view: one value box per FOS person
+    # Get unique FOS from the data
+    all_fos <- unique(unlist(lapply(metrics, function(metric_id) {
+      metric_data <- data[[metric_id]]
+      if (!is.null(metric_data) && "fos" %in% names(metric_data)) {
+        unique(metric_data$fos)
+      } else if (!is.null(metric_data) && "display_name" %in% names(metric_data)) {
+        unique(as.character(metric_data$display_name))
+      } else {
+        NULL
+      }
+    })))
+    
+    if (length(all_fos) == 0) {
+      return(div(
+        class = "alert alert-warning",
+        icon("exclamation-triangle"), " ",
+        "No FOS data available for this view."
+      ))
+    }
+    
+    n_fos <- length(all_fos)
+    max_per_row <- 4
+    col_width <- max(3, floor(12 / min(n_fos, max_per_row)))
+    
+    stat_boxes <- lapply(all_fos, function(fos_id) {
+      total_all <- 0
+      active_all <- 0
+      expiring_all <- 0
+      
       for (metric_id in metrics) {
-        hist <- historical_data[[metric_id]]
-        if (!is.null(hist) && !is.null(hist$current) && nrow(hist$current) > 0) {
-          week_row <- hist$current[hist$current$week_num == week_num, ]
-          if (nrow(week_row) > 0) {
-            config_m <- registry[[metric_id]]
-            if (isTRUE(config_m$aggregate_as_average)) {
-              weekly_values[[metric_id]] <- mean(week_row$value, na.rm = TRUE)
-            } else {
-              weekly_values[[metric_id]] <- sum(week_row$value, na.rm = TRUE)
-            }
+        metric_data <- data[[metric_id]]
+        if (!is.null(metric_data) && nrow(metric_data) > 0) {
+          # Match by fos column or display_name
+          if ("fos" %in% names(metric_data)) {
+            fos_data <- metric_data[metric_data$fos == fos_id, ]
+          } else if ("display_name" %in% names(metric_data)) {
+            fos_data <- metric_data[as.character(metric_data$display_name) == fos_id, ]
+          } else {
+            fos_data <- data.frame()
+          }
+          if (nrow(fos_data) > 0) {
+            total_all <- total_all + sum(fos_data$total, na.rm = TRUE)
+            active_all <- active_all + sum(fos_data$active, na.rm = TRUE)
+            expiring_all <- expiring_all + sum(fos_data$expiring, na.rm = TRUE)
           }
         }
       }
-      cat("[DEBUG] Weekly values extracted for", length(weekly_values), "metrics\n")
-    } else {
-      cat("[DEBUG] No historical data provided\n")
-    }
-    
-    # Build category sections
-    cat("[DEBUG] Building category sections...\n")
-    category_sections <- lapply(categories, function(cat) {
-      cat("[DEBUG] Processing category:", cat, "\n")
-      cat_metrics <- intersect(metrics_by_cat[[cat]], metrics)
-      cat("[DEBUG] Category", cat, "has metrics:", paste(cat_metrics, collapse = ", "), "\n")
       
-      if (length(cat_metrics) == 0) {
-        cat("[DEBUG] No metrics for category", cat, "- returning NULL\n")
-        return(NULL)
+      config <- registry[[metrics[1]]]
+      pct_info <- calculate_display_pct(metrics[1], config, total_all, active_all, expiring_all)
+      pct <- pct_info$pct
+      
+      # Get the display name (FOS shortname)
+      fos_display <- fos_id
+      # Try to get display_name from data
+      for (metric_id in metrics) {
+        metric_data <- data[[metric_id]]
+        if (!is.null(metric_data) && "fos" %in% names(metric_data) && "display_name" %in% names(metric_data)) {
+          match_row <- metric_data[metric_data$fos == fos_id, ]
+          if (nrow(match_row) > 0) {
+            fos_display <- as.character(match_row$display_name[1])
+            break
+          }
+        }
       }
       
-      # Calculate column width - use fixed width of 3 (3-4 per row max) to prevent crowding
+      box_color <- config$bg_color
+      
+      column(col_width,
+        div(
+          class = "stat-box-clickable",
+          `data-fos` = fos_id,
+          create_stat_box(
+            value = paste0(pct, "%"),
+            title = fos_display,
+            bg_color = box_color,
+            icon = icon("user-tie"),
+            icon_type = "fontawesome"
+          )
+        )
+      )
+    })
+    
+    fos_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_per_row))
+    row_elements <- lapply(fos_rows, function(row_boxes) fluidRow(row_boxes))
+    div(class = "fos-stat-boxes", row_elements)
+    
+  } else {
+    # District view: metrics grouped by category
+    categories <- get_metric_categories()
+    metrics_by_cat <- get_metrics_grouped_by_category()
+    
+    # Pre-extract weekly values from historical data to avoid duplicate DB loads
+    week_num <- lubridate::week(analysis_date)
+    weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
+    
+    # Build category sections
+    category_sections <- lapply(categories, function(cat) {
+      cat_metrics <- intersect(metrics_by_cat[[cat]], metrics)
+      if (length(cat_metrics) == 0) return(NULL)
+      
+      # Calculate column width
       n_metrics <- length(cat_metrics)
       max_per_row <- 3
       col_width <- max(4, floor(12 / min(n_metrics, max_per_row)))
-      cat("[DEBUG] Category", cat, "will use column width", col_width, "for", n_metrics, "metrics\n")
       
       stat_boxes <- lapply(cat_metrics, function(metric_id) {
-        cat("[DEBUG] Creating stat box for metric:", metric_id, "\n")
-        
         config <- registry[[metric_id]]
-        if (is.null(config)) {
-          cat("[DEBUG] ERROR: No config found for metric", metric_id, "\n")
-          return(NULL)
-        }
+        if (is.null(config)) return(NULL)
         
         metric_data <- data[[metric_id]]
-        cat("[DEBUG] Metric", metric_id, "data:", if (is.null(metric_data)) "NULL" else paste(nrow(metric_data), "rows"), "\n")
         
         # Calculate stats
         if (!is.null(metric_data) && nrow(metric_data) > 0) {
           total <- sum(metric_data$total, na.rm = TRUE)
           active <- sum(metric_data$active, na.rm = TRUE)
           expiring <- sum(metric_data$expiring, na.rm = TRUE)
-          cat("[DEBUG] Metric", metric_id, "stats: total=", total, "active=", active, "expiring=", expiring, "\n")
           
-          # For cattail_treatments:
-          # treated = active - expiring (active includes expiring in this dataset)
-          # needs_treatment = expiring
-          # Percentage = treated / (treated + needs_treatment)
-          # For display_as_average metrics: show percentage (current / avg * 100)
-          if (metric_id %in% c("cattail_treatments", "air_sites")) {
-            treated <- active - expiring
-            needs_treatment <- expiring
-            workload <- treated + needs_treatment
-            pct <- if (workload > 0) round(100 * treated / workload, 1) else 0
-            cat("[DEBUG]", metric_id, ": treated=", treated, "needs_treatment=", needs_treatment, "pct=", pct, "\n")
-          } else if (isTRUE(config$display_raw_value)) {
-            # For display_raw_value metrics (e.g., vector_index): show a raw value, not percentage
-            # The raw_value_column specifies which column has the value to display
-            raw_col <- if (!is.null(config$raw_value_column)) config$raw_value_column else "max_vector_index"
-            if (raw_col %in% names(metric_data)) {
-              pct <- max(metric_data[[raw_col]], na.rm = TRUE)
-              if (is.infinite(pct)) pct <- 0
-            } else {
-              pct <- if (total > 0) round(active / total * 100, 1) else 0
-            }
-            cat("[DEBUG] Display raw value:", raw_col, "=", pct, "\n")
-          } else if (isTRUE(config$display_as_average)) {
-            # For display_as_average metrics: current / avg * 100
-            pct <- if (total > 0) round(100 * active / total, 1) else 0
-            cat("[DEBUG] Display as average: pct=", pct, "\n")
-          } else {
-            pct <- ceiling(100 * active / max(1, total))
-            cat("[DEBUG] Regular percentage: pct=", pct, "\n")
-          }
+          pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
+          pct <- pct_info$pct
+          display_value <- pct_info$display_value
         } else {
-          cat("[DEBUG] No data for metric", metric_id, "- using defaults\n")
           pct <- 0
           active <- 0
+          display_value <- "0%"
         }
         
-        cat("[DEBUG] About to get dynamic value box info for", metric_id, "\n")
-        
         # Get dynamic color and comparison info
-        # Use pre-loaded weekly value if available (optimization)
-        # For fixed_pct and pct_of_average metrics, pass the percentage as current_value
         weekly_val <- weekly_values[[metric_id]]
         cm <- if (!is.null(config$color_mode)) config$color_mode else ""
         color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
@@ -910,24 +1061,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
           }
         )
-        week_num <- tryCatch(lubridate::week(analysis_date), error = function(e) {
-          cat("[DEBUG] Error getting week number:", e$message, "\n")
-          return(NA)
-        })
-        
-        # Format the display value: raw value metrics show the value directly, others show percentage
-        display_value <- if (isTRUE(config$display_raw_value)) {
-          # Show raw value with optional suffix (e.g., "0.42" for vector index)
-          suffix <- if (!is.null(config$raw_value_suffix)) config$raw_value_suffix else ""
-          paste0(round(pct, 2), suffix)
-        } else {
-          paste0(pct, "%")
-        }
-        
-        cat("[DEBUG] Creating stat box with pct=", pct, "title=", config$display_name, "color=", box_info$color, "\n")
+        week_num <- tryCatch(lubridate::week(analysis_date), error = function(e) NA)
         
         # Create clickable stat box with comparison data attributes
-        # Check if this metric has a redirect URL
         redirect_url <- if (!is.null(config$click_redirect)) config$click_redirect else ""
         result_box <- tryCatch(
           column(col_width,
@@ -954,21 +1090,11 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           }
         )
         
-        cat("[DEBUG] Stat box created for", metric_id, "\n")
         return(result_box)
       })
       
-      cat("[DEBUG] Created", length(stat_boxes), "stat boxes for category", cat, "\n")
       stat_boxes <- Filter(Negate(is.null), stat_boxes)
-      cat("[DEBUG] After filtering nulls:", length(stat_boxes), "stat boxes remain\n")
-      
-      if (length(stat_boxes) == 0) {
-        cat("[DEBUG] No stat boxes created for category", cat, "\n")
-        return(NULL)
-      }
-      
-      # Return category section with header and metrics in rows of max_per_row
-      cat("[DEBUG] Creating category section for", cat, "\n")
+      if (length(stat_boxes) == 0) return(NULL)
       
       # Split stat boxes into chunks for multiple rows
       box_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_per_row))
@@ -1008,24 +1134,15 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           do.call(tagList, row_elements),
           charts_row
         ),
-        error = function(e) {
-          cat("[DEBUG] ERROR creating category section for", cat, ":", e$message, "\n")
-          return(NULL)
-        }
+        error = function(e) NULL
       )
-      
-      cat("[DEBUG] Category section created for", cat, "\n")
       return(section_result)
     })
     
-    cat("[DEBUG] Created", length(category_sections), "category sections\n")
-    
     # Filter out NULL sections and wrap in a container
     category_sections <- Filter(Negate(is.null), category_sections)
-    cat("[DEBUG] After filtering nulls:", length(category_sections), "category sections remain\n")
     
     if (length(category_sections) == 0) {
-      cat("[DEBUG] ERROR: No category sections created!\n")
       return(div(
         class = "alert alert-warning",
         "No metrics data available to display."
@@ -1065,7 +1182,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
 build_overview_server <- function(input, output, session, 
                                    overview_type = "district",
                                    include_historical = TRUE,
-                                   metrics_filter = NULL) {
+                                   metrics_filter = NULL,
+                                   facility_filter = NULL,
+                                   fos_filter = NULL) {
   
   overview_config <- get_overview_config(overview_type)
   # Use filtered metrics if provided, otherwise get all active metrics
@@ -1160,7 +1279,9 @@ build_overview_server <- function(input, output, session,
               analysis_date = inputs$custom_today,
               expiring_days = inputs$expiring_days,
               zone_filter = inputs$zone_filter,
-              separate_zones = inputs$separate_zones
+              separate_zones = inputs$separate_zones,
+              facility_filter = facility_filter,
+              fos_filter = fos_filter
             )
           } else {
             # Fallback
@@ -1221,8 +1342,9 @@ build_overview_server <- function(input, output, session,
               end_year = years$end_year,
               display_metric = config$display_metric,
               zone_filter = inputs$zone_filter,
-              analysis_date = inputs$custom_today,  # CRITICAL: Pass the analysis date!
-              overview_type = overview_type
+              analysis_date = inputs$custom_today,
+              overview_type = overview_type,
+              facility_filter = facility_filter  # Pass for FOS view facility-specific historical
             )
           }, error = function(e) {
             cat("ERROR loading historical", metric_id, ":", e$message, "\n")
@@ -1242,8 +1364,14 @@ build_overview_server <- function(input, output, session,
   # =========================================================================
   
   # Determine chart function based on overview type
+  # District and facilities views need clickable charts for drill-down
   chart_function <- if (overview_type == "district") {
-    create_zone_chart
+    create_zone_chart  # always clickable
+  } else if (overview_type == "facilities" && overview_config$enable_drill_down) {
+    # Facilities view with drill-down: make bars clickable for FOS navigation
+    function(data, title, y_label, theme, metric_type, metric_config = NULL, ...) {
+      create_overview_chart(data, title, y_label, theme, metric_type, metric_config, clickable = TRUE)
+    }
   } else {
     create_overview_chart
   }
@@ -1304,7 +1432,8 @@ build_overview_server <- function(input, output, session,
             title = paste(local_config$display_name, "Progress"),
             y_label = local_config$y_label,
             theme = current_theme(),
-            metric_type = local_metric_id
+            metric_type = local_metric_id,
+            metric_config = local_config
           )
         }
       })
@@ -1392,16 +1521,17 @@ build_overview_server <- function(input, output, session,
   }
   
   # =========================================================================
-  # DRILL-DOWN CLICK HANDLERS (for district overview)
+  # DRILL-DOWN CLICK HANDLERS
   # =========================================================================
   
-  if (overview_config$enable_drill_down) {
+  # District view: bar chart clicks drill down to facilities
+  if (overview_config$enable_drill_down && overview_type == "district") {
     lapply(metrics, function(metric_id) {
       observeEvent(event_data("plotly_click", source = metric_id), {
         click_data <- event_data("plotly_click", source = metric_id)
         if (!is.null(click_data)) {
-          # Debug the click data
-          cat("DEBUG: Click event for", metric_id, "- x:", click_data$x, "y:", click_data$y, "pointNumber:", click_data$pointNumber, "\n")
+          # Debug the click data (use paste to safely handle list-type fields)
+          cat("DEBUG: Click event for", metric_id, "- x:", paste(click_data$x, collapse=","), "y:", paste(click_data$y, collapse=","), "key:", paste(click_data$key, collapse=","), "pointNumber:", paste(click_data$pointNumber, collapse=","), "\n")
           
           # Get current zone filter to understand data structure
           current_zone_filter <- input$zone_filter
@@ -1410,12 +1540,13 @@ build_overview_server <- function(input, output, session,
           # Zone determination logic based on current filter and click position
           zone_clicked <- NULL
           
+          # Use key aesthetic for reliable label (y returns factor level after coord_flip)
+          display_name <- as.character(click_data$key)
+          # Guard against NA key (happens if click lands on a bar trace without key aesthetic)
+          if (is.na(display_name)) display_name <- NULL
+          
           if (current_zone_filter == "1,2") {
-            # Combined P1+P2 data - check if we have 1 or 2 bars
-            if (!is.null(click_data$pointNumber)) {
-              # If pointNumber 0 and there are 2 bars, it's P1; if 1 bar total, it's combined P1+P2
-              # Check by looking at the y value (display_name)
-              display_name <- as.character(click_data$y)
+            if (!is.null(display_name) && display_name != "NULL") {
               if (grepl("P1", display_name, ignore.case = TRUE)) {
                 zone_clicked <- "P1"
               } else if (grepl("P2", display_name, ignore.case = TRUE)) {
@@ -1429,8 +1560,16 @@ build_overview_server <- function(input, output, session,
             # Single zone selected - pass through the current filter
             zone_clicked <- if (current_zone_filter == "1") "P1" else "P2"
           } else if (current_zone_filter == "separate") {
-            # Separate zones - use pointNumber or y value to determine
-            if (!is.null(click_data$pointNumber)) {
+            # Separate zones - use key to determine which zone was clicked
+            if (!is.null(display_name) && display_name != "NULL") {
+              if (grepl("P1", display_name, ignore.case = TRUE)) {
+                zone_clicked <- "P1"
+              } else if (grepl("P2", display_name, ignore.case = TRUE)) {
+                zone_clicked <- "P2"
+              }
+            }
+            # Fallback to pointNumber if key didn't help
+            if (is.null(zone_clicked) && !is.null(click_data$pointNumber)) {
               zone_clicked <- if (click_data$pointNumber == 0) "P1" else "P2"
             }
           }
@@ -1438,6 +1577,7 @@ build_overview_server <- function(input, output, session,
           cat("DEBUG: Determined zone_clicked:", zone_clicked, "\n")
           
           # Navigate with the determined zone and clicked metric
+          # Pass zone_filter_raw to preserve 'separate' mode in the drill-down URL
           navigate_to_overview(
             session, 
             overview_config$drill_down_target,
@@ -1445,12 +1585,78 @@ build_overview_server <- function(input, output, session,
             input$custom_today, 
             input$expiring_days,
             current_theme(),
-            metric_id  # Pass the clicked metric
+            metric_id,  # Pass the clicked metric
+            zone_filter_raw = current_zone_filter
           )
         }
       })
     })
   }
+  
+  # Facilities view: stat box click shows hidden detail boxes (JS toggles the container)
+  # Bar chart click drills down to FOS
+  if (overview_type == "facilities") {
+    # Stat box click just triggers detail boxes (handled by renderUI below + JS toggle)
+    observeEvent(input$selected_facility, {
+      facility <- input$selected_facility
+      if (!is.null(facility) && facility != "") {
+        cat("DEBUG: Facility stat box clicked - showing detail boxes for:", facility, "\n")
+        # The detail_boxes renderUI reacts to input$selected_facility automatically
+      }
+    })
+    
+    # Bar chart click navigates to FOS drill-down
+    if (overview_config$enable_drill_down) {
+      lapply(metrics, function(metric_id) {
+        local({
+          local_metric_id <- metric_id
+          observeEvent(event_data("plotly_click", source = local_metric_id), {
+            click_data <- event_data("plotly_click", source = local_metric_id)
+            if (!is.null(click_data)) {
+              cat("DEBUG: Facilities chart bar clicked for", local_metric_id, "\n")
+              cat("DEBUG: Click data - x:", paste(click_data$x, collapse=","), "y:", paste(click_data$y, collapse=","), "key:", paste(click_data$key, collapse=","), "\n")
+              
+              # Use key aesthetic for reliable facility name (y returns factor level after coord_flip)
+              facility_clicked <- as.character(click_data$key)
+              # Guard against NA key (happens if click lands on a bar trace without key aesthetic)
+              if (is.na(facility_clicked)) facility_clicked <- as.character(click_data$x)
+              
+              # Determine zone and preserve raw filter for 'separate' mode
+              zone_value <- isolate(input$zone_filter)
+              zone_clicked <- if (zone_value %in% c("1", "2")) {
+                paste0("P", zone_value)
+              } else {
+                "1,2"
+              }
+              
+              navigate_to_overview(
+                session,
+                "fos_overview",
+                zone_clicked,
+                isolate(input$custom_today),
+                isolate(input$expiring_days),
+                current_theme(),
+                metric_id = local_metric_id,
+                facility_clicked = facility_clicked,
+                zone_filter_raw = zone_value
+              )
+            }
+          })
+        })
+      })
+    }
+  }
+  
+  # FOS view: FOS stat box click to show detail value boxes
+  if (overview_type == "fos") {
+    observeEvent(input$selected_fos, {
+      fos <- input$selected_fos
+      if (!is.null(fos) && fos != "") {
+        cat("DEBUG: FOS clicked:", fos, "\n")
+      }
+    })
+  }
+  
   # =========================================================================
   # SUMMARY STATS OUTPUT
   # =========================================================================
@@ -1498,7 +1704,7 @@ build_overview_server <- function(input, output, session,
     
     # Generate value boxes
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter)
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter)
       message("[RENDER-UI] generate_summary_stats SUCCESS")
       stats
     }, error = function(e) {
@@ -1538,10 +1744,21 @@ build_overview_server <- function(input, output, session,
   
   output$facility_detail_boxes <- renderUI({
     tryCatch({
-      req(input$selected_facility)
       req(current_data())
       
-      facility <- input$selected_facility
+      # Determine what was selected: FOS or facility
+      selected_entity <- NULL
+      entity_type <- NULL
+      
+      if (overview_type == "fos" && !is.null(input$selected_fos) && input$selected_fos != "") {
+        selected_entity <- input$selected_fos
+        entity_type <- "fos"
+      } else if (!is.null(input$selected_facility) && input$selected_facility != "") {
+        selected_entity <- input$selected_facility
+        entity_type <- "facility"
+      }
+      
+      req(selected_entity)
 
       inputs <- last_refresh_inputs()
       if (is.null(inputs)) {
@@ -1549,14 +1766,14 @@ build_overview_server <- function(input, output, session,
           class = "alert alert-info",
           style = "margin: 10px 0;",
           icon("sync"), " ",
-          "Press Refresh to load facility details."
+          "Press Refresh to load details."
         ))
       }
       
       if (is.null(metrics_filter) || length(metrics_filter) == 0) {
         return(div(
           class = "alert alert-info",
-          "Select a metric category to see facility details."
+          "Select a metric category to see details."
         ))
       }
       
@@ -1576,29 +1793,57 @@ build_overview_server <- function(input, output, session,
       # Use already-loaded data (avoid reloading)
       preloaded_detail <- current_data()[[metric_id]]
       if (!is.null(preloaded_detail) && nrow(preloaded_detail) > 0) {
-        facility_key <- trimws(tolower(facility))
+        entity_key <- trimws(tolower(selected_entity))
         
-        # Create facility matching vectors
-        facility_match <- if ("facility" %in% names(preloaded_detail)) {
-          trimws(tolower(as.character(preloaded_detail$facility))) == facility_key
+        if (entity_type == "fos") {
+          # Match by fos column or display_name
+          fos_match <- if ("fos" %in% names(preloaded_detail)) {
+            trimws(tolower(as.character(preloaded_detail$fos))) == entity_key
+          } else {
+            rep(FALSE, nrow(preloaded_detail))
+          }
+          display_match <- if ("display_name" %in% names(preloaded_detail)) {
+            trimws(tolower(as.character(preloaded_detail$display_name))) == entity_key
+          } else {
+            rep(FALSE, nrow(preloaded_detail))
+          }
+          preloaded_detail <- preloaded_detail[fos_match | display_match, , drop = FALSE]
         } else {
-          rep(FALSE, nrow(preloaded_detail))
+          # Match by facility
+          facility_match <- if ("facility" %in% names(preloaded_detail)) {
+            trimws(tolower(as.character(preloaded_detail$facility))) == entity_key
+          } else {
+            rep(FALSE, nrow(preloaded_detail))
+          }
+          display_match <- if ("display_name" %in% names(preloaded_detail)) {
+            trimws(tolower(as.character(preloaded_detail$display_name))) == entity_key
+          } else {
+            rep(FALSE, nrow(preloaded_detail))
+          }
+          preloaded_detail <- preloaded_detail[facility_match | display_match, , drop = FALSE]
         }
-        
-        display_match <- if ("display_name" %in% names(preloaded_detail)) {
-          trimws(tolower(as.character(preloaded_detail$display_name))) == facility_key
-        } else {
-          rep(FALSE, nrow(preloaded_detail))
-        }
-        
-        # Apply the filter
-        preloaded_detail <- preloaded_detail[facility_match | display_match, , drop = FALSE]
       }
 
-      # Generate the detail boxes
+      # Get display name for header
+      header_label <- selected_entity
+      if (entity_type == "fos") {
+        # Try to get FOS shortname from data
+        for (mid in metrics) {
+          md <- current_data()[[mid]]
+          if (!is.null(md) && "fos" %in% names(md) && "display_name" %in% names(md)) {
+            match_row <- md[md$fos == selected_entity, ]
+            if (nrow(match_row) > 0) {
+              header_label <- as.character(match_row$display_name[1])
+              break
+            }
+          }
+        }
+      }
+
+      # Generate the detail boxes (reuse existing generator)
       generate_facility_detail_boxes(
         metric_id = metric_id,
-        facility = facility,
+        facility = header_label,
         zone_filter = inputs$zone_filter,
         analysis_date = inputs$custom_today,
         expiring_days = inputs$expiring_days,
@@ -1606,18 +1851,17 @@ build_overview_server <- function(input, output, session,
         detail_data = preloaded_detail
       )
     }, error = function(e) {
-      # Capture and display actual error message in UI
       div(
         class = "alert alert-danger",
         style = "margin: 10px 0; word-break: break-word;",
         icon("exclamation-circle"), " ",
-        strong("Error loading facility details:"), br(),
+        strong("Error loading details:"), br(),
         code(e$message)
       )
     })
   })
 
-  # Ensure facility detail boxes render even when container is hidden
+  # Ensure detail boxes render even when container is hidden
   outputOptions(output, "facility_detail_boxes", suspendWhenHidden = FALSE)
   
   # =========================================================================

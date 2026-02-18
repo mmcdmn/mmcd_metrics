@@ -62,7 +62,7 @@ load_raw_data <- function(analysis_date = NULL,
     if (is.null(con_overview)) {
       return(list(
         sites = data.frame(
-          facility = character(), zone = character(),
+          facility = character(), fosarea = character(), zone = character(),
           total_count = integer(), active_count = integer(), expiring_count = integer()
         ),
         treatments = data.frame(),
@@ -81,9 +81,9 @@ load_raw_data <- function(analysis_date = NULL,
       # 2) Get latest qualifying inspection from current table (covers current season)
       # 3) For sites not recently inspected in current, check archive with IN clause
       
-      # Step 1: Prehatch ground sites
+      # Step 1: Prehatch ground sites (include fosarea for FOS drill-down)
       prehatch <- dbGetQuery(con_overview, sprintf("
-        SELECT b.sitecode, sc.facility, sc.zone
+        SELECT b.sitecode, sc.facility, sc.fosarea, sc.zone
         FROM loc_breeding_sites b
         INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
         WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
@@ -95,7 +95,7 @@ load_raw_data <- function(analysis_date = NULL,
         safe_disconnect(con_overview)
         return(list(
           sites = data.frame(
-            facility = character(), zone = character(),
+            facility = character(), fosarea = character(), zone = character(),
             total_count = integer(), active_count = integer(), expiring_count = integer()
           ),
           treatments = data.frame(),
@@ -153,9 +153,9 @@ load_raw_data <- function(analysis_date = NULL,
           is_gap = is.na(final_insp) | final_insp < gap_cutoff
         )
       
-      # Aggregate to facility + zone
+      # Aggregate to facility + fosarea + zone (fosarea needed for FOS drill-down)
       sites <- sites_combined %>%
-        group_by(facility, zone) %>%
+        group_by(facility, fosarea, zone) %>%
         summarise(
           total_count = n(),
           active_count = sum(!is_gap),
@@ -178,7 +178,7 @@ load_raw_data <- function(analysis_date = NULL,
       if (!is.null(con_overview)) tryCatch(safe_disconnect(con_overview), error = function(e2) NULL)
       return(list(
         sites = data.frame(
-          facility = character(), zone = character(),
+          facility = character(), fosarea = character(), zone = character(),
           total_count = integer(), active_count = integer(), expiring_count = integer()
         ),
         treatments = data.frame(),

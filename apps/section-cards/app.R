@@ -223,32 +223,69 @@ server <- function(input, output, session) {
   
   # Reactive values
   cards_data <- reactiveVal(NULL)
-  
+
+  # Dynamic columns discovered from the JK table
+  jk_dynamic_cols <- reactiveVal(character(0))
+
+  # Load dynamic columns on startup (runs once - no reactive dependencies)
+  observe({
+    tryCatch({
+      dyn_cols <- get_dynamic_columns()
+      jk_dynamic_cols(dyn_cols)
+
+      # Add dynamic columns to column_order and checkbox_states
+      current_order <- isolate(column_order())
+      current_states <- isolate(checkbox_states())
+      new_cols <- setdiff(dyn_cols, current_order)
+      if (length(new_cols) > 0) {
+        column_order(c(current_order, new_cols))
+        for (col in new_cols) {
+          current_states[[col]] <- FALSE
+        }
+        checkbox_states(current_states)
+      }
+
+      message("[section_cards] Dynamic columns discovered: ", paste(dyn_cols, collapse = ", "))
+    }, error = function(e) {
+      message("[section_cards] Error loading dynamic columns: ", e$message)
+    })
+  })
+
   # Dynamic title fields panel based on site type
   output$title_fields_panel <- renderUI({
     site_type <- input$site_type
     
     if (is.null(site_type) || site_type == "breeding") {
-      # Air/Ground site fields
+      # Air/Ground site fields - static choices
+      static_choices <- list(
+        "Priority" = "priority",
+        "Acres" = "acres",
+        "Type" = "type",
+        "Culex" = "culex",
+        "Spring Aedes" = "spr_aedes",
+        "Perturbans" = "perturbans",
+        "Prehatch" = "prehatch",
+        "Prehatch Calculation" = "prehatch_calc",
+        "Sample Site" = "sample",
+        "Section" = "section",
+        "Remarks" = "remarks"
+      )
+
+      # Add dynamic columns from JK table
+      dyn_cols <- jk_dynamic_cols()
+      if (length(dyn_cols) > 0) {
+        dyn_labels <- sapply(dyn_cols, humanize_column_name)
+        dyn_choices <- as.list(setNames(dyn_cols, paste0("[DB] ", dyn_labels)))
+        static_choices <- c(static_choices, dyn_choices)
+      }
+
       wellPanel(
         h5("Title Section Fields"),
-        p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
+        p(class = "help-block", "Select fields to display in the card header (sitecode is always included). [DB] fields are dynamic from database."),
         checkboxGroupInput(
           "title_fields",
           NULL,
-          choices = list(
-            "Priority" = "priority",
-            "Acres" = "acres",
-            "Type" = "type",
-            "Culex" = "culex",
-            "Spring Aedes" = "spr_aedes",
-            "Perturbans" = "perturbans",
-            "Prehatch" = "prehatch",
-            "Prehatch Calculation" = "prehatch_calc",
-            "Sample Site" = "sample",
-            "Section" = "section",
-            "Remarks" = "remarks"
-          ),
+          choices = static_choices,
           selected = c("priority", "acres", "type", "remarks")
         )
       )
@@ -469,6 +506,13 @@ server <- function(input, output, session) {
       date = "Date", wet_pct = "Wet %", emp_num = "Emp #", 
       num_dip = "#/Dip", sample_num = "Sample #", amt = "Amt", mat = "Mat"
     )
+
+    # Add labels for dynamic DB columns
+    for (col_id in col_order) {
+      if (!(col_id %in% names(col_labels))) {
+        col_labels[[col_id]] <- paste0("[DB] ", humanize_column_name(col_id))
+      }
+    }
     
     tags$div(
       id = "column_order_ui",
@@ -525,7 +569,8 @@ server <- function(input, output, session) {
   # Update stored checkbox states when they change
   observe({
     current_states <- checkbox_states()
-    col_ids <- c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat")
+    # Use all columns in current order (includes both static and dynamic)
+    col_ids <- column_order()
     
     for (col_id in col_ids) {
       checkbox_id <- paste0("col_check_", col_id)
@@ -582,11 +627,14 @@ server <- function(input, output, session) {
     
     # Load data based on site type
     tryCatch({
+      t0 <- proc.time()[[3]]
       if (!is.null(input$site_type) && input$site_type == "structures") {
         data <- get_structures_with_sections()
       } else {
         data <- get_breeding_sites_with_sections()
       }
+      message(sprintf("[section_cards] Data loaded: %d rows, %d cols in %.2fs",
+                      nrow(data), ncol(data), proc.time()[[3]] - t0))
       cards_data(data)
       
     }, error = function(e) {

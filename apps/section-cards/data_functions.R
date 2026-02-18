@@ -1,6 +1,57 @@
 # data_functions.R
 # Data processing functions for Section Cards
 
+# =============================================================================
+# CONSTANTS: Core and excluded columns for loc_breeding_site_card_JK
+# =============================================================================
+
+# Core breeding site columns - always selected explicitly in queries
+CORE_BREEDING_COLS <- c("sitecode", "priority", "acres", "type", "air_gnd",
+                        "culex", "spr_aedes", "coq_pert", "prehatch",
+                        "remarks", "drone", "sample", "facility")
+
+# Internal/structural columns excluded from dynamic selection
+EXCLUDED_INTERNAL_COLS <- c("id", "geom", "fid", "site", "sectcode", "zone","foreman")
+
+# Combined exclusion list for dynamic column discovery
+ALL_EXCLUDED_FROM_DYNAMIC <- c(CORE_BREEDING_COLS, EXCLUDED_INTERNAL_COLS)
+
+#' Convert a column name to a human-readable label
+#'
+#' @param col_name The raw column name (e.g., "airmap_num")
+#' @return A human-readable label (e.g., "Airmap Num")
+#' @export
+humanize_column_name <- function(col_name) {
+  label <- gsub("_", " ", col_name)
+  label <- tools::toTitleCase(label)
+  return(label)
+}
+
+#' Get dynamic (non-core) column names from loc_breeding_site_card_JK
+#'
+#' Queries information_schema to discover columns that aren't part of the
+#' core breeding site fields. These columns may change as users modify the table.
+#'
+#' @param con Optional database connection. If NULL, creates a new one.
+#' @return Character vector of dynamic column names
+#' @export
+get_dynamic_columns <- function(con = NULL) {
+  own_con <- is.null(con)
+  if (own_con) {
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
+  }
+
+  all_cols <- dbGetQuery(con, "
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'loc_breeding_site_card_JK'
+    ORDER BY ordinal_position
+  ")$column_name
+
+  return(setdiff(all_cols, ALL_EXCLUDED_FROM_DYNAMIC))
+}
+
 #' Get filter options from database (lightweight query)
 #' 
 #' Retrieves unique values for filter dropdowns without loading full dataset
@@ -14,8 +65,8 @@ get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
   
-  # Build filter conditions
-  where_conditions <- "b.enddate IS NULL AND g.facility IS NOT NULL AND g.sectcode IS NOT NULL AND g.fosarea IS NOT NULL"
+  # Build filter conditions (no enddate filter - JK table doesn't have enddate)
+  where_conditions <- "g.facility IS NOT NULL AND g.sectcode IS NOT NULL AND g.fosarea IS NOT NULL"
   
   if (!is.null(facility_filter) && facility_filter != "all") {
     where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
@@ -30,8 +81,8 @@ get_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
       g.facility,
       g.sectcode as section,
       g.fosarea
-    FROM public.loc_breeding_sites b
-    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    FROM public.\"loc_breeding_site_card_JK\" b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = b.sectcode
     WHERE ", where_conditions, "
     ORDER BY g.facility, g.sectcode, g.fosarea
   ")
@@ -118,18 +169,28 @@ get_sections_by_towncode <- function(towncode_filter = NULL, facility_filter = N
 }
 
 #' Get breeding sites data with section information
-#' 
-#' This function retrieves breeding site data and joins with section (gis_sectcode)
-#' information using the correct JOIN logic to avoid ambiguous matches.
-#' 
-#' @return A data frame with breeding site and section information
+#'
+#' This function retrieves breeding site data from loc_breeding_site_card_JK
+#' and joins with section (gis_sectcode) information.
+#' Dynamically discovers extra columns in the JK table beyond the core fields.
+#'
+#' @return A data frame with breeding site, section, and dynamic column information
 #' @export
 get_breeding_sites_with_sections <- function() {
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
-  
-  query <- "
-    SELECT 
+
+  # Discover dynamic columns from the JK table
+  dynamic_cols <- get_dynamic_columns(con)
+
+  # Build dynamic SELECT clause for extra columns
+  dynamic_select <- ""
+  if (length(dynamic_cols) > 0) {
+    dynamic_select <- paste0(",\n      b.", dynamic_cols, collapse = "")
+  }
+
+  query <- paste0("
+    SELECT
       b.sitecode,
       b.priority,
       b.acres,
@@ -146,18 +207,14 @@ get_breeding_sites_with_sections <- function() {
       g.sectcode as section,
       g.zone,
       g.facility,
-      g.fosarea
-    FROM public.loc_breeding_sites b
-    -- CRITICAL: Use exact sectcode match to avoid ambiguous joins
-    -- This matches the first 7 characters of sitecode with sectcode
-    -- Example: sitecode '191819-045' -> left(sitecode,7) = '191819-' matches sectcode '191819-'
-    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
-    WHERE b.enddate IS NULL
+      g.fosarea", dynamic_select, "
+    FROM public.\"loc_breeding_site_card_JK\" b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = b.sectcode
     ORDER BY b.sitecode
-  "
-  
+  ")
+
   data <- dbGetQuery(con, query)
-  
+
   return(data)
 }
 

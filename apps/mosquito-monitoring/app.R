@@ -93,8 +93,8 @@ colorspecieslist <- list("Total_Ae_+_Cq" = "#000000", Total_Ae_springs = "#00800
                          sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
                          sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
                          Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-                         Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-                         Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+                         Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+                         Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
                          sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF" )
 
 shapespecieslist <- list("Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_summers = 1, Cq_perturbans_42 = 1,
@@ -109,8 +109,8 @@ shapespecieslist <- list("Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_sum
                          Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
                          sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
                          sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-                         Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-                         Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+                         Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+                         Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
                          Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18)
               
 
@@ -354,8 +354,8 @@ server <- function(input, output, session) {
           sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
           sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
           Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-          Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+          Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
           sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
         )) +
         scale_shape_manual(name = "Species",  values = c(
@@ -371,8 +371,8 @@ server <- function(input, output, session) {
           Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
           sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
           sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-          Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+          Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
           Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
         )) +
         geom_point(aes(color = spp_name, shape = spp_name), size=3)
@@ -408,8 +408,8 @@ server <- function(input, output, session) {
           sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
           sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
           Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-          Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+          Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
           sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
         )) +
         scale_shape_manual(name = "Species",  values = c(
@@ -425,8 +425,8 @@ server <- function(input, output, session) {
           Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
           sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
           sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-          Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+          Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
           Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
         )) +
         #geom_point(aes(color = spp_name)) +
@@ -469,8 +469,8 @@ server <- function(input, output, session) {
           sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
           sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
           Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-          Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+          Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
           sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
         )) +
         scale_shape_manual(name = "Species",  values = c(
@@ -486,8 +486,8 @@ server <- function(input, output, session) {
           Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
           sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
           sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-          Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+          Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
           Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
         )) +
         geom_point(aes(color = spp_name, shape = spp_name), size=3)
@@ -522,8 +522,8 @@ server <- function(input, output, session) {
           sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
           sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
           Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-          Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+          Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
           sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
         )) +
         scale_shape_manual(name = "Species",  values = c(
@@ -539,8 +539,8 @@ server <- function(input, output, session) {
           Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
           sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
           sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-          Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+          Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
           Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
         )) +
         #geom_point(aes(color = species)) +
@@ -651,14 +651,16 @@ server <- function(input, output, session) {
   #for (i in 1:nrow(dfsdtest)) {
   unique_speciesONE <- reactive({unique(dataONE()$spp_name)})
   unique_yearONE <- reactive({unique(dataONE()$Year)})
-  new_dataONE = data.frame()
-  
   DummyONE <- reactive({
-    lapply(unique_yearONE(), function(i) {
-      
-      new_rowONE <- data.frame(Year = i, spp_name = input$speciesONE, avg = NA, sd = NA, inspdate = as.Date(paste(i, "-05-01", sep = "")))
-      new_dataONE <- rbind(new_dataONE, new_rowONE)
+    dummy_list_one <- lapply(unique_yearONE(), function(i) {
+      new_rowONE <- data.frame(Year = i, spp_name = input$speciesONE, avg = NA, sd = NA, sum = NA, inspdate = as.Date(paste(i, "-05-01", sep = "")))
+      return(new_rowONE)
     })
+    if (length(dummy_list_one) > 0) {
+      do.call(rbind, dummy_list_one)
+    } else {
+      data.frame(Year = integer(0), spp_name = character(0), avg = numeric(0), sd = numeric(0), sum = numeric(0), inspdate = as.Date(character(0)))
+    }
   })
   # Combining the original data with the new rows
   RealDataONE <- reactive({
@@ -732,8 +734,8 @@ server <- function(input, output, session) {
           sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
           sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
           Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-          Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+          Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
           sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF" 
         )) +
         scale_shape_manual(name = "Species",  values = c(
@@ -749,8 +751,8 @@ server <- function(input, output, session) {
           Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
           sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
           sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-          Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+          Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
           Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18
         )) +
         geom_point(aes(color = spp_name, shape = spp_name), size=3)
@@ -785,8 +787,8 @@ server <- function(input, output, session) {
           sp21_stict = "#FF00FF", sp25_trivi = "#800080", sp261ae_unid = "#000000", sp262spr_unid = "#008000",
           sp264summ_unid = "#ffa500", sp50_hende = "#7fff00", Ae_albopictus_51 = "#FF0000",
           Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
-          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
-          Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+          Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", Cs_inornata_38 = "#0000FF",
+          Total_Psorophora = "#00FFFF", Cs_melanura_39 = "#FF0000", Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
           sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
         )) +
         scale_shape_manual(name = "Species",  values = c(
@@ -802,8 +804,8 @@ server <- function(input, output, session) {
           Ae_vexans_26 = 19, sp02_atrop = 19, Ae_canadensis_6 = 19, Ae_dorsalis_10 = 19, sp16_nigro = 19,
           sp21_stict = 19, sp25_trivi = 19, sp261ae_unid = 19, sp262spr_unid = 19, sp264summ_unid = 19,
           sp50_hende = 19, Ae_albopictus_51 = 19, Ae_japonicus_52 = 19, Ps_ciliata_44 = 3,
-          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, sp38_inorn = 3,
-          Total_Psorophora = 3, Culiseta_melanura = 18, sp40_minne = 18, sp41_morsi = 18, sp411cs_un = 18,
+          Ps_columbiae_45 = 3, Ps_ferox_46 = 3, sp471ps_un = 3, Ps_horrida_47 = 3, Cs_inornata_38 = 3,
+          Total_Psorophora = 3, Cs_melanura_39 = 18, Cs_minnesotae_40 = 18, Cs_morsitans_41 = 18, sp411cs_un = 18,
           Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18 
         )) +
         #geom_point(aes(color = species)) +

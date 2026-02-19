@@ -223,40 +223,34 @@ server <- function(input, output, session) {
   
   # Reactive values
   cards_data <- reactiveVal(NULL)
-
-  # Dynamic columns discovered from the JK table
+  
+  # ==========================================================================
+  # DYNAMIC COLUMN DISCOVERY from JK table
+  # Discover extra columns beyond core at startup
+  # ==========================================================================
   jk_dynamic_cols <- reactiveVal(character(0))
-
-  # Load dynamic columns on startup (runs once - no reactive dependencies)
+  
   observe({
     tryCatch({
       dyn_cols <- get_dynamic_columns()
       jk_dynamic_cols(dyn_cols)
-
-      # Add dynamic columns to column_order and checkbox_states
-      current_order <- isolate(column_order())
-      current_states <- isolate(checkbox_states())
-      new_cols <- setdiff(dyn_cols, current_order)
-      if (length(new_cols) > 0) {
-        column_order(c(current_order, new_cols))
-        for (col in new_cols) {
-          current_states[[col]] <- FALSE
-        }
-        checkbox_states(current_states)
-      }
-
-      message("[section_cards] Dynamic columns discovered: ", paste(dyn_cols, collapse = ", "))
+      message(sprintf("[section_cards] Discovered %d dynamic columns: %s",
+                      length(dyn_cols), paste(dyn_cols, collapse = ", ")))
     }, error = function(e) {
-      message("[section_cards] Error loading dynamic columns: ", e$message)
+      message("[section_cards] Dynamic column discovery failed: ", e$message)
     })
   })
-
+  
   # Dynamic title fields panel based on site type
   output$title_fields_panel <- renderUI({
     site_type <- input$site_type
     
     if (is.null(site_type) || site_type == "breeding") {
-      # Air/Ground site fields - static choices
+      # Air/Ground site fields - includes dynamic columns from JK table
+      # [DB] options are filtered to only show columns that have data
+      # for the currently selected facility/foreman filters
+      
+      # Static core choices
       static_choices <- list(
         "Priority" = "priority",
         "Acres" = "acres",
@@ -267,26 +261,55 @@ server <- function(input, output, session) {
         "Prehatch" = "prehatch",
         "Prehatch Calculation" = "prehatch_calc",
         "Sample Site" = "sample",
+        "Drone" = "drone",
         "Section" = "section",
+        "Facility" = "facility",
+        "Zone" = "zone",
+        "Foreman" = "foreman",
         "Remarks" = "remarks"
       )
-
-      # Add dynamic columns from JK table
+      
+      # Add dynamic columns from JK table with [DB] prefix
+      # Only show columns that have data for current facility/foreman filter
       dyn_cols <- jk_dynamic_cols()
       if (length(dyn_cols) > 0) {
-        dyn_labels <- sapply(dyn_cols, humanize_column_name)
-        dyn_choices <- as.list(setNames(dyn_cols, paste0("[DB] ", dyn_labels)))
-        static_choices <- c(static_choices, dyn_choices)
+        fac <- input$filter_facility
+        fos <- input$filter_fosarea
+        cols_with_data <- tryCatch(
+          get_dynamic_cols_with_data(dyn_cols, facility_filter = fac, fosarea_filter = fos),
+          error = function(e) dyn_cols  # fallback: show all on error
+        )
+        if (length(cols_with_data) > 0) {
+          dyn_choices <- setNames(
+            as.list(cols_with_data),
+            paste0("[DB] ", sapply(cols_with_data, humanize_column_name))
+          )
+          all_choices <- c(static_choices, dyn_choices)
+        } else {
+          all_choices <- static_choices
+        }
+      } else {
+        all_choices <- static_choices
       }
-
+      
+      # Preserve user's previous title_fields selections if they exist
+      # Only use defaults on first render
+      prev_selected <- isolate(input$title_fields)
+      if (is.null(prev_selected)) {
+        sel <- c("priority", "acres", "type", "remarks")
+      } else {
+        # Keep previous selections that are still valid choices
+        sel <- intersect(prev_selected, unlist(all_choices))
+      }
+      
       wellPanel(
         h5("Title Section Fields"),
-        p(class = "help-block", "Select fields to display in the card header (sitecode is always included). [DB] fields are dynamic from database."),
+        p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
         checkboxGroupInput(
           "title_fields",
           NULL,
-          choices = static_choices,
-          selected = c("priority", "acres", "type", "remarks")
+          choices = all_choices,
+          selected = sel
         )
       )
     } else {
@@ -489,37 +512,80 @@ server <- function(input, output, session) {
     })
   })
   
-  # Track column order - this will change when up/down buttons are used
-  column_order <- reactiveVal(c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat"))
+  # Track column order - includes static table cols + dynamic DB cols
+  # Dynamic cols are appended after discovery
+  static_table_cols <- c("date", "wet_pct", "emp_num", "num_dip", "sample_num", "amt", "mat")
+  column_order <- reactiveVal(static_table_cols)
   
   # Store checkbox states to preserve during re-rendering
+  # Static cols default ON, dynamic cols default OFF
   checkbox_states <- reactiveVal(list(
     date = TRUE, wet_pct = TRUE, emp_num = TRUE, 
     num_dip = TRUE, sample_num = TRUE, amt = TRUE, mat = TRUE
   ))
   
-  # Render column ordering UI - updates when order changes
-  output$column_order_ui <- renderUI({
-    col_order <- column_order()
-    current_states <- checkbox_states()
-    col_labels <- list(
+  # When dynamic columns are discovered, add them to the column order and checkbox states
+  observeEvent(jk_dynamic_cols(), {
+    dyn_cols <- jk_dynamic_cols()
+    if (length(dyn_cols) > 0) {
+      current_order <- column_order()
+      # Only add dynamic cols that aren't already in the order
+      new_cols <- setdiff(dyn_cols, current_order)
+      if (length(new_cols) > 0) {
+        column_order(c(current_order, new_cols))
+        # Add checkbox states for new dynamic cols (default OFF)
+        current_states <- checkbox_states()
+        for (col in new_cols) {
+          current_states[[col]] <- FALSE
+        }
+        checkbox_states(current_states)
+        message(sprintf("[section_cards] Added %d dynamic cols to table column order: %s",
+                        length(new_cols), paste(new_cols, collapse = ", ")))
+      }
+    }
+  })
+  
+  # Build column labels: static + dynamic with [DB] prefix
+  get_col_labels <- function() {
+    labels <- list(
       date = "Date", wet_pct = "Wet %", emp_num = "Emp #", 
       num_dip = "#/Dip", sample_num = "Sample #", amt = "Amt", mat = "Mat"
     )
-
-    # Add labels for dynamic DB columns
-    for (col_id in col_order) {
-      if (!(col_id %in% names(col_labels))) {
-        col_labels[[col_id]] <- paste0("[DB] ", humanize_column_name(col_id))
-      }
+    dyn_cols <- jk_dynamic_cols()
+    for (col in dyn_cols) {
+      labels[[col]] <- paste0("[DB] ", humanize_column_name(col))
     }
+    return(labels)
+  }
+  
+  # Render column ordering UI - updates when order changes
+  # Dynamic [DB] cols are filtered to only show ones with data for current facility/foreman
+  output$column_order_ui <- renderUI({
+    col_order <- column_order()
+    current_states <- checkbox_states()
+    col_labels <- get_col_labels()
+    dyn_cols <- jk_dynamic_cols()
+    
+    # Filter dynamic cols by data presence for current filters
+    cols_with_data <- character(0)
+    if (length(dyn_cols) > 0) {
+      fac <- input$filter_facility
+      fos <- input$filter_fosarea
+      cols_with_data <- tryCatch(
+        get_dynamic_cols_with_data(dyn_cols, facility_filter = fac, fosarea_filter = fos),
+        error = function(e) dyn_cols  # fallback: show all on error
+      )
+    }
+    
+    # Only show static cols + dynamic cols that have data
+    visible_order <- col_order[col_order %in% c(static_table_cols, cols_with_data)]
     
     tags$div(
       id = "column_order_ui",
       style = "max-height: 300px; overflow-y: auto;",
-      lapply(seq_along(col_order), function(i) {
-        col_id <- col_order[[i]]
-        col_label <- col_labels[[col_id]]
+      lapply(seq_along(visible_order), function(i) {
+        col_id <- visible_order[[i]]
+        col_label <- if (col_id %in% names(col_labels)) col_labels[[col_id]] else humanize_column_name(col_id)
         # Alternating background colors
         bg_color <- if (i %% 2 == 1) "#f8f9fa" else "#e9ecef"
         
@@ -529,7 +595,7 @@ server <- function(input, output, session) {
           checkboxInput(
             paste0("col_check_", col_id),
             NULL,
-            value = current_states[[col_id]],  # Use stored state
+            value = if (col_id %in% names(current_states)) current_states[[col_id]] else FALSE,
             width = "30px"
           ),
           tags$span(col_label, style = "flex-grow: 1; padding-left: 3px; font-weight: 500;"),
@@ -566,10 +632,9 @@ server <- function(input, output, session) {
     return(selected_ids)
   }
   
-  # Update stored checkbox states when they change
+  # Update stored checkbox states when they change (covers all cols in current order)
   observe({
     current_states <- checkbox_states()
-    # Use all columns in current order (includes both static and dynamic)
     col_ids <- column_order()
     
     for (col_id in col_ids) {
@@ -627,14 +692,11 @@ server <- function(input, output, session) {
     
     # Load data based on site type
     tryCatch({
-      t0 <- proc.time()[[3]]
       if (!is.null(input$site_type) && input$site_type == "structures") {
         data <- get_structures_with_sections()
       } else {
         data <- get_breeding_sites_with_sections()
       }
-      message(sprintf("[section_cards] Data loaded: %d rows, %d cols in %.2fs",
-                      nrow(data), ncol(data), proc.time()[[3]] - t0))
       cards_data(data)
       
     }, error = function(e) {

@@ -15,9 +15,6 @@
 #' @return HTML string with printable section cards
 generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE) {
   
-  t_start <- proc.time()[[3]]
-  message(sprintf("[section_cards] Starting HTML generation for %d cards...", nrow(data)))
-
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
   facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
@@ -25,8 +22,6 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # Map FOS codes to names using db_helpers
   fos_lookup <- get_foremen_lookup()
   fos_map <- setNames(fos_lookup$shortname, sprintf("%04d", as.numeric(fos_lookup$emp_num)))
-
-  message(sprintf("[section_cards] Lookups loaded in %.2fs", proc.time()[[3]] - t_start))
   
   # Define field labels for display
   field_labels <- list(
@@ -39,6 +34,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     zone = "Zone",
     facility = "Facility",
     fosarea = "FOS Area",
+    foreman = "Foreman",
     
     # Breeding site specific fields
     acres = "Acres",
@@ -50,6 +46,17 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     prehatch_calc = "Prehatch Calculation",
     sample = "Sample Site",
     drone = "Drone",
+    
+    # Dynamic columns from JK table (common extras)
+    ra = "RA",
+    airmap_num = "Airmap #",
+    partialtrt = "Partial Trt",
+    perimacres = "Perim Acres",
+    elevthresh = "Elev Thresh",
+    mapped = "Mapped",
+    catinsp = "Cat Insp",
+    percent = "Percent",
+    dip = "Dip",
     
     # Structure specific fields
     s_type = "Type",
@@ -66,7 +73,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     amt = "Amt",
     mat = "Mat"
   )
-
+  
   # Start HTML with print-friendly CSS
   html <- '
   <style>
@@ -423,33 +430,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   
   <div class="cards-container">
   '
-
-  # Use list accumulation for O(1) append instead of paste0 concatenation
-  parts <- list(html)
-  t_cards_start <- proc.time()[[3]]
-  message(sprintf("[section_cards] CSS/setup done in %.2fs, generating card HTML...", t_cards_start - t_start))
-
-  # Pre-generate the empty table rows HTML once (same for every card)
-  row_cells <- vapply(seq_along(table_fields), function(i) {
-    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
-    paste0('          <td class="', col_class, '"></td>')
-  }, character(1))
-  empty_row <- paste0('        <tr>\n', paste(row_cells, collapse = "\n"), '\n        </tr>')
-  empty_rows_html <- paste(rep(empty_row, num_rows), collapse = "\n")
-
-  # Pre-generate table header HTML once
-  header_cells <- vapply(seq_along(table_fields), function(i) {
-    field <- table_fields[i]
-    label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
-    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
-    paste0('        <th class="', col_class, '">', label, '</th>')
-  }, character(1))
-  table_header_html <- paste0('    <table class="card-table">\n      <thead><tr>\n',
-                               paste(header_cells, collapse = "\n"),
-                               '\n      </tr></thead>\n      <tbody>\n',
-                               empty_rows_html,
-                               '\n      </tbody>\n    </table>')
-
+  
   # Handle splitting by section, priority, and/or type
   if (split_by_section || split_by_priority || split_by_type) {
     # Determine grouping columns
@@ -509,15 +490,15 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
         is_last_page <- (page == num_pages)
         add_page_break <- !(is_last_group && is_last_page)
         
-        parts[[length(parts) + 1]] <- paste0('<div class="card-page', 
+        html <- paste0(html, '<div class="card-page', 
                        ifelse(add_page_break, ' page-break', ''), '">\n')
         
         for (i in start_idx:end_idx) {
-          parts[[length(parts) + 1]] <- generate_card_html(grp_data[i, ], title_fields, table_fields, num_rows, 
-                                    field_labels, facility_map, fos_map, table_header_html, empty_rows_html)
+          html <- paste0(html, generate_card_html(grp_data[i, ], title_fields, table_fields, num_rows, 
+                                    field_labels, facility_map, fos_map))
         }
         
-        parts[[length(parts) + 1]] <- '</div>\n'
+        html <- paste0(html, '</div>\n')
       }
     }
     
@@ -530,31 +511,22 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       start_idx <- (page - 1) * cards_per_page + 1
       end_idx <- min(page * cards_per_page, nrow(data))
       
-      parts[[length(parts) + 1]] <- paste0('<div class="card-page', 
+      html <- paste0(html, '<div class="card-page', 
                      ifelse(page < num_pages, ' page-break', ''), '">\n')
       
       for (i in start_idx:end_idx) {
-        parts[[length(parts) + 1]] <- generate_card_html(data[i, ], title_fields, table_fields, num_rows, 
-                                  field_labels, facility_map, fos_map, table_header_html, empty_rows_html)
+        html <- paste0(html, generate_card_html(data[i, ], title_fields, table_fields, num_rows, 
+                                  field_labels, facility_map, fos_map))
       }
       
-      parts[[length(parts) + 1]] <- '</div>\n'
+      html <- paste0(html, '</div>\n')
     }
   }
   
-  parts[[length(parts) + 1]] <- '</div>'
-  parts[[length(parts) + 1]] <- '<div class="page-footer">Section Cards by Alex Dyakin</div>'
-
-  t_collapse <- proc.time()[[3]]
-  message(sprintf("[section_cards] Card HTML built in %.2fs, collapsing %d parts...",
-                  t_collapse - t_cards_start, length(parts)))
-
-  result <- paste0(parts, collapse = "")
-
-  message(sprintf("[section_cards] Total HTML generation: %.2fs (%.0f KB)",
-                  proc.time()[[3]] - t_start, nchar(result) / 1024))
-
-  return(result)
+  html <- paste0(html, '</div>')
+  html <- paste0(html, '<div class="page-footer">Section Cards by Alex Dyakin</div>')
+  
+  return(html)
 }
 
 #' Generate HTML for a single card
@@ -568,25 +540,19 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
 #' @param field_labels Named list of field display labels
 #' @param facility_map Named vector mapping facility codes to names
 #' @param fos_map Named vector mapping FOS codes to names
-#' @param table_html Pre-built table HTML (header + empty rows) for performance
-#' @param empty_rows_html Pre-built empty rows HTML (unused when table_html provided)
 #' @return HTML string for one card
 generate_card_html <- function(row, title_fields, table_fields, num_rows, 
-                               field_labels, facility_map, fos_map,
-                               table_html = NULL, empty_rows_html = NULL) {
-  # Use list accumulation for O(1) append
-  parts <- vector("list", 50)
-  n <- 0L
-  add <- function(x) { n <<- n + 1L; parts[[n]] <<- x }
+                               field_labels, facility_map, fos_map) {
+  html <- ''
   
   # Track if we need prehatch overlay (computed at end)
   prehatch_overlay_value <- NULL
   
   # Card header with title and selected info fields
-  add('  <div class="section-card">\n')
-  add('    <div class="card-header">\n')
-  add(paste0('      <div class="card-title">', row$sitecode, '</div>\n'))
-  add('      <div class="card-info">\n')
+  html <- paste0(html, '  <div class="section-card">\n')
+  html <- paste0(html, '    <div class="card-header">\n')
+  html <- paste0(html, '      <div class="card-title">', row$sitecode, '</div>\n')
+  html <- paste0(html, '      <div class="card-info">\n')
   
   for (field in title_fields) {
     if (field != "sitecode") {
@@ -617,35 +583,50 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         value <- fos_map[value]
       }
       
+      # Map foreman code to name
+      if (field == "foreman" && value %in% names(fos_map)) {
+        value <- fos_map[value]
+      }
+      
+      # Get label with fallback for dynamic columns
       label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
       
       # Special handling for culex and spr_aedes - only show if Y or not null/empty
       if (field == "culex") {
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
-          add(paste0('        <div class="info-item"><span class="culex-field">',
-                        label, '</span></div>\n'))
+          # Show culex label with green background
+          html <- paste0(html, '        <div class="info-item"><span class="culex-field">',
+                        label, '</span></div>\n')
         }
       } else if (field == "spr_aedes") {
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
-          add(paste0('        <div class="info-item"><span class="spring-aedes-field">',
-                        label, '</span></div>\n'))
+          # Show spring aedes label with orange background
+          html <- paste0(html, '        <div class="info-item"><span class="spring-aedes-field">',
+                        label, '</span></div>\n')
         }
+        # If not Y, don't show anything
       } else if (field == "perturbans") {
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
-          add(paste0('        <div class="info-item"><span class="perturbans-field">',
-                        label, '</span></div>\n'))
+          # Show perturbans label with light blue background
+          html <- paste0(html, '        <div class="info-item"><span class="perturbans-field">',
+                        label, '</span></div>\n')
         }
+        # If not Y, don't show anything
       } else if (field == "sample") {
+        # Sample site - only show if Y with pink background
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
-          add(paste0('        <div class="info-item"><span class="sample-field">',
-                        label, '</span></div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="sample-field">',
+                        label, '</span></div>\n')
         }
+        # If not Y, don't show anything
       } else if (field == "prehatch") {
+        # Prehatch with blue background
         if (!is.na(value) && value != "") {
-          add(paste0('        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="prehatch-field">', value, '</span></div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="prehatch-field">', value, '</span></div>\n')
         }
       } else if (field == "status_udw") {
+        # Structure status (D/W/U) with color coding
         if (!is.na(value) && value != "") {
           status_label <- switch(toupper(value),
             "D" = "Dry",
@@ -659,88 +640,89 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
             "U" = "status-unknown",
             ""
           )
-          add(paste0('        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="', status_class, '">', status_label, '</span></div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="', status_class, '">', status_label, '</span></div>\n')
         }
       } else if (field == "s_type") {
+        # Structure type - display as uppercase
         if (!is.na(value) && value != "") {
-          add(paste0('        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="structure-type">', toupper(value), '</span></div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="structure-type">', toupper(value), '</span></div>\n')
         }
       } else if (field == "sqft") {
+        # Square feet
         if (!is.na(value) && value != "" && as.numeric(value) > 0) {
-          add(paste0('        <div class="info-item"><span class="info-label">',
-                        label, ':</span> ', value, '</div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> ', value, '</div>\n')
         }
       } else if (field == "chambers") {
+        # Chambers - only show for PR type structures and if value > 0
         s_type_val <- row[["s_type"]]
         if (!is.na(s_type_val) && grepl("PR", toupper(s_type_val)) && 
             !is.na(value) && value != "" && as.numeric(value) > 0) {
-          add(paste0('        <div class="info-item"><span class="info-label">',
-                        label, ':</span> ', value, '</div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> ', value, '</div>\n')
         }
       } else if (field == "priority") {
+        # Priority with color coding based on value
         if (!is.na(value) && value != "") {
           priority_class <- paste0("priority-", tolower(value))
-          add(paste0('        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="', priority_class, '">', value, '</span></div>\n'))
+          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                        label, ':</span> <span class="', priority_class, '">', value, '</span></div>\n')
         }
       } else if (field == "remarks") {
-        add(paste0('        <div class="info-item remarks"><span class="info-label">',
-                      label, ':</span> ', value, '</div>\n'))
+        # Remarks get special styling - larger and full width
+        html <- paste0(html, '        <div class="info-item remarks"><span class="info-label">',
+                      label, ':</span> ', value, '</div>\n')
       } else {
-        # Normal display for other fields (including dynamic DB columns)
-        add(paste0('        <div class="info-item"><span class="info-label">',
-                      label, ':</span> ', value, '</div>\n'))
+        # Normal display for other fields
+        html <- paste0(html, '        <div class="info-item"><span class="info-label">',
+                      label, ':</span> ', value, '</div>\n')
       }
       } # Close the else if (field %in% names(row)) block
     }
   }
   
-  add('      </div>\n')
-  add('    </div>\n')
+  html <- paste0(html, '      </div>\n')
+  html <- paste0(html, '    </div>\n')
   
-  # Use pre-built table HTML if provided (major performance win)
-  if (!is.null(table_html)) {
-    add(table_html)
-    add('\n')
-  } else {
-    # Fallback: build table inline
-    add('    <table class="card-table">\n')
-    add('      <thead><tr>\n')
-    
-    for (i in seq_along(table_fields)) {
-      field <- table_fields[i]
-      label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
-      col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
-      add(paste0('        <th class="', col_class, '">', label, '</th>\n'))
-    }
-    
-    add('      </tr></thead>\n')
-    add('      <tbody>\n')
-    
-    for (j in 1:num_rows) {
-      add('        <tr>\n')
-      for (i in seq_along(table_fields)) {
-        col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
-        add(paste0('          <td class="', col_class, '"></td>\n'))
-      }
-      add('        </tr>\n')
-    }
-    
-    add('      </tbody>\n')
-    add('    </table>\n')
+  # Data table with empty rows for manual entry
+  html <- paste0(html, '    <table class="card-table">\n')
+  html <- paste0(html, '      <thead><tr>\n')
+  
+  for (i in seq_along(table_fields)) {
+    field <- table_fields[i]
+    # Get label with fallback for dynamic columns
+    label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
+    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+    html <- paste0(html, '        <th class="', col_class, '">', label, '</th>\n')
   }
+  
+  html <- paste0(html, '      </tr></thead>\n')
+  html <- paste0(html, '      <tbody>\n')
+  
+  # Add empty rows for data entry
+  for (j in 1:num_rows) {
+    html <- paste0(html, '        <tr>\n')
+    for (i in seq_along(table_fields)) {
+      col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+      html <- paste0(html, '          <td class="', col_class, '"></td>\n')
+    }
+    html <- paste0(html, '        </tr>\n')
+  }
+  
+  html <- paste0(html, '      </tbody>\n')
+  html <- paste0(html, '    </table>\n')
   
   # Add prehatch overlay if calculated
   if (!is.null(prehatch_overlay_value)) {
-    add('    <div class="prehatch-overlay">\n')
-    add('      <div class="prehatch-rate">2.5/ac</div>\n')
-    add(paste0('      <div class="prehatch-value">', prehatch_overlay_value, '</div>\n'))
-    add('    </div>\n')
+    html <- paste0(html, '    <div class="prehatch-overlay">\n')
+    html <- paste0(html, '      <div class="prehatch-rate">2.5/ac</div>\n')
+    html <- paste0(html, '      <div class="prehatch-value">', prehatch_overlay_value, '</div>\n')
+    html <- paste0(html, '    </div>\n')
   }
   
-  add('  </div>\n')
+  html <- paste0(html, '  </div>\n')
   
-  return(paste0(parts[seq_len(n)], collapse = ""))
+  return(html)
 }

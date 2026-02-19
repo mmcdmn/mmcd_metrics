@@ -450,6 +450,7 @@ get_metric_registry <- function() {
       display_metric = "coverage",
       chart_types = c("bar"),
       default_chart_type = "bar",
+      chart_stacked_mode = TRUE,  # Bars stack: active + expiring = total (not overlay)
       # Detail boxes: inspected + gaps (total is redundant since active + gap = total)
       detail_boxes = list(
         list(id = "inspected", title = "Recently Inspected", column = "active", icon = "check-circle", status = "active"),
@@ -607,12 +608,12 @@ get_overview_config <- function(type) {
     
     facilities = list(
       title = "Facilities Overview Dashboard",
-      subtitle = "Compare treatment progress across all facilities",
+      subtitle = "Compare treatment progress across all facilities - Click a facility to drill into FOS",
       group_by = "facility",
       load_function = "load_data_by_facility",
       chart_function = "create_overview_chart",
-      enable_drill_down = FALSE,
-      drill_down_target = NULL,
+      enable_drill_down = TRUE,
+      drill_down_target = "fos_overview",
       historical_type = "yearly",     # yearly stacked bars
       historical_group_by = "facility" # bars grouped by facility
     ),

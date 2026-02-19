@@ -2,7 +2,30 @@
 # =============================================================================
 # Shared functions for managing the cache system across metrics.
 # FULLY DYNAMIC - reads from metric_registry.R to determine cacheable metrics.
+#
+# BACKEND: Uses Redis (ElastiCache) when available, falls back to .rds files.
+#          Redis is sourced from shared/redis_cache.R
 # =============================================================================
+
+# =============================================================================
+# REDIS INTEGRATION — source the Redis layer
+# =============================================================================
+
+# Source redis_cache.R (provides redis_is_active, redis_hget, etc.)
+.redis_cache_paths <- c(
+  "/srv/shiny-server/shared/redis_cache.R",
+  "../../../shared/redis_cache.R",
+  "../../shared/redis_cache.R",
+  "../shared/redis_cache.R",
+  "./shared/redis_cache.R"
+)
+for (.p in .redis_cache_paths) {
+  if (file.exists(.p)) {
+    source(.p, local = FALSE)
+    break
+  }
+}
+rm(.redis_cache_paths, .p)
 
 # =============================================================================
 # CACHE CONFIGURATION
@@ -85,6 +108,15 @@ get_cacheable_metrics <- function() {
 #' Get metrics that ARE currently cached
 #' @return Character vector of metric IDs that have cache entries
 get_cached_metrics <- function() {
+  # Try Redis first
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    keys <- redis_hkeys(HISTORICAL_HASH_KEY)
+    if (length(keys) > 0) {
+      return(unique(gsub("_(5yr|10yr|yearly_facilities|yearly_district)$", "", keys)))
+    }
+  }
+
+  # Fallback to file
   cache_file <- get_cache_file()
   if (!file.exists(cache_file)) return(character(0))
   
@@ -118,15 +150,24 @@ get_cache_status <- function() {
   all_metrics <- get_cacheable_metrics()
   cached_metrics <- get_cached_metrics()
   
-  # Load cache for dates/stats
-  cache_info <- if (file.exists(cache_file)) {
+  # Load cache for dates/stats — prefer Redis, fall back to file
+  cache_info <- if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    meta <- redis_get(HISTORICAL_META_KEY)
+    avgs <- redis_hgetall(HISTORICAL_HASH_KEY)
+    list(
+      generated_date = if (!is.null(meta)) meta$generated_date else NA,
+      averages = avgs,
+      source = "redis"
+    )
+  } else if (file.exists(cache_file)) {
     cache <- readRDS(cache_file)
     list(
       generated_date = cache$generated_date,
-      averages = cache$averages
+      averages = cache$averages,
+      source = "file"
     )
   } else {
-    list(generated_date = NA, averages = list())
+    list(generated_date = NA, averages = list(), source = "none")
   }
   
   # Build status for each metric
@@ -292,8 +333,15 @@ regenerate_cache <- function(metrics = NULL, zone_filter = c("1", "2")) {
   cache$generated_date <- Sys.Date()
   cache$zone_filter <- zone_filter
   
+  # Save to file (backward compat / fallback)
   saveRDS(cache, cache_file)
-  cat("\nCache saved to:", cache_file, "\n")
+  cat("\nCache saved to file:", cache_file, "\n")
+
+  # Save to Redis (primary for multi-container)
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    save_historical_cache_redis(cache)
+    cat("Cache saved to Redis\n")
+  }
   
   invisible(cache)
 }
@@ -303,26 +351,41 @@ regenerate_cache <- function(metrics = NULL, zone_filter = c("1", "2")) {
 clear_cache <- function(metrics = NULL) {
   cache_file <- get_cache_file()
   
-  if (!file.exists(cache_file)) {
-    cat("No cache file exists\n")
-    return(invisible())
-  }
-  
   if (is.null(metrics)) {
-    file.remove(cache_file)
-    cat("Entire cache cleared\n")
-  } else {
-    cache <- readRDS(cache_file)
-    for (metric_id in metrics) {
-      # Clear standard 5yr/10yr keys
-      cache$averages[[paste0(metric_id, "_5yr")]] <- NULL
-      cache$averages[[paste0(metric_id, "_10yr")]] <- NULL
-      # Clear yearly grouped keys
-      cache$averages[[paste0(metric_id, "_yearly_facilities")]] <- NULL
-      cache$averages[[paste0(metric_id, "_yearly_district")]] <- NULL
-      cat("Cleared cache for:", metric_id, "\n")
+    # Clear file
+    if (file.exists(cache_file)) {
+      file.remove(cache_file)
+      cat("File cache cleared\n")
     }
-    saveRDS(cache, cache_file)
+    # Clear Redis
+    if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+      clear_historical_cache_redis()
+      cat("Redis cache cleared\n")
+    }
+  } else {
+    # Clear specific metrics from file
+    if (file.exists(cache_file)) {
+      cache <- readRDS(cache_file)
+      for (metric_id in metrics) {
+        cache$averages[[paste0(metric_id, "_5yr")]] <- NULL
+        cache$averages[[paste0(metric_id, "_10yr")]] <- NULL
+        cache$averages[[paste0(metric_id, "_yearly_facilities")]] <- NULL
+        cache$averages[[paste0(metric_id, "_yearly_district")]] <- NULL
+        cat("Cleared file cache for:", metric_id, "\n")
+      }
+      saveRDS(cache, cache_file)
+    }
+    # Clear specific metrics from Redis
+    if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+      for (metric_id in metrics) {
+        fields <- c(
+          paste0(metric_id, "_5yr"), paste0(metric_id, "_10yr"),
+          paste0(metric_id, "_yearly_facilities"), paste0(metric_id, "_yearly_district")
+        )
+        redis_hdel(HISTORICAL_HASH_KEY, fields)
+        cat("Cleared Redis cache for:", metric_id, "\n")
+      }
+    }
   }
   
   invisible()
@@ -331,8 +394,8 @@ clear_cache <- function(metrics = NULL) {
 # =============================================================================
 # LOOKUP CACHE MANAGEMENT
 # =============================================================================
-# These functions provide access to the file-based lookup cache from db_helpers.R
-# enabling test-app to clear/refresh lookup data without restarting the server.
+# These functions provide access to the lookup cache (Redis or file-based)
+# from db_helpers.R, enabling test-app to clear/refresh lookup data.
 
 #' Get list of cached lookup types
 #' @return Character vector of lookup names that can be cached
@@ -340,11 +403,15 @@ get_lookup_cache_types <- function() {
   c("facilities", "foremen", "species", "structure_types", "spring_thresholds")
 }
 
-#' Get status of lookup cache (file-based)
+#' Get status of lookup cache
 #' @return Data frame with cache status for each lookup type
 get_lookup_cache_status <- function() {
-  # Load cache from file
-  cache <- load_lookup_cache()
+  # Load cache — prefer Redis, fall back to file
+  cache <- if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    load_lookup_cache_redis()
+  } else {
+    load_lookup_cache()
+  }
   
   lookup_types <- get_lookup_cache_types()
   
@@ -379,31 +446,44 @@ get_lookup_cache_status <- function() {
 #' @param lookup_types Character vector of lookup types to clear, or NULL for all
 #' @return Invisible NULL
 clear_lookup_cache_types <- function(lookup_types = NULL) {
+  use_redis <- exists("redis_is_active", mode = "function") && redis_is_active()
+
   if (is.null(lookup_types)) {
-    # Clear all by deleting the file
-    clear_lookup_cache()
+    # Clear all
+    clear_lookup_cache()  # file
+    if (use_redis) clear_lookup_cache_redis()  # Redis
     cat("All lookup caches cleared\n")
   } else {
-    # Clear specific types by removing from the list
+    # Clear specific types from file
     cache <- load_lookup_cache()
     for (lt in lookup_types) {
       if (lt %in% names(cache)) {
         cache[[lt]] <- NULL
         cache[[paste0(lt, "_timestamp")]] <- NULL
-        cat("Cleared lookup cache:", lt, "\n")
       }
+      cat("Cleared lookup cache:", lt, "\n")
     }
     save_lookup_cache(cache)
+
+    # Clear specific types from Redis
+    if (use_redis) {
+      for (lt in lookup_types) {
+        redis_hdel(LOOKUP_HASH_KEY, c(lt, paste0(lt, "_timestamp")))
+      }
+    }
   }
   
   invisible()
 }
 
-#' Refresh all lookup caches by clearing and re-fetching (file-based)
+#' Refresh all lookup caches by clearing and re-fetching
 #' @return Invisible list of refreshed data
 refresh_lookup_caches <- function() {
-  # Clear all cached lookups
+  # Clear all cached lookups (both file and Redis)
   clear_lookup_cache()
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    clear_lookup_cache_redis()
+  }
   
   # Re-fetch by calling the lookup functions
   # These will populate the cache on first call

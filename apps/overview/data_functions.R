@@ -324,7 +324,32 @@ aggregate_metric_data <- function(data, config, metric, group_cols, separate_zon
   # --- SUCO: capacity-based ---
   if (metric == "suco") {
     capacity_total <- config$load_params$capacity_total  # 72
-    if (separate_zones) {
+    has_facility_group <- "facility" %in% group_cols
+    
+    if (has_facility_group) {
+      # Facility view: group by facility, divide capacity per facility
+      n_facilities <- length(unique(data$facility))
+      if (n_facilities == 0) n_facilities <- 1
+      cap_per_fac <- capacity_total / n_facilities
+      
+      result <- data %>%
+        group_by(facility) %>%
+        summarize(active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
+        mutate(
+          total = cap_per_fac,
+          expiring = pmax(0, active - total)
+        )
+      
+      # Map facility names
+      result <- map_facility_names(result)
+      if ("facility_display" %in% names(result)) {
+        result$display_name <- result$facility_display
+        result <- result %>% select(-facility_display)
+      } else {
+        result$display_name <- result$facility
+      }
+      return(result)
+    } else if (separate_zones) {
       return(data %>%
         group_by(zone) %>%
         summarize(total = capacity_total / 2, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
@@ -484,22 +509,280 @@ load_data_by_facility <- function(metric,
   return(result)
 }
 
-#' Load ANY metric aggregated by FOS (placeholder for future)
+#' Load ANY metric aggregated by FOS (Field Operations Supervisor)
+#' Uses the same load_metric_data pipeline but re-aggregates the raw site-level
+#' data by fosarea instead of facility+zone.
+#' @param metric Metric ID from registry
+#' @param analysis_date Date for analysis
+#' @param expiring_days Days until expiring
+#' @param zone_filter Vector of zones to include
+#' @param separate_zones Whether to show P1/P2 separately
+#' @param facility_filter Optional: filter to specific facility (NULL = all)
+#' @param fos_filter Optional: filter to specific FOS shortname (NULL = all)
 #' @export
 load_data_by_fos <- function(metric,
                              analysis_date = Sys.Date(),
                              expiring_days = NULL,
                              zone_filter = c("1", "2"),
-                             separate_zones = FALSE) {
-  # TODO: Implement FOS aggregation when FOS overview is needed
-  # For now, return empty data frame with correct structure
-  data.frame(
-    fos = character(),
-    display_name = character(),
-    total = integer(),
-    active = integer(),
-    expiring = integer()
+                             separate_zones = FALSE,
+                             facility_filter = NULL,
+                             fos_filter = NULL) {
+  
+  # We need site-level data with fosarea, so call load_raw_data directly
+  # (load_metric_data aggregates away fosarea)
+  registry <- get_metric_registry()
+  if (!metric %in% names(registry)) {
+    stop(paste("Invalid metric:", metric, "- not found in registry"))
+  }
+  config <- registry[[metric]]
+  
+  if (is.null(expiring_days)) {
+    expiring_days <- if (!is.null(config$load_params$expiring_days)) {
+      config$load_params$expiring_days
+    } else {
+      7
+    }
+  }
+  
+  app_envs <- get_app_envs()
+  env <- app_envs[[metric]]
+  
+  if (is.null(env)) {
+    warning(paste("Environment not loaded for metric:", metric))
+    return(data.frame(fos = character(), display_name = character(),
+                      total = integer(), active = integer(), expiring = integer()))
+  }
+  
+  # Load raw site-level data
+  raw_data <- tryCatch({
+    if ("load_raw_data" %in% names(env)) {
+      env$load_raw_data(
+        analysis_date = analysis_date,
+        expiring_days = expiring_days,
+        zone_filter = zone_filter,
+        status_types = character(0)
+      )
+    } else {
+      list(sites = data.frame(), treatments = data.frame())
+    }
+  }, error = function(e) {
+    tryCatch({
+      env$load_raw_data(analysis_date = analysis_date)
+    }, error = function(e2) {
+      warning(paste("Error loading", metric, "for FOS:", e2$message))
+      list(sites = data.frame(), treatments = data.frame())
+    })
+  })
+  
+  # Apply filters if available
+  if ("apply_data_filters" %in% names(env) && !is.null(raw_data$sites) && nrow(raw_data$sites) > 0) {
+    tryCatch({
+      raw_data <- env$apply_data_filters(data = raw_data, zone_filter = zone_filter)
+    }, error = function(e) {
+      cat("Note: apply_data_filters failed for", metric, "FOS view\n")
+    })
+  }
+  
+  sites <- raw_data$sites
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(data.frame(fos = character(), display_name = character(),
+                      total = integer(), active = integer(), expiring = integer()))
+  }
+  
+  # Filter by zone
+  if ("zone" %in% names(sites)) {
+    sites <- sites %>% filter(zone %in% zone_filter)
+  }
+  
+  # Filter out zero-total rows (e.g., from CROSS JOINs in catch_basin)
+  if (isTRUE(raw_data$pre_aggregated) && "total_count" %in% names(sites)) {
+    sites <- sites %>% filter(total_count > 0)
+  }
+  
+  # Check for fosarea column (the FOS identifier)
+  # Different apps use different column names: fosarea, foreman, or both
+  fos_col <- if ("fosarea" %in% names(sites)) {
+    "fosarea"
+  } else if ("foreman" %in% names(sites)) {
+    "foreman"
+  } else {
+    cat("Warning: No fosarea/foreman column in", metric, "data - FOS view not available\n")
+    return(data.frame(fos = character(), display_name = character(),
+                      total = integer(), active = integer(), expiring = integer()))
+  }
+  
+  # Apply facility filter if specified
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    # Map facility names for matching
+    sites <- map_facility_names(sites)
+    sites <- sites %>%
+      filter(facility == facility_filter | facility_display == facility_filter)
+    if ("facility_display" %in% names(sites)) {
+      sites <- sites %>% select(-facility_display)
+    }
+  }
+  
+  # Map fosarea/foreman emp_num to shortname for display
+  foremen <- get_foremen_lookup()
+  fos_map <- setNames(foremen$shortname, as.character(foremen$emp_num))
+  
+  # Also build a FOS → facility map to validate FOS belongs to the right facility
+  # Map foremen facility abbreviations to FULL names so they match facility_filter from URLs
+  fac_lookup <- tryCatch(get_facility_lookup(), error = function(e) data.frame())
+  fac_abbr_to_full <- if (nrow(fac_lookup) > 0) setNames(fac_lookup$full_name, fac_lookup$short_name) else character(0)
+  foremen_facility_full <- ifelse(
+    as.character(foremen$facility) %in% names(fac_abbr_to_full),
+    fac_abbr_to_full[as.character(foremen$facility)],
+    as.character(foremen$facility)
   )
+  fos_facility_map <- setNames(foremen_facility_full, as.character(foremen$emp_num))
+  
+  sites <- sites %>%
+    mutate(
+      fos = as.character(.data[[fos_col]]),
+      fos_display = ifelse(fos %in% names(fos_map), fos_map[fos], fos),
+      fos_facility = ifelse(fos %in% names(fos_facility_map), fos_facility_map[fos], NA_character_)
+    ) %>%
+    filter(!is.na(fos) & fos != "" & fos != "NA")
+  
+  # If facility filter is set, validate FOS actually belongs to that facility
+  # This catches CROSS JOIN artifacts where rows exist for wrong FOS/facility combos
+  # Support both full names ("South Jordan") and abbreviations ("Sj")
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    # Also map the filter itself to full name in case it's an abbreviation
+    filter_full <- if (facility_filter %in% names(fac_abbr_to_full)) fac_abbr_to_full[[facility_filter]] else facility_filter
+    sites <- sites %>%
+      filter(!is.na(fos_facility) & (fos_facility == filter_full | fos_facility == facility_filter))
+  }
+  
+  # Clean up helper column
+  sites <- sites %>% select(-fos_facility)
+  
+  # Apply FOS filter if specified (match on shortname)
+  if (!is.null(fos_filter) && fos_filter != "all") {
+    sites <- sites %>% filter(fos_display == fos_filter | fos == fos_filter)
+  }
+  
+  # SUCO special case: capacity-based
+  if (metric == "suco") {
+    capacity_total <- config$load_params$capacity_total
+    
+    if (separate_zones && "zone" %in% names(sites)) {
+      # Separate zones: group by fos AND zone
+      n_fos <- length(unique(sites$fos_display))
+      if (n_fos == 0) n_fos <- 1
+      n_zones <- length(unique(sites$zone))
+      if (n_zones == 0) n_zones <- 1
+      capacity_per_fos_zone <- capacity_total / (n_fos * n_zones)
+      
+      result <- sites %>%
+        group_by(fos, fos_display, zone) %>%
+        summarize(
+          active = n(),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          total = capacity_per_fos_zone,
+          expiring = pmax(0, active - total),
+          display_name = paste0(fos_display, " (P", zone, ")"),
+          facility = NA_character_
+        ) %>%
+        select(fos, display_name, facility, zone, total, active, expiring)
+    } else {
+      n_fos <- length(unique(sites$fos_display))
+      if (n_fos == 0) n_fos <- 1
+      capacity_per_fos <- capacity_total / n_fos
+      
+      result <- sites %>%
+        group_by(fos, fos_display) %>%
+        summarize(
+          active = n(),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          total = capacity_per_fos,
+          expiring = pmax(0, active - total),
+          display_name = fos_display,
+          facility = NA_character_
+        ) %>%
+        select(fos, display_name, facility, total, active, expiring)
+    }
+    
+    return(result)
+  }
+  
+  # Standard aggregation by FOS
+  # Use acres if applicable, otherwise counts
+  use_acres <- metric %in% ACRES_METRICS
+  
+  # Determine grouping columns — include zone when separate_zones is TRUE
+  group_cols_fos <- if (separate_zones && "zone" %in% names(sites)) {
+    c("fos", "fos_display", "zone")
+  } else {
+    c("fos", "fos_display")
+  }
+  
+  if (isTRUE(raw_data$pre_aggregated)) {
+    # Pre-aggregated data - aggregate by FOS
+    if (use_acres && "total_acres" %in% names(sites)) {
+      result <- sites %>%
+        group_by(across(all_of(group_cols_fos))) %>%
+        summarize(
+          total = sum(total_acres, na.rm = TRUE),
+          active = sum(active_acres, na.rm = TRUE),
+          expiring = sum(expiring_acres, na.rm = TRUE),
+          facility = first(facility),
+          .groups = "drop"
+        )
+    } else {
+      result <- sites %>%
+        group_by(across(all_of(group_cols_fos))) %>%
+        summarize(
+          total = sum(total_count, na.rm = TRUE),
+          active = sum(active_count, na.rm = TRUE),
+          expiring = sum(expiring_count, na.rm = TRUE),
+          facility = first(facility),
+          .groups = "drop"
+        )
+    }
+  } else {
+    # Site-level data with is_active/is_expiring
+    if (use_acres && "acres" %in% names(sites)) {
+      treated_col <- if ("treated_acres" %in% names(sites)) "treated_acres" else "acres"
+      result <- sites %>%
+        group_by(across(all_of(group_cols_fos))) %>%
+        summarize(
+          total = sum(acres, na.rm = TRUE),
+          active = sum(ifelse(is_active, .data[[treated_col]], 0), na.rm = TRUE),
+          expiring = sum(ifelse(is_expiring, .data[[treated_col]], 0), na.rm = TRUE),
+          facility = first(facility),
+          .groups = "drop"
+        )
+    } else {
+      result <- sites %>%
+        group_by(across(all_of(group_cols_fos))) %>%
+        summarize(
+          total = n(),
+          active = sum(is_active, na.rm = TRUE),
+          expiring = sum(is_expiring, na.rm = TRUE),
+          facility = first(facility),
+          .groups = "drop"
+        )
+    }
+  }
+  
+  # Set display_name from fos_display, with zone suffix if separate
+  if (separate_zones && "zone" %in% names(result)) {
+    result <- result %>%
+      mutate(display_name = paste0(fos_display, " (P", zone, ")")) %>%
+      arrange(fos_display, zone)
+  } else {
+    result <- result %>%
+      mutate(display_name = fos_display) %>%
+      arrange(display_name)
+  }
+  
+  return(result)
 }
 
 # =============================================================================

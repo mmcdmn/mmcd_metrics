@@ -29,6 +29,14 @@ echo "DB_USER=${DB_USER}" >> /srv/shiny-server/.env
 echo "DB_PASSWORD=${DB_PASSWORD}" >> /srv/shiny-server/.env
 echo "DB_NAME=${DB_NAME}" >> /srv/shiny-server/.env
 
+# Redis / ElastiCache settings for distributed caching
+echo "REDIS_HOST=${REDIS_HOST:-127.0.0.1}" >> /srv/shiny-server/.env
+echo "REDIS_PORT=${REDIS_PORT:-6379}" >> /srv/shiny-server/.env
+echo "REDIS_PASSWORD=${REDIS_PASSWORD}" >> /srv/shiny-server/.env
+echo "REDIS_DB=${REDIS_DB:-0}" >> /srv/shiny-server/.env
+echo "REDIS_PREFIX=${REDIS_PREFIX:-mmcd:}" >> /srv/shiny-server/.env
+echo "CACHE_BACKEND=${CACHE_BACKEND:-redis}" >> /srv/shiny-server/.env
+
 chown shiny:shiny /srv/shiny-server/.env
 echo "Created .env file with environment variables"
 

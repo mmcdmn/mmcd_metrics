@@ -5,12 +5,12 @@
 # Uses AWS ElastiCache (Redis) so all Fargate containers share one cache.
 #
 # ENVIRONMENT VARIABLES:
-#   REDIS_HOST     – ElastiCache endpoint (default: 127.0.0.1)
-#   REDIS_PORT     – Port (default: 6379)
+#   REDIS_HOST     – Redis hostname (optional override)
+#   REDIS_PORT     – Port (optional override)
 #   REDIS_PASSWORD – AUTH token if required (optional)
-#   REDIS_DB       – Database index 0-15 (default: 0)
-#   REDIS_PREFIX   – Key prefix for namespacing (default: "mmcd:")
-#   CACHE_BACKEND  – "redis" to enable, "file" to fall back (default: "redis")
+#   REDIS_DB       – Database index 0-15 (optional override)
+#   REDIS_PREFIX   – Key prefix for namespacing (optional override)
+#   CACHE_BACKEND  – "redis" to enable, "file" to fall back (optional override)
 #
 # USAGE:
 #   source("../../shared/redis_cache.R")
@@ -30,12 +30,13 @@
 # =============================================================================
 
 REDIS_CONFIG <- list(
-  host     = Sys.getenv("REDIS_HOST", "127.0.0.1"),
-  port     = as.integer(Sys.getenv("REDIS_PORT", "6379")),
-  password = Sys.getenv("REDIS_PASSWORD", ""),
-  db       = as.integer(Sys.getenv("REDIS_DB", "0")),
-  prefix   = Sys.getenv("REDIS_PREFIX", "mmcd:"),
-  backend  = Sys.getenv("CACHE_BACKEND", "redis")
+  # Hardcoded defaults for local shared Redis (Docker network)
+  host     = "mmcd-redis",
+  port     = 6379L,
+  password = "",
+  db       = 0L,
+  prefix   = "mmcd:",
+  backend  = "redis"
 )
 
 # =============================================================================

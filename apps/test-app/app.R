@@ -32,6 +32,7 @@ ui <- dashboardPage(
       ),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Cache Manager", tabName = "cache_manager", icon = icon("database")),
+      menuItem("Runtime Info", tabName = "runtime_info", icon = icon("server")),
       menuItem("Metric Registry", tabName = "metric_registry", icon = icon("list")),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Facilities", tabName = "facilities", icon = icon("building")),
@@ -117,6 +118,28 @@ ui <- dashboardPage(
               tags$li(strong("spring_thresholds:"), " ACT4-P1 spring date thresholds")
             ),
             verbatimTextOutput("lookupCacheLog")
+          )
+        )
+      ),
+
+      # Runtime Info tab (NEW)
+      tabItem(tabName = "runtime_info",
+        fluidRow(
+          box(
+            title = "Runtime Environment",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("runtimeInfo")
+          ),
+          box(
+            title = "Redis / Cache Status",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("redisStatus"),
+            br(),
+            verbatimTextOutput("cacheBackendInfo")
           )
         )
       ),
@@ -370,6 +393,42 @@ server <- function(input, output, session) {
       "Cache file: ", cache_file, "\n",
       "File size: ", round(info$size / 1024, 1), " KB\n",
       "Last modified: ", info$mtime
+    )
+  })
+
+  # Runtime environment info (ECS/App Runner hints)
+  output$runtimeInfo <- renderPrint({
+    list(
+      host = Sys.info()[["nodename"]],
+      pid = Sys.getpid(),
+      user = Sys.info()[["user"]],
+      time = Sys.time(),
+      aws_execution_env = Sys.getenv("AWS_EXECUTION_ENV", ""),
+      ecs_cluster = Sys.getenv("ECS_CLUSTER", ""),
+      ecs_task_arn = Sys.getenv("ECS_TASK_ARN", ""),
+      ecs_metadata_uri_v4 = Sys.getenv("ECS_CONTAINER_METADATA_URI_V4", ""),
+      apprunner_service_arn = Sys.getenv("AWS_APPRUNNER_SERVICE_ARN", ""),
+      apprunner_service_id = Sys.getenv("AWS_APPRUNNER_SERVICE_ID", "")
+    )
+  })
+
+  # Redis status / cache backend info
+  output$redisStatus <- renderPrint({
+    if (exists("redis_cache_status", mode = "function")) {
+      redis_cache_status()
+    } else {
+      "redis_cache_status() not available"
+    }
+  })
+
+  output$cacheBackendInfo <- renderPrint({
+    list(
+      cache_backend = if (exists("REDIS_CONFIG")) REDIS_CONFIG$backend else "unknown",
+      redis_active = if (exists("redis_is_active", mode = "function")) redis_is_active() else FALSE,
+      redis_host = if (exists("REDIS_CONFIG")) REDIS_CONFIG$host else "unknown",
+      redis_port = if (exists("REDIS_CONFIG")) REDIS_CONFIG$port else NA,
+      redis_db = if (exists("REDIS_CONFIG")) REDIS_CONFIG$db else NA,
+      redis_prefix = if (exists("REDIS_CONFIG")) REDIS_CONFIG$prefix else "unknown"
     )
   })
   

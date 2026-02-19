@@ -485,8 +485,24 @@ extract_weekly_values_by_group <- function(metrics, historical_data, week_num, r
 .hist_cache <- new.env(parent = emptyenv())
 
 #' Load historical cache data once per session
+#' Tries: Redis → .rds file
 load_hist_cache <- function() {
   if (is.null(.hist_cache$data)) {
+    # 1. Try Redis first (shared across containers)
+    if (exists("load_historical_cache_redis", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active()) {
+      tryCatch({
+        redis_cache <- load_historical_cache_redis()
+        if (!is.null(redis_cache) && length(redis_cache$averages) > 0) {
+          .hist_cache$data <- redis_cache
+          cat("[CACHE] Historical cache loaded from Redis (", length(redis_cache$averages), " metrics)\n")
+          return(.hist_cache$data)
+        }
+      }, error = function(e) {
+        cat("[CACHE] Redis load failed, falling back to file:", e$message, "\n")
+      })
+    }
+    
+    # 2. Fall back to .rds file
     tryCatch({
       cache_file <- file.path(get_cache_dir(), "historical_averages_cache.rds")
       if (!file.exists(cache_file)) {
@@ -505,7 +521,7 @@ load_hist_cache <- function() {
       }
       if (file.exists(cache_file)) {
         .hist_cache$data <- readRDS(cache_file)
-        cat("[CACHE] Historical cache loaded from:", normalizePath(cache_file), "\n")
+        cat("[CACHE] Historical cache loaded from file:", normalizePath(cache_file), "\n")
       } else {
         cat("[CACHE] WARNING: Historical cache file not found\n")
       }

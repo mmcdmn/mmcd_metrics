@@ -24,6 +24,27 @@
 library(digest)
 
 # =============================================================================
+# SOURCE REDIS CACHE LAYER
+# =============================================================================
+# Provides redis_is_active(), get_app_cached_redis(), set_app_cached_redis()
+.redis_app_paths <- c(
+  "/srv/shiny-server/shared/redis_cache.R",
+  "redis_cache.R",
+  "../../shared/redis_cache.R",
+  "../shared/redis_cache.R",
+  "../../../shared/redis_cache.R",
+  "shared/redis_cache.R"
+)
+for (.rp in .redis_app_paths) {
+  if (file.exists(.rp) && !exists("redis_is_active", mode = "function")) {
+    tryCatch(source(.rp, local = FALSE), error = function(e) NULL)
+    break
+  }
+}
+if (exists(".redis_app_paths")) rm(.redis_app_paths)
+if (exists(".rp")) rm(.rp)
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
@@ -136,10 +157,11 @@ should_refresh <- function(entry) {
 }
 
 #' Get cached data with optional refresh
+#' Checks: in-memory → Redis → load_func
 get_cached <- function(key, load_func = NULL, ttl_minutes = CACHE_CONFIG$default_ttl_minutes) {
   cache_env <- get_cache_env()
   
-  # Check if we have a valid cached entry
+  # 1. Check in-memory cache (fastest, same R process)
   if (exists(key, envir = cache_env)) {
     entry <- get(key, envir = cache_env)
     
@@ -150,14 +172,27 @@ get_cached <- function(key, load_func = NULL, ttl_minutes = CACHE_CONFIG$default
       assign(key, entry, envir = cache_env)
       
       if (CACHE_CONFIG$debug) {
-        message(sprintf("[cache] HIT: %s (accessed %d times)", key, entry$access_count))
+        message(sprintf("[cache] HIT (memory): %s (accessed %d times)", key, entry$access_count))
       }
       
       return(entry$data)
     }
   }
   
-  # Cache miss or expired - need to load data
+  # 2. Check Redis (shared across containers)
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    redis_data <- get_app_cached_redis(key)
+    if (!is.null(redis_data)) {
+      # Populate in-memory for subsequent calls in this process
+      set_cached(key, redis_data, ttl_minutes, redis_write = FALSE)
+      if (CACHE_CONFIG$debug) {
+        message(sprintf("[cache] HIT (redis): %s", key))
+      }
+      return(redis_data)
+    }
+  }
+  
+  # 3. Cache miss - need to load data
   if (is.null(load_func)) {
     if (CACHE_CONFIG$debug) message(sprintf("[cache] MISS: %s (no load function)", key))
     return(NULL)
@@ -181,17 +216,31 @@ get_cached <- function(key, load_func = NULL, ttl_minutes = CACHE_CONFIG$default
 }
 
 #' Set cached data
-set_cached <- function(key, data, ttl_minutes = CACHE_CONFIG$default_ttl_minutes) {
+#' Writes to in-memory + Redis (if active)
+#' @param redis_write If FALSE, skip Redis write (used when populating from Redis hit)
+set_cached <- function(key, data, ttl_minutes = CACHE_CONFIG$default_ttl_minutes, redis_write = TRUE) {
   if (!CACHE_CONFIG$enabled) return(invisible(NULL))
   
   cache_env <- get_cache_env()
   
-  # Create entry
+  # Create entry for in-memory cache
   entry <- create_cache_entry(data, ttl_minutes, key)
   assign(key, entry, envir = cache_env)
   
-  if (CACHE_CONFIG$debug) {
-    message(sprintf("[cache] SET: %s (TTL: %d min)", key, ttl_minutes))
+  # Write to Redis for cross-container sharing
+  if (redis_write && exists("redis_is_active", mode = "function") && redis_is_active()) {
+    tryCatch({
+      set_app_cached_redis(key, data, ttl = ttl_minutes * 60)
+      if (CACHE_CONFIG$debug) {
+        message(sprintf("[cache] SET (memory+redis): %s (TTL: %d min)", key, ttl_minutes))
+      }
+    }, error = function(e) {
+      if (CACHE_CONFIG$debug) {
+        message(sprintf("[cache] SET (memory only, redis error): %s - %s", key, e$message))
+      }
+    })
+  } else if (CACHE_CONFIG$debug) {
+    message(sprintf("[cache] SET (memory): %s (TTL: %d min)", key, ttl_minutes))
   }
   
   # Check memory limits and evict if needed
@@ -200,13 +249,23 @@ set_cached <- function(key, data, ttl_minutes = CACHE_CONFIG$default_ttl_minutes
   invisible(NULL)
 }
 
-#' Remove specific cache entry
+#' Remove specific cache entry from memory and Redis
 remove_cached <- function(key) {
   cache_env <- get_cache_env()
   if (exists(key, envir = cache_env)) {
     rm(list = key, envir = cache_env)
-    if (CACHE_CONFIG$debug) message(sprintf("[cache] REMOVE: %s", key))
   }
+  
+  # Also remove from Redis
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    tryCatch({
+      redis_del(paste0("app:", key))
+    }, error = function(e) {
+      if (CACHE_CONFIG$debug) message(sprintf("[cache] Redis remove error: %s", e$message))
+    })
+  }
+  
+  if (CACHE_CONFIG$debug) message(sprintf("[cache] REMOVE: %s", key))
 }
 
 #' Enforce cache size limits using LRU eviction
@@ -464,15 +523,22 @@ print_cache_info <- function() {
   stats <- get_cache_stats()
   cache_env <- get_cache_env()
   
+  # Determine Redis status
+  redis_status <- "not configured"
+  if (exists("redis_is_active", mode = "function")) {
+    redis_status <- if (redis_is_active()) "connected" else "disconnected"
+  }
+  
   cat("\n╔═══════════════════════════════════════╗\n")
   cat("║       MMCD App Cache Status           ║\n")
   cat("╠═══════════════════════════════════════╣\n")
-  cat(sprintf("║ Entries: %-28d ║\n", stats$entries))
-  cat(sprintf("║ Memory:  %-26.2f MB ║\n", stats$total_size_mb))
+  cat(sprintf("║ In-Memory Entries: %-18d ║\n", stats$entries))
+  cat(sprintf("║ In-Memory Size:    %-16.2f MB ║\n", stats$total_size_mb))
+  cat(sprintf("║ Redis Backend:     %-18s ║\n", redis_status))
   cat("╠═══════════════════════════════════════╣\n")
   
   if (stats$entries > 0) {
-    cat("║ Cache Entries:                        ║\n")
+    cat("║ In-Memory Entries:                    ║\n")
     for (key in stats$keys) {
       entry <- get(key, envir = cache_env)
       if (is.list(entry) && "expires_at" %in% names(entry)) {
@@ -483,6 +549,20 @@ print_cache_info <- function() {
                     status))
       }
     }
+  }
+  
+  # Show Redis cache info if available
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    tryCatch({
+      redis_info <- redis_cache_status()
+      if (!is.null(redis_info)) {
+        cat("╠═══════════════════════════════════════╣\n")
+        cat(sprintf("║ Redis Historical Avg: %-15s ║\n",
+                    if (redis_info$historical_fields > 0) paste0(redis_info$historical_fields, " metrics") else "empty"))
+        cat(sprintf("║ Redis Lookups:        %-15s ║\n",
+                    if (redis_info$lookup_fields > 0) paste0(redis_info$lookup_fields, " tables") else "empty"))
+      }
+    }, error = function(e) NULL)
   }
   
   cat("╚═══════════════════════════════════════╝\n")

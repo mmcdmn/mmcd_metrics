@@ -68,7 +68,7 @@ parse_unified_params <- function(query_string) {
   
   # Determine view type (default: district)
   view_type <- "district"
-  if (!is.null(query$view) && query$view %in% c("district", "facility", "facilities")) {
+  if (!is.null(query$view) && query$view %in% c("district", "facility", "facilities", "fos")) {
     view_type <- if (query$view == "facility") "facilities" else query$view
   }
   
@@ -91,7 +91,21 @@ parse_unified_params <- function(query_string) {
       zone_filter <- "1"
     } else if (query$zone == "2") {
       zone_filter <- "2"
+    } else if (query$zone == "separate") {
+      zone_filter <- "separate"
     }
+  }
+  
+  # Parse facility filter (for FOS drilldown from a specific facility)
+  facility_filter <- NULL
+  if (!is.null(query$facility) && query$facility != "" && query$facility != "all") {
+    facility_filter <- query$facility
+  }
+  
+  # Parse FOS filter (for further drilldown to a specific FOS)
+  fos_filter <- NULL
+  if (!is.null(query$fos) && query$fos != "" && query$fos != "all") {
+    fos_filter <- query$fos
   }
   
   # Parse date
@@ -124,6 +138,8 @@ parse_unified_params <- function(query_string) {
     view_type = view_type,
     metrics_filter = metrics_filter,
     zone_filter = zone_filter,
+    facility_filter = facility_filter,
+    fos_filter = fos_filter,
     analysis_date = analysis_date,
     expiring_days = expiring_days,
     color_theme = color_theme
@@ -143,12 +159,14 @@ ui <- function(request) {
   # Only show historical charts when drilling down to specific metrics
   build_overview_ui(
     overview_type = params$view_type,
-    include_historical = !is.null(params$metrics_filter),  # Only show historical when filtering to specific metrics
+    include_historical = !is.null(params$metrics_filter),  # Historical for drill-down views
     metrics_filter = params$metrics_filter,
     initial_zone = params$zone_filter,
     initial_date = params$analysis_date,
     initial_expiring = params$expiring_days,
-    initial_theme = params$color_theme
+    initial_theme = params$color_theme,
+    facility_filter = params$facility_filter,
+    fos_filter = params$fos_filter
   )
 }
 
@@ -166,8 +184,10 @@ server <- function(input, output, session) {
     output = output,
     session = session,
     overview_type = params$view_type,
-    include_historical = TRUE,
-    metrics_filter = params$metrics_filter
+    include_historical = !is.null(params$metrics_filter),  # Historical for drill-down views
+    metrics_filter = params$metrics_filter,
+    facility_filter = params$facility_filter,
+    fos_filter = params$fos_filter
   )
 }
 

@@ -6,6 +6,15 @@ library(testthat)
 
 context("Database Connection")
 
+# Ensure db functions are loaded (stubs or real) when running standalone.
+# When run via test_dir(), the stubs from testthat.R may not be in scope.
+# Define minimal stubs in the global environment so tests can find them.
+if (!exists("get_pool", mode = "function", envir = .GlobalEnv)) {
+  assign("get_pool", function(force_reconnect = FALSE) NULL, envir = .GlobalEnv)
+  assign("get_db_connection", function() NULL, envir = .GlobalEnv)
+  assign("safe_disconnect", function(conn) invisible(NULL), envir = .GlobalEnv)
+}
+
 # =============================================================================
 # Connection Pool Tests
 # =============================================================================

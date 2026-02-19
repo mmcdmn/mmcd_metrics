@@ -428,7 +428,8 @@ load_historical_comparison_data <- function(metric,
                                              display_metric = "treatment_acres",
                                              zone_filter = c("1", "2"),
                                              analysis_date = NULL,
-                                             overview_type = "facilities") {
+                                             overview_type = "facilities",
+                                             facility_filter = NULL) {
   
   # Get registry config for metric
   registry <- get_metric_registry()
@@ -465,8 +466,10 @@ load_historical_comparison_data <- function(metric,
   
   # ==========================================================================
   # CACHE PATH: Try to use cached averages first (much faster)
+  # Skip cache when facility_filter is set (cache is district-wide)
   # ==========================================================================
-  if (exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES &&
+  if (is.null(facility_filter) &&
+      exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES &&
       exists("is_metric_cacheable") && is_metric_cacheable(metric)) {
     
     cached_5yr <- tryCatch(get_cached_average(metric, "5yr"), error = function(e) NULL)
@@ -508,8 +511,10 @@ load_historical_comparison_data <- function(metric,
   
   # ==========================================================================
   # CACHE PATH: Yearly grouped metrics (e.g., cattail_treatments)
+  # Skip cache when facility_filter is set (cache is district-wide)
   # ==========================================================================
-  if (isTRUE(config$historical_type == "yearly_grouped") &&
+  if (is.null(facility_filter) &&
+      isTRUE(config$historical_type == "yearly_grouped") &&
       exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES) {
     cache_key <- paste0(metric, "_yearly_", overview_type)
     cached_yearly <- tryCatch(get_cached_average(metric, paste0("yearly_", overview_type)), error = function(e) NULL)
@@ -553,6 +558,19 @@ load_historical_comparison_data <- function(metric,
   
   # CRITICAL: Filter out treatments after analysis_date (don't show future data)
   treatments <- treatments %>% filter(inspdate <= analysis_date)
+  
+  # Apply facility filter for FOS view (show facility-specific historical)
+  if (!is.null(facility_filter) && facility_filter != "all" && "facility" %in% names(treatments)) {
+    treatments <- map_facility_names(treatments)
+    treatments <- treatments %>%
+      filter(facility == facility_filter | facility_display == facility_filter)
+    if ("facility_display" %in% names(treatments)) {
+      treatments <- treatments %>% select(-facility_display)
+    }
+    if (nrow(treatments) == 0) {
+      return(list(average = data.frame(), current = data.frame(), yearly_data = data.frame(), total_count = 0))
+    }
+  }
   
   # Ensure inspdate is Date type
   if (!"inspdate" %in% names(treatments)) {

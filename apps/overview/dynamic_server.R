@@ -437,6 +437,46 @@ extract_weekly_values <- function(metrics, historical_data, week_num, registry) 
   vals
 }
 
+#' Extract weekly values grouped by an identifier (e.g., facility or fos)
+#' @param metrics Vector of metric IDs
+#' @param historical_data Historical data list
+#' @param week_num Week number
+#' @param registry Metric registry
+#' @param group_col Column name to group by (default: "facility")
+#' @return Named list of metric_id -> named list(group -> value)
+extract_weekly_values_by_group <- function(metrics, historical_data, week_num, registry, group_col = "facility") {
+  vals <- list()
+  if (is.null(historical_data)) return(vals)
+
+  for (metric_id in metrics) {
+    hist <- historical_data[[metric_id]]
+    if (is.null(hist) || is.null(hist$current) || nrow(hist$current) == 0) next
+
+    week_row <- hist$current[hist$current$week_num == week_num, ]
+    if (nrow(week_row) == 0 || !group_col %in% names(week_row)) next
+
+    config_m <- registry[[metric_id]]
+    group_vals <- list()
+
+    for (grp in unique(week_row[[group_col]])) {
+      grp_row <- week_row[week_row[[group_col]] == grp, ]
+      if (nrow(grp_row) == 0) next
+
+      group_vals[[as.character(grp)]] <- if (isTRUE(config_m$aggregate_as_average)) {
+        mean(grp_row$value, na.rm = TRUE)
+      } else {
+        sum(grp_row$value, na.rm = TRUE)
+      }
+    }
+
+    if (length(group_vals) > 0) {
+      vals[[metric_id]] <- group_vals
+    }
+  }
+
+  vals
+}
+
 # =============================================================================
 # DYNAMIC COLOR LOGIC
 # =============================================================================
@@ -509,6 +549,71 @@ get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2
   }
 }
 
+#' Get historical average for a SPECIFIC FACILITY for a metric and week
+#' Computes on-the-fly by loading 10-year historical data for that facility
+#' @param metric_id Metric ID
+#' @param week_num Week number
+#' @param facility Facility short name to filter
+#' @param zone_filter Zone filter
+#' @return Historical average value or NULL if not available
+get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, zone_filter = c("1", "2")) {
+  tryCatch({
+    registry <- get_metric_registry()
+    config <- registry[[metric_id]]
+    if (is.null(config)) return(NULL)
+    
+    # Get year range for 10-year average
+    current_year <- lubridate::year(Sys.Date())
+    start_year <- current_year - 9
+    
+    # Load historical data with facility filter
+    # Use load_app_historical_data which loads from the app's data_functions
+    raw_data <- load_app_historical_data(metric_id, start_year, current_year - 1, zone_filter)
+    
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
+    
+    treatments <- raw_data$treatments
+    
+    # Filter to specific facility
+    if (!"facility" %in% names(treatments)) return(NULL)
+    treatments <- treatments[treatments$facility == facility, ]
+    if (nrow(treatments) == 0) return(NULL)
+    
+    # Add week number
+    treatments$week_num <- lubridate::week(treatments$inspdate)
+    
+    # Filter to target week
+    week_treatments <- treatments[treatments$week_num == week_num, ]
+    if (nrow(week_treatments) == 0) return(NULL)
+    
+    # Assign value column (acres or count)
+    if (isTRUE(config$has_acres)) {
+      acres_col <- if ("treated_acres" %in% names(week_treatments)) "treated_acres"
+                   else if ("acres" %in% names(week_treatments)) "acres" else NULL
+      week_treatments$value <- if (!is.null(acres_col)) week_treatments[[acres_col]] else 1
+    } else if ("value" %in% names(week_treatments)) {
+      week_treatments$value <- as.numeric(week_treatments$value)
+    } else {
+      week_treatments$value <- 1
+    }
+    
+    # Calculate average across years for this week
+    yearly_values <- week_treatments %>%
+      dplyr::mutate(year = lubridate::year(inspdate)) %>%
+      dplyr::group_by(year) %>%
+      dplyr::summarise(yearly_value = sum(value, na.rm = TRUE), .groups = "drop")
+    
+    if (nrow(yearly_values) == 0) return(NULL)
+    
+    # Return average across years
+    mean(yearly_values$yearly_value, na.rm = TRUE)
+    
+  }, error = function(e) {
+    cat("[DEBUG] Error in get_historical_week_avg_by_facility:", e$message, "\n")
+    NULL
+  })
+}
+
 #' Get current week's value for a metric from database
 #' Uses the SAME logic as load_current_year_for_cache to match chart values
 #' @param metric_id Metric ID
@@ -554,9 +659,10 @@ get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1"
 #' @param config Metric configuration
 #' @param zone_filter Zones to filter
 #' @param weekly_value Optional: pre-loaded weekly value from historical data (avoids DB call)
+#' @param facility_filter Optional: specific facility to compare against (uses facility historical avg)
 #' @return List with color, historical_avg, current_week, pct_diff, and status
 #' @export
-get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL) {
+get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL, facility_filter = NULL) {
   default_color <- config$bg_color
   result <- list(
     color = default_color,
@@ -646,8 +752,14 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   # Get WEEKLY comparison: current week value vs 10yr weekly average
   week_num <- lubridate::week(analysis_date)
   
-  # Get 10-year weekly average from cache (fast - uses file cache)
-  historical_avg <- get_historical_week_avg(metric_id, week_num, zone_filter)
+  # Get 10-year weekly average - use facility-specific if facility_filter provided
+  historical_avg <- if (!is.null(facility_filter)) {
+    # Facility-specific: compare against THIS facility's historical average
+    get_historical_week_avg_by_facility(metric_id, week_num, facility_filter, zone_filter)
+  } else {
+    # Zone-wide: compare against zone average from cache (fast)
+    get_historical_week_avg(metric_id, week_num, zone_filter)
+  }
   if (is.null(historical_avg) || historical_avg == 0) return(result)
   
   # Use pre-loaded weekly value if provided, otherwise use short-term cache
@@ -737,9 +849,16 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     max_fac_per_row <- 3
     col_width <- max(4, floor(12 / min(n_facilities, max_fac_per_row)))
     
-    # Pre-extract zone-level weekly values from historical data for facility comparison
+    # Pre-extract FACILITY-SPECIFIC weekly values from historical data
+    # This ensures each facility is compared against its own current week data
     week_num <- lubridate::week(analysis_date)
-    fac_weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
+    fac_weekly_values <- extract_weekly_values_by_group(
+      metrics,
+      historical_data,
+      week_num,
+      registry,
+      group_col = "facility"
+    )
     
     stat_boxes <- lapply(all_facilities, function(fac) {
       # For this facility, aggregate across all metrics
@@ -769,15 +888,20 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       pct_info <- calculate_display_pct(metrics[1], config, total_all, active_all, expiring_all)
       pct <- pct_info$pct
       
-      # Use zone-level cached historical data for dynamic coloring
-      # Each facility inherits its zone's performance comparison
+      # Use FACILITY-SPECIFIC historical data for dynamic coloring
+      # Each facility is compared against ITS OWN historical average
       box_color <- config$bg_color
       box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
       
       if (!is.null(fac_zone)) {
         fac_zone_filter <- fac_zone
         for (metric_id in metrics) {
-          weekly_val <- fac_weekly_values[[metric_id]]
+          # Get facility-specific weekly value (nested: fac_weekly_values[[metric_id]][[fac]])
+          weekly_val <- if (!is.null(fac_weekly_values[[metric_id]])) {
+            fac_weekly_values[[metric_id]][[fac]]
+          } else {
+            NULL
+          }
           fac_config <- registry[[metric_id]]
           fac_cm <- if (!is.null(fac_config$color_mode)) fac_config$color_mode else ""
           color_value <- if (fac_cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
@@ -785,7 +909,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             get_dynamic_value_box_info(metric_id, color_value, analysis_date, 
                                        fac_config, 
                                        zone_filter = fac_zone_filter, 
-                                       weekly_value = weekly_val),
+                                       weekly_value = weekly_val,
+                                       facility_filter = fac),
             error = function(e) NULL
           )
           if (!is.null(info) && info$status != "default") {

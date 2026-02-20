@@ -254,7 +254,8 @@ render_surveillance_map <- function(combined_data, areas_sf,
       overlayGroups = overlay_groups,
       options = layersControlOptions(collapsed = TRUE)
     ) %>%
-    hideGroup("Zones")
+    hideGroup("Zones") %>%
+    addScaleBar(position = "bottomleft")
   
   m
 }
@@ -401,7 +402,8 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
     addLayersControl(
       baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
       overlayGroups = overlay_groups,
-      options = layersControlOptions(collapsed = TRUE))
+      options = layersControlOptions(collapsed = TRUE)) %>%
+    addScaleBar(position = "bottomleft")
 }
 
 # =============================================================================

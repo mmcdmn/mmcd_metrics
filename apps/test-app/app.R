@@ -32,6 +32,7 @@ ui <- dashboardPage(
       ),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Cache Manager", tabName = "cache_manager", icon = icon("database")),
+      menuItem("Runtime Info", tabName = "runtime_info", icon = icon("server")),
       menuItem("Metric Registry", tabName = "metric_registry", icon = icon("list")),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Facilities", tabName = "facilities", icon = icon("building")),
@@ -117,6 +118,28 @@ ui <- dashboardPage(
               tags$li(strong("spring_thresholds:"), " ACT4-P1 spring date thresholds")
             ),
             verbatimTextOutput("lookupCacheLog")
+          )
+        )
+      ),
+
+      # Runtime Info tab (NEW)
+      tabItem(tabName = "runtime_info",
+        fluidRow(
+          box(
+            title = "Runtime Environment",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("runtimeInfo")
+          ),
+          box(
+            title = "Redis / Cache Status",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("redisStatus"),
+            br(),
+            verbatimTextOutput("cacheBackendInfo")
           )
         )
       ),
@@ -370,6 +393,114 @@ server <- function(input, output, session) {
       "Cache file: ", cache_file, "\n",
       "File size: ", round(info$size / 1024, 1), " KB\n",
       "Last modified: ", info$mtime
+    )
+  })
+
+  # Comprehensive runtime environment diagnostics
+  output$runtimeInfo <- renderPrint({
+    # Detect platform
+    is_fargate <- nchar(Sys.getenv("ECS_TASK_ARN", "")) > 0
+    is_apprunner <- nchar(Sys.getenv("AWS_APPRUNNER_SERVICE_ARN", "")) > 0
+    
+    platform <- if (is_fargate) {
+      "Fargate"
+    } else if (is_apprunner) {
+      "App Runner"
+    } else {
+      "Local/Unknown"
+    }
+    
+    # Detect concurrency mode
+    enable_nginx <- Sys.getenv("ENABLE_NGINX", "true") == "true"
+    shiny_workers <- as.integer(Sys.getenv("SHINY_WORKERS", "3"))
+    
+    # Check if redis is embedded and working
+    redis_available <- tryCatch({
+      system("redis-cli -h 127.0.0.1 ping > /dev/null 2>&1", intern = FALSE) == 0
+    }, error = function(e) FALSE)
+    
+    # Test shared cache write/read (simpler, more reliable)
+    cache_test <- "NOT TESTED"
+    if (redis_available && exists("redis_set", mode = "function") && exists("redis_get", mode = "function")) {
+      tryCatch({
+        test_key <- "runtime_info_test"
+        redis_set(test_key, list(status = "working"), ttl = 5)
+        Sys.sleep(0.2)
+        result <- redis_get(test_key)
+        cache_test <- if (!is.null(result) && result$status == "working") "WORKING" else "FAILED"
+      }, error = function(e) {
+        # Gracefully handle any error during test
+      })
+    }
+    
+    sep <- paste0("=", paste(rep("=", 60), collapse = ""), "=\n")
+    
+    cat(sep)
+    cat("DEPLOYMENT ENVIRONMENT\n")
+    cat(sep)
+    cat("Platform:                 ", platform, "\n")
+    cat("Host:                     ", Sys.info()[["nodename"]], "\n")
+    cat("PID:                      ", Sys.getpid(), "\n")
+    cat("User:                     ", Sys.info()[["user"]], "\n")
+    cat("Time:                     ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
+    cat("\n")
+    
+    cat(sep)
+    cat("CONCURRENCY MODE\n")
+    cat(sep)
+    if (enable_nginx) {
+      cat("Status:                   MULTI-WORKER (nginx load-balanced)\n")
+      cat("Workers:                  ", shiny_workers, " Shiny Server instances\n")
+      cat("Load Balancer:            nginx on :3838\n")
+      cat("Worker Ports:             ", paste(3839:(3839+shiny_workers-1), collapse = ", "), "\n")
+    } else {
+      cat("Status:                   SINGLE-WORKER (no nginx)\n")
+      cat("Workers:                  1 Shiny Server\n")
+      cat("Listen Port:              3838\n")
+    }
+    cat("\n")
+    
+    cat(sep)
+    cat("SHARED CACHE STATUS\n")
+    cat(sep)
+    cat("Redis Host:               127.0.0.1\n")
+    cat("Redis Port:               6379\n")
+    cat("Redis Available:          ", if (redis_available) "YES" else "NO", "\n")
+    cat("Shared Cache Test:        ", cache_test, "\n")
+    cat("\n")
+    
+    cat(sep)
+    cat("SUMMARY\n")
+    cat(sep)
+    
+    status <- "✓ READY"
+    if (!enable_nginx) {
+      status <- "⚠ SINGLE-WORKER MODE (not optimal for production)"
+    }
+    if (!redis_available) {
+      status <- "✗ REDIS NOT AVAILABLE (cache will fall back to files)"
+    }
+    
+    cat(status, "\n")
+  })
+
+  # Redis status / cache backend info
+  output$redisStatus <- renderPrint({
+    if (exists("redis_cache_status", mode = "function")) {
+      redis_cache_status()
+    } else {
+      "redis_cache_status() not available"
+    }
+  })
+
+  output$cacheBackendInfo <- renderPrint({
+    list(
+      cache_backend = if (exists("REDIS_CONFIG")) REDIS_CONFIG$backend else "unknown",
+      redis_active = if (exists("redis_is_active", mode = "function")) redis_is_active() else FALSE,
+      redis_host = if (exists("REDIS_CONFIG")) REDIS_CONFIG$host else "unknown",
+      redis_port = if (exists("REDIS_CONFIG")) REDIS_CONFIG$port else NA,
+      redis_db = if (exists("REDIS_CONFIG")) REDIS_CONFIG$db else NA,
+      redis_prefix = if (exists("REDIS_CONFIG")) REDIS_CONFIG$prefix else "unknown"
     )
   })
   

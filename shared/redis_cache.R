@@ -1,16 +1,10 @@
 # =============================================================================
-# MMCD METRICS - REDIS DISTRIBUTED CACHE LAYER
+# MMCD METRICS - REDIS CACHE LAYER
 # =============================================================================
 # Drop-in replacement for file-based .rds caching.
-# Uses AWS ElastiCache (Redis) so all Fargate containers share one cache.
-#
-# ENVIRONMENT VARIABLES:
-#   REDIS_HOST     – ElastiCache endpoint (default: 127.0.0.1)
-#   REDIS_PORT     – Port (default: 6379)
-#   REDIS_PASSWORD – AUTH token if required (optional)
-#   REDIS_DB       – Database index 0-15 (default: 0)
-#   REDIS_PREFIX   – Key prefix for namespacing (default: "mmcd:")
-#   CACHE_BACKEND  – "redis" to enable, "file" to fall back (default: "redis")
+# Redis runs embedded in the container on 127.0.0.1:6379.
+# All Shiny workers (behind nginx) share this single Redis instance.
+# If Redis is unreachable, falls back to file-based .rds caching.
 #
 # USAGE:
 #   source("../../shared/redis_cache.R")
@@ -30,12 +24,12 @@
 # =============================================================================
 
 REDIS_CONFIG <- list(
-  host     = Sys.getenv("REDIS_HOST", "127.0.0.1"),
-  port     = as.integer(Sys.getenv("REDIS_PORT", "6379")),
-  password = Sys.getenv("REDIS_PASSWORD", ""),
-  db       = as.integer(Sys.getenv("REDIS_DB", "0")),
-  prefix   = Sys.getenv("REDIS_PREFIX", "mmcd:"),
-  backend  = Sys.getenv("CACHE_BACKEND", "redis")
+  host     = "127.0.0.1",
+  port     = 6379L,
+  password = "",
+  db       = 0L,
+  prefix   = "mmcd:",
+  backend  = "redis"
 )
 
 # =============================================================================

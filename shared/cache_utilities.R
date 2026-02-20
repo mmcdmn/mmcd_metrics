@@ -3,7 +3,7 @@
 # Shared functions for managing the cache system across metrics.
 # FULLY DYNAMIC - reads from metric_registry.R to determine cacheable metrics.
 #
-# BACKEND: Uses Redis (ElastiCache) when available, falls back to .rds files.
+# BACKEND: Uses embedded Redis when available, falls back to .rds files.
 #          Redis is sourced from shared/redis_cache.R
 # =============================================================================
 

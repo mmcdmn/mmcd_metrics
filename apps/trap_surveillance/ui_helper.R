@@ -48,6 +48,13 @@ trap_surveillance_ui <- function() {
                          choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
                          selected = "MMCD"),
               hr(),
+              checkboxInput("compare_mode", "Compare Two Weeks", value = FALSE),
+              conditionalPanel(
+                condition = "input.compare_mode",
+                selectInput("yrwk_b", "Compare To Week:",
+                           choices = NULL, selected = NULL)
+              ),
+              hr(),
               actionButton("refresh", "Refresh Data", icon = icon("refresh"), 
                           class = "btn-success", width = "100%")
             ),
@@ -67,8 +74,18 @@ trap_surveillance_ui <- function() {
             )
           ),
           fluidRow(
+            box(width = 12, title = "District-Wide MIR Trend", status = "warning", solidHeader = TRUE,
+                plotly::plotlyOutput("mir_trend_plot", height = "400px")
+            )
+          ),
+          fluidRow(
             box(width = 12, title = "Abundance by Area Over Time", status = "info", solidHeader = TRUE,
                 plotly::plotlyOutput("abundance_trend_plot", height = "400px")
+            )
+          ),
+          fluidRow(
+            box(width = 12, title = "Vector Index by Area Over Time", status = "danger", solidHeader = TRUE,
+                plotly::plotlyOutput("vi_trend_plot", height = "400px")
             )
           )
         ),

@@ -1,16 +1,10 @@
 # =============================================================================
-# MMCD METRICS - REDIS DISTRIBUTED CACHE LAYER
+# MMCD METRICS - REDIS CACHE LAYER
 # =============================================================================
 # Drop-in replacement for file-based .rds caching.
-# Uses AWS ElastiCache (Redis) so all Fargate containers share one cache.
-#
-# ENVIRONMENT VARIABLES:
-#   REDIS_HOST     – Redis hostname (optional override)
-#   REDIS_PORT     – Port (optional override)
-#   REDIS_PASSWORD – AUTH token if required (optional)
-#   REDIS_DB       – Database index 0-15 (optional override)
-#   REDIS_PREFIX   – Key prefix for namespacing (optional override)
-#   CACHE_BACKEND  – "redis" to enable, "file" to fall back (optional override)
+# Redis runs embedded in the container on 127.0.0.1:6379.
+# All Shiny workers (behind nginx) share this single Redis instance.
+# If Redis is unreachable, falls back to file-based .rds caching.
 #
 # USAGE:
 #   source("../../shared/redis_cache.R")
@@ -30,8 +24,7 @@
 # =============================================================================
 
 REDIS_CONFIG <- list(
-  # Hardcoded defaults for local shared Redis (Docker network)
-  host     = "mmcd-redis",
+  host     = "127.0.0.1",
   port     = 6379L,
   password = "",
   db       = 0L,

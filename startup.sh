@@ -21,6 +21,21 @@ echo "DB_USER=${DB_USER}" >> /srv/shiny-server/.env
 echo "DB_PASSWORD=${DB_PASSWORD}" >> /srv/shiny-server/.env
 echo "DB_NAME=${DB_NAME}" >> /srv/shiny-server/.env
 
+# Write runtime mode so R apps know the actual deployment state
+echo "ENABLE_NGINX=${ENABLE_NGINX:-false}" >> /srv/shiny-server/.env
+echo "SHINY_WORKERS=${SHINY_WORKERS:-3}" >> /srv/shiny-server/.env
+
+# Detect platform and write to .env
+if [ -n "${ECS_TASK_ARN}" ]; then
+    echo "MMCD_PLATFORM=Fargate" >> /srv/shiny-server/.env
+elif echo "$(hostname -f 2>/dev/null)" | grep -q 'compute.internal\|apprunner\|awsapprunner'; then
+    echo "MMCD_PLATFORM=App Runner" >> /srv/shiny-server/.env
+elif [ -f /proc/1/cgroup ] && grep -q 'ecs\|docker\|kubepods' /proc/1/cgroup 2>/dev/null; then
+    echo "MMCD_PLATFORM=AWS Container" >> /srv/shiny-server/.env
+else
+    echo "MMCD_PLATFORM=Local/Docker" >> /srv/shiny-server/.env
+fi
+
 chown shiny:shiny /srv/shiny-server/.env
 echo "Created .env file with environment variables"
 

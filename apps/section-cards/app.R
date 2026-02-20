@@ -679,40 +679,35 @@ server <- function(input, output, session) {
   # Generate cards when button is clicked
   observeEvent(input$generate_cards, {
     
-    # Show loading overlay
-    showModal(modalDialog(
-      div(
-        class = "loading-overlay",
-        div(class = "loading-spinner"),
-        div(class = "loading-text", "Generating section cards, please wait...")
-      ),
-      footer = NULL,
-      easyClose = FALSE
-    ))
-    
-    # Load data based on site type
-    tryCatch({
-      if (!is.null(input$site_type) && input$site_type == "structures") {
-        data <- get_structures_with_sections()
-      } else {
-        data <- get_breeding_sites_with_sections()
-      }
-      cards_data(data)
+    # Use withProgress for real progress tracking
+    withProgress(message = "Generating section cards...", value = 0, {
       
-    }, error = function(e) {
-      removeModal()
-      showNotification(
-        paste("Error loading data:", e$message),
-        type = "error",
-        duration = NULL
-      )
-      return()
-    })
-    
-    req(cards_data())
-    
-    # Apply filters
-    filtered <- cards_data()
+      setProgress(value = 0.05, detail = "Loading data from database...")
+      
+      # Load data based on site type
+      tryCatch({
+        if (!is.null(input$site_type) && input$site_type == "structures") {
+          data <- get_structures_with_sections()
+        } else {
+          data <- get_breeding_sites_with_sections()
+        }
+        cards_data(data)
+        
+      }, error = function(e) {
+        showNotification(
+          paste("Error loading data:", e$message),
+          type = "error",
+          duration = NULL
+        )
+        return()
+      })
+      
+      req(cards_data())
+      
+      setProgress(value = 0.15, detail = "Applying filters...")
+      
+      # Apply filters
+      filtered <- cards_data()
     
     # Apply facility filter
     if (input$filter_facility != "all") {
@@ -784,7 +779,6 @@ server <- function(input, output, session) {
     }
     
     if (nrow(filtered) == 0) {
-      removeModal()
       showNotification(
         "No sites match the selected filters.",
         type = "warning"
@@ -798,6 +792,8 @@ server <- function(input, output, session) {
       })
       return()
     }
+    
+    setProgress(value = 0.25, detail = sprintf("Building %d cards...", nrow(filtered)))
     
     # Ensure sitecode is always in title fields
     title_fields <- c("sitecode", input$title_fields)
@@ -813,7 +809,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    # Generate the HTML
+    # Generate the HTML with progress callback
     # split_by_type only applies to structures
     split_type <- if (!is.null(input$site_type) && input$site_type == "structures") {
       isTRUE(input$split_by_type)
@@ -828,19 +824,25 @@ server <- function(input, output, session) {
       input$num_rows,
       input$split_by_section,
       input$split_by_priority,
-      split_type
+      split_type,
+      progress_fn = function(pct, detail) {
+        setProgress(value = 0.25 + pct * 0.65, detail = detail)
+      }
     )
+    
+    setProgress(value = 0.95, detail = "Rendering cards...")
     
     # Render the cards
     output$section_cards <- renderUI({
       HTML(cards_html)
     })
     
-    # Remove loading overlay
-    removeModal()
+    setProgress(value = 1, detail = "Done!")
+    
+    }) # end withProgress
     
     showNotification(
-      paste("Generated", nrow(filtered), "section cards"),
+      paste("Generated", nrow(cards_data()), "section cards"),
       type = "message",
       duration = 3
     )
@@ -854,19 +856,9 @@ server <- function(input, output, session) {
     content = function(file) {
       req(cards_data())
       
-      # Show progress modal
-      showModal(modalDialog(
-        div(
-          class = "loading-overlay",
-          div(class = "loading-spinner"),
-          div(class = "loading-text", "Preparing download, please wait...")
-        ),
-        footer = NULL,
-        easyClose = FALSE
-      ))
+      withProgress(message = "Preparing download...", value = 0, {
       
-      # Small delay to show progress indicator
-      Sys.sleep(0.5)
+      setProgress(value = 0.05, detail = "Applying filters...")
       
       # Apply same filters as generate cards
       filtered <- cards_data()
@@ -925,7 +917,6 @@ server <- function(input, output, session) {
       table_fields <- get_selected_columns()
       
       if (length(table_fields) == 0) {
-        removeModal()
         showNotification(
           "Please select at least one table column.",
           type = "warning"
@@ -933,16 +924,7 @@ server <- function(input, output, session) {
         return()
       }
       
-      # Update progress
-      showModal(modalDialog(
-        div(
-          class = "loading-overlay",
-          div(class = "loading-spinner"),
-          div(class = "loading-text", "Generating HTML content...")
-        ),
-        footer = NULL,
-        easyClose = FALSE
-      ))
+      setProgress(value = 0.15, detail = sprintf("Generating HTML for %d cards...", nrow(filtered)))
       
       # Generate HTML with progress tracking
       # split_by_type only applies to structures
@@ -959,19 +941,13 @@ server <- function(input, output, session) {
         input$num_rows,
         input$split_by_section,
         input$split_by_priority,
-        split_type
+        split_type,
+        progress_fn = function(pct, detail) {
+          setProgress(value = 0.15 + pct * 0.70, detail = detail)
+        }
       )
       
-      # Update progress
-      showModal(modalDialog(
-        div(
-          class = "loading-overlay",
-          div(class = "loading-spinner"),
-          div(class = "loading-text", "Creating download file...")
-        ),
-        footer = NULL,
-        easyClose = FALSE
-      ))
+      setProgress(value = 0.90, detail = "Writing file...")
       
       # Create complete HTML document
       html_content <- paste0(
@@ -991,8 +967,9 @@ server <- function(input, output, session) {
       
       writeLines(html_content, file)
       
-      # Remove progress modal
-      removeModal()
+      setProgress(value = 1, detail = "Done!")
+      
+      }) # end withProgress
       
       showNotification(
         "HTML file downloaded. Open in browser and use Ctrl+P to print or save as PDF.",

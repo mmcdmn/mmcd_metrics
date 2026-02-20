@@ -398,20 +398,34 @@ server <- function(input, output, session) {
 
   # Comprehensive runtime environment diagnostics
   output$runtimeInfo <- renderPrint({
-    # Detect platform
-    is_fargate <- nchar(Sys.getenv("ECS_TASK_ARN", "")) > 0
-    is_apprunner <- nchar(Sys.getenv("AWS_APPRUNNER_SERVICE_ARN", "")) > 0
+    # Ensure .env is loaded (startup.sh writes MMCD_PLATFORM, ENABLE_NGINX there)
+    env_path <- "/srv/shiny-server/.env"
+    if (file.exists(env_path)) readRenviron(env_path)
     
-    platform <- if (is_fargate) {
-      "Fargate"
-    } else if (is_apprunner) {
-      "App Runner"
-    } else {
-      "Local/Unknown"
+    # Read platform from startup.sh-generated .env (most reliable)
+    mmcd_platform <- Sys.getenv("MMCD_PLATFORM", "")
+    
+    # Fallback detection if MMCD_PLATFORM wasn't set
+    if (nchar(mmcd_platform) == 0) {
+      hostname <- tryCatch(Sys.info()[["nodename"]], error = function(e) "")
+      is_fargate <- nchar(Sys.getenv("ECS_TASK_ARN", "")) > 0
+      is_aws <- grepl("compute\\.internal|ec2|apprunner", hostname, ignore.case = TRUE) ||
+                nchar(Sys.getenv("AWS_DEFAULT_REGION", "")) > 0 ||
+                nchar(Sys.getenv("AWS_REGION", "")) > 0
+      
+      mmcd_platform <- if (is_fargate) {
+        "Fargate"
+      } else if (is_aws) {
+        "App Runner (detected)"
+      } else {
+        "Local/Docker"
+      }
     }
     
-    # Detect concurrency mode
-    enable_nginx <- Sys.getenv("ENABLE_NGINX", "true") == "true"
+    platform <- mmcd_platform
+    
+    # Detect concurrency mode — default is single-worker (matches startup.sh)
+    enable_nginx <- Sys.getenv("ENABLE_NGINX", "false") == "true"
     shiny_workers <- as.integer(Sys.getenv("SHINY_WORKERS", "3"))
     
     # Check if redis is embedded and working

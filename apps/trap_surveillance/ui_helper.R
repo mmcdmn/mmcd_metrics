@@ -67,6 +67,11 @@ trap_surveillance_ui <- function() {
             )
           ),
           fluidRow(
+            box(width = 12, title = "District-Wide MIR Trend", status = "warning", solidHeader = TRUE,
+                plotly::plotlyOutput("mir_trend_plot", height = "400px")
+            )
+          ),
+          fluidRow(
             box(width = 12, title = "Abundance by Area Over Time", status = "info", solidHeader = TRUE,
                 plotly::plotlyOutput("abundance_trend_plot", height = "400px")
             )

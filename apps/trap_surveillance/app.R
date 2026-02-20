@@ -162,6 +162,68 @@ server <- function(input, output, session) {
       )
   })
   
+  # -------------------------------------------------------------------------
+  # MIR TREND PLOT
+  # -------------------------------------------------------------------------
+  output$mir_trend_plot <- plotly::renderPlotly({
+    req(input$year)
+    
+    trend_data <- fetch_mir_trend(input$year)
+    if (is.null(trend_data) || nrow(trend_data) == 0) {
+      return(plotly::plot_ly() %>% 
+               plotly::layout(title = "No MIR trend data available"))
+    }
+    
+    # Extract week number for x-axis
+    trend_data$week <- as.numeric(substr(as.character(trend_data$yrwk), 5, 6))
+    
+    # Fetch 5-year and 10-year averages
+    avg_5yr  <- fetch_mir_avg_by_epiweek(input$year, 5)
+    avg_10yr <- fetch_mir_avg_by_epiweek(input$year, 10)
+    
+    p <- ggplot(trend_data, aes(x = week, y = mir)) +
+      geom_ribbon(aes(ymin = pmax(mir - mir_se, 0), ymax = mir + mir_se), 
+                  alpha = 0.2, fill = "#8e44ad")
+    
+    # Add 10-year avg line (behind 5-year)
+    if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) {
+      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_mir, linetype = "10-yr Avg"),
+                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
+    }
+    # Add 5-year avg line
+    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
+      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_mir, linetype = "5-yr Avg"),
+                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
+    }
+    
+    p <- p +
+      geom_line(aes(linetype = paste0(input$year)), color = "#8e44ad", linewidth = 1) +
+      geom_point(color = "#8e44ad", size = 2) +
+      scale_linetype_manual(
+        name = "",
+        values = c(setNames("solid", input$year), "5-yr Avg" = "dashed", "10-yr Avg" = "dotted"),
+        guide = guide_legend(override.aes = list(
+          color = c("#8e44ad", "#27ae60", "#e67e22")
+        ))
+      ) +
+      labs(
+        title = sprintf("District-Wide MIR — %s", input$year),
+        x = "Epiweek",
+        y = "MIR (per 1000 mosquitoes)"
+      ) +
+      theme_minimal() +
+      theme(text = element_text(size = 13),
+            legend.position = "bottom",
+            legend.margin = margin(t = 5, b = 0),
+            plot.margin = margin(b = 40))
+    
+    plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      plotly::layout(
+        legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
+        margin = list(b = 80)
+      )
+  })
+  
   output$abundance_trend_plot <- plotly::renderPlotly({
     req(input$year, input$species)
     
@@ -257,19 +319,66 @@ server <- function(input, output, session) {
                            options = list(pageLength = 15)))
     }
     
-    # Clean up for display
-    display_data <- data %>%
-      dplyr::select(
-        `VI Area` = viarea,
-        `Total Count` = total_count,
-        `Traps` = num_traps,
-        `Avg/Trap` = avg_per_trap,
-        dplyr::everything()
-      )
+    # Compute SE before selecting columns
+    display_data <- data
     
-    # Remove internal columns
+    infection_met <- input$infection_metric %||% "mle"
+    
+    if (infection_met == "mle") {
+      # SE from 95% CI: SE = (upper - lower) / (2 * 1.96)
+      if (all(c("rate_lower", "rate_upper") %in% names(display_data))) {
+        display_data <- display_data %>%
+          dplyr::mutate(
+            infection_se = ifelse(!is.na(rate_lower) & !is.na(rate_upper),
+                                  (rate_upper - rate_lower) / (2 * 1.96), NA_real_)
+          )
+      }
+    } else {
+      # MIR SE: binomial SE = sqrt(p * (1-p) / n) * 1000
+      if (all(c("positive", "total_mosquitoes") %in% names(display_data))) {
+        display_data <- display_data %>%
+          dplyr::mutate(
+            p_hat = ifelse(total_mosquitoes > 0, positive / total_mosquitoes, 0),
+            infection_se = ifelse(total_mosquitoes > 0,
+                                  sqrt(p_hat * (1 - p_hat) / total_mosquitoes) * 1000, NA_real_)
+          ) %>%
+          dplyr::select(-p_hat)
+      }
+    }
+    
+    # Build clean display columns
+    if (infection_met == "mle") {
+      display_data <- display_data %>%
+        dplyr::select(
+          `VI Area` = viarea,
+          `Total Count` = total_count,
+          `Traps` = num_traps,
+          `Avg/Trap` = avg_per_trap,
+          `Infection Rate` = infection_rate,
+          `SE` = dplyr::any_of("infection_se"),
+          `Vector Index` = vector_index,
+          dplyr::any_of(c("rate_lower", "rate_upper"))
+        ) %>%
+        dplyr::select(-dplyr::any_of(c("rate_lower", "rate_upper")))
+    } else {
+      display_data <- display_data %>%
+        dplyr::select(
+          `VI Area` = viarea,
+          `Total Count` = total_count,
+          `Traps` = num_traps,
+          `Avg/Trap` = avg_per_trap,
+          `MIR (per 1000)` = dplyr::any_of("mir_raw"),
+          `SE` = dplyr::any_of("infection_se"),
+          `Positive` = dplyr::any_of("positive"),
+          `Pools` = dplyr::any_of("total_pools"),
+          `Mosquitoes` = dplyr::any_of("total_mosquitoes"),
+          `Vector Index` = vector_index
+        )
+    }
+    
+    # Round all numeric columns to 4 decimal places
     display_data <- display_data %>%
-      dplyr::select(-dplyr::any_of(c("rate_lower", "rate_upper")))
+      dplyr::mutate(dplyr::across(dplyr::where(is.numeric), ~ round(.x, 4)))
     
     DT::datatable(display_data, 
                   options = list(pageLength = 15, scrollX = TRUE),

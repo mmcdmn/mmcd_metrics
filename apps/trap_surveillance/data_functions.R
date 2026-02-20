@@ -314,6 +314,84 @@ fetch_mir_by_area_spp <- function(yrwk, spp_code) {
 }
 
 # =============================================================================
+# MIR TREND DATA - District-wide MIR over time (for trend chart)
+# Uses dbvirus_mir_yrwk — pre-calculated district-wide MIR (same pattern
+# as fetch_mle_trend using dbvirus_mle_yrwk).
+# =============================================================================
+
+# MIR district-wide by yrwk (from pre-calculated view)
+fetch_mir_trend <- function(year = NULL) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  where_clause <- if (!is.null(year)) {
+    sprintf("WHERE yrwk::text LIKE '%s%%'", as.character(year))
+  } else ""
+  
+  q <- sprintf(
+    "SELECT mir_id, yrwk,
+            positive::integer as positive,
+            total::integer as total_pools,
+            mosquitoes::integer as total_mosquitoes,
+            mir::numeric as mir
+     FROM dbvirus_mir_yrwk
+     %s
+     ORDER BY yrwk",
+    where_clause
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    if (!is.null(data) && nrow(data) > 0) {
+      # Compute SE in R: binomial SE = sqrt(p*(1-p)/n) * 1000
+      data$p_hat <- ifelse(data$total_mosquitoes > 0,
+                           data$positive / data$total_mosquitoes, 0)
+      data$mir_se <- ifelse(data$total_mosquitoes > 0,
+                            sqrt(data$p_hat * (1 - data$p_hat) / data$total_mosquitoes) * 1000,
+                            0)
+      data$p_hat <- NULL  # clean up temp column
+    }
+    message(sprintf("MIR trend: %d weeks for year %s", nrow(data), year))
+    data
+  }, error = function(e) {
+    warning(paste("MIR trend query failed:", e$message))
+    NULL
+  })
+}
+
+# MIR multi-year average by epiweek (for 5yr/10yr avg lines on trend chart)
+# Reads directly from dbvirus_mir_yrwk, averages by epiweek across years.
+fetch_mir_avg_by_epiweek <- function(current_year, n_years) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  start_year <- as.integer(current_year) - n_years
+  end_year   <- as.integer(current_year) - 1  # exclude current year
+  
+  q <- sprintf(
+    "SELECT (yrwk::integer %% 100) AS week,
+            AVG(mir::numeric) AS avg_mir
+     FROM dbvirus_mir_yrwk
+     WHERE (yrwk::integer / 100) BETWEEN %d AND %d
+     GROUP BY (yrwk::integer %% 100)
+     ORDER BY week",
+    start_year, end_year
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(data$week)
+    message(sprintf("MIR %d-yr avg: %d weeks from %d-%d", n_years, nrow(data), start_year, end_year))
+    data
+  }, error = function(e) {
+    warning(paste("MIR avg query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
 # GEOMETRY - Load vector index area polygons from database
 # =============================================================================
 

@@ -71,20 +71,23 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE }}
           aws-region: us-east-2
-
-      - name: Deploy to App Runner Image
-        id: deploy-apprunner
-        uses: awslabs/amazon-app-runner-deploy@main
+      - name: Deploy to ECS Express Mode
+        id: deploy-ecs
+        uses: aws-actions/amazon-ecs-deploy-express-service@v1
         with:
-          service: mmcd-metrics-${{ github.ref_name }}
-          image: ${{ needs.build.outputs.image }}
-          port: 3838
-          access-role-arn: ${{ secrets.AWS_ROLE }}
-          instance-role-arn: ${{ secrets.AWS_ROLE }}
-          region: us-east-2
-          cpu: 4
-          memory: 8
-          wait-for-service-stability-seconds: 1200
-
-      - name: App Runner URL
-        run: echo "App runner URL ${{ steps.deploy-apprunner.outputs.service-url }}"
+            service-name: metrics-prod
+            image: ${{ needs.build.outputs.image }}
+            container-port: 3838
+            execution-role-arn: ${{ secrets.AWS_ROLE }}
+            infrastructure-role-arn: ${{ secrets.AWS_ROLE }}
+            cpu: "4096" #  "1024"
+            memory: "8192" # "2048"
+            min-task-count: 1  # 2
+            max-task-count: 1  # 25
+            auto-scaling-metric: AVERAGE_CPU
+            auto-scaling-target-value: 10
+            environment-variables: |
+              [
+                {"name": "ENABLE_NGINX", "value": "true"},
+                {"name": "SHINY_WORKERS", "value": "3"}
+              ]

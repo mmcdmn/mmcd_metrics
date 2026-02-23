@@ -408,15 +408,18 @@ server <- function(input, output, session) {
     # Fallback detection if MMCD_PLATFORM wasn't set
     if (nchar(mmcd_platform) == 0) {
       hostname <- tryCatch(Sys.info()[["nodename"]], error = function(e) "")
-      is_fargate <- nchar(Sys.getenv("ECS_TASK_ARN", "")) > 0
+      is_ecs <- nchar(Sys.getenv("ECS_TASK_ARN", "")) > 0 ||
+                nchar(Sys.getenv("ECS_CONTAINER_METADATA_URI", "")) > 0 ||
+                nchar(Sys.getenv("ECS_CONTAINER_METADATA_URI_V4", "")) > 0 ||
+                grepl("AWS_ECS", Sys.getenv("AWS_EXECUTION_ENV", ""))
       is_aws <- grepl("compute\\.internal|ec2|apprunner", hostname, ignore.case = TRUE) ||
                 nchar(Sys.getenv("AWS_DEFAULT_REGION", "")) > 0 ||
                 nchar(Sys.getenv("AWS_REGION", "")) > 0
       
-      mmcd_platform <- if (is_fargate) {
-        "Fargate"
+      mmcd_platform <- if (is_ecs) {
+        "ECS/Fargate"
       } else if (is_aws) {
-        "App Runner (detected)"
+        "AWS (unknown service)"
       } else {
         "Local/Docker"
       }

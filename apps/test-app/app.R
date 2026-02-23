@@ -157,6 +157,8 @@ ui <- dashboardPage(
             status = "warning",
             solidHeader = TRUE,
             width = 12,
+            actionButton("refreshLB", "Refresh", icon = icon("sync"), class = "btn-sm btn-info"),
+            br(), br(),
             DTOutput("lbRecent")
           )
         ),
@@ -528,21 +530,76 @@ server <- function(input, output, session) {
     cat(status, "\n")
   })
 
+  # Walk the process tree to find which shiny-server instance owns this R process
+  find_worker_info <- function() {
+    map_file <- "/srv/shiny-server/.worker_map"
+    if (!file.exists(map_file)) {
+      return(list(id = "N/A", port = "N/A", debug = "no worker map (single-worker mode?)"))
+    }
+
+    map_lines <- readLines(map_file, warn = FALSE)
+    map_lines <- trimws(map_lines[nzchar(trimws(map_lines))])
+    if (length(map_lines) == 0) {
+      return(list(id = "N/A", port = "N/A", debug = "worker map is empty"))
+    }
+
+    # Parse: PID INSTANCE_ID PORT
+    map_df <- tryCatch({
+      do.call(rbind, lapply(map_lines, function(line) {
+        parts <- strsplit(line, "\\s+")[[1]]
+        if (length(parts) >= 3) {
+          data.frame(pid = as.integer(parts[1]), id = parts[2], port = parts[3],
+                     stringsAsFactors = FALSE)
+        }
+      }))
+    }, error = function(e) NULL)
+
+    if (is.null(map_df) || nrow(map_df) == 0) {
+      return(list(id = "N/A", port = "N/A", debug = paste("parse error:", map_lines[1])))
+    }
+
+    # Walk up the process tree from this R process looking for a PID in the map
+    current_pid <- Sys.getpid()
+    visited <- integer(0)
+    for (step in 1:10) {
+      if (current_pid %in% visited || current_pid <= 1) break
+      visited <- c(visited, current_pid)
+
+      idx <- which(map_df$pid == current_pid)
+      if (length(idx) > 0) {
+        return(list(id = map_df$id[idx[1]], port = map_df$port[idx[1]],
+                    debug = paste("matched PID", current_pid, "at step", step)))
+      }
+
+      # Read parent PID from /proc
+      status_file <- paste0("/proc/", current_pid, "/status")
+      if (!file.exists(status_file)) break
+      status_lines <- readLines(status_file, warn = FALSE)
+      ppid_line <- grep("^PPid:", status_lines, value = TRUE)
+      if (length(ppid_line) == 0) break
+      current_pid <- as.integer(sub("PPid:\\s+", "", ppid_line[1]))
+    }
+
+    list(id = "not matched", port = "unknown",
+         debug = paste("walked:", paste(visited, collapse = "->"),
+                       "| map PIDs:", paste(map_df$pid, collapse = ",")))
+  }
+
   output$workerInfo <- renderPrint({
     env_path <- "/srv/shiny-server/.env"
     if (file.exists(env_path)) readRenviron(env_path)
 
-    instance_id <- Sys.getenv("SHINY_INSTANCE_ID", "unknown")
-    instance_port <- Sys.getenv("SHINY_INSTANCE_PORT", "unknown")
+    worker <- find_worker_info()
     pid <- Sys.getpid()
     session_host <- tryCatch(session$clientData$url_hostname, error = function(e) "unknown")
     session_port <- tryCatch(session$clientData$url_port, error = function(e) "unknown")
     remote_addr <- tryCatch(session$request$REMOTE_ADDR, error = function(e) "unknown")
     x_forwarded_for <- tryCatch(session$request$HTTP_X_FORWARDED_FOR, error = function(e) "unknown")
 
-    cat("Instance ID:            ", instance_id, "\n")
-    cat("Instance Port:          ", instance_port, "\n")
+    cat("Instance ID:            ", worker$id, "\n")
+    cat("Instance Port:          ", worker$port, "\n")
     cat("Process PID:            ", pid, "\n")
+    cat("Worker Detection:       ", worker$debug, "\n")
     cat("Session Host:           ", session_host, "\n")
     cat("Session Port:           ", session_port, "\n")
     cat("Remote Addr:            ", remote_addr, "\n")
@@ -554,13 +611,31 @@ server <- function(input, output, session) {
       return(data.frame(Message = "nginx access log not found", stringsAsFactors = FALSE))
     }
 
-    lines <- tryCatch(readLines(log_path, warn = FALSE), error = function(e) character(0))
+    # Check if we can actually read the file
+    if (file.access(log_path, mode = 4) != 0) {
+      perms <- tryCatch(
+        paste(system(paste("ls -la", shQuote(log_path)), intern = TRUE), collapse = " "),
+        error = function(e) "unknown"
+      )
+      return(data.frame(
+        Message = paste0("Permission denied reading nginx log. File perms: ", perms),
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    lines <- tryCatch(readLines(log_path, warn = FALSE), error = function(e) {
+      return(character(0))
+    })
     if (length(lines) == 0) {
-      return(data.frame(Message = "nginx access log is empty", stringsAsFactors = FALSE))
+      fsize <- file.info(log_path)$size
+      return(data.frame(
+        Message = paste0("nginx access log has 0 parseable lines (file size: ", fsize, " bytes)"),
+        stringsAsFactors = FALSE
+      ))
     }
 
     lines <- tail(lines, max_lines)
-    pattern <- "^([^ ]+) - ([^ ]+) \\[([^\\]]+)\\] \"([^\"]*)\" ([0-9]{3}) ([0-9]+) \"([^\"]*)\" \"([^\"]*)\" upstream=([^ ]*) xff=\"([^\"]*)\" req_time=([^ ]*) upstream_time=([^ ]*) upstream_status=([^ ]*)"
+    pattern <- "^([^ ]+) - ([^ ]+) \\[([^]]+)\\] \"([^\"]*)\" ([0-9]{3}) ([0-9]+) \"([^\"]*)\" \"([^\"]*)\" upstream=([^ ]*) xff=\"([^\"]*)\" req_time=([^ ]*) upstream_time=([^ ]*) upstream_status=([^ ]*)"
     matches <- regexec(pattern, lines)
     parts <- regmatches(lines, matches)
 
@@ -594,10 +669,12 @@ server <- function(input, output, session) {
   }
 
   output$lbRecent <- renderDT({
+    input$refreshLB  # reactivity trigger
     parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 200)
   }, options = list(pageLength = 20, order = list(list(0, "desc"))))
 
   output$lbSessions <- renderDT({
+    input$refreshLB  # reactivity trigger
     df <- parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 500)
     if (!all(c("Path", "Upstream", "Time") %in% names(df))) {
       return(df)
@@ -605,6 +682,7 @@ server <- function(input, output, session) {
 
     session_id <- sub(".*/session/([^/]+).*", "\\1", df$Path)
     is_session <- grepl("/session/", df$Path)
+    session_id <- session_id[is_session]   # filter BEFORE subsetting df
     df <- df[is_session, , drop = FALSE]
 
     if (nrow(df) == 0) {
@@ -612,8 +690,8 @@ server <- function(input, output, session) {
     }
 
     summary <- aggregate(
-      x = list(Sessions = session_id[is_session]),
-      by = list(Upstream = df$Upstream[is_session]),
+      x = list(Sessions = session_id),
+      by = list(Upstream = df$Upstream),
       FUN = function(x) length(unique(x))
     )
     names(summary)[names(summary) == "Sessions"] <- "Unique Sessions"

@@ -108,6 +108,15 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
         echo "  ✓ Instance $i  →  port $PORT  (PID ${PIDS[-1]})"
     done
 
+    # Write worker PID→instance map so R apps can identify their worker
+    > /srv/shiny-server/.worker_map
+    for i in $(seq 1 "$NUM_WORKERS"); do
+        PORT=$((BASE_PORT + i - 1))
+        echo "${PIDS[$((i-1))]} $i $PORT" >> /srv/shiny-server/.worker_map
+    done
+    chown shiny:shiny /srv/shiny-server/.worker_map
+    echo "  Worker map: /srv/shiny-server/.worker_map"
+
     # Wait for all workers to be listening before starting nginx
     echo "Waiting for Shiny workers to be ready..."
     for i in $(seq 1 "$NUM_WORKERS"); do
@@ -125,6 +134,10 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
             echo "   Worker on port $PORT is ready"
         fi
     done
+
+    # Pre-create nginx logs readable by shiny user (for R diagnostic panels)
+    touch /var/log/nginx/access.log /var/log/nginx/error.log
+    chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log
 
     # Start nginx (load balancer on :3838)
     nginx -g 'daemon off;' &

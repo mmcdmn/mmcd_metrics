@@ -78,18 +78,12 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
 
     echo "Starting $NUM_WORKERS Shiny Server worker instances..."
 
-    # Build the nginx upstream block dynamically
-        {
-            echo "    upstream shiny_workers {"
-            echo "        hash \$http_x_forwarded_for\$remote_addr consistent;"
-        for i in $(seq 1 "$NUM_WORKERS"); do
-            echo "        server 127.0.0.1:$((BASE_PORT + i - 1));"
-        done
-        echo "    }"
-    } > /etc/nginx/upstream.conf
-
-    # Patch the main nginx config to include the generated upstream
-    sed -i '/upstream shiny_workers/,/}/c\    include /etc/nginx/upstream.conf;' /etc/nginx/nginx.conf
+    # Generate workers.list for Lua routing init
+    > /etc/nginx/workers.list
+    for i in $(seq 1 "$NUM_WORKERS"); do
+        echo "127.0.0.1:$((BASE_PORT + i - 1))" >> /etc/nginx/workers.list
+    done
+    echo "  Workers list: /etc/nginx/workers.list"
 
     for i in $(seq 1 "$NUM_WORKERS"); do
         PORT=$((BASE_PORT + i - 1))
@@ -139,10 +133,24 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     touch /var/log/nginx/access.log /var/log/nginx/error.log
     chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log
 
-    # Start nginx (load balancer on :3838)
-    nginx -g 'daemon off;' &
+    # Register workers in Redis for dynamic Lua routing
+    echo "Registering workers in Redis for dynamic routing..."
+    for i in $(seq 1 "$NUM_WORKERS"); do
+        WORKER_ADDR="127.0.0.1:$((BASE_PORT + i - 1))"
+        redis-cli -h 127.0.0.1 SADD "mmcd:workers" "$WORKER_ADDR" > /dev/null 2>&1
+        redis-cli -h 127.0.0.1 SET  "mmcd:load:${WORKER_ADDR}" "0" > /dev/null 2>&1
+    done
+    # Clear any stale route mappings from previous runs
+    for key in $(redis-cli -h 127.0.0.1 KEYS "mmcd:route:*" 2>/dev/null); do
+        redis-cli -h 127.0.0.1 DEL "$key" > /dev/null 2>&1
+    done
+    redis-cli -h 127.0.0.1 DEL "mmcd:route_log" > /dev/null 2>&1
+    echo "  Workers registered, load counters initialized"
+
+    # Start OpenResty (load balancer on :3838)
+    openresty -c /etc/nginx/nginx.conf -g 'daemon off;' &
     PIDS+=($!)
-    echo "   nginx load balancer on port 3838 (PID ${PIDS[-1]})"
+    echo "   OpenResty load balancer on port 3838 (PID ${PIDS[-1]})"
 
     # Pre-populate the shared cache in the background
     echo "Starting background cache warm-up..."
@@ -163,7 +171,9 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     echo ""
     echo "============================================================"
     echo "  MMCD Dashboard ready — $NUM_WORKERS concurrent workers"
+    echo "  Load balancer: OpenResty + Lua (dynamic routing)"
     echo "  Shared cache: Redis on 127.0.0.1:6379"
+    echo "  Route TTL: ${ROUTE_TTL_SECONDS:-600}s"
     echo "============================================================"
     echo ""
 

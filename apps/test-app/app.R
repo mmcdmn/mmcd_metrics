@@ -141,6 +141,33 @@ ui <- dashboardPage(
             br(),
             verbatimTextOutput("cacheBackendInfo")
           )
+        ),
+        fluidRow(
+          box(
+            title = "Worker Session",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            verbatimTextOutput("workerInfo")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Load Balancer (Recent Requests)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("lbRecent")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Load Balancer (Active Sessions by Worker)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("lbSessions")
+          )
         )
       ),
       
@@ -500,6 +527,98 @@ server <- function(input, output, session) {
     
     cat(status, "\n")
   })
+
+  output$workerInfo <- renderPrint({
+    env_path <- "/srv/shiny-server/.env"
+    if (file.exists(env_path)) readRenviron(env_path)
+
+    instance_id <- Sys.getenv("SHINY_INSTANCE_ID", "unknown")
+    instance_port <- Sys.getenv("SHINY_INSTANCE_PORT", "unknown")
+    pid <- Sys.getpid()
+    session_host <- tryCatch(session$clientData$url_hostname, error = function(e) "unknown")
+    session_port <- tryCatch(session$clientData$url_port, error = function(e) "unknown")
+    remote_addr <- tryCatch(session$request$REMOTE_ADDR, error = function(e) "unknown")
+    x_forwarded_for <- tryCatch(session$request$HTTP_X_FORWARDED_FOR, error = function(e) "unknown")
+
+    cat("Instance ID:            ", instance_id, "\n")
+    cat("Instance Port:          ", instance_port, "\n")
+    cat("Process PID:            ", pid, "\n")
+    cat("Session Host:           ", session_host, "\n")
+    cat("Session Port:           ", session_port, "\n")
+    cat("Remote Addr:            ", remote_addr, "\n")
+    cat("X-Forwarded-For:        ", x_forwarded_for, "\n")
+  })
+
+  parse_nginx_access_log <- function(log_path, max_lines = 200) {
+    if (!file.exists(log_path)) {
+      return(data.frame(Message = "nginx access log not found", stringsAsFactors = FALSE))
+    }
+
+    lines <- tryCatch(readLines(log_path, warn = FALSE), error = function(e) character(0))
+    if (length(lines) == 0) {
+      return(data.frame(Message = "nginx access log is empty", stringsAsFactors = FALSE))
+    }
+
+    lines <- tail(lines, max_lines)
+    pattern <- "^([^ ]+) - ([^ ]+) \\[([^\\]]+)\\] \"([^\"]*)\" ([0-9]{3}) ([0-9]+) \"([^\"]*)\" \"([^\"]*)\" upstream=([^ ]*) xff=\"([^\"]*)\" req_time=([^ ]*) upstream_time=([^ ]*) upstream_status=([^ ]*)"
+    matches <- regexec(pattern, lines)
+    parts <- regmatches(lines, matches)
+
+    rows <- lapply(parts, function(m) {
+      if (length(m) == 0) return(NULL)
+      request <- m[5]
+      req_parts <- strsplit(request, " ")[[1]]
+      method <- if (length(req_parts) >= 1) req_parts[1] else ""
+      path <- if (length(req_parts) >= 2) req_parts[2] else request
+      data.frame(
+        Time = m[4],
+        Method = method,
+        Path = path,
+        Status = m[6],
+        Upstream = m[10],
+        UpstreamStatus = m[14],
+        ReqTime = m[12],
+        UpstreamTime = m[13],
+        XFF = m[11],
+        RemoteAddr = m[2],
+        stringsAsFactors = FALSE
+      )
+    })
+
+    df <- do.call(rbind, rows)
+    if (is.null(df) || nrow(df) == 0) {
+      return(data.frame(Message = "No parseable nginx log lines yet", stringsAsFactors = FALSE))
+    }
+
+    df
+  }
+
+  output$lbRecent <- renderDT({
+    parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 200)
+  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
+
+  output$lbSessions <- renderDT({
+    df <- parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 500)
+    if (!all(c("Path", "Upstream", "Time") %in% names(df))) {
+      return(df)
+    }
+
+    session_id <- sub(".*/session/([^/]+).*", "\\1", df$Path)
+    is_session <- grepl("/session/", df$Path)
+    df <- df[is_session, , drop = FALSE]
+
+    if (nrow(df) == 0) {
+      return(data.frame(Message = "No session requests found in recent logs"))
+    }
+
+    summary <- aggregate(
+      x = list(Sessions = session_id[is_session]),
+      by = list(Upstream = df$Upstream[is_session]),
+      FUN = function(x) length(unique(x))
+    )
+    names(summary)[names(summary) == "Sessions"] <- "Unique Sessions"
+    summary
+  }, options = list(pageLength = 10))
 
   # Redis status / cache backend info
   output$redisStatus <- renderPrint({

@@ -26,12 +26,14 @@ echo "ENABLE_NGINX=${ENABLE_NGINX:-false}" >> /srv/shiny-server/.env
 echo "SHINY_WORKERS=${SHINY_WORKERS:-3}" >> /srv/shiny-server/.env
 
 # Detect platform and write to .env
-if [ -n "${ECS_TASK_ARN}" ]; then
-    echo "MMCD_PLATFORM=Fargate" >> /srv/shiny-server/.env
-elif echo "$(hostname -f 2>/dev/null)" | grep -q 'compute.internal\|apprunner\|awsapprunner'; then
+if [ -n "${ECS_TASK_ARN}" ] || [ -n "${ECS_CONTAINER_METADATA_URI}" ] || [ -n "${ECS_CONTAINER_METADATA_URI_V4}" ]; then
+    echo "MMCD_PLATFORM=ECS/Fargate" >> /srv/shiny-server/.env
+elif [ -n "${AWS_EXECUTION_ENV}" ] && echo "${AWS_EXECUTION_ENV}" | grep -q 'AWS_ECS'; then
+    echo "MMCD_PLATFORM=ECS/Fargate" >> /srv/shiny-server/.env
+elif echo "$(hostname -f 2>/dev/null)" | grep -q 'apprunner\|awsapprunner'; then
     echo "MMCD_PLATFORM=App Runner" >> /srv/shiny-server/.env
-elif [ -f /proc/1/cgroup ] && grep -q 'ecs\|docker\|kubepods' /proc/1/cgroup 2>/dev/null; then
-    echo "MMCD_PLATFORM=AWS Container" >> /srv/shiny-server/.env
+elif echo "$(hostname -f 2>/dev/null)" | grep -q 'compute.internal'; then
+    echo "MMCD_PLATFORM=AWS (unknown service)" >> /srv/shiny-server/.env
 else
     echo "MMCD_PLATFORM=Local/Docker" >> /srv/shiny-server/.env
 fi

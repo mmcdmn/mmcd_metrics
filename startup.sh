@@ -79,9 +79,9 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     echo "Starting $NUM_WORKERS Shiny Server worker instances..."
 
     # Build the nginx upstream block dynamically
-    {
-        echo "    upstream shiny_workers {"
-        echo "        ip_hash;"
+        {
+            echo "    upstream shiny_workers {"
+            echo "        hash \$http_x_forwarded_for\$remote_addr consistent;"
         for i in $(seq 1 "$NUM_WORKERS"); do
             echo "        server 127.0.0.1:$((BASE_PORT + i - 1));"
         done
@@ -103,7 +103,7 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
             | sed "s|log_dir /var/log/shiny-server;|log_dir ${LOG_DIR};|g" \
             > "$CONF"
 
-        /usr/bin/shiny-server "$CONF" &
+        SHINY_INSTANCE_ID="$i" SHINY_INSTANCE_PORT="$PORT" /usr/bin/shiny-server "$CONF" &
         PIDS+=($!)
         echo "  ✓ Instance $i  →  port $PORT  (PID ${PIDS[-1]})"
     done
@@ -133,7 +133,7 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
 
     # Pre-populate the shared cache in the background
     echo "Starting background cache warm-up..."
-    Rscript -e '
+        Rscript -e '
       tryCatch({
         source("/srv/shiny-server/shared/cache_utilities.R")
         source("/srv/shiny-server/shared/db_helpers.R")
@@ -142,7 +142,10 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
       }, error = function(e) {
         cat("[startup] Cache warm-up failed:", e$message, "\n")
       })
-    ' > /var/log/cache-warmup.log 2>&1 &    disown  # Detach so wait -n doesn't track the Rscript process    echo "   Cache warm-up running in background (check /var/log/cache-warmup.log)"
+        ' > /var/log/cache-warmup.log 2>&1 &
+        disown  # Detach so wait -n doesn't track the Rscript process
+        echo "   Cache warm-up running in background (check /var/log/cache-warmup.log)"
+        echo "   Cache warm-up running in background (check /var/log/cache-warmup.log)"
 
     echo ""
     echo "============================================================"
@@ -174,5 +177,5 @@ if [ "$LISTEN_PORT" != "3838" ]; then
     sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/shiny-server/shiny-server.conf
 fi
 
-exec /usr/bin/shiny-server
+SHINY_INSTANCE_ID="1" SHINY_INSTANCE_PORT="$LISTEN_PORT" exec /usr/bin/shiny-server
 cleanup

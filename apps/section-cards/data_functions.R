@@ -418,7 +418,7 @@ get_webster_breeding_sites <- function() {
       b.remarks,
       b.drone,
       b.sample,
-      COALESCE(g.facility, b.facility) as facility,
+      g.facility as facility,
       g.zone,
       g.fosarea,
       g.sectcode as section
@@ -487,10 +487,10 @@ get_webster_town_codes <- function(facility_filter = NULL, fosarea_filter = NULL
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
   
-  where_conditions <- "b.enddate IS NULL AND b.sitecode IS NOT NULL"
+  where_conditions <- "b.enddate IS NULL AND b.sitecode IS NOT NULL AND g.facility IS NOT NULL"
   
   if (!is.null(facility_filter) && facility_filter != "all") {
-    where_conditions <- paste0(where_conditions, " AND COALESCE(g.facility, b.facility) = '", facility_filter, "'")
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
   }
   if (!is.null(fosarea_filter) && fosarea_filter != "all") {
     where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")
@@ -519,13 +519,13 @@ get_webster_sections_by_towncode <- function(towncode_filter = NULL, facility_fi
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
   
-  where_conditions <- "b.enddate IS NULL AND b.sitecode IS NOT NULL"
+  where_conditions <- "b.enddate IS NULL AND b.sitecode IS NOT NULL AND g.facility IS NOT NULL"
   
   if (!is.null(towncode_filter) && towncode_filter != "all") {
     where_conditions <- paste0(where_conditions, " AND left(b.sitecode, 4) = '", towncode_filter, "'")
   }
   if (!is.null(facility_filter) && facility_filter != "all") {
-    where_conditions <- paste0(where_conditions, " AND COALESCE(g.facility, b.facility) = '", facility_filter, "'")
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
   }
   if (!is.null(fosarea_filter) && fosarea_filter != "all") {
     where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")

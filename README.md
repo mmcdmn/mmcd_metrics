@@ -59,6 +59,9 @@ Comprehensive technical documentation and performance reports:
 - **[Optimization Analysis](documents/OPTIMIZATION_ANALYSIS.md)** - Comprehensive performance optimization opportunities and implementation strategies
 - **[Before and After Data Pooling Tests](documents/before%20and%20after%20data%20pooling%20tests.pdf)** - Visual comparison of stress test results
 
+### Infrastructure & Load Balancing
+- **[Load Balancer Architecture](documents/LOAD_BALANCER_ARCHITECTURE.md)** - Complete guide to the OpenResty + Lua + Redis dynamic load-aware routing system, including request queueing, worker distribution, and production deployment architecture
+
 ### UI Customization
 - **[Color Themes Configuration](documents/COLOR_THEMES_README.md)** - Centralized color theme system where one change in `shared/db_helpers.R` automatically updates colors across all apps
 - **[Theme Configuration Guide](documents/THEME_CONFIGURATION.md)** - Detailed theme customization instructions

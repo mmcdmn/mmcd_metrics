@@ -114,6 +114,16 @@ tryCatch({
 }, error = function(e) cat("✗ metric_registry.R failed:", e$message, "\n"))
 
 tryCatch({
+  source("apps/overview/data_functions.R")
+  cat("✓ data_functions.R loaded\n")
+}, error = function(e) cat("✗ data_functions.R failed:", e$message, "\n"))
+
+tryCatch({
+  source("apps/overview/ui_helper.R")
+  cat("✓ ui_helper.R loaded\n")
+}, error = function(e) cat("✗ ui_helper.R failed:", e$message, "\n"))
+
+tryCatch({
   source("apps/overview/url_router.R")
   cat("✓ url_router.R loaded\n")
 }, error = function(e) cat("✗ url_router.R failed:", e$message, "\n"))

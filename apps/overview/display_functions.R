@@ -78,6 +78,7 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   
   status_colors <- get_status_colors(theme = theme)
   display_as_average <- isTRUE(metric_config$display_as_average)
+  stacked_mode <- isTRUE(metric_config$chart_stacked_mode)
   labels <- if (!is.null(metric_config$chart_labels)) {
     metric_config$chart_labels
   } else {
@@ -88,10 +89,12 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   click_hint <- if (clickable) "\n<i>Click to drill down</i>" else ""
   
   # Prepare data for layered bars
+  # For stacked_mode: active and expiring are SEPARATE buckets that add up to total
+  # For overlay mode (default): active INCLUDES expiring as a subset
   data <- data %>%
     mutate(
       y_total = total,
-      y_active = pmax(0, active - expiring),
+      y_active = if (stacked_mode) active else pmax(0, active - expiring),
       y_expiring = expiring,
       pct = if (display_as_average) round(active, 1) else ceiling(100 * active / pmax(1, total)),
       tooltip_text = if (display_as_average) {
@@ -106,42 +109,67 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
         paste0(
           display_name, "\n",
           "Total: ", format(total, big.mark = ","), "\n",
-          "Active: ", format(active, big.mark = ","), " (", pct, "%)\n",
-          "Expiring: ", format(expiring, big.mark = ","),
+          labels$active, ": ", format(active, big.mark = ","), " (", pct, "%)\n",
+          labels$expiring, ": ", format(expiring, big.mark = ","),
           click_hint
         )
       }
     )
   
-  # Order: clickable (zone) charts use P1/P2 factor, facility charts sort by total desc
-  if (clickable) {
+  # Order: zone charts use P1/P2 factor, facility/FOS charts sort by total desc
+  is_zone_chart <- all(data$display_name %in% c("P1", "P2"))
+  if (is_zone_chart) {
     data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
   } else {
     data$display_name <- reorder(data$display_name, -data$y_total)
   }
   
   # Layered bar chart: red background → orange (expiring+active) → green (active)
+  # For stacked_mode: red background, then green at y_active, then orange stacked on top
   # cattail_treatments uses lighter red background to show progress "filling up"
   red_alpha <- if (metric_type == "cattail_treatments") 0.15 else 0.3
   
-  p <- ggplot(data, aes(x = display_name)) +
-    geom_bar(aes(y = y_total, text = tooltip_text),
-             stat = "identity", fill = "#D32F2F", alpha = red_alpha) +
-    geom_bar(aes(y = y_expiring + y_active),
-             stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-    geom_bar(aes(y = y_active),
-             stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-    coord_flip() +
-    labs(title = NULL, x = NULL, y = y_label) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(face = "bold", size = 12),
-      axis.text = element_text(size = if (clickable) 14 else 11, face = "bold"),
-      axis.text.y = element_text(face = "bold"),
-      panel.grid.minor = element_blank(),
-      legend.position = "none"
-    )
+  if (stacked_mode) {
+    # Stacked mode: green bar from 0 to active, orange bar from active to active+expiring
+    p <- ggplot(data, aes(x = display_name)) +
+      geom_bar(aes(y = y_total, text = tooltip_text, key = as.character(display_name)),
+               stat = "identity", fill = "#D32F2F", alpha = red_alpha) +
+      geom_bar(aes(y = y_active + y_expiring, key = as.character(display_name)),
+               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
+      geom_bar(aes(y = y_active, key = as.character(display_name)),
+               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
+      coord_flip() +
+      labs(title = NULL, x = NULL, y = y_label) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(face = "bold", size = 12),
+        axis.text = element_text(size = if (clickable) 14 else 11, face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        panel.grid.minor = element_blank(),
+        legend.position = "none"
+      )
+  } else {
+    # Overlay mode (default): green from 0 to active-expiring, orange from 0 to active
+    p <- ggplot(data, aes(x = display_name)) +
+      geom_bar(aes(y = y_total, text = tooltip_text, key = as.character(display_name)),
+               stat = "identity", fill = "#D32F2F", alpha = red_alpha) +
+      geom_bar(aes(y = y_expiring + y_active, key = as.character(display_name)),
+               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
+      geom_bar(aes(y = y_active, key = as.character(display_name)),
+               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
+      coord_flip() +
+      labs(title = NULL, x = NULL, y = y_label) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(face = "bold", size = 12),
+        axis.text = element_text(size = if (clickable) 14 else 11, face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        panel.grid.minor = element_blank(),
+        legend.position = "none"
+      )
+  }
   
   # Convert to plotly
   plotly_args <- list(p = p, tooltip = "text")

@@ -450,6 +450,13 @@ get_overview_css <- function() {
     .stat-box-clickable[data-facility].active::after {
       content: 'Click to hide details';
     }
+    /* FOS stat box hints */
+    .stat-box-clickable[data-fos]::after {
+      content: 'FOS Area';
+    }
+    .stat-box-clickable[data-fos].active::after {
+      content: 'Selected';
+    }
     @media (min-width: 1200px) {
       .category-section {
         flex: 0 1 48%;
@@ -747,11 +754,45 @@ get_overview_js <- function() {
         detailContainer.removeClass('visible');
         Shiny.setInputValue('selected_facility', null, {priority: 'event'});
       } else {
-        // Clicking new facility - show details
+        // Clicking new facility - show details / drill down
         statBox.addClass('active');
         detailContainer.data('current-facility', facility);
         detailContainer.addClass('visible');
         Shiny.setInputValue('selected_facility', facility, {priority: 'event'});
+        
+        // Scroll to detail container
+        setTimeout(function() {
+          if (detailContainer.length && detailContainer.hasClass('visible')) {
+            $('html, body').animate({
+              scrollTop: detailContainer.offset().top - 100
+            }, 300);
+          }
+        }, 100);
+      }
+    });
+    
+    // FOS box click handler (for fos view) - toggle detail boxes
+    $(document).on('click', '.stat-box-clickable[data-fos]', function() {
+      var fos = $(this).data('fos');
+      var statBox = $(this);
+      var detailContainer = $('#facility_detail_container');
+      
+      // Toggle active state on FOS boxes
+      $('.stat-box-clickable[data-fos]').removeClass('active');
+      
+      // Check if this FOS is already selected
+      var currentFos = detailContainer.data('current-fos');
+      if (currentFos === fos) {
+        // Clicking same FOS - toggle off
+        detailContainer.data('current-fos', null);
+        detailContainer.removeClass('visible');
+        Shiny.setInputValue('selected_fos', '', {priority: 'event'});
+      } else {
+        // Clicking new FOS - show details
+        statBox.addClass('active');
+        detailContainer.data('current-fos', fos);
+        detailContainer.addClass('visible');
+        Shiny.setInputValue('selected_fos', fos, {priority: 'event'});
         
         // Scroll to detail container
         setTimeout(function() {
@@ -965,9 +1006,25 @@ generate_historical_charts_ui <- function(overview_type = "district", chart_heig
 #' @export
 build_overview_ui <- function(overview_type = "district", include_historical = TRUE, metrics_filter = NULL, 
                                initial_zone = "1,2", initial_date = Sys.Date(), 
-                               initial_expiring = 3, initial_theme = "MMCD") {
+                               initial_expiring = 3, initial_theme = "MMCD",
+                               facility_filter = NULL, fos_filter = NULL) {
   
   overview_config <- get_overview_config(overview_type)
+  
+  # Build dynamic title - include facility name for FOS view
+  page_title <- overview_config$title
+  page_subtitle <- overview_config$subtitle
+  if (overview_type == "fos" && !is.null(facility_filter)) {
+    # Map facility short name to full name
+    facilities <- tryCatch(get_facility_lookup(), error = function(e) data.frame())
+    fac_display <- facility_filter
+    if (nrow(facilities) > 0) {
+      match <- facilities[facilities$short_name == facility_filter, ]
+      if (nrow(match) > 0) fac_display <- match$full_name[1]
+    }
+    page_title <- paste0(fac_display, " - FOS Overview")
+    page_subtitle <- paste0("Field Operations Supervisor progress for ", fac_display)
+  }
   
   fluidPage(
     # Include universal CSS from db_helpers
@@ -981,8 +1038,8 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     
     # Page Header
     div(class = "page-header",
-      h1(overview_config$title),
-      div(class = "subtitle", overview_config$subtitle)
+      h1(page_title),
+      div(class = "subtitle", page_subtitle)
     ),
     
     # Controls Panel
@@ -1046,7 +1103,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       )
     ),
     
-    # Facility Detail Boxes Container (for facilities view drill-down)
+    # Detail Boxes Container (for facilities AND FOS view click-to-expand)
     div(id = "facility_detail_container",
       class = "facility-detail-section",
       style = "margin-top: 20px;",
@@ -1056,7 +1113,8 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     # Main Charts Container (only for drill-down views - district charts are now in category sections)
     div(class = "dashboard-container",
       # For drill-down view, show current progress and historical side-by-side
-      if (include_historical && !is.null(metrics_filter)) {
+      # EXCEPT for FOS overview with specific FOS (those use hidden charts behind value boxes)
+      if (include_historical && !is.null(metrics_filter) && !(overview_type == "fos" && !is.null(fos_filter))) {
         fluidRow(
           column(6,
             div(style = "padding-right: 10px;",
@@ -1071,6 +1129,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
         )
       }
       # District view charts are now embedded in category sections
+      # FOS overview charts are embedded in generate_summary_stats per-metric sections
     )
   )
 }

@@ -1003,9 +1003,10 @@ load_raw_data <- function(analysis_date = Sys.Date(),
     mutate(
       site_id = paste0("SUCO_", ainspecnum),  # Unique ID for each SUCO
       facility = as.character(facility),
-      zone = as.character(zone)
+      zone = as.character(zone),
+      foreman = as.character(foreman)
     ) %>%
-    select(site_id, facility, zone, sitecode, inspdate, location, 
+    select(site_id, facility, zone, foreman, sitecode, inspdate, location, 
            total_species_count, species_summary) %>%
     distinct()
   
@@ -1016,9 +1017,10 @@ load_raw_data <- function(analysis_date = Sys.Date(),
       site_id = paste0("SUCO_", ainspecnum),
       treatment_date = inspdate,
       facility = as.character(facility),
-      zone = as.character(zone)
+      zone = as.character(zone),
+      foreman = as.character(foreman)
     ) %>%
-    select(site_id, treatment_date, facility, zone) %>%
+    select(site_id, treatment_date, facility, zone, foreman) %>%
     distinct()
   
   result <- list(

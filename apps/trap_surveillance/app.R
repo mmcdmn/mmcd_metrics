@@ -78,8 +78,41 @@ server <- function(input, output, session) {
     load_vi_area_geometries()
   })
   
+  # Load all trap locations from shapefile (cached — fast, no DB query)
+  all_traps <- reactive({
+    load_trap_locations()
+  })
+  
+  # Populate comparison week dropdown when year changes
+  observeEvent(input$year, {
+    weeks_data <- fetch_available_weeks(as.integer(input$year))
+    if (!is.null(weeks_data) && nrow(weeks_data) > 0) {
+      week_choices <- setNames(
+        as.character(weeks_data$yrwk),
+        ifelse(!is.na(weeks_data$week_days) & weeks_data$week_days != "",
+               sprintf(" %s (Wk %s)", weeks_data$week_days, weeks_data$epiweek),
+               sprintf(" (Wk %s)", weeks_data$epiweek))
+      )
+      # Default compare-to: second week if available
+      sel <- if (length(week_choices) >= 2) week_choices[2] else week_choices[1]
+      updateSelectInput(session, "yrwk_b", choices = week_choices, selected = sel)
+    }
+  })
+  
+  # Comparison data — fetched for the second week on refresh
+  compare_data <- eventReactive(input$refresh, {
+    if (!isTRUE(input$compare_mode)) return(NULL)
+    req(input$yrwk_b)
+    req(input$species)
+    fetch_combined_area_data(
+      yrwk = input$yrwk_b,
+      spp_name = input$species,
+      infection_metric = input$infection_metric %||% "mle"
+    )
+  })
+  
   # =========================================================================
-  # MAP OUTPUT
+  # MAP OUTPUT - normal or comparison mode
   # =========================================================================
   
   output$map <- leaflet::renderLeaflet({
@@ -88,15 +121,34 @@ server <- function(input, output, session) {
     
     spp_label <- SPECIES_MAP[[input$species]]$label %||% input$species
     yrwk_label <- input$yrwk %||% ""
+    metric_type <- input$metric_type %||% "abundance"
+    trap_locations <- all_traps()
+    
+    # Comparison mode: show delta map
+    if (isTRUE(input$compare_mode)) {
+      data_b <- compare_data()
+      return(render_comparison_map(
+        data_a = data,
+        data_b = data_b,
+        areas_sf = geom,
+        metric_type = metric_type,
+        infection_metric = input$infection_metric %||% "mle",
+        spp_label = spp_label,
+        yrwk_a = input$yrwk %||% "",
+        yrwk_b = input$yrwk_b %||% "",
+        all_traps = trap_locations
+      ))
+    }
     
     render_surveillance_map(
       combined_data = data,
       areas_sf = geom,
-      metric_type = input$metric_type %||% "abundance",
+      metric_type = metric_type,
       infection_metric = input$infection_metric %||% "mle",
       spp_label = spp_label,
       yrwk_label = yrwk_label,
-      color_theme = input$color_theme %||% "MMCD"
+      color_theme = input$color_theme %||% "MMCD",
+      all_traps = trap_locations
     )
   })
   
@@ -148,6 +200,68 @@ server <- function(input, output, session) {
         title = sprintf("District-Wide MLE — %s", input$year),
         x = "Epiweek",
         y = "MLE (Infection Rate)"
+      ) +
+      theme_minimal() +
+      theme(text = element_text(size = 13),
+            legend.position = "bottom",
+            legend.margin = margin(t = 5, b = 0),
+            plot.margin = margin(b = 40))
+    
+    plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      plotly::layout(
+        legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
+        margin = list(b = 80)
+      )
+  })
+  
+  # -------------------------------------------------------------------------
+  # MIR TREND PLOT
+  # -------------------------------------------------------------------------
+  output$mir_trend_plot <- plotly::renderPlotly({
+    req(input$year)
+    
+    trend_data <- fetch_mir_trend(input$year)
+    if (is.null(trend_data) || nrow(trend_data) == 0) {
+      return(plotly::plot_ly() %>% 
+               plotly::layout(title = "No MIR trend data available"))
+    }
+    
+    # Extract week number for x-axis
+    trend_data$week <- as.numeric(substr(as.character(trend_data$yrwk), 5, 6))
+    
+    # Fetch 5-year and 10-year averages
+    avg_5yr  <- fetch_mir_avg_by_epiweek(input$year, 5)
+    avg_10yr <- fetch_mir_avg_by_epiweek(input$year, 10)
+    
+    p <- ggplot(trend_data, aes(x = week, y = mir)) +
+      geom_ribbon(aes(ymin = pmax(mir - mir_se, 0), ymax = mir + mir_se), 
+                  alpha = 0.2, fill = "#8e44ad")
+    
+    # Add 10-year avg line (behind 5-year)
+    if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) {
+      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_mir, linetype = "10-yr Avg"),
+                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
+    }
+    # Add 5-year avg line
+    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
+      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_mir, linetype = "5-yr Avg"),
+                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
+    }
+    
+    p <- p +
+      geom_line(aes(linetype = paste0(input$year)), color = "#8e44ad", linewidth = 1) +
+      geom_point(color = "#8e44ad", size = 2) +
+      scale_linetype_manual(
+        name = "",
+        values = c(setNames("solid", input$year), "5-yr Avg" = "dashed", "10-yr Avg" = "dotted"),
+        guide = guide_legend(override.aes = list(
+          color = c("#8e44ad", "#27ae60", "#e67e22")
+        ))
+      ) +
+      labs(
+        title = sprintf("District-Wide MIR — %s", input$year),
+        x = "Epiweek",
+        y = "MIR (per 1000 mosquitoes)"
       ) +
       theme_minimal() +
       theme(text = element_text(size = 13),
@@ -246,8 +360,71 @@ server <- function(input, output, session) {
       )
   })
   
+  # -------------------------------------------------------------------------
+  # VECTOR INDEX TREND PLOT (per area, like abundance)
+  # -------------------------------------------------------------------------
+  output$vi_trend_plot <- plotly::renderPlotly({
+    req(input$year, input$species)
+    
+    withProgress(message = "Loading vector index trend...", value = 0.3, {
+      vi_data <- fetch_vi_area_trend(
+        year = as.integer(input$year), 
+        spp_name = input$species,
+        infection_metric = input$infection_metric %||% "mle"
+      )
+      setProgress(1)
+    })
+    
+    if (is.null(vi_data) || nrow(vi_data) == 0) {
+      return(plotly::plot_ly() %>%
+               plotly::layout(title = "No vector index data available"))
+    }
+    
+    # District-wide average per week (for bold black line)
+    vi_district <- vi_data %>%
+      dplyr::group_by(yrwk, week) %>%
+      dplyr::summarise(
+        vector_index = mean(vector_index, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    infection_label <- if ((input$infection_metric %||% "mle") == "mle") "MLE" else "MIR"
+    
+    p <- ggplot(vi_data, aes(x = week, y = vector_index, color = viarea)) +
+      geom_line(linewidth = 0.8, alpha = 0.6) +
+      geom_point(size = 1.5, alpha = 0.6)
+    
+    # District-wide average
+    p <- p + geom_line(data = vi_district, aes(x = week, y = vector_index, color = NULL),
+                       color = "#2c3e50", linewidth = 1.3, linetype = "solid",
+                       inherit.aes = FALSE)
+    
+    p <- p +
+      labs(
+        title = sprintf("Vector Index by Area — %s — %s (%s)", input$year,
+                        SPECIES_MAP[[input$species]]$label %||% input$species, infection_label),
+        subtitle = "VI = Avg/Trap × Infection Rate | Bold black = district avg",
+        x = "Epiweek",
+        y = "Vector Index (N × P)",
+        color = "VI Area"
+      ) +
+      theme_minimal() +
+      theme(text = element_text(size = 12),
+            legend.position = "right",
+            plot.subtitle = element_text(size = 10, color = "#666"))
+    
+    plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      plotly::layout(
+        annotations = list(
+          list(text = "Bold black = district avg",
+               x = 0.5, y = 1.05, xref = "paper", yref = "paper",
+               showarrow = FALSE, font = list(size = 11, color = "#666"))
+        )
+      )
+  })
+  
   # =========================================================================
-  # DATA TABLE
+  # DATA TABLE — with CI and SE columns
   # =========================================================================
   
   output$data_table <- DT::renderDT({
@@ -257,19 +434,136 @@ server <- function(input, output, session) {
                            options = list(pageLength = 15)))
     }
     
-    # Clean up for display
-    display_data <- data %>%
-      dplyr::select(
-        `VI Area` = viarea,
-        `Total Count` = total_count,
-        `Traps` = num_traps,
-        `Avg/Trap` = avg_per_trap,
-        dplyr::everything()
-      )
+    infection_met <- input$infection_metric %||% "mle"
     
-    # Remove internal columns
+    # ==== COMPARISON MODE TABLE ====
+    if (isTRUE(input$compare_mode)) {
+      data_b <- compare_data()
+      if (is.null(data_b) || nrow(data_b) == 0) {
+        return(DT::datatable(data.frame(Message = "No data for comparison week"), 
+                             options = list(pageLength = 15)))
+      }
+      
+      # Pick metric columns
+      if (infection_met == "mle") {
+        cols <- c("viarea", "avg_per_trap", "infection_rate", "vector_index")
+        col_labels <- c("VI Area", "Avg/Trap", "Infection Rate", "Vector Index")
+      } else {
+        cols <- c("viarea", "avg_per_trap", "vector_index")
+        if ("mir_raw" %in% names(data)) {
+          cols <- c("viarea", "avg_per_trap", "mir_raw", "vector_index")
+          col_labels <- c("VI Area", "Avg/Trap", "MIR", "Vector Index")
+        } else {
+          col_labels <- c("VI Area", "Avg/Trap", "Vector Index")
+        }
+      }
+      
+      # Subset to available columns
+      cols_a <- intersect(cols, names(data))
+      cols_b <- intersect(cols, names(data_b))
+      
+      a <- data[, cols_a, drop = FALSE]
+      b <- data_b[, cols_b, drop = FALSE]
+      
+      cmp <- merge(a, b, by = "viarea", suffixes = c("_wkA", "_wkB"), all = TRUE)
+      
+      # Compute deltas for numeric columns (skip viarea)
+      num_cols <- setdiff(cols, "viarea")
+      for (nc in num_cols) {
+        ca <- paste0(nc, "_wkA")
+        cb <- paste0(nc, "_wkB")
+        if (ca %in% names(cmp) && cb %in% names(cmp)) {
+          cmp[[paste0(nc, "_delta")]] <- round(cmp[[cb]] - cmp[[ca]], 4)
+        }
+      }
+      
+      # Round numeric
+      cmp <- cmp %>%
+        dplyr::mutate(dplyr::across(dplyr::where(is.numeric), ~ round(.x, 4)))
+      
+      return(DT::datatable(cmp, 
+                      options = list(pageLength = 15, scrollX = TRUE),
+                      caption = sprintf("Comparison: Wk %s vs Wk %s — %s",
+                                        input$yrwk %||% "?", input$yrwk_b %||% "?",
+                                        SPECIES_MAP[[input$species]]$label %||% "?")))
+    }
+    
+    # ==== NORMAL MODE TABLE ====
+    display_data <- data
+    
+    infection_met <- input$infection_metric %||% "mle"
+    
+    if (infection_met == "mle") {
+      # SE from 95% CI: SE = (upper - lower) / (2 * 1.96)
+      # CI formatted as "(lower - upper)"
+      if (all(c("rate_lower", "rate_upper") %in% names(display_data))) {
+        display_data <- display_data %>%
+          dplyr::mutate(
+            infection_se = ifelse(!is.na(rate_lower) & !is.na(rate_upper),
+                                  (rate_upper - rate_lower) / (2 * 1.96), NA_real_),
+            ci_95 = ifelse(!is.na(rate_lower) & !is.na(rate_upper),
+                           sprintf("(%s - %s)", 
+                                   formatC(round(rate_lower, 4), format = "f", digits = 4),
+                                   formatC(round(rate_upper, 4), format = "f", digits = 4)),
+                           NA_character_)
+          )
+      }
+    } else {
+      # MIR SE: binomial SE = sqrt(p * (1-p) / n) * 1000
+      # CI: MIR ± 1.96 × SE
+      if (all(c("positive", "total_mosquitoes") %in% names(display_data))) {
+        display_data <- display_data %>%
+          dplyr::mutate(
+            p_hat = ifelse(total_mosquitoes > 0, positive / total_mosquitoes, 0),
+            infection_se = ifelse(total_mosquitoes > 0,
+                                  sqrt(p_hat * (1 - p_hat) / total_mosquitoes) * 1000, NA_real_),
+            ci_lower = ifelse(!is.na(infection_se), pmax(mir_raw - 1.96 * infection_se, 0), NA_real_),
+            ci_upper = ifelse(!is.na(infection_se), mir_raw + 1.96 * infection_se, NA_real_),
+            ci_95 = ifelse(!is.na(ci_lower),
+                           sprintf("(%s - %s)", 
+                                   formatC(round(ci_lower, 4), format = "f", digits = 4),
+                                   formatC(round(ci_upper, 4), format = "f", digits = 4)),
+                           NA_character_)
+          ) %>%
+          dplyr::select(-p_hat, -ci_lower, -ci_upper)
+      }
+    }
+    
+    # Build clean display columns
+    if (infection_met == "mle") {
+      display_data <- display_data %>%
+        dplyr::select(
+          `VI Area` = viarea,
+          `Total Count` = total_count,
+          `Traps` = num_traps,
+          `Avg/Trap` = avg_per_trap,
+          `Infection Rate` = infection_rate,
+          `SE` = dplyr::any_of("infection_se"),
+          `95% CI` = dplyr::any_of("ci_95"),
+          `Vector Index` = vector_index,
+          dplyr::any_of(c("rate_lower", "rate_upper"))
+        ) %>%
+        dplyr::select(-dplyr::any_of(c("rate_lower", "rate_upper")))
+    } else {
+      display_data <- display_data %>%
+        dplyr::select(
+          `VI Area` = viarea,
+          `Total Count` = total_count,
+          `Traps` = num_traps,
+          `Avg/Trap` = avg_per_trap,
+          `MIR (per 1000)` = dplyr::any_of("mir_raw"),
+          `SE` = dplyr::any_of("infection_se"),
+          `95% CI` = dplyr::any_of("ci_95"),
+          `Positive` = dplyr::any_of("positive"),
+          `Pools` = dplyr::any_of("total_pools"),
+          `Mosquitoes` = dplyr::any_of("total_mosquitoes"),
+          `Vector Index` = vector_index
+        )
+    }
+    
+    # Round all numeric columns to 4 decimal places (CI is already formatted as string)
     display_data <- display_data %>%
-      dplyr::select(-dplyr::any_of(c("rate_lower", "rate_upper")))
+      dplyr::mutate(dplyr::across(dplyr::where(is.numeric), ~ round(.x, 4)))
     
     DT::datatable(display_data, 
                   options = list(pageLength = 15, scrollX = TRUE),

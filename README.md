@@ -498,6 +498,9 @@ See [Shared Resources README](shared/README.md) for complete documentation.
 - **Storage**: At least 2GB free space for dependencies and applications
 - **Network**: Internet access for package installation and database connectivity
 
+### Distributed Cache (Redis)
+The apps use Redis for shared caching across containers. This repo currently hardcodes Redis to the local Docker host name `mmcd-redis` (port 6379, db 0, prefix `mmcd:`, no password). Ensure all app containers run on the same Docker network as the `mmcd-redis` container so they can reach it by name.
+
 ### Prerequisites - System Dependencies
 The MMCD applications require extensive geospatial and database libraries. Install all system dependencies first:
 

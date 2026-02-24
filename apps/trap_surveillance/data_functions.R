@@ -314,6 +314,200 @@ fetch_mir_by_area_spp <- function(yrwk, spp_code) {
 }
 
 # =============================================================================
+# MIR TREND DATA - District-wide MIR over time (for trend chart)
+# Uses dbvirus_mir_yrwk — pre-calculated district-wide MIR (same pattern
+# as fetch_mle_trend using dbvirus_mle_yrwk).
+# =============================================================================
+
+# MIR district-wide by yrwk (from pre-calculated view)
+fetch_mir_trend <- function(year = NULL) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  where_clause <- if (!is.null(year)) {
+    sprintf("WHERE yrwk::text LIKE '%s%%'", as.character(year))
+  } else ""
+  
+  q <- sprintf(
+    "SELECT mir_id, yrwk,
+            positive::integer as positive,
+            total::integer as total_pools,
+            mosquitoes::integer as total_mosquitoes,
+            mir::numeric as mir
+     FROM dbvirus_mir_yrwk
+     %s
+     ORDER BY yrwk",
+    where_clause
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    if (!is.null(data) && nrow(data) > 0) {
+      # Compute SE in R: binomial SE = sqrt(p*(1-p)/n) * 1000
+      data$p_hat <- ifelse(data$total_mosquitoes > 0,
+                           data$positive / data$total_mosquitoes, 0)
+      data$mir_se <- ifelse(data$total_mosquitoes > 0,
+                            sqrt(data$p_hat * (1 - data$p_hat) / data$total_mosquitoes) * 1000,
+                            0)
+      data$p_hat <- NULL  # clean up temp column
+    }
+    message(sprintf("MIR trend: %d weeks for year %s", nrow(data), year))
+    data
+  }, error = function(e) {
+    warning(paste("MIR trend query failed:", e$message))
+    NULL
+  })
+}
+
+# MIR multi-year average by epiweek (for 5yr/10yr avg lines on trend chart)
+# Reads directly from dbvirus_mir_yrwk, averages by epiweek across years.
+fetch_mir_avg_by_epiweek <- function(current_year, n_years) {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  start_year <- as.integer(current_year) - n_years
+  end_year   <- as.integer(current_year) - 1  # exclude current year
+  
+  q <- sprintf(
+    "SELECT (yrwk::integer %% 100) AS week,
+            AVG(mir::numeric) AS avg_mir
+     FROM dbvirus_mir_yrwk
+     WHERE (yrwk::integer / 100) BETWEEN %d AND %d
+     GROUP BY (yrwk::integer %% 100)
+     ORDER BY week",
+    start_year, end_year
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(data$week)
+    message(sprintf("MIR %d-yr avg: %d weeks from %d-%d", n_years, nrow(data), start_year, end_year))
+    data
+  }, error = function(e) {
+    warning(paste("MIR avg query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
+# TRAP LOCATIONS - Load all trap sites from shapefile + tested traps from DB
+# =============================================================================
+
+# Cache for trap shapefile
+.trap_locations_cache <- NULL
+
+# Load all trap locations from the pre-extracted shapefile
+load_trap_locations <- function(force_reload = FALSE) {
+  if (!force_reload && !is.null(.trap_locations_cache)) {
+    return(.trap_locations_cache)
+  }
+  
+  shp_path <- file.path("..", "..", "shared", "Q_to_R", "data", "recent_trap_locations.shp")
+  if (!file.exists(shp_path)) {
+    warning("recent_trap_locations.shp not found")
+    return(NULL)
+  }
+  
+  tryCatch({
+    traps_sf <- st_read(shp_path, quiet = TRUE)
+    if (!st_is_longlat(traps_sf)) {
+      traps_sf <- st_transform(traps_sf, 4326)
+    }
+    
+    # Add lon/lat columns from geometry
+    coords <- st_coordinates(traps_sf)
+    traps_sf$lon <- coords[, 1]
+    traps_sf$lat <- coords[, 2]
+    
+    # Add trap type label based on survtype
+    traps_sf$trap_type_label <- dplyr::case_when(
+      traps_sf$survtype == "4" ~ "CO2 Light Trap",
+      traps_sf$survtype == "5" ~ "Gravid Trap",
+      traps_sf$survtype == "6" ~ "CO2 Trap (no light)",
+      traps_sf$survtype == "B" ~ "BG Sentinel Trap",
+      TRUE ~ paste("Type", traps_sf$survtype)
+    )
+    
+    message(sprintf("Loaded %d trap locations from shapefile", nrow(traps_sf)))
+    .trap_locations_cache <<- traps_sf
+    traps_sf
+  }, error = function(e) {
+    warning(paste("Failed to load trap locations:", e$message))
+    NULL
+  })
+}
+
+
+
+# =============================================================================
+# VECTOR INDEX TREND - Per VI Area (like abundance trend but for VI = N × P)
+# =============================================================================
+
+# Fetch Vector Index by area over time for the selected year.
+# VI = avg_per_trap × infection_rate (MLE or MIR/1000).
+# This is PER-AREA, not district-wide — allows colored lines per area like abundance.
+fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors", 
+                                infection_metric = "mle") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  spp_code <- spp_name_to_code(spp_name)
+  
+  if (infection_metric == "mle") {
+    # Use area-level MLE tables
+    infection_table <- if (is.null(spp_code)) "dbvirus_mle_yrwk_area" else "dbvirus_mle_yrwk_area_spp"
+    spp_filter <- if (!is.null(spp_code)) sprintf("AND inf.spp_code = '%s'", spp_code) else ""
+    infection_col <- "CASE WHEN inf.p IS NOT NULL AND inf.p::text <> 'NULL' AND inf.p::text <> '' THEN inf.p::numeric ELSE 0 END"
+  } else {
+    # Use area-level MIR tables
+    infection_table <- if (is.null(spp_code)) "dbvirus_mir_yrwk_area" else "dbvirus_mir_yrwk_area_spp"
+    spp_filter <- if (!is.null(spp_code)) sprintf("AND inf.spp_code = '%s'", spp_code) else ""
+    infection_col <- "COALESCE(inf.mir::numeric / 1000.0, 0)"  # MIR/1000 for per-mosquito rate
+  }
+  
+  q <- sprintf(
+    "WITH abundance AS (
+       SELECT viarea, yrwk,
+              SUM(mosqcount) as total_count,
+              COUNT(DISTINCT loc_code) as num_traps,
+              CASE WHEN COUNT(DISTINCT loc_code) > 0 
+                   THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code) ELSE 0 END as avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year = %d AND spp_name = '%s'
+       GROUP BY viarea, yrwk
+     ),
+     infection AS (
+       SELECT viarea, yrwk,
+              %s as infection_rate
+       FROM %s inf
+       WHERE yrwk::text LIKE '%s%%' %s
+     )
+     SELECT a.viarea, a.yrwk,
+            a.avg_per_trap,
+            COALESCE(i.infection_rate, 0) as infection_rate,
+            a.avg_per_trap * COALESCE(i.infection_rate, 0) as vector_index
+     FROM abundance a
+     LEFT JOIN infection i ON a.viarea = i.viarea AND a.yrwk::text = i.yrwk::text
+     ORDER BY a.viarea, a.yrwk",
+    as.integer(year), spp_name,
+    infection_col, infection_table, as.character(year), spp_filter
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(substr(as.character(data$yrwk), 5, 6))
+    message(sprintf("VI area trend: %d rows for year %s", nrow(data), year))
+    data
+  }, error = function(e) {
+    warning(paste("VI area trend query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
 # GEOMETRY - Load vector index area polygons from database
 # =============================================================================
 
@@ -584,35 +778,6 @@ fetch_combined_area_data <- function(yrwk, spp_name = "Total_Cx_vectors",
 #
 # Since viarea doesn't map to facility/zone, we report district-wide.
 # =============================================================================
-
-#' Get the most recent yrwk with data for a given year
-#' @param year Integer year (default: current year)
-#' @return The latest yrwk value, or NULL
-fetch_latest_yrwk <- function(year = NULL) {
-  con <- get_db_connection()
-  if (is.null(con)) return(NULL)
-  on.exit(safe_disconnect(con))
-  
-  if (is.null(year)) year <- as.integer(format(Sys.Date(), "%Y"))
-  
-  q <- sprintf(
-    "SELECT MAX(yrwk) as latest_yrwk
-     FROM dbadult_mon_nt_co2_forvectorabundance
-     WHERE year = %d",
-    as.integer(year)
-  )
-  
-  tryCatch({
-    result <- dbGetQuery(con, q)
-    if (nrow(result) > 0 && !is.na(result$latest_yrwk[1])) {
-      return(result$latest_yrwk[1])
-    }
-    NULL
-  }, error = function(e) {
-    warning(paste("fetch_latest_yrwk failed:", e$message))
-    NULL
-  })
-}
 
 #' Overview-compatible data loader for Vector Index
 #' 

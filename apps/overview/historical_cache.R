@@ -32,35 +32,34 @@ for (.rp in .redis_hist_paths) {
 # Toggle this to enable/disable caching
 USE_CACHED_AVERAGES <- TRUE
 
-# Cache file location (in the shared/cache directory for all apps)
+# Legacy compat: CACHE_DIR and CACHE_FILE kept for any code that references them
 CACHE_DIR <- tryCatch({
-  # Try shared/cache directory first (actual location)
   if (dir.exists("/srv/shiny-server/shared/cache")) {
     "/srv/shiny-server/shared/cache"
   } else if (dir.exists("../../../shared/cache")) {
-    "../../../shared/cache"  # Relative path from unified/ subfolder
+    "../../../shared/cache"
   } else if (dir.exists("../../shared/cache")) {
-    "../../shared/cache"  # Relative path from overview app  
+    "../../shared/cache"
   } else if (dir.exists("/srv/shiny-server/shared")) {
     "/srv/shiny-server/shared"
   } else if (dir.exists("../../../shared")) {
-    "../../../shared"  # Relative path from unified/ subfolder
+    "../../../shared"
   } else if (dir.exists("../../shared")) {
-    "../../shared"  # Relative path from overview app
+    "../../shared"
   } else {
-    dirname(sys.frame(1)$ofile)  # Fallback to current file directory
+    dirname(sys.frame(1)$ofile)
   }
 }, error = function(e) {
-  getwd()  # Final fallback to current working directory
+  getwd()
 })
-CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
+CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")  # Legacy reference only
 
 # =============================================================================
 # CACHE FUNCTIONS
 # =============================================================================
 
 #' Get cached historical averages for a metric
-#' Checks: Redis → .rds file
+#' Checks: Redis only (single source of truth)
 #' @param metric_id The metric ID (e.g., "catch_basin", "drone")
 #' @param avg_type "5yr" or "10yr"
 #' @return Data frame with cached averages by week, or NULL if not cached
@@ -72,7 +71,7 @@ get_cached_average <- function(metric_id, avg_type = "10yr") {
   
   cache_key <- paste0(metric_id, "_", avg_type)
   
-  # 1. Try Redis first (shared across containers)
+  # Try Redis (shared across containers / workers)
   if (exists("get_cached_average_redis", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active()) {
     redis_result <- tryCatch({
       get_cached_average_redis(metric_id, avg_type)
@@ -83,36 +82,7 @@ get_cached_average <- function(metric_id, avg_type = "10yr") {
     }
   }
   
-  # 2. Fall back to .rds file
-  cache_file <- CACHE_FILE
-  if (!file.exists(cache_file)) {
-    # Try alternative paths
-    alt_paths <- c(
-      "/srv/shiny-server/shared/cache/historical_averages_cache.rds",
-      "/srv/shiny-server/shared/historical_averages_cache.rds",
-      "/srv/shiny-server/apps/overview/historical_averages_cache.rds"
-    )
-    
-    cache_file <- NULL
-    for (alt_path in alt_paths) {
-      if (file.exists(alt_path)) {
-        cache_file <- alt_path
-        break
-      }
-    }
-    
-    if (is.null(cache_file)) {
-      return(NULL)
-    }
-  }
-  
-  cache <- readRDS(cache_file)
-  
-  if (!cache_key %in% names(cache$averages)) {
-    return(NULL)
-  }
-  
-  return(cache$averages[[cache_key]])
+  NULL
 }
 
 #' Check if cache is available and recent
@@ -121,12 +91,17 @@ get_cached_average <- function(metric_id, avg_type = "10yr") {
 #' @export
 is_cache_valid <- function(max_age_days = 7) {
   if (!USE_CACHED_AVERAGES) return(FALSE)
-  if (!file.exists(CACHE_FILE)) return(FALSE)
   
-  cache <- readRDS(CACHE_FILE)
-  cache_age <- as.numeric(Sys.Date() - as.Date(cache$generated_date))
+  # Check Redis for metadata
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    meta <- tryCatch(redis_get(HISTORICAL_META_KEY), error = function(e) NULL)
+    if (!is.null(meta) && !is.null(meta$generated_date)) {
+      cache_age <- as.numeric(Sys.Date() - as.Date(meta$generated_date))
+      return(cache_age <= max_age_days)
+    }
+  }
   
-  return(cache_age <= max_age_days)
+  FALSE
 }
 
 #' Regenerate the historical averages cache
@@ -234,19 +209,16 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
     })
   }
   
-  # Save cache to .rds file
-  saveRDS(cache, CACHE_FILE)
-  cat("\n=== CACHE SAVED ===\n")
-  cat("File:", CACHE_FILE, "\n")
-  
-  # Also save to Redis for cross-container sharing
+  # Save cache to Redis (single source of truth)
   if (exists("save_historical_cache_redis", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active()) {
     tryCatch({
       save_historical_cache_redis(cache)
-      cat("Redis: saved\n")
+      cat("\n=== CACHE SAVED TO REDIS ===\n")
     }, error = function(e) {
       cat("Redis: save failed -", e$message, "\n")
     })
+  } else {
+    cat("\nWARNING: Redis not available — cache NOT persisted!\n")
   }
   
   cat("Metrics cached:", length(cache$averages), "\n")
@@ -260,52 +232,56 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
 view_cache_status <- function() {
   cat("=== HISTORICAL AVERAGES CACHE STATUS ===\n")
   cat("Caching enabled:", USE_CACHED_AVERAGES, "\n")
-  cat("Cache file:", CACHE_FILE, "\n")
+  cat("Backend: Redis\n")
   
   # Redis status
   if (exists("redis_is_active", mode = "function")) {
-    cat("Redis backend:", if (redis_is_active()) "connected" else "disconnected", "\n")
+    cat("Redis connection:", if (redis_is_active()) "connected" else "disconnected", "\n")
     if (redis_is_active()) {
       tryCatch({
         info <- redis_cache_status()
         cat("Redis historical metrics:", info$historical_count, "\n")
-      }, error = function(e) NULL)
+        
+        meta <- redis_get(HISTORICAL_META_KEY)
+        if (!is.null(meta)) {
+          cat("Generated:", as.character(meta$generated_date), "\n")
+          cache_age <- as.numeric(Sys.Date() - as.Date(meta$generated_date))
+          cat("Age:", cache_age, "days\n")
+          cat("Zone filter:", paste(meta$zone_filter, collapse = ", "), "\n")
+        }
+        
+        # List cached keys & stats
+        avgs <- redis_hgetall(HISTORICAL_HASH_KEY)
+        if (length(avgs) > 0) {
+          cat("\nCached averages:\n")
+          for (key in names(avgs)) {
+            avg_val <- mean(avgs[[key]]$value, na.rm = TRUE)
+            cat("  -", key, ":", round(avg_val, 1), "(", nrow(avgs[[key]]), "weeks )\n")
+          }
+        } else {
+          cat("\nNo cached averages in Redis.\n")
+        }
+      }, error = function(e) {
+        cat("Error reading Redis status:", e$message, "\n")
+      })
     }
   } else {
     cat("Redis backend: not configured\n")
   }
   
-  if (!file.exists(CACHE_FILE)) {
-    cat("File status: NO CACHE FILE EXISTS\n")
-    cat("Run regenerate_historical_cache() to create cache\n")
-    return(invisible(NULL))
-  }
-  
-  cache <- readRDS(CACHE_FILE)
-  cat("Generated:", as.character(cache$generated_date), "\n")
-  cat("Age:", as.numeric(Sys.Date() - as.Date(cache$generated_date)), "days\n")
-  cat("Zone filter:", paste(cache$zone_filter, collapse = ", "), "\n")
-  cat("\nCached averages:\n")
-  
-  for (key in names(cache$averages)) {
-    avg_val <- mean(cache$averages[[key]]$value, na.rm = TRUE)
-    cat("  -", key, ":", round(avg_val, 1), "(", nrow(cache$averages[[key]]), "weeks )\n")
-  }
-  
-  return(invisible(cache))
+  return(invisible(NULL))
 }
 
 #' Clear the cache file and Redis
 #' @export
 clear_cache <- function() {
+  # Remove legacy RDS file if it exists
   if (file.exists(CACHE_FILE)) {
     file.remove(CACHE_FILE)
-    cat("Cache file cleared:", CACHE_FILE, "\n")
-  } else {
-    cat("No cache file to clear\n")
+    cat("Legacy RDS cache file removed:", CACHE_FILE, "\n")
   }
   
-  # Also clear Redis historical cache
+  # Clear Redis historical cache (primary)
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
     tryCatch({
       r <- get_redis()

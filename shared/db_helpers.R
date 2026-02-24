@@ -190,69 +190,55 @@ clear_memory_cache <- function() {
 }
 
 # =============================================================================
-# LOOKUP CACHE - File-based cache for static reference data
+# LOOKUP CACHE - Redis-backed cache for static reference data
 # =============================================================================
 # Cache for lookup tables that don't change frequently.
-# Persists across Shiny restarts via RDS file.
+# L1: In-memory (same R process) — L2: Redis (shared across workers)
+# No file-based RDS fallback — Redis is the single source of truth.
 
-# Get lookup cache directory (same as historical cache)
-get_lookup_cache_dir <- function() {
-  paths <- c(
-    "/srv/shiny-server/shared/cache",
-    "../../shared/cache",
-    "../shared/cache",
-    "./shared/cache"
-  )
-  for (p in paths) {
-    if (dir.exists(p)) return(normalizePath(p))
-  }
-  # Create if needed
-  if (dir.exists("/srv/shiny-server/shared")) {
-    dir.create("/srv/shiny-server/shared/cache", showWarnings = FALSE, recursive = TRUE)
-    return("/srv/shiny-server/shared/cache")
-  }
-  "."
-}
+# Legacy compat stubs (no-ops) — some modules may still reference these
+get_lookup_cache_dir <- function() "."   # Deprecated: no file cache
+get_lookup_cache_file <- function() ""   # Deprecated: no file cache
 
-# Get lookup cache file path
-get_lookup_cache_file <- function() {
-  file.path(get_lookup_cache_dir(), "lookup_cache.rds")
-}
-
-# Load lookup cache from file
+# Load entire lookup cache from Redis (returns named list)
 load_lookup_cache <- function() {
-  cache_file <- get_lookup_cache_file()
-  if (file.exists(cache_file)) {
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
     tryCatch({
-      readRDS(cache_file)
+      return(load_lookup_cache_redis())
     }, error = function(e) {
-      warning(paste("Error reading lookup cache:", e$message))
-      list()
+      warning(paste("[lookup cache] Redis read error:", e$message))
     })
-  } else {
-    list()
+  }
+  # Return whatever is in memory as last resort
+  keys <- ls(.lookup_memory_cache)
+  if (length(keys) == 0) return(list())
+  vals <- lapply(keys, function(k) get(k, envir = .lookup_memory_cache))
+  names(vals) <- keys
+  vals
+}
+
+# Save entire lookup cache to Redis
+save_lookup_cache <- function(cache) {
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    tryCatch({
+      for (key in names(cache)) {
+        set_lookup_redis(key, cache[[key]])
+      }
+    }, error = function(e) {
+      warning(paste("[lookup cache] Redis write error:", e$message))
+    })
   }
 }
 
-# Save lookup cache to file
-save_lookup_cache <- function(cache) {
-  cache_file <- get_lookup_cache_file()
-  tryCatch({
-    saveRDS(cache, cache_file)
-  }, error = function(e) {
-    warning(paste("Error saving lookup cache:", e$message))
-  })
-}
-
-# Get a specific item from the lookup cache (Redis → memory → file)
+# Get a specific item from the lookup cache (memory → Redis)
 get_cached_lookup <- function(key) {
   # 1. Try in-memory (fastest, same-process)
   mem_val <- get_memory_cached(key)
   if (!is.null(mem_val)) return(mem_val)
 
-  # 2. Try Redis (shared across containers)
+  # 2. Try Redis (shared across workers)
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
-    redis_val <- get_lookup_redis(key)
+    redis_val <- tryCatch(get_lookup_redis(key), error = function(e) NULL)
     if (!is.null(redis_val)) {
       # Populate in-memory for next call
       set_memory_cached(key, redis_val)
@@ -260,45 +246,35 @@ get_cached_lookup <- function(key) {
     }
   }
 
-  # 3. Fall back to file
-  cache <- load_lookup_cache()
-  if (key %in% names(cache)) {
-    val <- cache[[key]]
-    set_memory_cached(key, val)  # warm in-memory
-    return(val)
-  }
   NULL
 }
 
-# Set a specific item in the lookup cache (writes to all layers)
+# Set a specific item in the lookup cache (writes to memory + Redis)
 set_cached_lookup <- function(key, value) {
   # In-memory (fastest for same-process)
   set_memory_cached(key, value)
 
-  # Redis (shared across containers)
+  # Redis (shared across workers)
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
-    set_lookup_redis(key, value)
+    tryCatch({
+      set_lookup_redis(key, value)
+      # Also store timestamp in Redis
+      set_lookup_redis(paste0(key, "_timestamp"), Sys.time())
+    }, error = function(e) {
+      warning(paste("[lookup cache] Redis write error for", key, ":", e$message))
+    })
   }
-
-  # File (fallback / persistence)
-  cache <- load_lookup_cache()
-  cache[[key]] <- value
-  cache[[paste0(key, "_timestamp")]] <- Sys.time()
-  save_lookup_cache(cache)
 }
 
 # Clear all cached lookups (call if reference data changes)
 clear_lookup_cache <- function() {
-  # Clear file
-  cache_file <- get_lookup_cache_file()
-  if (file.exists(cache_file)) {
-    file.remove(cache_file)
-  }
   # Clear in-memory
   clear_memory_cache()
   # Clear Redis
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
-    clear_lookup_cache_redis()
+    tryCatch(clear_lookup_cache_redis(), error = function(e) {
+      warning(paste("[lookup cache] Redis clear error:", e$message))
+    })
   }
 }
 

@@ -6,6 +6,10 @@ library(shinydashboard)
 library(shinyjs)
 library(dplyr)
 library(DT)
+library(jsonlite)
+
+# Null-coalescing operator (available in R 4.4+ but define for compatibility)
+if (!exists("%||%")) `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 source("../../shared/db_helpers.R")
 source("../../shared/cache_utilities.R")
@@ -33,6 +37,7 @@ ui <- dashboardPage(
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Cache Manager", tabName = "cache_manager", icon = icon("database")),
       menuItem("Runtime Info", tabName = "runtime_info", icon = icon("server")),
+      menuItem("Dynamic Routing", tabName = "dynamic_routing", icon = icon("random")),
       menuItem("Metric Registry", tabName = "metric_registry", icon = icon("list")),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Facilities", tabName = "facilities", icon = icon("building")),
@@ -169,6 +174,55 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             width = 12,
             DTOutput("lbSessions")
+          )
+        )
+      ),
+
+      # Dynamic Routing tab
+      tabItem(tabName = "dynamic_routing",
+        fluidRow(
+          box(
+            title = "Dynamic Routing — Worker Load (Live)",
+            status = "success",
+            solidHeader = TRUE,
+            width = 6,
+            actionButton("refreshDR", "Refresh", icon = icon("sync"), class = "btn-sm btn-info"),
+            br(), br(),
+            DTOutput("drWorkerLoad")
+          ),
+          box(
+            title = "Dynamic Routing — Configuration",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("drConfig")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Active Route Mappings (IP → Worker)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("drRouteMappings")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Routing Decision Log (Recent)",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("drRouteLog")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "nginx Access Log (Recent Requests)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("drAccessLog")
           )
         )
       ),
@@ -697,6 +751,189 @@ server <- function(input, output, session) {
     names(summary)[names(summary) == "Sessions"] <- "Unique Sessions"
     summary
   }, options = list(pageLength = 10))
+
+  # ===========================================================================
+  # Dynamic Routing monitoring (reads from Redis keys set by Lua router)
+  # ===========================================================================
+
+  # Helper: get a standalone Redis connection for monitoring queries
+  get_monitor_redis <- function() {
+    tryCatch({
+      redux::hiredis(host = "127.0.0.1", port = 6379L)
+    }, error = function(e) NULL)
+  }
+
+  # Worker Load (live active WebSocket connections per worker)
+  output$drWorkerLoad <- renderDT({
+    input$refreshDR
+    tryCatch({
+      r <- get_monitor_redis()
+      if (is.null(r)) {
+        return(data.frame(Worker = "N/A", `Active WebSockets` = "Redis unavailable", check.names = FALSE))
+      }
+      workers_raw <- r$SMEMBERS("mmcd:workers")
+      if (is.null(workers_raw) || length(workers_raw) == 0) {
+        return(data.frame(Worker = "N/A", `Active WebSockets` = "No workers registered", check.names = FALSE))
+      }
+      workers <- sort(unlist(workers_raw))
+      loads <- vapply(workers, function(w) {
+        val <- tryCatch(r$GET(paste0("mmcd:load:", w)), error = function(e) NULL)
+        if (is.null(val)) 0L else as.integer(val)
+      }, integer(1))
+      data.frame(
+        Worker = workers,
+        `Active WebSockets` = loads,
+        check.names = FALSE,
+        stringsAsFactors = FALSE,
+        row.names = NULL
+      )
+    }, error = function(e) {
+      data.frame(Worker = "Error", `Active WebSockets` = e$message, check.names = FALSE)
+    })
+  }, options = list(pageLength = 10, dom = "t"))
+
+  # Configuration summary
+  output$drConfig <- renderPrint({
+    tryCatch({
+      r <- get_monitor_redis()
+
+      workers_file <- "/etc/nginx/workers.list"
+      workers_list <- if (file.exists(workers_file)) {
+        readLines(workers_file, warn = FALSE)
+      } else {
+        c("(workers.list not found)")
+      }
+
+      route_ttl <- Sys.getenv("ROUTE_TTL_SECONDS", "600")
+
+      cat("=== DYNAMIC ROUTING CONFIG ===\n\n")
+      cat("Load Balancer:       OpenResty + Lua\n")
+      cat("Routing Strategy:    Least-loaded worker assignment\n")
+      cat("Route TTL:          ", route_ttl, "seconds\n")
+      cat("Sticky Sessions:     Yes (for TTL duration)\n")
+      cat("Fallback:            Consistent hash (if Redis down)\n\n")
+      cat("Workers:\n")
+      for (w in workers_list) cat("  ", w, "\n")
+      cat("\nRedis Keys:\n")
+      cat("  mmcd:workers       SET of worker addresses\n")
+      cat("  mmcd:load:<worker> INT active WS connections\n")
+      cat("  mmcd:route:<ip>    STRING worker addr (TTL=", route_ttl, "s)\n")
+      cat("  mmcd:route_log     LIST last 200 routing decisions\n")
+
+      if (!is.null(r)) {
+        total_routes <- tryCatch({
+          keys <- r$KEYS("mmcd:route:*")
+          length(keys)
+        }, error = function(e) "?")
+        cat("\nActive Routes:      ", total_routes, "\n")
+
+        total_workers <- tryCatch(r$SCARD("mmcd:workers"), error = function(e) "?")
+        cat("Registered Workers: ", total_workers, "\n")
+
+        log_len <- tryCatch(r$LLEN("mmcd:route_log"), error = function(e) "?")
+        cat("Decision Log Size:  ", log_len, "\n")
+      } else {
+        cat("\n(Redis not available — live stats unavailable)\n")
+      }
+    }, error = function(e) {
+      cat("Error loading config:", e$message, "\n")
+    })
+  })
+
+  # Active Route Mappings (IP -> Worker with remaining TTL)
+  output$drRouteMappings <- renderDT({
+    input$refreshDR
+    tryCatch({
+      r <- get_monitor_redis()
+      if (is.null(r)) {
+        return(data.frame(`Client IP` = "N/A", `Assigned Worker` = "Redis unavailable",
+                          `TTL Remaining (s)` = NA_integer_, check.names = FALSE))
+      }
+
+      # Use KEYS to find all route mappings (safe for small datasets)
+      route_keys <- tryCatch(r$KEYS("mmcd:route:*"), error = function(e) list())
+
+      if (is.null(route_keys) || length(route_keys) == 0) {
+        return(data.frame(`Client IP` = "(none)", `Assigned Worker` = "No active route mappings",
+                          `TTL Remaining (s)` = NA_integer_, check.names = FALSE))
+      }
+
+      rows <- lapply(route_keys, function(key) {
+        key_str <- as.character(key)
+        ip <- sub("^mmcd:route:", "", key_str)
+        worker <- tryCatch(as.character(r$GET(key_str)), error = function(e) "?")
+        ttl <- tryCatch(as.integer(r$TTL(key_str)), error = function(e) -1L)
+        data.frame(
+          `Client IP` = ip,
+          `Assigned Worker` = worker,
+          `TTL Remaining (s)` = ttl,
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+      do.call(rbind, rows)
+    }, error = function(e) {
+      data.frame(`Client IP` = "Error", `Assigned Worker` = e$message,
+                 `TTL Remaining (s)` = NA_integer_, check.names = FALSE)
+    })
+  }, options = list(pageLength = 20, order = list(list(2, "asc"))))
+
+  # Routing Decision Log (from mmcd:route_log Redis list)
+  output$drRouteLog <- renderDT({
+    input$refreshDR
+    tryCatch({
+      r <- get_monitor_redis()
+      if (is.null(r)) {
+        return(data.frame(Time = "N/A", `Client IP` = "Redis unavailable",
+                          `Assigned To` = "", `Worker Load` = NA_integer_,
+                          Reason = "", `All Loads` = "", check.names = FALSE))
+      }
+
+      log_raw <- tryCatch(r$LRANGE("mmcd:route_log", 0L, 49L), error = function(e) list())
+      if (is.null(log_raw) || length(log_raw) == 0) {
+        return(data.frame(Time = "(none)", `Client IP` = "No routing decisions logged yet",
+                          `Assigned To` = "", `Worker Load` = NA_integer_,
+                          Reason = "", `All Loads` = "", check.names = FALSE))
+      }
+
+      rows <- lapply(log_raw, function(entry) {
+        parsed <- tryCatch(jsonlite::fromJSON(as.character(entry)), error = function(e) NULL)
+        if (is.null(parsed)) return(NULL)
+        loads_str <- if (!is.null(parsed$all_loads)) {
+          paste(names(parsed$all_loads), "=", unlist(parsed$all_loads), collapse = ", ")
+        } else {
+          ""
+        }
+        data.frame(
+          Time = if (!is.null(parsed$time_fmt)) parsed$time_fmt else as.character(parsed$time),
+          `Client IP` = parsed$client_ip %||% "?",
+          `Assigned To` = parsed$target %||% "?",
+          `Worker Load` = as.integer(parsed$load %||% 0),
+          Reason = parsed$reason %||% "?",
+          `All Loads` = loads_str,
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+      rows <- rows[!sapply(rows, is.null)]
+      if (length(rows) == 0) {
+        return(data.frame(Time = "(none)", `Client IP` = "No parseable routing decisions",
+                          `Assigned To` = "", `Worker Load` = NA_integer_,
+                          Reason = "", `All Loads` = "", check.names = FALSE))
+      }
+      do.call(rbind, rows)
+    }, error = function(e) {
+      data.frame(Time = "Error", `Client IP` = e$message,
+                 `Assigned To` = "", `Worker Load` = NA_integer_,
+                 Reason = "", `All Loads` = "", check.names = FALSE)
+    })
+  }, options = list(pageLength = 20, dom = "frtip"))
+
+  # nginx access log for the Dynamic Routing tab (reuses parse_nginx_access_log)
+  output$drAccessLog <- renderDT({
+    input$refreshDR
+    parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 100)
+  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
 
   # Redis status / cache backend info
   output$redisStatus <- renderPrint({

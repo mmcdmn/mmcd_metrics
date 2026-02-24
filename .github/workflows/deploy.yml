@@ -89,5 +89,5 @@ jobs:
             environment-variables: |
               [
                 {"name": "ENABLE_NGINX", "value": "true"},
-                {"name": "SHINY_WORKERS", "value": "3"}
+                {"name": "SHINY_WORKERS", "value": "5"}
               ]

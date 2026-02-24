@@ -485,10 +485,10 @@ extract_weekly_values_by_group <- function(metrics, historical_data, week_num, r
 .hist_cache <- new.env(parent = emptyenv())
 
 #' Load historical cache data once per session
-#' Tries: Redis → .rds file
+#' Loads from Redis (single source of truth)
 load_hist_cache <- function() {
   if (is.null(.hist_cache$data)) {
-    # 1. Try Redis first (shared across containers)
+    # Redis is the single source of truth
     if (exists("load_historical_cache_redis", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active()) {
       tryCatch({
         redis_cache <- load_historical_cache_redis()
@@ -496,39 +496,15 @@ load_hist_cache <- function() {
           .hist_cache$data <- redis_cache
           cat("[CACHE] Historical cache loaded from Redis (", length(redis_cache$averages), " metrics)\n")
           return(.hist_cache$data)
+        } else {
+          cat("[CACHE] WARNING: Redis historical cache is empty\n")
         }
       }, error = function(e) {
-        cat("[CACHE] Redis load failed, falling back to file:", e$message, "\n")
+        cat("[CACHE] Redis load failed:", e$message, "\n")
       })
+    } else {
+      cat("[CACHE] WARNING: Redis not available for historical cache\n")
     }
-    
-    # 2. Fall back to .rds file
-    tryCatch({
-      cache_file <- file.path(get_cache_dir(), "historical_averages_cache.rds")
-      if (!file.exists(cache_file)) {
-        # Try additional fallback paths for unified/ directory depth
-        alt_paths <- c(
-          "../../../shared/cache/historical_averages_cache.rds",
-          "../../shared/cache/historical_averages_cache.rds",
-          "../shared/cache/historical_averages_cache.rds"
-        )
-        for (alt in alt_paths) {
-          if (file.exists(alt)) {
-            cache_file <- alt
-            break
-          }
-        }
-      }
-      if (file.exists(cache_file)) {
-        .hist_cache$data <- readRDS(cache_file)
-        cat("[CACHE] Historical cache loaded from file:", normalizePath(cache_file), "\n")
-      } else {
-        cat("[CACHE] WARNING: Historical cache file not found\n")
-      }
-    }, error = function(e) {
-      cat("[CACHE] ERROR loading historical cache:", e$message, "\n")
-      NULL
-    })
   }
   .hist_cache$data
 }

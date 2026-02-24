@@ -37,9 +37,9 @@ config:set("route_ttl", tonumber(ttl))
 ngx.log(ngx.NOTICE, "[route-init] Route TTL: ", ttl, "s")
 
 -- Queue configuration (overridable via env vars)
-local queue_retries = os.getenv("QUEUE_MAX_RETRIES") or "5"
+local queue_retries = os.getenv("QUEUE_MAX_RETRIES") or "10"
 config:set("queue_max_retries", tonumber(queue_retries))
-local queue_delay = os.getenv("QUEUE_RETRY_DELAY") or "2"
+local queue_delay = os.getenv("QUEUE_RETRY_DELAY") or "1"
 config:set("queue_retry_delay", tonumber(queue_delay))
 ngx.log(ngx.NOTICE, "[route-init] Queue: max_retries=", queue_retries,
         " delay=", queue_delay, "s (max wait ",

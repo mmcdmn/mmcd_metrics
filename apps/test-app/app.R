@@ -97,11 +97,11 @@ ui <- dashboardPage(
         # Lookup Cache Section
         fluidRow(
           box(
-            title = "Lookup Cache (In-Memory)",
+            title = "Lookup Cache (Redis + Memory)",
             status = "info",
             solidHeader = TRUE,
             width = 6,
-            p("Cached lookup tables (facilities, foremen, species, etc.) are stored in memory to reduce database queries."),
+            p("Cached lookup tables (facilities, foremen, species, etc.) are stored in Redis (shared across workers) with an in-memory L1 layer."),
             DTOutput("lookupCacheStatus"),
             br(),
             actionButton("refreshLookupCaches", "Refresh All Lookups", 
@@ -114,7 +114,7 @@ ui <- dashboardPage(
             status = "info",
             solidHeader = TRUE,
             width = 6,
-            p(strong("Note:"), " Lookup caches are automatically populated on first access and cleared when the server restarts."),
+            p(strong("Note:"), " Lookup caches are stored in Redis (shared across all Shiny workers) with a 5-minute in-memory L1 layer. Lookups are auto-populated on first access."),
             tags$ul(
               tags$li(strong("facilities:"), " Facility codes and names"),
               tags$li(strong("foremen:"), " Field supervisor employee data"),
@@ -465,18 +465,32 @@ server <- function(input, output, session) {
   # Cache info text
   output$cacheInfo <- renderText({
     cache_trigger()
-    cache_file <- get_cache_file()
     
-    if (!file.exists(cache_file)) {
-      return("Cache file does not exist. Click 'Regenerate All' to create.")
+    # Show Redis status instead of file info
+    redis_active <- exists("redis_is_active", mode = "function") && redis_is_active()
+    
+    if (!redis_active) {
+      return("Redis is not available. Cache backend is offline.")
     }
     
-    info <- file.info(cache_file)
-    paste0(
-      "Cache file: ", cache_file, "\n",
-      "File size: ", round(info$size / 1024, 1), " KB\n",
-      "Last modified: ", info$mtime
-    )
+    tryCatch({
+      info <- redis_cache_status()
+      meta <- redis_get(HISTORICAL_META_KEY)
+      
+      paste0(
+        "Cache backend: Redis (", REDIS_CONFIG$host, ":", REDIS_CONFIG$port, ")\n",
+        "Historical metrics cached: ", info$historical_count, "\n",
+        "Lookup keys cached: ", info$lookup_count, "\n",
+        if (!is.null(meta) && !is.null(meta$generated_date)) {
+          paste0("Last generated: ", as.character(meta$generated_date), "\n",
+                 "Age: ", as.numeric(Sys.Date() - as.Date(meta$generated_date)), " days\n")
+        } else {
+          "No historical cache metadata found.\n"
+        }
+      )
+    }, error = function(e) {
+      paste0("Redis connected but error reading status: ", e$message)
+    })
   })
 
   # Comprehensive runtime environment diagnostics

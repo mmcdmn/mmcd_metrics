@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y \
     libv8-dev libpoppler-cpp-dev libmagick++-dev \
     nginx
 
-# Install libsodium for plumber API
-RUN apt-get install -y libsodium-dev
+# Install libsodium for plumber API, libhiredis for Redis client, redis-server for embedded cache
+RUN apt-get install -y libsodium-dev libhiredis-dev redis-server
 
 # Install required R packages
 RUN R -e "install.packages(c( \
@@ -35,6 +35,9 @@ RUN R -e "install.packages(c('tidyr'), lib='/usr/local/lib/R/site-library', repo
 
 # Install pool package for database connection pooling
 RUN R -e "install.packages('pool', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
+# Install redux package for Redis caching
+RUN R -e "install.packages('redux', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
 # Install plumber for API server
 RUN R -e "install.packages('plumber', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"

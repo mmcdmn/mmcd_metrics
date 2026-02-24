@@ -32,6 +32,7 @@ ui <- dashboardPage(
       ),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Cache Manager", tabName = "cache_manager", icon = icon("database")),
+      menuItem("Runtime Info", tabName = "runtime_info", icon = icon("server")),
       menuItem("Metric Registry", tabName = "metric_registry", icon = icon("list")),
       hr(style = "margin: 5px 0; border-color: #444;"),
       menuItem("Facilities", tabName = "facilities", icon = icon("building")),
@@ -117,6 +118,57 @@ ui <- dashboardPage(
               tags$li(strong("spring_thresholds:"), " ACT4-P1 spring date thresholds")
             ),
             verbatimTextOutput("lookupCacheLog")
+          )
+        )
+      ),
+
+      # Runtime Info tab (NEW)
+      tabItem(tabName = "runtime_info",
+        fluidRow(
+          box(
+            title = "Runtime Environment",
+            status = "primary",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("runtimeInfo")
+          ),
+          box(
+            title = "Redis / Cache Status",
+            status = "info",
+            solidHeader = TRUE,
+            width = 6,
+            verbatimTextOutput("redisStatus"),
+            br(),
+            verbatimTextOutput("cacheBackendInfo")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Worker Session",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            verbatimTextOutput("workerInfo")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Load Balancer (Recent Requests)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            actionButton("refreshLB", "Refresh", icon = icon("sync"), class = "btn-sm btn-info"),
+            br(), br(),
+            DTOutput("lbRecent")
+          )
+        ),
+        fluidRow(
+          box(
+            title = "Load Balancer (Active Sessions by Worker)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            DTOutput("lbSessions")
           )
         )
       ),
@@ -370,6 +422,299 @@ server <- function(input, output, session) {
       "Cache file: ", cache_file, "\n",
       "File size: ", round(info$size / 1024, 1), " KB\n",
       "Last modified: ", info$mtime
+    )
+  })
+
+  # Comprehensive runtime environment diagnostics
+  output$runtimeInfo <- renderPrint({
+    # Ensure .env is loaded (startup.sh writes MMCD_PLATFORM, ENABLE_NGINX there)
+    env_path <- "/srv/shiny-server/.env"
+    if (file.exists(env_path)) readRenviron(env_path)
+    
+    # Read platform from startup.sh-generated .env (most reliable)
+    mmcd_platform <- Sys.getenv("MMCD_PLATFORM", "")
+    
+    # Fallback detection if MMCD_PLATFORM wasn't set
+    if (nchar(mmcd_platform) == 0) {
+      hostname <- tryCatch(Sys.info()[["nodename"]], error = function(e) "")
+      is_ecs <- nchar(Sys.getenv("ECS_TASK_ARN", "")) > 0 ||
+                nchar(Sys.getenv("ECS_CONTAINER_METADATA_URI", "")) > 0 ||
+                nchar(Sys.getenv("ECS_CONTAINER_METADATA_URI_V4", "")) > 0 ||
+                grepl("AWS_ECS", Sys.getenv("AWS_EXECUTION_ENV", ""))
+      is_aws <- grepl("compute\\.internal|ec2|apprunner", hostname, ignore.case = TRUE) ||
+                nchar(Sys.getenv("AWS_DEFAULT_REGION", "")) > 0 ||
+                nchar(Sys.getenv("AWS_REGION", "")) > 0
+      
+      mmcd_platform <- if (is_ecs) {
+        "ECS/Fargate"
+      } else if (is_aws) {
+        "AWS (unknown service)"
+      } else {
+        "Local/Docker"
+      }
+    }
+    
+    platform <- mmcd_platform
+    
+    # Detect concurrency mode — default is single-worker (matches startup.sh)
+    enable_nginx <- Sys.getenv("ENABLE_NGINX", "false") == "true"
+    shiny_workers <- as.integer(Sys.getenv("SHINY_WORKERS", "3"))
+    
+    # Check if redis is embedded and working
+    redis_available <- tryCatch({
+      system("redis-cli -h 127.0.0.1 ping > /dev/null 2>&1", intern = FALSE) == 0
+    }, error = function(e) FALSE)
+    
+    # Test shared cache write/read (simpler, more reliable)
+    cache_test <- "NOT TESTED"
+    if (redis_available && exists("redis_set", mode = "function") && exists("redis_get", mode = "function")) {
+      tryCatch({
+        test_key <- "runtime_info_test"
+        redis_set(test_key, list(status = "working"), ttl = 5)
+        Sys.sleep(0.2)
+        result <- redis_get(test_key)
+        cache_test <- if (!is.null(result) && result$status == "working") "WORKING" else "FAILED"
+      }, error = function(e) {
+        # Gracefully handle any error during test
+      })
+    }
+    
+    sep <- paste0("=", paste(rep("=", 60), collapse = ""), "=\n")
+    
+    cat(sep)
+    cat("DEPLOYMENT ENVIRONMENT\n")
+    cat(sep)
+    cat("Platform:                 ", platform, "\n")
+    cat("Host:                     ", Sys.info()[["nodename"]], "\n")
+    cat("PID:                      ", Sys.getpid(), "\n")
+    cat("User:                     ", Sys.info()[["user"]], "\n")
+    cat("Time:                     ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"), "\n")
+    cat("\n")
+    
+    cat(sep)
+    cat("CONCURRENCY MODE\n")
+    cat(sep)
+    if (enable_nginx) {
+      cat("Status:                   MULTI-WORKER (nginx load-balanced)\n")
+      cat("Workers:                  ", shiny_workers, " Shiny Server instances\n")
+      cat("Load Balancer:            nginx on :3838\n")
+      cat("Worker Ports:             ", paste(3839:(3839+shiny_workers-1), collapse = ", "), "\n")
+    } else {
+      cat("Status:                   SINGLE-WORKER (no nginx)\n")
+      cat("Workers:                  1 Shiny Server\n")
+      cat("Listen Port:              3838\n")
+    }
+    cat("\n")
+    
+    cat(sep)
+    cat("SHARED CACHE STATUS\n")
+    cat(sep)
+    cat("Redis Host:               127.0.0.1\n")
+    cat("Redis Port:               6379\n")
+    cat("Redis Available:          ", if (redis_available) "YES" else "NO", "\n")
+    cat("Shared Cache Test:        ", cache_test, "\n")
+    cat("\n")
+    
+    cat(sep)
+    cat("SUMMARY\n")
+    cat(sep)
+    
+    status <- "✓ READY"
+    if (!enable_nginx) {
+      status <- "⚠ SINGLE-WORKER MODE (not optimal for production)"
+    }
+    if (!redis_available) {
+      status <- "✗ REDIS NOT AVAILABLE (cache will fall back to files)"
+    }
+    
+    cat(status, "\n")
+  })
+
+  # Walk the process tree to find which shiny-server instance owns this R process
+  find_worker_info <- function() {
+    map_file <- "/srv/shiny-server/.worker_map"
+    if (!file.exists(map_file)) {
+      return(list(id = "N/A", port = "N/A", debug = "no worker map (single-worker mode?)"))
+    }
+
+    map_lines <- readLines(map_file, warn = FALSE)
+    map_lines <- trimws(map_lines[nzchar(trimws(map_lines))])
+    if (length(map_lines) == 0) {
+      return(list(id = "N/A", port = "N/A", debug = "worker map is empty"))
+    }
+
+    # Parse: PID INSTANCE_ID PORT
+    map_df <- tryCatch({
+      do.call(rbind, lapply(map_lines, function(line) {
+        parts <- strsplit(line, "\\s+")[[1]]
+        if (length(parts) >= 3) {
+          data.frame(pid = as.integer(parts[1]), id = parts[2], port = parts[3],
+                     stringsAsFactors = FALSE)
+        }
+      }))
+    }, error = function(e) NULL)
+
+    if (is.null(map_df) || nrow(map_df) == 0) {
+      return(list(id = "N/A", port = "N/A", debug = paste("parse error:", map_lines[1])))
+    }
+
+    # Walk up the process tree from this R process looking for a PID in the map
+    current_pid <- Sys.getpid()
+    visited <- integer(0)
+    for (step in 1:10) {
+      if (current_pid %in% visited || current_pid <= 1) break
+      visited <- c(visited, current_pid)
+
+      idx <- which(map_df$pid == current_pid)
+      if (length(idx) > 0) {
+        return(list(id = map_df$id[idx[1]], port = map_df$port[idx[1]],
+                    debug = paste("matched PID", current_pid, "at step", step)))
+      }
+
+      # Read parent PID from /proc
+      status_file <- paste0("/proc/", current_pid, "/status")
+      if (!file.exists(status_file)) break
+      status_lines <- readLines(status_file, warn = FALSE)
+      ppid_line <- grep("^PPid:", status_lines, value = TRUE)
+      if (length(ppid_line) == 0) break
+      current_pid <- as.integer(sub("PPid:\\s+", "", ppid_line[1]))
+    }
+
+    list(id = "not matched", port = "unknown",
+         debug = paste("walked:", paste(visited, collapse = "->"),
+                       "| map PIDs:", paste(map_df$pid, collapse = ",")))
+  }
+
+  output$workerInfo <- renderPrint({
+    env_path <- "/srv/shiny-server/.env"
+    if (file.exists(env_path)) readRenviron(env_path)
+
+    worker <- find_worker_info()
+    pid <- Sys.getpid()
+    session_host <- tryCatch(session$clientData$url_hostname, error = function(e) "unknown")
+    session_port <- tryCatch(session$clientData$url_port, error = function(e) "unknown")
+    remote_addr <- tryCatch(session$request$REMOTE_ADDR, error = function(e) "unknown")
+    x_forwarded_for <- tryCatch(session$request$HTTP_X_FORWARDED_FOR, error = function(e) "unknown")
+
+    cat("Instance ID:            ", worker$id, "\n")
+    cat("Instance Port:          ", worker$port, "\n")
+    cat("Process PID:            ", pid, "\n")
+    cat("Worker Detection:       ", worker$debug, "\n")
+    cat("Session Host:           ", session_host, "\n")
+    cat("Session Port:           ", session_port, "\n")
+    cat("Remote Addr:            ", remote_addr, "\n")
+    cat("X-Forwarded-For:        ", x_forwarded_for, "\n")
+  })
+
+  parse_nginx_access_log <- function(log_path, max_lines = 200) {
+    if (!file.exists(log_path)) {
+      return(data.frame(Message = "nginx access log not found", stringsAsFactors = FALSE))
+    }
+
+    # Check if we can actually read the file
+    if (file.access(log_path, mode = 4) != 0) {
+      perms <- tryCatch(
+        paste(system(paste("ls -la", shQuote(log_path)), intern = TRUE), collapse = " "),
+        error = function(e) "unknown"
+      )
+      return(data.frame(
+        Message = paste0("Permission denied reading nginx log. File perms: ", perms),
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    lines <- tryCatch(readLines(log_path, warn = FALSE), error = function(e) {
+      return(character(0))
+    })
+    if (length(lines) == 0) {
+      fsize <- file.info(log_path)$size
+      return(data.frame(
+        Message = paste0("nginx access log has 0 parseable lines (file size: ", fsize, " bytes)"),
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    lines <- tail(lines, max_lines)
+    pattern <- "^([^ ]+) - ([^ ]+) \\[([^]]+)\\] \"([^\"]*)\" ([0-9]{3}) ([0-9]+) \"([^\"]*)\" \"([^\"]*)\" upstream=([^ ]*) xff=\"([^\"]*)\" req_time=([^ ]*) upstream_time=([^ ]*) upstream_status=([^ ]*)"
+    matches <- regexec(pattern, lines)
+    parts <- regmatches(lines, matches)
+
+    rows <- lapply(parts, function(m) {
+      if (length(m) == 0) return(NULL)
+      request <- m[5]
+      req_parts <- strsplit(request, " ")[[1]]
+      method <- if (length(req_parts) >= 1) req_parts[1] else ""
+      path <- if (length(req_parts) >= 2) req_parts[2] else request
+      data.frame(
+        Time = m[4],
+        Method = method,
+        Path = path,
+        Status = m[6],
+        Upstream = m[10],
+        UpstreamStatus = m[14],
+        ReqTime = m[12],
+        UpstreamTime = m[13],
+        XFF = m[11],
+        RemoteAddr = m[2],
+        stringsAsFactors = FALSE
+      )
+    })
+
+    df <- do.call(rbind, rows)
+    if (is.null(df) || nrow(df) == 0) {
+      return(data.frame(Message = "No parseable nginx log lines yet", stringsAsFactors = FALSE))
+    }
+
+    df
+  }
+
+  output$lbRecent <- renderDT({
+    input$refreshLB  # reactivity trigger
+    parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 200)
+  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
+
+  output$lbSessions <- renderDT({
+    input$refreshLB  # reactivity trigger
+    df <- parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 500)
+    if (!all(c("Path", "Upstream", "Time") %in% names(df))) {
+      return(df)
+    }
+
+    session_id <- sub(".*/session/([^/]+).*", "\\1", df$Path)
+    is_session <- grepl("/session/", df$Path)
+    session_id <- session_id[is_session]   # filter BEFORE subsetting df
+    df <- df[is_session, , drop = FALSE]
+
+    if (nrow(df) == 0) {
+      return(data.frame(Message = "No session requests found in recent logs"))
+    }
+
+    summary <- aggregate(
+      x = list(Sessions = session_id),
+      by = list(Upstream = df$Upstream),
+      FUN = function(x) length(unique(x))
+    )
+    names(summary)[names(summary) == "Sessions"] <- "Unique Sessions"
+    summary
+  }, options = list(pageLength = 10))
+
+  # Redis status / cache backend info
+  output$redisStatus <- renderPrint({
+    if (exists("redis_cache_status", mode = "function")) {
+      redis_cache_status()
+    } else {
+      "redis_cache_status() not available"
+    }
+  })
+
+  output$cacheBackendInfo <- renderPrint({
+    list(
+      cache_backend = if (exists("REDIS_CONFIG")) REDIS_CONFIG$backend else "unknown",
+      redis_active = if (exists("redis_is_active", mode = "function")) redis_is_active() else FALSE,
+      redis_host = if (exists("REDIS_CONFIG")) REDIS_CONFIG$host else "unknown",
+      redis_port = if (exists("REDIS_CONFIG")) REDIS_CONFIG$port else NA,
+      redis_db = if (exists("REDIS_CONFIG")) REDIS_CONFIG$db else NA,
+      redis_prefix = if (exists("REDIS_CONFIG")) REDIS_CONFIG$prefix else "unknown"
     )
   })
   

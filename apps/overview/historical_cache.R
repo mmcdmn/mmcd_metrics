@@ -9,6 +9,22 @@
 library(dplyr)
 library(lubridate)
 
+# Source Redis cache layer (if available)
+.redis_hist_paths <- c(
+  "/srv/shiny-server/shared/redis_cache.R",
+  "../../shared/redis_cache.R",
+  "../../../shared/redis_cache.R",
+  file.path(getwd(), "shared/redis_cache.R")
+)
+for (.rp in .redis_hist_paths) {
+  if (file.exists(.rp)) {
+    tryCatch(source(.rp, local = FALSE), error = function(e) {
+      message("[historical_cache] Redis source error: ", e$message)
+    })
+    break
+  }
+}
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -44,6 +60,7 @@ CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")
 # =============================================================================
 
 #' Get cached historical averages for a metric
+#' Checks: Redis → .rds file
 #' @param metric_id The metric ID (e.g., "catch_basin", "drone")
 #' @param avg_type "5yr" or "10yr"
 #' @return Data frame with cached averages by week, or NULL if not cached
@@ -53,7 +70,20 @@ get_cached_average <- function(metric_id, avg_type = "10yr") {
     return(NULL)
   }
   
-  # Find cache file
+  cache_key <- paste0(metric_id, "_", avg_type)
+  
+  # 1. Try Redis first (shared across containers)
+  if (exists("get_cached_average_redis", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active()) {
+    redis_result <- tryCatch({
+      get_cached_average_redis(metric_id, avg_type)
+    }, error = function(e) NULL)
+    
+    if (!is.null(redis_result)) {
+      return(redis_result)
+    }
+  }
+  
+  # 2. Fall back to .rds file
   cache_file <- CACHE_FILE
   if (!file.exists(cache_file)) {
     # Try alternative paths
@@ -77,7 +107,6 @@ get_cached_average <- function(metric_id, avg_type = "10yr") {
   }
   
   cache <- readRDS(cache_file)
-  cache_key <- paste0(metric_id, "_", avg_type)
   
   if (!cache_key %in% names(cache$averages)) {
     return(NULL)
@@ -205,10 +234,21 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
     })
   }
   
-  # Save cache
+  # Save cache to .rds file
   saveRDS(cache, CACHE_FILE)
   cat("\n=== CACHE SAVED ===\n")
   cat("File:", CACHE_FILE, "\n")
+  
+  # Also save to Redis for cross-container sharing
+  if (exists("save_historical_cache_redis", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active()) {
+    tryCatch({
+      save_historical_cache_redis(cache)
+      cat("Redis: saved\n")
+    }, error = function(e) {
+      cat("Redis: save failed -", e$message, "\n")
+    })
+  }
+  
   cat("Metrics cached:", length(cache$averages), "\n")
   cat("Generated:", as.character(cache$generated_date), "\n")
   
@@ -222,8 +262,21 @@ view_cache_status <- function() {
   cat("Caching enabled:", USE_CACHED_AVERAGES, "\n")
   cat("Cache file:", CACHE_FILE, "\n")
   
+  # Redis status
+  if (exists("redis_is_active", mode = "function")) {
+    cat("Redis backend:", if (redis_is_active()) "connected" else "disconnected", "\n")
+    if (redis_is_active()) {
+      tryCatch({
+        info <- redis_cache_status()
+        cat("Redis historical metrics:", info$historical_count, "\n")
+      }, error = function(e) NULL)
+    }
+  } else {
+    cat("Redis backend: not configured\n")
+  }
+  
   if (!file.exists(CACHE_FILE)) {
-    cat("Status: NO CACHE FILE EXISTS\n")
+    cat("File status: NO CACHE FILE EXISTS\n")
     cat("Run regenerate_historical_cache() to create cache\n")
     return(invisible(NULL))
   }
@@ -242,14 +295,27 @@ view_cache_status <- function() {
   return(invisible(cache))
 }
 
-#' Clear the cache file
+#' Clear the cache file and Redis
 #' @export
 clear_cache <- function() {
   if (file.exists(CACHE_FILE)) {
     file.remove(CACHE_FILE)
-    cat("Cache cleared:", CACHE_FILE, "\n")
+    cat("Cache file cleared:", CACHE_FILE, "\n")
   } else {
     cat("No cache file to clear\n")
+  }
+  
+  # Also clear Redis historical cache
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    tryCatch({
+      r <- get_redis()
+      prefix <- REDIS_CONFIG$prefix
+      r$DEL(paste0(prefix, HISTORICAL_HASH_KEY))
+      r$DEL(paste0(prefix, HISTORICAL_META_KEY))
+      cat("Redis historical cache cleared\n")
+    }, error = function(e) {
+      cat("Redis clear failed:", e$message, "\n")
+    })
   }
 }
 

@@ -123,15 +123,17 @@ calculate_checkback_status <- function(rounds, checkbacks, treatments, all_inspe
               filter(inspdate < next_treatment_date)
           }
           
-          # Exclude control checkbacks: no treatments occurred between
-          # the pre-inspection and the post (checkback) inspection.
-          # Use timestamps for same-day accuracy.
+          # Exclude invalid checkbacks:
+          # 1. Control: no treatments between pre and post (by timestamp)
+          # 2. Pre during active treatment: a prior treatment's effect_days
+          #    hadn't expired at the time of the pre-inspection
           if (!is.null(all_inspections) && nrow(all_inspections) > 0 && nrow(site_checkbacks) > 0) {
             site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
 
             # Build combined datetime for treatments at this site
             site_trt <- treatments[treatments$sitecode == site, ]
             site_trt_dt <- paste(site_trt$inspdate, ifelse(is.na(site_trt$insptime) | site_trt$insptime == "", "00:00:00", site_trt$insptime))
+            site_trt_effect <- ifelse(is.na(site_trt$effect_days), 14, site_trt$effect_days)
 
             keep_mask <- vapply(seq_len(nrow(site_checkbacks)), function(j) {
               cb_date <- site_checkbacks$inspdate[j]
@@ -145,9 +147,23 @@ calculate_checkback_status <- function(rounds, checkbacks, treatments, all_inspe
               valid_pre <- pre_dts[pre_dts < cb_dt]
               if (length(valid_pre) == 0) return(TRUE)
               pre_dt <- max(valid_pre)
+              pre_date_val <- as.Date(substr(pre_dt, 1, 10))
 
-              # Any treatments between pre and post (by datetime)?
-              any(site_trt_dt > pre_dt & site_trt_dt < cb_dt)
+              # Check 1: Any treatments between pre and post (by datetime)?
+              has_trt_between <- any(site_trt_dt > pre_dt & site_trt_dt < cb_dt)
+              if (!has_trt_between) return(FALSE)  # control — exclude
+
+              # Check 2: Was there active treatment at the site during the pre-inspection?
+              # A prior treatment is "active" if trt_date + effect_days > pre_date
+              prior_mask <- site_trt$inspdate < pre_date_val
+              if (any(prior_mask)) {
+                prior_trt_dates <- site_trt$inspdate[prior_mask]
+                prior_effect <- site_trt_effect[prior_mask]
+                prior_expiry <- prior_trt_dates + prior_effect
+                if (any(prior_expiry > pre_date_val)) return(FALSE)  # pre during active trt — exclude
+              }
+
+              TRUE  # valid checkback
             }, logical(1))
             site_checkbacks <- site_checkbacks[keep_mask, , drop = FALSE]
           }
@@ -308,11 +324,17 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
       
       days_diff <- as.numeric(checkback_date - treatment_date)
       
-      # Detect control checkbacks: no treatments occurred between the
-      # pre-inspection and the post (checkback) inspection.
-      # Use timestamps for same-day accuracy.
+      # Classify checkback validity:
+      # - Control: no treatments between pre and post (by timestamp)
+      # - Invalid (pre during active trt): a prior treatment's effect_days
+      #   hadn't expired at the time of the pre-inspection
       is_control <- FALSE
+      is_invalid <- FALSE
+      invalid_reason <- NA_character_
       pre_inspection_date <- NA
+      prior_trt_date_for_invalid <- NA
+      prior_trt_expiry_for_invalid <- NA
+      prior_trt_material_for_invalid <- NA_character_
       if (!is.null(all_inspections) && nrow(all_inspections) > 0) {
         site_insps <- all_inspections[all_inspections$sitecode == site & is.na(all_inspections$posttrt_p), ]
 
@@ -335,11 +357,64 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
           trt_times <- ifelse(is.na(site_trts$insptime) | site_trts$insptime == "", "00:00:00", site_trts$insptime)
           trt_dts <- paste(site_trts$inspdate, trt_times)
 
-          # Is there any treatment between pre and post (by datetime)?
-          is_control <- !any(trt_dts > pre_dt & trt_dts < cb_dt)
+          # Check 1: Is there any treatment between pre and post (by datetime)?
+          has_trt_between <- any(trt_dts > pre_dt & trt_dts < cb_dt)
+          is_control <- !has_trt_between
+
+          # Check 2: Was there active treatment during the pre-inspection?
+          # A prior treatment is "active" if trt_date + effect_days > pre_date
+          # Use <= on dates to include same-day treatments, then refine with
+          # datetime: a same-day treatment counts as "prior" if its timestamp
+          # is at or before the pre-inspection timestamp (trt happened first).
+          site_trt_effect <- ifelse(is.na(site_trts$effect_days), 14, site_trts$effect_days)
+          prior_mask <- site_trts$inspdate <= pre_inspection_date & trt_dts <= pre_dt
+          if (any(prior_mask)) {
+            prior_trt_dates <- site_trts$inspdate[prior_mask]
+            prior_effect <- site_trt_effect[prior_mask]
+            prior_expiry <- prior_trt_dates + prior_effect
+            active_idx <- which(prior_expiry > pre_inspection_date)
+            if (length(active_idx) > 0) {
+              # Use the most recent active prior treatment for the reason
+              best <- active_idx[which.max(prior_trt_dates[active_idx])]
+              prior_trt_date_for_invalid <- prior_trt_dates[best]
+              prior_trt_expiry_for_invalid <- prior_expiry[best]
+              mat_val <- if ("mattype" %in% names(site_trts)) site_trts$mattype[prior_mask][best] else NA_character_
+              prior_trt_material_for_invalid <- mat_val
+              days_remaining <- as.numeric(prior_expiry[best] - pre_inspection_date)
+              is_invalid <- TRUE
+              is_control <- FALSE  # Invalid takes priority over control
+              invalid_reason <- sprintf(
+                "Pre-inspection on %s occurred during active treatment (%s treated %s, %dd effect, expires %s, %dd remaining)",
+                pre_inspection_date, ifelse(is.na(mat_val), "unknown", mat_val),
+                prior_trt_date_for_invalid, prior_effect[best],
+                prior_trt_expiry_for_invalid, days_remaining
+              )
+            }
+          }
         }
       }
       
+      # Capture timestamps for the invalid checkbacks table
+      cb_time_val <- if ("insptime" %in% names(checkback) && !is.na(checkback$insptime) && checkback$insptime != "") {
+        checkback$insptime
+      } else "23:59:59"
+      trt_timestamp <- if ("insptime" %in% names(site_treatments)) {
+        paste(treatment_date, ifelse(is.na(site_treatments$insptime[last_treatment_idx]) | site_treatments$insptime[last_treatment_idx] == "", "00:00:00", site_treatments$insptime[last_treatment_idx]))
+      } else paste(treatment_date, "00:00:00")
+      pre_timestamp <- if (!is.na(pre_inspection_date)) {
+        # Find pre time from all_inspections
+        pre_time_val <- "00:00:00"
+        if (!is.null(all_inspections)) {
+          pre_match <- all_inspections[all_inspections$sitecode == site & all_inspections$inspdate == pre_inspection_date & is.na(all_inspections$posttrt_p), ]
+          if (nrow(pre_match) > 0 && "insptime" %in% names(pre_match)) {
+            pt <- pre_match$insptime[1]
+            if (!is.na(pt) && pt != "") pre_time_val <- pt
+          }
+        }
+        paste(pre_inspection_date, pre_time_val)
+      } else NA_character_
+      post_timestamp <- paste(checkback_date, cb_time_val)
+
       checkback_list[[i]] <- data.frame(
         sitecode = site,
         facility = checkback$facility,
@@ -359,7 +434,15 @@ create_site_details <- function(treatments, checkbacks, species_data = NULL, all
         redblue = redblue_val,
         missing = missing_val,
         is_control = is_control,
+        is_invalid = is_invalid,
+        invalid_reason = invalid_reason,
+        prior_trt_date = prior_trt_date_for_invalid,
+        prior_trt_expiry = prior_trt_expiry_for_invalid,
+        prior_trt_material = prior_trt_material_for_invalid,
         pre_inspection_date = pre_inspection_date,
+        trt_timestamp = trt_timestamp,
+        pre_timestamp = pre_timestamp,
+        post_timestamp = post_timestamp,
         stringsAsFactors = FALSE
       )
     }

@@ -766,154 +766,167 @@ server <- function(input, output, session) {
   # Worker Load (live active WebSocket connections per worker)
   output$drWorkerLoad <- renderDT({
     input$refreshDR
-    r <- get_monitor_redis()
-    if (is.null(r)) {
-      return(data.frame(Message = "Redis unavailable"))
-    }
-    workers <- tryCatch(r$SMEMBERS("mmcd:workers"), error = function(e) list())
-    if (length(workers) == 0) {
-      return(data.frame(Message = "No workers registered in Redis (mmcd:workers is empty)"))
-    }
-    workers <- sort(unlist(workers))
-    loads <- sapply(workers, function(w) {
-      val <- tryCatch(r$GET(paste0("mmcd:load:", w)), error = function(e) "0")
-      as.integer(val %||% "0")
+    tryCatch({
+      r <- get_monitor_redis()
+      if (is.null(r)) {
+        return(data.frame(Worker = "N/A", `Active WebSockets` = "Redis unavailable", check.names = FALSE))
+      }
+      workers_raw <- r$SMEMBERS("mmcd:workers")
+      if (is.null(workers_raw) || length(workers_raw) == 0) {
+        return(data.frame(Worker = "N/A", `Active WebSockets` = "No workers registered", check.names = FALSE))
+      }
+      workers <- sort(unlist(workers_raw))
+      loads <- vapply(workers, function(w) {
+        val <- tryCatch(r$GET(paste0("mmcd:load:", w)), error = function(e) NULL)
+        if (is.null(val)) 0L else as.integer(val)
+      }, integer(1))
+      data.frame(
+        Worker = workers,
+        `Active WebSockets` = loads,
+        check.names = FALSE,
+        stringsAsFactors = FALSE,
+        row.names = NULL
+      )
+    }, error = function(e) {
+      data.frame(Worker = "Error", `Active WebSockets` = e$message, check.names = FALSE)
     })
-    data.frame(
-      Worker = workers,
-      `Active WebSockets` = loads,
-      check.names = FALSE,
-      stringsAsFactors = FALSE
-    )
   }, options = list(pageLength = 10, dom = "t"))
 
   # Configuration summary
   output$drConfig <- renderPrint({
-    r <- get_monitor_redis()
-    env_path <- "/srv/shiny-server/.env"
-    if (file.exists(env_path)) readRenviron(env_path)
+    tryCatch({
+      r <- get_monitor_redis()
 
-    workers_file <- "/etc/nginx/workers.list"
-    workers_list <- if (file.exists(workers_file)) {
-      readLines(workers_file, warn = FALSE)
-    } else {
-      "file not found"
-    }
+      workers_file <- "/etc/nginx/workers.list"
+      workers_list <- if (file.exists(workers_file)) {
+        readLines(workers_file, warn = FALSE)
+      } else {
+        c("(workers.list not found)")
+      }
 
-    route_ttl <- Sys.getenv("ROUTE_TTL_SECONDS", "600")
+      route_ttl <- Sys.getenv("ROUTE_TTL_SECONDS", "600")
 
-    cat("=== DYNAMIC ROUTING CONFIG ===\n\n")
-    cat("Load Balancer:       OpenResty + Lua\n")
-    cat("Routing Strategy:    Least-loaded worker assignment\n")
-    cat("Route TTL:           ", route_ttl, "seconds\n")
-    cat("Sticky Sessions:     Yes (for TTL duration)\n")
-    cat("Fallback:            Consistent hash (if Redis down)\n\n")
-    cat("Workers:\n")
-    for (w in workers_list) cat("  ", w, "\n")
-    cat("\nRedis Keys:\n")
-    cat("  mmcd:workers       SET of worker addresses\n")
-    cat("  mmcd:load:<worker> INT active WS connections\n")
-    cat("  mmcd:route:<ip>    STRING worker addr (TTL=", route_ttl, "s)\n")
-    cat("  mmcd:route_log     LIST last 200 routing decisions\n")
+      cat("=== DYNAMIC ROUTING CONFIG ===\n\n")
+      cat("Load Balancer:       OpenResty + Lua\n")
+      cat("Routing Strategy:    Least-loaded worker assignment\n")
+      cat("Route TTL:          ", route_ttl, "seconds\n")
+      cat("Sticky Sessions:     Yes (for TTL duration)\n")
+      cat("Fallback:            Consistent hash (if Redis down)\n\n")
+      cat("Workers:\n")
+      for (w in workers_list) cat("  ", w, "\n")
+      cat("\nRedis Keys:\n")
+      cat("  mmcd:workers       SET of worker addresses\n")
+      cat("  mmcd:load:<worker> INT active WS connections\n")
+      cat("  mmcd:route:<ip>    STRING worker addr (TTL=", route_ttl, "s)\n")
+      cat("  mmcd:route_log     LIST last 200 routing decisions\n")
 
-    if (!is.null(r)) {
-      total_routes <- tryCatch({
-        cursor <- "0"
-        count <- 0
-        repeat {
-          result <- r$SCAN(cursor, match = "mmcd:route:*", count = 100L)
-          cursor <- result[[1]]
-          count <- count + length(result[[2]])
-          if (cursor == "0") break
-        }
-        count
-      }, error = function(e) "?")
-      cat("\nActive Routes:      ", total_routes, "\n")
+      if (!is.null(r)) {
+        total_routes <- tryCatch({
+          keys <- r$KEYS("mmcd:route:*")
+          length(keys)
+        }, error = function(e) "?")
+        cat("\nActive Routes:      ", total_routes, "\n")
 
-      total_workers <- tryCatch(r$SCARD("mmcd:workers"), error = function(e) "?")
-      cat("Registered Workers: ", total_workers, "\n")
+        total_workers <- tryCatch(r$SCARD("mmcd:workers"), error = function(e) "?")
+        cat("Registered Workers: ", total_workers, "\n")
 
-      log_len <- tryCatch(r$LLEN("mmcd:route_log"), error = function(e) "?")
-      cat("Decision Log Size:  ", log_len, "\n")
-    }
+        log_len <- tryCatch(r$LLEN("mmcd:route_log"), error = function(e) "?")
+        cat("Decision Log Size:  ", log_len, "\n")
+      } else {
+        cat("\n(Redis not available — live stats unavailable)\n")
+      }
+    }, error = function(e) {
+      cat("Error loading config:", e$message, "\n")
+    })
   })
 
-  # Active Route Mappings (IP → Worker with remaining TTL)
+  # Active Route Mappings (IP -> Worker with remaining TTL)
   output$drRouteMappings <- renderDT({
     input$refreshDR
-    r <- get_monitor_redis()
-    if (is.null(r)) {
-      return(data.frame(Message = "Redis unavailable"))
-    }
+    tryCatch({
+      r <- get_monitor_redis()
+      if (is.null(r)) {
+        return(data.frame(`Client IP` = "N/A", `Assigned Worker` = "Redis unavailable",
+                          `TTL Remaining (s)` = NA_integer_, check.names = FALSE))
+      }
 
-    # SCAN for all mmcd:route:* keys
-    routes <- list()
-    cursor <- "0"
-    repeat {
-      result <- tryCatch(r$SCAN(cursor, match = "mmcd:route:*", count = 100L),
-                         error = function(e) list("0", list()))
-      cursor <- result[[1]]
-      routes <- c(routes, result[[2]])
-      if (cursor == "0") break
-    }
+      # Use KEYS to find all route mappings (safe for small datasets)
+      route_keys <- tryCatch(r$KEYS("mmcd:route:*"), error = function(e) list())
 
-    if (length(routes) == 0) {
-      return(data.frame(Message = "No active route mappings"))
-    }
+      if (is.null(route_keys) || length(route_keys) == 0) {
+        return(data.frame(`Client IP` = "(none)", `Assigned Worker` = "No active route mappings",
+                          `TTL Remaining (s)` = NA_integer_, check.names = FALSE))
+      }
 
-    rows <- lapply(routes, function(key) {
-      key_str <- as.character(key)
-      ip <- sub("^mmcd:route:", "", key_str)
-      worker <- tryCatch(as.character(r$GET(key_str)), error = function(e) "?")
-      ttl <- tryCatch(as.integer(r$TTL(key_str)), error = function(e) -1L)
-      data.frame(
-        `Client IP` = ip,
-        `Assigned Worker` = worker,
-        `TTL Remaining (s)` = ttl,
-        check.names = FALSE,
-        stringsAsFactors = FALSE
-      )
+      rows <- lapply(route_keys, function(key) {
+        key_str <- as.character(key)
+        ip <- sub("^mmcd:route:", "", key_str)
+        worker <- tryCatch(as.character(r$GET(key_str)), error = function(e) "?")
+        ttl <- tryCatch(as.integer(r$TTL(key_str)), error = function(e) -1L)
+        data.frame(
+          `Client IP` = ip,
+          `Assigned Worker` = worker,
+          `TTL Remaining (s)` = ttl,
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+      do.call(rbind, rows)
+    }, error = function(e) {
+      data.frame(`Client IP` = "Error", `Assigned Worker` = e$message,
+                 `TTL Remaining (s)` = NA_integer_, check.names = FALSE)
     })
-    do.call(rbind, rows)
   }, options = list(pageLength = 20, order = list(list(2, "asc"))))
 
   # Routing Decision Log (from mmcd:route_log Redis list)
   output$drRouteLog <- renderDT({
     input$refreshDR
-    r <- get_monitor_redis()
-    if (is.null(r)) {
-      return(data.frame(Message = "Redis unavailable"))
-    }
-
-    log_raw <- tryCatch(r$LRANGE("mmcd:route_log", 0L, 49L), error = function(e) list())
-    if (length(log_raw) == 0) {
-      return(data.frame(Message = "No routing decisions logged yet"))
-    }
-
-    rows <- lapply(log_raw, function(entry) {
-      parsed <- tryCatch(jsonlite::fromJSON(as.character(entry)), error = function(e) NULL)
-      if (is.null(parsed)) return(NULL)
-      loads_str <- if (!is.null(parsed$all_loads)) {
-        paste(names(parsed$all_loads), "=", unlist(parsed$all_loads), collapse = ", ")
-      } else {
-        ""
+    tryCatch({
+      r <- get_monitor_redis()
+      if (is.null(r)) {
+        return(data.frame(Time = "N/A", `Client IP` = "Redis unavailable",
+                          `Assigned To` = "", `Worker Load` = NA_integer_,
+                          Reason = "", `All Loads` = "", check.names = FALSE))
       }
-      data.frame(
-        Time = if (!is.null(parsed$time_fmt)) parsed$time_fmt else as.character(parsed$time),
-        `Client IP` = parsed$client_ip %||% "?",
-        `Assigned To` = parsed$target %||% "?",
-        `Worker Load` = as.integer(parsed$load %||% 0),
-        Reason = parsed$reason %||% "?",
-        `All Loads` = loads_str,
-        check.names = FALSE,
-        stringsAsFactors = FALSE
-      )
+
+      log_raw <- tryCatch(r$LRANGE("mmcd:route_log", 0L, 49L), error = function(e) list())
+      if (is.null(log_raw) || length(log_raw) == 0) {
+        return(data.frame(Time = "(none)", `Client IP` = "No routing decisions logged yet",
+                          `Assigned To` = "", `Worker Load` = NA_integer_,
+                          Reason = "", `All Loads` = "", check.names = FALSE))
+      }
+
+      rows <- lapply(log_raw, function(entry) {
+        parsed <- tryCatch(jsonlite::fromJSON(as.character(entry)), error = function(e) NULL)
+        if (is.null(parsed)) return(NULL)
+        loads_str <- if (!is.null(parsed$all_loads)) {
+          paste(names(parsed$all_loads), "=", unlist(parsed$all_loads), collapse = ", ")
+        } else {
+          ""
+        }
+        data.frame(
+          Time = if (!is.null(parsed$time_fmt)) parsed$time_fmt else as.character(parsed$time),
+          `Client IP` = parsed$client_ip %||% "?",
+          `Assigned To` = parsed$target %||% "?",
+          `Worker Load` = as.integer(parsed$load %||% 0),
+          Reason = parsed$reason %||% "?",
+          `All Loads` = loads_str,
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })
+      rows <- rows[!sapply(rows, is.null)]
+      if (length(rows) == 0) {
+        return(data.frame(Time = "(none)", `Client IP` = "No parseable routing decisions",
+                          `Assigned To` = "", `Worker Load` = NA_integer_,
+                          Reason = "", `All Loads` = "", check.names = FALSE))
+      }
+      do.call(rbind, rows)
+    }, error = function(e) {
+      data.frame(Time = "Error", `Client IP` = e$message,
+                 `Assigned To` = "", `Worker Load` = NA_integer_,
+                 Reason = "", `All Loads` = "", check.names = FALSE)
     })
-    rows <- rows[!sapply(rows, is.null)]
-    if (length(rows) == 0) {
-      return(data.frame(Message = "No parseable routing decisions"))
-    }
-    do.call(rbind, rows)
   }, options = list(pageLength = 20, dom = "frtip"))
 
   # nginx access log for the Dynamic Routing tab (reuses parse_nginx_access_log)

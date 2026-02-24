@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Section Cards Generator - Technical Notes</title>
+    <title>Section Cards - Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,87 +122,129 @@
 </head>
 <body>
     <div class="container">
-<h1>Section Cards Generator - Technical Notes</h1>
+<h1>Section Cards - Technical Notes</h1>
 
 <h2>Overview</h2>
-<p>This utility app generates printable field cards for FOS (Field Operations Supervisor) personnel to use during mosquito breeding site inspections. The cards display site characteristics and provide empty tables for manual data entry in the field.</p>
-
-<p><strong>Key Features</strong>:</p>
-<ul>
-<li><strong>Printable Cards</strong>: 6 cards per page, optimized for standard printing</li>
-<li><strong>Configurable Content</strong>: Select which site fields to display in card header vs data table</li>
-<li><strong>Filtering</strong>: Filter by facility, zone, FOS area, section, site type, priority</li>
-<li><strong>Section Grouping</strong>: Option to group cards by section (prevents mixing sections on pages)</li>
-<li><strong>Download</strong>: Export as standalone HTML file for printing</li>
+<p>This app generates printable field cards for:</p>
+<ol>
+<li><strong>Air/Ground Sites</strong> (breeding sites)</li>
+<li><strong>Structures</strong></li>
 </ul>
+
+<p>Air/Ground mode supports two data sources:</p>
+<ul>
+<li><strong>QGIS method (default):</strong> <code>public.loc<em>breeding</em>site<em>cards</em>sjsreast2</code></li>
+<li><strong>Webster method:</strong> <code>public.loc<em>breeding</em>sites</code> + <code>public.gis_sectcode</code></li>
+</ul>
+
+<p>UI toggle (Air/Ground only): <strong>Use Webster data (no custom columns)</strong></p>
 
 <h2>Data Sources</h2>
 
 <h3>Core Database Tables</h3>
-
-<h4>1. <code>loc<em>breeding</em>sites</code> - Breeding Site Registry</h4>
-<p><strong>Key Columns</strong>:</p>
 <ul>
-<li><code>sitecode</code> - Unique site identifier (ALWAYS displayed prominently)</li>
-<li><code>priority</code> - Site priority (RED, YELLOW, GREEN, BLUE)</li>
-<li><code>acres</code> - Site acres (capacity)</li>
-<li><code>type</code> - Breeding site type</li>
-<li><code>air_gnd</code> - Treatment type:</li>
+<li><strong><code>public.loc<em>breeding</em>site<em>cards</em>sjsreast2</code></strong></li>
 <ul>
-<li><strong>'A'</strong> - Air site</li>
-<li><strong>'G'</strong> - Ground site</li>
-<li><strong>'D'</strong> - Drone site</li>
+<li>Includes app-facing values for <code>facility</code>, <code>zone</code>, <code>foreman</code></li>
+<li>Supports dynamic extra columns (<code>[DB] ...</code> options)</li>
 </ul>
-<li><code>culex</code> - Culex mosquito presence ('Y' flag)</li>
-<li><code>spr_aedes</code> - Spring Aedes presence ('Y' flag)</li>
-<li><code>prehatch</code> - Prehatch site designation</li>
-<li><code>remarks</code> - Site notes/comments</li>
-<li><code>drone</code> - Drone designation codes ('Y', 'M', 'C')</li>
-<li><code>sample</code> - Sample site designation</li>
-<li><code>facility</code> - Facility code (from breeding site record)</li>
-<li><code>enddate</code> - Site termination date (NULL = active site)</li>
 </ul>
 
-<p><strong>Critical Filter</strong>: <code>enddate IS NULL</code> - Only active sites included</p>
-
-<p><strong>Usage</strong>: Primary source for all site characteristics displayed on cards</p>
-
-<h4>2. <code>gis_sectcode</code> - Geographic Section Mapping</h4>
-<p><strong>Key Columns</strong>:</p>
 <ul>
-<li><code>sectcode</code> - 7-character section code (e.g., '191819-', '191102N')</li>
-<li><code>zone</code> - Zone designation:</li>
+<li><strong><code>public.loc<em>breeding</em>sites</code></strong></li>
 <ul>
-<li><strong>'1'</strong> - P1 (Primary zone)</li>
-<li><strong>'2'</strong> - P2 (Secondary zone)</li>
+<li>Webster Air/Ground source when toggle is ON</li>
+<li>Core breeding-site fields only</li>
+<li>Requires section join to resolve geography/assignment fields</li>
 </ul>
-<li><code>facility</code> - Facility name (Sr, Nr, Er, Wr, etc.) - AUTHORITATIVE</li>
-<li><code>fosarea</code> - FOS area code (4-digit like "0203", "1904")</li>
 </ul>
 
-<p><strong>Join Pattern</strong>: <code>LEFT JOIN gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)</code></p>
-
-<p><strong>Usage</strong>: Provides facility, zone, and FOS area assignments for filtering and display</p>
-
-<h4>3. <code>employee_list</code> - FOS Personnel Data</h4>
-<p><strong>Key Columns</strong>:</p>
 <ul>
-<li><code>emp_num</code> - Employee number (formats as 4-digit to match fosarea)</li>
-<li><code>shortname</code> - Foreman name (e.g., "Andrew M.")</li>
-<li><code>facility</code> - Facility assignment</li>
-<li><code>emp_type</code> - Employee type (filter: 'FieldSuper')</li>
-<li><code>active</code> - Active status (filter: TRUE)</li>
+<li><strong><code>public.gis_sectcode</code></strong></li>
+<ul>
+<li>Provides <code>sectcode</code>, <code>facility</code>, <code>zone</code>, <code>fosarea</code></li>
+<li>Used by Webster Air/Ground mode and Structures mode</li>
+</ul>
 </ul>
 
-<p><strong>FOS Code Format</strong>: <code>sprintf("%04d", emp_num)</code> - Convert to 4-digit string</p>
+<ul>
+<li><strong><code>public.loc_cxstruct</code></strong></li>
+<ul>
+<li>Structures source</li>
+</ul>
+</ul>
 
-<p><strong>Usage</strong>: Maps fosarea codes to readable names for display on cards</p>
+<h2>Table Comparison (QGIS vs Webster)</h2>
 
-<h3>Data Collection Strategy</h3>
+<h3>Where Facility and Foreman/FOS filters come from</h3>
 
-<p><strong>Single Query Approach</strong>:</p>
+<h4>QGIS method (<code>loc<em>breeding</em>site<em>cards</em>sjsreast2</code>)</h4>
+<ul>
+<li><strong>Facility filter source:</strong> <code>loc<em>breeding</em>site<em>cards</em>sjsreast2.facility</code></li>
+<li><strong>Foreman/FOS filter source:</strong> <code>loc<em>breeding</em>site<em>cards</em>sjsreast2.foreman</code></li>
+<li>App-level mapping: <code>fosarea = foreman</code></li>
+</ul>
+
+<h4>Webster method (<code>loc<em>breeding</em>sites</code> + <code>gis_sectcode</code>)</h4>
+<ul>
+<li><strong>Facility filter source:</strong> <code>gis_sectcode.facility</code></li>
+<li><strong>Foreman/FOS filter source:</strong> <code>gis_sectcode.fosarea</code></li>
+<li><strong>Not sourced from:</strong> <code>loc<em>breeding</em>sites.foreman</code></li>
+</ul>
+
+<h3>Other differences</h3>
+<ul>
+<li><strong>Section</strong></li>
+<ul>
+<li>QGIS: <code>left(sitecode, 7)</code></li>
+<li>Webster: <code>gis_sectcode.sectcode</code></li>
+</ul>
+<li><strong>Zone</strong></li>
+<ul>
+<li>QGIS: <code>loc<em>breeding</em>site<em>cards</em>sjsreast2.zone</code></li>
+<li>Webster: <code>gis_sectcode.zone</code></li>
+</ul>
+</ul>
+
+
+<h2>Data Collection Strategy</h2>
+
+<h3>QGIS method pattern</h3>
+<p>Single-table read from <code>public.loc<em>breeding</em>site<em>cards</em>sjsreast2</code>.</p>
+
+<h3>Webster method pattern</h3>
+<p>Join-based read:</p>
 <pre><code class="sql">
-SELECT 
+FROM public.loc_breeding_sites b
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+WHERE b.enddate IS NULL
+</code></pre>
+
+<h2>App Flow</h2>
+
+<h3>Filter cascade (Air/Ground)</h3>
+<ol>
+<li>Facility</li>
+<li>FOS Area</li>
+<li>Town Code</li>
+<li>Section</li>
+</ul>
+
+
+
+<h2>Key Files</h2>
+<ul>
+<li><code>app.R</code> - mode switching, filter cascade, card generation/download</li>
+<li><code>data_functions.R</code> - query helpers for current/Webster/structures</li>
+<li><code>display_functions.R</code> - card HTML/CSS rendering</li>
+<li><code>ui_helper.R</code> - filter and configuration controls</li>
+</ul>
+
+<h2>SQL Reference</h2>
+<p>used in <code>get<em>webster</em>breeding_sites()</code>:</p>
+
+<pre><code class="sql">
+SELECT
   b.sitecode,
   b.priority,
   b.acres,
@@ -210,261 +252,20 @@ SELECT
   b.air_gnd,
   b.culex,
   b.spr_aedes,
+  b.coq_pert as perturbans,
   b.prehatch,
   b.remarks,
   b.drone,
   b.sample,
-  b.facility AS site_facility,
-  g.sectcode AS section,
+  g.facility as facility,
   g.zone,
-  g.facility,
-  g.fosarea
+  g.fosarea,
+  g.sectcode as section
 FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(b.sitecode, 7)
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
 WHERE b.enddate IS NULL
 ORDER BY b.sitecode
 </code></pre>
-
-<p><strong>Note</strong>: The query retrieves ALL active sites; filtering is applied client-side in R for responsive UI updates.</p>
-
-<h2>App Functionality</h2>
-
-<h3>Card Configuration Panel</h3>
-
-<p><strong>Filters</strong>:</p>
-<ul>
-<li><strong>Facility</strong>: Filter sites by facility (Sr, Nr, Er, etc.)</li>
-<li><strong>Zone</strong>: Filter by P1, P2, or All</li>
-<li><strong>FOS Area</strong>: Filter by specific FOS area (cascades based on facility)</li>
-<li><strong>Section</strong>: Filter by specific section (cascades based on facility and FOS)</li>
-<li><strong>Priority</strong>: Filter by priority level (RED, YELLOW, GREEN, BLUE)</li>
-<li><strong>Site Type</strong>: Filter by Air, Ground, Drone, or All</li>
-<li><strong>Include Unassigned Sites</strong>: Option to include sites with no FOS area assigned</li>
-</ul>
-
-<p><strong>Title Fields</strong> (displayed in card header):</p>
-<ul>
-<li>Select which fields appear below sitecode in card header</li>
-<li>Options: priority, acres, facility, zone, fosarea, section, type, air_gnd</li>
-<li>Use Ctrl+Click (Windows) or Cmd+Click (Mac) for multi-select</li>
-</ul>
-
-<p><strong>Table Columns</strong> (data entry table):</p>
-<ul>
-<li>Select which columns to include in the empty data table</li>
-<li>Options: date, wet<em>pct, emp</em>num, num<em>dip, sample</em>num, amt, mat</li>
-<li>Columns appear as empty fields for manual field entry</li>
-<li>Use sortable interface to reorder columns (drag handles)</li>
-</ul>
-
-<p><strong>Table Rows</strong>:</p>
-<ul>
-<li>Number of empty rows in each card's data table (1-10, default 5)</li>
-<li>More rows = more space for multiple inspections/treatments</li>
-</ul>
-
-<p><strong>Split Cards by Section</strong>:</p>
-<ul>
-<li>When enabled: Each section starts on a new page (no mixing)</li>
-<li>When disabled: Cards fill pages regardless of section boundaries</li>
-</ul>
-
-<h3>Generate Cards Workflow</h3>
-
-<ol>
-<li><strong>Click Generate Cards</strong>: Loads complete breeding site data from database</li>
-<li><strong>Apply Filters</strong>: Client-side filtering based on selected criteria</li>
-<li><strong>Render Cards</strong>: Generates HTML with 6 cards per page</li>
-<li><strong>Display</strong>: Shows cards in browser with print-optimized styling</li>
-</ul>
-
-<h3>Print/Export Options</h3>
-
-<p><strong>Browser Print</strong> (Ctrl+P / Cmd+P):</p>
-<ul>
-<li>Prints directly from browser</li>
-<li>Sidebar and buttons automatically hidden via CSS <code>@media print</code></li>
-<li>Cards maintain layout and spacing for field use</li>
-</ul>
-
-<p><strong>Download HTML</strong>:</p>
-<ul>
-<li>Creates standalone HTML file with embedded CSS</li>
-<li>Can be opened and printed later without app</li>
-<li>Filename format: <code>section-cards-YYYYMMDD.html</code></li>
-</ul>
-
-<h2>Card Layout</h2>
-
-<h3>Card Structure (each card ~1/6 page)</h3>
-
-<p><strong>Header Section</strong> (gray background):</p>
-<ul>
-<li><strong>Sitecode</strong> (large, bold, always displayed)</li>
-<li><strong>Selected Info Fields</strong> (smaller text, multi-column grid layout):</li>
-<ul>
-<li>Priority with color coding (RED=#FF0000, YELLOW=#FFD700, GREEN=#00FF00, BLUE=#0000FF)</li>
-<li>Acres, Type, Air/Ground designation</li>
-<li>Facility name (full name from lookup)</li>
-<li>FOS area (name from lookup, not just code)</li>
-<li>Zone, Section</li>
-<li>Special flags (Culex=green background, Spring Aedes=yellow)</li>
-<li>Remarks (full width if selected)</li>
-</ul>
-</ul>
-
-<p><strong>Data Table</strong> (white background):</p>
-<ul>
-<li>Column headers based on selected table fields</li>
-<li>Empty rows for manual field data entry</li>
-<li>Borders and spacing optimized for handwriting</li>
-<li>Standard columns:</li>
-<ul>
-<li><strong>Date</strong>: Inspection/treatment date</li>
-<li><strong>Wet %</strong>: Percentage of site that is wet</li>
-<li><strong>Emp #</strong>: Employee number</li>
-<li><strong>#/Dip</strong>: Larvae count per dip</li>
-<li><strong>Sample #</strong>: Lab sample number</li>
-<li><strong>Amt</strong>: Material amount applied</li>
-<li><strong>Mat</strong>: Material type code</li>
-</ul>
-</ul>
-
-<h3>Page Layout</h3>
-
-<p><strong>Standard Mode</strong> (split<em>by</em>section = FALSE):</p>
-<ul>
-<li>6 cards per page</li>
-<li>2 columns × 3 rows</li>
-<li>Page breaks after every 6 cards</li>
-<li>Sections may be mixed on pages</li>
-</ul>
-
-<p><strong>Section-Grouped Mode</strong> (split<em>by</em>section = TRUE):</p>
-<ul>
-<li>6 cards per page within each section</li>
-<li>Each section starts on new page</li>
-<li>No mixing of sections across page boundaries</li>
-<li>Useful for organizing field work by section</li>
-</ul>
-
-<h2>Function Reference</h2>
-
-<h3>Data Functions (data_functions.R)</h3>
-
-<p><strong><code>get<em>filter</em>options(facility<em>filter, fosarea</em>filter)</code></strong></p>
-<ul>
-<li>Retrieves unique values for dropdown filters</li>
-<li>Applies cascading filters (facility → FOS → section)</li>
-<li>Returns list with facilities, sections, fosarea_list</li>
-<li>Lightweight query for responsive UI</li>
-</ul>
-
-<p><strong><code>get<em>breeding</em>sites<em>with</em>sections()</code></strong></p>
-<ul>
-<li>Main data loading function</li>
-<li>Retrieves all active breeding sites with section info</li>
-<li>Uses correct JOIN pattern: <code>LEFT(sitecode, 7) = sectcode</code></li>
-<li>Returns complete dataset for client-side filtering</li>
-</ul>
-
-<h3>Display Functions (display_functions.R)</h3>
-
-<p><strong><code>generate<em>section</em>cards<em>html(data, title</em>fields, table<em>fields, num</em>rows, split<em>by</em>section)</code></strong></p>
-<ul>
-<li>Main HTML generation function</li>
-<li>Creates complete card layout with CSS</li>
-<li>Handles page breaks and sectioning</li>
-<li>Maps facility codes and FOS codes to names</li>
-<li>Returns HTML string ready for display</li>
-</ul>
-
-<p><strong><code>generate<em>card</em>html(row, title<em>fields, table</em>fields, num<em>rows, field</em>labels, facility<em>map, fos</em>map)</code></strong></p>
-<ul>
-<li>Generates HTML for single card</li>
-<li>Applies priority color coding</li>
-<li>Formats special fields (Culex, Spring Aedes)</li>
-<li>Creates empty data table rows</li>
-<li>Returns HTML string for one card</li>
-</ul>
-
-<h3>UI Helper Functions (ui_helper.R)</h3>
-
-<p><strong><code>create<em>field</em>selector()</code></strong></p>
-<ul>
-<li>Creates complete configuration panel</li>
-<li>Includes all filter inputs</li>
-<li>Creates title field multi-select</li>
-<li>Creates table column selector with reordering</li>
-<li>Returns tagList of UI elements</li>
-</ul>
-
-<h2>File Structure</h2>
-
-<pre><code class="">
-apps/section-cards/
-├── app.R                    # Main application UI and server logic
-├── data_functions.R         # Data loading and filter options
-├── display_functions.R      # HTML generation and card layout
-├── ui_helper.R              # UI component creation
-└── NOTES.md                 # This file - technical documentation
-</code></pre>
-
-<h2>Notes and Considerations</h2>
-
-<h3>Design Philosophy</h3>
-<ul>
-<li><strong>Field-First</strong>: Optimized for printing and manual field data entry</li>
-<li><strong>Configurable</strong>: FOS personnel can customize cards for their workflow</li>
-<li><strong>Lightweight</strong>: Fast filtering and rendering for responsive UX</li>
-</ul>
-
-<h3>Print Optimization</h3>
-<ul>
-<li>Cards sized to fit 6 per standard letter page</li>
-<li>Font sizes optimized for readability (sitecode=16px, data table=10-12px)</li>
-<li>Black borders for clear field boundaries</li>
-<li>Page breaks prevent card splitting across pages</li>
-</ul>
-
-<h3>Data Entry Fields</h3>
-<ul>
-<li>Standard columns cover common inspection/treatment data</li>
-<li>Empty rows allow multiple entries per site (repeat inspections)</li>
-<li>Field workers fill in actual data during site visits</li>
-<li>Cards become physical field records</li>
-</ul>
-
-<h3>Filtering Strategy</h3>
-<ul>
-<li>Load complete dataset once (on Generate Cards click)</li>
-<li>Apply filters client-side for instant UI updates</li>
-<li>Cascading filters (facility → FOS → section) improve usability</li>
-<li>"Unassigned" option handles sites with missing FOS assignments</li>
-</ul>
-
-<h3>Section Grouping</h3>
-<ul>
-<li>Useful for FOS area organization (each FOS works specific sections)</li>
-<li>Prevents partial section splits across pages</li>
-<li>May result in partially filled last page per section</li>
-</ul>
-
-<h3>Future Enhancements</h3>
-<ul>
-<li>Add QR codes for mobile data entry integration</li>
-<li>Include site maps/coordinates for navigation</li>
-<li>Add historical inspection summaries</li>
-<li>Export to PDF directly (currently HTML → browser PDF)</li>
-</ul>
-
-<h3>Known Limitations</h3>
-<ul>
-<li>Print quality depends on browser rendering</li>
-<li>No direct PDF generation (requires browser print-to-PDF)</li>
-<li>Client-side filtering may be slow for very large datasets (thousands of sites)</li>
-<li>No mobile-optimized layout (desktop/print focused)</li>
-</ul>
     </div>
 </body>
 </html>

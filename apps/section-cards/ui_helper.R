@@ -16,6 +16,17 @@ create_field_selector <- function() {
         choices = c("Air/Ground Sites" = "breeding", "Structures" = "structures"),
         selected = "breeding",
         inline = TRUE
+      ),
+      # Data source toggle - only visible for breeding sites
+      conditionalPanel(
+        condition = "input.site_type == 'breeding'",
+        hr(),
+        checkboxInput(
+          "use_webster",
+          "Use Webster data (no custom columns)",
+          value = FALSE
+        ),
+        tags$small(class = "help-block", "Webster uses the original loc_breeding_sites table")
       )
     ),
     

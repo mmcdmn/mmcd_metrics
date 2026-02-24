@@ -28,6 +28,10 @@ local REDIS_TIMEOUT = 100   -- ms — keep fast, fall back on timeout
 local ROUTE_TTL     = config:get("route_ttl") or 600  -- seconds
 local L1_TTL        = 30    -- seconds — L1 cache lifetime
 
+-- Queue retry detection: when the request is being retried after a 502/503,
+-- skip cached routes to allow fresh worker load evaluation.
+local is_queue_retry = (tonumber(ngx.req.get_headers()["X-Queue-Retries"]) or 0) > 0
+
 -- ---- Helper: parse worker list from config shared dict ----
 local function get_workers()
     local workers_str = config:get("workers")
@@ -86,20 +90,23 @@ if not workers or #workers == 0 then
 end
 
 -- 2. L1 cache check (shared dict — sub-millisecond)
-local cached = route_cache:get(client_ip)
-if cached then
-    ngx.var.backend = cached
-    -- Track WebSocket for load counting
-    local upgrade = ngx.var.http_upgrade
-    if upgrade and upgrade:lower() == "websocket" then
-        local red = get_redis()
-        if red then
-            red:incr("mmcd:load:" .. cached)
-            ngx.ctx.ws_worker = cached
-            release_redis(red)
+--    Skip on queue retries to force fresh evaluation
+if not is_queue_retry then
+    local cached = route_cache:get(client_ip)
+    if cached then
+        ngx.var.backend = cached
+        -- Track WebSocket for load counting
+        local upgrade = ngx.var.http_upgrade
+        if upgrade and upgrade:lower() == "websocket" then
+            local red = get_redis()
+            if red then
+                red:incr("mmcd:load:" .. cached)
+                ngx.ctx.ws_worker = cached
+                release_redis(red)
+            end
         end
+        return
     end
-    return
 end
 
 -- 3. Redis check (L2 — sub-millisecond for local Redis)
@@ -118,8 +125,8 @@ end
 local route_key = "mmcd:route:" .. client_ip
 local cached_worker = red:get(route_key)
 
-if cached_worker and cached_worker ~= ngx.null then
-    -- Existing sticky route still valid
+if not is_queue_retry and cached_worker and cached_worker ~= ngx.null then
+    -- Existing sticky route still valid (skip on retry to allow rebalancing)
     ngx.var.backend = cached_worker
     route_cache:set(client_ip, cached_worker, L1_TTL)
 
@@ -180,7 +187,7 @@ local log_entry = cjson.encode({
     client_ip  = client_ip,
     target     = target,
     load       = min_load,
-    reason     = "least_loaded",
+    reason     = is_queue_retry and "queue_retry" or "least_loaded",
     all_loads  = (function()
         local t = {}
         for _, w in ipairs(workers) do

@@ -296,7 +296,7 @@ server <- function(input, output) {
   output$progressSitesTable <- DT::renderDataTable({
     site_data <- progress_sites_data()
     
-    if (nrow(site_data) == 0) {
+    if (is.null(site_data) || nrow(site_data) == 0) {
       return(data.frame(Message = "No site data available."))
     }
     
@@ -339,7 +339,7 @@ server <- function(input, output) {
       rownames = FALSE,
       filter = 'top'
     )
-  })
+  }, server = FALSE)
   
   # Download handler for progress sites
   output$download_progress_sites <- downloadHandler(
@@ -478,7 +478,7 @@ server <- function(input, output) {
   output$sitesTable <- DT::renderDataTable({
     site_data <- sites_table_data()
     
-    if (nrow(site_data) == 0) {
+    if (is.null(site_data) || nrow(site_data) == 0) {
       return(data.frame(Message = "No site data available."))
     }
     
@@ -506,7 +506,7 @@ server <- function(input, output) {
       ),
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # NOTE: Treatment Planning server code commented out - functionality to be moved to treatment progress app
   # Treatment Planning - fetch data only on refresh

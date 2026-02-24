@@ -99,7 +99,8 @@ server <- function(input, output, session) {
     current_year <- year(analysis_date)
     
     withProgress(message = "Loading cattail treatment data...", value = 0.5, {
-      values$raw_data <- load_raw_data(
+      values$raw_data <- cached_load_raw_data(
+        "cattail_treatments",
         analysis_date = analysis_date,
         include_archive = TRUE,
         start_year = current_year - 2,
@@ -521,13 +522,13 @@ server <- function(input, output, session) {
     # Placeholder - will be implemented when treatment tracking is added
     datatable(data.frame(Message = "Treatment tracking - Coming Soon"), 
               options = list(dom = 't'), rownames = FALSE)
-  })
+  }, server = FALSE)
   
   output$plans_table <- renderDT({
     # Placeholder - will be implemented when planning module is added  
     datatable(data.frame(Message = "Treatment planning - Coming Soon"), 
               options = list(dom = 't'), rownames = FALSE)
-  })
+  }, server = FALSE)
   
   output$status_table <- renderDT({
     sites_data <- if (!is.null(values$aggregated_data) && !is.null(values$aggregated_data$sites_data)) {
@@ -543,7 +544,7 @@ server <- function(input, output, session) {
     }
     
     create_status_table(sites_data, treatments_data, input$analysis_date)
-  })
+  }, server = FALSE)
   
   # Map output
   output$treatment_map <- renderLeaflet({
@@ -577,7 +578,7 @@ server <- function(input, output, session) {
     } else {
       datatable(data.frame(Message = "No site data available"), options = list(dom = 't'), rownames = FALSE)
     }
-  })
+  }, server = FALSE)
   
   # Summary statistics value boxes
   output$total_inspected_stat <- renderUI({

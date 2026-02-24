@@ -462,6 +462,9 @@ server <- function(input, output, session) {
     req(input$refresh)
     inputs <- refresh_inputs()
     data <- filtered_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(DT::datatable(data.frame(Message = "No data available with current filters"), options = list(dom = 't'), rownames = FALSE))
+    }
     create_detailed_samples_table(data, inputs$species_filter)
   }, options = list(pageLength = 25, 
                     searching = TRUE,
@@ -472,7 +475,8 @@ server <- function(input, output, session) {
                         return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
                       }")
                     ))),
-  escape = FALSE)
+  escape = FALSE,
+  server = FALSE)
   
   # ===========================================================================
   # OUTPUT: TOP LOCATIONS

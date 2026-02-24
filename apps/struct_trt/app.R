@@ -199,7 +199,8 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     withProgress(message = "Loading structure treatment data...", value = 0.5, {
-      load_raw_data(
+      cached_load_raw_data(
+        "struct_trt",
         analysis_date = inputs$custom_today,
         expiring_days = inputs$expiring_days,
         facility_filter = inputs$facility_filter,
@@ -456,7 +457,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # Historical structure data table
   output$historicalStructureTable <- DT::renderDataTable({
@@ -489,7 +490,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # Download handlers for CSV exports
   output$download_current_data <- downloadHandler(

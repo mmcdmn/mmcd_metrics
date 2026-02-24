@@ -379,7 +379,7 @@ server <- function(input, output, session) {
       )
     ) %>%
       DT::formatStyle("Larvae Count", color = DT::styleInterval(c(0), c("black", "red")))
-  })
+  }, server = FALSE)
 
   # ===========================================================================
   # PIPELINE SNAPSHOT TAB
@@ -470,7 +470,7 @@ server <- function(input, output, session) {
     ) %>%
       DT::formatStyle("Treatment Rate",
                        backgroundColor = DT::styleInterval(cuts = c(50, 75), values = c("#f8d7da", "#fff3cd", "#d4edda")))
-  })
+  }, server = FALSE)
 
   # Shared reactive for facility process details (used by table + download)
   facility_process_details <- reactive({
@@ -505,7 +505,7 @@ server <- function(input, output, session) {
                          c("Active Treatment", "Needs Treatment", "Inspected", "Needs ID", "Unknown"),
                          c("#d4edda", "#f8d7da", "#d1ecf1", "#fff3cd", "#f8f9fa")
                        ))
-  })
+  }, server = FALSE)
 
   # Shared reactive for treatment volume summary (used by table + download)
   treatment_volume_summary <- reactive({
@@ -640,7 +640,7 @@ server <- function(input, output, session) {
                        backgroundColor = DT::styleInterval(cuts = c(10, 25, 50), values = c("#d4edda", "#fff3cd", "#ffeeba", "#f8d7da"))) %>%
       DT::formatStyle("Total Inspections",
                        backgroundColor = DT::styleInterval(cuts = c(5, 20, 50), values = c("#f8f9fa", "#e2e3e5", "#d1ecf1", "#b8daff")))
-  })
+  }, server = FALSE)
 
   # Treatment volume chart
   output$treatment_volume_chart <- renderPlotly({
@@ -724,7 +724,7 @@ server <- function(input, output, session) {
     ) %>%
       DT::formatStyle("Treatment Acres",
                        backgroundColor = DT::styleInterval(cuts = c(50, 200, 500), values = c("#f8f9fa", "#d1ecf1", "#b8daff", "#7fb3d3")))
-  })
+  }, server = FALSE)
 
   # ===========================================================================
   # DOWNLOAD HANDLERS

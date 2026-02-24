@@ -6,6 +6,9 @@
 # Where sites has: sitecode, facility, zone, is_active, is_expiring
 # 
 # NO HARDCODED METRIC NAMES - Everything comes from the registry!
+#
+# CACHING: DB query results are cached in Redis (2-min TTL) via
+# get_cached_db_query(). FOS drill-down data uses 7-day TTL.
 # =============================================================================
 
 # Source the registry (must exist before this file is sourced)
@@ -84,6 +87,26 @@ load_metric_data <- function(metric,
                              expiring_days = NULL,
                              zone_filter = c("1", "2")) {
   
+  # Try Redis cache for DB query results (2-min TTL)
+  if (exists("get_cached_db_query", mode = "function")) {
+    cached <- tryCatch({
+      get_cached_db_query(
+        paste0("metric_data:", metric),
+        load_func = function() {
+          .load_metric_data_uncached(metric, analysis_date, expiring_days, zone_filter)
+        },
+        metric, as.character(analysis_date), expiring_days, paste(zone_filter, collapse = "_")
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  # Fallback — load without cache
+  .load_metric_data_uncached(metric, analysis_date, expiring_days, zone_filter)
+}
+
+#' Internal uncached implementation of load_metric_data
+.load_metric_data_uncached <- function(metric, analysis_date, expiring_days, zone_filter) {
   # Get config from registry
   registry <- get_metric_registry()
   if (!metric %in% names(registry)) {
@@ -512,6 +535,7 @@ load_data_by_facility <- function(metric,
 #' Load ANY metric aggregated by FOS (Field Operations Supervisor)
 #' Uses the same load_metric_data pipeline but re-aggregates the raw site-level
 #' data by fosarea instead of facility+zone.
+#' Cached in Redis with 7-day TTL for fast FOS drill-down.
 #' @param metric Metric ID from registry
 #' @param analysis_date Date for analysis
 #' @param expiring_days Days until expiring
@@ -528,6 +552,30 @@ load_data_by_fos <- function(metric,
                              facility_filter = NULL,
                              fos_filter = NULL) {
   
+  # Try Redis cache for FOS drill-down data (7-day TTL)
+  if (exists("get_cached_fos_data", mode = "function")) {
+    cached <- tryCatch({
+      get_cached_fos_data(
+        paste0("fos:", metric),
+        load_func = function() {
+          .load_data_by_fos_uncached(metric, analysis_date, expiring_days,
+                                      zone_filter, separate_zones, facility_filter, fos_filter)
+        },
+        metric, as.character(analysis_date), expiring_days,
+        paste(zone_filter, collapse = "_"), separate_zones, facility_filter, fos_filter
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  .load_data_by_fos_uncached(metric, analysis_date, expiring_days,
+                              zone_filter, separate_zones, facility_filter, fos_filter)
+}
+
+#' Internal uncached implementation of load_data_by_fos
+.load_data_by_fos_uncached <- function(metric, analysis_date, expiring_days,
+                                        zone_filter, separate_zones,
+                                        facility_filter, fos_filter) {
   # We need site-level data with fosarea, so call load_raw_data directly
   # (load_metric_data aggregates away fosarea)
   registry <- get_metric_registry()
@@ -882,6 +930,7 @@ load_all_metrics <- function(metrics = NULL,
 
 #' Calculate stats for a single metric (for stat boxes)
 #' Uses ceiling() to round percentages UP with no decimal places
+#' Results are cached in Redis with 2-min TTL.
 #' 
 #' @param data Data frame with total, active, expiring columns
 #' @param metric_id Optional metric ID for special handling
@@ -893,6 +942,27 @@ calculate_metric_stats <- function(data, metric_id = NULL, metric_config = NULL)
     return(list(total = 0, active = 0, pct = 0))
   }
   
+  # Try Redis cache for stat box calculations (2-min TTL)
+  if (!is.null(metric_id) && exists("get_cached_stat_box", mode = "function")) {
+    # Build a cache key from the data fingerprint
+    data_hash <- digest::digest(data, algo = "xxhash64")
+    cached <- tryCatch({
+      get_cached_stat_box(
+        paste0("stats:", metric_id),
+        calc_func = function() {
+          .calculate_metric_stats_uncached(data, metric_id, metric_config)
+        },
+        metric_id, data_hash
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  .calculate_metric_stats_uncached(data, metric_id, metric_config)
+}
+
+#' Internal uncached stat calculation
+.calculate_metric_stats_uncached <- function(data, metric_id, metric_config) {
   total <- sum(data$total, na.rm = TRUE)
   active <- sum(data$active, na.rm = TRUE)
   

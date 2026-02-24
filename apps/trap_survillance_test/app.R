@@ -151,7 +151,7 @@ server <- function(input, output, session) {
     sections_display <- data$sections
     DT::datatable(sections_display, options = list(pageLength = 15), 
                   caption = "Section Population Index Results")
-  })
+  }, server = FALSE)
   
   # Download handler for vector data CSV export
   output$download_vector_data <- downloadHandler(

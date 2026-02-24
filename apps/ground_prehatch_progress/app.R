@@ -377,9 +377,12 @@ server <- function(input, output, session) {
     req(input$refresh)  # Only render after refresh button clicked
     
     data <- details_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(DT::datatable(data.frame(Message = "No data available with current filters"), options = list(dom = 't'), rownames = FALSE))
+    }
     foremen_lookup <- get_foremen_lookup()
     create_details_table(data, foremen_lookup)
-  })
+  }, server = FALSE)
   
   # Download handler for details data
   output$download_details_data <- downloadHandler(
@@ -461,8 +464,11 @@ server <- function(input, output, session) {
   output$historical_details_table <- DT::renderDataTable({
     req(input$hist_refresh)
     data <- historical_aggregated()
+    if (is.null(data) || nrow(data) == 0) {
+      return(DT::datatable(data.frame(Message = "No historical data available"), options = list(dom = 't'), rownames = FALSE))
+    }
     create_historical_details_table(data)
-  })
+  }, server = FALSE)
   
   # Download handler for historical data
   output$download_historical_data <- downloadHandler(

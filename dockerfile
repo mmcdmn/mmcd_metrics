@@ -64,7 +64,8 @@ COPY startup.sh /startup.sh
 # Make startup script executable, set ownership, create required dirs
 RUN chmod +x /startup.sh && \
     chown -R shiny:shiny /srv/shiny-server && \
-    mkdir -p /run /var/log/nginx /etc/nginx/lua && \
+    mkdir -p /run /var/log/nginx /etc/nginx/lua /srv/shiny-server/error_pages && \
+    cp /srv/shiny-server/shared/assets/503.html /srv/shiny-server/error_pages/503.html && \
     rm -f /etc/nginx/sites-enabled/default
 
 EXPOSE 3838

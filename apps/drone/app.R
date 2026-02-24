@@ -161,7 +161,7 @@ server <- function(input, output, session) {
     
     withProgress(message = "Loading drone data...", value = 0.5, {
       # Load raw data
-      data <- load_raw_data(drone_types, analysis_date = inputs$analysis_date)
+      data <- cached_load_raw_data("drone", drone_types, analysis_date = inputs$analysis_date)
     })
     
     # Apply filters immediately using captured input values
@@ -488,7 +488,7 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     # Load and process data like the plot does
-    data <- load_raw_data(c("Y", "M", "C"), analysis_date = inputs$analysis_date)
+    data <- cached_load_raw_data("drone", c("Y", "M", "C"), analysis_date = inputs$analysis_date)
     filtered <- apply_data_filters(
       data = data,
       facility_filter = inputs$facility_filter,
@@ -592,7 +592,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # =============================================================================
   # HISTORICAL TRENDS SECTION  
@@ -728,7 +728,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # =============================================================================
   # SITE STATISTICS SECTION
@@ -1097,7 +1097,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # Download handlers for CSV exports
   output$download_current_data <- downloadHandler(
@@ -1107,7 +1107,7 @@ server <- function(input, output, session) {
     content = function(file) {
       # Get the same data used for the current data table
       inputs <- refresh_inputs()
-      data <- load_raw_data(c("Y", "M", "C"), analysis_date = inputs$analysis_date)
+      data <- cached_load_raw_data("drone", c("Y", "M", "C"), analysis_date = inputs$analysis_date)
       filtered <- apply_data_filters(
         data = data,
         facility_filter = inputs$facility_filter,

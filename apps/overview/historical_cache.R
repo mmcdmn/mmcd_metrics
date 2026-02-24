@@ -60,6 +60,7 @@ CACHE_FILE <- file.path(CACHE_DIR, "historical_averages_cache.rds")  # Legacy re
 
 #' Get cached historical averages for a metric
 #' Checks: Redis only (single source of truth)
+#' Auto-repopulates if cache is stale (>14 days old) on first request
 #' @param metric_id The metric ID (e.g., "catch_basin", "drone")
 #' @param avg_type "5yr" or "10yr"
 #' @return Data frame with cached averages by week, or NULL if not cached
@@ -78,18 +79,67 @@ get_cached_average <- function(metric_id, avg_type = "10yr") {
     }, error = function(e) NULL)
     
     if (!is.null(redis_result)) {
+      # Check staleness — trigger background repopulation if >14 days old
+      .check_and_repopulate_if_stale()
       return(redis_result)
+    }
+    
+    # Cache miss — check if entire cache needs regeneration
+    meta <- tryCatch(redis_get(HISTORICAL_META_KEY), error = function(e) NULL)
+    if (is.null(meta)) {
+      # No cache at all — trigger regeneration
+      message(sprintf("[historical_cache] Cache empty, triggering regeneration for '%s'", cache_key))
+      .trigger_background_repopulate()
     }
   }
   
   NULL
 }
 
+# Flag to prevent multiple concurrent repopulations in the same process
+.repopulate_in_progress <- new.env(parent = emptyenv())
+assign("running", FALSE, envir = .repopulate_in_progress)
+
+#' Check cache age and trigger repopulation if stale (>14 days)
+#' Only fires once per process to avoid concurrent regeneration storms
+.check_and_repopulate_if_stale <- function() {
+  # Already triggered in this process?
+  if (isTRUE(get("running", envir = .repopulate_in_progress))) return(invisible(NULL))
+  
+  meta <- tryCatch(redis_get(HISTORICAL_META_KEY), error = function(e) NULL)
+  if (is.null(meta) || is.null(meta$generated_date)) return(invisible(NULL))
+  
+  cache_age_days <- as.numeric(Sys.Date() - as.Date(meta$generated_date))
+  if (cache_age_days > 14) {
+    message(sprintf("[historical_cache] Cache is %d days old (>14), triggering repopulation", cache_age_days))
+    .trigger_background_repopulate()
+  }
+  invisible(NULL)
+}
+
+#' Trigger cache regeneration (sets flag to prevent duplicate runs)
+.trigger_background_repopulate <- function() {
+  if (isTRUE(get("running", envir = .repopulate_in_progress))) return(invisible(NULL))
+  assign("running", TRUE, envir = .repopulate_in_progress)
+  
+  tryCatch({
+    # Run regeneration synchronously (will block the first request)
+    # This ensures the cache is available for subsequent requests
+    regenerate_historical_cache()
+    message("[historical_cache] Auto-repopulation complete")
+  }, error = function(e) {
+    message(sprintf("[historical_cache] Auto-repopulation failed: %s", e$message))
+  }, finally = {
+    assign("running", FALSE, envir = .repopulate_in_progress)
+  })
+  invisible(NULL)
+}
+
 #' Check if cache is available and recent
-#' @param max_age_days Maximum age of cache in days before it's considered stale
+#' @param max_age_days Maximum age of cache in days before it's considered stale (default 14)
 #' @return TRUE if cache is valid and recent
 #' @export
-is_cache_valid <- function(max_age_days = 7) {
+is_cache_valid <- function(max_age_days = 14) {
   if (!USE_CACHED_AVERAGES) return(FALSE)
   
   # Check Redis for metadata

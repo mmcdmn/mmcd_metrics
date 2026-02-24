@@ -1427,6 +1427,24 @@ generate_distinct_colors_internal <- function(n, theme = getOption("mmcd.color.t
 #'   If alpha_zones is NULL: Named vector where names are facility short names and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
 get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
+  # Try Redis cache for color mappings (7-day TTL)
+  if (exists("get_cached_color_mapping", mode = "function")) {
+    cached <- tryCatch({
+      get_cached_color_mapping(
+        "facility_base_colors",
+        gen_func = function() {
+          .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
+        },
+        alpha_zones, combined_groups, theme
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
+}
+
+#' Internal uncached implementation
+.get_facility_base_colors_uncached <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
   facilities <- get_facility_lookup()
   if (nrow(facilities) == 0) return(c())
   
@@ -1528,6 +1546,24 @@ get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL,
 #'   If alpha_zones is NULL: Named vector where names are foreman shortnames and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
 get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
+  # Try Redis cache for color mappings (7-day TTL)
+  if (exists("get_cached_color_mapping", mode = "function")) {
+    cached <- tryCatch({
+      get_cached_color_mapping(
+        "foreman_colors",
+        gen_func = function() {
+          .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
+        },
+        alpha_zones, combined_groups, theme
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
+}
+
+#' Internal uncached implementation
+.get_foreman_colors_uncached <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
   foremen <- get_foremen_lookup()
   if (nrow(foremen) == 0) return(c())
   

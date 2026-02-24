@@ -201,7 +201,8 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     withProgress(message = "Loading catch basin data...", value = 0.5, {
-      data <- load_raw_data(
+      data <- cached_load_raw_data(
+        "catch_basin_status",
         facility_filter = inputs$facility_filter,
         foreman_filter = inputs$foreman_filter,
         zone_filter = inputs$zone_filter,
@@ -429,7 +430,7 @@ server <- function(input, output, session) {
       class = 'cell-border stripe',
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
   # =============================================================================
   # HISTORICAL TAB OUTPUTS
@@ -501,7 +502,7 @@ server <- function(input, output, session) {
       class = 'cell-border stripe',
       rownames = FALSE
     )
-  })
+  }, server = FALSE)
   
 
   

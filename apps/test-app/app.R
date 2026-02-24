@@ -124,6 +124,47 @@ ui <- dashboardPage(
             ),
             verbatimTextOutput("lookupCacheLog")
           )
+        ),
+        # Tiered Cache Management (DB queries, charts, stat boxes, FOS data, colors)
+        fluidRow(
+          box(
+            title = "Tiered Cache Management (Redis)",
+            status = "warning",
+            solidHeader = TRUE,
+            width = 12,
+            p("Manage cached DB queries (2 min), plotly charts (2 min), stat boxes (2 min), FOS drill-down data (7 days), and color mappings (7 days)."),
+            fluidRow(
+              column(4,
+                h5("Short-lived (2 min TTL)"),
+                actionButton("clearDbCache", "Clear DB Query Cache",
+                             icon = icon("database"), class = "btn-warning btn-sm"),
+                br(), br(),
+                actionButton("clearChartCache", "Clear Chart Cache",
+                             icon = icon("chart-bar"), class = "btn-warning btn-sm"),
+                br(), br(),
+                actionButton("clearStatCache", "Clear Stat Box Cache",
+                             icon = icon("calculator"), class = "btn-warning btn-sm")
+              ),
+              column(4,
+                h5("Long-lived (7 day TTL)"),
+                actionButton("clearFosCache", "Clear FOS Drill-Down Cache",
+                             icon = icon("users"), class = "btn-danger btn-sm"),
+                br(), br(),
+                actionButton("clearColorCache", "Clear Color Mapping Cache",
+                             icon = icon("palette"), class = "btn-danger btn-sm")
+              ),
+              column(4,
+                h5("Bulk Actions"),
+                actionButton("clearAllTieredCache", "Clear ALL Tiered Caches",
+                             icon = icon("trash-alt"), class = "btn-danger btn-sm"),
+                br(), br(),
+                actionButton("refreshTieredStatus", "Refresh Status",
+                             icon = icon("sync"), class = "btn-info btn-sm"),
+                br(), br(),
+                verbatimTextOutput("tieredCacheStatus")
+              )
+            )
+          )
         )
       ),
 
@@ -460,7 +501,7 @@ server <- function(input, output, session) {
     )
     
     display_df
-  }, escape = FALSE, options = list(pageLength = 20, dom = 't'))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 20, dom = 't'))
   
   # Cache info text
   output$cacheInfo <- renderText({
@@ -739,7 +780,7 @@ server <- function(input, output, session) {
   output$lbRecent <- renderDT({
     input$refreshLB  # reactivity trigger
     parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 200)
-  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
+  }, server = FALSE, options = list(pageLength = 20, order = list(list(0, "desc"))))
 
   output$lbSessions <- renderDT({
     input$refreshLB  # reactivity trigger
@@ -764,7 +805,7 @@ server <- function(input, output, session) {
     )
     names(summary)[names(summary) == "Sessions"] <- "Unique Sessions"
     summary
-  }, options = list(pageLength = 10))
+  }, server = FALSE, options = list(pageLength = 10))
 
   # ===========================================================================
   # Dynamic Routing monitoring (reads from Redis keys set by Lua router)
@@ -804,7 +845,7 @@ server <- function(input, output, session) {
     }, error = function(e) {
       data.frame(Worker = "Error", `Active WebSockets` = e$message, check.names = FALSE)
     })
-  }, options = list(pageLength = 10, dom = "t"))
+  }, server = FALSE, options = list(pageLength = 10, dom = "t"))
 
   # Configuration summary
   output$drConfig <- renderPrint({
@@ -890,7 +931,7 @@ server <- function(input, output, session) {
       data.frame(`Client IP` = "Error", `Assigned Worker` = e$message,
                  `TTL Remaining (s)` = NA_integer_, check.names = FALSE)
     })
-  }, options = list(pageLength = 20, order = list(list(2, "asc"))))
+  }, server = FALSE, options = list(pageLength = 20, order = list(list(2, "asc"))))
 
   # Routing Decision Log (from mmcd:route_log Redis list)
   output$drRouteLog <- renderDT({
@@ -941,13 +982,13 @@ server <- function(input, output, session) {
                  `Assigned To` = "", `Worker Load` = NA_integer_,
                  Reason = "", `All Loads` = "", check.names = FALSE)
     })
-  }, options = list(pageLength = 20, dom = "frtip"))
+  }, server = FALSE, options = list(pageLength = 20, dom = "frtip"))
 
   # nginx access log for the Dynamic Routing tab (reuses parse_nginx_access_log)
   output$drAccessLog <- renderDT({
     input$refreshDR
     parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 100)
-  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
+  }, server = FALSE, options = list(pageLength = 20, order = list(list(0, "desc"))))
 
   # Redis status / cache backend info
   output$redisStatus <- renderPrint({
@@ -1079,7 +1120,7 @@ server <- function(input, output, session) {
     }))
     
     df
-  }, escape = FALSE, options = list(pageLength = 20))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 20))
   
   # ==========================================================================
   # LOOKUP CACHE MANAGEMENT
@@ -1116,7 +1157,7 @@ server <- function(input, output, session) {
         row_count = NA
       )
     })
-  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't'))
   
   # Lookup cache log
   output$lookupCacheLog <- renderText({
@@ -1151,6 +1192,86 @@ server <- function(input, output, session) {
     })
     
     lookup_trigger(lookup_trigger() + 1)
+  })
+  
+  # ==========================================================================
+  # TIERED CACHE HANDLERS
+  # ==========================================================================
+  
+  tiered_trigger <- reactiveVal(0)
+  
+  # Clear DB query cache
+  observeEvent(input$clearDbCache, {
+    tryCatch({
+      n <- clear_cache_tier("db")
+      lookup_log_message(sprintf("✓ DB query cache cleared (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  # Clear chart cache
+  observeEvent(input$clearChartCache, {
+    tryCatch({
+      n <- clear_cache_tier("chart")
+      lookup_log_message(sprintf("✓ Chart cache cleared (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  # Clear stat box cache
+  observeEvent(input$clearStatCache, {
+    tryCatch({
+      n <- clear_cache_tier("stat")
+      lookup_log_message(sprintf("✓ Stat box cache cleared (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  # Clear FOS drill-down cache (7-day)
+  observeEvent(input$clearFosCache, {
+    tryCatch({
+      n <- clear_cache_tier("fos")
+      lookup_log_message(sprintf("✓ FOS drill-down cache cleared (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  # Clear color mapping cache (7-day)
+  observeEvent(input$clearColorCache, {
+    tryCatch({
+      n <- clear_cache_tier("color")
+      lookup_log_message(sprintf("✓ Color mapping cache cleared (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  # Clear all tiered caches
+  observeEvent(input$clearAllTieredCache, {
+    tryCatch({
+      clear_cache_tier("all")
+      lookup_log_message("✓ ALL tiered caches cleared")
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  # Tiered cache status display
+  output$tieredCacheStatus <- renderText({
+    tiered_trigger()
+    input$refreshTieredStatus
+    
+    tryCatch({
+      counts <- get_cache_tier_counts()
+      paste(
+        "=== Tiered Cache Status ===",
+        sprintf("DB Queries:     %d keys", counts$db_queries),
+        sprintf("Charts:         %d keys", counts$charts),
+        sprintf("Stat Boxes:     %d keys", counts$stat_boxes),
+        sprintf("FOS Drill-down: %d keys", counts$fos_drilldown),
+        sprintf("Color Maps:     %d keys", counts$color_maps),
+        sprintf("Total App Keys: %d keys", counts$other_app),
+        sep = "\n"
+      )
+    }, error = function(e) paste("Error:", e$message))
   })
   
   # ==========================================================================
@@ -1191,7 +1312,7 @@ server <- function(input, output, session) {
       row.names = NULL
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # FOS Information (with colors)
   output$fosInfo <- renderDT({
@@ -1213,7 +1334,7 @@ server <- function(input, output, session) {
       row.names = NULL
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Status Colors (Hex)
   output$statusColors <- renderDT({
@@ -1231,7 +1352,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Shiny Colors (Named)
   output$shinyColors <- renderDT({
@@ -1244,7 +1365,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Status Color Mapping
   output$statusColorMap <- renderDT({
@@ -1261,7 +1382,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Treatment Plan Colors (by Code)
   output$treatmentColorsCodes <- renderDT({
@@ -1285,7 +1406,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Treatment Plan Colors (by Name)
   output$treatmentColorsNames <- renderDT({
@@ -1309,7 +1430,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Treatment Plan Types
   output$treatmentPlanTypes <- renderDT({
@@ -1330,7 +1451,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
   
   # Mosquito Species Colors
   output$mosquitoColors <- renderDT({
@@ -1354,7 +1475,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 20, scrollY = "400px", scrollCollapse = TRUE))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 20, scrollY = "400px", scrollCollapse = TRUE))
   
   # Theme Preview Outputs
   output$themeInfo <- renderUI({
@@ -1389,7 +1510,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't'))
   
   output$themeSequentialColors <- renderDT({
     if (!exists("get_theme_palette", mode = "function")) {
@@ -1409,7 +1530,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't'))
   
   output$themeDivergingColors <- renderDT({
     if (!exists("get_theme_palette", mode = "function")) {
@@ -1429,7 +1550,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, escape = FALSE, options = list(pageLength = 10, dom = 't', scrollX = TRUE))
+  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't', scrollX = TRUE))
   
 
 }

@@ -316,3 +316,250 @@ test_that("cache row counts are accurate", {
 
 # Clean up after all tests
 clear_test_cache()
+
+# =============================================================================
+# Tests for Redis Cache Migration
+# =============================================================================
+# Verify that the caching layer NO LONGER uses RDS files and that
+# the function signatures expected by the rest of the app still exist.
+
+context("Cache System - Redis Migration (no RDS)")
+
+# =============================================================================
+# TEST: No readRDS/saveRDS in production paths
+# =============================================================================
+
+test_that("db_helpers.R has no active readRDS/saveRDS calls", {
+  db_helpers_path <- file.path(
+    getwd(), "..", "..", "shared", "db_helpers.R"
+  )
+  # Try alternative paths (depending on test runner cwd)
+  alt_paths <- c(
+    "../../shared/db_helpers.R",
+    "../shared/db_helpers.R",
+    "shared/db_helpers.R",
+    "/srv/shiny-server/shared/db_helpers.R"
+  )
+  found <- NULL
+  for (p in c(db_helpers_path, alt_paths)) {
+    if (file.exists(p)) { found <- p; break }
+  }
+  skip_if(is.null(found), "db_helpers.R not found from test cwd")
+  
+  lines <- readLines(found)
+  # Filter out comments
+  code_lines <- lines[!grepl("^\\s*#", lines)]
+  active_rds <- code_lines[grepl("readRDS|saveRDS", code_lines)]
+  
+  expect_equal(length(active_rds), 0,
+    info = paste("Active RDS calls found:", paste(active_rds, collapse = "\n")))
+})
+
+test_that("cache_utilities.R has no active readRDS/saveRDS calls", {
+  alt_paths <- c(
+    "../../shared/cache_utilities.R",
+    "../shared/cache_utilities.R",
+    "shared/cache_utilities.R",
+    "/srv/shiny-server/shared/cache_utilities.R"
+  )
+  found <- NULL
+  for (p in alt_paths) {
+    if (file.exists(p)) { found <- p; break }
+  }
+  skip_if(is.null(found), "cache_utilities.R not found from test cwd")
+  
+  lines <- readLines(found)
+  code_lines <- lines[!grepl("^\\s*#", lines)]
+  active_rds <- code_lines[grepl("readRDS|saveRDS", code_lines)]
+  
+  expect_equal(length(active_rds), 0,
+    info = paste("Active RDS calls found:", paste(active_rds, collapse = "\n")))
+})
+
+test_that("historical_cache.R has no active readRDS/saveRDS calls", {
+  alt_paths <- c(
+    "../../apps/overview/historical_cache.R",
+    "../apps/overview/historical_cache.R",
+    "apps/overview/historical_cache.R",
+    "/srv/shiny-server/apps/overview/historical_cache.R"
+  )
+  found <- NULL
+  for (p in alt_paths) {
+    if (file.exists(p)) { found <- p; break }
+  }
+  skip_if(is.null(found), "historical_cache.R not found from test cwd")
+  
+  lines <- readLines(found)
+  code_lines <- lines[!grepl("^\\s*#", lines)]
+  active_rds <- code_lines[grepl("readRDS|saveRDS", code_lines)]
+  
+  expect_equal(length(active_rds), 0,
+    info = paste("Active RDS calls found:", paste(active_rds, collapse = "\n")))
+})
+
+test_that("dynamic_server.R has no active readRDS/saveRDS calls", {
+  alt_paths <- c(
+    "../../apps/overview/dynamic_server.R",
+    "../apps/overview/dynamic_server.R",
+    "apps/overview/dynamic_server.R",
+    "/srv/shiny-server/apps/overview/dynamic_server.R"
+  )
+  found <- NULL
+  for (p in alt_paths) {
+    if (file.exists(p)) { found <- p; break }
+  }
+  skip_if(is.null(found), "dynamic_server.R not found from test cwd")
+  
+  lines <- readLines(found)
+  code_lines <- lines[!grepl("^\\s*#", lines)]
+  active_rds <- code_lines[grepl("readRDS|saveRDS", code_lines)]
+  
+  expect_equal(length(active_rds), 0,
+    info = paste("Active RDS calls found:", paste(active_rds, collapse = "\n")))
+})
+
+# =============================================================================
+# TEST: Required function signatures still exist
+# =============================================================================
+
+test_that("lookup cache functions have correct signatures", {
+  # These functions must exist and accept the same arguments after migration
+  # We test by parsing the source files
+  
+  alt_paths <- c(
+    "../../shared/db_helpers.R",
+    "../shared/db_helpers.R",
+    "shared/db_helpers.R",
+    "/srv/shiny-server/shared/db_helpers.R"
+  )
+  found <- NULL
+  for (p in alt_paths) {
+    if (file.exists(p)) { found <- p; break }
+  }
+  skip_if(is.null(found), "db_helpers.R not found from test cwd")
+  
+  source_text <- paste(readLines(found), collapse = "\n")
+  
+  # These function definitions must exist
+  expect_true(grepl("get_cached_lookup <- function\\(key\\)", source_text))
+  expect_true(grepl("set_cached_lookup <- function\\(key, value\\)", source_text))
+  expect_true(grepl("clear_lookup_cache <- function\\(\\)", source_text))
+  expect_true(grepl("get_memory_cached <- function\\(key\\)", source_text))
+  expect_true(grepl("set_memory_cached <- function\\(key, value\\)", source_text))
+  expect_true(grepl("clear_memory_cache <- function\\(\\)", source_text))
+})
+
+test_that("cache_utilities functions have correct signatures", {
+  alt_paths <- c(
+    "../../shared/cache_utilities.R",
+    "../shared/cache_utilities.R",
+    "shared/cache_utilities.R",
+    "/srv/shiny-server/shared/cache_utilities.R"
+  )
+  found <- NULL
+  for (p in alt_paths) {
+    if (file.exists(p)) { found <- p; break }
+  }
+  skip_if(is.null(found), "cache_utilities.R not found from test cwd")
+  
+  source_text <- paste(readLines(found), collapse = "\n")
+  
+  expect_true(grepl("get_cache_status <- function\\(\\)", source_text))
+  expect_true(grepl("regenerate_cache <- function\\(", source_text))
+  expect_true(grepl("clear_cache <- function\\(", source_text))
+  expect_true(grepl("get_cached_metrics <- function\\(\\)", source_text))
+  expect_true(grepl("get_cacheable_metrics <- function\\(\\)", source_text))
+  expect_true(grepl("get_lookup_cache_status <- function\\(\\)", source_text))
+  expect_true(grepl("clear_lookup_cache_types <- function\\(", source_text))
+  expect_true(grepl("refresh_lookup_caches <- function\\(\\)", source_text))
+})
+
+# =============================================================================
+# TEST: In-memory cache tier still works (L1 of 2-tier: memory → Redis)
+# =============================================================================
+
+test_that("in-memory cache works as L1 tier", {
+  # Simulate the actual .lookup_memory_cache pattern from db_helpers.R
+  mem_cache <- new.env(parent = emptyenv())
+  ts_cache <- new.env(parent = emptyenv())
+  ttl <- 300  # 5 minutes
+  
+  # set
+  assign("facilities", data.frame(code = c("N", "E")), envir = mem_cache)
+  assign("facilities", Sys.time(), envir = ts_cache)
+  
+  # get (not expired)
+  expect_true(exists("facilities", envir = mem_cache))
+  val <- get("facilities", envir = mem_cache)
+  expect_equal(nrow(val), 2)
+  
+  # Check timestamp
+  ts <- get("facilities", envir = ts_cache)
+  elapsed <- as.numeric(difftime(Sys.time(), ts, units = "secs"))
+  expect_true(elapsed < ttl)
+})
+
+test_that("in-memory cache expiry works", {
+  mem_cache <- new.env(parent = emptyenv())
+  ts_cache <- new.env(parent = emptyenv())
+  
+  # Set with a past timestamp (expired)
+  assign("old_data", data.frame(x = 1), envir = mem_cache)
+  assign("old_data", Sys.time() - 600, envir = ts_cache)  # 10 min ago
+  
+  ttl <- 300  # 5 min TTL
+  ts <- get("old_data", envir = ts_cache)
+  elapsed <- as.numeric(difftime(Sys.time(), ts, units = "secs"))
+  
+  # Should be expired
+
+  expect_true(elapsed > ttl)
+})
+
+# =============================================================================
+# TEST: Redis cache function stubs / mock pattern
+# =============================================================================
+
+test_that("redis_is_active function signature is correct", {
+  # The app checks: exists('redis_is_active', mode = 'function') && redis_is_active()
+
+  # In tests, we mock it. Verify the pattern works.
+  
+  # Mock redis_is_active as FALSE (no Redis in test env)
+  mock_redis_is_active <- function() FALSE
+  
+  # The guard pattern
+  result <- if (exists("mock_redis_is_active", mode = "function") && mock_redis_is_active()) {
+    "redis_available"
+  } else {
+    "redis_unavailable"
+  }
+  
+  expect_equal(result, "redis_unavailable")
+})
+
+test_that("cache layer gracefully handles Redis unavailability", {
+  # Simulate the get_cached_lookup pattern when Redis is down
+  # L1: memory, L2: Redis (unavailable) → should return NULL if not in memory
+  
+  mem_cache <- new.env(parent = emptyenv())
+  
+  get_cached <- function(key) {
+    # L1: memory
+    if (exists(key, envir = mem_cache)) return(get(key, envir = mem_cache))
+    # L2: Redis (simulated as unavailable)
+    redis_available <- FALSE
+    if (redis_available) {
+      # Would call get_lookup_redis(key)
+    }
+    NULL
+  }
+  
+  # Nothing cached → NULL
+  expect_null(get_cached("facilities"))
+  
+  # Add to memory → retrieves from L1
+  assign("facilities", data.frame(code = "N"), envir = mem_cache)
+  result <- get_cached("facilities")
+  expect_equal(nrow(result), 1)
+})

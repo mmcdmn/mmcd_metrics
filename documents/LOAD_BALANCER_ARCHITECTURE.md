@@ -324,7 +324,6 @@ The **test-app** includes a "Dynamic Routing" tab that reads Redis state directl
 ## Architecture Diagram
 
 ```
-```
 ┌──────────────────────────────────────────────────────────────┐
 │                    AWS Fargate Task                          │
 │                                                              │

@@ -296,7 +296,7 @@ server <- function(input, output) {
   output$progressSitesTable <- DT::renderDataTable({
     site_data <- progress_sites_data()
     
-    if (nrow(site_data) == 0) {
+    if (is.null(site_data) || nrow(site_data) == 0) {
       return(data.frame(Message = "No site data available."))
     }
     
@@ -478,7 +478,7 @@ server <- function(input, output) {
   output$sitesTable <- DT::renderDataTable({
     site_data <- sites_table_data()
     
-    if (nrow(site_data) == 0) {
+    if (is.null(site_data) || nrow(site_data) == 0) {
       return(data.frame(Message = "No site data available."))
     }
     

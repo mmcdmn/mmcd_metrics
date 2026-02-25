@@ -71,7 +71,7 @@ server <- function(input, output, session) {
   # Update FOS choices when facility changes
   observeEvent(input$facility_filter, {
     if (!is.null(input$facility_filter)) {
-      if (input$facility_filter == "all") {
+      if (input$facility_filter == "all" || nrow(foremen_lookup) == 0) {
         # Show all FOS using the existing function
         fos_choices <- get_foreman_choices(include_all = TRUE)
       } else {
@@ -199,7 +199,8 @@ server <- function(input, output, session) {
     inputs <- refresh_inputs()
     
     withProgress(message = "Loading structure treatment data...", value = 0.5, {
-      load_raw_data(
+      cached_load_raw_data(
+        "struct_trt",
         analysis_date = inputs$custom_today,
         expiring_days = inputs$expiring_days,
         facility_filter = inputs$facility_filter,

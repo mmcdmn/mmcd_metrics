@@ -188,23 +188,50 @@ setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, c
           }
         }
         
-        # Choose chart function based on chart type
-        if (chart_type == "pie" && "pie" %in% local_config$chart_types) {
-          create_overview_pie_chart(
-            data = data,
-            title = paste(local_config$display_name, "Progress"),
-            theme = theme_reactive(),
-            metric_type = local_metric_id
-          )
-        } else {
-          chart_function(
-            data = data,
-            title = paste(local_config$display_name, "Progress"),
-            y_label = local_config$y_label,
-            theme = theme_reactive(),
-            metric_type = local_metric_id
-          )
+        current_theme <- theme_reactive()
+        
+        # Try Redis chart cache (2-min TTL)
+        chart <- NULL
+        if (exists("get_cached_chart", mode = "function")) {
+          data_hash <- digest::digest(data, algo = "xxhash64")
+          chart <- tryCatch({
+            get_cached_chart(
+              paste0("current:", local_metric_id),
+              render_func = NULL,  # will build manually below if miss
+              local_metric_id, chart_type, current_theme, data_hash
+            )
+          }, error = function(e) NULL)
         }
+        
+        if (is.null(chart)) {
+          # Build chart
+          chart <- if (chart_type == "pie" && "pie" %in% local_config$chart_types) {
+            create_overview_pie_chart(
+              data = data,
+              title = paste(local_config$display_name, "Progress"),
+              theme = current_theme,
+              metric_type = local_metric_id
+            )
+          } else {
+            chart_function(
+              data = data,
+              title = paste(local_config$display_name, "Progress"),
+              y_label = local_config$y_label,
+              theme = current_theme,
+              metric_type = local_metric_id
+            )
+          }
+          
+          # Cache the built chart
+          if (exists("set_app_cached_redis", mode = "function")) {
+            cache_key <- build_cache_key("chart", paste0("current:", local_metric_id),
+                                          local_metric_id, chart_type, current_theme,
+                                          digest::digest(data, algo = "xxhash64"))
+            tryCatch(set_app_cached_redis(cache_key, chart, ttl = TTL_2_MIN), error = function(e) NULL)
+          }
+        }
+        
+        chart
       })
     })
   })

@@ -99,7 +99,8 @@ server <- function(input, output, session) {
     current_year <- year(analysis_date)
     
     withProgress(message = "Loading cattail treatment data...", value = 0.5, {
-      values$raw_data <- load_raw_data(
+      values$raw_data <- cached_load_raw_data(
+        "cattail_treatments",
         analysis_date = analysis_date,
         include_archive = TRUE,
         start_year = current_year - 2,

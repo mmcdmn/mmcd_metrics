@@ -91,7 +91,8 @@ server <- function(input, output, session) {
     
     # ONE SINGLE QUERY GETS ALL DATA
     
-    load_raw_data(
+    cached_load_raw_data(
+      "inspections",
       facility_filter = facility_filter,
       fosarea_filter = fosarea_filter, 
       zone_filter = zone_filter,

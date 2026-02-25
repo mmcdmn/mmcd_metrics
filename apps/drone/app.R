@@ -592,7 +592,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # =============================================================================
   # HISTORICAL TRENDS SECTION  
@@ -728,7 +728,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # =============================================================================
   # SITE STATISTICS SECTION
@@ -1097,7 +1097,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # Download handlers for CSV exports
   output$download_current_data <- downloadHandler(

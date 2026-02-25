@@ -382,7 +382,7 @@ server <- function(input, output, session) {
     }
     foremen_lookup <- get_foremen_lookup()
     create_details_table(data, foremen_lookup)
-  }, server = FALSE)
+  })
   
   # Download handler for details data
   output$download_details_data <- downloadHandler(
@@ -468,7 +468,7 @@ server <- function(input, output, session) {
       return(DT::datatable(data.frame(Message = "No historical data available"), options = list(dom = 't'), rownames = FALSE))
     }
     create_historical_details_table(data)
-  }, server = FALSE)
+  })
   
   # Download handler for historical data
   output$download_historical_data <- downloadHandler(

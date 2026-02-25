@@ -241,7 +241,7 @@ server <- function(input, output, session) {
     } else {
       render_gap_table(gap_data(), theme = current_theme())
     }
-  }, server = FALSE)
+  })
   
   # ============= SITE ANALYTICS TAB =============
   # ============= WET ANALYSIS TAB (USES MAIN DATA) =============
@@ -368,7 +368,7 @@ server <- function(input, output, session) {
       data <- wet_analysis_data()
       render_wet_frequency_table(data$wet_frequency, theme = current_theme())
     }
-  }, server = FALSE)
+  })
   
   # ============= LARVAE THRESHOLD TAB =============
   larvae_data <- eventReactive(input$analyze_larvae, {
@@ -416,7 +416,7 @@ server <- function(input, output, session) {
     } else {
       render_high_larvae_table(larvae_data(), theme = current_theme())
     }
-  }, server = FALSE)
+  })
   
   # ============= CHART OUTPUTS =============
   

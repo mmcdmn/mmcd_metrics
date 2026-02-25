@@ -475,8 +475,7 @@ server <- function(input, output, session) {
                         return data ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : 'N/A';
                       }")
                     ))),
-  escape = FALSE,
-  server = FALSE)
+  escape = FALSE)
   
   # ===========================================================================
   # OUTPUT: TOP LOCATIONS

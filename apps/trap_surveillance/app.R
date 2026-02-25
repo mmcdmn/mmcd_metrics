@@ -570,7 +570,7 @@ server <- function(input, output, session) {
                   caption = sprintf("Week %s — %s", 
                                     input$yrwk %||% "?",
                                     SPECIES_MAP[[input$species]]$label %||% "?"))
-  }, server = FALSE)
+  })
   
   # =========================================================================
   # DOWNLOAD

@@ -501,7 +501,7 @@ server <- function(input, output, session) {
     )
     
     display_df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 20, dom = 't'))
+  }, escape = FALSE, options = list(pageLength = 20, dom = 't'))
   
   # Cache info text
   output$cacheInfo <- renderText({
@@ -780,7 +780,7 @@ server <- function(input, output, session) {
   output$lbRecent <- renderDT({
     input$refreshLB  # reactivity trigger
     parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 200)
-  }, server = FALSE, options = list(pageLength = 20, order = list(list(0, "desc"))))
+  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
 
   output$lbSessions <- renderDT({
     input$refreshLB  # reactivity trigger
@@ -805,7 +805,7 @@ server <- function(input, output, session) {
     )
     names(summary)[names(summary) == "Sessions"] <- "Unique Sessions"
     summary
-  }, server = FALSE, options = list(pageLength = 10))
+  }, options = list(pageLength = 10))
 
   # ===========================================================================
   # Dynamic Routing monitoring (reads from Redis keys set by Lua router)
@@ -845,7 +845,7 @@ server <- function(input, output, session) {
     }, error = function(e) {
       data.frame(Worker = "Error", `Active WebSockets` = e$message, check.names = FALSE)
     })
-  }, server = FALSE, options = list(pageLength = 10, dom = "t"))
+  }, options = list(pageLength = 10, dom = "t"))
 
   # Configuration summary
   output$drConfig <- renderPrint({
@@ -931,7 +931,7 @@ server <- function(input, output, session) {
       data.frame(`Client IP` = "Error", `Assigned Worker` = e$message,
                  `TTL Remaining (s)` = NA_integer_, check.names = FALSE)
     })
-  }, server = FALSE, options = list(pageLength = 20, order = list(list(2, "asc"))))
+  }, options = list(pageLength = 20, order = list(list(2, "asc"))))
 
   # Routing Decision Log (from mmcd:route_log Redis list)
   output$drRouteLog <- renderDT({
@@ -982,13 +982,13 @@ server <- function(input, output, session) {
                  `Assigned To` = "", `Worker Load` = NA_integer_,
                  Reason = "", `All Loads` = "", check.names = FALSE)
     })
-  }, server = FALSE, options = list(pageLength = 20, dom = "frtip"))
+  }, options = list(pageLength = 20, dom = "frtip"))
 
   # nginx access log for the Dynamic Routing tab (reuses parse_nginx_access_log)
   output$drAccessLog <- renderDT({
     input$refreshDR
     parse_nginx_access_log("/var/log/nginx/access.log", max_lines = 100)
-  }, server = FALSE, options = list(pageLength = 20, order = list(list(0, "desc"))))
+  }, options = list(pageLength = 20, order = list(list(0, "desc"))))
 
   # Redis status / cache backend info
   output$redisStatus <- renderPrint({
@@ -1120,7 +1120,7 @@ server <- function(input, output, session) {
     }))
     
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 20))
+  }, escape = FALSE, options = list(pageLength = 20))
   
   # ==========================================================================
   # LOOKUP CACHE MANAGEMENT
@@ -1157,7 +1157,7 @@ server <- function(input, output, session) {
         row_count = NA
       )
     })
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
   
   # Lookup cache log
   output$lookupCacheLog <- renderText({
@@ -1312,7 +1312,7 @@ server <- function(input, output, session) {
       row.names = NULL
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # FOS Information (with colors)
   output$fosInfo <- renderDT({
@@ -1334,7 +1334,7 @@ server <- function(input, output, session) {
       row.names = NULL
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Status Colors (Hex)
   output$statusColors <- renderDT({
@@ -1352,7 +1352,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Shiny Colors (Named)
   output$shinyColors <- renderDT({
@@ -1365,7 +1365,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Status Color Mapping
   output$statusColorMap <- renderDT({
@@ -1382,7 +1382,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Treatment Plan Colors (by Code)
   output$treatmentColorsCodes <- renderDT({
@@ -1406,7 +1406,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Treatment Plan Colors (by Name)
   output$treatmentColorsNames <- renderDT({
@@ -1430,7 +1430,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Treatment Plan Types
   output$treatmentPlanTypes <- renderDT({
@@ -1451,7 +1451,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10))
+  }, escape = FALSE, options = list(pageLength = 10))
   
   # Mosquito Species Colors
   output$mosquitoColors <- renderDT({
@@ -1475,7 +1475,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 20, scrollY = "400px", scrollCollapse = TRUE))
+  }, escape = FALSE, options = list(pageLength = 20, scrollY = "400px", scrollCollapse = TRUE))
   
   # Theme Preview Outputs
   output$themeInfo <- renderUI({
@@ -1510,7 +1510,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
   
   output$themeSequentialColors <- renderDT({
     if (!exists("get_theme_palette", mode = "function")) {
@@ -1530,7 +1530,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
   
   output$themeDivergingColors <- renderDT({
     if (!exists("get_theme_palette", mode = "function")) {
@@ -1550,7 +1550,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     df
-  }, server = FALSE, escape = FALSE, options = list(pageLength = 10, dom = 't', scrollX = TRUE))
+  }, escape = FALSE, options = list(pageLength = 10, dom = 't', scrollX = TRUE))
   
 
 }

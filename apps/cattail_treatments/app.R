@@ -522,13 +522,13 @@ server <- function(input, output, session) {
     # Placeholder - will be implemented when treatment tracking is added
     datatable(data.frame(Message = "Treatment tracking - Coming Soon"), 
               options = list(dom = 't'), rownames = FALSE)
-  }, server = FALSE)
+  })
   
   output$plans_table <- renderDT({
     # Placeholder - will be implemented when planning module is added  
     datatable(data.frame(Message = "Treatment planning - Coming Soon"), 
               options = list(dom = 't'), rownames = FALSE)
-  }, server = FALSE)
+  })
   
   output$status_table <- renderDT({
     sites_data <- if (!is.null(values$aggregated_data) && !is.null(values$aggregated_data$sites_data)) {
@@ -544,7 +544,7 @@ server <- function(input, output, session) {
     }
     
     create_status_table(sites_data, treatments_data, input$analysis_date)
-  }, server = FALSE)
+  })
   
   # Map output
   output$treatment_map <- renderLeaflet({
@@ -578,7 +578,7 @@ server <- function(input, output, session) {
     } else {
       datatable(data.frame(Message = "No site data available"), options = list(dom = 't'), rownames = FALSE)
     }
-  }, server = FALSE)
+  })
   
   # Summary statistics value boxes
   output$total_inspected_stat <- renderUI({

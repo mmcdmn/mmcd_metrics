@@ -430,7 +430,7 @@ server <- function(input, output, session) {
       class = 'cell-border stripe',
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # =============================================================================
   # HISTORICAL TAB OUTPUTS
@@ -502,7 +502,7 @@ server <- function(input, output, session) {
       class = 'cell-border stripe',
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
 
   

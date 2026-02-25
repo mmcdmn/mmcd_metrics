@@ -498,7 +498,7 @@ server <- function(input, output, session) {
           c(10, 20, 30, 40, 50, 60, 70, 80, 90),
           c("#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf",
             "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837")))
-  }, server = FALSE)
+  })
 
   # Control Checkback Details Table (same format as efficacy table)
   output$control_details <- DT::renderDataTable({
@@ -546,7 +546,7 @@ server <- function(input, output, session) {
     ) %>%
       formatStyle(columns = names(display_data),
                   backgroundColor = "#fff3cd")
-  }, server = FALSE)
+  })
 
   # Invalid Checkback Details Table (from site_details / progress tab)
   output$invalid_checkback_details_progress <- DT::renderDataTable({
@@ -588,7 +588,7 @@ server <- function(input, output, session) {
     ) %>%
       formatStyle(columns = names(display_data),
                   backgroundColor = "#f8d7da")
-  }, server = FALSE)
+  })
 
   # ===========================================================================
   # CONTROL EFFICACY TAB
@@ -780,7 +780,7 @@ server <- function(input, output, session) {
           c(-50, 0, 25, 50, 75, 90, 95),
           c("#67001f", "#d73027", "#f46d43", "#fee08b", "#d9ef8b",
             "#a6d96a", "#66bd63", "#1a9850")))
-  }, server = FALSE)
+  })
 
   # Invalid Checkback Details Table (from efficacy data - pre during active treatment)
   output$invalid_checkback_details <- DT::renderDataTable({
@@ -823,7 +823,7 @@ server <- function(input, output, session) {
     ) %>%
       formatStyle(columns = names(display_data),
                   backgroundColor = "#f8d7da")
-  }, server = FALSE)
+  })
 }
 
 # Run the app

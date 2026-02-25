@@ -508,7 +508,7 @@ server <- function(input, output, session) {
       data <- air_sites_data()
       create_site_details_table(data, input$status_filter)
     }
-  }, server = FALSE)
+  })
   
   # Flow Testing Functionality
   # Reactive for synthetic flow test data
@@ -612,7 +612,7 @@ server <- function(input, output, session) {
                   options = list(pageLength = 15, scrollX = TRUE), 
                   rownames = FALSE,
                   caption = "Synthetic Test Site Data with Status Calculations")
-  }, server = FALSE)
+  })
   
   # Flow test transitions table
   output$flow_test_transitions_table <- renderDT({
@@ -638,7 +638,7 @@ server <- function(input, output, session) {
                   options = list(pageLength = 10, scrollX = TRUE), 
                   rownames = FALSE,
                   caption = "Status Distribution by Scenario Combinations")
-  }, server = FALSE)
+  })
   
   # Business logic validation
   output$business_logic_results <- renderText({
@@ -690,7 +690,7 @@ server <- function(input, output, session) {
       return(DT::datatable(data.frame(Message = "No flow test data available"), options = list(dom = 't'), rownames = FALSE))
     }
     DT::datatable(data, options = list(pageLength = 15, scrollX = TRUE), rownames = FALSE)
-  }, server = FALSE)
+  })
   
   output$daily_counts_chart <- renderPlotly({
     data <- flow_test_data()

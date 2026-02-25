@@ -339,7 +339,7 @@ server <- function(input, output) {
       rownames = FALSE,
       filter = 'top'
     )
-  }, server = FALSE)
+  })
   
   # Download handler for progress sites
   output$download_progress_sites <- downloadHandler(
@@ -506,7 +506,7 @@ server <- function(input, output) {
       ),
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # NOTE: Treatment Planning server code commented out - functionality to be moved to treatment progress app
   # Treatment Planning - fetch data only on refresh

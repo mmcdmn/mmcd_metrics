@@ -457,7 +457,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # Historical structure data table
   output$historicalStructureTable <- DT::renderDataTable({
@@ -490,7 +490,7 @@ server <- function(input, output, session) {
       ),
       rownames = FALSE
     )
-  }, server = FALSE)
+  })
   
   # Download handlers for CSV exports
   output$download_current_data <- downloadHandler(

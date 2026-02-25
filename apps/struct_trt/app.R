@@ -71,7 +71,7 @@ server <- function(input, output, session) {
   # Update FOS choices when facility changes
   observeEvent(input$facility_filter, {
     if (!is.null(input$facility_filter)) {
-      if (input$facility_filter == "all") {
+      if (input$facility_filter == "all" || nrow(foremen_lookup) == 0) {
         # Show all FOS using the existing function
         fos_choices <- get_foreman_choices(include_all = TRUE)
       } else {

@@ -334,7 +334,13 @@ get_db_connection <- function() {
   # Check if connection pool is available (from db_pool.R)
   if (exists("get_pool", mode = "function")) {
     # Use connection pool - much faster!
-    return(get_pool())
+    # Wrap in tryCatch so callers with fallbacks (e.g. get_facility_lookup,
+    # get_structure_type_choices) get NULL instead of a fatal stop()
+    pool <- tryCatch(get_pool(), error = function(e) {
+      warning(paste("[db_helpers] Pool unavailable:", e$message))
+      NULL
+    })
+    return(pool)
   }
   
   # Fallback to traditional connection if pool not available

@@ -72,6 +72,11 @@ create_field_selector <- function() {
         "Split by priority (each priority on separate pages)",
         value = FALSE
       ),
+      checkboxInput(
+        "double_sided",
+        "Double-sided printing (pad sections to even pages)",
+        value = FALSE
+      ),
       
       # Air/Ground specific filters (shown when site_type == "breeding")
       conditionalPanel(

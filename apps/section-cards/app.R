@@ -179,6 +179,7 @@ ui <- fluidPage(
         HTML("<strong>How to Print/Save as PDF:</strong><br/>
              <strong>Option 1 - Quick Print:</strong> Click 'Generate Cards' then use browser print (Ctrl+P / Cmd+P)<br/>
              <strong>Option 2 - Download First:</strong> Use 'Download as HTML' button (shows progress), then open file and print<br/>
+              <strong>Important:</strong> In the print dialog, turn OFF <em>Headers and footers</em> to remove URL/date text<br/>
              <br/>
              <em>The layout is optimized for Letter size paper with 6 cards per page.</em>")
       )
@@ -276,6 +277,11 @@ server <- function(input, output, session) {
         "Foreman" = "foreman",
         "Remarks" = "remarks"
       )
+      
+      # Add RA as core choice (only for QGIS method)
+      if (!use_webster) {
+        static_choices <- c(static_choices, list("Restricted Area (RA)" = "ra"))
+      }
       
       # Add dynamic columns from JK table with [DB] prefix
       # Only available when NOT using Webster data
@@ -866,7 +872,8 @@ server <- function(input, output, session) {
       split_type,
       progress_fn = function(pct, detail) {
         setProgress(value = 0.25 + pct * 0.65, detail = detail)
-      }
+      },
+      double_sided = isTRUE(input$double_sided)
     )
     
     setProgress(value = 0.95, detail = "Rendering cards...")
@@ -983,7 +990,8 @@ server <- function(input, output, session) {
         split_type,
         progress_fn = function(pct, detail) {
           setProgress(value = 0.15 + pct * 0.70, detail = detail)
-        }
+        },
+        double_sided = isTRUE(input$double_sided)
       )
       
       setProgress(value = 0.90, detail = "Writing file...")

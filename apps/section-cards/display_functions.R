@@ -13,7 +13,7 @@
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -48,7 +48,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     drone = "Drone",
     
     # Dynamic columns from JK table (common extras)
-    ra = "RA",
+    ra = "Restricted",
     airmap_num = "Airmap #",
     partialtrt = "Partial Trt",
     perimacres = "Perim Acres",
@@ -283,6 +283,16 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
+    .ra-field { 
+      background-color: #FFB6C1 !important; 
+      background: #FFB6C1 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
     .prehatch-overlay {
       position: absolute;
       bottom: 10px;
@@ -390,28 +400,6 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     
     .card-table td.col-even {
       background: #f0f0f0;
-    }
-    
-    .page-footer {
-      position: fixed;
-      bottom: 10px;
-      right: 20px;
-      font-size: 8px;
-      color: #999;
-      font-style: italic;
-      z-index: 1000;
-    }
-    
-    @media print {
-      .page-footer {
-        position: fixed;
-        bottom: 0.5in;
-        right: 0.5in;
-        font-size: 8pt;
-        color: #999 !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
     }
     
     @media screen {
@@ -548,6 +536,13 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
         html_parts[[part_idx]] <- '</div>\n'
         part_idx <- part_idx + 1
       }
+      
+      # Double-sided printing: if this group used an odd number of pages,
+      # add a blank page so the next group starts on a front side
+      if (double_sided && !is_last_group && (num_pages %% 2 == 1)) {
+        html_parts[[part_idx]] <- '<div class="card-page page-break" style="visibility:hidden;">&nbsp;</div>\n'
+        part_idx <- part_idx + 1
+      }
     }
     
   } else {
@@ -575,7 +570,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     }
   }
   
-  html_parts[[part_idx]] <- '</div><div class="page-footer">Section Cards by Alex Dyakin</div>'
+  html_parts[[part_idx]] <- '</div>'
   
   # Single collapse at the end (much faster than incremental paste0)
   return(paste0(html_parts, collapse = ""))
@@ -670,6 +665,13 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
           html <- paste0(html, '        <div class="info-item"><span class="sample-field">',
                         label, '</span></div>\n')
+        }
+        # If not Y, don't show anything
+      } else if (field == "ra") {
+        # Restricted Area - only show if Y with pink background
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          html <- paste0(html, '        <div class="info-item"><span class="ra-field">',
+                        'Restricted</span></div>\n')
         }
         # If not Y, don't show anything
       } else if (field == "prehatch") {

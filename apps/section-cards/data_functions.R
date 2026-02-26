@@ -9,7 +9,7 @@
 # STRUCTURES: Still use gis_sectcode for facility/zone/fosarea (separate data source)
 
 # =============================================================================
-# JK TABLE CONSTANTS & DYNAMIC COLUMN DISCOVERY
+# CUSTOM TABLE CONSTANTS & DYNAMIC COLUMN DISCOVERY
 # =============================================================================
 
 # The production table name (case-sensitive, needs quoting in SQL)
@@ -19,16 +19,16 @@ JK_TABLE <- '"loc_breeding_site_cards_sjsreast2"'
 # Same core columns but no custom fields; uses gis_sectcode for zone/fosarea
 WEBSTER_TABLE <- 'loc_breeding_sites'
 
-# Core columns that are always expected in the JK table
+# Core columns that are always expected in the custom table
 CORE_BREEDING_COLS <- c("sitecode", "priority", "acres", "type", "air_gnd",
                         "culex", "spr_aedes", "coq_pert", "prehatch",
                         "remarks", "drone", "sample", "facility",
-                        "zone", "foreman")
+                        "zone", "foreman", "ra")
 
 # Internal/structural columns excluded from dynamic discovery
 EXCLUDED_INTERNAL_COLS <- c("id", "geom", "fid", "site", "page")
 
-#' Discover dynamic (extra) columns in the JK table
+#' Discover dynamic (extra) columns in the custom table
 #'
 #' Queries information_schema to find columns beyond core + excluded sets.
 #' These are extra fields like ra, airmap_num, partialtrt, etc.
@@ -374,12 +374,13 @@ get_breeding_sites_with_sections <- function() {
       zone,
       foreman,
       foreman as fosarea,
+      ra,
       left(sitecode, 7) as section", dynamic_select, "
     FROM public.", JK_TABLE, "
     ORDER BY sitecode
   ")
   
-  message("[section_cards] Loading breeding sites from JK table...")
+  message("[section_cards] Loading breeding sites from custom table...")
   data <- dbGetQuery(con, query)
   message(sprintf("[section_cards] Loaded %d breeding sites with %d columns", nrow(data), ncol(data)))
   

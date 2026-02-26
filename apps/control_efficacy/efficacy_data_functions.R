@@ -116,10 +116,9 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       filter(action %in% c('A', 'D', '3')) %>%
       arrange(sitecode, desc(inspdate), desc(insptime))
     
-    # Optionally filter to Bti matcodes
-    if (bti_only && !is.null(bti_codes)) {
-      treatments_all <- treatments_all %>% filter(matcode %in% bti_codes)
-    }
+    # NOTE: Bti filter is applied AFTER matching, not here.
+    # Filtering treatments before matching causes post-checks to silently drop
+    # when the most recent treatment isn't Bti (even if an earlier Bti treatment exists).
     
     pre_checks_all <- all_records %>%
       filter(action %in% c('4', '2', '1'), is.na(posttrt_p)) %>%
@@ -203,6 +202,22 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     matched$trt_acres <- NULL
     
     message(sprintf("[efficacy] Matched %d post-checks to treatments", nrow(matched)))
+    
+    # -------------------------------------------------------------------
+    # STEP 2a-post: Apply Bti filter AFTER matching
+    # Each post-check is matched to its most recent treatment. Now we filter
+    # to keep only rows where that matched treatment used a Bti matcode.
+    # -------------------------------------------------------------------
+    if (bti_only && !is.null(bti_codes)) {
+      n_before <- nrow(matched)
+      matched <- matched[matched$trt_matcode %in% bti_codes, ]
+      message(sprintf("[efficacy] Bti post-filter: %d -> %d rows (removed %d non-Bti)",
+                      n_before, nrow(matched), n_before - nrow(matched)))
+      if (nrow(matched) == 0) {
+        safe_disconnect(con)
+        return(NULL)
+      }
+    }
     
     # -------------------------------------------------------------------
     # STEP 2b: Look up material details (active_ingredient, dosage)

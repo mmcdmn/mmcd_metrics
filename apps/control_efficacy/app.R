@@ -548,6 +548,55 @@ server <- function(input, output, session) {
                   backgroundColor = "#fff3cd")
   })
 
+  # Invalid Checkback Details Table
+  output$invalid_details <- DT::renderDataTable({
+    data <- efficacy_data_raw()
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No invalid checkbacks found"))
+    }
+
+    invalid_data <- data[data$is_invalid == TRUE, ]
+    if (is.null(invalid_data) || nrow(invalid_data) == 0) {
+      return(data.frame(Message = "No invalid checkbacks found - all checkbacks are valid"))
+    }
+
+    display_data <- invalid_data %>%
+      filter(!is.na(pct_reduction)) %>%
+      mutate(
+        `% Reduction` = round(pct_reduction, 1),
+        `Pre Genus Dips` = round(pre_genus_dips, 2),
+        `Post Genus Dips` = round(post_genus_dips, 2),
+        `Pre Genus %` = round(pre_genus_pct, 0),
+        `Post Genus %` = round(post_genus_pct, 0),
+        Acres = round(acres, 1),
+        `Invalid Reason` = invalid_reason
+      ) %>%
+      select(
+        Site = sitecode, Facility = facility,
+        Year = year, Season = season, Genus = genus,
+        `Trt Type` = trt_type, `Mat Code` = trt_matcode,
+        `Trt Date` = trt_date, `Pre Date` = pre_date, `Post Date` = post_date,
+        `Days from Trt` = days_from_trt,
+        `Pre Dips` = pre_numdip, `Post Dips` = post_numdip,
+        `Pre Genus %`, `Post Genus %`,
+        `Pre Genus Dips`, `Post Genus Dips`,
+        `% Reduction`, Acres,
+        `Invalid Reason`
+      ) %>%
+      arrange(desc(`Trt Date`), Site, Genus)
+
+    display_data$Site <- make_sitecode_link(display_data$Site)
+
+    datatable(display_data,
+      escape = FALSE,
+      options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE,
+                     columnDefs = list(list(className = 'dt-center', targets = '_all'))),
+      rownames = FALSE, filter = 'top'
+    ) %>%
+      formatStyle(columns = names(display_data),
+                  backgroundColor = "#f8d7da")
+  })
+
   # ===========================================================================
   # CONTROL EFFICACY TAB
   # ===========================================================================
@@ -577,6 +626,12 @@ server <- function(input, output, session) {
     # (they are used internally for Mulla's correction but not shown)
     if ("is_control" %in% names(filtered)) {
       filtered <- filtered[filtered$is_control == FALSE, ]
+    }
+
+    # Exclude invalid checkbacks from the efficacy display
+    # (shown separately in Status Tables tab)
+    if ("is_invalid" %in% names(filtered)) {
+      filtered <- filtered[filtered$is_invalid == FALSE, ]
     }
 
     # Season filter
@@ -646,6 +701,18 @@ server <- function(input, output, session) {
                     bg_color = status_colors["unknown"], icon = icon("chart-bar"))
   })
 
+  output$efficacy_invalid_count <- renderUI({
+    data <- efficacy_data_raw()
+    n_invalid <- 0
+    if (!is.null(data) && "is_invalid" %in% names(data)) {
+      n_invalid <- sum(data$is_invalid, na.rm = TRUE)
+    }
+    status_colors <- get_status_colors(theme = input$color_theme)
+    color <- if (n_invalid > 0) status_colors["needs_action"] else status_colors["active"]
+    create_stat_box(value = n_invalid, title = "Invalid Observations",
+                    bg_color = color, icon = icon("exclamation-triangle"))
+  })
+
   output$efficacy_median_reduction <- renderUI({
     data <- efficacy_data_filtered()
     med <- 0
@@ -689,7 +756,7 @@ server <- function(input, output, session) {
                     bg_color = color, icon = icon("check-double"))
   })
 
-  # Efficacy data table
+  # Efficacy data table — exclude invalids (shown separately)
   output$efficacy_table <- DT::renderDataTable({
     data <- efficacy_data_filtered()
 

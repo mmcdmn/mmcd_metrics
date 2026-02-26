@@ -223,8 +223,8 @@ control_efficacy_ui <- function() {
               br(),
               fluidRow(
                 column(3, uiOutput("efficacy_valid_count")),
+                column(3, uiOutput("efficacy_invalid_count")),
                 column(3, uiOutput("efficacy_median_reduction")),
-                column(3, uiOutput("efficacy_mean_reduction")),
                 column(3, uiOutput("efficacy_pct_above_80"))
               ),
               br(),
@@ -232,7 +232,17 @@ control_efficacy_ui <- function() {
               plotly::plotlyOutput("reduction_boxplot", height = "600px"),
               br(),
               h4("Efficacy Data Table"),
-              DT::dataTableOutput("efficacy_table")
+              DT::dataTableOutput("efficacy_table"),
+              br(),
+              h4("Invalid Checkback Details", style = "color: #721c24;"),
+              div(style = "padding: 10px; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 15px;",
+                tags$i(class = "fa fa-exclamation-triangle", style = "color: #721c24;"),
+                tags$span(style = "font-size: 0.9em;",
+                  " Invalid checkbacks: 2 or more treatments occurred between the",
+                  " pre-inspection and post-inspection, making the efficacy measurement unreliable."
+                )
+              ),
+              DT::dataTableOutput("invalid_details")
             ),
             
             # --- Checkback Progress ---

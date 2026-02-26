@@ -695,7 +695,13 @@ server <- function(input, output, session) {
   # Stat boxes
   output$efficacy_valid_count <- renderUI({
     data <- efficacy_data_filtered()
-    valid <- if (!is.null(data)) sum(!is.na(data$pct_reduction)) else 0
+    valid <- 0
+    if (!is.null(data) && nrow(data) > 0) {
+      valid_rows <- data[!is.na(data$pct_reduction), ]
+      if (nrow(valid_rows) > 0) {
+        valid <- length(unique(valid_rows$sitecode))
+      }
+    }
     status_colors <- get_status_colors(theme = input$color_theme)
     create_stat_box(value = valid, title = "Valid Observations",
                     bg_color = status_colors["unknown"], icon = icon("chart-bar"))
@@ -705,12 +711,12 @@ server <- function(input, output, session) {
     data <- efficacy_data_raw()
     n_invalid <- 0
     if (!is.null(data) && "is_invalid" %in% names(data)) {
-      n_invalid <- sum(data$is_invalid, na.rm = TRUE)
+      inv_rows <- data[data$is_invalid == TRUE, ]
+      if (nrow(inv_rows) > 0) {
+        n_invalid <- length(unique(inv_rows$sitecode))
+      }
     }
-    status_colors <- get_status_colors(theme = input$color_theme)
-    color <- if (n_invalid > 0) status_colors["needs_action"] else status_colors["active"]
-    create_stat_box(value = n_invalid, title = "Invalid Observations",
-                    bg_color = color, icon = icon("exclamation-triangle"))
+
   })
 
   output$efficacy_median_reduction <- renderUI({

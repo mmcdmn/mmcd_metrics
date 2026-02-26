@@ -342,6 +342,9 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       
       if (n_between < 2) return(NA_character_)
       
+      # Air sites are exempt from the 2+ treatment invalid rule
+      if (!is.na(matched$trt_action[i]) && matched$trt_action[i] == "A") return(NA_character_)
+      
       # Return info: number of treatments between pre and post
       between_trts <- site_trts[between_mask, ]
       trt_dates_str <- paste(between_trts$inspdate, collapse = ", ")

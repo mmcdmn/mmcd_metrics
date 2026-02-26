@@ -13,7 +13,7 @@
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE, watermark_fields = NULL) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -293,6 +293,59 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
+
+    /* Watermark styles - semi-transparent overlays at bottom of card */
+    .watermark-container {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .watermark-item {
+      font-size: 14px;
+      font-weight: bold;
+      padding: 4px 12px;
+      border-radius: 4px;
+      opacity: 0.68;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .watermark-culex {
+      background-color: rgba(50, 205, 50, 0.35) !important;
+      background: rgba(50, 205, 50, 0.35) !important;
+      color: #000 !important;
+    }
+    .watermark-spring-aedes {
+      background-color: rgba(255, 213, 128, 0.4) !important;
+      background: rgba(255, 213, 128, 0.4) !important;
+      color: #000 !important;
+    }
+    .watermark-perturbans {
+      background-color: rgba(65, 105, 225, 0.35) !important;
+      background: rgba(65, 105, 225, 0.35) !important;
+      color: #000 !important;
+    }
+    .watermark-sample {
+      background-color: rgba(255, 182, 193, 0.4) !important;
+      background: rgba(255, 182, 193, 0.4) !important;
+      color: #000 !important;
+    }
+    .watermark-prehatch-calc {
+      background-color: rgba(255, 200, 200, 0.35) !important;
+      background: rgba(255, 200, 200, 0.35) !important;
+      color: #CC0000 !important;
+      font-size: 16px;
+    }
+
     .prehatch-overlay {
       position: absolute;
       bottom: 10px;
@@ -463,7 +516,8 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   build_card <- function(row) {
     generate_card_html(row, title_fields, table_fields, num_rows,
                        field_labels, facility_map, fos_map,
-                       prebuilt_table_header, prebuilt_table_footer)
+                       prebuilt_table_header, prebuilt_table_footer,
+                       watermark_fields)
   }
   
   # Handle splitting by section, priority, and/or type
@@ -590,7 +644,8 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
 #' @return HTML string for one card
 generate_card_html <- function(row, title_fields, table_fields, num_rows, 
                                field_labels, facility_map, fos_map,
-                               prebuilt_table_header = NULL, prebuilt_table_footer = NULL) {
+                               prebuilt_table_header = NULL, prebuilt_table_footer = NULL,
+                               watermark_fields = NULL) {
   html <- ''
   
   # Track if we need prehatch overlay (computed at end)
@@ -776,7 +831,42 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
     html <- paste0(html, '    </table>\n')
   }
   
-  # Add prehatch overlay if calculated
+  # Add watermark overlays at bottom of card (on top of table columns, semi-transparent)
+  if (!is.null(watermark_fields) && length(watermark_fields) > 0) {
+    wm_items <- character(0)
+    
+    for (wm_field in watermark_fields) {
+      if (wm_field == "culex" && "culex" %in% names(row) &&
+          !is.na(row[["culex"]]) && toupper(row[["culex"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-culex">Culex</span>')
+      } else if (wm_field == "spr_aedes" && "spr_aedes" %in% names(row) &&
+                 !is.na(row[["spr_aedes"]]) && toupper(row[["spr_aedes"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-spring-aedes">Spring Aedes</span>')
+      } else if (wm_field == "perturbans" && "perturbans" %in% names(row) &&
+                 !is.na(row[["perturbans"]]) && toupper(row[["perturbans"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-perturbans">Perturbans</span>')
+      } else if (wm_field == "prehatch_calc") {
+        prehatch_val <- row[["prehatch"]]
+        acres_val <- row[["acres"]]
+        if (!is.na(prehatch_val) && prehatch_val != "" &&
+            !is.na(acres_val) && !is.na(as.numeric(acres_val))) {
+          calc_val <- max(round(as.numeric(acres_val) * 2.5, 2), 0.05)
+          wm_items <- c(wm_items, paste0('<span class="watermark-item watermark-prehatch-calc">2.5/ac<br>',
+                                          sprintf("%.2f", calc_val), '</span>'))
+        }
+      } else if (wm_field == "sample" && "sample" %in% names(row) &&
+                 !is.na(row[["sample"]]) && toupper(row[["sample"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-sample">Sample Site</span>')
+      }
+    }
+    
+    if (length(wm_items) > 0) {
+      html <- paste0(html, '    <div class="watermark-container">\n      ',
+                     paste0(wm_items, collapse = '\n      '), '\n    </div>\n')
+    }
+  }
+  
+  # Add prehatch overlay if calculated (legacy - used when prehatch_calc is in title_fields)
   if (!is.null(prehatch_overlay_value)) {
     html <- paste0(html, '    <div class="prehatch-overlay">\n')
     html <- paste0(html, '      <div class="prehatch-rate">2.5/ac</div>\n')

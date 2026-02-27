@@ -182,8 +182,61 @@ end
 -- =====================================================================
 
 -- 0. WebSocket requests need direct proxy (capture can't handle upgrades)
+--    BUT first, probe the backend via HTTP to ensure the app is loaded.
+--    If the initial worker returns 404, try others before exec'ing to @websocket.
 local upgrade = ngx.var.http_upgrade
 if upgrade and upgrade:lower() == "websocket" then
+    -- Extract the base app path from the URI for the probe
+    -- e.g. /apps/drone/__sockjs__/... → /apps/drone/
+    --       /drone/__sockjs__/...     → /drone/
+    local probe_path = ngx.var.request_uri:match("^(/[^_]+/)")
+    if not probe_path then
+        probe_path = ngx.var.request_uri:match("^(/[^/]+/)")
+    end
+
+    if probe_path then
+        -- Quick probe to find a worker that has this app loaded
+        local ws_workers = get_workers()
+        local ws_client_ip = ngx.var.http_x_forwarded_for or ngx.var.remote_addr
+        if ws_client_ip then ws_client_ip = ws_client_ip:match("^%s*([^,]+)") end
+        if not ws_client_ip or ws_client_ip == "" then ws_client_ip = ngx.var.remote_addr or "unknown" end
+
+        if ws_workers and #ws_workers > 0 then
+            -- First try the routed worker
+            local ws_target = select_route(ws_client_ip, ws_workers, false)
+            if ws_target then
+                ngx.req.set_header("X-Backend-Target", ws_target)
+                local probe = ngx.location.capture("/proxy_upstream" .. probe_path, {
+                    method = ngx.HTTP_HEAD,
+                })
+                if probe and probe.status and probe.status ~= 404 then
+                    ngx.var.backend = ws_target
+                    return ngx.exec("@websocket")
+                end
+                -- First worker returned 404 — try all others
+                for _, w in ipairs(ws_workers) do
+                    if w ~= ws_target then
+                        ngx.req.set_header("X-Backend-Target", w)
+                        local p2 = ngx.location.capture("/proxy_upstream" .. probe_path, {
+                            method = ngx.HTTP_HEAD,
+                        })
+                        if p2 and p2.status and p2.status ~= 404 then
+                            -- Update sticky route to this working worker
+                            route_cache:set(ws_client_ip, w, L1_TTL)
+                            local red = get_redis()
+                            if red then
+                                red:setex("mmcd:route:" .. ws_client_ip, ROUTE_TTL, w)
+                                release_redis(red)
+                            end
+                            ngx.var.backend = w
+                            return ngx.exec("@websocket")
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- Fallback: exec to @websocket with whatever route we have
     return ngx.exec("@websocket")
 end
 
@@ -264,6 +317,8 @@ for attempt = 0, MAX_RETRIES do
         targets_to_try = { target }
     end
 
+    local all_404_this_attempt = true  -- assume all 404 until proven otherwise
+
     for _, target in ipairs(targets_to_try) do
         -- Set the backend target as a request header so the subrequest can read it
         ngx.req.set_header("X-Backend-Target", target)
@@ -321,6 +376,9 @@ for attempt = 0, MAX_RETRIES do
         end
 
         -- Got 404/502/503 — this worker doesn't have the app or is busy, try next
+        if not res or not res.status or res.status ~= 404 then
+            all_404_this_attempt = false  -- at least one non-404 response
+        end
         last_status = (res and res.status) or 503
     end
 
@@ -328,11 +386,64 @@ for attempt = 0, MAX_RETRIES do
         queue_stats:incr("total_queued", 1, 0)
     end
 
+    -- SMART 404 HANDLING: If we tried ALL workers (retry attempt) and
+    -- every single one returned 404, the resource genuinely doesn't exist.
+    -- Stop immediately — don't waste 15+ seconds retrying a dead URL.
+    -- This handles: expired sessions, invalid URLs, missing resources.
+    if is_retry and all_404_this_attempt and #targets_to_try == #workers then
+        ngx.log(ngx.INFO, "[queue] All ", #workers, " workers returned 404 for ",
+                uri, " — resource not found, stopping retries")
+        break
+    end
+
     ::continue::
 end
 
--- 3. All retries exhausted — return auto-refreshing page
+-- 3. All retries exhausted — return appropriate error page
 queue_stats:incr("total_exhausted", 1, 0)
+
+-- If the last status was 404 (resource not found on ALL workers),
+-- return a proper 404 page, not the "busy" 503 page.
+if last_status == 404 then
+    ngx.log(ngx.INFO, "[queue] Resource not found on any worker for ", client_ip, ": ", uri)
+    ngx.status = 404
+    ngx.header["Content-Type"] = "text/html; charset=utf-8"
+    ngx.say([[<!DOCTYPE html>
+<html>
+<head>
+  <title>Page Not Found - MMCD Metrics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; justify-content: center; align-items: center;
+      min-height: 80vh; margin: 0; background: #f5f5f5;
+    }
+    .card {
+      background: white; border-radius: 12px; padding: 40px 50px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;
+      max-width: 500px;
+    }
+    h1   { color: #e74c3c; margin-bottom: 10px; }
+    p    { color: #555; line-height: 1.6; }
+    a    { color: #2980b9; text-decoration: none; font-weight: 600; }
+    a:hover { text-decoration: underline; }
+    .sub { font-size: 0.85em; color: #999; margin-top: 15px; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Page Not Found</h1>
+  <p>The page you requested could not be found.<br>
+     Your session may have expired.</p>
+  <p><a href="/">&#x2190; Return to Dashboard</a></p>
+  <p class="sub">If this keeps happening, try refreshing the app page.</p>
+</div>
+</body>
+</html>]])
+    return
+end
+
 local wait_time = MAX_RETRIES * RETRY_DELAY
 
 ngx.log(ngx.WARN, "[queue] Exhausted ", MAX_RETRIES, " retries for ", client_ip,

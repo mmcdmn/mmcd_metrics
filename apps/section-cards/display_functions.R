@@ -310,40 +310,40 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       pointer-events: none;
     }
     .watermark-item {
-      font-size: 14px;
+      font-size: 42px !important;
       font-weight: bold;
-      padding: 4px 12px;
-      border-radius: 4px;
-      opacity: 0.68;
+      padding: 0 8px;
+      background: none !important;
+      background-color: transparent !important;
+      opacity: 0.40;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
     .watermark-culex {
-      background-color: rgba(50, 205, 50, 0.35) !important;
-      background: rgba(50, 205, 50, 0.35) !important;
-      color: #000 !important;
+      color: #228B22 !important;
     }
     .watermark-spring-aedes {
-      background-color: rgba(255, 213, 128, 0.4) !important;
-      background: rgba(255, 213, 128, 0.4) !important;
-      color: #000 !important;
+      color: #D4880F !important;
     }
     .watermark-perturbans {
-      background-color: rgba(65, 105, 225, 0.35) !important;
-      background: rgba(65, 105, 225, 0.35) !important;
-      color: #000 !important;
+      color: #4169E1 !important;
     }
     .watermark-sample {
-      background-color: rgba(255, 182, 193, 0.4) !important;
-      background: rgba(255, 182, 193, 0.4) !important;
-      color: #000 !important;
+      color: #DC143C !important;
     }
     .watermark-prehatch-calc {
-      background-color: rgba(255, 200, 200, 0.35) !important;
-      background: rgba(255, 200, 200, 0.35) !important;
-      color: #CC0000 !important;
-      font-size: 16px;
+      position: absolute;
+      bottom: 8px;
+      right: 10px;
+      text-align: right;
+      color: red !important;
+      font-weight: bold;
+      font-size: 14px;
+      opacity: 0.55;
+      background: none !important;
+      background-color: transparent !important;
+      padding: 0;
     }
 
     .prehatch-overlay {
@@ -834,6 +834,7 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   # Add watermark overlays at bottom of card (on top of table columns, semi-transparent)
   if (!is.null(watermark_fields) && length(watermark_fields) > 0) {
     wm_items <- character(0)
+    prehatch_wm_html <- NULL
     
     for (wm_field in watermark_fields) {
       if (wm_field == "culex" && "culex" %in% names(row) &&
@@ -851,8 +852,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         if (!is.na(prehatch_val) && prehatch_val != "" &&
             !is.na(acres_val) && !is.na(as.numeric(acres_val))) {
           calc_val <- max(round(as.numeric(acres_val) * 2.5, 2), 0.05)
-          wm_items <- c(wm_items, paste0('<span class="watermark-item watermark-prehatch-calc">2.5/ac<br>',
-                                          sprintf("%.2f", calc_val), '</span>'))
+          # Prehatch calc rendered separately as small red number bottom-right (not in watermark flow)
+          prehatch_wm_html <- paste0('<div class="watermark-prehatch-calc">2.5/ac<br>',
+                                      sprintf("%.2f", calc_val), '</div>')
         }
       } else if (wm_field == "sample" && "sample" %in% names(row) &&
                  !is.na(row[["sample"]]) && toupper(row[["sample"]]) == "Y") {
@@ -863,6 +865,10 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
     if (length(wm_items) > 0) {
       html <- paste0(html, '    <div class="watermark-container">\n      ',
                      paste0(wm_items, collapse = '\n      '), '\n    </div>\n')
+    }
+    # Prehatch calc watermark: small red number, bottom-right, outside the centered container
+    if (exists("prehatch_wm_html") && !is.null(prehatch_wm_html)) {
+      html <- paste0(html, '    ', prehatch_wm_html, '\n')
     }
   }
   

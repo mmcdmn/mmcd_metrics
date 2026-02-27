@@ -274,8 +274,8 @@ for attempt = 0, MAX_RETRIES do
             always_forward_body = true,
         })
 
-        if res and res.status and res.status ~= 502 and res.status ~= 503 then
-            -- Success (or a non-retryable error like 404)
+        if res and res.status and res.status ~= 502 and res.status ~= 503 and res.status ~= 404 then
+            -- Success (or a non-retryable client error)
             ngx.status = res.status
 
             -- Build client-facing base URL for Location header rewriting.
@@ -320,7 +320,7 @@ for attempt = 0, MAX_RETRIES do
             return
         end
 
-        -- Got 502/503 — this worker is busy, try next
+        -- Got 404/502/503 — this worker doesn't have the app or is busy, try next
         last_status = (res and res.status) or 503
     end
 

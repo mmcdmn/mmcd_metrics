@@ -278,11 +278,24 @@ for attempt = 0, MAX_RETRIES do
             -- Success (or a non-retryable error like 404)
             ngx.status = res.status
 
+            -- Build client-facing base URL for Location header rewriting.
+            -- Internal workers (127.0.0.1:PORT) must never leak to the client.
+            local client_base_url = (ngx.var.http_x_forwarded_proto or ngx.var.scheme)
+                                    .. "://"
+                                    .. (ngx.var.http_host or ngx.var.host)
+
             -- Forward response headers
             for k, v in pairs(res.header) do
                 -- Skip hop-by-hop headers that nginx manages
                 local lk = k:lower()
                 if lk ~= "connection" and lk ~= "transfer-encoding" then
+                    -- Rewrite Location headers: replace internal backend
+                    -- addresses with the client-facing URL so browsers never
+                    -- receive (and cache) redirects to 127.0.0.1:PORT
+                    if lk == "location" and type(v) == "string" then
+                        v = v:gsub("https?://127%.0%.0%.1:%d+", client_base_url)
+                        v = v:gsub("https?://localhost:%d+", client_base_url)
+                    end
                     ngx.header[k] = v
                 end
             end

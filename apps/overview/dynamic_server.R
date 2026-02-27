@@ -536,6 +536,33 @@ load_hist_cache <- function() {
   .hist_cache$data
 }
 
+# In-memory cache for raw historical treatment data (per metric, per session)
+# Avoids repeated 10-year DB loads when computing FOS/facility averages
+# for multiple FOS people on the same metric in a single render pass.
+.raw_hist_cache <- new.env(parent = emptyenv())
+
+#' Get cached raw historical treatments for a metric (10yr)
+#' @param metric_id Metric ID
+#' @param zone_filter Zone filter
+#' @return List from load_app_historical_data or NULL
+get_cached_raw_historical <- function(metric_id, zone_filter = c("1", "2")) {
+  cache_key <- paste0(metric_id, "_", paste(zone_filter, collapse = "_"))
+  if (exists(cache_key, envir = .raw_hist_cache)) {
+    cached <- get(cache_key, envir = .raw_hist_cache)
+    # 5-minute TTL
+    if (difftime(Sys.time(), cached$ts, units = "secs") < 300) {
+      return(cached$data)
+    }
+  }
+  
+  current_year <- lubridate::year(Sys.Date())
+  start_year <- current_year - 9
+  raw_data <- load_app_historical_data(metric_id, start_year, current_year - 1, zone_filter)
+  
+  assign(cache_key, list(data = raw_data, ts = Sys.time()), envir = .raw_hist_cache)
+  raw_data
+}
+
 #' Get historical average for a metric and week (cached for performance)
 #' @param metric_id Metric ID
 #' @param week_num Week number (from lubridate::week(), matching cache data)
@@ -576,18 +603,19 @@ get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2
 #' @param zone_filter Zone filter
 #' @return Historical average value or NULL if not available
 get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, zone_filter = c("1", "2")) {
+  # Check Redis cache first (FOS-level historical avg, 7-day TTL)
+  cache_key <- paste0("hist_fac:", metric_id, ":", facility, ":w", week_num)
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    cached <- tryCatch(redis_get(cache_key), error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
   tryCatch({
     registry <- get_metric_registry()
     config <- registry[[metric_id]]
     if (is.null(config)) return(NULL)
     
-    # Get year range for 10-year average
-    current_year <- lubridate::year(Sys.Date())
-    start_year <- current_year - 9
-    
-    # Load historical data with facility filter
-    # Use load_app_historical_data which loads from the app's data_functions
-    raw_data <- load_app_historical_data(metric_id, start_year, current_year - 1, zone_filter)
+    # Load from in-memory cache (avoids repeated 10yr DB loads per render pass)
+    raw_data <- get_cached_raw_historical(metric_id, zone_filter)
     
     if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
     
@@ -625,10 +653,153 @@ get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, z
     if (nrow(yearly_values) == 0) return(NULL)
     
     # Return average across years
-    mean(yearly_values$yearly_value, na.rm = TRUE)
+    result_val <- mean(yearly_values$yearly_value, na.rm = TRUE)
+    
+    # Cache in Redis (7-day TTL) to avoid recomputing
+    if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+      tryCatch(redis_set(cache_key, result_val, ttl = 604800), error = function(e) NULL)
+    }
+    
+    result_val
     
   }, error = function(e) {
     cat("[DEBUG] Error in get_historical_week_avg_by_facility:", e$message, "\n")
+    NULL
+  })
+}
+
+#' Get historical average for a SPECIFIC FOS (Field Operations Supervisor) area
+#' Computes on-the-fly by loading 10-year historical data filtered by fosarea/foreman
+#' Cached in Redis with 7-day TTL for fast repeat access
+#' @param metric_id Metric ID
+#' @param week_num Week number
+#' @param fos_emp_num FOS employee number (fosarea value)
+#' @param zone_filter Zone filter
+#' @return Historical average value or NULL if not available
+get_historical_week_avg_by_fos <- function(metric_id, week_num, fos_emp_num, zone_filter = c("1", "2")) {
+  # Check Redis cache first (FOS-level historical avg, 7-day TTL)
+  cache_key <- paste0("hist_fos:", metric_id, ":", fos_emp_num, ":w", week_num)
+  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+    cached <- tryCatch(redis_get(cache_key), error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  tryCatch({
+    registry <- get_metric_registry()
+    config <- registry[[metric_id]]
+    if (is.null(config)) return(NULL)
+    
+    # Year range for 10-year average (needed by active treatment calculation loop)
+    current_year <- lubridate::year(Sys.Date())
+    start_year <- current_year - 9
+    
+    # Load from in-memory cache (avoids repeated 10yr DB loads per render pass)
+    raw_data <- get_cached_raw_historical(metric_id, zone_filter)
+    
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
+    
+    treatments <- raw_data$treatments
+    
+    # Filter to specific FOS area
+    # Different apps use different column names: fosarea or foreman
+    fos_col <- if ("fosarea" %in% names(treatments)) {
+      "fosarea"
+    } else if ("foreman" %in% names(treatments)) {
+      "foreman"
+    } else {
+      cat("[DEBUG] No fosarea/foreman column in", metric_id, "treatments for FOS historical\n")
+      return(NULL)
+    }
+    
+    treatments <- treatments[as.character(treatments[[fos_col]]) == as.character(fos_emp_num), ]
+    if (nrow(treatments) == 0) return(NULL)
+    
+    # Add week number
+    treatments$week_num <- lubridate::week(treatments$inspdate)
+    
+    # For active treatment metrics, compute what's active on each week's Friday
+    use_active <- isTRUE(config$use_active_calculation)
+    
+    if (use_active) {
+      # Active treatment calculation (same logic as historical_functions.R)
+      if (!"effect_days" %in% names(treatments)) {
+        treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
+      }
+      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
+      
+      # Assign value column
+      treatments <- assign_value_column(treatments, config)
+      
+      # Compute weekly active values across all years
+      yearly_values <- data.frame()
+      for (yr in start_year:(current_year - 1)) {
+        start_date <- as.Date(paste0(yr, "-01-01"))
+        end_date <- as.Date(paste0(yr, "-12-31"))
+        week_start_dates <- seq.Date(start_date, end_date, by = "week")
+        
+        for (ws in week_start_dates) {
+          ws <- as.Date(ws, origin = "1970-01-01")
+          wf <- ws + 4  # Friday
+          if (lubridate::year(wf) != yr) next
+          wn <- lubridate::week(wf)
+          if (wn != week_num) next
+          
+          active_on_friday <- treatments[treatments$inspdate <= wf & treatments$treatment_end >= wf, ]
+          if (nrow(active_on_friday) > 0) {
+            # Dedup by site
+            if ("sitecode" %in% names(active_on_friday)) {
+              active_on_friday <- active_on_friday[order(-as.numeric(active_on_friday$treatment_end)), ]
+              active_on_friday <- active_on_friday[!duplicated(active_on_friday$sitecode), ]
+            } else if ("catchbasin_id" %in% names(active_on_friday)) {
+              active_on_friday <- active_on_friday[order(-as.numeric(active_on_friday$treatment_end)), ]
+              active_on_friday <- active_on_friday[!duplicated(active_on_friday$catchbasin_id), ]
+            }
+            week_value <- sum(active_on_friday$value, na.rm = TRUE)
+          } else {
+            week_value <- 0
+          }
+          yearly_values <- rbind(yearly_values, data.frame(year = yr, value = week_value))
+        }
+      }
+      
+      if (nrow(yearly_values) == 0) return(NULL)
+      result_val <- mean(yearly_values$value, na.rm = TRUE)
+      
+    } else {
+      # Simple count/sum by week
+      week_treatments <- treatments[treatments$week_num == week_num, ]
+      if (nrow(week_treatments) == 0) return(NULL)
+      
+      # Assign value column
+      if (isTRUE(config$has_acres)) {
+        acres_col <- if ("treated_acres" %in% names(week_treatments)) "treated_acres"
+                     else if ("acres" %in% names(week_treatments)) "acres" else NULL
+        week_treatments$value <- if (!is.null(acres_col)) week_treatments[[acres_col]] else 1
+      } else if ("value" %in% names(week_treatments)) {
+        week_treatments$value <- as.numeric(week_treatments$value)
+      } else {
+        week_treatments$value <- 1
+      }
+      
+      # Calculate average across years
+      yearly_values <- week_treatments %>%
+        dplyr::mutate(year = lubridate::year(inspdate)) %>%
+        dplyr::group_by(year) %>%
+        dplyr::summarise(yearly_value = sum(value, na.rm = TRUE), .groups = "drop")
+      
+      if (nrow(yearly_values) == 0) return(NULL)
+      result_val <- mean(yearly_values$yearly_value, na.rm = TRUE)
+    }
+    
+    # Cache in Redis (7-day TTL)
+    if (exists("redis_is_active", mode = "function") && redis_is_active()) {
+      tryCatch(redis_set(cache_key, result_val, ttl = 604800), error = function(e) NULL)
+    }
+    
+    result_val
+    
+  }, error = function(e) {
+    cat("[DEBUG] Error in get_historical_week_avg_by_fos:", e$message, "\n")
     NULL
   })
 }
@@ -679,9 +850,10 @@ get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1"
 #' @param zone_filter Zones to filter
 #' @param weekly_value Optional: pre-loaded weekly value from historical data (avoids DB call)
 #' @param facility_filter Optional: specific facility to compare against (uses facility historical avg)
+#' @param fos_filter Optional: specific FOS emp_num to compare against (uses FOS-specific historical avg)
 #' @return List with color, historical_avg, current_week, pct_diff, and status
 #' @export
-get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL, facility_filter = NULL) {
+get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL, facility_filter = NULL, fos_filter = NULL) {
   default_color <- config$bg_color
   result <- list(
     color = default_color,
@@ -771,12 +943,17 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   # Get WEEKLY comparison: current week value vs 10yr weekly average
   week_num <- lubridate::week(analysis_date)
   
-  # Get 10-year weekly average - use facility-specific if facility_filter provided
-  historical_avg <- if (!is.null(facility_filter)) {
+  # Get 10-year weekly average — use most specific scope available:
+  #   FOS (smallest area) → Facility → Zone (district-wide cache)
+  # Each scope compares against its own historical average
+  historical_avg <- if (!is.null(fos_filter)) {
+    # FOS-specific: compare against THIS FOS area's historical average
+    get_historical_week_avg_by_fos(metric_id, week_num, fos_filter, zone_filter)
+  } else if (!is.null(facility_filter)) {
     # Facility-specific: compare against THIS facility's historical average
     get_historical_week_avg_by_facility(metric_id, week_num, facility_filter, zone_filter)
   } else {
-    # Zone-wide: compare against zone average from cache (fast)
+    # Zone/district-wide: compare against zone average from cache (fast)
     get_historical_week_avg(metric_id, week_num, zone_filter)
   }
   if (is.null(historical_avg) || historical_avg == 0) return(result)
@@ -971,6 +1148,22 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     week_num <- lubridate::week(analysis_date)
     weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
     
+    # Resolve fos_filter to emp_num for historical comparison
+    # fos_filter may be a shortname (e.g., "Smith") or emp_num (e.g., "1234")
+    fos_emp_num <- fos_filter
+    tryCatch({
+      foremen <- get_foremen_lookup()
+      # If fos_filter is a shortname, resolve to emp_num
+      shortname_match <- foremen[foremen$shortname == fos_filter, ]
+      if (nrow(shortname_match) > 0) {
+        fos_emp_num <- as.character(shortname_match$emp_num[1])
+      }
+      # If it's already an emp_num, keep it as-is
+    }, error = function(e) {
+      cat("[FOS] Warning: Could not resolve fos_filter to emp_num:", e$message, "\n")
+    })
+    cat("[FOS] Using fos_emp_num =", fos_emp_num, "for historical comparison\n")
+    
     n_metrics <- length(metrics)
     max_per_row <- 3
     col_width <- max(4, floor(12 / min(n_metrics, max_per_row)))
@@ -995,12 +1188,14 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         display_value <- "0%"
       }
       
-      # Get dynamic color
+      # Get dynamic color — compare against THIS FOS's historical average
       weekly_val <- weekly_values[[metric_id]]
       cm <- if (!is.null(config$color_mode)) config$color_mode else ""
       color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
       box_info <- tryCatch(
-        get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
+        get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, 
+                                   zone_filter = zone_filter, weekly_value = weekly_val,
+                                   fos_filter = fos_emp_num),
         error = function(e) list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
       )
       
@@ -1133,12 +1328,34 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         }
       }
       
+      # Dynamic color: compare THIS FOS against its own historical average
       box_color <- config$bg_color
+      box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
+      week_num_fos <- lubridate::week(analysis_date)
+      for (metric_id in metrics) {
+        fos_config <- registry[[metric_id]]
+        cm <- if (!is.null(fos_config$color_mode)) fos_config$color_mode else ""
+        color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
+        info <- tryCatch(
+          get_dynamic_value_box_info(metric_id, color_value, analysis_date,
+                                     fos_config, zone_filter = zone_filter,
+                                     fos_filter = as.character(fos_id)),
+          error = function(e) NULL
+        )
+        if (!is.null(info) && info$status != "default") {
+          box_color <- info$color
+          box_info <- info
+          break
+        }
+      }
       
       column(col_width,
         div(
           class = "stat-box-clickable",
           `data-fos` = fos_id,
+          `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
+          `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
+          `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
           create_stat_box(
             value = paste0(pct, "%"),
             title = fos_display,
@@ -1184,6 +1401,21 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           total <- sum(metric_data$total, na.rm = TRUE)
           active <- sum(metric_data$active, na.rm = TRUE)
           expiring <- sum(metric_data$expiring, na.rm = TRUE)
+          
+          # SUCO: stat box percentage always reflects full district (P1+P2 combined)
+          # regardless of zone filter. The bar graph drill-down still respects zone filter.
+          if (metric_id == "suco" && !identical(sort(zone_filter), c("1", "2"))) {
+            full_suco <- tryCatch(
+              load_data_by_zone(metric = "suco", analysis_date = analysis_date,
+                                zone_filter = c("1", "2")),
+              error = function(e) NULL
+            )
+            if (!is.null(full_suco) && nrow(full_suco) > 0) {
+              total <- sum(full_suco$total, na.rm = TRUE)
+              active <- sum(full_suco$active, na.rm = TRUE)
+              expiring <- sum(full_suco$expiring, na.rm = TRUE)
+            }
+          }
           
           pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
           pct <- pct_info$pct

@@ -53,6 +53,14 @@ tryCatch({
   message("[overview] Lookup tables preloaded")
 }, error = function(e) message("[overview] Preload warning: ", e$message))
 
+# Eagerly load app environments (parse each app's data_functions.R once at startup
+# instead of on the first user request, saving ~2-3 seconds on initial load)
+message("[overview] Preloading app data environments...")
+tryCatch({
+  get_app_envs()
+  message("[overview] App environments preloaded")
+}, error = function(e) message("[overview] App env preload warning: ", e$message))
+
 # Load environment variables
 load_env_vars()
 

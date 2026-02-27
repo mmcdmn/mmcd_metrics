@@ -416,6 +416,7 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           trt.inspdate,
           loc.facility,
           sc.zone,
+          sc.fosarea,
           loc.gid as catchbasin_id,
           COALESCE(mat.effect_days, 28) as effect_days
         FROM dblarv_insptrt_current trt
@@ -443,6 +444,7 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
           trt.inspdate,
           loc.facility,
           sc.zone,
+          sc.fosarea,
           loc.gid as catchbasin_id,
           COALESCE(mat.effect_days, 28) as effect_days
         FROM dblarv_insptrt_archive trt

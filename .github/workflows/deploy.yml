@@ -88,6 +88,6 @@ jobs:
             auto-scaling-target-value: 10
             environment-variables: |
               [
-                {"name": "ENABLE_NGINX", "value": "true"},
+                {"name": "ENABLE_NGINX", "value": "false"},
                 {"name": "SHINY_WORKERS", "value": "10"}
               ]

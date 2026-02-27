@@ -17,16 +17,6 @@ source("ui_helper.R")
 # Set application name for AWS RDS monitoring
 set_app_name("inspections")
 
-# =============================================================================
-# STARTUP OPTIMIZATION: Preload lookup tables into cache
-# =============================================================================
-message("[inspections] Preloading lookup tables...")
-tryCatch({
-  get_facility_lookup()
-  get_foremen_lookup()
-  message("[inspections] Lookup tables preloaded")
-}, error = function(e) message("[inspections] Preload warning: ", e$message))
-
 # Define UI
 ui <- create_main_ui()
 
@@ -94,7 +84,7 @@ server <- function(input, output, session) {
     cached_load_raw_data(
       "inspections",
       facility_filter = facility_filter,
-      fosarea_filter = fosarea_filter, 
+      fosarea_filter = fosarea_filter,
       zone_filter = zone_filter,
       priority_filter = priority_filter,
       drone_filter = drone_filter,

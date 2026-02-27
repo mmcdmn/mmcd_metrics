@@ -116,10 +116,9 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       filter(action %in% c('A', 'D', '3')) %>%
       arrange(sitecode, desc(inspdate), desc(insptime))
     
-    # Optionally filter to Bti matcodes
-    if (bti_only && !is.null(bti_codes)) {
-      treatments_all <- treatments_all %>% filter(matcode %in% bti_codes)
-    }
+    # NOTE: Bti filter is applied AFTER matching, not here.
+    # Filtering treatments before matching causes post-checks to silently drop
+    # when the most recent treatment isn't Bti (even if an earlier Bti treatment exists).
     
     pre_checks_all <- all_records %>%
       filter(action %in% c('4', '2', '1'), is.na(posttrt_p)) %>%
@@ -203,6 +202,22 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     matched$trt_acres <- NULL
     
     message(sprintf("[efficacy] Matched %d post-checks to treatments", nrow(matched)))
+    
+    # -------------------------------------------------------------------
+    # STEP 2a-post: Apply Bti filter AFTER matching
+    # Each post-check is matched to its most recent treatment. Now we filter
+    # to keep only rows where that matched treatment used a Bti matcode.
+    # -------------------------------------------------------------------
+    if (bti_only && !is.null(bti_codes)) {
+      n_before <- nrow(matched)
+      matched <- matched[matched$trt_matcode %in% bti_codes, ]
+      message(sprintf("[efficacy] Bti post-filter: %d -> %d rows (removed %d non-Bti)",
+                      n_before, nrow(matched), n_before - nrow(matched)))
+      if (nrow(matched) == 0) {
+        safe_disconnect(con)
+        return(NULL)
+      }
+    }
     
     # -------------------------------------------------------------------
     # STEP 2b: Look up material details (active_ingredient, dosage)
@@ -289,10 +304,9 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     
     # Flag control checkbacks and invalid checkbacks:
     # Control: no treatments between pre and post (by timestamp)
-    # Invalid: pre-inspection occurred while a PRIOR treatment was still active (effect_days)
-    #   The "prior treatment" is any treatment at the same site BEFORE the pre-inspection,
-    #   NOT the matched treatment (which is between pre and post for valid checkbacks).
-    # trt_time, pre_time, and trt_effect_days were stored during the matching loop.
+    # Invalid: TWO OR MORE treatments between the pre-inspection and post-inspection
+    #   This means the site was treated multiple times, so we can't attribute
+    #   the checkback result to a single treatment.
     trt_datetime <- paste(matched$trt_date, matched$trt_time)
     pre_datetime <- ifelse(is.na(matched$pre_date), NA_character_,
                            paste(matched$pre_date, matched$pre_time))
@@ -302,51 +316,39 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     matched$is_control <- !is.na(matched$pre_date) &
                 (is.na(matched$trt_date) | trt_datetime <= pre_datetime)
     
-    # Invalid = a PRIOR treatment (before the pre-inspection date) was still active
-    # at the time of the pre-inspection (prior_trt_date + effect_days > pre_date).
-    # This means the pre-count was taken while a previous treatment was still working,
-    # so the checkback baseline is contaminated.
-    # We check all treatments at the site that are BEFORE the pre-inspection date.
+    # Invalid = TWO OR MORE treatments between pre-inspection and post-inspection.
+    # One treatment between pre and post is expected (that's the treatment we're
+    # measuring efficacy for). Two or more means we can't attribute the result
+    # to a single treatment.
     # trt_by_site is available from the matching loop above.
     invalid_info <- vapply(seq_len(nrow(matched)), function(i) {
-      if (is.na(matched$pre_date[i])) return(NA_character_)
+      if (is.na(matched$pre_date[i]) || is.na(matched$post_date[i])) return(NA_character_)
       
       site <- matched$sitecode[i]
       pre_date_val <- matched$pre_date[i]
+      post_date_val <- matched$post_date[i]
       site_trts <- trt_by_site[[site]]
       if (is.null(site_trts) || nrow(site_trts) == 0) return(NA_character_)
       
-      # Find treatments at or before the pre-inspection (by datetime).
-      # Same-day treatments count as "prior" if their timestamp <= pre timestamp.
+      # Count treatments strictly between pre and post dates
       pre_time_val <- matched$pre_time[i]
+      post_time_val <- if (!is.na(matched$post_time[i]) && matched$post_time[i] != "") matched$post_time[i] else "23:59:59"
       pre_dt_full <- paste(pre_date_val, pre_time_val)
+      post_dt_full <- paste(post_date_val, post_time_val)
       trt_times_local <- ifelse(is.na(site_trts$insptime) | site_trts$insptime == "", "00:00:00", site_trts$insptime)
       trt_dts_local <- paste(site_trts$inspdate, trt_times_local)
-      prior_mask <- trt_dts_local <= pre_dt_full
-      if (!any(prior_mask)) return(NA_character_)
+      between_mask <- trt_dts_local > pre_dt_full & trt_dts_local < post_dt_full
+      n_between <- sum(between_mask)
       
-      prior_trts <- site_trts[prior_mask, ]
-      prior_effect <- ifelse(is.na(prior_trts$effect_days), 14, prior_trts$effect_days)
-      prior_expiry <- prior_trts$inspdate + prior_effect
+      if (n_between < 2) return(NA_character_)
       
-      # Check if any prior treatment was still active at the pre-inspection
-      active_mask <- prior_expiry > pre_date_val
-      if (!any(active_mask)) return(NA_character_)
+      # Air sites are exempt from the 2+ treatment invalid rule
+      if (!is.na(matched$trt_action[i]) && matched$trt_action[i] == "A") return(NA_character_)
       
-      # Return info about the most recent active prior treatment
-      active_trts <- prior_trts[active_mask, ]
-      active_effect <- prior_effect[active_mask]
-      active_expiry <- prior_expiry[active_mask]
-      # Most recent one (already sorted desc)
-      idx <- 1
-      days_remaining <- as.numeric(active_expiry[idx] - pre_date_val)
-      sprintf("%s|%s|%s|%d|%s|%d",
-              active_trts$inspdate[idx],
-              ifelse(is.na(active_trts$mattype[idx]), "Unknown", active_trts$mattype[idx]),
-              active_expiry[idx],
-              active_effect[idx],
-              pre_date_val,
-              days_remaining)
+      # Return info: number of treatments between pre and post
+      between_trts <- site_trts[between_mask, ]
+      trt_dates_str <- paste(between_trts$inspdate, collapse = ", ")
+      sprintf("%d|%s", n_between, trt_dates_str)
     }, character(1))
     
     matched$is_invalid <- !is.na(invalid_info)
@@ -364,20 +366,15 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       for (j in seq_along(valid_idx)) {
         p <- parts[[j]]
         matched$invalid_reason[valid_idx[j]] <- sprintf(
-          "Pre-inspection on %s during active treatment (%s treated %s, %dd effect, expires %s, %dd remaining)",
-          p[5], p[2], p[1], as.integer(p[4]), p[3], as.integer(p[6]))
-        matched$prior_trt_date[valid_idx[j]] <- as.Date(p[1])
-        matched$prior_trt_material[valid_idx[j]] <- p[2]
-        matched$prior_trt_effect_days[valid_idx[j]] <- as.integer(p[4])
-        matched$prior_trt_expiry[valid_idx[j]] <- as.Date(p[3])
-        matched$prior_trt_days_remaining[valid_idx[j]] <- as.integer(p[6])
+          "%s treatments between pre and post inspections (dates: %s)",
+          p[1], p[2])
       }
     }
     
     n_control <- sum(matched$is_control, na.rm = TRUE)
     n_invalid <- sum(matched$is_invalid, na.rm = TRUE)
     n_valid <- sum(!matched$is_control & !matched$is_invalid, na.rm = TRUE)
-    message(sprintf("[efficacy] Control: %d, Invalid (pre during active trt): %d, Valid: %d",
+    message(sprintf("[efficacy] Control: %d, Invalid (2+ treatments between pre/post): %d, Valid: %d",
                     n_control, n_invalid, n_valid))
     
     # -------------------------------------------------------------------

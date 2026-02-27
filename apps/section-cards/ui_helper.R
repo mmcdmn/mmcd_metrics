@@ -65,12 +65,17 @@ create_field_selector <- function() {
       checkboxInput(
         "split_by_section",
         "Split by section (each section on separate pages)",
-        value = FALSE
+        value = TRUE
       ),
       checkboxInput(
         "split_by_priority",
         "Split by priority (each priority on separate pages)",
-        value = FALSE
+        value = TRUE
+      ),
+      checkboxInput(
+        "double_sided",
+        "Double-sided printing (pad sections to even pages)",
+        value = TRUE
       ),
       
       # Air/Ground specific filters (shown when site_type == "breeding")
@@ -124,6 +129,9 @@ create_field_selector <- function() {
     
     # Title fields section - conditionally rendered based on site type
     uiOutput("title_fields_panel"),
+    
+    # Watermark fields - semi-transparent overlays at bottom of cards
+    uiOutput("watermark_fields_panel"),
     
     wellPanel(
       h5("Data Table Columns"),

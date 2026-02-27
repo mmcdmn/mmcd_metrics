@@ -179,6 +179,7 @@ ui <- fluidPage(
         HTML("<strong>How to Print/Save as PDF:</strong><br/>
              <strong>Option 1 - Quick Print:</strong> Click 'Generate Cards' then use browser print (Ctrl+P / Cmd+P)<br/>
              <strong>Option 2 - Download First:</strong> Use 'Download as HTML' button (shows progress), then open file and print<br/>
+              <strong>Important:</strong> In the print dialog, turn OFF <em>Headers and footers</em> to remove URL/date text<br/>
              <br/>
              <em>The layout is optimized for Letter size paper with 6 cards per page.</em>")
       )
@@ -263,12 +264,7 @@ server <- function(input, output, session) {
         "Priority" = "priority",
         "Acres" = "acres",
         "Type" = "type",
-        "Culex" = "culex",
-        "Spring Aedes" = "spr_aedes",
-        "Perturbans" = "perturbans",
         "Prehatch" = "prehatch",
-        "Prehatch Calculation" = "prehatch_calc",
-        "Sample Site" = "sample",
         "Drone" = "drone",
         "Section" = "section",
         "Facility" = "facility",
@@ -276,6 +272,11 @@ server <- function(input, output, session) {
         "Foreman" = "foreman",
         "Remarks" = "remarks"
       )
+      
+      # Add RA as core choice (only for QGIS method)
+      if (!use_webster) {
+        static_choices <- c(static_choices, list("Restricted Area (RA)" = "ra"))
+      }
       
       # Add dynamic columns from JK table with [DB] prefix
       # Only available when NOT using Webster data
@@ -344,6 +345,36 @@ server <- function(input, output, session) {
             "Remarks" = "remarks"
           ),
           selected = c("priority", "s_type", "status_udw", "sqft", "remarks")
+        )
+      )
+    }
+  })
+  
+  # Watermark fields panel - only for breeding sites
+  output$watermark_fields_panel <- renderUI({
+    site_type <- input$site_type
+    
+    # Only show watermark options for breeding sites
+    if (is.null(site_type) || site_type == "breeding") {
+      watermark_choices <- list(
+        "Culex" = "culex",
+        "Spring Aedes" = "spr_aedes",
+        "Perturbans" = "perturbans",
+        "Prehatch Calculation" = "prehatch_calc",
+        "Sample Site" = "sample"
+      )
+      
+      # Preserve previous selections
+      prev_selected <- isolate(input$watermark_fields)
+      
+      wellPanel(
+        h5("Watermark Fields"),
+        p(class = "help-block", "Semi-transparent labels overlaid at the bottom of each card (on top of columns)"),
+        checkboxGroupInput(
+          "watermark_fields",
+          NULL,
+          choices = watermark_choices,
+          selected = if (!is.null(prev_selected)) intersect(prev_selected, unlist(watermark_choices)) else character(0)
         )
       )
     }
@@ -866,7 +897,9 @@ server <- function(input, output, session) {
       split_type,
       progress_fn = function(pct, detail) {
         setProgress(value = 0.25 + pct * 0.65, detail = detail)
-      }
+      },
+      double_sided = isTRUE(input$double_sided),
+      watermark_fields = input$watermark_fields
     )
     
     setProgress(value = 0.95, detail = "Rendering cards...")
@@ -983,7 +1016,9 @@ server <- function(input, output, session) {
         split_type,
         progress_fn = function(pct, detail) {
           setProgress(value = 0.15 + pct * 0.70, detail = detail)
-        }
+        },
+        double_sided = isTRUE(input$double_sided),
+        watermark_fields = input$watermark_fields
       )
       
       setProgress(value = 0.90, detail = "Writing file...")

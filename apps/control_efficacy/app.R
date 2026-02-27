@@ -548,35 +548,42 @@ server <- function(input, output, session) {
                   backgroundColor = "#fff3cd")
   })
 
-  # Invalid Checkback Details Table (from site_details / progress tab)
-  output$invalid_checkback_details_progress <- DT::renderDataTable({
-    data <- site_details()
-    if (is.null(data) || nrow(data) == 0 || !"is_invalid" %in% names(data)) {
+  # Invalid Checkback Details Table
+  output$invalid_details <- DT::renderDataTable({
+    data <- efficacy_data_raw()
+    if (is.null(data) || nrow(data) == 0) {
       return(data.frame(Message = "No invalid checkbacks found"))
     }
 
     invalid_data <- data[data$is_invalid == TRUE, ]
-    if (nrow(invalid_data) == 0) {
-      return(data.frame(Message = "No invalid checkbacks found - all pre-inspections occurred outside active treatment windows"))
+    if (is.null(invalid_data) || nrow(invalid_data) == 0) {
+      return(data.frame(Message = "No invalid checkbacks found - all checkbacks are valid"))
     }
 
     display_data <- invalid_data %>%
+      filter(!is.na(pct_reduction)) %>%
       mutate(
-        Acres = round(acres, 1)
+        `% Reduction` = round(pct_reduction, 1),
+        `Pre Genus Dips` = round(pre_genus_dips, 2),
+        `Post Genus Dips` = round(post_genus_dips, 2),
+        `Pre Genus %` = round(pre_genus_pct, 0),
+        `Post Genus %` = round(post_genus_pct, 0),
+        Acres = round(acres, 1),
+        `Invalid Reason` = invalid_reason
       ) %>%
       select(
         Site = sitecode, Facility = facility,
-        `Matched Material` = mattype,
-        `Matched Trt Date` = treatment_date,
-        `Trt Timestamp` = trt_timestamp,
-        `Pre Date` = pre_inspection_date,
-        `Pre Timestamp` = pre_timestamp,
-        `Post Date` = checkback_date,
-        `Post Timestamp` = post_timestamp,
-        `Pre Dips` = pre_treatment_dips, `Post Dips` = post_treatment_dips,
-        Acres, Reason = invalid_reason
+        Year = year, Season = season, Genus = genus,
+        `Trt Type` = trt_type, `Mat Code` = trt_matcode,
+        `Trt Date` = trt_date, `Pre Date` = pre_date, `Post Date` = post_date,
+        `Days from Trt` = days_from_trt,
+        `Pre Dips` = pre_numdip, `Post Dips` = post_numdip,
+        `Pre Genus %`, `Post Genus %`,
+        `Pre Genus Dips`, `Post Genus Dips`,
+        `% Reduction`, Acres,
+        `Invalid Reason`
       ) %>%
-      arrange(desc(`Matched Trt Date`), Site)
+      arrange(desc(`Trt Date`), Site, Genus)
 
     display_data$Site <- make_sitecode_link(display_data$Site)
 
@@ -615,12 +622,14 @@ server <- function(input, output, session) {
 
     filtered <- data
 
-    # Exclude control and invalid checkbacks from the display
-    # (controls are used internally for Mulla's correction;
-    #  invalids have pre-inspection during active treatment)
+    # Exclude control checkbacks from the display
+    # (they are used internally for Mulla's correction but not shown)
     if ("is_control" %in% names(filtered)) {
       filtered <- filtered[filtered$is_control == FALSE, ]
     }
+
+    # Exclude invalid checkbacks from the efficacy display
+    # (shown separately in Status Tables tab)
     if ("is_invalid" %in% names(filtered)) {
       filtered <- filtered[filtered$is_invalid == FALSE, ]
     }
@@ -686,10 +695,28 @@ server <- function(input, output, session) {
   # Stat boxes
   output$efficacy_valid_count <- renderUI({
     data <- efficacy_data_filtered()
-    valid <- if (!is.null(data)) sum(!is.na(data$pct_reduction)) else 0
+    valid <- 0
+    if (!is.null(data) && nrow(data) > 0) {
+      valid_rows <- data[!is.na(data$pct_reduction), ]
+      if (nrow(valid_rows) > 0) {
+        valid <- length(unique(valid_rows$sitecode))
+      }
+    }
     status_colors <- get_status_colors(theme = input$color_theme)
     create_stat_box(value = valid, title = "Valid Observations",
                     bg_color = status_colors["unknown"], icon = icon("chart-bar"))
+  })
+
+  output$efficacy_invalid_count <- renderUI({
+    data <- efficacy_data_raw()
+    n_invalid <- 0
+    if (!is.null(data) && "is_invalid" %in% names(data)) {
+      inv_rows <- data[data$is_invalid == TRUE, ]
+      if (nrow(inv_rows) > 0) {
+        n_invalid <- length(unique(inv_rows$sitecode))
+      }
+    }
+
   })
 
   output$efficacy_median_reduction <- renderUI({
@@ -735,7 +762,7 @@ server <- function(input, output, session) {
                     bg_color = color, icon = icon("check-double"))
   })
 
-  # Efficacy data table
+  # Efficacy data table — exclude invalids (shown separately)
   output$efficacy_table <- DT::renderDataTable({
     data <- efficacy_data_filtered()
 
@@ -780,49 +807,6 @@ server <- function(input, output, session) {
           c(-50, 0, 25, 50, 75, 90, 95),
           c("#67001f", "#d73027", "#f46d43", "#fee08b", "#d9ef8b",
             "#a6d96a", "#66bd63", "#1a9850")))
-  })
-
-  # Invalid Checkback Details Table (from efficacy data - pre during active treatment)
-  output$invalid_checkback_details <- DT::renderDataTable({
-    data <- efficacy_data_raw()
-    if (is.null(data) || nrow(data) == 0 || !"is_invalid" %in% names(data)) {
-      return(data.frame(Message = "No invalid checkbacks found"))
-    }
-
-    invalid_data <- data[data$is_invalid == TRUE, ]
-    if (is.null(invalid_data) || nrow(invalid_data) == 0) {
-      return(data.frame(Message = "No invalid checkbacks found - all pre-inspections occurred outside active treatment windows"))
-    }
-
-    # Deduplicate across genera — show one row per checkback
-    display_data <- invalid_data %>%
-      filter(!duplicated(paste(sitecode, post_date, trt_date))) %>%
-      mutate(
-        Acres = round(acres, 1)
-      ) %>%
-      select(
-        Site = sitecode, Facility = facility,
-        Year = year, Season = season,
-        `Trt Type` = trt_type, Material = trt_mattype,
-        `Trt Date` = trt_date, `Pre Date` = pre_date, `Post Date` = post_date,
-        `Prior Trt Date` = prior_trt_date, `Prior Material` = prior_trt_material,
-        `Effect Days` = prior_trt_effect_days, `Trt Expiry` = prior_trt_expiry,
-        `Days Remaining` = prior_trt_days_remaining,
-        `Pre Dips` = pre_numdip, `Post Dips` = post_numdip,
-        Acres, Reason = invalid_reason
-      ) %>%
-      arrange(desc(`Trt Date`), Site)
-
-    display_data$Site <- make_sitecode_link(display_data$Site)
-
-    datatable(display_data,
-      escape = FALSE,
-      options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE,
-                     columnDefs = list(list(className = 'dt-center', targets = '_all'))),
-      rownames = FALSE, filter = 'top'
-    ) %>%
-      formatStyle(columns = names(display_data),
-                  backgroundColor = "#f8d7da")
   })
 }
 

@@ -117,7 +117,7 @@ descriptions:
 # URLs for metric documentation pages.
 # Empty string = no link shown. Used by the info buttons on overview cards.
 wiki_links:
-  catch_basin: ""
+  catch_basin: "https://mmcd.wiki/index.php/Howwe_page:_Catch_Basins_and_Structures"
   drone: ""
   ground_prehatch: ""
   air_sites: ""

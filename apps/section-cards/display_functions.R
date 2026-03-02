@@ -314,7 +314,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       font-weight: bold;
       padding: 4px 12px;
       border-radius: 4px;
-      opacity: 0.68;
+      opacity: 0.54;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;

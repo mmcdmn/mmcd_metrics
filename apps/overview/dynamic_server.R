@@ -375,10 +375,16 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
       ))
     }
     
-    # Return container with facility header and detail boxes
+    # Return container with facility header, detail boxes, and drill-down button
     div(class = "facility-detail-boxes-container",
       div(class = "facility-detail-header",
-        icon("building"), " ", facility, " - ", config$display_name, " Details"
+        icon("building"), " ", facility, " - ", config$display_name, " Details",
+        tags$button(
+          class = "drill-down-btn",
+          style = "position: relative; float: right; margin-top: -2px;",
+          `data-facility` = facility,
+          icon("arrow-right"), " Drill Down to FOS"
+        )
       ),
       fluidRow(class = "facility-detail-boxes", box_elements)
     )
@@ -2015,6 +2021,50 @@ build_overview_server <- function(input, output, session,
       )
     })
   }
+  
+  # Facility drill-down button click handler (button in facility detail boxes area)
+  if (overview_type == "facilities" && overview_config$enable_drill_down) {
+    observeEvent(input$drill_down_facility_btn, {
+      facility_name <- input$drill_down_facility_btn
+      cat("DEBUG: Facility drill-down button clicked for:", facility_name, "\n")
+      
+      # Strip zone suffix if present (e.g., "Maple Grove (P1)" -> "Maple Grove")
+      zone_from_name <- NULL
+      clean_facility <- facility_name
+      if (grepl("\\(P[12]\\)$", facility_name)) {
+        zone_from_name <- gsub(".*\\(P([12])\\)$", "\\1", facility_name)
+        clean_facility <- trimws(gsub("\\s*\\(P[12]\\)$", "", facility_name))
+      }
+      
+      zone_value <- isolate(input$zone_filter)
+      zone_clicked <- if (!is.null(zone_from_name)) {
+        paste0("P", zone_from_name)
+      } else if (zone_value %in% c("1", "2")) {
+        paste0("P", zone_value)
+      } else {
+        "1,2"
+      }
+      
+      # Use the first metric in the filter (or first metric overall)
+      metric_id <- if (!is.null(metrics_filter) && length(metrics_filter) > 0) {
+        metrics_filter[1]
+      } else {
+        metrics[1]
+      }
+      
+      navigate_to_overview(
+        session,
+        "fos_overview",
+        zone_clicked,
+        isolate(input$custom_today),
+        isolate(input$expiring_days),
+        current_theme(),
+        metric_id = metric_id,
+        facility_clicked = clean_facility,
+        zone_filter_raw = zone_value
+      )
+    })
+  }
 
   # Facilities view: stat box click shows hidden detail boxes (JS toggles the container)
   # Bar chart click drills down to FOS
@@ -2044,9 +2094,18 @@ build_overview_server <- function(input, output, session,
               # Guard against NA key (happens if click lands on a bar trace without key aesthetic)
               if (is.na(facility_clicked)) facility_clicked <- as.character(click_data$x)
               
-              # Determine zone and preserve raw filter for 'separate' mode
+              # Strip zone suffix from facility name (e.g., "Maple Grove (P1)" -> "Maple Grove")
+              # and extract zone info
               zone_value <- isolate(input$zone_filter)
-              zone_clicked <- if (zone_value %in% c("1", "2")) {
+              zone_from_name <- NULL
+              if (grepl("\\(P[12]\\)$", facility_clicked)) {
+                zone_from_name <- gsub(".*\\(P([12])\\)$", "\\1", facility_clicked)
+                facility_clicked <- trimws(gsub("\\s*\\(P[12]\\)$", "", facility_clicked))
+              }
+              
+              zone_clicked <- if (!is.null(zone_from_name)) {
+                paste0("P", zone_from_name)
+              } else if (zone_value %in% c("1", "2")) {
                 paste0("P", zone_value)
               } else {
                 "1,2"

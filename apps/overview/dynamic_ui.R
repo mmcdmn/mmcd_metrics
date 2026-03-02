@@ -890,7 +890,14 @@ get_overview_js <- function() {
     $(document).on('click', '.drill-down-btn', function(e) {
       e.stopPropagation();
       var metricId = $(this).data('metric-id');
-      Shiny.setInputValue('drill_down_btn', metricId, {priority: 'event'});
+      var facility = $(this).data('facility');
+      if (facility) {
+        // Facility drill-down to FOS view
+        Shiny.setInputValue('drill_down_facility_btn', facility, {priority: 'event'});
+      } else if (metricId) {
+        // District drill-down to facilities view
+        Shiny.setInputValue('drill_down_btn', metricId, {priority: 'event'});
+      }
     });
 
     // Legacy: Chart type toggle functionality (kept for backwards compatibility)

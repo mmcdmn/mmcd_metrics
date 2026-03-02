@@ -99,6 +99,8 @@ parse_unified_params <- function(query_string) {
       zone_filter <- "1"
     } else if (query$zone == "2") {
       zone_filter <- "2"
+    } else if (query$zone == "1,2") {
+      zone_filter <- "1,2"
     } else if (query$zone == "separate") {
       zone_filter <- "separate"
     }

@@ -380,40 +380,42 @@ navigate_to_overview <- function(session, target, zone_clicked, analysis_date, e
   cat("DEBUG navigate_to_overview: zone_clicked =", zone_clicked, "class =", class(zone_clicked), "\n")
   cat("DEBUG navigate_to_overview: target =", target, "facility_clicked =", facility_clicked, "zone_filter_raw =", zone_filter_raw, "\n")
   
-  # If zone_filter_raw is "separate", preserve that in the URL
-  # This ensures the target page also renders P1/P2 as separate bars
-  if (!is.null(zone_filter_raw) && zone_filter_raw == "separate") {
+  # Extract zone number from different possible formats.
+  # Important: if a specific zone was clicked, it should take precedence over
+  # the raw filter value (including "separate").
+  zone_num <- NA
+  
+  if (is.character(zone_clicked)) {
+    if (zone_clicked %in% c("P1", "P2")) {
+      zone_num <- gsub("P", "", zone_clicked)
+    } else if (zone_clicked %in% c("1", "2")) {
+      zone_num <- zone_clicked
+    } else if (zone_clicked == "1,2") {
+      zone_num <- "1,2"
+    }
+  } else if (is.numeric(zone_clicked)) {
+    if (zone_clicked == 0) {
+      zone_num <- "1"
+    } else if (zone_clicked == 1) {
+      zone_num <- "2"
+    }
+  }
+  
+  # If no specific clicked zone was detected, preserve "separate" mode.
+  if (!is.null(zone_filter_raw) && zone_filter_raw == "separate" &&
+      (is.na(zone_num) || is.null(zone_num))) {
     zone_num <- "separate"
-  } else {
-    # Extract zone number from different possible formats
-    zone_num <- NA
-    
-    if (is.character(zone_clicked)) {
-      if (zone_clicked %in% c("P1", "P2")) {
-        # Standard format: "P1" -> "1", "P2" -> "2"
-        zone_num <- gsub("P", "", zone_clicked)
-      } else if (zone_clicked %in% c("1", "2")) {
-        # Already a number string
-        zone_num <- zone_clicked
-      } else if (zone_clicked == "1,2") {
-        zone_num <- NULL  # Combined - omit from URL (defaults to 1,2)
-      }
-    } else if (is.numeric(zone_clicked)) {
-      # If it's a point number (0, 1), convert to zone
-      if (zone_clicked == 0) {
-        zone_num <- "1"  # First point = P1
-      } else if (zone_clicked == 1) {
-        zone_num <- "2"  # Second point = P2
-      }
+  } else if (!is.null(zone_filter_raw) && zone_filter_raw == "1,2" &&
+             (is.na(zone_num) || is.null(zone_num))) {
+    zone_num <- "1,2"
+  }
+  
+  # Fallback: if zone_num is still NA (not NULL or a valid value), clear it
+  if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
+    if (!is.null(zone_clicked)) {
+      cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
     }
-    
-    # Fallback: if zone_num is still NA (not NULL or a valid value), clear it
-    if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
-      if (!is.null(zone_clicked)) {
-        cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
-      }
-      zone_num <- NULL
-    }
+    zone_num <- NULL
   }
   
   cat("DEBUG: Final zone_num =", zone_num, "\n")

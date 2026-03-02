@@ -1953,8 +1953,29 @@ build_overview_server <- function(input, output, session,
           
           # Use key aesthetic for reliable label (y returns factor level after coord_flip)
           display_name <- as.character(click_data$key)
-          # Guard against NA key (happens if click lands on a bar trace without key aesthetic)
-          if (is.na(display_name)) display_name <- NULL
+          # Guard against missing key (happens if click lands on a bar trace without key aesthetic)
+          if (length(display_name) == 0 || is.na(display_name) || display_name == "NULL") {
+            display_name <- NULL
+          }
+          # Additional fallback: derive label from x/y/text payload when key is absent
+          if (is.null(display_name)) {
+            if (!is.null(click_data$y) && length(click_data$y) > 0) {
+              display_name <- as.character(click_data$y)
+            }
+            if ((is.null(display_name) || display_name == "NULL") &&
+                !is.null(click_data$x) && length(click_data$x) > 0) {
+              display_name <- as.character(click_data$x)
+            }
+            if ((is.null(display_name) || display_name == "NULL") &&
+                !is.null(click_data$text) && length(click_data$text) > 0) {
+              text_val <- as.character(click_data$text)
+              if (grepl("P1", text_val, ignore.case = TRUE)) {
+                display_name <- "P1"
+              } else if (grepl("P2", text_val, ignore.case = TRUE)) {
+                display_name <- "P2"
+              }
+            }
+          }
           
           if (current_zone_filter == "1,2") {
             if (!is.null(display_name) && display_name != "NULL") {
@@ -1986,13 +2007,20 @@ build_overview_server <- function(input, output, session,
           }
           
           cat("DEBUG: Determined zone_clicked:", zone_clicked, "\n")
+
+          # For district -> facilities drill-down, preserve the current zone filter mode
+          # from the parent view (requested behavior):
+          # - separate stays separate
+          # - 1,2 stays combined
+          # - 1 or 2 stays single-zone
+          zone_for_drilldown <- current_zone_filter
           
           # Navigate with the determined zone and clicked metric
           # Pass zone_filter_raw to preserve 'separate' mode in the drill-down URL
           navigate_to_overview(
             session, 
             overview_config$drill_down_target,
-            zone_clicked, 
+            zone_for_drilldown,
             input$custom_today, 
             input$expiring_days,
             current_theme(),

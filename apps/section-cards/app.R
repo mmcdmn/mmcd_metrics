@@ -52,7 +52,7 @@ ui <- fluidPage(
   # Custom CSS for print button and layout
   tags$head(
     tags$style(HTML("
-      body, p, div, span, td, th, label, .help-block {
+      body, p, div, span:not(.watermark-item):not(.watermark-prehatch-calc), td, th, label, .help-block {
         font-size: 16px !important;
       }
       h1 { font-size: 32px !important; }

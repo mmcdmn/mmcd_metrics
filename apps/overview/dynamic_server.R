@@ -375,10 +375,16 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
       ))
     }
     
-    # Return container with facility header and detail boxes
+    # Return container with facility header, detail boxes, and drill-down button
     div(class = "facility-detail-boxes-container",
       div(class = "facility-detail-header",
-        icon("building"), " ", facility, " - ", config$display_name, " Details"
+        icon("building"), " ", facility, " - ", config$display_name, " Details",
+        tags$button(
+          class = "drill-down-btn",
+          style = "position: relative; float: right; margin-top: -2px;",
+          `data-facility` = facility,
+          icon("arrow-right"), " Drill Down to FOS"
+        )
       ),
       fluidRow(class = "facility-detail-boxes", box_elements)
     )
@@ -1146,7 +1152,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     # FOS overview with specific FOS selected (from index.html):
     # Show per-METRIC value boxes with hidden charts, same pattern as district view
     week_num <- lubridate::week(analysis_date)
-    weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
+    # NOTE: Do NOT use extract_weekly_values() here — that function extracts from
+    # facility/zone-level historical data, which is NOT FOS-filtered.
+    # Instead, we use the FOS-filtered 'active' value from 'data' as the weekly value
+    # for each metric, so Current and 10yr Avg are both FOS-scoped.
     
     # Resolve fos_filter to emp_num for historical comparison
     # fos_filter may be a shortname (e.g., "Smith") or emp_num (e.g., "1234")
@@ -1189,7 +1198,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       }
       
       # Get dynamic color — compare against THIS FOS's historical average
-      weekly_val <- weekly_values[[metric_id]]
+      # Use FOS-filtered 'active' as the weekly value (not the facility-wide extract)
+      # This ensures Current and 10yr Avg are both scoped to this FOS
+      weekly_val <- if (!is.null(metric_data) && nrow(metric_data) > 0) active else NULL
       cm <- if (!is.null(config$color_mode)) config$color_mode else ""
       color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
       box_info <- tryCatch(
@@ -1489,6 +1500,11 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
               cat("[DEBUG] ERROR creating chart for", metric_id, ":", e$message, "\n")
               div(class = "alert alert-warning", "Error loading chart")
             }
+          ),
+          tags$button(
+            class = "drill-down-btn",
+            `data-metric-id` = metric_id,
+            icon("arrow-right"), " Drill Down"
           )
         )
       })
@@ -1553,7 +1569,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
 #' @param output Shiny output object
 #' @param session Shiny session object
 #' @param overview_type One of: "district", "facilities", "fos"
-#' @param include_historical Whether to include historical charts
+#' @param include_historical Whether to include historical charts (visual only).
+#'   NOTE: Historical data is ALWAYS loaded regardless of this flag, because
+#'   value box coloring depends on weekly historical comparisons.
+#'   This flag controls whether historical chart panels are rendered.
 #' @export
 build_overview_server <- function(input, output, session, 
                                    overview_type = "district",
@@ -1618,15 +1637,26 @@ build_overview_server <- function(input, output, session,
     inputs <- refresh_inputs()
     n_metrics <- length(metrics)
     
-    withProgress(message = "Loading current data...", value = 0, {
+    # Total steps = current metrics + historical metrics (for unified progress)
+    # Historical data is ALWAYS loaded (needed for value box coloring),
+    # regardless of whether historical charts are shown.
+    all_historical <- get_historical_metrics()
+    hist_metrics <- if (!is.null(metrics_filter)) {
+      intersect(metrics_filter, all_historical)
+    } else {
+      all_historical
+    }
+    total_steps <- n_metrics + length(hist_metrics)
+    
+    withProgress(message = "Loading data...", value = 0, {
       results <- list()
       for (i in seq_along(metrics)) {
         metric_id <- metrics[i]
         config <- registry[[metric_id]]
         
         setProgress(
-          value = (i - 0.5) / n_metrics,
-          detail = paste("Loading", config$display_name, "...")
+          value = i / total_steps,
+          detail = paste0("Current: ", config$display_name, " (", i, "/", n_metrics, ")")
         )
         
         # Use the correct load function based on overview type
@@ -1660,7 +1690,6 @@ build_overview_server <- function(input, output, session,
               fos_filter = fos_filter
             )
           } else {
-            # Fallback
             load_data_by_zone(
               metric = metric_id,
               analysis_date = inputs$custom_today,
@@ -1674,13 +1703,19 @@ build_overview_server <- function(input, output, session,
           data.frame()
         })
       }
-      setProgress(value = 1, detail = "Complete!")
+      
+      # Store total_steps and n_metrics in attribute so historical_data can continue the bar
+      attr(results, "progress_offset") <- n_metrics
+      attr(results, "total_steps") <- total_steps
+      
       results
     })
   })
   
-  # Historical data loading with progress bar
-  historical_data <- if (include_historical) {
+  # Historical data loading with progress bar (continues the same progress bar)
+  # ALWAYS loaded — value box coloring depends on weekly historical comparisons.
+  # The `include_historical` flag only controls whether chart outputs are created.
+  historical_data <- {
     eventReactive(input$refresh, {
       inputs <- refresh_inputs()
       years <- get_historical_year_range(10, inputs$custom_today)
@@ -1698,17 +1733,19 @@ build_overview_server <- function(input, output, session,
         return(list())
       }
       
-      n_metrics <- length(hist_metrics)
+      n_hist <- length(hist_metrics)
+      n_current <- length(metrics)
+      total_steps <- n_current + n_hist
       
-      withProgress(message = "Loading historical data...", value = 0, {
+      withProgress(message = "Loading historical data...", value = n_current / total_steps, {
         results <- list()
         for (i in seq_along(hist_metrics)) {
           metric_id <- hist_metrics[i]
           config <- registry[[metric_id]]
           
           setProgress(
-            value = (i - 0.5) / n_metrics,
-            detail = paste("Loading", config$display_name, "history...")
+            value = (n_current + i) / total_steps,
+            detail = paste0("Historical: ", config$display_name, " (", i, "/", n_hist, ")")
           )
           
           results[[metric_id]] <- tryCatch({
@@ -1720,19 +1757,17 @@ build_overview_server <- function(input, output, session,
               zone_filter = inputs$zone_filter,
               analysis_date = inputs$custom_today,
               overview_type = overview_type,
-              facility_filter = facility_filter  # Pass for FOS view facility-specific historical
+              facility_filter = facility_filter
             )
           }, error = function(e) {
             cat("ERROR loading historical", metric_id, ":", e$message, "\n")
             list(average = data.frame(), current = data.frame(), yearly_data = data.frame())
           })
         }
-        setProgress(value = 1, detail = "Complete!")
+        setProgress(value = 1, detail = "All data loaded!")
         results
       })
     })
-  } else {
-    reactive({ list() })
   }
   
   # =========================================================================
@@ -1918,8 +1953,29 @@ build_overview_server <- function(input, output, session,
           
           # Use key aesthetic for reliable label (y returns factor level after coord_flip)
           display_name <- as.character(click_data$key)
-          # Guard against NA key (happens if click lands on a bar trace without key aesthetic)
-          if (is.na(display_name)) display_name <- NULL
+          # Guard against missing key (happens if click lands on a bar trace without key aesthetic)
+          if (length(display_name) == 0 || is.na(display_name) || display_name == "NULL") {
+            display_name <- NULL
+          }
+          # Additional fallback: derive label from x/y/text payload when key is absent
+          if (is.null(display_name)) {
+            if (!is.null(click_data$y) && length(click_data$y) > 0) {
+              display_name <- as.character(click_data$y)
+            }
+            if ((is.null(display_name) || display_name == "NULL") &&
+                !is.null(click_data$x) && length(click_data$x) > 0) {
+              display_name <- as.character(click_data$x)
+            }
+            if ((is.null(display_name) || display_name == "NULL") &&
+                !is.null(click_data$text) && length(click_data$text) > 0) {
+              text_val <- as.character(click_data$text)
+              if (grepl("P1", text_val, ignore.case = TRUE)) {
+                display_name <- "P1"
+              } else if (grepl("P2", text_val, ignore.case = TRUE)) {
+                display_name <- "P2"
+              }
+            }
+          }
           
           if (current_zone_filter == "1,2") {
             if (!is.null(display_name) && display_name != "NULL") {
@@ -1951,13 +2007,20 @@ build_overview_server <- function(input, output, session,
           }
           
           cat("DEBUG: Determined zone_clicked:", zone_clicked, "\n")
+
+          # For district -> facilities drill-down, preserve the current zone filter mode
+          # from the parent view (requested behavior):
+          # - separate stays separate
+          # - 1,2 stays combined
+          # - 1 or 2 stays single-zone
+          zone_for_drilldown <- current_zone_filter
           
           # Navigate with the determined zone and clicked metric
           # Pass zone_filter_raw to preserve 'separate' mode in the drill-down URL
           navigate_to_overview(
             session, 
             overview_config$drill_down_target,
-            zone_clicked, 
+            zone_for_drilldown,
             input$custom_today, 
             input$expiring_days,
             current_theme(),
@@ -1969,6 +2032,68 @@ build_overview_server <- function(input, output, session,
     })
   }
   
+  # Drill-down button click handler (button revealed alongside chart on value box click)
+  if (overview_config$enable_drill_down) {
+    observeEvent(input$drill_down_btn, {
+      metric_id <- input$drill_down_btn
+      cat("DEBUG: Drill-down button clicked for metric:", metric_id, "\n")
+      navigate_to_overview(
+        session,
+        overview_config$drill_down_target,
+        NULL,
+        isolate(input$custom_today),
+        isolate(input$expiring_days),
+        current_theme(),
+        metric_id = metric_id,
+        zone_filter_raw = isolate(input$zone_filter)
+      )
+    })
+  }
+  
+  # Facility drill-down button click handler (button in facility detail boxes area)
+  if (overview_type == "facilities" && overview_config$enable_drill_down) {
+    observeEvent(input$drill_down_facility_btn, {
+      facility_name <- input$drill_down_facility_btn
+      cat("DEBUG: Facility drill-down button clicked for:", facility_name, "\n")
+      
+      # Strip zone suffix if present (e.g., "Maple Grove (P1)" -> "Maple Grove")
+      zone_from_name <- NULL
+      clean_facility <- facility_name
+      if (grepl("\\(P[12]\\)$", facility_name)) {
+        zone_from_name <- gsub(".*\\(P([12])\\)$", "\\1", facility_name)
+        clean_facility <- trimws(gsub("\\s*\\(P[12]\\)$", "", facility_name))
+      }
+      
+      zone_value <- isolate(input$zone_filter)
+      zone_clicked <- if (!is.null(zone_from_name)) {
+        paste0("P", zone_from_name)
+      } else if (zone_value %in% c("1", "2")) {
+        paste0("P", zone_value)
+      } else {
+        "1,2"
+      }
+      
+      # Use the first metric in the filter (or first metric overall)
+      metric_id <- if (!is.null(metrics_filter) && length(metrics_filter) > 0) {
+        metrics_filter[1]
+      } else {
+        metrics[1]
+      }
+      
+      navigate_to_overview(
+        session,
+        "fos_overview",
+        zone_clicked,
+        isolate(input$custom_today),
+        isolate(input$expiring_days),
+        current_theme(),
+        metric_id = metric_id,
+        facility_clicked = clean_facility,
+        zone_filter_raw = zone_value
+      )
+    })
+  }
+
   # Facilities view: stat box click shows hidden detail boxes (JS toggles the container)
   # Bar chart click drills down to FOS
   if (overview_type == "facilities") {
@@ -1997,9 +2122,18 @@ build_overview_server <- function(input, output, session,
               # Guard against NA key (happens if click lands on a bar trace without key aesthetic)
               if (is.na(facility_clicked)) facility_clicked <- as.character(click_data$x)
               
-              # Determine zone and preserve raw filter for 'separate' mode
+              # Strip zone suffix from facility name (e.g., "Maple Grove (P1)" -> "Maple Grove")
+              # and extract zone info
               zone_value <- isolate(input$zone_filter)
-              zone_clicked <- if (zone_value %in% c("1", "2")) {
+              zone_from_name <- NULL
+              if (grepl("\\(P[12]\\)$", facility_clicked)) {
+                zone_from_name <- gsub(".*\\(P([12])\\)$", "\\1", facility_clicked)
+                facility_clicked <- trimws(gsub("\\s*\\(P[12]\\)$", "", facility_clicked))
+              }
+              
+              zone_clicked <- if (!is.null(zone_from_name)) {
+                paste0("P", zone_from_name)
+              } else if (zone_value %in% c("1", "2")) {
                 paste0("P", zone_value)
               } else {
                 "1,2"

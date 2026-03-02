@@ -113,10 +113,11 @@ get_overview_css <- function() {
       margin-bottom: 15px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
       min-height: 200px;
+      overflow: hidden;
     }
     .chart-panel-wrapper {
       height: 0;
-      overflow: hidden;
+      visibility: hidden;
       transition: all 0.3s ease-out;
       opacity: 0;
       max-width: 0;
@@ -126,7 +127,7 @@ get_overview_css <- function() {
     }
     .chart-panel-wrapper.visible {
       height: auto;
-      overflow: visible;
+      visibility: visible;
       opacity: 1;
       max-width: none;
       flex: 1 1 400px;
@@ -222,13 +223,13 @@ get_overview_css <- function() {
       width: 100%;
       max-width: 100%;
       display: block;
-      overflow-x: hidden;
+      overflow: visible;
     }
     .category-section {
       width: 100%;
       max-width: 100%;
       margin-bottom: 20px;
-      overflow-x: hidden;
+      overflow: visible;
     }
     .category-section .row {
       display: flex;
@@ -262,6 +263,30 @@ get_overview_css <- function() {
       min-width: 0;
       max-width: 100%;
       box-sizing: border-box;
+      overflow: hidden;
+      position: relative;
+    }
+    .drill-down-btn {
+      position: absolute;
+      bottom: 6px;
+      right: 8px;
+      font-size: 11px;
+      padding: 3px 10px;
+      background: #2c5aa0;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      opacity: 0.8;
+      z-index: 10;
+      transition: opacity 0.2s, background 0.2s;
+    }
+    .drill-down-btn:hover {
+      opacity: 1;
+      background: #1e3c72;
+    }
+    .drill-down-btn i {
+      margin-right: 3px;
     }
     .category-section .category-chart.visible {
       display: block !important;
@@ -276,11 +301,12 @@ get_overview_css <- function() {
       width: 100%;
       max-width: 100%;
     }
-    /* Force plotly to not scroll */
+    /* Constrain plotly within container */
     .category-chart .js-plotly-plot,
     .category-chart .plot-container,
     .category-chart .svg-container {
-      overflow: visible !important;
+      overflow: hidden !important;
+      max-width: 100% !important;
     }
     /* Ensure legend is visible - uiOutput creates shiny-html-output wrapper */
     .category-chart .shiny-html-output {
@@ -616,7 +642,62 @@ get_overview_js <- function() {
       }
     });
     Shiny.addCustomMessageHandler('navigate', function(url) {
+      // Before navigating away, cache the current rendered content
+      // so the back button can restore it INSTANTLY without re-fetching data
+      var statsWrapper = document.getElementById('summary_stats_wrapper');
+      if (statsWrapper && statsWrapper.style.display !== 'none') {
+        var cacheKey = 'mmcd_page_cache_' + window.location.href;
+        try {
+          sessionStorage.setItem(cacheKey, statsWrapper.innerHTML);
+        } catch(e) { /* storage full - ignore */ }
+      }
+      // Mark that we're navigating forward (drill-down) so target page auto-loads
+      sessionStorage.setItem('mmcd_auto_refresh', 'true');
       window.location.href = url;
+    });
+    
+    // On page load: restore cached content for back-nav, or auto-refresh for drill-down
+    $(document).on('shiny:connected', function() {
+      // Check if this is a back/forward navigation
+      var navEntries = performance.getEntriesByType('navigation');
+      var isBackForward = navEntries.length > 0 && navEntries[0].type === 'back_forward';
+      
+      if (isBackForward) {
+        // BACK/FORWARD: restore cached HTML instantly (no database hit!)
+        var cacheKey = 'mmcd_page_cache_' + window.location.href;
+        var cachedHtml = sessionStorage.getItem(cacheKey);
+        if (cachedHtml) {
+          var statsWrapper = document.getElementById('summary_stats_wrapper');
+          var initialPrompt = document.getElementById('initial_prompt_static');
+          var loadingSkeleton = document.getElementById('loading_skeleton_static');
+          if (statsWrapper) {
+            statsWrapper.innerHTML = cachedHtml;
+            statsWrapper.style.display = '';
+          }
+          if (initialPrompt) initialPrompt.style.display = 'none';
+          if (loadingSkeleton) loadingSkeleton.style.display = 'none';
+          // Done — user sees previous content instantly, no refresh needed
+          return;
+        }
+        // No cache found — fall through to show normal prompt
+      }
+      
+      // Check if this is a forward drill-down navigation
+      if (sessionStorage.getItem('mmcd_auto_refresh') === 'true') {
+        sessionStorage.removeItem('mmcd_auto_refresh');
+        setTimeout(function() { $('#refresh').click(); }, 300);
+      }
+    });
+    
+    // Also cache content when user clicks the Back button (before navigation)
+    window.addEventListener('pagehide', function() {
+      var statsWrapper = document.getElementById('summary_stats_wrapper');
+      if (statsWrapper && statsWrapper.style.display !== 'none') {
+        var cacheKey = 'mmcd_page_cache_' + window.location.href;
+        try {
+          sessionStorage.setItem(cacheKey, statsWrapper.innerHTML);
+        } catch(e) { /* storage full - ignore */ }
+      }
     });
     
     // Clear banners and reset active states when refresh is clicked
@@ -805,6 +886,20 @@ get_overview_js <- function() {
       }
     });
     
+    // Drill-down button click (appears when chart is revealed via value box click)
+    $(document).on('click', '.drill-down-btn', function(e) {
+      e.stopPropagation();
+      var metricId = $(this).data('metric-id');
+      var facility = $(this).data('facility');
+      if (facility) {
+        // Facility drill-down to FOS view
+        Shiny.setInputValue('drill_down_facility_btn', facility, {priority: 'event'});
+      } else if (metricId) {
+        // District drill-down to facilities view
+        Shiny.setInputValue('drill_down_btn', metricId, {priority: 'event'});
+      }
+    });
+
     // Legacy: Chart type toggle functionality (kept for backwards compatibility)
     $(document).on('click', '.chart-toggle-btn', function() {
       var btn = $(this);
@@ -1005,13 +1100,13 @@ generate_historical_charts_ui <- function(overview_type = "district", chart_heig
 #' @return Complete fluidPage UI
 #' @export
 build_overview_ui <- function(overview_type = "district", include_historical = TRUE, metrics_filter = NULL, 
-                               initial_zone = "1,2", initial_date = Sys.Date(), 
+                               initial_zone = "separate", initial_date = Sys.Date(), 
                                initial_expiring = 3, initial_theme = "MMCD",
                                facility_filter = NULL, fos_filter = NULL) {
   
   overview_config <- get_overview_config(overview_type)
   
-  # Build dynamic title - include facility name for FOS view
+  # Build dynamic title - include FOS name for FOS view
   page_title <- overview_config$title
   page_subtitle <- overview_config$subtitle
   if (overview_type == "fos" && !is.null(facility_filter)) {
@@ -1022,8 +1117,28 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       match <- facilities[facilities$short_name == facility_filter, ]
       if (nrow(match) > 0) fac_display <- match$full_name[1]
     }
-    page_title <- paste0(fac_display, " - FOS Overview")
-    page_subtitle <- paste0("Field Operations Supervisor progress for ", fac_display)
+    
+    # If a specific FOS is selected, show their name in the title
+    if (!is.null(fos_filter) && fos_filter != "all") {
+      # Resolve FOS emp_num/shortname to display name
+      fos_display <- fos_filter
+      tryCatch({
+        foremen <- get_foremen_lookup()
+        # Try matching by shortname first, then by emp_num
+        match_by_short <- foremen[foremen$shortname == fos_filter, ]
+        match_by_emp <- foremen[as.character(foremen$emp_num) == as.character(fos_filter), ]
+        if (nrow(match_by_short) > 0) {
+          fos_display <- match_by_short$shortname[1]
+        } else if (nrow(match_by_emp) > 0) {
+          fos_display <- match_by_emp$shortname[1]
+        }
+      }, error = function(e) NULL)
+      page_title <- paste0(fos_display, " - FOS Overview (" , fac_display, ")")
+      page_subtitle <- paste0("Field Operations Supervisor progress for ", fos_display, " at ", fac_display)
+    } else {
+      page_title <- paste0(fac_display, " - FOS Overview")
+      page_subtitle <- paste0("Field Operations Supervisor progress for ", fac_display)
+    }
   }
   
   fluidPage(
@@ -1036,8 +1151,20 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       get_overview_js()
     ),
     
-    # Page Header
+    # Page Header with Back Button for drill-down views
     div(class = "page-header",
+      if (overview_type %in% c("fos", "facilities") || !is.null(metrics_filter)) {
+        div(style = "margin-bottom: 8px;",
+          tags$a(
+            href = "javascript:void(0)",
+            onclick = "window.history.back();",
+            class = "btn btn-default btn-sm",
+            style = "font-size: 13px; padding: 4px 12px; color: #555; border-color: #ccc;",
+            icon("arrow-left"),
+            " Back to Overview"
+          )
+        )
+      },
       h1(page_title),
       div(class = "subtitle", page_subtitle)
     ),
@@ -1057,22 +1184,14 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
                    max = Sys.Date(),
                    format = "yyyy-mm-dd")
         ),
-        column(2,
-          sliderInput("expiring_days", "Expiring Window (days):",
-                     min = 1, max = 30, value = initial_expiring, step = 1)
-        ),
-        column(2,
+        tags$input(type = "hidden", id = "expiring_days", name = "expiring_days", value = "3"),
+        column(4,
           selectInput("zone_filter", "Zone:",
                      choices = c("P1 Only" = "1",
                                 "P2 Only" = "2",
                                 "P1 and P2" = "1,2",
                                 "P1 and P2 SEPARATE" = "separate"),
                      selected = initial_zone)
-        ),
-        column(2,
-          selectInput("color_theme", "Color Theme:",
-                     choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
-                     selected = initial_theme)
         ),
         column(2,
           div(class = "last-updated",
@@ -1130,6 +1249,15 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       }
       # District view charts are now embedded in category sections
       # FOS overview charts are embedded in generate_summary_stats per-metric sections
+    ),
+
+    # Color Theme selector at the bottom
+    div(style = "text-align: right; padding: 10px 20px; margin-top: 10px;",
+      div(style = "display: inline-block; width: 180px;",
+        selectInput("color_theme", "Color Theme:",
+                   choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
+                   selected = initial_theme)
+      )
     )
   )
 }

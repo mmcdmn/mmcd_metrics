@@ -132,7 +132,7 @@ ui <- dashboardPage(
             status = "warning",
             solidHeader = TRUE,
             width = 12,
-            p("Manage cached DB queries (2 min), plotly charts (2 min), stat boxes (2 min), FOS drill-down data (7 days), and color mappings (7 days)."),
+            p("Manage cached DB queries (2 min), plotly charts (2 min), stat boxes (2 min), FOS drill-down data (7 days), color mappings (7 days), and facility-filtered historical (24 hr)."),
             fluidRow(
               column(4,
                 h5("Short-lived (2 min TTL)"),
@@ -146,12 +146,15 @@ ui <- dashboardPage(
                              icon = icon("calculator"), class = "btn-warning btn-sm")
               ),
               column(4,
-                h5("Long-lived (7 day TTL)"),
+                h5("Long-lived (7 day / 24 hr TTL)"),
                 actionButton("clearFosCache", "Clear FOS Drill-Down Cache",
                              icon = icon("users"), class = "btn-danger btn-sm"),
                 br(), br(),
                 actionButton("clearColorCache", "Clear Color Mapping Cache",
-                             icon = icon("palette"), class = "btn-danger btn-sm")
+                             icon = icon("palette"), class = "btn-danger btn-sm"),
+                br(), br(),
+                actionButton("clearFacHistCache", "Clear Facility Historical Cache",
+                             icon = icon("building"), class = "btn-danger btn-sm")
               ),
               column(4,
                 h5("Bulk Actions"),
@@ -1245,6 +1248,15 @@ server <- function(input, output, session) {
     tiered_trigger(tiered_trigger() + 1)
   })
   
+  # Clear facility-filtered historical cache (24-hr)
+  observeEvent(input$clearFacHistCache, {
+    tryCatch({
+      n <- clear_cache_tier("fachist")
+      lookup_log_message(sprintf("✓ Facility historical cache cleared (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("✗ Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
   # Clear all tiered caches
   observeEvent(input$clearAllTieredCache, {
     tryCatch({
@@ -1258,17 +1270,37 @@ server <- function(input, output, session) {
   output$tieredCacheStatus <- renderText({
     tiered_trigger()
     input$refreshTieredStatus
+    # Also auto-refresh every 10 seconds for live visibility
+    invalidateLater(10000)
     
     tryCatch({
       counts <- get_cache_tier_counts()
+      
+      # Also get Redis-level info
+      redis_total <- tryCatch(length(redis_keys("*")), error = function(e) "?")
+      hist_total <- tryCatch(length(redis_keys("mmcd:historical:*")), error = function(e) 0)
+      lookup_total <- tryCatch(length(redis_keys("mmcd:lookup:*")), error = function(e) 0)
+      raw_hist <- tryCatch(length(redis_keys("mmcd:raw_hist:*")), error = function(e) 0)
+      fos_hist <- tryCatch(length(redis_keys("mmcd:hist_fos:*")), error = function(e) 0)
+      
       paste(
-        "=== Tiered Cache Status ===",
-        sprintf("DB Queries:     %d keys", counts$db_queries),
-        sprintf("Charts:         %d keys", counts$charts),
-        sprintf("Stat Boxes:     %d keys", counts$stat_boxes),
-        sprintf("FOS Drill-down: %d keys", counts$fos_drilldown),
-        sprintf("Color Maps:     %d keys", counts$color_maps),
+        "=== Tiered App Cache ===",
+        sprintf("DB Queries:     %d keys  (2 min TTL)", counts$db_queries),
+        sprintf("Charts:         %d keys  (2 min TTL)", counts$charts),
+        sprintf("Stat Boxes:     %d keys  (2 min TTL)", counts$stat_boxes),
+        sprintf("FOS Drill-down: %d keys  (7 day TTL)", counts$fos_drilldown),
+        sprintf("Color Maps:     %d keys  (7 day TTL)", counts$color_maps),
+        sprintf("Fac Historical: %d keys  (24 hr TTL)", counts$fac_hist),
         sprintf("Total App Keys: %d keys", counts$other_app),
+        "",
+        "=== Global Redis Keys ===",
+        sprintf("Historical Avg: %d keys  (14 day TTL)", hist_total),
+        sprintf("FOS Hist Avg:   %d keys  (7 day TTL)", fos_hist),
+        sprintf("Lookup Tables:  %d keys  (14 day TTL)", lookup_total),
+        sprintf("Raw Historical: %d keys  (in-memory)", raw_hist),
+        sprintf("Total Redis:    %s keys", redis_total),
+        "",
+        paste0("Last checked: ", format(Sys.time(), "%H:%M:%S")),
         sep = "\n"
       )
     }, error = function(e) paste("Error:", e$message))

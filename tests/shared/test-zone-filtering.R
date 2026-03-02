@@ -152,12 +152,11 @@ test_that("navigate preserves zone=separate in URL", {
   navigate_to_overview(
     session = mock_session,
     target = "facilities_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = Sys.Date(),
     expiring_days = 3,
     color_theme = "MMCD",
-    metric_id = "drone",
-    zone_filter_raw = "separate"
+    metric_id = "drone"
   )
   url <- mock_session$last_navigate_url
   expect_true(!is.null(url))
@@ -195,7 +194,7 @@ test_that("navigate produces zone=2 for P2 click", {
               info = paste("URL should contain zone=2, got:", url))
 })
 
-test_that("navigate omits zone param for combined mode (1,2)", {
+test_that("navigate omits zone param for combined (1,2)", {
   mock_session$last_navigate_url <- NULL
   navigate_to_overview(
     session = mock_session,
@@ -210,21 +209,20 @@ test_that("navigate omits zone param for combined mode (1,2)", {
                info = paste("URL should not contain zone param for combined mode, got:", url))
 })
 
-test_that("navigate preserves separate mode even when specific zone clicked", {
-  # When user is in "separate" mode and clicks P1 bar, the drill-down should
-  # still carry zone=separate so the target page shows both zones separately
+test_that("navigate preserves separate mode from filter", {
+  # When user is in "separate" mode (zone_filter=separate), the drill-down
+  # passes zone_clicked="separate" so the target page shows both zones separately
   mock_session$last_navigate_url <- NULL
   navigate_to_overview(
     session = mock_session,
     target = "facilities_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = Sys.Date(),
-    expiring_days = 3,
-    zone_filter_raw = "separate"
+    expiring_days = 3
   )
   url <- mock_session$last_navigate_url
   expect_true(grepl("zone=separate", url),
-              info = paste("zone=separate should override P1 click, got:", url))
+              info = paste("zone=separate should be in URL, got:", url))
   expect_false(grepl("zone=1[^,]", url),
                info = paste("zone=1 should NOT appear when separate mode active, got:", url))
 })
@@ -234,12 +232,11 @@ test_that("navigate produces correct facility drill-down URL", {
   navigate_to_overview(
     session = mock_session,
     target = "fos_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = Sys.Date(),
     expiring_days = 3,
     metric_id = "ground_prehatch",
-    facility_clicked = "East",
-    zone_filter_raw = "separate"
+    facility_clicked = "East"
   )
   url <- mock_session$last_navigate_url
   expect_true(grepl("view=fos", url))
@@ -518,12 +515,11 @@ test_that("district -> facilities drill-down preserves separate zone", {
   navigate_to_overview(
     session = mock_session,
     target = "facilities_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = as.Date("2026-02-18"),
     expiring_days = 3,
     color_theme = "MMCD",
-    metric_id = "drone",
-    zone_filter_raw = "separate"
+    metric_id = "drone"
   )
   
   url <- mock_session$last_navigate_url
@@ -556,7 +552,7 @@ test_that("facilities -> fos drill-down preserves separate zone", {
   navigate_to_overview(
     session = mock_session,
     target = "fos_overview",
-    zone_clicked = "1,2",
+    zone_clicked = "separate",
     analysis_date = as.Date("2026-02-18"),
     expiring_days = 3,
     color_theme = "MMCD",

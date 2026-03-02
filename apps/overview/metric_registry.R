@@ -437,11 +437,11 @@ get_metric_registry <- function() {
     # =========================================================================
     prehatch_coverage = list(
       id = "prehatch_coverage",
-      display_name = "Prehatch Inspection Coverage",
+      display_name = "Prehatch Red Bugs (5yr)",
       short_name = "Coverage",
       icon = "calendar-check",
       category = "Floodwater",
-      y_label = "Sites Inspected",
+      y_label = "Sites",
       bg_color = "#b91c1c",
       app_folder = "inspections",
       has_acres = FALSE,
@@ -451,25 +451,24 @@ get_metric_registry <- function() {
       chart_types = c("bar"),
       default_chart_type = "bar",
       chart_stacked_mode = TRUE,  # Bars stack: active + expiring = total (not overlay)
-      # Detail boxes: inspected + gaps (total is redundant since active + gap = total)
+      # Detail boxes: sampled with red bugs + gaps
       detail_boxes = list(
-        list(id = "inspected", title = "Recently Inspected", column = "active", icon = "check-circle", status = "active"),
-        list(id = "gaps", title = "Inspection Gaps", column = "expiring", icon = "calendar-times", status = "needs_treatment")
+        list(id = "inspected", title = "Red Bugs Sampled", column = "active", icon = "check-circle", status = "active"),
+        list(id = "gaps", title = "No Red Bugs (5yr)", column = "expiring", icon = "calendar-times", status = "needs_treatment")
       ),
-      # Color: fewer gaps = better. Higher % inspected = green.
+      # Color: fewer gaps = better. Higher % sampled = green.
       color_mode = "fixed_pct",
       color_thresholds = list(good = 85, warning = 60),
       chart_labels = list(
         total = "Total Prehatch Sites",
-        active = "Recently Inspected",
-        expiring = "Inspection Gaps (\u22653 yrs)"
+        active = "Red Bugs Sampled",
+        expiring = "No Red Bugs (\u22655 yrs)"
       ),
-      filter_info = HTML("<b>Prehatch Inspection Coverage:</b><br>
+      filter_info = HTML("<b>Prehatch Red Bug Coverage:</b><br>
                          • Ground sites only (prehatch)<br>
-                         • Drone sites included<br>
-                         • Gap threshold: 3 years<br>
-                         • Includes never-inspected sites<br>
-                         • Action filtering: 1, 2, 4, or 3 with dry<br>
+                         • Checks for samples with red bugs<br>
+                         • Gap threshold: 5 years<br>
+                         • Includes never-sampled sites<br>
                          • Zone filter from dropdown<br>
                          • Click for detailed inspection coverage app"),
       load_params = list(expiring_days = 0)

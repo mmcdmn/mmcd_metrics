@@ -468,8 +468,11 @@ server <- function(input, output, session) {
   })
   
   output$ovWorkerMode <- renderValueBox({
+    # Load container .env to pick up ENABLE_NGINX and SHINY_WORKERS
+    env_path <- "/srv/shiny-server/.env"
+    if (file.exists(env_path)) readRenviron(env_path)
     enable_nginx <- Sys.getenv("ENABLE_NGINX", "false") == "true"
-    workers <- as.integer(Sys.getenv("SHINY_WORKERS", "1"))
+    workers <- as.integer(Sys.getenv("SHINY_WORKERS", "3"))
     valueBox(
       if (enable_nginx) paste0(workers, " Workers") else "Single",
       "Worker Mode", icon = icon("server"),

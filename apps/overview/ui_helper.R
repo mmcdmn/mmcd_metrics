@@ -91,7 +91,7 @@ create_overview_ui <- function(overview_type = "facilities", metrics = NULL) {
                                 "P2 Only" = "2", 
                                 "P1 and P2" = "1,2",
                                 "P1 and P2 SEPARATE" = "separate"),
-                     selected = "1,2")
+                     selected = "separate")
         ),
         column(2,
           selectInput("color_theme", "Color Theme:",

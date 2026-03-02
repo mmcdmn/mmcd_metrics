@@ -1252,7 +1252,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             title = config$display_name,
             bg_color = box_info$color,
             icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome",
+            metric_id = metric_id
           )
         )
       )
@@ -1496,7 +1497,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
                 title = config$display_name,
                 bg_color = box_info$color,
                 icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-                icon_type = if (!is.null(config$image_path)) "image" else "fontawesome"
+                icon_type = if (!is.null(config$image_path)) "image" else "fontawesome",
+                metric_id = metric_id
               )
             )
           ),

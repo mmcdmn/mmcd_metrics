@@ -91,7 +91,7 @@ create_overview_ui <- function(overview_type = "facilities", metrics = NULL) {
                                 "P2 Only" = "2", 
                                 "P1 and P2" = "1,2",
                                 "P1 and P2 SEPARATE" = "separate"),
-                     selected = "1,2")
+                     selected = "separate")
         ),
         column(2,
           selectInput("color_theme", "Color Theme:",
@@ -380,40 +380,43 @@ navigate_to_overview <- function(session, target, zone_clicked, analysis_date, e
   cat("DEBUG navigate_to_overview: zone_clicked =", zone_clicked, "class =", class(zone_clicked), "\n")
   cat("DEBUG navigate_to_overview: target =", target, "facility_clicked =", facility_clicked, "zone_filter_raw =", zone_filter_raw, "\n")
   
-  # If zone_filter_raw is "separate", preserve that in the URL
-  # This ensures the target page also renders P1/P2 as separate bars
-  if (!is.null(zone_filter_raw) && zone_filter_raw == "separate") {
-    zone_num <- "separate"
-  } else {
-    # Extract zone number from different possible formats
-    zone_num <- NA
-    
-    if (is.character(zone_clicked)) {
-      if (zone_clicked %in% c("P1", "P2")) {
-        # Standard format: "P1" -> "1", "P2" -> "2"
-        zone_num <- gsub("P", "", zone_clicked)
-      } else if (zone_clicked %in% c("1", "2")) {
-        # Already a number string
-        zone_num <- zone_clicked
-      } else if (zone_clicked == "1,2") {
-        zone_num <- NULL  # Combined - omit from URL (defaults to 1,2)
-      }
-    } else if (is.numeric(zone_clicked)) {
-      # If it's a point number (0, 1), convert to zone
-      if (zone_clicked == 0) {
-        zone_num <- "1"  # First point = P1
-      } else if (zone_clicked == 1) {
-        zone_num <- "2"  # Second point = P2
-      }
+  # Extract zone number from different possible formats.
+  # zone_clicked can be:
+  #   1. A filter mode value ("separate", "1", "2", "1,2") from parent filter
+  #   2. A clicked zone value ("P1", "P2") from bar click
+  #   3. A numeric point index (0, 1) from Plotly
+  zone_num <- NA
+  
+  if (is.character(zone_clicked)) {
+    # Handle filter mode values from parent (highest priority)
+    if (zone_clicked == "separate") {
+      zone_num <- "separate"
+    } else if (zone_clicked == "1,2") {
+      zone_num <- NULL  # Omit from URL - combined is the default
+    } else if (zone_clicked %in% c("1", "2")) {
+      zone_num <- zone_clicked
     }
-    
-    # Fallback: if zone_num is still NA (not NULL or a valid value), clear it
-    if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
-      if (!is.null(zone_clicked)) {
-        cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
-      }
-      zone_num <- NULL
+    # Handle clicked zone values (backward compatibility with bar clicks)
+    else if (zone_clicked == "P1") {
+      zone_num <- "1"
+    } else if (zone_clicked == "P2") {
+      zone_num <- "2"
     }
+  } else if (is.numeric(zone_clicked)) {
+    # Handle Plotly point index (0 = first point = P1, 1 = second point = P2)
+    if (zone_clicked == 0) {
+      zone_num <- "1"
+    } else if (zone_clicked == 1) {
+      zone_num <- "2"
+    }
+  }
+  
+  # Fallback: if zone_num is still NA (couldn't parse), clear it
+  if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
+    if (!is.null(zone_clicked)) {
+      cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
+    }
+    zone_num <- NULL
   }
   
   cat("DEBUG: Final zone_num =", zone_num, "\n")

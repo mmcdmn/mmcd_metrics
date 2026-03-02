@@ -282,10 +282,11 @@ get_historical_comparison_colors <- function(theme = "MMCD") {
   palette <- get_theme_palette(theme)
   
   # Use consistent colors across all historical comparison charts
-  # Blue for 5-Year Average, Orange for Current Year
+  # Blue for 5-Year Average, Active (green) for Current Year
+  status <- get_theme_palette(theme)$status
   colors <- list(
     "5-Year Avg" = palette$primary[1],  # Blue
-    "current_year" = palette$primary[2]  # Orange
+    "current_year" = unname(status["active"])  # Same as active treatment color
   )
   
   return(colors)

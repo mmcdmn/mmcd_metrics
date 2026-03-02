@@ -31,14 +31,31 @@ REDIS_CONFIG <- list(
   backend  = "redis"
 )
 
+# Null-coalesce operator (needed before TTL config loading)
+if (!exists("%||%")) {
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+}
+
 # =============================================================================
-# TTL CONSTANTS (seconds)
+# TTL CONSTANTS (seconds) — loaded from config/app_config.yaml
 # =============================================================================
-TTL_14_DAYS <- 1209600L   # 14 days — historical averages, lookup tables
-TTL_7_DAYS  <- 604800L    # 7 days  — FOS drill-down, color mappings
-TTL_5_MIN   <- 300L       # 5 min   — general app-level cache
-TTL_24_HR   <- 86400L     # 24 hours
-TTL_2_MIN   <- 120L       # 2 min   — DB query results, charts, stat boxes
+# Source config loader if not already loaded
+if (!exists("get_app_config", mode = "function")) {
+  for (.cfg_path in c("config.R", "shared/config.R", "../../shared/config.R",
+                       "../shared/config.R", "/srv/shiny-server/shared/config.R")) {
+    if (file.exists(.cfg_path)) { source(.cfg_path); break }
+  }
+}
+
+.ttl_cfg <- tryCatch(get_app_config()$cache$ttl, error = function(e) NULL)
+
+TTL_14_DAYS <- as.integer(.ttl_cfg$historical_averages %||% 1209600L)
+TTL_7_DAYS  <- as.integer(.ttl_cfg$fos_drilldown      %||% 604800L)
+TTL_5_MIN   <- as.integer(.ttl_cfg$general             %||% 300L)
+TTL_24_HR   <- as.integer(.ttl_cfg$facility_historical %||% 86400L)
+TTL_2_MIN   <- as.integer(.ttl_cfg$db_queries          %||% 120L)
+
+rm(.ttl_cfg)
 
 
 # =============================================================================
@@ -485,11 +502,12 @@ clear_app_cache_redis <- function() {
 # =============================================================================
 
 # Cache key prefixes for each tier
-CACHE_PREFIX_DB    <- "db"      # DB query results (2 min)
-CACHE_PREFIX_CHART <- "chart"   # Plotly chart objects (2 min)
-CACHE_PREFIX_STAT  <- "stat"    # Stat box calculations (2 min)
-CACHE_PREFIX_FOS   <- "fos"     # FOS drill-down data (7 days)
-CACHE_PREFIX_COLOR <- "color"   # Color mappings (7 days)
+CACHE_PREFIX_DB       <- "db"       # DB query results (2 min)
+CACHE_PREFIX_CHART    <- "chart"    # Plotly chart objects (2 min)
+CACHE_PREFIX_STAT     <- "stat"     # Stat box calculations (2 min)
+CACHE_PREFIX_FOS      <- "fos"      # FOS drill-down data (7 days)
+CACHE_PREFIX_COLOR    <- "color"    # Color mappings (7 days)
+CACHE_PREFIX_FAC_HIST <- "fachist"  # Facility-filtered historical data (24 hr)
 
 #' Build a deterministic cache key from a prefix and parameters
 #' Uses digest::digest for consistent hashing of complex parameter sets
@@ -552,6 +570,17 @@ get_cached_color_mapping <- function(cache_id, gen_func, ...) {
   get_app_cached_redis(key, gen_func, ttl = TTL_7_DAYS)
 }
 
+#' Get cached facility-filtered historical data (24-hr TTL)
+#' Used for FOS overview where historical averages are filtered by facility.
+#' @param cache_id Descriptive ID (e.g., "catch_basin_south_rosemount")
+#' @param load_func Function to load data on cache miss
+#' @param ... Additional parameters for cache key uniqueness (metric, facility, zones)
+#' @return Cached or freshly loaded historical comparison data
+get_cached_fac_hist_data <- function(cache_id, load_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_FAC_HIST, cache_id, ...)
+  get_app_cached_redis(key, load_func, ttl = TTL_24_HR)
+}
+
 #' Clear all cache entries matching a specific tier prefix
 #' @param prefix One of: "db", "chart", "stat", "fos", "color", or "all"
 #' @return Number of keys deleted
@@ -579,6 +608,7 @@ get_cache_tier_counts <- function() {
     stat_boxes    = length(redis_keys(paste0("app:", CACHE_PREFIX_STAT, ":*"))),
     fos_drilldown = length(redis_keys(paste0("app:", CACHE_PREFIX_FOS, ":*"))),
     color_maps    = length(redis_keys(paste0("app:", CACHE_PREFIX_COLOR, ":*"))),
+    fac_hist      = length(redis_keys(paste0("app:", CACHE_PREFIX_FAC_HIST, ":*"))),
     other_app     = length(redis_keys("app:*"))
   )
 }
@@ -657,11 +687,6 @@ print_redis_status <- function() {
 # =============================================================================
 # MODULE INIT
 # =============================================================================
-
-# Null-coalesce operator (if not already defined)
-if (!exists("%||%")) {
-  `%||%` <- function(a, b) if (is.null(a)) b else a
-}
 
 message(sprintf("[redis_cache] Module loaded (backend=%s, host=%s:%d)",
                 REDIS_CONFIG$backend, REDIS_CONFIG$host, REDIS_CONFIG$port))

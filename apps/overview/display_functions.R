@@ -680,8 +680,9 @@ create_yearly_grouped_chart <- function(data, title, y_label, theme = "MMCD", ov
   n_groups <- length(groups)
   
   if (n_groups == 1) {
-    # Single group - use theme primary color
-    group_colors <- setNames("#ff9500", groups)  # Cattail orange
+    # Single group - use active status color from theme
+    status_colors <- get_status_colors(theme = theme)
+    group_colors <- setNames(unname(status_colors["active"]), groups)
   } else {
     # Multiple groups - use facility colors
     group_colors <- setNames(

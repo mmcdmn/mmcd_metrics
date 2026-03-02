@@ -485,11 +485,12 @@ clear_app_cache_redis <- function() {
 # =============================================================================
 
 # Cache key prefixes for each tier
-CACHE_PREFIX_DB    <- "db"      # DB query results (2 min)
-CACHE_PREFIX_CHART <- "chart"   # Plotly chart objects (2 min)
-CACHE_PREFIX_STAT  <- "stat"    # Stat box calculations (2 min)
-CACHE_PREFIX_FOS   <- "fos"     # FOS drill-down data (7 days)
-CACHE_PREFIX_COLOR <- "color"   # Color mappings (7 days)
+CACHE_PREFIX_DB       <- "db"       # DB query results (2 min)
+CACHE_PREFIX_CHART    <- "chart"    # Plotly chart objects (2 min)
+CACHE_PREFIX_STAT     <- "stat"     # Stat box calculations (2 min)
+CACHE_PREFIX_FOS      <- "fos"      # FOS drill-down data (7 days)
+CACHE_PREFIX_COLOR    <- "color"    # Color mappings (7 days)
+CACHE_PREFIX_FAC_HIST <- "fachist"  # Facility-filtered historical data (24 hr)
 
 #' Build a deterministic cache key from a prefix and parameters
 #' Uses digest::digest for consistent hashing of complex parameter sets
@@ -552,6 +553,17 @@ get_cached_color_mapping <- function(cache_id, gen_func, ...) {
   get_app_cached_redis(key, gen_func, ttl = TTL_7_DAYS)
 }
 
+#' Get cached facility-filtered historical data (24-hr TTL)
+#' Used for FOS overview where historical averages are filtered by facility.
+#' @param cache_id Descriptive ID (e.g., "catch_basin_south_rosemount")
+#' @param load_func Function to load data on cache miss
+#' @param ... Additional parameters for cache key uniqueness (metric, facility, zones)
+#' @return Cached or freshly loaded historical comparison data
+get_cached_fac_hist_data <- function(cache_id, load_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_FAC_HIST, cache_id, ...)
+  get_app_cached_redis(key, load_func, ttl = TTL_24_HR)
+}
+
 #' Clear all cache entries matching a specific tier prefix
 #' @param prefix One of: "db", "chart", "stat", "fos", "color", or "all"
 #' @return Number of keys deleted
@@ -579,6 +591,7 @@ get_cache_tier_counts <- function() {
     stat_boxes    = length(redis_keys(paste0("app:", CACHE_PREFIX_STAT, ":*"))),
     fos_drilldown = length(redis_keys(paste0("app:", CACHE_PREFIX_FOS, ":*"))),
     color_maps    = length(redis_keys(paste0("app:", CACHE_PREFIX_COLOR, ":*"))),
+    fac_hist      = length(redis_keys(paste0("app:", CACHE_PREFIX_FAC_HIST, ":*"))),
     other_app     = length(redis_keys("app:*"))
   )
 }

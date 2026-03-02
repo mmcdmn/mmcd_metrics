@@ -1146,7 +1146,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     # FOS overview with specific FOS selected (from index.html):
     # Show per-METRIC value boxes with hidden charts, same pattern as district view
     week_num <- lubridate::week(analysis_date)
-    weekly_values <- extract_weekly_values(metrics, historical_data, week_num, registry)
+    # NOTE: Do NOT use extract_weekly_values() here — that function extracts from
+    # facility/zone-level historical data, which is NOT FOS-filtered.
+    # Instead, we use the FOS-filtered 'active' value from 'data' as the weekly value
+    # for each metric, so Current and 10yr Avg are both FOS-scoped.
     
     # Resolve fos_filter to emp_num for historical comparison
     # fos_filter may be a shortname (e.g., "Smith") or emp_num (e.g., "1234")
@@ -1189,7 +1192,9 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       }
       
       # Get dynamic color — compare against THIS FOS's historical average
-      weekly_val <- weekly_values[[metric_id]]
+      # Use FOS-filtered 'active' as the weekly value (not the facility-wide extract)
+      # This ensures Current and 10yr Avg are both scoped to this FOS
+      weekly_val <- if (!is.null(metric_data) && nrow(metric_data) > 0) active else NULL
       cm <- if (!is.null(config$color_mode)) config$color_mode else ""
       color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
       box_info <- tryCatch(
@@ -1553,7 +1558,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
 #' @param output Shiny output object
 #' @param session Shiny session object
 #' @param overview_type One of: "district", "facilities", "fos"
-#' @param include_historical Whether to include historical charts
+#' @param include_historical Whether to include historical charts (visual only).
+#'   NOTE: Historical data is ALWAYS loaded regardless of this flag, because
+#'   value box coloring depends on weekly historical comparisons.
+#'   This flag controls whether historical chart panels are rendered.
 #' @export
 build_overview_server <- function(input, output, session, 
                                    overview_type = "district",
@@ -1618,15 +1626,26 @@ build_overview_server <- function(input, output, session,
     inputs <- refresh_inputs()
     n_metrics <- length(metrics)
     
-    withProgress(message = "Loading current data...", value = 0, {
+    # Total steps = current metrics + historical metrics (for unified progress)
+    # Historical data is ALWAYS loaded (needed for value box coloring),
+    # regardless of whether historical charts are shown.
+    all_historical <- get_historical_metrics()
+    hist_metrics <- if (!is.null(metrics_filter)) {
+      intersect(metrics_filter, all_historical)
+    } else {
+      all_historical
+    }
+    total_steps <- n_metrics + length(hist_metrics)
+    
+    withProgress(message = "Loading data...", value = 0, {
       results <- list()
       for (i in seq_along(metrics)) {
         metric_id <- metrics[i]
         config <- registry[[metric_id]]
         
         setProgress(
-          value = (i - 0.5) / n_metrics,
-          detail = paste("Loading", config$display_name, "...")
+          value = i / total_steps,
+          detail = paste0("Current: ", config$display_name, " (", i, "/", n_metrics, ")")
         )
         
         # Use the correct load function based on overview type
@@ -1660,7 +1679,6 @@ build_overview_server <- function(input, output, session,
               fos_filter = fos_filter
             )
           } else {
-            # Fallback
             load_data_by_zone(
               metric = metric_id,
               analysis_date = inputs$custom_today,
@@ -1674,13 +1692,19 @@ build_overview_server <- function(input, output, session,
           data.frame()
         })
       }
-      setProgress(value = 1, detail = "Complete!")
+      
+      # Store total_steps and n_metrics in attribute so historical_data can continue the bar
+      attr(results, "progress_offset") <- n_metrics
+      attr(results, "total_steps") <- total_steps
+      
       results
     })
   })
   
-  # Historical data loading with progress bar
-  historical_data <- if (include_historical) {
+  # Historical data loading with progress bar (continues the same progress bar)
+  # ALWAYS loaded — value box coloring depends on weekly historical comparisons.
+  # The `include_historical` flag only controls whether chart outputs are created.
+  historical_data <- {
     eventReactive(input$refresh, {
       inputs <- refresh_inputs()
       years <- get_historical_year_range(10, inputs$custom_today)
@@ -1698,17 +1722,19 @@ build_overview_server <- function(input, output, session,
         return(list())
       }
       
-      n_metrics <- length(hist_metrics)
+      n_hist <- length(hist_metrics)
+      n_current <- length(metrics)
+      total_steps <- n_current + n_hist
       
-      withProgress(message = "Loading historical data...", value = 0, {
+      withProgress(message = "Loading historical data...", value = n_current / total_steps, {
         results <- list()
         for (i in seq_along(hist_metrics)) {
           metric_id <- hist_metrics[i]
           config <- registry[[metric_id]]
           
           setProgress(
-            value = (i - 0.5) / n_metrics,
-            detail = paste("Loading", config$display_name, "history...")
+            value = (n_current + i) / total_steps,
+            detail = paste0("Historical: ", config$display_name, " (", i, "/", n_hist, ")")
           )
           
           results[[metric_id]] <- tryCatch({
@@ -1720,19 +1746,17 @@ build_overview_server <- function(input, output, session,
               zone_filter = inputs$zone_filter,
               analysis_date = inputs$custom_today,
               overview_type = overview_type,
-              facility_filter = facility_filter  # Pass for FOS view facility-specific historical
+              facility_filter = facility_filter
             )
           }, error = function(e) {
             cat("ERROR loading historical", metric_id, ":", e$message, "\n")
             list(average = data.frame(), current = data.frame(), yearly_data = data.frame())
           })
         }
-        setProgress(value = 1, detail = "Complete!")
+        setProgress(value = 1, detail = "All data loaded!")
         results
       })
     })
-  } else {
-    reactive({ list() })
   }
   
   # =========================================================================

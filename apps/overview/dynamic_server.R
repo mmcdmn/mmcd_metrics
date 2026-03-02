@@ -869,24 +869,48 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
     status = "default"
   )
   
+  # Load threshold colors from config (with hardcoded fallbacks)
+  status_colors <- tryCatch(get_status_indicator_colors(), error = function(e) NULL)
+  COLOR_GOOD    <- status_colors$good    %||% "#16a34a"
+  COLOR_WARNING <- status_colors$warning %||% "#eab308"
+  COLOR_ALERT   <- status_colors$alert   %||% "#dc2626"
+  
   # Only apply dynamic colors to specific metrics
   dynamic_metrics <- c("drone", "ground_prehatch", "catch_basin", "structure", 
                        "mosquito_monitoring", "suco")
   
   # Fixed percentage-based coloring (e.g., air_sites coverage %)
   if (isTRUE(config$color_mode == "fixed_pct")) {
-    thresholds <- config$color_thresholds
-    # current_value is passed as the treatment coverage percentage
+    # Try config thresholds first, fall back to metric registry thresholds
+    cfg_thresh <- tryCatch(get_config_threshold("fixed_pct", metric_id), error = function(e) NULL)
+    thresholds <- cfg_thresh %||% config$color_thresholds
+    is_inverse <- isTRUE(cfg_thresh$direction == "lower_is_better") || isTRUE(config$inverse_color)
+    
     pct_val <- current_value
-    if (pct_val >= thresholds$good) {
-      result$color <- "#16a34a"
-      result$status <- "good"
-    } else if (pct_val >= thresholds$warning) {
-      result$color <- "#eab308"
-      result$status <- "warning"
+    if (is_inverse) {
+      # Lower is better (e.g., vector index)
+      if (pct_val <= thresholds$good) {
+        result$color <- COLOR_GOOD
+        result$status <- "good"
+      } else if (pct_val <= thresholds$warning) {
+        result$color <- COLOR_WARNING
+        result$status <- "warning"
+      } else {
+        result$color <- COLOR_ALERT
+        result$status <- "alert"
+      }
     } else {
-      result$color <- "#dc2626"
-      result$status <- "alert"
+      # Higher is better (e.g., air_sites, prehatch_coverage)
+      if (pct_val >= thresholds$good) {
+        result$color <- COLOR_GOOD
+        result$status <- "good"
+      } else if (pct_val >= thresholds$warning) {
+        result$color <- COLOR_WARNING
+        result$status <- "warning"
+      } else {
+        result$color <- COLOR_ALERT
+        result$status <- "alert"
+      }
     }
     return(result)
   }
@@ -894,32 +918,33 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   # Percent-of-average coloring (e.g., mosquito monitoring current vs historical)
   # current_value = pct from value box (e.g., 76.5 means current is 76.5% of historical)
   if (isTRUE(config$color_mode == "pct_of_average")) {
-    thresholds <- config$color_thresholds
+    cfg_thresh <- tryCatch(get_config_threshold("pct_of_average", metric_id), error = function(e) NULL)
+    thresholds <- cfg_thresh %||% config$color_thresholds
     pct_val <- current_value
     pct_diff_val <- round(pct_val - 100, 1)
     
-    if (isTRUE(config$inverse_color)) {
+    if (isTRUE(config$inverse_color) || isTRUE(cfg_thresh$direction == "lower_is_better")) {
       # Inverse: lower is better (mosquitoes - fewer = good)
       if (pct_val <= thresholds$good) {
-        result$color <- "#16a34a"
+        result$color <- COLOR_GOOD
         result$status <- "good"
       } else if (pct_val <= thresholds$warning) {
-        result$color <- "#eab308"
+        result$color <- COLOR_WARNING
         result$status <- "warning"
       } else {
-        result$color <- "#dc2626"
+        result$color <- COLOR_ALERT
         result$status <- "alert"
       }
     } else {
       # Standard: higher is better
       if (pct_val >= (200 - thresholds$good)) {
-        result$color <- "#16a34a"
+        result$color <- COLOR_GOOD
         result$status <- "good"
       } else if (pct_val >= (200 - thresholds$warning)) {
-        result$color <- "#eab308"
+        result$color <- COLOR_WARNING
         result$status <- "warning"
       } else {
-        result$color <- "#dc2626"
+        result$color <- COLOR_ALERT
         result$status <- "alert"
       }
     }
@@ -930,19 +955,23 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   
   if (!metric_id %in% dynamic_metrics) return(result)
   
-  # SUCO has hardcoded capacity logic
+  # SUCO has capacity-based logic — thresholds from config
   if (metric_id == "suco") {
-    if (current_value >= 72) {
-      result$color <- "#dc2626"
+    cfg_thresh <- tryCatch(get_config_threshold("capacity", "suco"), error = function(e) NULL)
+    at_cap   <- cfg_thresh$at_capacity   %||% 72
+    near_cap <- cfg_thresh$near_capacity %||% 60
+    
+    if (current_value >= at_cap) {
+      result$color <- COLOR_ALERT
       result$status <- "at_capacity"
-    } else if (current_value >= 60) {
-      result$color <- "#eab308"
+    } else if (current_value >= near_cap) {
+      result$color <- COLOR_WARNING
       result$status <- "near_capacity"
     } else {
-      result$color <- "#16a34a"
+      result$color <- COLOR_GOOD
       result$status <- "good"
     }
-    result$historical_avg <- 72  # Capacity threshold for reference
+    result$historical_avg <- at_cap  # Capacity threshold for reference
     return(result)
   }
   
@@ -950,16 +979,13 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   week_num <- lubridate::week(analysis_date)
   
   # Get 10-year weekly average — use most specific scope available:
-  #   FOS (smallest area) → Facility → Zone (district-wide cache)
+  #   FOS (smallest area) -> Facility -> Zone (district-wide cache)
   # Each scope compares against its own historical average
   historical_avg <- if (!is.null(fos_filter)) {
-    # FOS-specific: compare against THIS FOS area's historical average
     get_historical_week_avg_by_fos(metric_id, week_num, fos_filter, zone_filter)
   } else if (!is.null(facility_filter)) {
-    # Facility-specific: compare against THIS facility's historical average
     get_historical_week_avg_by_facility(metric_id, week_num, facility_filter, zone_filter)
   } else {
-    # Zone/district-wide: compare against zone average from cache (fast)
     get_historical_week_avg(metric_id, week_num, zone_filter)
   }
   if (is.null(historical_avg) || historical_avg == 0) return(result)
@@ -968,40 +994,43 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   current_week <- if (!is.null(weekly_value)) {
     weekly_value
   } else {
-    # Use cached value (120s TTL) to reduce DB load under concurrent access
     get_cached_current_week_value(metric_id, analysis_date, zone_filter)
   }
-  if (is.null(current_week)) {
-    # Fallback: can't get weekly value, use default color
-    return(result)
-  }
+  if (is.null(current_week)) return(result)
   
   result$historical_avg <- round(historical_avg, 0)
   result$current_week <- round(current_week, 0)
   result$pct_diff <- round(100 * (current_week - historical_avg) / historical_avg, 1)
   
-  # Mosquito monitoring uses inverse logic (lower is better)
-  if (metric_id == "mosquito_monitoring") {
-    if (current_week <= historical_avg * 1.1) {
-      result$color <- "#16a34a"
+  # Historical comparison — thresholds from config
+  cfg_hist <- tryCatch(get_config_threshold("historical", metric_id), error = function(e) NULL)
+  
+  if (metric_id == "mosquito_monitoring" || isTRUE(cfg_hist$direction == "lower_is_better")) {
+    # Inverse: lower is better (e.g., mosquito counts)
+    good_mult    <- cfg_hist$good    %||% 1.1
+    warning_mult <- cfg_hist$warning %||% 1.2
+    if (current_week <= historical_avg * good_mult) {
+      result$color <- COLOR_GOOD
       result$status <- "good"
-    } else if (current_week <= historical_avg * 1.2) {
-      result$color <- "#eab308"
+    } else if (current_week <= historical_avg * warning_mult) {
+      result$color <- COLOR_WARNING
       result$status <- "warning"
     } else {
-      result$color <- "#dc2626"
+      result$color <- COLOR_ALERT
       result$status <- "alert"
     }
   } else {
-    # Standard metrics (higher is better)
-    if (current_week >= historical_avg * 0.9) {
-      result$color <- "#16a34a"
+    # Standard: higher is better (treatments, coverage)
+    good_mult    <- cfg_hist$good    %||% 0.9
+    warning_mult <- cfg_hist$warning %||% 0.8
+    if (current_week >= historical_avg * good_mult) {
+      result$color <- COLOR_GOOD
       result$status <- "good"
-    } else if (current_week >= historical_avg * 0.8) {
-      result$color <- "#eab308"
+    } else if (current_week >= historical_avg * warning_mult) {
+      result$color <- COLOR_WARNING
       result$status <- "warning"
     } else {
-      result$color <- "#dc2626"
+      result$color <- COLOR_ALERT
       result$status <- "alert"
     }
   }

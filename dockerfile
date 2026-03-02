@@ -47,12 +47,16 @@ RUN R -e "install.packages('pool', lib='/usr/local/lib/R/site-library', repos='h
 # Install redux package for Redis caching
 RUN R -e "install.packages('redux', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
+# Install yaml package for config file parsing
+RUN R -e "install.packages('yaml', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
 # Install plumber for API server
 RUN R -e "install.packages('plumber', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
 # Copy app files and config to correct locations
 COPY apps /srv/shiny-server/apps
 COPY shared /srv/shiny-server/shared
+COPY config /srv/shiny-server/config
 COPY tests /srv/shiny-server/tests
 COPY api /srv/api
 COPY index.html /srv/shiny-server/

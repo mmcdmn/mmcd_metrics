@@ -899,7 +899,8 @@ server <- function(input, output, session) {
         setProgress(value = 0.25 + pct * 0.65, detail = detail)
       },
       double_sided = isTRUE(input$double_sided),
-      watermark_fields = input$watermark_fields
+      watermark_fields = input$watermark_fields,
+      cards_per_page = as.integer(input$cards_per_page)
     )
     
     setProgress(value = 0.95, detail = "Rendering cards...")
@@ -1018,7 +1019,8 @@ server <- function(input, output, session) {
           setProgress(value = 0.15 + pct * 0.70, detail = detail)
         },
         double_sided = isTRUE(input$double_sided),
-        watermark_fields = input$watermark_fields
+        watermark_fields = input$watermark_fields,
+        cards_per_page = as.integer(input$cards_per_page)
       )
       
       setProgress(value = 0.90, detail = "Writing file...")

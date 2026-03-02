@@ -13,7 +13,7 @@
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE, watermark_fields = NULL) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE, watermark_fields = NULL, cards_per_page = 6) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -75,7 +75,8 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   )
   
   # Start HTML with print-friendly CSS
-  html <- '
+  grid_rows <- ceiling(cards_per_page / 2)
+  html <- paste0('
   <style>
     @media print {
       @page {
@@ -103,7 +104,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     .card-page {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: repeat(3, auto);
+      grid-template-rows: repeat(', grid_rows, ', auto);
       gap: 15px;
       margin-bottom: 20px;
     }
@@ -470,7 +471,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   </style>
   
   <div class="cards-container">
-  '
+  ')
   
   # =========================================================================
   # OPTIMIZATION: Pre-build table header + empty rows (identical for all cards)
@@ -565,7 +566,6 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     for (grp_idx in seq_along(group_data_list)) {
       grp_data <- group_data_list[[grp_idx]]
       
-      cards_per_page <- 6
       num_pages <- ceiling(nrow(grp_data) / cards_per_page)
       
       for (page in 1:num_pages) {
@@ -600,8 +600,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     }
     
   } else {
-    # Normal mode: group cards into pages of 6 without section splits
-    cards_per_page <- 6
+    # Normal mode: group cards into pages without section splits
     num_pages <- ceiling(nrow(data) / cards_per_page)
     
     for (page in 1:num_pages) {
@@ -732,8 +731,8 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
       } else if (field == "prehatch") {
         # Prehatch with blue background
         if (!is.na(value) && value != "") {
-          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="prehatch-field">', value, '</span></div>\n')
+          html <- paste0(html, '        <div class="info-item"><span class="prehatch-field">',
+                        toupper(value), '</span></div>\n')
         }
       } else if (field == "status_udw") {
         # Structure status (D/W/U) with color coding
@@ -777,8 +776,7 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         # Priority with color coding based on value
         if (!is.na(value) && value != "") {
           priority_class <- paste0("priority-", tolower(value))
-          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="', priority_class, '">', value, '</span></div>\n')
+          html <- paste0(html, '        <div class="info-item"><span class="', priority_class, '">', toupper(value), '</span></div>\n')
         }
       } else if (field == "remarks") {
         # Remarks get special styling - larger and full width (skip if empty)

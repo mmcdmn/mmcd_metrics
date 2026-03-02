@@ -55,8 +55,9 @@ load_raw_data <- function(analysis_date = NULL,
   # =========================================================================
   # When called from overview registry, status_types is passed as character(0).
   # Uses a dedicated 3-query approach (~1-2s vs 60s+ for full data load).
-  # Filters: Ground sites, prehatch only, include drone, 3-year gap threshold.
-  # Action filtering for qualifying inspections: 1, 2, 4, or (3 with wet='0')
+  # Filters: Ground sites, prehatch only, checks for samples with red bugs.
+  # Red bug detection: joins inspections → samples where redblue = 'R'.
+  # Gap threshold: 5 years.
   if (!is.null(status_types) && is.character(status_types) && length(status_types) == 0) {
     con_overview <- get_db_connection()
     if (is.null(con_overview)) {
@@ -71,15 +72,15 @@ load_raw_data <- function(analysis_date = NULL,
     }
     
     tryCatch({
-      years_gap <- 3
+      years_gap <- 5
       gap_cutoff <- analysis_date - lubridate::years(years_gap)
       gap_cutoff_str <- as.character(gap_cutoff)
       analysis_date_str <- as.character(analysis_date)
       
       # FAST 3-QUERY APPROACH (~1-2 seconds vs 60+ seconds for single CTE)
       # 1) Get prehatch ground sites with facility+zone
-      # 2) Get latest qualifying inspection from current table (covers current season)
-      # 3) For sites not recently inspected in current, check archive with IN clause
+      # 2) Get latest inspection with a red bug sample from current table
+      # 3) For sites without recent red bug sample, check archive with IN clause
       
       # Step 1: Prehatch ground sites (include fosarea for FOS drill-down)
       prehatch <- dbGetQuery(con_overview, sprintf("
@@ -103,20 +104,22 @@ load_raw_data <- function(analysis_date = NULL,
         ))
       }
       
-      # Step 2: Latest qualifying inspection from current table (fast - ~0.3s)
+      # Step 2: Latest inspection with red bug sample from current table (fast - ~0.5s)
       current_max <- dbGetQuery(con_overview, "
-        SELECT sitecode, MAX(inspdate) AS last_insp
-        FROM dblarv_insptrt_current
-        WHERE inspdate IS NOT NULL
-          AND (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
-        GROUP BY sitecode
+        SELECT i.sitecode, MAX(i.inspdate) AS last_insp
+        FROM dblarv_insptrt_current i
+        INNER JOIN dblarv_sample_current s ON i.sampnum_yr = s.sampnum_yr
+        WHERE i.inspdate IS NOT NULL
+          AND i.sampnum_yr IS NOT NULL
+          AND s.redblue = 'R'
+        GROUP BY i.sitecode
       ")
       
       # Merge current table results
       sites_with_current <- prehatch %>%
         left_join(current_max, by = "sitecode")
       
-      # Step 3: Sites needing archive check (not recently inspected in current table)
+      # Step 3: Sites needing archive check (no recent red bug sample in current table)
       need_archive_codes <- sites_with_current %>%
         filter(is.na(last_insp) | last_insp < gap_cutoff) %>%
         pull(sitecode) %>%
@@ -131,13 +134,15 @@ load_raw_data <- function(analysis_date = NULL,
           chunk <- need_archive_codes[i:min(i + chunk_size - 1, length(need_archive_codes))]
           in_clause <- paste0("'", chunk, "'", collapse = ",")
           q <- sprintf("
-            SELECT sitecode, MAX(inspdate) AS archive_insp
-            FROM dblarv_insptrt_archive
-            WHERE sitecode IN (%s)
-              AND inspdate IS NOT NULL
-              AND inspdate >= '%s'::date - interval '6 years'
-              AND (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
-            GROUP BY sitecode
+            SELECT i.sitecode, MAX(i.inspdate) AS archive_insp
+            FROM dblarv_insptrt_archive i
+            INNER JOIN dblarv_sample_archive s ON i.sampnum_yr = s.sampnum_yr
+            WHERE i.sitecode IN (%s)
+              AND i.inspdate IS NOT NULL
+              AND i.sampnum_yr IS NOT NULL
+              AND i.inspdate >= '%s'::date - interval '5 years'
+              AND s.redblue = 'R'
+            GROUP BY i.sitecode
           ", in_clause, analysis_date_str)
           archive_parts[[length(archive_parts) + 1]] <- dbGetQuery(con_overview, q)
         }
@@ -145,7 +150,7 @@ load_raw_data <- function(analysis_date = NULL,
       }
       safe_disconnect(con_overview)
       
-      # Combine: use the most recent inspection from either table
+      # Combine: use the most recent red bug sample from either table
       sites_combined <- sites_with_current %>%
         left_join(archive_max, by = "sitecode") %>%
         mutate(
@@ -163,7 +168,7 @@ load_raw_data <- function(analysis_date = NULL,
           .groups = "drop"
         )
       
-      message(sprintf("[inspection_gaps] Overview (fast): %s facilities, %s total sites, %s gaps (%.1f%%)",
+      message(sprintf("[prehatch_red_bugs] Overview (fast): %s facilities, %s total sites, %s no red bugs (%.1f%%)",
                       nrow(sites), sum(sites$total_count), sum(sites$expiring_count),
                       100 * sum(sites$expiring_count) / max(1, sum(sites$total_count))))
       

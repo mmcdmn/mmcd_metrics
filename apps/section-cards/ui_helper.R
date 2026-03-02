@@ -147,6 +147,13 @@ create_field_selector <- function() {
         min = 1,
         max = 20,
         step = 1
+      ),
+      
+      selectInput(
+        "cards_per_page",
+        "Cards per page:",
+        choices = c("6" = "6", "8" = "8", "10" = "10", "12" = "12"),
+        selected = "6"
       )
     )
   )

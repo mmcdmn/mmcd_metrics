@@ -381,19 +381,29 @@ navigate_to_overview <- function(session, target, zone_clicked, analysis_date, e
   cat("DEBUG navigate_to_overview: target =", target, "facility_clicked =", facility_clicked, "zone_filter_raw =", zone_filter_raw, "\n")
   
   # Extract zone number from different possible formats.
-  # Important: if a specific zone was clicked, it should take precedence over
-  # the raw filter value (including "separate").
+  # zone_clicked can be:
+  #   1. A filter mode value ("separate", "1", "2", "1,2") from parent filter
+  #   2. A clicked zone value ("P1", "P2") from bar click
+  #   3. A numeric point index (0, 1) from Plotly
   zone_num <- NA
   
   if (is.character(zone_clicked)) {
-    if (zone_clicked %in% c("P1", "P2")) {
-      zone_num <- gsub("P", "", zone_clicked)
+    # Handle filter mode values from parent (highest priority)
+    if (zone_clicked == "separate") {
+      zone_num <- "separate"
+    } else if (zone_clicked == "1,2") {
+      zone_num <- NULL  # Omit from URL - combined is the default
     } else if (zone_clicked %in% c("1", "2")) {
       zone_num <- zone_clicked
-    } else if (zone_clicked == "1,2") {
-      zone_num <- "1,2"
+    }
+    # Handle clicked zone values (backward compatibility with bar clicks)
+    else if (zone_clicked == "P1") {
+      zone_num <- "1"
+    } else if (zone_clicked == "P2") {
+      zone_num <- "2"
     }
   } else if (is.numeric(zone_clicked)) {
+    # Handle Plotly point index (0 = first point = P1, 1 = second point = P2)
     if (zone_clicked == 0) {
       zone_num <- "1"
     } else if (zone_clicked == 1) {
@@ -401,16 +411,7 @@ navigate_to_overview <- function(session, target, zone_clicked, analysis_date, e
     }
   }
   
-  # If no specific clicked zone was detected, preserve "separate" mode.
-  if (!is.null(zone_filter_raw) && zone_filter_raw == "separate" &&
-      (is.na(zone_num) || is.null(zone_num))) {
-    zone_num <- "separate"
-  } else if (!is.null(zone_filter_raw) && zone_filter_raw == "1,2" &&
-             (is.na(zone_num) || is.null(zone_num))) {
-    zone_num <- "1,2"
-  }
-  
-  # Fallback: if zone_num is still NA (not NULL or a valid value), clear it
+  # Fallback: if zone_num is still NA (couldn't parse), clear it
   if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
     if (!is.null(zone_clicked)) {
       cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")

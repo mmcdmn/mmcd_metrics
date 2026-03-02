@@ -93,7 +93,7 @@ parse_unified_params <- function(query_string) {
   }
   
   # Parse zone filter
-  zone_filter <- "separate"  # default
+  zone_filter <- "1,2"  # default to combined (P1 and P2)
   if (!is.null(query$zone)) {
     if (query$zone == "1") {
       zone_filter <- "1"

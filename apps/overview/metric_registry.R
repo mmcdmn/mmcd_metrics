@@ -437,7 +437,7 @@ get_metric_registry <- function() {
     # =========================================================================
     prehatch_coverage = list(
       id = "prehatch_coverage",
-      display_name = "Prehatch Inspection Coverage",
+      display_name = "Prehatch Sites Sampled (5yr)",
       short_name = "Coverage",
       icon = "calendar-check",
       category = "Floodwater",

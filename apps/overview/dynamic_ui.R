@@ -218,6 +218,91 @@ get_overview_css <- function() {
     .stat-box-clickable.active::after {
       content: 'Click to hide chart';
     }
+    /* Info button on stat boxes — replaces the metric icon */
+    .stat-box-info-btn:hover {
+      background: rgba(255,255,255,0.45) !important;
+    }
+    /* Info button on chart titles */
+    .chart-info-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      color: #666;
+      font-size: 13px;
+      cursor: pointer;
+      margin-left: 8px;
+      border: 1px solid #ccc;
+      transition: all 0.2s;
+      vertical-align: middle;
+    }
+    .chart-info-btn:hover {
+      background: #007bff;
+      color: white;
+      border-color: #007bff;
+    }
+    .info-popover {
+      position: absolute;
+      top: 34px;
+      right: 4px;
+      z-index: 1050;
+      background: #ffffff;
+      color: #333;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      padding: 14px 16px;
+      min-width: 240px;
+      max-width: 320px;
+      font-size: 13px;
+      line-height: 1.5;
+      animation: popoverFadeIn 0.15s ease;
+    }
+    .info-popover::before {
+      content: '';
+      position: absolute;
+      top: -6px;
+      right: 10px;
+      width: 12px;
+      height: 12px;
+      background: #ffffff;
+      transform: rotate(45deg);
+      box-shadow: -2px -2px 4px rgba(0,0,0,0.08);
+    }
+    @keyframes popoverFadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .info-popover .info-description {
+      margin-bottom: 8px;
+    }
+    .info-popover .info-wiki-link {
+      display: inline-block;
+      margin-top: 4px;
+      color: #2563eb;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .info-popover .info-wiki-link:hover {
+      text-decoration: underline;
+    }
+    .info-popover .info-close {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      background: none;
+      border: none;
+      font-size: 16px;
+      color: #999;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .info-popover .info-close:hover {
+      color: #333;
+    }
     /* Category grouping styles */
     .metrics-by-category {
       width: 100%;
@@ -555,43 +640,6 @@ get_overview_css <- function() {
       font-size: 12px;
       font-style: italic;
     }
-    .filter-info-btn {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      line-height: 18px;
-      text-align: center;
-      border-radius: 50%;
-      background: #e0e0e0;
-      color: #666;
-      font-size: 14px;
-      font-weight: bold;
-      cursor: pointer;
-      margin-left: 8px;
-      border: 1px solid #ccc;
-      transition: all 0.2s;
-    }
-    .filter-info-btn:hover {
-      background: #007bff;
-      color: white;
-      border-color: #007bff;
-    }
-    .filter-tooltip {
-      display: none;
-      position: absolute;
-      background: #333;
-      color: white;
-      padding: 10px 15px;
-      border-radius: 6px;
-      font-size: 12px;
-      z-index: 1000;
-      max-width: 300px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-      line-height: 1.5;
-    }
-    .filter-tooltip.show {
-      display: block;
-    }
     .historical-section {
       margin-top: 30px;
       padding-top: 20px;
@@ -627,18 +675,46 @@ get_overview_css <- function() {
 #' @return tags$script element
 get_overview_js <- function() {
   tags$script(HTML("
-    function toggleFilterInfo(id) {
-      var tooltip = document.getElementById(id);
-      var allTooltips = document.querySelectorAll('.filter-tooltip');
-      allTooltips.forEach(function(t) {
-        if (t.id !== id) t.classList.remove('show');
-      });
-      tooltip.classList.toggle('show');
-    }
-    document.addEventListener('click', function(e) {
-      if (!e.target.classList.contains('filter-info-btn')) {
-        var allTooltips = document.querySelectorAll('.filter-tooltip');
-        allTooltips.forEach(function(t) { t.classList.remove('show'); });
+    // Unified info button handler — works for BOTH stat boxes and chart titles
+    $(document).on('click', '.stat-box-info-btn, .chart-info-btn', function(e) {
+      e.stopPropagation();
+      
+      // Remove any existing popover
+      $('.info-popover').remove();
+      
+      var btn = $(this);
+      var description = btn.data('description') || '';
+      var wikiLink = btn.data('wiki-link') || '';
+      
+      if (!description && !wikiLink) return;
+      
+      // Build popover content
+      var html = '<div class=\"info-popover\">';
+      html += '<button class=\"info-close\">&times;</button>';
+      if (description) {
+        html += '<div class=\"info-description\">' + description + '</div>';
+      }
+      if (wikiLink) {
+        html += '<a class=\"info-wiki-link\" href=\"' + wikiLink + '\" target=\"_blank\">';
+        html += '<i class=\"fa fa-external-link-alt\"></i> View full documentation</a>';
+      }
+      html += '</div>';
+      
+      // Position relative to the button's parent container
+      var parent = btn.closest('.stat-box-clickable, .chart-panel, [style*=\"position\"]');
+      if (!parent.length) parent = btn.parent();
+      parent.css('position', 'relative');
+      parent.append(html);
+    });
+    
+    // Close popover
+    $(document).on('click', '.info-popover .info-close', function(e) {
+      e.stopPropagation();
+      $(this).closest('.info-popover').remove();
+    });
+    $(document).on('click', function(e) {
+      if (!$(e.target).closest('.info-popover, .stat-box-info-btn, .chart-info-btn').length) {
+        $('.info-popover').remove();
       }
     });
     Shiny.addCustomMessageHandler('navigate', function(url) {
@@ -952,24 +1028,34 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
     }
   }
   
-  filter_id <- paste0(metric_id, "_filters")
   legend_id <- paste0(metric_id, "_legend")
-  chart_type_id <- paste0(metric_id, "_chart_type")
   
-  # Check if metric supports multiple chart types (legacy - kept but not shown)
-  has_chart_toggle <- !is.null(config$chart_types) && length(config$chart_types) > 1
-  
+  # Build info button for chart title (shown on ALL charts, current + historical)
+  metric_description <- tryCatch(get_metric_description(metric_id), error = function(e) "")
+  wiki_link <- tryCatch(get_wiki_link(metric_id), error = function(e) "")
+  if (is_historical && nzchar(metric_description)) {
+    metric_description <- paste0(metric_description, " (by week)")
+  }
+  chart_info_btn <- if (nzchar(metric_description) || !is.null(config$filter_info) || nzchar(wiki_link)) {
+    # Combine description + filter_info into one data attribute
+    combined_desc <- paste0(
+      if (nzchar(metric_description)) metric_description else "",
+      if (!is.null(config$filter_info) && !is_historical) {
+        paste0("<hr style='margin:6px 0;border-color:#ddd'>", as.character(config$filter_info))
+      } else ""
+    )
+    span(
+      class = "chart-info-btn",
+      `data-description` = combined_desc,
+      `data-wiki-link` = wiki_link,
+      shiny::icon("info-circle")
+    )
+  }
+
   div(class = "chart-panel",
     div(class = "chart-title",
       get_metric_icon(config), title_text,
-      # Pie chart toggle buttons removed - now using value box click to show/hide
-      if (!is_historical && !is.null(config$filter_info)) {
-        tagList(
-          span(class = "filter-info-btn",
-               onclick = paste0("toggleFilterInfo('", filter_id, "')"), "+"),
-          div(id = filter_id, class = "filter-tooltip", config$filter_info)
-        )
-      }
+      chart_info_btn
     ),
     # Add legend for current progress charts (not historical)
     if (!is_historical) {

@@ -99,6 +99,19 @@ get_app_config <- function(force_reload = FALSE) {
         suco = list(direction = "lower_is_better", at_capacity = 72, near_capacity = 60)
       )
     ),
+    descriptions = list(
+      drone = "Percent of Prehatch Drone acres with active treatment",
+      ground_prehatch = "Percent of Ground Prehatch acres with active treatment",
+      air_sites = "Percent of red air sites that have received treatment for last brood",
+      prehatch_coverage = "Percent of Prehatch sites with target species in sample last 5 years",
+      catch_basin = "Percent of wet Catch Basins with active treatment",
+      structure = "Percent of wet structures with active treatment (needs better priority)",
+      vector_index = "Highest Vector Index - risk of getting bit by an infectious mosquito",
+      mosquito_monitoring = "Abundance of mosquitos found in traps across the district",
+      suco = "How close the field is to the weekly processing capacity of the lab (needs reworking)",
+      cattail_treatments = "Percent of cattail sites with perturban treatment - resets to zero in August",
+      cattail_inspections = "Starting in August, number of sites inspected for perturbans for this year only"
+    ),
     wiki_links = list(
       catch_basin = "", drone = "", ground_prehatch = "", air_sites = "",
       structure = "", vector_index = "", cattail_treatments = "",
@@ -185,6 +198,16 @@ get_wiki_link <- function(metric_id) {
   cfg <- get_app_config()
   link <- cfg$wiki_links[[metric_id]]
   if (is.null(link)) "" else as.character(link)
+}
+
+#' Get the plain-language description for a metric
+#' @param metric_id The metric ID (e.g., "drone", "catch_basin")
+#' @return Character string description (empty string if not configured)
+#' @export
+get_metric_description <- function(metric_id) {
+  cfg <- get_app_config()
+  desc <- cfg$descriptions[[metric_id]]
+  if (is.null(desc)) "" else as.character(desc)
 }
 
 #' Get a display setting

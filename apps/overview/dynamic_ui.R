@@ -245,9 +245,7 @@ get_overview_css <- function() {
       border-color: #007bff;
     }
     .info-popover {
-      position: absolute;
-      top: 34px;
-      right: 4px;
+      position: fixed;
       z-index: 1050;
       background: #ffffff;
       color: #333;
@@ -264,7 +262,6 @@ get_overview_css <- function() {
       content: '';
       position: absolute;
       top: -6px;
-      right: 10px;
       width: 12px;
       height: 12px;
       background: #ffffff;
@@ -700,21 +697,65 @@ get_overview_js <- function() {
       }
       html += '</div>';
       
-      // Position relative to the button's parent container
-      var parent = btn.closest('.stat-box-clickable, .chart-panel, [style*=\"position\"]');
-      if (!parent.length) parent = btn.parent();
-      parent.css('position', 'relative');
-      parent.append(html);
+      // Append to body with fixed positioning
+      var $popover = $(html).appendTo('body');
+      
+      // Position relative to button using viewport coordinates
+      var rect = btn[0].getBoundingClientRect();
+      var popW = $popover.outerWidth();
+      var winW = $(window).width();
+      
+      // Vertical: below the button
+      var topPos = rect.bottom + 6;
+      
+      // Horizontal: try right-aligned with button, flip if would overflow
+      var rightAligned = rect.right - popW;
+      var leftAligned = rect.left;
+      var arrowRight;
+      
+      if (rightAligned >= 8) {
+        // Right-align: popover right edge near button right edge
+        $popover.css('left', rightAligned + 'px');
+        arrowRight = (popW - (rect.width / 2) - 4);
+        $popover.find('.info-popover').addBack().each(function() {
+          // no-op; arrow positioned via pseudo-element
+        });
+        $popover.attr('data-arrow-pos', 'right');
+        $popover.css('--arrow-left', 'auto');
+        $popover.css('--arrow-right', Math.max(8, (rect.width / 2)) + 'px');
+      } else {
+        // Left-align: popover left edge near button left edge
+        $popover.css('left', Math.max(8, leftAligned) + 'px');
+        $popover.attr('data-arrow-pos', 'left');
+        $popover.css('--arrow-left', Math.max(8, (rect.width / 2)) + 'px');
+        $popover.css('--arrow-right', 'auto');
+      }
+      
+      $popover.css('top', topPos + 'px');
+      
+      // Set arrow position via inline style on ::before (use a style element)
+      var arrowDir = $popover.attr('data-arrow-pos');
+      var arrowStyle;
+      if (arrowDir === 'right') {
+        arrowStyle = 'right: ' + Math.max(8, Math.round(rect.width / 2)) + 'px; left: auto;';
+      } else {
+        arrowStyle = 'left: ' + Math.max(8, Math.round(rect.width / 2)) + 'px; right: auto;';
+      }
+      // Apply arrow positioning via a unique style tag
+      $('#info-popover-arrow-style').remove();
+      $('head').append('<style id=\"info-popover-arrow-style\">.info-popover::before { ' + arrowStyle + ' }</style>');
     });
     
     // Close popover
     $(document).on('click', '.info-popover .info-close', function(e) {
       e.stopPropagation();
       $(this).closest('.info-popover').remove();
+      $('#info-popover-arrow-style').remove();
     });
     $(document).on('click', function(e) {
       if (!$(e.target).closest('.info-popover, .stat-box-info-btn, .chart-info-btn').length) {
         $('.info-popover').remove();
+        $('#info-popover-arrow-style').remove();
       }
     });
     Shiny.addCustomMessageHandler('navigate', function(url) {

@@ -69,8 +69,8 @@ thresholds:
       warning: 60          # Yellow if >= 60%, Red if below
     prehatch_coverage:
       direction: higher_is_better
-      good: 85             # Green if >= 85% recently inspected
-      warning: 60          # Yellow if >= 60%, Red if below
+      good: 80             # Green if >= 80% recently sampled sites with target species
+      warning: 70          # Yellow if >= 70%, Red if below
     vector_index:
       direction: lower_is_better
       good: 30             # Green if VI <= 30

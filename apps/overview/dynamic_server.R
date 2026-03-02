@@ -1494,6 +1494,11 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
               cat("[DEBUG] ERROR creating chart for", metric_id, ":", e$message, "\n")
               div(class = "alert alert-warning", "Error loading chart")
             }
+          ),
+          tags$button(
+            class = "drill-down-btn",
+            `data-metric-id` = metric_id,
+            icon("arrow-right"), " Drill Down"
           )
         )
       })
@@ -1993,6 +1998,24 @@ build_overview_server <- function(input, output, session,
     })
   }
   
+  # Drill-down button click handler (button revealed alongside chart on value box click)
+  if (overview_config$enable_drill_down) {
+    observeEvent(input$drill_down_btn, {
+      metric_id <- input$drill_down_btn
+      cat("DEBUG: Drill-down button clicked for metric:", metric_id, "\n")
+      navigate_to_overview(
+        session,
+        overview_config$drill_down_target,
+        NULL,
+        isolate(input$custom_today),
+        isolate(input$expiring_days),
+        current_theme(),
+        metric_id = metric_id,
+        zone_filter_raw = isolate(input$zone_filter)
+      )
+    })
+  }
+
   # Facilities view: stat box click shows hidden detail boxes (JS toggles the container)
   # Bar chart click drills down to FOS
   if (overview_type == "facilities") {

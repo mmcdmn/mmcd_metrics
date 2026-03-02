@@ -113,6 +113,7 @@ get_overview_css <- function() {
       margin-bottom: 15px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
       min-height: 200px;
+      overflow: hidden;
     }
     .chart-panel-wrapper {
       height: 0;
@@ -262,6 +263,30 @@ get_overview_css <- function() {
       min-width: 0;
       max-width: 100%;
       box-sizing: border-box;
+      overflow: hidden;
+      position: relative;
+    }
+    .drill-down-btn {
+      position: absolute;
+      bottom: 6px;
+      right: 8px;
+      font-size: 11px;
+      padding: 3px 10px;
+      background: #2c5aa0;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      opacity: 0.8;
+      z-index: 10;
+      transition: opacity 0.2s, background 0.2s;
+    }
+    .drill-down-btn:hover {
+      opacity: 1;
+      background: #1e3c72;
+    }
+    .drill-down-btn i {
+      margin-right: 3px;
     }
     .category-section .category-chart.visible {
       display: block !important;
@@ -276,11 +301,12 @@ get_overview_css <- function() {
       width: 100%;
       max-width: 100%;
     }
-    /* Force plotly to not scroll */
+    /* Constrain plotly within container */
     .category-chart .js-plotly-plot,
     .category-chart .plot-container,
     .category-chart .svg-container {
-      overflow: visible !important;
+      overflow: hidden !important;
+      max-width: 100% !important;
     }
     /* Ensure legend is visible - uiOutput creates shiny-html-output wrapper */
     .category-chart .shiny-html-output {
@@ -860,6 +886,13 @@ get_overview_js <- function() {
       }
     });
     
+    // Drill-down button click (appears when chart is revealed via value box click)
+    $(document).on('click', '.drill-down-btn', function(e) {
+      e.stopPropagation();
+      var metricId = $(this).data('metric-id');
+      Shiny.setInputValue('drill_down_btn', metricId, {priority: 'event'});
+    });
+
     // Legacy: Chart type toggle functionality (kept for backwards compatibility)
     $(document).on('click', '.chart-toggle-btn', function() {
       var btn = $(this);
@@ -1060,7 +1093,7 @@ generate_historical_charts_ui <- function(overview_type = "district", chart_heig
 #' @return Complete fluidPage UI
 #' @export
 build_overview_ui <- function(overview_type = "district", include_historical = TRUE, metrics_filter = NULL, 
-                               initial_zone = "1,2", initial_date = Sys.Date(), 
+                               initial_zone = "separate", initial_date = Sys.Date(), 
                                initial_expiring = 3, initial_theme = "MMCD",
                                facility_filter = NULL, fos_filter = NULL) {
   
@@ -1144,22 +1177,14 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
                    max = Sys.Date(),
                    format = "yyyy-mm-dd")
         ),
-        column(2,
-          sliderInput("expiring_days", "Expiring Window (days):",
-                     min = 1, max = 30, value = initial_expiring, step = 1)
-        ),
-        column(2,
+        tags$input(type = "hidden", id = "expiring_days", name = "expiring_days", value = "3"),
+        column(4,
           selectInput("zone_filter", "Zone:",
                      choices = c("P1 Only" = "1",
                                 "P2 Only" = "2",
                                 "P1 and P2" = "1,2",
                                 "P1 and P2 SEPARATE" = "separate"),
                      selected = initial_zone)
-        ),
-        column(2,
-          selectInput("color_theme", "Color Theme:",
-                     choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
-                     selected = initial_theme)
         ),
         column(2,
           div(class = "last-updated",
@@ -1217,6 +1242,15 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       }
       # District view charts are now embedded in category sections
       # FOS overview charts are embedded in generate_summary_stats per-metric sections
+    ),
+
+    # Color Theme selector at the bottom
+    div(style = "text-align: right; padding: 10px 20px; margin-top: 10px;",
+      div(style = "display: inline-block; width: 180px;",
+        selectInput("color_theme", "Color Theme:",
+                   choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
+                   selected = initial_theme)
+      )
     )
   )
 }

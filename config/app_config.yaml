@@ -91,6 +91,10 @@ thresholds:
       goal_per_facility: 12   # Each facility should complete 12 SUCOs/week
       num_facilities: 6       # Total number of facilities
       district_goal: 72       # 6 * 12 = 72 total district goal
+      # District-level color thresholds (# of facilities that met goal)
+      good: 6                 # Green if all 6 facilities met goal
+      warning: 4              # Yellow if 4-5 facilities met goal
+      # Red if < 4 facilities met goal
 
 
 # =============================================================================

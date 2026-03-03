@@ -1040,25 +1040,40 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   if (metric_id == "suco") {
     cfg_goal <- tryCatch(get_config_threshold("goal", "suco"), error = function(e) NULL)
     goal_per_fac <- cfg_goal$goal_per_facility %||% 12
-    district_goal <- cfg_goal$district_goal %||% 72
+    num_facs <- cfg_goal$num_facilities %||% 6
+    good_thresh <- cfg_goal$good %||% 6
+    warning_thresh <- cfg_goal$warning %||% 4
     
-    # current_value = total SUCOs completed this week (district) or per-facility count
-    # For district: compare total completed vs district goal
-    # For facility: compare facility completed vs per-facility goal
-    goal <- if (!is.null(facility_filter)) goal_per_fac else district_goal
-    pct_of_goal <- if (goal > 0) current_value / goal else 0
-    
-    if (pct_of_goal >= 1.0) {
-      result$color <- COLOR_GOOD      # Met or exceeded goal
-      result$status <- "good"
-    } else if (pct_of_goal >= 0.75) {
-      result$color <- COLOR_WARNING    # 75%+ of goal
-      result$status <- "warning"
+    # District view: current_value = facilities_at_goal count (passed from stat box)
+    # Facility view: current_value = SUCOs completed for that facility
+    if (is.null(facility_filter)) {
+      # District: compare facilities_at_goal count vs thresholds
+      if (current_value >= good_thresh) {
+        result$color <- COLOR_GOOD      # All facilities met goal
+        result$status <- "good"
+      } else if (current_value >= warning_thresh) {
+        result$color <- COLOR_WARNING    # Most facilities met goal
+        result$status <- "warning"
+      } else {
+        result$color <- COLOR_ALERT      # Too few facilities met goal
+        result$status <- "alert"
+      }
+      result$historical_avg <- num_facs
     } else {
-      result$color <- COLOR_ALERT      # Below 75% of goal
-      result$status <- "alert"
+      # Facility: compare SUCOs vs per-facility goal
+      pct_of_goal <- if (goal_per_fac > 0) current_value / goal_per_fac else 0
+      if (pct_of_goal >= 1.0) {
+        result$color <- COLOR_GOOD
+        result$status <- "good"
+      } else if (pct_of_goal >= 0.75) {
+        result$color <- COLOR_WARNING
+        result$status <- "warning"
+      } else {
+        result$color <- COLOR_ALERT
+        result$status <- "alert"
+      }
+      result$historical_avg <- goal_per_fac
     }
-    result$historical_avg <- goal
     return(result)
   }
   
@@ -1606,7 +1621,14 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         # Get dynamic color and comparison info
         weekly_val <- weekly_values[[metric_id]]
         cm <- if (!is.null(config$color_mode)) config$color_mode else ""
-        color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
+        # SUCO: use facilities_at_goal count for district coloring
+        color_value <- if (metric_id == "suco" && !is.null(metric_data) && "facilities_at_goal" %in% names(metric_data)) {
+          sum(metric_data$facilities_at_goal, na.rm = TRUE)
+        } else if (cm %in% c("fixed_pct", "pct_of_average")) {
+          pct
+        } else {
+          active
+        }
         box_info <- tryCatch(
           get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
           error = function(e) {

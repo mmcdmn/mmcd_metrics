@@ -357,40 +357,42 @@ get_metric_registry <- function() {
     
     suco = list(
       id = "suco",
-      display_name = "SUCO Capacity",
+      display_name = "SUCO Goal",
       short_name = "SUCO",
       icon = "search",
-      image_path = "assets/bucket.png",  # Use adult mosquito icon
+      image_path = "assets/bucket.png",
       category = "Adult Samples",
       y_label = "SUCOs Completed",
       bg_color = "#6366f1",  # Indigo color
       app_folder = "suco_history",
       has_acres = FALSE,
-      historical_enabled = FALSE,  # Can enable later with weekly historical data
-      use_active_calculation = FALSE,  # SUCOs use count-based progress
-      display_metric = "inspections",  # count of SUCO inspections
-      display_as_average = TRUE,  # Show capacity-style display (not percentage)
+      historical_enabled = FALSE,
+      use_active_calculation = FALSE,
+      display_metric = "goal",  # goal-based display
+      display_as_goal = TRUE,   # Flag for goal-based rendering
       chart_types = c("bar"),
       default_chart_type = "bar",
+      ignore_zone_filter = TRUE,  # SUCO goal ignores zone filter
       # Detail boxes shown when drilling down to facility level
       detail_boxes = list(
-        list(id = "capacity", title = "Weekly Capacity", column = "total", icon = "chart-line", status = "completed"),
+        list(id = "goal", title = "Weekly Goal", column = "total", icon = "bullseye", status = "completed"),
         list(id = "completed", title = "Completed", column = "active", icon = "check-circle", status = "active")
       ),
       chart_labels = list(
-        total = "Weekly Capacity",
+        total = "Weekly Goal",
         active = "Completed",
-        expiring = "Above Capacity"
+        expiring = "Over Goal"
       ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • SUCO inspections only (survtype = 7)<br>
                          • Current week (Monday through today)<br>
-                         • All facilities<br>
-                         • Zone filter from dropdown"),
+                         • All facilities (zone filter not applied)<br>
+                         • Goal: 12 SUCOs per facility per week"),
       load_params = list(
-        capacity_total = 72,  # District-wide capacity: 72 SUCOs per week
-        capacity_per_facility = 72 / 7,  # Per-facility capacity
-        time_period = "current_week"  # Use current week for progress
+        goal_per_facility = 12,  # Each facility goal: 12 SUCOs per week
+        num_facilities = 6,      # Number of facilities
+        district_goal = 72,      # 6 * 12 = 72 total district goal
+        time_period = "current_week"
       )
     ),
     

@@ -78,6 +78,7 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   
   status_colors <- get_status_colors(theme = theme)
   display_as_average <- isTRUE(metric_config$display_as_average)
+  display_as_goal <- isTRUE(metric_config$display_as_goal)
   stacked_mode <- isTRUE(metric_config$chart_stacked_mode)
   labels <- if (!is.null(metric_config$chart_labels)) {
     metric_config$chart_labels
@@ -97,7 +98,15 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       y_active = if (stacked_mode) active else pmax(0, active - expiring),
       y_expiring = expiring,
       pct = if (display_as_average) round(active, 1) else ceiling(100 * active / pmax(1, total)),
-      tooltip_text = if (display_as_average) {
+      tooltip_text = if (display_as_goal) {
+        paste0(
+          display_name, "\n",
+          labels$active, ": ", format(active, big.mark = ","), " / ",
+          labels$total, ": ", format(total, big.mark = ","),
+          ifelse(expiring > 0, paste0("\n", labels$expiring, ": ", format(expiring, big.mark = ",")), ""),
+          click_hint
+        )
+      } else if (display_as_average) {
         paste0(
           display_name, "\n",
           labels$active, ": ", format(active, big.mark = ","), "\n",

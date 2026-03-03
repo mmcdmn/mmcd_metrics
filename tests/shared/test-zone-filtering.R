@@ -347,38 +347,43 @@ test_that("aggregate by facility without zone gives per-facility rows", {
 })
 
 # =============================================================================
-# 5. SUCO metric aggregate_metric_data zone handling
+# 5. SUCO metric aggregate_metric_data goal handling
 # =============================================================================
 
 mock_suco_config <- list(
   id = "suco",
-  display_name = "SUCO",
-  load_params = list(capacity_total = 72)
+  display_name = "SUCO Goal",
+  display_as_goal = TRUE,
+  load_params = list(goal_per_facility = 12, num_facilities = 6, district_goal = 72)
 )
 
 create_suco_mock_data <- function() {
   data.frame(
     facility = rep(c("E", "N"), each = 4),
-    zone = rep(c("1", "1", "2", "2"), 2),
+    zone = rep("all", 8),
     active_count = c(3, 2, 4, 1, 5, 3, 2, 1),
+    met_goal = rep(FALSE, 8),
     stringsAsFactors = FALSE
   )
 }
 
-test_that("SUCO aggregate with separate_zones=TRUE shows per-zone capacity", {
+test_that("SUCO aggregate district shows goal-based totals", {
   data <- create_suco_mock_data()
   result <- aggregate_metric_data(data, mock_suco_config, "suco",
                                   group_cols = c("zone"),
                                   separate_zones = TRUE)
-  # Should have 2 rows (P1, P2)
-  expect_equal(nrow(result), 2)
+  # Should have 1 row (district total — SUCO ignores zones)
+  expect_equal(nrow(result), 1)
   expect_true("display_name" %in% names(result))
-  # Each zone gets capacity_total / 2 = 36
-  expect_equal(result$total[1], 36)
-  expect_equal(result$total[2], 36)
+  # District goal = 72
+  expect_equal(result$total, 72)
+  # Active = sum of all active_count = 3+2+4+1+5+3+2+1 = 21
+  expect_equal(result$active, 21)
+  # facilities_at_goal should be present
+  expect_true("facilities_at_goal" %in% names(result))
 })
 
-test_that("SUCO aggregate with separate_zones=FALSE shows full capacity", {
+test_that("SUCO aggregate district with no zones shows full goal", {
   data <- create_suco_mock_data()
   result <- aggregate_metric_data(data, mock_suco_config, "suco",
                                   group_cols = character(0),
@@ -387,14 +392,15 @@ test_that("SUCO aggregate with separate_zones=FALSE shows full capacity", {
   expect_equal(result$total, 72)
 })
 
-test_that("SUCO aggregate by facility shows per-facility capacity", {
+test_that("SUCO aggregate by facility shows per-facility goal", {
   data <- create_suco_mock_data()
   result <- aggregate_metric_data(data, mock_suco_config, "suco",
                                   group_cols = c("facility"),
                                   separate_zones = FALSE)
-  # 2 facilities, each gets 72/2 = 36
+  # 2 facilities, each gets goal = 12
   expect_equal(nrow(result), 2)
-  expect_equal(result$total[1], 36)
+  expect_equal(result$total[1], 12)
+  expect_equal(result$total[2], 12)
 })
 
 # =============================================================================

@@ -195,34 +195,33 @@ load_metric_data <- function(metric,
     # - active = actual SUCOs completed this week
     # - expiring = 0 (not applicable)
     
-    # Get capacity from config
-    capacity_total <- config$load_params$capacity_total  # 72
-    capacity_per_facility <- config$load_params$capacity_per_facility  # 72/7
+    # Get goal from config
+    goal_per_facility <- config$load_params$goal_per_facility  # 12
+    num_facilities <- config$load_params$num_facilities  # 6
     
-    # Count SUCOs by facility and zone (each row in sites is one SUCO)
+    # SUCO ignores zone filter — always load all zones
+    # Count SUCOs by facility (each row in sites is one SUCO)
     suco_counts <- sites %>%
-      filter(zone %in% zone_filter) %>%
-      group_by(facility, zone) %>%
+      group_by(facility) %>%
       summarize(
         active_count = n(),  # Count of SUCOs done this week
         .groups = "drop"
       )
     
-    # Get all facilities and zones to show capacity even if no SUCOs
+    # Get all facilities to show goal even if no SUCOs
     all_facilities <- get_facility_lookup()
-    all_combinations <- expand.grid(
-      facility = all_facilities$short_name,
-      zone = zone_filter,
-      stringsAsFactors = FALSE
-    )
     
-    result <- all_combinations %>%
-      left_join(suco_counts, by = c("facility", "zone")) %>%
+    result <- data.frame(
+      facility = all_facilities$short_name,
+      stringsAsFactors = FALSE
+    ) %>%
+      left_join(suco_counts, by = "facility") %>%
       mutate(
-        total_count = capacity_per_facility,  # Capacity per facility
-        active_count = ifelse(is.na(active_count), 0, active_count),  # Actual SUCOs
-        # "Above Capacity" = how many SUCOs exceed the capacity line per facility
-        expiring_count = pmax(0, active_count - total_count)
+        zone = "all",
+        total_count = goal_per_facility,  # Goal per facility (12)
+        active_count = ifelse(is.na(active_count), 0, active_count),
+        expiring_count = pmax(0, active_count - total_count),  # Over goal
+        met_goal = active_count >= goal_per_facility  # Whether facility met goal
       )
     
     return(result)
@@ -344,23 +343,22 @@ ACRES_METRICS <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites"
 #' @return Data frame with total, active, expiring, display_name columns
 aggregate_metric_data <- function(data, config, metric, group_cols, separate_zones = TRUE) {
   
-  # --- SUCO: capacity-based ---
+  # --- SUCO: goal-based ---
   if (metric == "suco") {
-    capacity_total <- config$load_params$capacity_total  # 72
+    goal_per_facility <- config$load_params$goal_per_facility  # 12
+    num_facilities <- config$load_params$num_facilities  # 6
+    district_goal <- config$load_params$district_goal  # 72
     has_facility_group <- "facility" %in% group_cols
     
     if (has_facility_group) {
-      # Facility view: group by facility, divide capacity per facility
-      n_facilities <- length(unique(data$facility))
-      if (n_facilities == 0) n_facilities <- 1
-      cap_per_fac <- capacity_total / n_facilities
-      
+      # Facility view: show each facility's progress vs goal of 12
       result <- data %>%
         group_by(facility) %>%
         summarize(active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
         mutate(
-          total = cap_per_fac,
-          expiring = pmax(0, active - total)
+          total = goal_per_facility,
+          expiring = pmax(0, active - total),
+          met_goal = active >= goal_per_facility
         )
       
       # Map facility names
@@ -372,15 +370,26 @@ aggregate_metric_data <- function(data, config, metric, group_cols, separate_zon
         result$display_name <- result$facility
       }
       return(result)
-    } else if (separate_zones) {
-      return(data %>%
-        group_by(zone) %>%
-        summarize(total = capacity_total / 2, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(expiring = pmax(0, active - total), display_name = paste0("P", zone)))
     } else {
-      return(data %>%
-        summarize(total = capacity_total, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(expiring = pmax(0, active - total), display_name = "MMCD (All)", zone = "1,2"))
+      # District view (zone or combined): show total completed vs district goal
+      total_completed <- sum(data$active_count, na.rm = TRUE)
+      facilities_at_goal <- if ("met_goal" %in% names(data)) {
+        sum(data$met_goal, na.rm = TRUE)
+      } else {
+        # Compute from per-facility counts
+        fac_sums <- data %>% group_by(facility) %>% summarize(n = sum(active_count, na.rm = TRUE), .groups = "drop")
+        sum(fac_sums$n >= goal_per_facility)
+      }
+      return(data.frame(
+        total = district_goal,
+        active = total_completed,
+        expiring = pmax(0, total_completed - district_goal),
+        facilities_at_goal = facilities_at_goal,
+        num_facilities = num_facilities,
+        display_name = "MMCD (All)",
+        zone = "all",
+        stringsAsFactors = FALSE
+      ))
     }
   }
   
@@ -711,50 +720,21 @@ load_data_by_fos <- function(metric,
     sites <- sites %>% filter(fos_display == fos_filter | fos == fos_filter)
   }
   
-  # SUCO special case: capacity-based
+  # SUCO special case: goal-based — just show count per FOS
   if (metric == "suco") {
-    capacity_total <- config$load_params$capacity_total
-    
-    if (separate_zones && "zone" %in% names(sites)) {
-      # Separate zones: group by fos AND zone
-      n_fos <- length(unique(sites$fos_display))
-      if (n_fos == 0) n_fos <- 1
-      n_zones <- length(unique(sites$zone))
-      if (n_zones == 0) n_zones <- 1
-      capacity_per_fos_zone <- capacity_total / (n_fos * n_zones)
-      
-      result <- sites %>%
-        group_by(fos, fos_display, zone) %>%
-        summarize(
-          active = n(),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          total = capacity_per_fos_zone,
-          expiring = pmax(0, active - total),
-          display_name = paste0(fos_display, " (P", zone, ")"),
-          facility = NA_character_
-        ) %>%
-        select(fos, display_name, facility, zone, total, active, expiring)
-    } else {
-      n_fos <- length(unique(sites$fos_display))
-      if (n_fos == 0) n_fos <- 1
-      capacity_per_fos <- capacity_total / n_fos
-      
-      result <- sites %>%
-        group_by(fos, fos_display) %>%
-        summarize(
-          active = n(),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          total = capacity_per_fos,
-          expiring = pmax(0, active - total),
-          display_name = fos_display,
-          facility = NA_character_
-        ) %>%
-        select(fos, display_name, facility, total, active, expiring)
-    }
+    result <- sites %>%
+      group_by(fos, fos_display) %>%
+      summarize(
+        active = n(),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        total = active,  # No goal at FOS level, just show count
+        expiring = 0L,
+        display_name = fos_display,
+        facility = NA_character_
+      ) %>%
+      select(fos, display_name, facility, total, active, expiring)
     
     return(result)
   }

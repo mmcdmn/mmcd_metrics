@@ -77,12 +77,20 @@ load_all_current_data <- function(inputs, group_by = "zone", progress_callback =
     }
     
     cat("Loading", metric_id, "for", group_by, "...\n")
+    
+    # Override zone_filter for metrics that ignore it (e.g., SUCO)
+    effective_zone_filter <- if (isTRUE(config$ignore_zone_filter)) {
+      c("1", "2")
+    } else {
+      inputs$zone_filter
+    }
+    
     results[[metric_id]] <- tryCatch({
       load_fn(
         metric = metric_id,
         analysis_date = inputs$custom_today,
         expiring_days = inputs$expiring_days,
-        zone_filter = inputs$zone_filter,
+        zone_filter = effective_zone_filter,
         separate_zones = if (!is.null(inputs$separate_zones)) inputs$separate_zones else FALSE
       )
     }, error = function(e) {
@@ -415,6 +423,23 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
 #' @param metric_data Optional full data frame (for raw_value_column)
 #' @return Named list: pct (display value), display_value (formatted string)
 calculate_display_pct <- function(metric_id, config, total, active, expiring, metric_data = NULL) {
+  # --- SUCO Goal: show facilities-at-goal / total-facilities (district) or completed/goal (facility) ---
+  if (isTRUE(config$display_as_goal)) {
+    goal_per_fac <- config$load_params$goal_per_facility  # 12
+    num_facs <- config$load_params$num_facilities  # 6
+    
+    # Check if metric_data has facilities_at_goal (district view)
+    if (!is.null(metric_data) && "facilities_at_goal" %in% names(metric_data)) {
+      fac_at_goal <- sum(metric_data$facilities_at_goal, na.rm = TRUE)
+      pct <- round(100 * fac_at_goal / num_facs, 0)
+      return(list(pct = pct, display_value = paste0(fac_at_goal, "/", num_facs)))
+    }
+    
+    # Facility view: active / goal_per_facility
+    pct <- round(100 * active / goal_per_fac, 0)
+    return(list(pct = pct, display_value = paste0(active, "/", goal_per_fac)))
+  }
+  
   if (metric_id %in% c("cattail_treatments", "air_sites")) {
     treated <- active - expiring
     workload <- treated + expiring
@@ -1011,23 +1036,29 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   
   if (!metric_id %in% dynamic_metrics) return(result)
   
-  # SUCO has capacity-based logic — thresholds from config
+  # SUCO has goal-based logic — color based on progress toward goal
   if (metric_id == "suco") {
-    cfg_thresh <- tryCatch(get_config_threshold("capacity", "suco"), error = function(e) NULL)
-    at_cap   <- cfg_thresh$at_capacity   %||% 72
-    near_cap <- cfg_thresh$near_capacity %||% 60
+    cfg_goal <- tryCatch(get_config_threshold("goal", "suco"), error = function(e) NULL)
+    goal_per_fac <- cfg_goal$goal_per_facility %||% 12
+    district_goal <- cfg_goal$district_goal %||% 72
     
-    if (current_value >= at_cap) {
-      result$color <- COLOR_ALERT
-      result$status <- "at_capacity"
-    } else if (current_value >= near_cap) {
-      result$color <- COLOR_WARNING
-      result$status <- "near_capacity"
-    } else {
-      result$color <- COLOR_GOOD
+    # current_value = total SUCOs completed this week (district) or per-facility count
+    # For district: compare total completed vs district goal
+    # For facility: compare facility completed vs per-facility goal
+    goal <- if (!is.null(facility_filter)) goal_per_fac else district_goal
+    pct_of_goal <- if (goal > 0) current_value / goal else 0
+    
+    if (pct_of_goal >= 1.0) {
+      result$color <- COLOR_GOOD      # Met or exceeded goal
       result$status <- "good"
+    } else if (pct_of_goal >= 0.75) {
+      result$color <- COLOR_WARNING    # 75%+ of goal
+      result$status <- "warning"
+    } else {
+      result$color <- COLOR_ALERT      # Below 75% of goal
+      result$status <- "alert"
     }
-    result$historical_avg <- at_cap  # Capacity threshold for reference
+    result$historical_avg <- goal
     return(result)
   }
   
@@ -1165,10 +1196,11 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       config <- registry[[metrics[1]]]
       pct_info <- calculate_display_pct(metrics[1], config, total_all, active_all, expiring_all)
       pct <- pct_info$pct
-      display_value <- paste0(pct, "%")
+      display_value <- pct_info$display_value
       
       # When zones are separate, show dual P1/P2 values for this facility
-      if (isTRUE(separate_zones)) {
+      # (Skip for zone-independent metrics like SUCO)
+      if (isTRUE(separate_zones) && !isTRUE(config$ignore_zone_filter)) {
         p1_total <- 0; p1_active <- 0; p1_expiring <- 0
         p2_total <- 0; p2_active <- 0; p2_expiring <- 0
         has_zones <- FALSE
@@ -1298,13 +1330,19 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         active <- sum(metric_data$active, na.rm = TRUE)
         expiring <- sum(metric_data$expiring, na.rm = TRUE)
         
-        pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
-        pct <- pct_info$pct
-        display_value <- pct_info$display_value
+        # SUCO at FOS level: just show the count
+        if (isTRUE(config$display_as_goal)) {
+          pct <- 0
+          display_value <- as.character(active)
+        } else {
+          pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
+          pct <- pct_info$pct
+          display_value <- pct_info$display_value
+        }
       } else {
         pct <- 0
         active <- 0
-        display_value <- "0%"
+        display_value <- if (isTRUE(config$display_as_goal)) "0" else "0%"
       }
       
       # Get dynamic color — compare against THIS FOS's historical average
@@ -1348,8 +1386,12 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     row_elements <- lapply(box_rows, function(row_boxes) fluidRow(row_boxes))
     
     # Build hidden chart panels for each metric (current progress + historical side by side)
+    # Skip chart panels for goal-based metrics (SUCO) at FOS level
     chart_panels <- lapply(metrics, function(metric_id) {
       config <- registry[[metric_id]]
+      
+      # No charts for SUCO at FOS level
+      if (isTRUE(config$display_as_goal)) return(NULL)
       
       # Current progress chart
       current_panel <- create_chart_panel(metric_id, config, chart_height = "250px", is_historical = FALSE)
@@ -1375,6 +1417,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       )
     })
     
+    chart_panels <- Filter(Negate(is.null), chart_panels)
     charts_row <- div(class = "charts-grid-row", do.call(tagList, chart_panels))
     
     div(class = "fos-metric-boxes",
@@ -1524,27 +1567,14 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           active <- sum(metric_data$active, na.rm = TRUE)
           expiring <- sum(metric_data$expiring, na.rm = TRUE)
           
-          # SUCO: stat box percentage always reflects full district (P1+P2 combined)
-          # regardless of zone filter. The bar graph drill-down still respects zone filter.
-          if (metric_id == "suco" && !identical(sort(zone_filter), c("1", "2"))) {
-            full_suco <- tryCatch(
-              load_data_by_zone(metric = "suco", analysis_date = analysis_date,
-                                zone_filter = c("1", "2")),
-              error = function(e) NULL
-            )
-            if (!is.null(full_suco) && nrow(full_suco) > 0) {
-              total <- sum(full_suco$total, na.rm = TRUE)
-              active <- sum(full_suco$active, na.rm = TRUE)
-              expiring <- sum(full_suco$expiring, na.rm = TRUE)
-            }
-          }
-          
           pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
           pct <- pct_info$pct
           display_value <- pct_info$display_value
           
           # When zones are separate, show dual P1/P2 values
-          if (isTRUE(separate_zones) && "zone" %in% names(metric_data) &&
+          # When zones are separate, show dual P1/P2 values (skip for zone-independent metrics like SUCO)
+          if (isTRUE(separate_zones) && !isTRUE(config$ignore_zone_filter) &&
+              "zone" %in% names(metric_data) &&
               all(c("1", "2") %in% as.character(metric_data$zone))) {
             p1_data <- metric_data[as.character(metric_data$zone) == "1", ]
             p2_data <- metric_data[as.character(metric_data$zone) == "2", ]

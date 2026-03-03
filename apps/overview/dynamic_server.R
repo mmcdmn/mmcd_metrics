@@ -1055,7 +1055,7 @@ get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date,
 #' @param historical_data Optional: pre-loaded historical data to extract weekly values (avoids duplicate DB loads)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL) {
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL, separate_zones = FALSE) {
   
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
@@ -1163,7 +1163,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           `data-week-num` = week_num,
           create_stat_box(
             value = paste0(pct, "%"),
-            title = fac,  # Just show facility short name
+            title = get_facility_display_names(fac),  # Show full facility name
             bg_color = box_color,
             icon = NULL,  # No icon for facility view
             icon_type = "fontawesome"
@@ -1461,6 +1461,32 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
           pct <- pct_info$pct
           display_value <- pct_info$display_value
+          
+          # When zones are separate, show dual P1/P2 values
+          if (isTRUE(separate_zones) && "zone" %in% names(metric_data) &&
+              all(c("1", "2") %in% as.character(metric_data$zone))) {
+            p1_data <- metric_data[as.character(metric_data$zone) == "1", ]
+            p2_data <- metric_data[as.character(metric_data$zone) == "2", ]
+            
+            p1_total <- sum(p1_data$total, na.rm = TRUE)
+            p1_active <- sum(p1_data$active, na.rm = TRUE)
+            p1_expiring <- sum(p1_data$expiring, na.rm = TRUE)
+            p2_total <- sum(p2_data$total, na.rm = TRUE)
+            p2_active <- sum(p2_data$active, na.rm = TRUE)
+            p2_expiring <- sum(p2_data$expiring, na.rm = TRUE)
+            
+            p1_info <- calculate_display_pct(metric_id, config, p1_total, p1_active, p1_expiring, p1_data)
+            p2_info <- calculate_display_pct(metric_id, config, p2_total, p2_active, p2_expiring, p2_data)
+            
+            # Build dual display: P1 larger, P2 smaller below
+            display_value <- tagList(
+              tags$span(style = "font-size: 1em;",
+                paste0("P1: ", p1_info$display_value)),
+              tags$br(),
+              tags$span(style = "font-size: 0.7em; opacity: 0.85;",
+                paste0("P2: ", p2_info$display_value))
+            )
+          }
         } else {
           pct <- 0
           active <- 0
@@ -2245,7 +2271,7 @@ build_overview_server <- function(input, output, session,
     
     # Generate value boxes
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter)
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
       message("[RENDER-UI] generate_summary_stats SUCCESS")
       stats
     }, error = function(e) {

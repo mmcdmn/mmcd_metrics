@@ -845,28 +845,25 @@ get_facility_order <- function() {
   facilities <- tryCatch({
     get_facility_lookup()
   }, error = function(e) {
-    data.frame(full_name = c("East", "North", "South Jordan", "South Reserve", "West Metro"))
+    data.frame(full_name = c("East", "Main Office", "North", "South Jordan", "South Rosemount", "West Maple Grove", "West Plymouth"))
   })
   
   if (nrow(facilities) == 0) {
-    return(c("East", "North", "South Jordan", "South Reserve", "West Metro"))
+    return(c("East", "Main Office", "North", "South Jordan", "South Rosemount", "West Maple Grove", "West Plymouth"))
   }
   return(facilities$full_name)
 }
 
-#' Order facilities in standard order
+#' Order facilities in alphabetical order
 order_facilities <- function(data, separate_zones = FALSE) {
   if (!"display_name" %in% names(data)) return(data)
   
-  facility_order <- get_facility_order()
-  
   if (separate_zones) {
-    zone_levels <- unlist(lapply(facility_order, function(f) {
-      c(paste0(f, " (P1)"), paste0(f, " (P2)"))
-    }))
-    data <- data %>% mutate(display_name = factor(display_name, levels = zone_levels))
+    alpha_levels <- sort(unique(as.character(data$display_name)))
+    data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
   } else {
-    data <- data %>% mutate(display_name = factor(display_name, levels = facility_order))
+    alpha_levels <- sort(unique(as.character(data$display_name)))
+    data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
   }
   
   data %>% arrange(display_name)

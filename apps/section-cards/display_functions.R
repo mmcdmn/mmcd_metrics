@@ -76,12 +76,30 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   
   # Start HTML with print-friendly CSS
   grid_rows <- ceiling(cards_per_page / 2)
+  
+  # ---- Density scaling ----
+  # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller
+  card_scale <- 6 / cards_per_page  # 1.0, 0.75, 0.6, 0.5
+  # Page margins shrink to reclaim space at higher density
+  page_margin <- switch(as.character(cards_per_page),
+    "6"  = "0.5in",
+    "8"  = "0.4in",
+    "10" = "0.3in",
+    "12" = "0.25in",
+    "0.5in"
+  )
+  margin_num <- as.numeric(gsub("in", "", page_margin))
+  # Usable print area on letter paper (8.5 x 11)
+  usable_height <- 11 - 2 * margin_num
+  # Gap between cards scales down
+  grid_gap <- max(2, round(15 * card_scale))
+  
   html <- paste0('
   <style>
     @media print {
       @page {
         size: letter;
-        margin: 0.5in;
+        margin: ', page_margin, ';
       }
       .page-break {
         page-break-after: always;
@@ -104,9 +122,10 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     .card-page {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: repeat(', grid_rows, ', auto);
-      gap: 15px;
+      grid-template-rows: repeat(', grid_rows, ', 1fr);
+      gap: ', grid_gap, 'px;
       margin-bottom: 20px;
+      box-sizing: border-box;
     }
     
     .section-card {
@@ -116,6 +135,13 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       font-family: Arial, sans-serif;
       font-size: 11px;
       position: relative;
+      transform: scale(', card_scale, ');
+      transform-origin: top left;
+      width: ', round(100 / card_scale), '%;
+      height: ', round(100 / card_scale), '%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
     
     .prehatch-overlay {
@@ -422,6 +448,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     .card-table {
       width: 100%;
       border-collapse: collapse;
+      flex: 1;
     }
     
     .card-table th {
@@ -466,6 +493,14 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
         padding: 20px;
         margin-bottom: 40px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+    }
+    
+    /* Print: constrain card-page to exact page height so cards fit */
+    @media print {
+      .card-page {
+        height: ', usable_height, 'in;
+        overflow: hidden;
       }
     }
   </style>

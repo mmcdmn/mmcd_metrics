@@ -376,9 +376,10 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
     }
     
     # Return container with facility header, detail boxes, and drill-down button
+    facility_display <- get_facility_display_names(facility)
     div(class = "facility-detail-boxes-container",
       div(class = "facility-detail-header",
-        icon("building"), " ", facility, " - ", config$display_name, " Details",
+        icon("building"), " ", facility_display, " - ", config$display_name, " Details",
         tags$button(
           class = "drill-down-btn",
           style = "position: relative; float: right; margin-top: -2px;",
@@ -603,13 +604,15 @@ get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2
 
 #' Get historical average for a SPECIFIC FACILITY for a metric and week
 #' Computes on-the-fly by loading 10-year historical data for that facility
+#' For active treatment metrics (use_active_calculation=TRUE), computes
+#' active-on-Friday values with effect_days and dedup — same logic as FOS version.
 #' @param metric_id Metric ID
 #' @param week_num Week number
 #' @param facility Facility short name to filter
 #' @param zone_filter Zone filter
 #' @return Historical average value or NULL if not available
 get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, zone_filter = c("1", "2")) {
-  # Check Redis cache first (FOS-level historical avg, 7-day TTL)
+  # Check Redis cache first (facility-level historical avg, 7-day TTL)
   cache_key <- paste0("hist_fac:", metric_id, ":", facility, ":w", week_num)
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
     cached <- tryCatch(redis_get(cache_key), error = function(e) NULL)
@@ -619,6 +622,10 @@ get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, z
     registry <- get_metric_registry()
     config <- registry[[metric_id]]
     if (is.null(config)) return(NULL)
+    
+    # Year range for 10-year average
+    current_year <- lubridate::year(Sys.Date())
+    start_year <- current_year - 9
     
     # Load from in-memory cache (avoids repeated 10yr DB loads per render pass)
     raw_data <- get_cached_raw_historical(metric_id, zone_filter)
@@ -635,31 +642,80 @@ get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, z
     # Add week number
     treatments$week_num <- lubridate::week(treatments$inspdate)
     
-    # Filter to target week
-    week_treatments <- treatments[treatments$week_num == week_num, ]
-    if (nrow(week_treatments) == 0) return(NULL)
+    # For active treatment metrics, compute what's active on each week's Friday
+    # (same logic as get_historical_week_avg_by_fos)
+    use_active <- isTRUE(config$use_active_calculation)
     
-    # Assign value column (acres or count)
-    if (isTRUE(config$has_acres)) {
-      acres_col <- if ("treated_acres" %in% names(week_treatments)) "treated_acres"
-                   else if ("acres" %in% names(week_treatments)) "acres" else NULL
-      week_treatments$value <- if (!is.null(acres_col)) week_treatments[[acres_col]] else 1
-    } else if ("value" %in% names(week_treatments)) {
-      week_treatments$value <- as.numeric(week_treatments$value)
+    if (use_active) {
+      # Active treatment calculation
+      if (!"effect_days" %in% names(treatments)) {
+        treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
+      }
+      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
+      
+      # Assign value column
+      treatments <- assign_value_column(treatments, config)
+      
+      # Compute weekly active values across all years
+      yearly_values <- data.frame()
+      for (yr in start_year:(current_year - 1)) {
+        start_date <- as.Date(paste0(yr, "-01-01"))
+        end_date <- as.Date(paste0(yr, "-12-31"))
+        week_start_dates <- seq.Date(start_date, end_date, by = "week")
+        
+        for (ws in week_start_dates) {
+          ws <- as.Date(ws, origin = "1970-01-01")
+          wf <- ws + 4  # Friday
+          if (lubridate::year(wf) != yr) next
+          wn <- lubridate::week(wf)
+          if (wn != week_num) next
+          
+          active_on_friday <- treatments[treatments$inspdate <= wf & treatments$treatment_end >= wf, ]
+          if (nrow(active_on_friday) > 0) {
+            # Dedup by site
+            if ("sitecode" %in% names(active_on_friday)) {
+              active_on_friday <- active_on_friday[order(-as.numeric(active_on_friday$treatment_end)), ]
+              active_on_friday <- active_on_friday[!duplicated(active_on_friday$sitecode), ]
+            } else if ("catchbasin_id" %in% names(active_on_friday)) {
+              active_on_friday <- active_on_friday[order(-as.numeric(active_on_friday$treatment_end)), ]
+              active_on_friday <- active_on_friday[!duplicated(active_on_friday$catchbasin_id), ]
+            }
+            week_value <- sum(active_on_friday$value, na.rm = TRUE)
+          } else {
+            week_value <- 0
+          }
+          yearly_values <- rbind(yearly_values, data.frame(year = yr, value = week_value))
+        }
+      }
+      
+      if (nrow(yearly_values) == 0) return(NULL)
+      result_val <- mean(yearly_values$value, na.rm = TRUE)
+      
     } else {
-      week_treatments$value <- 1
+      # Simple count/sum by week (non-active metrics)
+      week_treatments <- treatments[treatments$week_num == week_num, ]
+      if (nrow(week_treatments) == 0) return(NULL)
+      
+      # Assign value column
+      if (isTRUE(config$has_acres)) {
+        acres_col <- if ("treated_acres" %in% names(week_treatments)) "treated_acres"
+                     else if ("acres" %in% names(week_treatments)) "acres" else NULL
+        week_treatments$value <- if (!is.null(acres_col)) week_treatments[[acres_col]] else 1
+      } else if ("value" %in% names(week_treatments)) {
+        week_treatments$value <- as.numeric(week_treatments$value)
+      } else {
+        week_treatments$value <- 1
+      }
+      
+      # Calculate average across years
+      yearly_values <- week_treatments %>%
+        dplyr::mutate(year = lubridate::year(inspdate)) %>%
+        dplyr::group_by(year) %>%
+        dplyr::summarise(yearly_value = sum(value, na.rm = TRUE), .groups = "drop")
+      
+      if (nrow(yearly_values) == 0) return(NULL)
+      result_val <- mean(yearly_values$yearly_value, na.rm = TRUE)
     }
-    
-    # Calculate average across years for this week
-    yearly_values <- week_treatments %>%
-      dplyr::mutate(year = lubridate::year(inspdate)) %>%
-      dplyr::group_by(year) %>%
-      dplyr::summarise(yearly_value = sum(value, na.rm = TRUE), .groups = "drop")
-    
-    if (nrow(yearly_values) == 0) return(NULL)
-    
-    # Return average across years
-    result_val <- mean(yearly_values$yearly_value, na.rm = TRUE)
     
     # Cache in Redis (7-day TTL) to avoid recomputing
     if (exists("redis_is_active", mode = "function") && redis_is_active()) {
@@ -1055,7 +1111,7 @@ get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date,
 #' @param historical_data Optional: pre-loaded historical data to extract weekly values (avoids duplicate DB loads)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL) {
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL, separate_zones = FALSE) {
   
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
@@ -1080,16 +1136,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     max_fac_per_row <- 3
     col_width <- max(4, floor(12 / min(n_facilities, max_fac_per_row)))
     
-    # Pre-extract FACILITY-SPECIFIC weekly values from historical data
-    # This ensures each facility is compared against its own current week data
     week_num <- lubridate::week(analysis_date)
-    fac_weekly_values <- extract_weekly_values_by_group(
-      metrics,
-      historical_data,
-      week_num,
-      registry,
-      group_col = "facility"
-    )
     
     stat_boxes <- lapply(all_facilities, function(fac) {
       # For this facility, aggregate across all metrics
@@ -1118,37 +1165,71 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       config <- registry[[metrics[1]]]
       pct_info <- calculate_display_pct(metrics[1], config, total_all, active_all, expiring_all)
       pct <- pct_info$pct
+      display_value <- paste0(pct, "%")
+      
+      # When zones are separate, show dual P1/P2 values for this facility
+      if (isTRUE(separate_zones)) {
+        p1_total <- 0; p1_active <- 0; p1_expiring <- 0
+        p2_total <- 0; p2_active <- 0; p2_expiring <- 0
+        has_zones <- FALSE
+        for (metric_id in metrics) {
+          metric_data <- data[[metric_id]]
+          if (!is.null(metric_data) && "facility" %in% names(metric_data) && "zone" %in% names(metric_data)) {
+            fac_data <- metric_data[metric_data$facility == fac, ]
+            p1_rows <- fac_data[as.character(fac_data$zone) == "1", ]
+            p2_rows <- fac_data[as.character(fac_data$zone) == "2", ]
+            if (nrow(p1_rows) > 0 || nrow(p2_rows) > 0) has_zones <- TRUE
+            p1_total <- p1_total + sum(p1_rows$total, na.rm = TRUE)
+            p1_active <- p1_active + sum(p1_rows$active, na.rm = TRUE)
+            p1_expiring <- p1_expiring + sum(p1_rows$expiring, na.rm = TRUE)
+            p2_total <- p2_total + sum(p2_rows$total, na.rm = TRUE)
+            p2_active <- p2_active + sum(p2_rows$active, na.rm = TRUE)
+            p2_expiring <- p2_expiring + sum(p2_rows$expiring, na.rm = TRUE)
+          }
+        }
+        if (has_zones) {
+          p1_info <- calculate_display_pct(metrics[1], config, p1_total, p1_active, p1_expiring)
+          p2_info <- calculate_display_pct(metrics[1], config, p2_total, p2_active, p2_expiring)
+          display_value <- tagList(
+            tags$span(style = "font-size: 1em;",
+              paste0("P1: ", p1_info$display_value)),
+            tags$span(style = "font-size: 0.7em; opacity: 0.85; margin-left: 12px;",
+              paste0("P2: ", p2_info$display_value))
+          )
+        }
+      }
       
       # Use FACILITY-SPECIFIC historical data for dynamic coloring
       # Each facility is compared against ITS OWN historical average
+      # IMPORTANT: Pass active_all as weekly_value — this is the facility's current
+      # active acres/count, NOT district-wide. extract_weekly_values_by_group can't
+      # provide per-facility values because load_current_year_for_cache is district-wide.
       box_color <- config$bg_color
       box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
       
-      if (!is.null(fac_zone)) {
-        fac_zone_filter <- fac_zone
-        for (metric_id in metrics) {
-          # Get facility-specific weekly value (nested: fac_weekly_values[[metric_id]][[fac]])
-          weekly_val <- if (!is.null(fac_weekly_values[[metric_id]])) {
-            fac_weekly_values[[metric_id]][[fac]]
-          } else {
+      # Use facility's zone for comparison; fall back to parent zone_filter
+      fac_zone_filter <- if (!is.null(fac_zone)) fac_zone else zone_filter
+      for (metric_id in metrics) {
+        fac_config <- registry[[metric_id]]
+        fac_cm <- if (!is.null(fac_config$color_mode)) fac_config$color_mode else ""
+        color_value <- if (fac_cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
+        # Use active_all as the weekly value — this is THIS facility's current active
+        # value from load_data_by_facility, not district-wide
+        info <- tryCatch(
+          get_dynamic_value_box_info(metric_id, color_value, analysis_date, 
+                                     fac_config, 
+                                     zone_filter = fac_zone_filter, 
+                                     weekly_value = active_all,
+                                     facility_filter = fac),
+          error = function(e) {
+            cat("[COLOR] Error for", fac, metric_id, ":", e$message, "\n")
             NULL
           }
-          fac_config <- registry[[metric_id]]
-          fac_cm <- if (!is.null(fac_config$color_mode)) fac_config$color_mode else ""
-          color_value <- if (fac_cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
-          info <- tryCatch(
-            get_dynamic_value_box_info(metric_id, color_value, analysis_date, 
-                                       fac_config, 
-                                       zone_filter = fac_zone_filter, 
-                                       weekly_value = weekly_val,
-                                       facility_filter = fac),
-            error = function(e) NULL
-          )
-          if (!is.null(info) && info$status != "default") {
-            box_color <- info$color
-            box_info <- info
-            break
-          }
+        )
+        if (!is.null(info) && info$status != "default") {
+          box_color <- info$color
+          box_info <- info
+          break
         }
       }
       
@@ -1162,8 +1243,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
           `data-week-num` = week_num,
           create_stat_box(
-            value = paste0(pct, "%"),
-            title = fac,  # Just show facility short name
+            value = display_value,
+            title = get_facility_display_names(fac),  # Show full facility name
             bg_color = box_color,
             icon = NULL,  # No icon for facility view
             icon_type = "fontawesome"
@@ -1461,6 +1542,31 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
           pct <- pct_info$pct
           display_value <- pct_info$display_value
+          
+          # When zones are separate, show dual P1/P2 values
+          if (isTRUE(separate_zones) && "zone" %in% names(metric_data) &&
+              all(c("1", "2") %in% as.character(metric_data$zone))) {
+            p1_data <- metric_data[as.character(metric_data$zone) == "1", ]
+            p2_data <- metric_data[as.character(metric_data$zone) == "2", ]
+            
+            p1_total <- sum(p1_data$total, na.rm = TRUE)
+            p1_active <- sum(p1_data$active, na.rm = TRUE)
+            p1_expiring <- sum(p1_data$expiring, na.rm = TRUE)
+            p2_total <- sum(p2_data$total, na.rm = TRUE)
+            p2_active <- sum(p2_data$active, na.rm = TRUE)
+            p2_expiring <- sum(p2_data$expiring, na.rm = TRUE)
+            
+            p1_info <- calculate_display_pct(metric_id, config, p1_total, p1_active, p1_expiring, p1_data)
+            p2_info <- calculate_display_pct(metric_id, config, p2_total, p2_active, p2_expiring, p2_data)
+            
+            # Build dual display: P1 and P2 side by side
+            display_value <- tagList(
+              tags$span(style = "font-size: 1em;",
+                paste0("P1: ", p1_info$display_value)),
+              tags$span(style = "font-size: 0.7em; opacity: 0.85; margin-left: 12px;",
+                paste0("P2: ", p2_info$display_value))
+            )
+          }
         } else {
           pct <- 0
           active <- 0
@@ -2245,7 +2351,7 @@ build_overview_server <- function(input, output, session,
     
     # Generate value boxes
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter)
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
       message("[RENDER-UI] generate_summary_stats SUCCESS")
       stats
     }, error = function(e) {
@@ -2379,6 +2485,9 @@ build_overview_server <- function(input, output, session,
             }
           }
         }
+      } else if (entity_type == "facility") {
+        # Map facility short code to full display name
+        header_label <- get_facility_display_names(selected_entity)
       }
 
       # Generate the detail boxes (reuse existing generator)

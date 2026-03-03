@@ -116,12 +116,13 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       }
     )
   
-  # Order: zone charts use P1/P2 factor, facility/FOS charts sort by total desc
+  # Order: zone charts use P1/P2 factor, facility/FOS charts use alphabetical
   is_zone_chart <- all(data$display_name %in% c("P1", "P2"))
   if (is_zone_chart) {
     data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
   } else {
-    data$display_name <- reorder(data$display_name, -data$y_total)
+    alpha_levels <- sort(unique(as.character(data$display_name)))
+    data$display_name <- factor(data$display_name, levels = rev(alpha_levels))
   }
   
   # Layered bar chart: red background → orange (expiring+active) → green (active)
@@ -438,7 +439,10 @@ create_percentage_chart <- function(data, theme = "MMCD") {
   status_colors <- get_status_colors(theme = theme)
   
   # Create percentage bar chart
-  p <- ggplot(data, aes(x = reorder(display_name, pct_active), y = pct_active, text = tooltip_text)) +
+  alpha_levels <- sort(unique(as.character(data$display_name)))
+  data$display_name <- factor(data$display_name, levels = rev(alpha_levels))
+  
+  p <- ggplot(data, aes(x = display_name, y = pct_active, text = tooltip_text)) +
     geom_bar(stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
     geom_hline(yintercept = 100, linetype = "dashed", color = "gray50") +
     coord_flip() +

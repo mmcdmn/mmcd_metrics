@@ -944,6 +944,9 @@ get_overview_js <- function() {
       // Toggle active state on facility boxes
       $('.stat-box-clickable[data-facility]').removeClass('active');
       
+      // Remove any existing comparison banner in detail container
+      detailContainer.find('.comparison-banner').remove();
+      
       // Check if this facility is already selected
       var currentFacility = detailContainer.data('current-facility');
       if (currentFacility === facility) {
@@ -957,6 +960,26 @@ get_overview_js <- function() {
         detailContainer.data('current-facility', facility);
         detailContainer.addClass('visible');
         Shiny.setInputValue('selected_facility', facility, {priority: 'event'});
+        
+        // Add comparison banner from stat box data attributes
+        var currentWeek = statBox.data('current-week');
+        var historicalAvg = statBox.data('historical-avg');
+        var pctDiff = statBox.data('pct-diff');
+        var weekNum = statBox.data('week-num');
+        
+        if (historicalAvg && currentWeek !== undefined && currentWeek !== '') {
+          var diffClass = pctDiff >= 0 ? 'positive' : 'negative';
+          var diffSign = pctDiff >= 0 ? '+' : '';
+          var bannerHtml = '<div class=\"comparison-banner ' + diffClass + '\">' +
+            '<span class=\"current\">Current: ' + Math.round(currentWeek).toLocaleString() + '</span>' +
+            '<span class=\"separator\">|</span>' +
+            '<span class=\"historical\">10yr Week ' + weekNum + ' Avg: ' + Math.round(historicalAvg).toLocaleString() + '</span>' +
+            '<span class=\"separator\">|</span>' +
+            '<span class=\"diff ' + diffClass + '\">' + diffSign + pctDiff + '%</span>' +
+            '</div>';
+          // Prepend banner into detail container (appears above detail boxes)
+          detailContainer.prepend(bannerHtml);
+        }
         
         // Scroll to detail container
         setTimeout(function() {
@@ -1293,7 +1316,12 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
         )
       },
       h1(page_title),
-      div(class = "subtitle", page_subtitle)
+      div(class = "subtitle", page_subtitle),
+      # Color explanation note — appears in the blue header for all views
+      div(style = "margin-top: 8px; font-size: 12px; opacity: 0.85; display: flex; align-items: center; gap: 6px;",
+        icon("info-circle"),
+        span("Value box colors reflect current week vs. 10-year weekly average for treatment metrics")
+      )
     ),
     
     # Controls Panel

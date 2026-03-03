@@ -10,16 +10,37 @@ library(testthat)
 
 context("Zone Filtering")
 
+resolve_project_file <- function(rel_path) {
+  candidates <- c(
+    rel_path,
+    file.path("..", rel_path),
+    file.path("..", "..", rel_path)
+  )
+  for (candidate in candidates) {
+    if (file.exists(candidate)) return(candidate)
+  }
+  NA_character_
+}
+
 # =============================================================================
 # SETUP: Source required modules
 # =============================================================================
 
 # Ensure metric_registry and data functions are available
 tryCatch({
-  source("apps/overview/metric_registry.R")
-  source("apps/overview/data_functions.R")
-  source("apps/overview/ui_helper.R")
-  cat("✓ Overview modules loaded for zone filtering tests\n")
+  metric_registry_file <- resolve_project_file("apps/overview/metric_registry.R")
+  data_functions_file <- resolve_project_file("apps/overview/data_functions.R")
+  ui_helper_file <- resolve_project_file("apps/overview/ui_helper.R")
+
+  if (!is.na(metric_registry_file)) source(metric_registry_file)
+  if (!is.na(data_functions_file)) source(data_functions_file)
+  if (!is.na(ui_helper_file)) source(ui_helper_file)
+
+  if (exists("navigate_to_overview", mode = "function")) {
+    cat("✓ Overview modules loaded for zone filtering tests\n")
+  } else {
+    cat("✗ Overview modules not available for zone filtering tests\n")
+  }
 }, error = function(e) {
   cat("✗ Overview modules failed:", e$message, "\n")
 })
@@ -29,13 +50,12 @@ tryCatch({
 # =============================================================================
 
 test_that("parse_unified_params is available", {
-  tryCatch({
-    source("apps/overview/unified/app.R", local = TRUE)
-    skip("Cannot source unified/app.R in test environment (needs shiny)")
-  }, error = function(e) {
-    # Expected - test the parsing logic directly instead
-    expect_true(TRUE)
-  })
+  unified_app_file <- resolve_project_file("apps/overview/unified/app.R")
+  if (is.na(unified_app_file)) {
+    skip("unified/app.R not present in this repository")
+  }
+
+  expect_true(file.exists(unified_app_file))
 })
 
 # Test zone parsing logic directly (extracted from parse_unified_params)

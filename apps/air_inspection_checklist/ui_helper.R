@@ -26,6 +26,15 @@ air_inspection_checklist_ui <- function() {
           font-size: 14px;
           border-bottom: 1px solid #ccc;
         }
+        .section-inner-subheader {
+          background-color: #f0f4f8;
+          padding: 4px 12px 4px 24px;
+          font-weight: 600;
+          font-size: 13px;
+          color: #495057;
+          border-bottom: 1px solid #dee2e6;
+          border-top: 1px solid #dee2e6;
+        }
         .checklist-item {
           padding: 6px 12px;
           border-bottom: 1px solid #eee;
@@ -106,6 +115,33 @@ air_inspection_checklist_ui <- function() {
           font-size: 12px;
           color: #666;
         }
+        /* AirMap collapsible sub-headers */
+        .airmap-toggle {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: background-color 0.15s;
+        }
+        .airmap-toggle:hover {
+          background-color: #dde4ef;
+        }
+        .airmap-chevron {
+          transition: transform 0.2s;
+          font-size: 12px;
+          width: 16px;
+        }
+        .airmap-toggle.open .airmap-chevron {
+          transform: rotate(90deg);
+        }
+      ")),
+      # JavaScript for collapsible AirMap sections
+      tags$script(HTML("
+        $(document).on('click', '.airmap-toggle', function() {
+          var target = $(this).data('target');
+          var panel = $('#' + target);
+          $(this).toggleClass('open');
+          panel.slideToggle(200);
+        });
       "))
     ),
 

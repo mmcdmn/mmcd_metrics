@@ -178,7 +178,7 @@ get_metric_registry <- function() {
       bg_color = "#0ea5e9",
       app_folder = "air_sites_simple",
       has_acres = TRUE,
-      historical_enabled = TRUE,
+      historical_enabled = FALSE,
       use_active_calculation = TRUE,
       display_metric = "treatment_acres",
       chart_types = c("bar", "pie"),

@@ -84,13 +84,17 @@ thresholds:
       good: 110            # Green if current <= 110% of avg
       warning: 130         # Yellow if <= 130%, Red if above
 
-  # --- Capacity-based metrics ---
-  # Compared against absolute capacity numbers
-  capacity:
+  # --- Goal-based metrics ---
+  # Compared against weekly goals per facility. every goal is higher_is_better.
+  goal:
     suco:
-      direction: lower_is_better
-      at_capacity: 72      # Red if >= 72 (at weekly capacity)
-      near_capacity: 60    # Yellow if >= 60 (approaching capacity)
+      goal_per_facility: 12   # Each facility should complete 12 SUCOs/week
+      num_facilities: 6       # Total number of facilities
+      district_goal: 72       # 6 * 12 = 72 total district goal
+      # District-level color thresholds (# of facilities that met goal)
+      good: 6                 # Green if all 6 facilities met goal
+      warning: 4              # Yellow if 4-5 facilities met goal
+      # Red if < 4 facilities met goal
 
 
 # =============================================================================
@@ -107,7 +111,7 @@ descriptions:
   structure: "Percent of wet structures with active treatment (needs better priority)"
   vector_index: "Highest Vector Index — risk of getting bit by an infectious mosquito"
   mosquito_monitoring: "Abundance of mosquitos found in traps across the district"
-  suco: "How close the field is to the weekly processing capacity of the lab (needs reworking)"
+  suco: "Number of SUCO inspections completed this week vs weekly goal of 12 per facility (72 district-wide)"
   cattail_treatments: "Percent of cattail sites with perturban treatment — resets to zero in August"
   cattail_inspections: "Starting in August, number of sites inspected for perturbans for this year only"
 

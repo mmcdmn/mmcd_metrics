@@ -508,6 +508,154 @@ fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors",
 }
 
 # =============================================================================
+# TRAP DATA BY WEEK - Fetch active traps with pool details for the selected week
+# =============================================================================
+# Replaces the shapefile-based trap locations with live data from the database.
+# For the selected yrwk:
+#   1. Gets traps active in that week from the abundance view
+#   2. Gets trap geometry from loc_mondaynight
+#   3. Gets abundance (Cx vector count) per trap
+#   4. Joins pool test data (species, size, result) via sampnum_yr
+
+fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  yrwk_int <- as.integer(yrwk)
+  
+  q <- sprintf(
+    "WITH week_abundance AS (
+      SELECT loc_code, inspdate, mosqcount
+      FROM dbadult_mon_nt_co2_forvectorabundance
+      WHERE yrwk = %d
+        AND spp_name = 'Total_Cx_vectors'
+    ),
+    week_inspections AS (
+      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
+      FROM dbadult_insp_current i
+      WHERE i.network_type = 'mnt'
+        AND i.survtype = '6'
+        AND i.missing IS NULL
+        AND calc_week_num(i.inspdate) = %d
+      UNION ALL
+      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
+      FROM dbadult_insp_archive i
+      WHERE i.network_type = 'mnt'
+        AND i.survtype = '6'
+        AND i.missing IS NULL
+        AND calc_week_num(i.inspdate) = %d
+    ),
+    trap_pools AS (
+      SELECT 
+        wi.loc_code,
+        wi.sampnum_yr,
+        p.poolnum,
+        p.spp_code,
+        p.count as pool_size,
+        t.result,
+        t.target,
+        t.date as test_date,
+        ls.genus,
+        ls.species
+      FROM week_inspections wi
+      JOIN dbvirus_pool p ON wi.sampnum_yr = p.sampnum_yr
+      LEFT JOIN dbvirus_pool_test t ON p.poolnum = t.poolnum
+      LEFT JOIN lookup_specieslist ls ON p.spp_code = CAST(ls.sppcode AS VARCHAR)
+      WHERE t.target = '%s' OR t.target IS NULL
+    )
+    SELECT 
+      wa.loc_code,
+      wi.facility,
+      wa.inspdate,
+      wa.mosqcount as cx_vector_count,
+      mn.loc_facility,
+      mn.zone,
+      mn.virus_test,
+      ST_X(ST_Transform(mn.geom, 4326)) as lon,
+      ST_Y(ST_Transform(mn.geom, 4326)) as lat,
+      tp.poolnum,
+      tp.spp_code,
+      tp.pool_size,
+      tp.result,
+      tp.target,
+      tp.test_date,
+      tp.genus,
+      tp.species
+    FROM week_abundance wa
+    JOIN week_inspections wi ON wi.loc_code = wa.loc_code AND wi.inspdate = wa.inspdate
+    LEFT JOIN loc_mondaynight mn ON mn.loc_code = wa.loc_code
+    LEFT JOIN trap_pools tp ON tp.loc_code = wa.loc_code
+    WHERE mn.geom IS NOT NULL
+    ORDER BY wa.loc_code",
+    yrwk_int, yrwk_int, yrwk_int, virus_target
+  )
+  
+  tryCatch({
+    raw_data <- dbGetQuery(con, q)
+    
+    if (nrow(raw_data) == 0) {
+      message(sprintf("No trap data for week %d", yrwk_int))
+      return(NULL)
+    }
+    
+    # Aggregate to one row per trap with pool details
+    trap_summary <- raw_data %>%
+      group_by(loc_code) %>%
+      summarise(
+        facility = first(facility),
+        inspdate = first(inspdate),
+        cx_vector_count = first(cx_vector_count),
+        lon = first(lon),
+        lat = first(lat),
+        zone = first(zone),
+        virus_test = first(virus_test),
+        num_pools = sum(!is.na(poolnum)),
+        num_positive = sum(result == "Pos", na.rm = TRUE),
+        total_mosquitoes_tested = sum(pool_size, na.rm = TRUE),
+        pool_details_html = {
+          pool_rows <- which(!is.na(pick(everything())$poolnum))
+          if (length(pool_rows) == 0) {
+            "<em>No pools tested</em>"
+          } else {
+            d <- pick(everything())
+            rows_html <- paste(
+              sprintf("<tr><td>%s</td><td>%s %s</td><td>%d</td><td style='color:%s;font-weight:bold;'>%s</td></tr>",
+                d$poolnum[pool_rows],
+                d$genus[pool_rows],
+                d$species[pool_rows],
+                as.integer(d$pool_size[pool_rows]),
+                ifelse(d$result[pool_rows] == "Pos", "#e74c3c", "#27ae60"),
+                d$result[pool_rows]
+              ),
+              collapse = ""
+            )
+            paste0(
+              "<table style='width:100%;border-collapse:collapse;font-size:11px;'>",
+              "<tr style='border-bottom:1px solid #ccc;'><th>Pool</th><th>Species</th><th>Size</th><th>Result</th></tr>",
+              rows_html, "</table>"
+            )
+          }
+        },
+        .groups = "drop"
+      )
+    
+    # Convert to sf for leaflet
+    traps_sf <- st_as_sf(trap_summary, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+    
+    message(sprintf("Week %d: %d traps (%d with pools, %d with positive pools)",
+                    yrwk_int, nrow(trap_summary),
+                    sum(trap_summary$num_pools > 0),
+                    sum(trap_summary$num_positive > 0)))
+    
+    traps_sf
+  }, error = function(e) {
+    warning(paste("Trap week query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
 # GEOMETRY - Load vector index area polygons from database
 # =============================================================================
 
@@ -947,4 +1095,4 @@ load_raw_data <- function(analysis_date = NULL,
   })
 }
 
-message("✓ trap_surveillance/data_functions.R loaded")
+message(" trap_surveillance/data_functions.R loaded")

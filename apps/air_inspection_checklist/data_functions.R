@@ -137,9 +137,11 @@ get_checklist_data <- function(facility_filter = NULL,
         s.zone,
         s.fosarea,
         s.sectcode,
+        cards.airmap_num,
         i.inspdate AS last_insp_date,
         i.numdip AS dip_count,
         i.emp1 AS inspector_emp,
+        emp.shortname AS inspector_name,
         i.sampnum_yr,
         lr.redblue,
         lr.missing AS lab_missing,
@@ -153,7 +155,9 @@ get_checklist_data <- function(facility_filter = NULL,
       LEFT JOIN RecentInspections i ON s.sitecode = i.sitecode AND i.rn = 1
       LEFT JOIN LabResults lr ON i.sampnum_yr = lr.sampnum_yr
       LEFT JOIN ActiveTreatmentSites ats ON s.sitecode = ats.sitecode
-      ORDER BY s.fosarea, s.sectcode, s.sitecode
+      LEFT JOIN \"loc_breeding_site_cards_sjsreast2\" cards ON s.sitecode = cards.sitecode
+      LEFT JOIN employee_list emp ON i.emp1 = emp.emp_num::text
+      ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
     ",
       as.character(analysis_date),
       facility_condition,
@@ -182,6 +186,24 @@ get_checklist_data <- function(facility_filter = NULL,
     # Add FOS display name
     foremen_lookup <- get_foremen_lookup()
     result$fos_display <- get_foreman_display_names(result$fosarea, lookup = foremen_lookup)
+
+    # Add AirMap display label (for sub-grouping)
+    result$airmap_display <- ifelse(
+      is.na(result$airmap_num) | result$airmap_num == "",
+      "No AirMap",
+      paste("AirMap", result$airmap_num)
+    )
+
+    # Inspector display: use employee name if available, fall back to emp number
+    result$inspector_display <- ifelse(
+      !is.na(result$inspector_name) & result$inspector_name != "",
+      result$inspector_name,
+      ifelse(
+        !is.na(result$inspector_emp) & result$inspector_emp != "",
+        paste0("Emp #", result$inspector_emp),
+        ""
+      )
+    )
 
     # Add bug status column
     result$bug_status <- ifelse(

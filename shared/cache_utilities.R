@@ -127,13 +127,6 @@ is_metric_cacheable <- function(metric) {
   metric %in% get_cacheable_metrics()
 }
 
-#' Check if a metric IS currently cached
-#' @param metric The metric name to check  
-#' @return TRUE if metric has cache data
-is_metric_cached <- function(metric) {
-  metric %in% get_cached_metrics()
-}
-
 # =============================================================================
 # CACHE MANAGEMENT FUNCTIONS
 # =============================================================================
@@ -490,10 +483,4 @@ refresh_lookup_caches <- function() {
   
   cat("Lookup cache refresh complete\n")
   invisible(results)
-}
-
-#' Get lookup cache file path for display (legacy compat)
-#' @return Description of cache backend
-get_lookup_cache_path <- function() {
-  "Redis (mmcd:lookup_cache)"
 }

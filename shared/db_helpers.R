@@ -196,10 +196,6 @@ clear_memory_cache <- function() {
 # L1: In-memory (same R process) — L2: Redis (shared across workers)
 # No file-based RDS fallback — Redis is the single source of truth.
 
-# Legacy compat stubs (no-ops) — some modules may still reference these
-get_lookup_cache_dir <- function() "."   # Deprecated: no file cache
-get_lookup_cache_file <- function() ""   # Deprecated: no file cache
-
 # Load entire lookup cache from Redis (returns named list)
 load_lookup_cache <- function() {
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
@@ -215,19 +211,6 @@ load_lookup_cache <- function() {
   vals <- lapply(keys, function(k) get(k, envir = .lookup_memory_cache))
   names(vals) <- keys
   vals
-}
-
-# Save entire lookup cache to Redis
-save_lookup_cache <- function(cache) {
-  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
-    tryCatch({
-      for (key in names(cache)) {
-        set_lookup_redis(key, cache[[key]])
-      }
-    }, error = function(e) {
-      warning(paste("[lookup cache] Redis write error:", e$message))
-    })
-  }
 }
 
 # Get a specific item from the lookup cache (memory → Redis)
@@ -443,20 +426,6 @@ build_sql_equals_clause <- function(column_name, value, prefix = "AND ") {
     return("")
   }
   paste0(prefix, column_name, " = '", value, "'")
-}
-
-#' Extract filter value from input, returning NULL if "all" is selected
-#' Useful for reactive filter processing
-#' @param input_value The raw input value (potentially containing "all")
-#' @return The filter values, or NULL if "all" was selected or empty
-normalize_filter_input <- function(input_value) {
-  if (is.null(input_value) || length(input_value) == 0) {
-    return(NULL)
-  }
-  if ("all" %in% tolower(input_value)) {
-    return(NULL)
-  }
-  return(input_value)
 }
 
 # =============================================================================
@@ -726,11 +695,6 @@ evaluate_strategy <- function(current_years, archive_years,
   )
 }
 
-# Convenience: clear cached table strategy (call after data migration)
-clear_table_strategy_cache <- function() {
-  rm(list = ls(envir = .table_strategy_cache), envir = .table_strategy_cache)
-}
-
 # Facility lookup functions (CACHED - in-memory first, then file-based)
 get_facility_lookup <- function() {
   # Check in-memory cache first (fastest)
@@ -937,6 +901,11 @@ get_structure_type_choices <- function(include_all = TRUE) {
 # Get material choices with optional filtering for prehatch or BTI materials
 # filter_type: NULL (all materials), "prehatch" (prehatch=TRUE only), "bti" (BTI/Bs materials only)
 get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
+  # Check in-memory cache first (keyed by filter_type)
+  cache_key <- paste0("material_choices:", include_all, ":", filter_type %||% "all")
+  cached_mem <- get_memory_cached(cache_key)
+  if (!is.null(cached_mem)) return(cached_mem)
+  
   con <- get_db_connection()
   if (is.null(con)) {
     if (is.null(filter_type)) {
@@ -992,6 +961,8 @@ get_material_choices <- function(include_all = TRUE, filter_type = NULL) {
       choices <- c("All Materials" = "all", choices)
     }
     
+    # Cache for future calls
+    set_memory_cached(cache_key, choices)
     return(choices)
     
   }, error = function(e) {
@@ -1112,43 +1083,6 @@ get_facility_display_names <- function(facility_codes, lookup = NULL) {
   result[is.na(result)] <- facility_codes[is.na(result)]
   
   unname(result)
-}
-
-#' Create popup text column using vectorized operations
-#' 
-#' @param data Data frame with columns to use in popup
-#' @param template Character template with {column_name} placeholders
-#' @return Vector of popup HTML strings
-#' @export
-create_popup_text_vectorized <- function(data, template) {
-  result <- template
-  
-  # Find all column placeholders in template
-  placeholders <- regmatches(template, gregexpr("\\{[^}]+\\}", template))[[1]]
-  
-  for (placeholder in placeholders) {
-    col_name <- gsub("[{}]", "", placeholder)
-    if (col_name %in% names(data)) {
-      values <- as.character(data[[col_name]])
-      values[is.na(values)] <- ""
-      result <- gsub(placeholder, "%s", result, fixed = TRUE)
-    }
-  }
-  
-  # Build the result using sprintf for each row
-  # This is more complex but still faster than sapply
-  col_names <- gsub("[{}]", "", placeholders)
-  col_names <- col_names[col_names %in% names(data)]
-  
-  if (length(col_names) == 0) {
-    return(rep(template, nrow(data)))
-  }
-  
-  # Use paste0 for simple case
-  paste0(
-    "<b>Date:</b> ", data$inspdate, "<br>",
-    "<b>Facility:</b> ", data$facility, "<br>"
-  )
 }
 
 # =============================================================================
@@ -1634,52 +1568,6 @@ get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme
         foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
       }
     }
-    hsv_base <- rgb2hsv(rgb_base[1], rgb_base[2], rgb_base[3])
-    
-    # Generate variations of the base color
-    if (n_foremen == 1) {
-      # Single foreman gets the facility base color
-      foreman_colors[foremen$shortname == facility_foremen$shortname] <- base_color
-    } else {
-      # Sort foremen by shortname for consistent ordering
-      facility_foremen <- facility_foremen[order(facility_foremen$shortname), ]
-      base_hue <- hsv_base[1]
-      
-      # Use a smaller hue range for better facility color grouping
-      hue_range <- 0.08  # ±8% variation around facility color (was 15%)
-      
-      # Create distinct but related colors for foremen in this facility
-      for (i in 1:n_foremen) {
-        foreman_name <- facility_foremen$shortname[i]
-        
-        # Calculate hue offset based on position
-        if (n_foremen == 2) {
-          # For 2 foremen: one slightly lighter, one slightly darker
-          hue_offset <- ifelse(i == 1, -hue_range/2, hue_range/2)
-        } else {
-          # For 3+ foremen: spread across the hue range
-          hue_offset <- -hue_range + (2 * hue_range * (i - 1) / (n_foremen - 1))
-        }
-        
-        # Calculate foreman hue (keep within facility color family)
-        foreman_hue <- (base_hue + hue_offset) %% 1
-        
-        # Vary saturation and brightness more distinctly
-        if (n_foremen <= 3) {
-          # For small groups, use more pronounced saturation/value differences
-          saturation <- 0.6 + (0.35 * (i - 1) / max(1, n_foremen - 1))  # 0.6 to 0.95
-          value <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))       # 0.65 to 0.95
-        } else {
-          # For larger groups, use smaller but still distinct differences
-          saturation <- 0.65 + (0.3 * (i - 1) / max(1, n_foremen - 1))  # 0.65 to 0.95
-          value <- 0.7 + (0.25 * (i - 1) / max(1, n_foremen - 1))       # 0.7 to 0.95
-        }
-        
-        # Assign the color for this foreman
-        foreman_idx <- which(foremen$shortname == foreman_name)
-        foreman_colors[foreman_idx] <- hsv(h = foreman_hue, s = saturation, v = value)
-      }
-    }
   }
   
   # Create named vector
@@ -1896,6 +1784,10 @@ get_species_display_colors <- function() {
 #' Returns:
 #'   Data frame with columns: plan_code, plan_name, description
 get_treatment_plan_types <- function() {
+  # Check in-memory cache first (static lookup, doesn't change)
+  cached_mem <- get_memory_cached("treatment_plan_types")
+  if (!is.null(cached_mem)) return(cached_mem)
+  
   con <- get_db_connection()
   if (is.null(con)) {
     # Return default mapping if database is unavailable
@@ -1942,6 +1834,7 @@ get_treatment_plan_types <- function() {
     ")
     
     safe_disconnect(con)
+    set_memory_cached("treatment_plan_types", plan_types)
     return(plan_types)
     
   }, error = function(e) {

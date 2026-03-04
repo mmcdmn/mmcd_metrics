@@ -52,6 +52,7 @@ if (!exists("get_app_config", mode = "function")) {
 TTL_14_DAYS <- as.integer(.ttl_cfg$historical_averages %||% 1209600L)
 TTL_7_DAYS  <- as.integer(.ttl_cfg$fos_drilldown      %||% 604800L)
 TTL_5_MIN   <- as.integer(.ttl_cfg$general             %||% 300L)
+TTL_3_MIN   <- as.integer(.ttl_cfg$current_year        %||% 180L)
 TTL_24_HR   <- as.integer(.ttl_cfg$facility_historical %||% 86400L)
 TTL_2_MIN   <- as.integer(.ttl_cfg$db_queries          %||% 120L)
 
@@ -508,6 +509,7 @@ CACHE_PREFIX_STAT     <- "stat"     # Stat box calculations (2 min)
 CACHE_PREFIX_FOS      <- "fos"      # FOS drill-down data (7 days)
 CACHE_PREFIX_COLOR    <- "color"    # Color mappings (7 days)
 CACHE_PREFIX_FAC_HIST <- "fachist"  # Facility-filtered historical data (24 hr)
+CACHE_PREFIX_CURYR    <- "curyr"    # Current-year live data (3 min)
 
 #' Build a deterministic cache key from a prefix and parameters
 #' Uses digest::digest for consistent hashing of complex parameter sets
@@ -520,7 +522,7 @@ build_cache_key <- function(prefix, ...) {
   paste0(prefix, ":", hash)
 }
 
-#' Get cached DB query result (2-min TTL)
+#' Get cached DB query result (5-min TTL)
 #' @param cache_id Descriptive ID (e.g., "catch_basin_zone")
 #' @param load_func Function to load data on cache miss
 #' @param ... Additional parameters for cache key uniqueness
@@ -581,14 +583,32 @@ get_cached_fac_hist_data <- function(cache_id, load_func, ...) {
   get_app_cached_redis(key, load_func, ttl = TTL_24_HR)
 }
 
+#' Get cached current-year live data (3-min TTL)
+#' Used for current-year treatment/inspection data that changes frequently.
+#' @param cache_id Descriptive ID (e.g., "catch_basin_2026")
+#' @param load_func Function to load data on cache miss
+#' @param ... Additional parameters for cache key uniqueness
+#' @return Cached or freshly loaded current-year data
+get_cached_curyr_data <- function(cache_id, load_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_CURYR, cache_id, ...)
+  get_app_cached_redis(key, load_func, ttl = TTL_3_MIN)
+}
+
 #' Clear all cache entries matching a specific tier prefix
-#' @param prefix One of: "db", "chart", "stat", "fos", "color", or "all"
+#' @param prefix One of: "db", "chart", "stat", "fos", "color", "fachist", "curyr",
+#'        "hist_fac", "hist_fos", or "all"
 #' @return Number of keys deleted
 clear_cache_tier <- function(prefix = "all") {
   if (prefix == "all") {
     return(clear_app_cache_redis())
   }
-  pattern <- paste0("app:", prefix, ":*")
+  # Global caches (hist_fac, hist_fos) use "mmcd:" prefix, not "app:"
+  global_prefixes <- c("hist_fac", "hist_fos")
+  if (prefix %in% global_prefixes) {
+    pattern <- paste0("mmcd:", prefix, ":*")
+  } else {
+    pattern <- paste0("app:", prefix, ":*")
+  }
   keys <- redis_keys(pattern)
   if (length(keys) > 0) {
     n <- redis_del(keys)
@@ -609,7 +629,28 @@ get_cache_tier_counts <- function() {
     fos_drilldown = length(redis_keys(paste0("app:", CACHE_PREFIX_FOS, ":*"))),
     color_maps    = length(redis_keys(paste0("app:", CACHE_PREFIX_COLOR, ":*"))),
     fac_hist      = length(redis_keys(paste0("app:", CACHE_PREFIX_FAC_HIST, ":*"))),
+    curyr         = length(redis_keys(paste0("app:", CACHE_PREFIX_CURYR, ":*"))),
+    hist_fac      = length(redis_keys("mmcd:hist_fac:*")),
+    hist_fos      = length(redis_keys("mmcd:hist_fos:*")),
     other_app     = length(redis_keys("app:*"))
+  )
+}
+
+#' Get a detailed inventory of all cache tiers for display
+#' @return Data frame with Tier, Keys, TTL columns
+get_tiered_cache_inventory <- function() {
+  counts <- get_cache_tier_counts()
+  data.frame(
+    Tier = c("DB Queries", "Charts", "Stat Boxes", "Current Year",
+             "FOS Drill-down", "Color Maps", "Fac Historical",
+             "Hist Avg (Fac)", "Hist Avg (FOS)", "Other App"),
+    Keys = c(counts$db_queries, counts$charts, counts$stat_boxes, counts$curyr,
+             counts$fos_drilldown, counts$color_maps, counts$fac_hist,
+             counts$hist_fac, counts$hist_fos, counts$other_app),
+    TTL = c("2 min", "2 min", "2 min", "3 min",
+            "7 days", "7 days", "24 hr",
+            "7 days", "7 days", "varies"),
+    stringsAsFactors = FALSE
   )
 }
 

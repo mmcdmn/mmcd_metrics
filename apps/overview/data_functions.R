@@ -18,22 +18,10 @@
 # ENVIRONMENT LOADING - Uses registry for app folders
 # =============================================================================
 
-# Get apps base path - checks relative paths
-get_apps_base_path_df <- function() {
-  # When running from apps/overview/district or apps/overview/facilities
-  if (file.exists("../../drone/data_functions.R")) return("../..")
-  # When running from apps/overview
-  if (file.exists("../drone/data_functions.R")) return("..")
-  # When running on server
-  if (file.exists("/srv/shiny-server/apps/drone/data_functions.R")) return("/srv/shiny-server/apps")
-  # Fallback
-  return("../..")
-}
-
 # Load each app's data_functions into isolated environment
 # Uses registry to get app folders dynamically
 .load_app_environments <- function() {
-  apps_base <- get_apps_base_path_df()
+  apps_base <- get_apps_base_path()
   registry <- get_metric_registry()
   
   app_envs <- list()
@@ -87,7 +75,7 @@ load_metric_data <- function(metric,
                              expiring_days = NULL,
                              zone_filter = c("1", "2")) {
   
-  # Try Redis cache for DB query results (2-min TTL)
+  # Try Redis cache for DB query results (5-min TTL — underlying data changes at most daily)
   if (exists("get_cached_db_query", mode = "function")) {
     cached <- tryCatch({
       get_cached_db_query(
@@ -838,13 +826,8 @@ get_facility_order <- function() {
 order_facilities <- function(data, separate_zones = FALSE) {
   if (!"display_name" %in% names(data)) return(data)
   
-  if (separate_zones) {
-    alpha_levels <- sort(unique(as.character(data$display_name)))
-    data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
-  } else {
-    alpha_levels <- sort(unique(as.character(data$display_name)))
-    data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
-  }
+  alpha_levels <- sort(unique(as.character(data$display_name)))
+  data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
   
   data %>% arrange(display_name)
 }
@@ -853,53 +836,6 @@ order_facilities <- function(data, separate_zones = FALSE) {
 # GENERIC LOADER FOR ALL METRICS
 # =============================================================================
 
-#' Load all metrics for an overview dashboard
-#' 
-#' @param metrics Vector of metric IDs to load
-#' @param group_by Aggregation type: "zone", "facility", or "fos"
-#' @param analysis_date Date for analysis
-#' @param expiring_days Days until expiring
-#' @param zone_filter Vector of zones to include
-#' @param separate_zones Whether to show zones separately
-#' @return Named list of data frames, one per metric
-#' @export
-load_all_metrics <- function(metrics = NULL,
-                             group_by = "zone",
-                             analysis_date = Sys.Date(),
-                             expiring_days = 7,
-                             zone_filter = c("1", "2"),
-                             separate_zones = TRUE) {
-  
-  if (is.null(metrics)) {
-    metrics <- VALID_METRICS
-  }
-  
-  # Choose the right loader function
-  loader <- switch(group_by,
-    "zone" = load_data_by_zone,
-    "facility" = load_data_by_facility,
-    "fos" = load_data_by_fos,
-    load_data_by_zone  # default
-  )
-  
-  results <- list()
-  for (metric in metrics) {
-    results[[metric]] <- tryCatch({
-      loader(
-        metric = metric,
-        analysis_date = analysis_date,
-        expiring_days = expiring_days,
-        zone_filter = zone_filter,
-        separate_zones = separate_zones
-      )
-    }, error = function(e) {
-      cat("ERROR loading", metric, ":", e$message, "\n")
-      data.frame()
-    })
-  }
-  
-  return(results)
-}
 
 # =============================================================================
 # STATS CALCULATION

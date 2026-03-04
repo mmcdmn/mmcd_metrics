@@ -85,30 +85,24 @@ assign_value_column <- function(treatments, config) {
 
 #' Load current year data for cache path (helper function)
 #' Handles both active treatment metrics and simple count metrics
-#' Results are cached in Redis with 5-min TTL to avoid redundant DB queries
-#' when multiple views/metrics request the same current year data.
+#' Results are cached via get_cached_curyr_data (3-min TTL) to avoid redundant
+#' DB queries when multiple views/metrics request the same current year data.
 #' @param metric Metric ID
 #' @param analysis_year Year to load
 #' @param zone_filter Zone filter
 #' @param config Metric config from registry
 #' @return Data frame with time_period, week_num, value, group_label columns
 load_current_year_for_cache <- function(metric, analysis_year, zone_filter, config) {
-  # Try Redis cache first (5-min TTL) — avoids re-running the full year query
-  if (exists("get_app_cached_redis", mode = "function")) {
-    cache_key <- paste0("curyr:", metric, ":", analysis_year, ":", paste(sort(zone_filter), collapse = "_"))
-    cached <- tryCatch(get_app_cached_redis(cache_key, ttl = 300L), error = function(e) NULL)
-    if (!is.null(cached)) return(cached)
+  # Use tiered cache helper (3-min TTL) if available
+  cache_id <- paste0(metric, ":", analysis_year, ":", paste(sort(zone_filter), collapse = "_"))
+  if (exists("get_cached_curyr_data", mode = "function")) {
+    return(get_cached_curyr_data(cache_id, function() {
+      .load_current_year_for_cache_uncached(metric, analysis_year, zone_filter, config)
+    }))
   }
 
-  result <- .load_current_year_for_cache_uncached(metric, analysis_year, zone_filter, config)
-
-  # Store in Redis on success
-  if (!is.null(result) && nrow(result) > 0 && exists("set_app_cached_redis", mode = "function")) {
-    cache_key <- paste0("curyr:", metric, ":", analysis_year, ":", paste(sort(zone_filter), collapse = "_"))
-    tryCatch(set_app_cached_redis(cache_key, result, ttl = 300L), error = function(e) NULL)
-  }
-
-  result
+  # Fallback: direct call without caching
+  .load_current_year_for_cache_uncached(metric, analysis_year, zone_filter, config)
 }
 
 #' Uncached implementation of load_current_year_for_cache
@@ -394,8 +388,7 @@ load_historical_comparison_data <- function(metric,
                                              zone_filter = c("1", "2"),
                                              analysis_date = NULL,
                                              overview_type = "facilities",
-                                             facility_filter = NULL,
-                                             allow_incremental_cache = FALSE) {
+                                             facility_filter = NULL) {
   
   # Get registry config for metric
   registry <- get_metric_registry()
@@ -593,30 +586,6 @@ load_historical_comparison_data <- function(metric,
                                     metric, facility_filter, sort(zone_filter), overview_type, analysis_week)
       set_app_cached_redis(cache_key, yearly_result, ttl = TTL_24_HR)
       cat("[fachist] Cached yearly grouped result for", metric, "facility:", facility_filter, "\n")
-    }
-    
-    # Incremental cache: store yearly grouped result for future direct cache hits
-    # Only when explicitly allowed (drill-down view) — NOT on district overview bulk loads
-    if (isTRUE(allow_incremental_cache) && is.null(facility_filter) &&
-        exists("redis_hset", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active() &&
-        exists("HISTORICAL_HASH_KEY") && exists("HISTORICAL_META_KEY")) {
-      tryCatch({
-        if (!is.null(yearly_result$yearly_data) && nrow(yearly_result$yearly_data) > 0) {
-          cache_key_yrly <- paste0(metric, "_yearly_", overview_type)
-          redis_hset(HISTORICAL_HASH_KEY, cache_key_yrly, yearly_result$yearly_data, ttl = TTL_14_DAYS)
-          meta <- tryCatch(redis_get(HISTORICAL_META_KEY), error = function(e) NULL)
-          if (is.null(meta)) {
-            meta <- list(generated_date = Sys.Date(), generated_by = "incremental",
-                         zone_filter = zone_filter, field_count = 0L)
-          }
-          meta$generated_date <- Sys.Date()
-          meta$field_count <- length(redis_hkeys(HISTORICAL_HASH_KEY))
-          redis_set(HISTORICAL_META_KEY, meta, ttl = TTL_14_DAYS)
-          cat("[historical] Incrementally cached", metric, overview_type, "yearly data\n")
-        }
-      }, error = function(e) {
-        message("[historical] Failed to cache yearly ", metric, ": ", e$message)
-      })
     }
     
     return(yearly_result)
@@ -881,46 +850,6 @@ load_historical_comparison_data <- function(metric,
                                   metric, facility_filter, sort(zone_filter), overview_type, analysis_week)
     set_app_cached_redis(cache_key, result, ttl = TTL_24_HR)
     cat("[fachist] Cached result for", metric, "facility:", facility_filter, "\n")
-  }
-  
-  # =========================================================================
-  # INCREMENTAL CACHE: Store per-metric historical averages in Redis
-  # so that next drill-down to this metric is instant (uses cached path).
-  # Only for non-facility-filtered (district/all) results.
-  # Only when explicitly allowed (drill-down view) — NOT on district overview.
-  # =========================================================================
-  if (isTRUE(allow_incremental_cache) && is.null(facility_filter) &&
-      exists("redis_hset", mode = "function") && exists("redis_is_active", mode = "function") && redis_is_active() &&
-      exists("HISTORICAL_HASH_KEY") && exists("HISTORICAL_META_KEY")) {
-    tryCatch({
-      # Store zone-level data if available, otherwise aggregated
-      avg_to_store <- if (!is.null(average_by_zone)) average_by_zone else display_5yr
-      ten_to_store <- if (!is.null(ten_year_by_zone)) ten_year_by_zone else display_10yr
-      
-      stored_any <- FALSE
-      if (!is.null(avg_to_store) && nrow(avg_to_store) > 0) {
-        redis_hset(HISTORICAL_HASH_KEY, paste0(metric, "_5yr"), avg_to_store, ttl = TTL_14_DAYS)
-        stored_any <- TRUE
-      }
-      if (!is.null(ten_to_store) && nrow(ten_to_store) > 0) {
-        redis_hset(HISTORICAL_HASH_KEY, paste0(metric, "_10yr"), ten_to_store, ttl = TTL_14_DAYS)
-        stored_any <- TRUE
-      }
-      if (stored_any) {
-        # Update metadata (or create if absent) so the cache shows as populated
-        meta <- tryCatch(redis_get(HISTORICAL_META_KEY), error = function(e) NULL)
-        if (is.null(meta)) {
-          meta <- list(generated_date = Sys.Date(), generated_by = "incremental",
-                       zone_filter = zone_filter, field_count = 0L)
-        }
-        meta$generated_date <- Sys.Date()
-        meta$field_count <- length(redis_hkeys(HISTORICAL_HASH_KEY))
-        redis_set(HISTORICAL_META_KEY, meta, ttl = TTL_14_DAYS)
-        cat("[historical] Incrementally cached ", metric, " averages in Redis\n")
-      }
-    }, error = function(e) {
-      message("[historical] Failed to cache ", metric, ": ", e$message)
-    })
   }
   
   result

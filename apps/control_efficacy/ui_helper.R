@@ -223,8 +223,8 @@ control_efficacy_ui <- function() {
               br(),
               fluidRow(
                 column(3, uiOutput("efficacy_valid_count")),
+                column(3, uiOutput("efficacy_invalid_count")),
                 column(3, uiOutput("efficacy_median_reduction")),
-                column(3, uiOutput("efficacy_mean_reduction")),
                 column(3, uiOutput("efficacy_pct_above_80"))
               ),
               br(),
@@ -234,17 +234,15 @@ control_efficacy_ui <- function() {
               h4("Efficacy Data Table"),
               DT::dataTableOutput("efficacy_table"),
               br(),
-              h4("Control Checkback Details", style = "color: #856404;"),
-              div(style = "padding: 10px; background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; margin-bottom: 15px;",
-                tags$i(class = "fa fa-info-circle", style = "color: #856404;"),
+              h4("Invalid Checkback Details", style = "color: #721c24;"),
+              div(style = "padding: 10px; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 15px;",
+                tags$i(class = "fa fa-exclamation-triangle", style = "color: #721c24;"),
                 tags$span(style = "font-size: 0.9em;",
-                  " Control checkbacks: no treatments occurred between the pre-inspection",
-                  " and the post (checkback) inspection.",
-                  " These show natural population change and are used for",
-                  " Mulla's formula correction when enabled above."
+                  " Invalid checkbacks: 2 or more treatments occurred between the",
+                  " pre-inspection and post-inspection, making the efficacy measurement unreliable."
                 )
               ),
-              DT::dataTableOutput("control_details")
+              DT::dataTableOutput("invalid_details")
             ),
             
             # --- Checkback Progress ---
@@ -268,7 +266,18 @@ control_efficacy_ui <- function() {
               br(),
               h4("Brood Status Table"),
               DT::dataTableOutput("checkback_status_table"),
-              br()
+              br(),
+              h4("Control Checkback Details", style = "color: #856404;"),
+              div(style = "padding: 10px; background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; margin-bottom: 15px;",
+                tags$i(class = "fa fa-info-circle", style = "color: #856404;"),
+                tags$span(style = "font-size: 0.9em;",
+                  " Control checkbacks: treatment happened BEFORE the pre-inspection,",
+                  " so both pre and post measurements occurred after treatment.",
+                  " These show natural population change and are used for",
+                  " Mulla's formula correction when enabled in the Efficacy tab."
+                )
+              ),
+              DT::dataTableOutput("control_details")
             )
           ) # end tabsetPanel
         ) # end main content column

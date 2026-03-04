@@ -9,6 +9,18 @@ library(testthat)
 
 context("URL Router Functions")
 
+resolve_project_file <- function(rel_path) {
+  candidates <- c(
+    rel_path,
+    file.path("..", rel_path),
+    file.path("..", "..", rel_path)
+  )
+  for (candidate in candidates) {
+    if (file.exists(candidate)) return(candidate)
+  }
+  NA_character_
+}
+
 # =============================================================================
 # SETUP: Source the url_router.R file
 # =============================================================================
@@ -16,16 +28,29 @@ context("URL Router Functions")
 # Source the url_router (and dependencies)
 # Need to handle the fact that url_router.R sources metric_registry.R
 tryCatch({
-  # First source metric_registry to define get_metric_registry()
-  source("apps/overview/metric_registry.R")
-  cat("✓ metric_registry.R loaded\n")
+  metric_registry_file <- resolve_project_file("apps/overview/metric_registry.R")
+  if (!is.na(metric_registry_file)) {
+    source(metric_registry_file)
+    cat("✓ metric_registry.R loaded\n")
+  } else if (exists("get_metric_registry", mode = "function")) {
+    cat("✓ metric_registry.R already available\n")
+  } else {
+    cat("✗ metric_registry.R not found\n")
+  }
 }, error = function(e) {
   cat("✗ metric_registry.R failed:", e$message, "\n")
 })
 
 tryCatch({
-  source("apps/overview/url_router.R")
-  cat("✓ url_router.R loaded\n")
+  url_router_file <- resolve_project_file("apps/overview/url_router.R")
+  if (!is.na(url_router_file)) {
+    source(url_router_file)
+    cat("✓ url_router.R loaded\n")
+  } else if (exists("parse_url_params", mode = "function")) {
+    cat("✓ url_router.R already available\n")
+  } else {
+    stop("url_router.R not found")
+  }
 }, error = function(e) {
   cat("✗ url_router.R failed:", e$message, "\n")
   # If we can't load url_router, skip all tests

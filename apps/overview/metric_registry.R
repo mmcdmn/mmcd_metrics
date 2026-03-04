@@ -178,7 +178,7 @@ get_metric_registry <- function() {
       bg_color = "#0ea5e9",
       app_folder = "air_sites_simple",
       has_acres = TRUE,
-      historical_enabled = TRUE,
+      historical_enabled = FALSE,
       use_active_calculation = TRUE,
       display_metric = "treatment_acres",
       chart_types = c("bar", "pie"),
@@ -357,40 +357,42 @@ get_metric_registry <- function() {
     
     suco = list(
       id = "suco",
-      display_name = "SUCO Capacity",
+      display_name = "SUCO Goal",
       short_name = "SUCO",
       icon = "search",
-      image_path = "assets/bucket.png",  # Use adult mosquito icon
+      image_path = "assets/bucket.png",
       category = "Adult Samples",
       y_label = "SUCOs Completed",
       bg_color = "#6366f1",  # Indigo color
       app_folder = "suco_history",
       has_acres = FALSE,
-      historical_enabled = FALSE,  # Can enable later with weekly historical data
-      use_active_calculation = FALSE,  # SUCOs use count-based progress
-      display_metric = "inspections",  # count of SUCO inspections
-      display_as_average = TRUE,  # Show capacity-style display (not percentage)
+      historical_enabled = FALSE,
+      use_active_calculation = FALSE,
+      display_metric = "goal",  # goal-based display
+      display_as_goal = TRUE,   # Flag for goal-based rendering
       chart_types = c("bar"),
       default_chart_type = "bar",
+      ignore_zone_filter = TRUE,  # SUCO goal ignores zone filter
       # Detail boxes shown when drilling down to facility level
       detail_boxes = list(
-        list(id = "capacity", title = "Weekly Capacity", column = "total", icon = "chart-line", status = "completed"),
+        list(id = "goal", title = "Weekly Goal", column = "total", icon = "bullseye", status = "completed"),
         list(id = "completed", title = "Completed", column = "active", icon = "check-circle", status = "active")
       ),
       chart_labels = list(
-        total = "Weekly Capacity",
+        total = "Weekly Goal",
         active = "Completed",
-        expiring = "Above Capacity"
+        expiring = "Over Goal"
       ),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • SUCO inspections only (survtype = 7)<br>
                          • Current week (Monday through today)<br>
-                         • All facilities<br>
-                         • Zone filter from dropdown"),
+                         • All facilities (zone filter not applied)<br>
+                         • Goal: 12 SUCOs per facility per week"),
       load_params = list(
-        capacity_total = 72,  # District-wide capacity: 72 SUCOs per week
-        capacity_per_facility = 72 / 7,  # Per-facility capacity
-        time_period = "current_week"  # Use current week for progress
+        goal_per_facility = 12,  # Each facility goal: 12 SUCOs per week
+        num_facilities = 6,      # Number of facilities
+        district_goal = 72,      # 6 * 12 = 72 total district goal
+        time_period = "current_week"
       )
     ),
     
@@ -437,11 +439,11 @@ get_metric_registry <- function() {
     # =========================================================================
     prehatch_coverage = list(
       id = "prehatch_coverage",
-      display_name = "Prehatch Inspection Coverage",
+      display_name = "Prehatch Red Bugs (5yr)",
       short_name = "Coverage",
       icon = "calendar-check",
       category = "Floodwater",
-      y_label = "Sites Inspected",
+      y_label = "Sites",
       bg_color = "#b91c1c",
       app_folder = "inspections",
       has_acres = FALSE,
@@ -451,25 +453,24 @@ get_metric_registry <- function() {
       chart_types = c("bar"),
       default_chart_type = "bar",
       chart_stacked_mode = TRUE,  # Bars stack: active + expiring = total (not overlay)
-      # Detail boxes: inspected + gaps (total is redundant since active + gap = total)
+      # Detail boxes: sampled with red bugs + gaps
       detail_boxes = list(
-        list(id = "inspected", title = "Recently Inspected", column = "active", icon = "check-circle", status = "active"),
-        list(id = "gaps", title = "Inspection Gaps", column = "expiring", icon = "calendar-times", status = "needs_treatment")
+        list(id = "inspected", title = "Red Bugs Sampled", column = "active", icon = "check-circle", status = "active"),
+        list(id = "gaps", title = "No Red Bugs (5yr)", column = "expiring", icon = "calendar-times", status = "needs_treatment")
       ),
-      # Color: fewer gaps = better. Higher % inspected = green.
+      # Color: fewer gaps = better. Higher % sampled = green.
       color_mode = "fixed_pct",
       color_thresholds = list(good = 85, warning = 60),
       chart_labels = list(
         total = "Total Prehatch Sites",
-        active = "Recently Inspected",
-        expiring = "Inspection Gaps (\u22653 yrs)"
+        active = "Red Bugs Sampled",
+        expiring = "No Red Bugs (\u22655 yrs)"
       ),
-      filter_info = HTML("<b>Prehatch Inspection Coverage:</b><br>
+      filter_info = HTML("<b>Prehatch Red Bug Coverage:</b><br>
                          • Ground sites only (prehatch)<br>
-                         • Drone sites included<br>
-                         • Gap threshold: 3 years<br>
-                         • Includes never-inspected sites<br>
-                         • Action filtering: 1, 2, 4, or 3 with dry<br>
+                         • Checks for samples with red bugs<br>
+                         • Gap threshold: 5 years<br>
+                         • Includes never-sampled sites<br>
                          • Zone filter from dropdown<br>
                          • Click for detailed inspection coverage app"),
       load_params = list(expiring_days = 0)

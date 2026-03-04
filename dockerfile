@@ -1,6 +1,6 @@
 FROM rocker/shiny:latest
 
-# Install system dependencies for geospatial and database packages + nginx
+# Install system dependencies for geospatial and database packages
 RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev libssl-dev libxml2-dev libpq-dev \
     libgdal-dev libudunits2-dev libproj-dev \
@@ -8,8 +8,16 @@ RUN apt-get update && apt-get install -y \
     libharfbuzz-dev libfribidi-dev gfortran cmake gdebi-core \
     libgl1-mesa-dev libglu1-mesa libx11-dev libxt-dev libxft-dev \
     libtiff-dev libjpeg-dev libgeos-dev libgmp-dev libgsl-dev \
-    libv8-dev libpoppler-cpp-dev libmagick++-dev \
-    nginx
+    libv8-dev libpoppler-cpp-dev libmagick++-dev
+
+# Install OpenResty (nginx + LuaJIT + lua-resty-redis) for dynamic load-aware routing
+RUN apt-get install -y --no-install-recommends wget gnupg lsb-release && \
+    wget -qO - https://openresty.org/package/pubkey.gpg | gpg --dearmor -o /usr/share/keyrings/openresty.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" \
+      > /etc/apt/sources.list.d/openresty.list && \
+    apt-get update && \
+    apt-get install -y openresty && \
+    ln -sf /usr/local/openresty/bin/openresty /usr/local/bin/openresty
 
 # Install libsodium for plumber API, libhiredis for Redis client, redis-server for embedded cache
 RUN apt-get install -y libsodium-dev libhiredis-dev redis-server
@@ -39,23 +47,29 @@ RUN R -e "install.packages('pool', lib='/usr/local/lib/R/site-library', repos='h
 # Install redux package for Redis caching
 RUN R -e "install.packages('redux', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
+# Install yaml package for config file parsing
+RUN R -e "install.packages('yaml', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
+
 # Install plumber for API server
 RUN R -e "install.packages('plumber', lib='/usr/local/lib/R/site-library', repos='https://cran.rstudio.com/')"
 
 # Copy app files and config to correct locations
 COPY apps /srv/shiny-server/apps
 COPY shared /srv/shiny-server/shared
+COPY config /srv/shiny-server/config
 COPY tests /srv/shiny-server/tests
 COPY api /srv/api
 COPY index.html /srv/shiny-server/
 COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
 COPY nginx.conf /etc/nginx/nginx.conf
+COPY lua /etc/nginx/lua
 COPY startup.sh /startup.sh
 
-# Make startup script executable, set ownership, create nginx dirs
+# Make startup script executable, set ownership, create required dirs
 RUN chmod +x /startup.sh && \
     chown -R shiny:shiny /srv/shiny-server && \
-    mkdir -p /run /var/log/nginx && \
+    mkdir -p /run /var/log/nginx /etc/nginx/lua /srv/shiny-server/error_pages && \
+    cp /srv/shiny-server/shared/assets/503.html /srv/shiny-server/error_pages/503.html && \
     rm -f /etc/nginx/sites-enabled/default
 
 EXPOSE 3838

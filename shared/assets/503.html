@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Loading - MMCD Metrics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="5">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      display: flex; justify-content: center; align-items: center;
+      min-height: 80vh; margin: 0; background: #f5f5f5;
+    }
+    .card {
+      background: white; border-radius: 12px; padding: 40px 50px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;
+      max-width: 500px;
+    }
+    h1   { color: #2980b9; margin-bottom: 10px; }
+    p    { color: #555; line-height: 1.6; }
+    .sub { font-size: 0.85em; color: #999; margin-top: 15px; }
+    .spinner {
+      width: 40px; height: 40px; margin: 20px auto;
+      border: 4px solid #e0e0e0; border-top: 4px solid #3498db;
+      border-radius: 50%; animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>&#x23F3; Almost There!</h1>
+  <div class="spinner"></div>
+  <p>The dashboard is loading. This page will<br>
+     <strong>automatically refresh</strong> in a few seconds.</p>
+  <p class="sub">If this page persists, the server may be under heavy load.<br>
+     Please wait &mdash; it will be available shortly.</p>
+</div>
+</body>
+</html>

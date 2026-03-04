@@ -4,7 +4,6 @@
 # Drop-in replacement for file-based .rds caching.
 # Redis runs embedded in the container on 127.0.0.1:6379.
 # All Shiny workers (behind nginx) share this single Redis instance.
-# If Redis is unreachable, falls back to file-based .rds caching.
 #
 # USAGE:
 #   source("../../shared/redis_cache.R")
@@ -31,6 +30,33 @@ REDIS_CONFIG <- list(
   prefix   = "mmcd:",
   backend  = "redis"
 )
+
+# Null-coalesce operator (needed before TTL config loading)
+if (!exists("%||%")) {
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+}
+
+# =============================================================================
+# TTL CONSTANTS (seconds) — loaded from config/app_config.yaml
+# =============================================================================
+# Source config loader if not already loaded
+if (!exists("get_app_config", mode = "function")) {
+  for (.cfg_path in c("config.R", "shared/config.R", "../../shared/config.R",
+                       "../shared/config.R", "/srv/shiny-server/shared/config.R")) {
+    if (file.exists(.cfg_path)) { source(.cfg_path); break }
+  }
+}
+
+.ttl_cfg <- tryCatch(get_app_config()$cache$ttl, error = function(e) NULL)
+
+TTL_14_DAYS <- as.integer(.ttl_cfg$historical_averages %||% 1209600L)
+TTL_7_DAYS  <- as.integer(.ttl_cfg$fos_drilldown      %||% 604800L)
+TTL_5_MIN   <- as.integer(.ttl_cfg$general             %||% 300L)
+TTL_24_HR   <- as.integer(.ttl_cfg$facility_historical %||% 86400L)
+TTL_2_MIN   <- as.integer(.ttl_cfg$db_queries          %||% 120L)
+
+rm(.ttl_cfg)
+
 
 # =============================================================================
 # CONNECTION MANAGEMENT
@@ -103,9 +129,9 @@ redis_key <- function(key) {
 #'
 #' @param key   Cache key (will be prefixed automatically)
 #' @param value Any R object (data.frame, list, vector, …)
-#' @param ttl   Time-to-live in seconds. NULL = no expiry. Default 86400 (24h).
+#' @param ttl   Time-to-live in seconds. NULL = no expiry. Default 14 days.
 #' @return TRUE on success, FALSE on failure
-redis_set <- function(key, value, ttl = 86400L) {
+redis_set <- function(key, value, ttl = TTL_14_DAYS) {
   conn <- get_redis()
   if (is.null(conn)) return(FALSE)
 
@@ -211,9 +237,9 @@ LOOKUP_HASH_KEY      <- "lookup_cache"
 #'
 #' @param field  e.g. "catch_basin_5yr"
 #' @param value  data.frame
-#' @param ttl    TTL for the entire hash (refreshed on every write). Default 24h.
+#' @param ttl    TTL for the entire hash (refreshed on every write). Default 14 days.
 #' @return TRUE/FALSE
-redis_hset <- function(hash_key, field, value, ttl = 86400L) {
+redis_hset <- function(hash_key, field, value, ttl = TTL_14_DAYS) {
   conn <- get_redis()
   if (is.null(conn)) return(FALSE)
 
@@ -324,9 +350,9 @@ redis_hdel <- function(hash_key, fields) {
 #' Mirrors the structure: list(generated_date, averages = list(...))
 #'
 #' @param cache List with $generated_date, $zone_filter, $averages
-#' @param ttl   TTL in seconds (default 24h)
+#' @param ttl   TTL in seconds (default 14 days)
 #' @return TRUE/FALSE
-save_historical_cache_redis <- function(cache, ttl = 86400L) {
+save_historical_cache_redis <- function(cache, ttl = TTL_14_DAYS) {
   if (!redis_is_active()) return(FALSE)
 
   # Store each metric as a hash field
@@ -400,8 +426,8 @@ get_lookup_redis <- function(key) {
 #'
 #' @param key   Lookup name
 #' @param value Any R object
-#' @param ttl   TTL for the entire lookup hash (default 1h)
-set_lookup_redis <- function(key, value, ttl = 3600L) {
+#' @param ttl   TTL for the entire lookup hash (default 14 days)
+set_lookup_redis <- function(key, value, ttl = TTL_14_DAYS) {
   redis_hset(LOOKUP_HASH_KEY, key, value, ttl = ttl)
   # Also store timestamp (but don't double-stamp timestamp keys)
   if (!grepl("_timestamp$", key)) {
@@ -469,6 +495,122 @@ clear_app_cache_redis <- function() {
   keys <- redis_keys("app:*")
   if (length(keys) > 0) redis_del(keys)
   message("[redis_cache] App cache cleared from Redis")
+}
+
+# =============================================================================
+# TIERED CACHE HELPERS — Specialized wrappers with semantic key prefixes
+# =============================================================================
+
+# Cache key prefixes for each tier
+CACHE_PREFIX_DB       <- "db"       # DB query results (2 min)
+CACHE_PREFIX_CHART    <- "chart"    # Plotly chart objects (2 min)
+CACHE_PREFIX_STAT     <- "stat"     # Stat box calculations (2 min)
+CACHE_PREFIX_FOS      <- "fos"      # FOS drill-down data (7 days)
+CACHE_PREFIX_COLOR    <- "color"    # Color mappings (7 days)
+CACHE_PREFIX_FAC_HIST <- "fachist"  # Facility-filtered historical data (24 hr)
+
+#' Build a deterministic cache key from a prefix and parameters
+#' Uses digest::digest for consistent hashing of complex parameter sets
+#' @param prefix Cache tier prefix (e.g., "db", "chart", "fos")
+#' @param ... Named or unnamed arguments that define cache uniqueness
+#' @return Character cache key like "db:abc123def"
+build_cache_key <- function(prefix, ...) {
+  args <- list(...)
+  hash <- digest::digest(args, algo = "xxhash64")
+  paste0(prefix, ":", hash)
+}
+
+#' Get cached DB query result (2-min TTL)
+#' @param cache_id Descriptive ID (e.g., "catch_basin_zone")
+#' @param load_func Function to load data on cache miss
+#' @param ... Additional parameters for cache key uniqueness
+#' @return Cached or freshly loaded data
+get_cached_db_query <- function(cache_id, load_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_DB, cache_id, ...)
+  get_app_cached_redis(key, load_func, ttl = TTL_2_MIN)
+}
+
+#' Get cached chart object (2-min TTL)
+#' @param cache_id Descriptive ID (e.g., "catch_basin_historical")
+#' @param render_func Function to render the chart on cache miss
+#' @param ... Additional parameters for cache key uniqueness
+#' @return Cached or freshly rendered plotly object
+get_cached_chart <- function(cache_id, render_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_CHART, cache_id, ...)
+  get_app_cached_redis(key, render_func, ttl = TTL_2_MIN)
+}
+
+#' Get cached stat box calculation (2-min TTL)
+#' @param cache_id Descriptive ID (e.g., "catch_basin_stats")
+#' @param calc_func Function to compute stat values on cache miss
+#' @param ... Additional parameters for cache key uniqueness
+#' @return Cached or freshly computed stat data
+get_cached_stat_box <- function(cache_id, calc_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_STAT, cache_id, ...)
+  get_app_cached_redis(key, calc_func, ttl = TTL_2_MIN)
+}
+
+#' Get cached FOS drill-down data (7-day TTL)
+#' @param cache_id Descriptive ID (e.g., "catch_basin_fos")
+#' @param load_func Function to load data on cache miss
+#' @param ... Additional parameters for cache key uniqueness
+#' @return Cached or freshly loaded FOS data
+get_cached_fos_data <- function(cache_id, load_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_FOS, cache_id, ...)
+  get_app_cached_redis(key, load_func, ttl = TTL_7_DAYS)
+}
+
+#' Get cached color mapping (7-day TTL)
+#' @param cache_id Descriptive ID (e.g., "facility_colors")
+#' @param gen_func Function to generate colors on cache miss
+#' @param ... Additional parameters for cache key uniqueness
+#' @return Cached or freshly generated color mapping
+get_cached_color_mapping <- function(cache_id, gen_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_COLOR, cache_id, ...)
+  get_app_cached_redis(key, gen_func, ttl = TTL_7_DAYS)
+}
+
+#' Get cached facility-filtered historical data (24-hr TTL)
+#' Used for FOS overview where historical averages are filtered by facility.
+#' @param cache_id Descriptive ID (e.g., "catch_basin_south_rosemount")
+#' @param load_func Function to load data on cache miss
+#' @param ... Additional parameters for cache key uniqueness (metric, facility, zones)
+#' @return Cached or freshly loaded historical comparison data
+get_cached_fac_hist_data <- function(cache_id, load_func, ...) {
+  key <- build_cache_key(CACHE_PREFIX_FAC_HIST, cache_id, ...)
+  get_app_cached_redis(key, load_func, ttl = TTL_24_HR)
+}
+
+#' Clear all cache entries matching a specific tier prefix
+#' @param prefix One of: "db", "chart", "stat", "fos", "color", or "all"
+#' @return Number of keys deleted
+clear_cache_tier <- function(prefix = "all") {
+  if (prefix == "all") {
+    return(clear_app_cache_redis())
+  }
+  pattern <- paste0("app:", prefix, ":*")
+  keys <- redis_keys(pattern)
+  if (length(keys) > 0) {
+    n <- redis_del(keys)
+    message(sprintf("[redis_cache] Cleared %d keys with prefix '%s'", n, prefix))
+    return(n)
+  }
+  message(sprintf("[redis_cache] No keys found with prefix '%s'", prefix))
+  0L
+}
+
+#' Get count of cached items per tier
+#' @return Named list with counts for each cache tier
+get_cache_tier_counts <- function() {
+  list(
+    db_queries    = length(redis_keys(paste0("app:", CACHE_PREFIX_DB, ":*"))),
+    charts        = length(redis_keys(paste0("app:", CACHE_PREFIX_CHART, ":*"))),
+    stat_boxes    = length(redis_keys(paste0("app:", CACHE_PREFIX_STAT, ":*"))),
+    fos_drilldown = length(redis_keys(paste0("app:", CACHE_PREFIX_FOS, ":*"))),
+    color_maps    = length(redis_keys(paste0("app:", CACHE_PREFIX_COLOR, ":*"))),
+    fac_hist      = length(redis_keys(paste0("app:", CACHE_PREFIX_FAC_HIST, ":*"))),
+    other_app     = length(redis_keys("app:*"))
+  )
 }
 
 # =============================================================================
@@ -545,11 +687,6 @@ print_redis_status <- function() {
 # =============================================================================
 # MODULE INIT
 # =============================================================================
-
-# Null-coalesce operator (if not already defined)
-if (!exists("%||%")) {
-  `%||%` <- function(a, b) if (is.null(a)) b else a
-}
 
 message(sprintf("[redis_cache] Module loaded (backend=%s, host=%s:%d)",
                 REDIS_CONFIG$backend, REDIS_CONFIG$host, REDIS_CONFIG$port))

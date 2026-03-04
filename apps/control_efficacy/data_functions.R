@@ -397,12 +397,15 @@ load_site_inspections <- function(treated_sites, start_date, end_date) {
 #' @param ingredient Character string to match against active_ingredient (case-insensitive)
 #' @return Character vector of matcodes
 get_matcodes_by_ingredient <- function(con, ingredient) {
+  # Special case for Bti: also include Bti_VbacGS (matcodes S1, S2) which are
+
+  # classified as (5) Experimental but are operationally used as Bti larvicide.
   query <- sprintf("
     SELECT DISTINCT t.matcode
     FROM mattype_list_targetdose t
     JOIN mattype_list m ON t.mattype = m.mattype
     WHERE m.active_ingredient ILIKE '%%%s%%'
-      AND m.physinv_list = '(1) Larvicide'
+      AND (m.physinv_list = '(1) Larvicide' OR t.mattype = 'Bti_VbacGS')
   ", ingredient)
   result <- dbGetQuery(con, query)
   if (is.null(result) || nrow(result) == 0) return(character(0))

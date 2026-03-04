@@ -79,8 +79,16 @@ server <- function(input, output, session) {
   })
   
   # Load all trap locations from shapefile (cached — fast, no DB query)
+  # Used as fallback when no week is selected
   all_traps <- reactive({
     load_trap_locations()
+  })
+  
+  # Load traps for selected week with pool details (replaces shapefile when week is selected)
+  week_traps <- eventReactive(input$refresh, {
+    req(input$yrwk)
+    virus_target <- if (!is.null(input$infection_metric) && input$infection_metric == "mir") "WNV" else "WNV"
+    fetch_traps_for_week(yrwk = input$yrwk, virus_target = virus_target)
   })
   
   # Populate comparison week dropdown when year changes
@@ -123,6 +131,7 @@ server <- function(input, output, session) {
     yrwk_label <- input$yrwk %||% ""
     metric_type <- input$metric_type %||% "abundance"
     trap_locations <- all_traps()
+    week_trap_data <- week_traps()
     
     # Comparison mode: show delta map
     if (isTRUE(input$compare_mode)) {
@@ -136,7 +145,8 @@ server <- function(input, output, session) {
         spp_label = spp_label,
         yrwk_a = input$yrwk %||% "",
         yrwk_b = input$yrwk_b %||% "",
-        all_traps = trap_locations
+        all_traps = trap_locations,
+        week_traps = week_trap_data
       ))
     }
     
@@ -148,7 +158,8 @@ server <- function(input, output, session) {
       spp_label = spp_label,
       yrwk_label = yrwk_label,
       color_theme = input$color_theme %||% "MMCD",
-      all_traps = trap_locations
+      all_traps = trap_locations,
+      week_traps = week_trap_data
     )
   })
   

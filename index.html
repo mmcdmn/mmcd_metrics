@@ -329,7 +329,7 @@
         });
 
         // Load REAL facilities from the air_inspection_checklist Shiny app
-        async function loadRealFacilities() {
+        async function loadRealFacilities(retries = 3, delay = 2000) {
             try {
                 const facilitySelect = document.getElementById('air_facility');
                 const jsonUrl = 'air_inspection_checklist/facilities.json';
@@ -351,18 +351,27 @@
                             facilitySelect.appendChild(option);
                         });
                     }
+                } else if (retries > 0) {
+                    console.warn(`Facilities fetch returned HTTP ${response.status}, retrying in ${delay}ms... (${retries} left)`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return loadRealFacilities(retries - 1, delay * 1.5);
                 } else {
-                    console.error('Failed to load facilities - HTTP', response.status);
+                    console.error('Failed to load facilities after retries - HTTP', response.status);
                     facilitySelect.innerHTML = '<option value="">Unable to load facilities from database</option>';
                 }
             } catch (error) {
+                if (retries > 0) {
+                    console.warn(`Facilities fetch error, retrying in ${delay}ms... (${retries} left)`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return loadRealFacilities(retries - 1, delay * 1.5);
+                }
                 console.error('Error loading real facilities:', error);
                 document.getElementById('air_facility').innerHTML = '<option value="">Error loading facilities</option>';
             }
         }
 
         // Load REAL foremen from the air_inspection_checklist Shiny app
-        async function loadRealForemen() {
+        async function loadRealForemen(retries = 3, delay = 2000) {
             try {
                 const fosSelect = document.getElementById('air_fos');
                 const jsonUrl = 'air_inspection_checklist/foremen.json';
@@ -376,11 +385,20 @@
                     
                     // Initial population - show all foremen
                     filterFOSByFacility();
+                } else if (retries > 0) {
+                    console.warn(`Foremen fetch returned HTTP ${response.status}, retrying in ${delay}ms... (${retries} left)`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return loadRealForemen(retries - 1, delay * 1.5);
                 } else {
-                    console.error('Failed to load foremen - HTTP', response.status);
+                    console.error('Failed to load foremen after retries - HTTP', response.status);
                     fosSelect.innerHTML = '<option value="">Unable to load FOS areas from database</option>';
                 }
             } catch (error) {
+                if (retries > 0) {
+                    console.warn(`Foremen fetch error, retrying in ${delay}ms... (${retries} left)`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return loadRealForemen(retries - 1, delay * 1.5);
+                }
                 console.error('Error loading real foremen:', error);
                 document.getElementById('air_fos').innerHTML = '<option value="">Error loading FOS areas</option>';
             }

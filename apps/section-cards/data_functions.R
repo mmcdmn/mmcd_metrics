@@ -9,22 +9,26 @@
 # STRUCTURES: Still use gis_sectcode for facility/zone/fosarea (separate data source)
 
 # =============================================================================
-# JK TABLE CONSTANTS & DYNAMIC COLUMN DISCOVERY
+# CUSTOM TABLE CONSTANTS & DYNAMIC COLUMN DISCOVERY
 # =============================================================================
 
 # The production table name (case-sensitive, needs quoting in SQL)
 JK_TABLE <- '"loc_breeding_site_cards_sjsreast2"'
 
-# Core columns that are always expected in the JK table
+# The original Webster table (public.loc_breeding_sites)
+# Same core columns but no custom fields; uses gis_sectcode for zone/fosarea
+WEBSTER_TABLE <- 'loc_breeding_sites'
+
+# Core columns that are always expected in the custom table
 CORE_BREEDING_COLS <- c("sitecode", "priority", "acres", "type", "air_gnd",
                         "culex", "spr_aedes", "coq_pert", "prehatch",
                         "remarks", "drone", "sample", "facility",
-                        "zone", "foreman")
+                        "zone", "foreman", "ra")
 
 # Internal/structural columns excluded from dynamic discovery
 EXCLUDED_INTERNAL_COLS <- c("id", "geom", "fid", "site", "page")
 
-#' Discover dynamic (extra) columns in the JK table
+#' Discover dynamic (extra) columns in the custom table
 #'
 #' Queries information_schema to find columns beyond core + excluded sets.
 #' These are extra fields like ra, airmap_num, partialtrt, etc.
@@ -370,12 +374,13 @@ get_breeding_sites_with_sections <- function() {
       zone,
       foreman,
       foreman as fosarea,
+      ra,
       left(sitecode, 7) as section", dynamic_select, "
     FROM public.", JK_TABLE, "
     ORDER BY sitecode
   ")
   
-  message("[section_cards] Loading breeding sites from JK table...")
+  message("[section_cards] Loading breeding sites from custom table...")
   data <- dbGetQuery(con, query)
   message(sprintf("[section_cards] Loaded %d breeding sites with %d columns", nrow(data), ncol(data)))
   
@@ -383,6 +388,160 @@ get_breeding_sites_with_sections <- function() {
   data <- sanitize_breeding_data(data)
   
   return(data)
+}
+
+# =============================================================================
+# WEBSTER TABLE FUNCTIONS (public.loc_breeding_sites + gis_sectcode)
+# =============================================================================
+
+#' Get breeding sites from the original Webster table (loc_breeding_sites)
+#'
+#' Uses gis_sectcode for zone/fosarea (like structures do).
+#' No dynamic columns — only the standard core fields.
+#'
+#' @return A data frame with breeding site information
+#' @export
+get_webster_breeding_sites <- function() {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  
+  query <- paste0("
+    SELECT
+      b.sitecode,
+      b.priority,
+      b.acres,
+      b.type,
+      b.air_gnd,
+      b.culex,
+      b.spr_aedes,
+      b.coq_pert as perturbans,
+      b.prehatch,
+      b.remarks,
+      b.drone,
+      b.sample,
+      g.facility as facility,
+      g.zone,
+      g.fosarea,
+      g.sectcode as section
+    FROM public.", WEBSTER_TABLE, " b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    WHERE b.enddate IS NULL
+    ORDER BY b.sitecode
+  ")
+  
+  message("[section_cards] Loading breeding sites from Webster table (loc_breeding_sites)...")
+  data <- dbGetQuery(con, query)
+  message(sprintf("[section_cards] Loaded %d Webster breeding sites", nrow(data)))
+  
+  # Sanitize data
+  data <- sanitize_breeding_data(data)
+  
+  return(data)
+}
+
+#' Get filter options from Webster table
+#'
+#' @param facility_filter Optional facility filter
+#' @param fosarea_filter Optional FOS area filter
+#' @return A list with facility, section, and fosarea choices
+#' @export
+get_webster_filter_options <- function(facility_filter = NULL, fosarea_filter = NULL) {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  
+  where_conditions <- "b.enddate IS NULL AND g.facility IS NOT NULL AND b.sitecode IS NOT NULL"
+  
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
+  }
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
+    SELECT DISTINCT
+      g.facility,
+      g.sectcode as section,
+      g.fosarea
+    FROM public.", WEBSTER_TABLE, " b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    WHERE ", where_conditions, "
+    ORDER BY g.facility, g.sectcode, g.fosarea
+  ")
+  
+  data <- dbGetQuery(con, query)
+  
+  return(list(
+    facilities = sort(unique(data$facility)),
+    sections = sort(unique(data$section)),
+    fosarea_list = sort(unique(data$fosarea))
+  ))
+}
+
+#' Get town codes from Webster table
+#'
+#' @param facility_filter Optional facility filter
+#' @param fosarea_filter Optional FOS area filter
+#' @return A vector of unique town codes
+#' @export
+get_webster_town_codes <- function(facility_filter = NULL, fosarea_filter = NULL) {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  
+  where_conditions <- "b.enddate IS NULL AND b.sitecode IS NOT NULL AND g.facility IS NOT NULL"
+  
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
+  }
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
+    SELECT DISTINCT left(b.sitecode, 4) as towncode
+    FROM public.", WEBSTER_TABLE, " b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    WHERE ", where_conditions, "
+    ORDER BY left(b.sitecode, 4)
+  ")
+  
+  data <- dbGetQuery(con, query)
+  return(data$towncode)
+}
+
+#' Get sections from Webster table filtered by town code
+#'
+#' @param towncode_filter Optional town code filter
+#' @param facility_filter Optional facility filter
+#' @param fosarea_filter Optional FOS area filter
+#' @return A vector of unique sections
+#' @export
+get_webster_sections_by_towncode <- function(towncode_filter = NULL, facility_filter = NULL, fosarea_filter = NULL) {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  
+  where_conditions <- "b.enddate IS NULL AND b.sitecode IS NOT NULL AND g.facility IS NOT NULL"
+  
+  if (!is.null(towncode_filter) && towncode_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND left(b.sitecode, 4) = '", towncode_filter, "'")
+  }
+  if (!is.null(facility_filter) && facility_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.facility = '", facility_filter, "'")
+  }
+  if (!is.null(fosarea_filter) && fosarea_filter != "all") {
+    where_conditions <- paste0(where_conditions, " AND g.fosarea = '", fosarea_filter, "'")
+  }
+  
+  query <- paste0("
+    SELECT DISTINCT g.sectcode
+    FROM public.", WEBSTER_TABLE, " b
+    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
+    WHERE ", where_conditions, " AND g.sectcode IS NOT NULL
+    ORDER BY g.sectcode
+  ")
+  
+  data <- dbGetQuery(con, query)
+  return(data$sectcode)
 }
 
 #' Get structure sites data with section information

@@ -466,7 +466,7 @@ load_historical_comparison_data <- function(metric,
   
   # ==========================================================================
   # CACHE PATH: Try to use cached averages first (much faster)
-  # Skip cache when facility_filter is set (cache is district-wide)
+  # Skip cache when facility_filter is set — use Redis facility-specific cache instead
   # ==========================================================================
   if (is.null(facility_filter) &&
       exists("get_cached_average") && exists("USE_CACHED_AVERAGES") && USE_CACHED_AVERAGES &&
@@ -531,6 +531,34 @@ load_historical_comparison_data <- function(metric,
   }
   
   # ==========================================================================
+  # CACHE PATH: Facility-filtered historical (Redis, 24-hr TTL)
+  # When viewing FOS overview, cache the full result per facility + metric
+  # ==========================================================================
+  if (!is.null(facility_filter) && facility_filter != "all" &&
+      exists("get_cached_fac_hist_data")) {
+    
+    # Build a stable cache key from metric + facility + zones + analysis week
+    analysis_week <- if (!is.null(analysis_date)) {
+      paste0(lubridate::year(analysis_date), "_W", lubridate::week(analysis_date))
+    } else {
+      paste0(lubridate::year(Sys.Date()), "_W", lubridate::week(Sys.Date()))
+    }
+    
+    fac_hist_id <- paste0(metric, "_", facility_filter)
+    cached_result <- get_cached_fac_hist_data(
+      fac_hist_id, NULL,
+      metric, facility_filter, sort(zone_filter), overview_type, analysis_week
+    )
+    
+    if (!is.null(cached_result)) {
+      cat("[fachist] Cache HIT for", metric, "facility:", facility_filter, "\n")
+      return(cached_result)
+    }
+    
+    cat("[fachist] Cache MISS for", metric, "facility:", facility_filter, "- loading from DB\n")
+  }
+  
+  # ==========================================================================
   # DATABASE FALLBACK: Load full historical data from database
   # ==========================================================================
   
@@ -585,7 +613,24 @@ load_historical_comparison_data <- function(metric,
   
   # Check if this metric uses yearly grouped chart
   if (isTRUE(config$historical_type == "yearly_grouped")) {
-    return(load_yearly_grouped_data(metric, treatments, config, overview_type, start_year, end_year))
+    yearly_result <- load_yearly_grouped_data(metric, treatments, config, overview_type, start_year, end_year)
+    
+    # Cache facility-filtered yearly grouped result before returning
+    if (!is.null(facility_filter) && facility_filter != "all" &&
+        exists("set_app_cached_redis") && exists("build_cache_key") && exists("CACHE_PREFIX_FAC_HIST")) {
+      analysis_week <- if (!is.null(analysis_date)) {
+        paste0(lubridate::year(analysis_date), "_W", lubridate::week(analysis_date))
+      } else {
+        paste0(lubridate::year(Sys.Date()), "_W", lubridate::week(Sys.Date()))
+      }
+      fac_hist_id <- paste0(metric, "_", facility_filter)
+      cache_key <- build_cache_key(CACHE_PREFIX_FAC_HIST, fac_hist_id,
+                                    metric, facility_filter, sort(zone_filter), overview_type, analysis_week)
+      set_app_cached_redis(cache_key, yearly_result, ttl = TTL_24_HR)
+      cat("[fachist] Cached yearly grouped result for", metric, "facility:", facility_filter, "\n")
+    }
+    
+    return(yearly_result)
   }
   
   # Assign value column using shared helper (reduces duplication)
@@ -818,13 +863,32 @@ load_historical_comparison_data <- function(metric,
       select(time_period, week_num, value, group_label)
   }
   
-  list(
+  result <- list(
     average = display_5yr,
     ten_year_average = display_10yr,
     current = current_formatted,
     average_by_zone = average_by_zone,
     ten_year_by_zone = ten_year_by_zone
   )
+  
+  # Store facility-filtered result in Redis for next time
+  if (!is.null(facility_filter) && facility_filter != "all" &&
+      exists("set_app_cached_redis") && exists("build_cache_key") && exists("CACHE_PREFIX_FAC_HIST")) {
+    
+    analysis_week <- if (!is.null(analysis_date)) {
+      paste0(lubridate::year(analysis_date), "_W", lubridate::week(analysis_date))
+    } else {
+      paste0(lubridate::year(Sys.Date()), "_W", lubridate::week(Sys.Date()))
+    }
+    
+    fac_hist_id <- paste0(metric, "_", facility_filter)
+    cache_key <- build_cache_key(CACHE_PREFIX_FAC_HIST, fac_hist_id,
+                                  metric, facility_filter, sort(zone_filter), overview_type, analysis_week)
+    set_app_cached_redis(cache_key, result, ttl = TTL_24_HR)
+    cat("[fachist] Cached result for", metric, "facility:", facility_filter, "\n")
+  }
+  
+  result
 }
 
 # =============================================================================

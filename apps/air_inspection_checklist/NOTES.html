@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trap Surveillance Dashboard</title>
+    <title>Air Inspection Checklist</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,58 +122,43 @@
 </head>
 <body>
     <div class="container">
-<h1>Trap Surveillance Dashboard</h1>
+<h1>Air Inspection Checklist</h1>
 
-<h2>Overview</h2>
-<p>Displays mosquito vector abundance, MLE/MIR infection rates, and Vector Index by <strong>Vector Index Area</strong> using pre-calculated database views. This is the production version — the legacy <code>trap<em>survillance</em>test</code> app used in-app KNN calculations; this version reads directly from materialized views.</p>
+<h2>Purpose</h2>
+<p>Checklist view of RED air sites showing whether each site has been inspected within a configurable lookback period. Organized by FOS area and section for easy field verification.</p>
 
-<h2>Data Sources</h2>
-
-<p>| View/Table                           | Purpose                                                                                   |</p>
-<p>|--------------------------------------|-------------------------------------------------------------------------------------------|</p>
-<p>| <code>dbadult<em>mon</em>nt<em>co2</em>forvectorabundance</code> | Monday night CO₂ trap counts by species, trap location, and yrwk                       |</p>
-<p>| <code>dbvirus<em>mle</em>yrwk_area</code>              | Pre-calculated MLE by week × VI area (all Cx species combined)                            |</p>
-<p>| <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code>          | Pre-calculated MLE by week × VI area × species                                            |</p>
-<p>| <code>dbvirus<em>mir</em>yrwk_area</code>              | Pre-calculated MIR by week × VI area                                                      |</p>
-<p>| <code>dbvirus<em>mir</em>yrwk<em>area</em>spp</code>          | Pre-calculated MIR by week × VI area × species                                            |</p>
-<p>| <code>dbvirus<em>mle</em>yrwk</code>                   | District-wide MLE by week (for trend chart)                                               |</p>
-<p>| <code>loc<em>vectorindexareas</em>sections_a</code>    | Section polygons with <code>viareaa</code> grouping, dissolved into 12 VI areas                      |</p>
-
-<h2>Metrics</h2>
-
+<h2>Features</h2>
 <ul>
-<li><strong>Abundance (N):</strong> Average mosquitoes per trap per night for the selected week</li>
-<li><strong>MLE:</strong> Maximum Likelihood Estimate of infection rate (pre-calculated, Firth method)</li>
-<li><strong>MIR:</strong> Minimum Infection Rate = (positive pools / total mosquitoes) × 1000</li>
-<li><strong>Vector Index (VI):</strong> N × P where P = infection rate (MLE or MIR/1000)</li>
+<li>Filter by Facility and FOS (FOS choices filter by selected facility)</li>
+<li>Adjustable lookback days (1-7, default 2)</li>
+<li>Show only unfinished (un-inspected) sites</li>
+<li>Employee number and dip count shown for completed inspections</li>
+<li>Red/Blue bug status badges from lab sample results</li>
+<li>URL parameter support: <code>?facility=N&amp;fos=Rosa&amp;lookback=3</code></li>
 </ul>
 
-<h2>Species</h2>
+<h2>URL Parameters</h2>
+<p>| Parameter | Description | Example |</p>
+<p>|-----------|-------------|---------|</p>
+<p>| <code>facility</code> | Facility short code | <code>N</code>, <code>E</code>, <code>Sr</code> |</p>
+<p>| <code>fos</code> | FOS shortname(s), comma-separated | <code>Rosa</code>, <code>Rosa,Abbey</code> |</p>
+<p>| <code>lookback</code> | Lookback days (1-7) | <code>3</code> |</p>
+
+<h2>Data Source</h2>
 <ul>
-<li><strong>Total Cx Vectors</strong> — all Culex combined; uses <code>dbvirus<em>mle</em>yrwk_area</code> (no species filter)</li>
-<li><strong>Cx. pipiens (33)</strong> — uses <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code> with <code>spp_code = '33'</code></li>
-<li><strong>Cx. restuans (34)</strong> — spp_code = '34'</li>
-<li><strong>Cx. tarsalis (36)</strong> — spp_code = '36'</li>
-<li><strong>Cx. restuans/pipiens (372)</strong> — spp_code = '372'</li>
+<li><strong>Sites</strong>: <code>loc<em>breeding</em>sites</code> (air_gnd='A', priority='RED')</li>
+<li><strong>Sections/FOS</strong>: <code>gis<em>sectcode</code> (fosarea maps to employee</em>list.emp_num)</li>
+<li><strong>Inspections</strong>: <code>dblarv<em>insptrt</em>current</code> (actions '2','4')</li>
+<li><strong>Lab Samples</strong>: <code>dblarv<em>sample</em>current</code> (redblue column for bug type)</li>
 </ul>
 
-<h2>Key Differences from Legacy App (<code>trap<em>survillance</em>test</code>)</h2>
-<ol>
-<li><strong>No KNN calculations</strong> — legacy computed per-section k-NN weighted averages; this uses area-level pre-calculated data</li>
-<li><strong>No PooledInfRate dependency</strong> — MLE is pre-calculated in the database</li>
-<li><strong>Area-based, not section-based</strong> — displays 12 VI areas instead of ~3,200 individual sections</li>
-<li><strong>Much faster</strong> — simple SELECT queries vs. heavy spatial computation</li>
-<li><strong>Week-based navigation</strong> — browse by yrwk instead of analysis date</li>
-</ul>
-
-<h2>Files</h2>
-<ul>
-<li><code>app.R</code> — Shiny app entry point</li>
-<li><code>ui_helper.R</code> — Dashboard UI layout</li>
-<li><code>data_functions.R</code> — All database queries and data fetching</li>
-<li><code>display_functions.R</code> — Leaflet map rendering</li>
-<li><code>NOTES.md</code> — This file</li>
-</ul>
+<h2>File Structure</h2>
+<p>| File | Purpose |</p>
+<p>|------|---------|</p>
+<p>| <code>app.R</code> | Main application entry point, server logic, URL parsing |</p>
+<p>| <code>data_functions.R</code> | Database queries and data processing |</p>
+<p>| <code>display_functions.R</code> | Checklist HTML generation and summary boxes |</p>
+<p>| <code>ui_helper.R</code> | Shiny UI definition |</p>
     </div>
 </body>
 </html>

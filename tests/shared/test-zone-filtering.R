@@ -10,16 +10,37 @@ library(testthat)
 
 context("Zone Filtering")
 
+resolve_project_file <- function(rel_path) {
+  candidates <- c(
+    rel_path,
+    file.path("..", rel_path),
+    file.path("..", "..", rel_path)
+  )
+  for (candidate in candidates) {
+    if (file.exists(candidate)) return(candidate)
+  }
+  NA_character_
+}
+
 # =============================================================================
 # SETUP: Source required modules
 # =============================================================================
 
 # Ensure metric_registry and data functions are available
 tryCatch({
-  source("apps/overview/metric_registry.R")
-  source("apps/overview/data_functions.R")
-  source("apps/overview/ui_helper.R")
-  cat("✓ Overview modules loaded for zone filtering tests\n")
+  metric_registry_file <- resolve_project_file("apps/overview/metric_registry.R")
+  data_functions_file <- resolve_project_file("apps/overview/data_functions.R")
+  ui_helper_file <- resolve_project_file("apps/overview/ui_helper.R")
+
+  if (!is.na(metric_registry_file)) source(metric_registry_file)
+  if (!is.na(data_functions_file)) source(data_functions_file)
+  if (!is.na(ui_helper_file)) source(ui_helper_file)
+
+  if (exists("navigate_to_overview", mode = "function")) {
+    cat("✓ Overview modules loaded for zone filtering tests\n")
+  } else {
+    cat("✗ Overview modules not available for zone filtering tests\n")
+  }
 }, error = function(e) {
   cat("✗ Overview modules failed:", e$message, "\n")
 })
@@ -29,13 +50,12 @@ tryCatch({
 # =============================================================================
 
 test_that("parse_unified_params is available", {
-  tryCatch({
-    source("apps/overview/unified/app.R", local = TRUE)
-    skip("Cannot source unified/app.R in test environment (needs shiny)")
-  }, error = function(e) {
-    # Expected - test the parsing logic directly instead
-    expect_true(TRUE)
-  })
+  unified_app_file <- resolve_project_file("apps/overview/unified/app.R")
+  if (is.na(unified_app_file)) {
+    skip("unified/app.R not present in this repository")
+  }
+
+  expect_true(file.exists(unified_app_file))
 })
 
 # Test zone parsing logic directly (extracted from parse_unified_params)
@@ -152,12 +172,11 @@ test_that("navigate preserves zone=separate in URL", {
   navigate_to_overview(
     session = mock_session,
     target = "facilities_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = Sys.Date(),
     expiring_days = 3,
     color_theme = "MMCD",
-    metric_id = "drone",
-    zone_filter_raw = "separate"
+    metric_id = "drone"
   )
   url <- mock_session$last_navigate_url
   expect_true(!is.null(url))
@@ -195,7 +214,7 @@ test_that("navigate produces zone=2 for P2 click", {
               info = paste("URL should contain zone=2, got:", url))
 })
 
-test_that("navigate omits zone param for combined mode (1,2)", {
+test_that("navigate omits zone param for combined (1,2)", {
   mock_session$last_navigate_url <- NULL
   navigate_to_overview(
     session = mock_session,
@@ -210,21 +229,20 @@ test_that("navigate omits zone param for combined mode (1,2)", {
                info = paste("URL should not contain zone param for combined mode, got:", url))
 })
 
-test_that("navigate preserves separate mode even when specific zone clicked", {
-  # When user is in "separate" mode and clicks P1 bar, the drill-down should
-  # still carry zone=separate so the target page shows both zones separately
+test_that("navigate preserves separate mode from filter", {
+  # When user is in "separate" mode (zone_filter=separate), the drill-down
+  # passes zone_clicked="separate" so the target page shows both zones separately
   mock_session$last_navigate_url <- NULL
   navigate_to_overview(
     session = mock_session,
     target = "facilities_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = Sys.Date(),
-    expiring_days = 3,
-    zone_filter_raw = "separate"
+    expiring_days = 3
   )
   url <- mock_session$last_navigate_url
   expect_true(grepl("zone=separate", url),
-              info = paste("zone=separate should override P1 click, got:", url))
+              info = paste("zone=separate should be in URL, got:", url))
   expect_false(grepl("zone=1[^,]", url),
                info = paste("zone=1 should NOT appear when separate mode active, got:", url))
 })
@@ -234,12 +252,11 @@ test_that("navigate produces correct facility drill-down URL", {
   navigate_to_overview(
     session = mock_session,
     target = "fos_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = Sys.Date(),
     expiring_days = 3,
     metric_id = "ground_prehatch",
-    facility_clicked = "East",
-    zone_filter_raw = "separate"
+    facility_clicked = "East"
   )
   url <- mock_session$last_navigate_url
   expect_true(grepl("view=fos", url))
@@ -330,38 +347,43 @@ test_that("aggregate by facility without zone gives per-facility rows", {
 })
 
 # =============================================================================
-# 5. SUCO metric aggregate_metric_data zone handling
+# 5. SUCO metric aggregate_metric_data goal handling
 # =============================================================================
 
 mock_suco_config <- list(
   id = "suco",
-  display_name = "SUCO",
-  load_params = list(capacity_total = 72)
+  display_name = "SUCO Goal",
+  display_as_goal = TRUE,
+  load_params = list(goal_per_facility = 12, num_facilities = 6, district_goal = 72)
 )
 
 create_suco_mock_data <- function() {
   data.frame(
     facility = rep(c("E", "N"), each = 4),
-    zone = rep(c("1", "1", "2", "2"), 2),
+    zone = rep("all", 8),
     active_count = c(3, 2, 4, 1, 5, 3, 2, 1),
+    met_goal = rep(FALSE, 8),
     stringsAsFactors = FALSE
   )
 }
 
-test_that("SUCO aggregate with separate_zones=TRUE shows per-zone capacity", {
+test_that("SUCO aggregate district shows goal-based totals", {
   data <- create_suco_mock_data()
   result <- aggregate_metric_data(data, mock_suco_config, "suco",
                                   group_cols = c("zone"),
                                   separate_zones = TRUE)
-  # Should have 2 rows (P1, P2)
-  expect_equal(nrow(result), 2)
+  # Should have 1 row (district total — SUCO ignores zones)
+  expect_equal(nrow(result), 1)
   expect_true("display_name" %in% names(result))
-  # Each zone gets capacity_total / 2 = 36
-  expect_equal(result$total[1], 36)
-  expect_equal(result$total[2], 36)
+  # District goal = 72
+  expect_equal(result$total, 72)
+  # Active = sum of all active_count = 3+2+4+1+5+3+2+1 = 21
+  expect_equal(result$active, 21)
+  # facilities_at_goal should be present
+  expect_true("facilities_at_goal" %in% names(result))
 })
 
-test_that("SUCO aggregate with separate_zones=FALSE shows full capacity", {
+test_that("SUCO aggregate district with no zones shows full goal", {
   data <- create_suco_mock_data()
   result <- aggregate_metric_data(data, mock_suco_config, "suco",
                                   group_cols = character(0),
@@ -370,14 +392,15 @@ test_that("SUCO aggregate with separate_zones=FALSE shows full capacity", {
   expect_equal(result$total, 72)
 })
 
-test_that("SUCO aggregate by facility shows per-facility capacity", {
+test_that("SUCO aggregate by facility shows per-facility goal", {
   data <- create_suco_mock_data()
   result <- aggregate_metric_data(data, mock_suco_config, "suco",
                                   group_cols = c("facility"),
                                   separate_zones = FALSE)
-  # 2 facilities, each gets 72/2 = 36
+  # 2 facilities, each gets goal = 12
   expect_equal(nrow(result), 2)
-  expect_equal(result$total[1], 36)
+  expect_equal(result$total[1], 12)
+  expect_equal(result$total[2], 12)
 })
 
 # =============================================================================
@@ -518,12 +541,11 @@ test_that("district -> facilities drill-down preserves separate zone", {
   navigate_to_overview(
     session = mock_session,
     target = "facilities_overview",
-    zone_clicked = "P1",
+    zone_clicked = "separate",
     analysis_date = as.Date("2026-02-18"),
     expiring_days = 3,
     color_theme = "MMCD",
-    metric_id = "drone",
-    zone_filter_raw = "separate"
+    metric_id = "drone"
   )
   
   url <- mock_session$last_navigate_url
@@ -556,7 +578,7 @@ test_that("facilities -> fos drill-down preserves separate zone", {
   navigate_to_overview(
     session = mock_session,
     target = "fos_overview",
-    zone_clicked = "1,2",
+    zone_clicked = "separate",
     analysis_date = as.Date("2026-02-18"),
     expiring_days = 3,
     color_theme = "MMCD",

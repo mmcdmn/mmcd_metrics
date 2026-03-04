@@ -686,6 +686,9 @@ server <- function(input, output, session) {
   
   output$flow_test_results <- DT::renderDataTable({
     data <- flow_test_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(DT::datatable(data.frame(Message = "No flow test data available"), options = list(dom = 't'), rownames = FALSE))
+    }
     DT::datatable(data, options = list(pageLength = 15, scrollX = TRUE), rownames = FALSE)
   })
   

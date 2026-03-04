@@ -16,6 +16,17 @@ create_field_selector <- function() {
         choices = c("Air/Ground Sites" = "breeding", "Structures" = "structures"),
         selected = "breeding",
         inline = TRUE
+      ),
+      # Data source toggle - only visible for breeding sites
+      conditionalPanel(
+        condition = "input.site_type == 'breeding'",
+        hr(),
+        checkboxInput(
+          "use_webster",
+          "Use Webster data (no custom columns)",
+          value = FALSE
+        ),
+        tags$small(class = "help-block", "Webster uses the original loc_breeding_sites table")
       )
     ),
     
@@ -54,12 +65,17 @@ create_field_selector <- function() {
       checkboxInput(
         "split_by_section",
         "Split by section (each section on separate pages)",
-        value = FALSE
+        value = TRUE
       ),
       checkboxInput(
         "split_by_priority",
         "Split by priority (each priority on separate pages)",
-        value = FALSE
+        value = TRUE
+      ),
+      checkboxInput(
+        "double_sided",
+        "Double-sided printing (pad sections to even pages)",
+        value = TRUE
       ),
       
       # Air/Ground specific filters (shown when site_type == "breeding")
@@ -114,6 +130,9 @@ create_field_selector <- function() {
     # Title fields section - conditionally rendered based on site type
     uiOutput("title_fields_panel"),
     
+    # Watermark fields - semi-transparent overlays at bottom of cards
+    uiOutput("watermark_fields_panel"),
+    
     wellPanel(
       h5("Data Table Columns"),
       p(class = "help-block", "Select columns and reorder them using the buttons"),
@@ -128,6 +147,13 @@ create_field_selector <- function() {
         min = 1,
         max = 20,
         step = 1
+      ),
+      
+      selectInput(
+        "cards_per_page",
+        "Cards per page:",
+        choices = c("6" = "6", "8" = "8", "10" = "10", "12" = "12"),
+        selected = "6"
       )
     )
   )

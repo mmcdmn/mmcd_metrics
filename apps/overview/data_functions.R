@@ -6,6 +6,9 @@
 # Where sites has: sitecode, facility, zone, is_active, is_expiring
 # 
 # NO HARDCODED METRIC NAMES - Everything comes from the registry!
+#
+# CACHING: DB query results are cached in Redis (2-min TTL) via
+# get_cached_db_query(). FOS drill-down data uses 7-day TTL.
 # =============================================================================
 
 # Source the registry (must exist before this file is sourced)
@@ -84,6 +87,26 @@ load_metric_data <- function(metric,
                              expiring_days = NULL,
                              zone_filter = c("1", "2")) {
   
+  # Try Redis cache for DB query results (2-min TTL)
+  if (exists("get_cached_db_query", mode = "function")) {
+    cached <- tryCatch({
+      get_cached_db_query(
+        paste0("metric_data:", metric),
+        load_func = function() {
+          .load_metric_data_uncached(metric, analysis_date, expiring_days, zone_filter)
+        },
+        metric, as.character(analysis_date), expiring_days, paste(zone_filter, collapse = "_")
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  # Fallback — load without cache
+  .load_metric_data_uncached(metric, analysis_date, expiring_days, zone_filter)
+}
+
+#' Internal uncached implementation of load_metric_data
+.load_metric_data_uncached <- function(metric, analysis_date, expiring_days, zone_filter) {
   # Get config from registry
   registry <- get_metric_registry()
   if (!metric %in% names(registry)) {
@@ -172,34 +195,33 @@ load_metric_data <- function(metric,
     # - active = actual SUCOs completed this week
     # - expiring = 0 (not applicable)
     
-    # Get capacity from config
-    capacity_total <- config$load_params$capacity_total  # 72
-    capacity_per_facility <- config$load_params$capacity_per_facility  # 72/7
+    # Get goal from config
+    goal_per_facility <- config$load_params$goal_per_facility  # 12
+    num_facilities <- config$load_params$num_facilities  # 6
     
-    # Count SUCOs by facility and zone (each row in sites is one SUCO)
+    # SUCO ignores zone filter — always load all zones
+    # Count SUCOs by facility (each row in sites is one SUCO)
     suco_counts <- sites %>%
-      filter(zone %in% zone_filter) %>%
-      group_by(facility, zone) %>%
+      group_by(facility) %>%
       summarize(
         active_count = n(),  # Count of SUCOs done this week
         .groups = "drop"
       )
     
-    # Get all facilities and zones to show capacity even if no SUCOs
+    # Get all facilities to show goal even if no SUCOs
     all_facilities <- get_facility_lookup()
-    all_combinations <- expand.grid(
-      facility = all_facilities$short_name,
-      zone = zone_filter,
-      stringsAsFactors = FALSE
-    )
     
-    result <- all_combinations %>%
-      left_join(suco_counts, by = c("facility", "zone")) %>%
+    result <- data.frame(
+      facility = all_facilities$short_name,
+      stringsAsFactors = FALSE
+    ) %>%
+      left_join(suco_counts, by = "facility") %>%
       mutate(
-        total_count = capacity_per_facility,  # Capacity per facility
-        active_count = ifelse(is.na(active_count), 0, active_count),  # Actual SUCOs
-        # "Above Capacity" = how many SUCOs exceed the capacity line per facility
-        expiring_count = pmax(0, active_count - total_count)
+        zone = "all",
+        total_count = goal_per_facility,  # Goal per facility (12)
+        active_count = ifelse(is.na(active_count), 0, active_count),
+        expiring_count = pmax(0, active_count - total_count),  # Over goal
+        met_goal = active_count >= goal_per_facility  # Whether facility met goal
       )
     
     return(result)
@@ -321,23 +343,22 @@ ACRES_METRICS <- c("drone", "ground_prehatch", "cattail_treatments", "air_sites"
 #' @return Data frame with total, active, expiring, display_name columns
 aggregate_metric_data <- function(data, config, metric, group_cols, separate_zones = TRUE) {
   
-  # --- SUCO: capacity-based ---
+  # --- SUCO: goal-based ---
   if (metric == "suco") {
-    capacity_total <- config$load_params$capacity_total  # 72
+    goal_per_facility <- config$load_params$goal_per_facility  # 12
+    num_facilities <- config$load_params$num_facilities  # 6
+    district_goal <- config$load_params$district_goal  # 72
     has_facility_group <- "facility" %in% group_cols
     
     if (has_facility_group) {
-      # Facility view: group by facility, divide capacity per facility
-      n_facilities <- length(unique(data$facility))
-      if (n_facilities == 0) n_facilities <- 1
-      cap_per_fac <- capacity_total / n_facilities
-      
+      # Facility view: show each facility's progress vs goal of 12
       result <- data %>%
         group_by(facility) %>%
         summarize(active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
         mutate(
-          total = cap_per_fac,
-          expiring = pmax(0, active - total)
+          total = goal_per_facility,
+          expiring = pmax(0, active - total),
+          met_goal = active >= goal_per_facility
         )
       
       # Map facility names
@@ -349,15 +370,26 @@ aggregate_metric_data <- function(data, config, metric, group_cols, separate_zon
         result$display_name <- result$facility
       }
       return(result)
-    } else if (separate_zones) {
-      return(data %>%
-        group_by(zone) %>%
-        summarize(total = capacity_total / 2, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(expiring = pmax(0, active - total), display_name = paste0("P", zone)))
     } else {
-      return(data %>%
-        summarize(total = capacity_total, active = sum(active_count, na.rm = TRUE), .groups = "drop") %>%
-        mutate(expiring = pmax(0, active - total), display_name = "MMCD (All)", zone = "1,2"))
+      # District view (zone or combined): show total completed vs district goal
+      total_completed <- sum(data$active_count, na.rm = TRUE)
+      facilities_at_goal <- if ("met_goal" %in% names(data)) {
+        sum(data$met_goal, na.rm = TRUE)
+      } else {
+        # Compute from per-facility counts
+        fac_sums <- data %>% group_by(facility) %>% summarize(n = sum(active_count, na.rm = TRUE), .groups = "drop")
+        sum(fac_sums$n >= goal_per_facility)
+      }
+      return(data.frame(
+        total = district_goal,
+        active = total_completed,
+        expiring = pmax(0, total_completed - district_goal),
+        facilities_at_goal = facilities_at_goal,
+        num_facilities = num_facilities,
+        display_name = "MMCD (All)",
+        zone = "all",
+        stringsAsFactors = FALSE
+      ))
     }
   }
   
@@ -512,6 +544,7 @@ load_data_by_facility <- function(metric,
 #' Load ANY metric aggregated by FOS (Field Operations Supervisor)
 #' Uses the same load_metric_data pipeline but re-aggregates the raw site-level
 #' data by fosarea instead of facility+zone.
+#' Cached in Redis with 7-day TTL for fast FOS drill-down.
 #' @param metric Metric ID from registry
 #' @param analysis_date Date for analysis
 #' @param expiring_days Days until expiring
@@ -528,6 +561,30 @@ load_data_by_fos <- function(metric,
                              facility_filter = NULL,
                              fos_filter = NULL) {
   
+  # Try Redis cache for FOS drill-down data (7-day TTL)
+  if (exists("get_cached_fos_data", mode = "function")) {
+    cached <- tryCatch({
+      get_cached_fos_data(
+        paste0("fos:", metric),
+        load_func = function() {
+          .load_data_by_fos_uncached(metric, analysis_date, expiring_days,
+                                      zone_filter, separate_zones, facility_filter, fos_filter)
+        },
+        metric, as.character(analysis_date), expiring_days,
+        paste(zone_filter, collapse = "_"), separate_zones, facility_filter, fos_filter
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  .load_data_by_fos_uncached(metric, analysis_date, expiring_days,
+                              zone_filter, separate_zones, facility_filter, fos_filter)
+}
+
+#' Internal uncached implementation of load_data_by_fos
+.load_data_by_fos_uncached <- function(metric, analysis_date, expiring_days,
+                                        zone_filter, separate_zones,
+                                        facility_filter, fos_filter) {
   # We need site-level data with fosarea, so call load_raw_data directly
   # (load_metric_data aggregates away fosarea)
   registry <- get_metric_registry()
@@ -663,50 +720,21 @@ load_data_by_fos <- function(metric,
     sites <- sites %>% filter(fos_display == fos_filter | fos == fos_filter)
   }
   
-  # SUCO special case: capacity-based
+  # SUCO special case: goal-based — just show count per FOS
   if (metric == "suco") {
-    capacity_total <- config$load_params$capacity_total
-    
-    if (separate_zones && "zone" %in% names(sites)) {
-      # Separate zones: group by fos AND zone
-      n_fos <- length(unique(sites$fos_display))
-      if (n_fos == 0) n_fos <- 1
-      n_zones <- length(unique(sites$zone))
-      if (n_zones == 0) n_zones <- 1
-      capacity_per_fos_zone <- capacity_total / (n_fos * n_zones)
-      
-      result <- sites %>%
-        group_by(fos, fos_display, zone) %>%
-        summarize(
-          active = n(),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          total = capacity_per_fos_zone,
-          expiring = pmax(0, active - total),
-          display_name = paste0(fos_display, " (P", zone, ")"),
-          facility = NA_character_
-        ) %>%
-        select(fos, display_name, facility, zone, total, active, expiring)
-    } else {
-      n_fos <- length(unique(sites$fos_display))
-      if (n_fos == 0) n_fos <- 1
-      capacity_per_fos <- capacity_total / n_fos
-      
-      result <- sites %>%
-        group_by(fos, fos_display) %>%
-        summarize(
-          active = n(),
-          .groups = "drop"
-        ) %>%
-        mutate(
-          total = capacity_per_fos,
-          expiring = pmax(0, active - total),
-          display_name = fos_display,
-          facility = NA_character_
-        ) %>%
-        select(fos, display_name, facility, total, active, expiring)
-    }
+    result <- sites %>%
+      group_by(fos, fos_display) %>%
+      summarize(
+        active = n(),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        total = active,  # No goal at FOS level, just show count
+        expiring = 0L,
+        display_name = fos_display,
+        facility = NA_character_
+      ) %>%
+      select(fos, display_name, facility, total, active, expiring)
     
     return(result)
   }
@@ -797,28 +825,25 @@ get_facility_order <- function() {
   facilities <- tryCatch({
     get_facility_lookup()
   }, error = function(e) {
-    data.frame(full_name = c("East", "North", "South Jordan", "South Reserve", "West Metro"))
+    data.frame(full_name = c("East", "Main Office", "North", "South Jordan", "South Rosemount", "West Maple Grove", "West Plymouth"))
   })
   
   if (nrow(facilities) == 0) {
-    return(c("East", "North", "South Jordan", "South Reserve", "West Metro"))
+    return(c("East", "Main Office", "North", "South Jordan", "South Rosemount", "West Maple Grove", "West Plymouth"))
   }
   return(facilities$full_name)
 }
 
-#' Order facilities in standard order
+#' Order facilities in alphabetical order
 order_facilities <- function(data, separate_zones = FALSE) {
   if (!"display_name" %in% names(data)) return(data)
   
-  facility_order <- get_facility_order()
-  
   if (separate_zones) {
-    zone_levels <- unlist(lapply(facility_order, function(f) {
-      c(paste0(f, " (P1)"), paste0(f, " (P2)"))
-    }))
-    data <- data %>% mutate(display_name = factor(display_name, levels = zone_levels))
+    alpha_levels <- sort(unique(as.character(data$display_name)))
+    data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
   } else {
-    data <- data %>% mutate(display_name = factor(display_name, levels = facility_order))
+    alpha_levels <- sort(unique(as.character(data$display_name)))
+    data <- data %>% mutate(display_name = factor(display_name, levels = alpha_levels))
   }
   
   data %>% arrange(display_name)
@@ -882,6 +907,7 @@ load_all_metrics <- function(metrics = NULL,
 
 #' Calculate stats for a single metric (for stat boxes)
 #' Uses ceiling() to round percentages UP with no decimal places
+#' Results are cached in Redis with 2-min TTL.
 #' 
 #' @param data Data frame with total, active, expiring columns
 #' @param metric_id Optional metric ID for special handling
@@ -893,6 +919,27 @@ calculate_metric_stats <- function(data, metric_id = NULL, metric_config = NULL)
     return(list(total = 0, active = 0, pct = 0))
   }
   
+  # Try Redis cache for stat box calculations (2-min TTL)
+  if (!is.null(metric_id) && exists("get_cached_stat_box", mode = "function")) {
+    # Build a cache key from the data fingerprint
+    data_hash <- digest::digest(data, algo = "xxhash64")
+    cached <- tryCatch({
+      get_cached_stat_box(
+        paste0("stats:", metric_id),
+        calc_func = function() {
+          .calculate_metric_stats_uncached(data, metric_id, metric_config)
+        },
+        metric_id, data_hash
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  
+  .calculate_metric_stats_uncached(data, metric_id, metric_config)
+}
+
+#' Internal uncached stat calculation
+.calculate_metric_stats_uncached <- function(data, metric_id, metric_config) {
   total <- sum(data$total, na.rm = TRUE)
   active <- sum(data$active, na.rm = TRUE)
   

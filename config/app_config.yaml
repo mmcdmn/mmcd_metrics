@@ -1,0 +1,152 @@
+# =============================================================================
+# MMCD Metrics - Application Configuration
+# =============================================================================
+# Changes to this file take effect on next app restart (or cache clear).
+# =============================================================================
+
+
+# =============================================================================
+# CACHE TTL SETTINGS (seconds)
+# =============================================================================
+# Controls how long different data types are cached in Redis.
+# Shorter TTLs mean fresher data but more DB load.
+# Longer TTLs reduce DB load but data may be stale.
+cache:
+  ttl:
+    historical_averages: 1209600   # 14 days — 10-year weekly averages (slow to change)
+    lookup_tables: 1209600         # 14 days — facilities, foremen, species, etc.
+    fos_drilldown: 604800          # 7 days  — FOS-level drill-down data
+    color_mappings: 604800         # 7 days  — status/facility/FOS color maps
+    facility_historical: 86400     # 24 hours — facility-filtered historical averages
+    general: 300                   # 5 min   — general app-level cache
+    db_queries: 120                # 2 min   — raw database query results
+    charts: 120                    # 2 min   — rendered plotly chart objects
+    stat_boxes: 120                # 2 min   — computed stat box values
+
+
+# =============================================================================
+# VALUE BOX COLOR THRESHOLDS
+# =============================================================================
+# Controls the green/yellow/red status colors on overview dashboard value boxes.
+#
+# Each metric uses one of four comparison modes:
+#   historical  — compares current week value to 10-year weekly average
+#   fixed_pct   — compares value against absolute percentage thresholds
+#   pct_of_avg  — compares value as a percentage of historical average
+#   capacity    — compares against a fixed capacity number
+#
+# direction:
+#   higher_is_better — green when above threshold (treatments, coverage)
+#   lower_is_better  — green when below threshold (mosquitoes, vector index)
+
+thresholds:
+
+  # Status indicator colors (hex)
+  colors:
+    good: "#16a34a"       # Green  — on track or better than average
+    warning: "#eab308"    # Yellow — slightly behind or approaching concern
+    alert: "#dc2626"      # Red    — significantly behind or at alert level
+
+  # --- Historical comparison metrics ---
+  # Multipliers applied to 10-year weekly average
+  # Example: good=0.9 means "green if current >= avg * 0.9"
+  historical:
+    default:
+      direction: higher_is_better
+      good: 0.9           # Green if current >= 90% of historical avg
+      warning: 0.8         # Yellow if current >= 80%, Red if below
+    mosquito_monitoring:
+      direction: lower_is_better
+      good: 1.1            # Green if current <= 110% of historical avg
+      warning: 1.2          # Yellow if current <= 120%, Red if above
+
+  # --- Fixed percentage metrics ---
+  # Value is compared directly against these percentage thresholds
+  fixed_pct:
+    air_sites:
+      direction: higher_is_better
+      good: 85             # Green if >= 85% treated
+      warning: 60          # Yellow if >= 60%, Red if below
+    prehatch_coverage:
+      direction: higher_is_better
+      good: 80             # Green if >= 80% recently sampled sites with target species
+      warning: 70          # Yellow if >= 70%, Red if below
+    vector_index:
+      direction: lower_is_better
+      good: 30             # Green if VI <= 30
+      warning: 60          # Yellow if VI <= 60, Red if above
+
+  # --- Percentage of average metrics ---
+  # current value expressed as % of historical avg (100 = exactly average)
+  pct_of_average:
+    mosquito_monitoring:
+      direction: lower_is_better
+      good: 110            # Green if current <= 110% of avg
+      warning: 130         # Yellow if <= 130%, Red if above
+
+  # --- Goal-based metrics ---
+  # Compared against weekly goals per facility. every goal is higher_is_better.
+  goal:
+    suco:
+      goal_per_facility: 12   # Each facility should complete 12 SUCOs/week
+      num_facilities: 6       # Total number of facilities
+      district_goal: 72       # 6 * 12 = 72 total district goal
+      # District-level color thresholds (# of facilities that met goal)
+      good: 6                 # Green if all 6 facilities met goal
+      warning: 4              # Yellow if 4-5 facilities met goal
+      # Red if < 4 facilities met goal
+
+
+# =============================================================================
+# METRIC DESCRIPTIONS
+# =============================================================================
+# Brief plain-language descriptions shown when users click the info button
+# on overview dashboard cards.
+descriptions:
+  drone: "Percent of Prehatch Drone acres with active treatment"
+  ground_prehatch: "Percent of Ground Prehatch acres with active treatment"
+  air_sites: "Percent of red air sites that have received treatment for last brood"
+  prehatch_coverage: "Percent of Prehatch sites with target species in sample last 5 years"
+  catch_basin: "Percent of wet Catch Basins with active treatment"
+  structure: "Percent of wet structures with active treatment (needs better priority)"
+  vector_index: "Highest Vector Index — risk of getting bit by an infectious mosquito"
+  mosquito_monitoring: "Abundance of mosquitos found in traps across the district"
+  suco: "Number of SUCO inspections completed this week vs weekly goal of 12 per facility (72 district-wide)"
+  cattail_treatments: "Percent of cattail sites with perturban treatment — resets to zero in August"
+  cattail_inspections: "Starting in August, number of sites inspected for perturbans for this year only"
+
+# =============================================================================
+# WIKI LINKS
+# =============================================================================
+# URLs for metric documentation pages.
+# Empty string = no link shown. Used by the info buttons on overview cards.
+wiki_links:
+  catch_basin: "https://mmcd.wiki/index.php/Howwe_page:_Catch_Basins_and_Structures"
+  drone: ""
+  ground_prehatch: ""
+  air_sites: ""
+  structure: ""
+  vector_index: ""
+  cattail_treatments: ""
+  mosquito_monitoring: ""
+  suco: ""
+  cattail_inspections: ""
+  prehatch_coverage: ""
+
+
+# =============================================================================
+# DISPLAY SETTINGS
+# =============================================================================
+display:
+  default_zone_filter: "P1 and P2 SEPARATE"
+  expiring_days_default: 3
+  historical_year_range: 5     # Number of years shown in historical charts
+
+
+# =============================================================================
+# RUNTIME SETTINGS (not sure if this will actually change anything) 
+# might need to be set in .github/workflows/deploy.yml instead
+# =============================================================================
+runtime:
+  route_ttl_seconds: 600       # Sticky session TTL for load balancer routing
+  max_workers: 10              # Number of Shiny Server worker instances

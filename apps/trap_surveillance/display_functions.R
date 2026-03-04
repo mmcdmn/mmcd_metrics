@@ -11,6 +11,17 @@ library(sf)
 # Source color themes
 source("../../shared/color_themes.R")
 
+build_trap_status_legend_html <- function() {
+  paste0(
+    "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;line-height:1.4;'>",
+    "<strong>Trap Status</strong><br/>",
+    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#e74c3c;border:1px solid #333;margin-right:6px;'></span>Positive pool(s)<br/>",
+    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#3498db;border:1px solid #333;margin-right:6px;'></span>Tested, all negative<br/>",
+    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#FFD700;border:1px solid #333;margin-right:6px;'></span>No pools tested",
+    "</div>"
+  )
+}
+
 # =============================================================================
 # MAIN MAP RENDER
 # =============================================================================
@@ -20,7 +31,8 @@ render_surveillance_map <- function(combined_data, areas_sf,
                                      spp_label = "Total Culex Vectors",
                                      yrwk_label = "",
                                      color_theme = "MMCD",
-                                     all_traps = NULL) {
+                                     all_traps = NULL,
+                                     week_traps = NULL) {
   
   if (is.null(areas_sf) || nrow(areas_sf) == 0) {
     return(leaflet() %>%
@@ -218,12 +230,46 @@ render_surveillance_map <- function(combined_data, areas_sf,
     addControl(html = title_html, position = "topleft")
   
   # =========================================================================
-  # TRAP MARKERS — all trap locations from shapefile
+  # TRAP MARKERS — prefer week-active traps with pool details over shapefile
   # =========================================================================
   
   overlay_groups <- c("Vector Index Areas", "Facilities", "Counties", "Zones")
   
-  if (!is.null(all_traps) && nrow(all_traps) > 0) {
+  if (!is.null(week_traps) && nrow(week_traps) > 0) {
+    # Week-active traps with pool details
+    trap_popup <- sprintf(
+      "<strong>Trap: %s</strong><br/>Facility: %s | Zone: %s<br/><hr/><strong>Cx Vector Count: %d</strong><br/>Inspection: %s<br/><hr/><strong>Pools (%d total, %d positive):</strong><br/>%s",
+      week_traps$loc_code,
+      week_traps$facility,
+      ifelse(is.na(week_traps$zone), "N/A", week_traps$zone),
+      as.integer(week_traps$cx_vector_count),
+      as.character(week_traps$inspdate),
+      week_traps$num_pools,
+      week_traps$num_positive,
+      week_traps$pool_details_html
+    )
+    
+    # Color traps by pool status
+    trap_fill <- ifelse(week_traps$num_positive > 0, "#e74c3c",  # Red = positive pools
+                 ifelse(week_traps$num_pools > 0, "#3498db",      # Blue = tested, all negative
+                        "#FFD700"))                                # Gold = no pools tested
+    
+    m <- m %>%
+      addCircleMarkers(
+        data = week_traps,
+        radius = 5,
+        color = "#333",
+        fillColor = trap_fill,
+        fillOpacity = 0.85,
+        weight = 1,
+        popup = trap_popup,
+        options = pathOptions(pane = "traps"),
+        group = "Trap Locations"
+      )
+    overlay_groups <- c(overlay_groups, "Trap Locations")
+    m <- m %>% addControl(html = build_trap_status_legend_html(), position = "topright")
+  } else if (!is.null(all_traps) && nrow(all_traps) > 0) {
+    # Fallback: shapefile traps (no pool details)
     trap_popup <- sprintf(
       "<strong>Trap Location</strong><br/>Facility: %s<br/>Type: %s<br/>Survey Type: %s<br/>Date: %s",
       all_traps$facility,
@@ -245,6 +291,10 @@ render_surveillance_map <- function(combined_data, areas_sf,
         group = "Trap Locations"
       )
     overlay_groups <- c(overlay_groups, "Trap Locations")
+    m <- m %>% addControl(
+      html = "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;line-height:1.4;'><strong>Trap Status</strong><br/><span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#FFD700;border:1px solid #333;margin-right:6px;'></span>Trap location</div>",
+      position = "topright"
+    )
   }
   
   # Layer control
@@ -271,7 +321,8 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
                                   infection_metric = "mle",
                                   spp_label = "",
                                   yrwk_a = "", yrwk_b = "",
-                                  all_traps = NULL) {
+                                  all_traps = NULL,
+                                  week_traps = NULL) {
   
   if (is.null(areas_sf) || nrow(areas_sf) == 0 ||
       is.null(data_a)   || nrow(data_a) == 0 ||
@@ -387,7 +438,28 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
   
   # Trap markers
   overlay_groups <- c("Vector Index Areas", "Facilities", "Counties")
-  if (!is.null(all_traps) && nrow(all_traps) > 0) {
+  if (!is.null(week_traps) && nrow(week_traps) > 0) {
+    trap_popup <- sprintf(
+      "<strong>Trap: %s</strong><br/>Facility: %s | Zone: %s<br/><hr/><strong>Cx Count: %d</strong> | Pools: %d (%d pos)<br/>%s",
+      week_traps$loc_code,
+      week_traps$facility,
+      ifelse(is.na(week_traps$zone), "N/A", week_traps$zone),
+      as.integer(week_traps$cx_vector_count),
+      week_traps$num_pools,
+      week_traps$num_positive,
+      week_traps$pool_details_html
+    )
+    trap_fill <- ifelse(week_traps$num_positive > 0, "#e74c3c",
+                 ifelse(week_traps$num_pools > 0, "#3498db", "#FFD700"))
+    m <- m %>%
+      addCircleMarkers(data = week_traps, radius = 5, color = "#333",
+                       fillColor = trap_fill, fillOpacity = 0.85, weight = 1,
+                       popup = trap_popup,
+                       options = pathOptions(pane = "traps"),
+                       group = "Trap Locations")
+    overlay_groups <- c(overlay_groups, "Trap Locations")
+    m <- m %>% addControl(html = build_trap_status_legend_html(), position = "topright")
+  } else if (!is.null(all_traps) && nrow(all_traps) > 0) {
     m <- m %>%
       addCircleMarkers(data = all_traps, radius = 4, color = "#333",
                        fillColor = "#FFD700", fillOpacity = 0.8, weight = 1,

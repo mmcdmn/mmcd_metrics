@@ -79,19 +79,23 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     site_list <- paste0("'", paste(sites, collapse = "','"), "'")
     
     all_sql <- sprintf("
-      SELECT pkey_pg, inspdate, insptime, sitecode, numdip, sampnum_yr,
-             presamp_yr, action, matcode, mattype, posttrt_p,
-             COALESCE(gis.facility, insp.facility) AS facility, insp.acres
+      SELECT insp.pkey_pg, insp.inspdate, insp.insptime, insp.sitecode, insp.numdip, insp.sampnum_yr,
+             insp.presamp_yr, insp.action, insp.matcode, insp.mattype, insp.posttrt_p,
+             COALESCE(gis.facility, insp.facility) AS facility, insp.acres,
+             COALESCE(mt.effect_days, 14) AS effect_days
       FROM dblarv_insptrt_current insp
       LEFT JOIN gis_sectcode gis ON gis.sectcode = LEFT(insp.sitecode, 7)
+      LEFT JOIN mattype_list_targetdose mt ON insp.matcode = mt.matcode
       WHERE insp.sitecode IN (%s)
         AND insp.inspdate >= '%s' AND insp.inspdate <= '%s'
       UNION ALL
-      SELECT pkey_pg, inspdate, insptime, sitecode, numdip, sampnum_yr,
-             presamp_yr, action, matcode, mattype, posttrt_p,
-             COALESCE(gis.facility, insp.facility), insp.acres
+      SELECT insp.pkey_pg, insp.inspdate, insp.insptime, insp.sitecode, insp.numdip, insp.sampnum_yr,
+             insp.presamp_yr, insp.action, insp.matcode, insp.mattype, insp.posttrt_p,
+             COALESCE(gis.facility, insp.facility), insp.acres,
+             COALESCE(mt.effect_days, 14)
       FROM dblarv_insptrt_archive insp
       LEFT JOIN gis_sectcode gis ON gis.sectcode = LEFT(insp.sitecode, 7)
+      LEFT JOIN mattype_list_targetdose mt ON insp.matcode = mt.matcode
       WHERE insp.sitecode IN (%s)
         AND insp.inspdate >= '%s' AND insp.inspdate <= '%s'
     ", site_list, wider_start, end_date, site_list, wider_start, end_date)
@@ -112,10 +116,9 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       filter(action %in% c('A', 'D', '3')) %>%
       arrange(sitecode, desc(inspdate), desc(insptime))
     
-    # Optionally filter to Bti matcodes
-    if (bti_only && !is.null(bti_codes)) {
-      treatments_all <- treatments_all %>% filter(matcode %in% bti_codes)
-    }
+    # NOTE: Bti filter is applied AFTER matching, not here.
+    # Filtering treatments before matching causes post-checks to silently drop
+    # when the most recent treatment isn't Bti (even if an earlier Bti treatment exists).
     
     pre_checks_all <- all_records %>%
       filter(action %in% c('4', '2', '1'), is.na(posttrt_p)) %>%
@@ -173,6 +176,7 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
         trt_matcode = trt$matcode,
         trt_mattype = trt$mattype,
         trt_acres = trt$acres,
+        trt_effect_days = trt$effect_days,
         pre_date = pre_date,
         pre_time = pre_time_val,
         pre_numdip = pre_numdip,
@@ -198,6 +202,22 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     matched$trt_acres <- NULL
     
     message(sprintf("[efficacy] Matched %d post-checks to treatments", nrow(matched)))
+    
+    # -------------------------------------------------------------------
+    # STEP 2a-post: Apply Bti filter AFTER matching
+    # Each post-check is matched to its most recent treatment. Now we filter
+    # to keep only rows where that matched treatment used a Bti matcode.
+    # -------------------------------------------------------------------
+    if (bti_only && !is.null(bti_codes)) {
+      n_before <- nrow(matched)
+      matched <- matched[matched$trt_matcode %in% bti_codes, ]
+      message(sprintf("[efficacy] Bti post-filter: %d -> %d rows (removed %d non-Bti)",
+                      n_before, nrow(matched), n_before - nrow(matched)))
+      if (nrow(matched) == 0) {
+        safe_disconnect(con)
+        return(NULL)
+      }
+    }
     
     # -------------------------------------------------------------------
     # STEP 2b: Look up material details (active_ingredient, dosage)
@@ -282,9 +302,11 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
       TRUE ~ "Other"
     )
     
-    # Flag control checkbacks: no treatments occurred between the pre and post
-    # inspections. Use timestamps for same-day accuracy.
-    # trt_time and pre_time were stored during the matching loop.
+    # Flag control checkbacks and invalid checkbacks:
+    # Control: no treatments between pre and post (by timestamp)
+    # Invalid: TWO OR MORE treatments between the pre-inspection and post-inspection
+    #   This means the site was treated multiple times, so we can't attribute
+    #   the checkback result to a single treatment.
     trt_datetime <- paste(matched$trt_date, matched$trt_time)
     pre_datetime <- ifelse(is.na(matched$pre_date), NA_character_,
                            paste(matched$pre_date, matched$pre_time))
@@ -294,9 +316,66 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     matched$is_control <- !is.na(matched$pre_date) &
                 (is.na(matched$trt_date) | trt_datetime <= pre_datetime)
     
+    # Invalid = TWO OR MORE treatments between pre-inspection and post-inspection.
+    # One treatment between pre and post is expected (that's the treatment we're
+    # measuring efficacy for). Two or more means we can't attribute the result
+    # to a single treatment.
+    # trt_by_site is available from the matching loop above.
+    invalid_info <- vapply(seq_len(nrow(matched)), function(i) {
+      if (is.na(matched$pre_date[i]) || is.na(matched$post_date[i])) return(NA_character_)
+      
+      site <- matched$sitecode[i]
+      pre_date_val <- matched$pre_date[i]
+      post_date_val <- matched$post_date[i]
+      site_trts <- trt_by_site[[site]]
+      if (is.null(site_trts) || nrow(site_trts) == 0) return(NA_character_)
+      
+      # Count treatments strictly between pre and post dates
+      pre_time_val <- matched$pre_time[i]
+      post_time_val <- if (!is.na(matched$post_time[i]) && matched$post_time[i] != "") matched$post_time[i] else "23:59:59"
+      pre_dt_full <- paste(pre_date_val, pre_time_val)
+      post_dt_full <- paste(post_date_val, post_time_val)
+      trt_times_local <- ifelse(is.na(site_trts$insptime) | site_trts$insptime == "", "00:00:00", site_trts$insptime)
+      trt_dts_local <- paste(site_trts$inspdate, trt_times_local)
+      between_mask <- trt_dts_local > pre_dt_full & trt_dts_local < post_dt_full
+      n_between <- sum(between_mask)
+      
+      if (n_between < 2) return(NA_character_)
+      
+      # Air sites are exempt from the 2+ treatment invalid rule
+      if (!is.na(matched$trt_action[i]) && matched$trt_action[i] == "A") return(NA_character_)
+      
+      # Return info: number of treatments between pre and post
+      between_trts <- site_trts[between_mask, ]
+      trt_dates_str <- paste(between_trts$inspdate, collapse = ", ")
+      sprintf("%d|%s", n_between, trt_dates_str)
+    }, character(1))
+    
+    matched$is_invalid <- !is.na(invalid_info)
+    # If a row is invalid, it can't also be a control — invalid takes priority
+    matched$is_control[matched$is_invalid] <- FALSE
+    matched$invalid_reason <- NA_character_
+    matched$prior_trt_date <- as.Date(NA)
+    matched$prior_trt_material <- NA_character_
+    matched$prior_trt_effect_days <- NA_integer_
+    matched$prior_trt_expiry <- as.Date(NA)
+    matched$prior_trt_days_remaining <- NA_integer_
+    if (any(matched$is_invalid)) {
+      valid_idx <- which(!is.na(invalid_info))
+      parts <- strsplit(invalid_info[valid_idx], "\\|")
+      for (j in seq_along(valid_idx)) {
+        p <- parts[[j]]
+        matched$invalid_reason[valid_idx[j]] <- sprintf(
+          "%s treatments between pre and post inspections (dates: %s)",
+          p[1], p[2])
+      }
+    }
+    
     n_control <- sum(matched$is_control, na.rm = TRUE)
-    n_valid <- sum(!matched$is_control, na.rm = TRUE)
-    message(sprintf("[efficacy] Control checkbacks: %d, Valid checkbacks: %d", n_control, n_valid))
+    n_invalid <- sum(matched$is_invalid, na.rm = TRUE)
+    n_valid <- sum(!matched$is_control & !matched$is_invalid, na.rm = TRUE)
+    message(sprintf("[efficacy] Control: %d, Invalid (2+ treatments between pre/post): %d, Valid: %d",
+                    n_control, n_invalid, n_valid))
     
     # -------------------------------------------------------------------
     # STEP 5: Compute genus dip counts + % reduction (vectorized)
@@ -356,7 +435,7 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
           for (s in unique(control_summary$season)) {
             if (is.na(s)) next
             season_ctrl <- control_summary[control_summary$season == s, ]
-            treated_season <- !control_mask & valid & gm$season == s & !is.na(gm$season)
+            treated_season <- !control_mask & !gm$is_invalid & valid & gm$season == s & !is.na(gm$season)
             
             gm$pct_reduction[treated_season] <-
               100 - (gm$post_genus_dips[treated_season] /
@@ -384,11 +463,12 @@ load_efficacy_data <- function(start_year, end_year, bti_only = FALSE, use_mulla
     result <- do.call(rbind, result_list)
     rownames(result) <- NULL
     
-    message(sprintf("[efficacy] Final: %d rows (%d Aedes, %d Culex, %d control) | Bti=%s Mulla=%s",
+    message(sprintf("[efficacy] Final: %d rows (%d Aedes, %d Culex, %d control, %d invalid) | Bti=%s Mulla=%s",
                     nrow(result),
                     sum(result$genus == "Aedes"),
                     sum(result$genus == "Culex"),
                     sum(result$is_control, na.rm = TRUE),
+                    sum(result$is_invalid, na.rm = TRUE),
                     bti_only, use_mullas))
     
     return(result)

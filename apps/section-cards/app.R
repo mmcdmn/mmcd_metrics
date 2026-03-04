@@ -179,6 +179,7 @@ ui <- fluidPage(
         HTML("<strong>How to Print/Save as PDF:</strong><br/>
              <strong>Option 1 - Quick Print:</strong> Click 'Generate Cards' then use browser print (Ctrl+P / Cmd+P)<br/>
              <strong>Option 2 - Download First:</strong> Use 'Download as HTML' button (shows progress), then open file and print<br/>
+              <strong>Important:</strong> In the print dialog, turn OFF <em>Headers and footers</em> to remove URL/date text<br/>
              <br/>
              <em>The layout is optimized for Letter size paper with 6 cards per page.</em>")
       )
@@ -227,10 +228,16 @@ server <- function(input, output, session) {
   # ==========================================================================
   # DYNAMIC COLUMN DISCOVERY from JK table
   # Discover extra columns beyond core at startup
+  # Only active when NOT using Webster data
   # ==========================================================================
   jk_dynamic_cols <- reactiveVal(character(0))
   
   observe({
+    # Skip dynamic column discovery if using Webster data
+    if (isTRUE(input$use_webster)) {
+      jk_dynamic_cols(character(0))
+      return()
+    }
     tryCatch({
       dyn_cols <- get_dynamic_columns()
       jk_dynamic_cols(dyn_cols)
@@ -244,9 +251,11 @@ server <- function(input, output, session) {
   # Dynamic title fields panel based on site type
   output$title_fields_panel <- renderUI({
     site_type <- input$site_type
+    use_webster <- isTRUE(input$use_webster)
     
     if (is.null(site_type) || site_type == "breeding") {
-      # Air/Ground site fields - includes dynamic columns from JK table
+      # Air/Ground site fields
+      # When using Webster data, no dynamic columns are available
       # [DB] options are filtered to only show columns that have data
       # for the currently selected facility/foreman filters
       
@@ -255,12 +264,7 @@ server <- function(input, output, session) {
         "Priority" = "priority",
         "Acres" = "acres",
         "Type" = "type",
-        "Culex" = "culex",
-        "Spring Aedes" = "spr_aedes",
-        "Perturbans" = "perturbans",
         "Prehatch" = "prehatch",
-        "Prehatch Calculation" = "prehatch_calc",
-        "Sample Site" = "sample",
         "Drone" = "drone",
         "Section" = "section",
         "Facility" = "facility",
@@ -269,9 +273,19 @@ server <- function(input, output, session) {
         "Remarks" = "remarks"
       )
       
+      # Add RA as core choice (only for QGIS method)
+      if (!use_webster) {
+        static_choices <- c(static_choices, list("Restricted Area (RA)" = "ra"))
+      }
+      
       # Add dynamic columns from JK table with [DB] prefix
+      # Only available when NOT using Webster data
       # Only show columns that have data for current facility/foreman filter
-      dyn_cols <- jk_dynamic_cols()
+      if (!use_webster) {
+        dyn_cols <- jk_dynamic_cols()
+      } else {
+        dyn_cols <- character(0)
+      }
       if (length(dyn_cols) > 0) {
         fac <- input$filter_facility
         fos <- input$filter_fosarea
@@ -336,9 +350,39 @@ server <- function(input, output, session) {
     }
   })
   
-  # Reset filters when site type changes
-  observeEvent(input$site_type, {
-    # Reset to defaults when switching site types
+  # Watermark fields panel - only for breeding sites
+  output$watermark_fields_panel <- renderUI({
+    site_type <- input$site_type
+    
+    # Only show watermark options for breeding sites
+    if (is.null(site_type) || site_type == "breeding") {
+      watermark_choices <- list(
+        "Culex" = "culex",
+        "Spring Aedes" = "spr_aedes",
+        "Perturbans" = "perturbans",
+        "Prehatch Calculation" = "prehatch_calc",
+        "Sample Site" = "sample"
+      )
+      
+      # Preserve previous selections
+      prev_selected <- isolate(input$watermark_fields)
+      
+      wellPanel(
+        h5("Watermark Fields"),
+        p(class = "help-block", "Semi-transparent labels overlaid at the bottom of each card (on top of columns)"),
+        checkboxGroupInput(
+          "watermark_fields",
+          NULL,
+          choices = watermark_choices,
+          selected = if (!is.null(prev_selected)) intersect(prev_selected, unlist(watermark_choices)) else character(0)
+        )
+      )
+    }
+  })
+  
+  # Reset filters when site type or data source changes
+  observeEvent(c(input$site_type, input$use_webster), {
+    # Reset to defaults when switching site types or data source
     updateSelectInput(session, "filter_facility", selected = "all")
     updateSelectInput(session, "filter_zone", selected = "all")
     updateSelectInput(session, "filter_fosarea", selected = "all")
@@ -410,8 +454,16 @@ server <- function(input, output, session) {
           facility_filter = input$filter_facility,
           fosarea_filter = NULL
         )
+      } else if (isTRUE(input$use_webster)) {
+        # Webster table cascading
+        town_codes <- get_webster_town_codes(facility_filter = input$filter_facility)
+        sections <- get_webster_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = NULL
+        )
       } else {
-        # Breeding site cascading
+        # JK table breeding site cascading
         town_codes <- get_town_codes(facility_filter = input$filter_facility)
         sections <- get_sections_by_towncode(
           towncode_filter = input$filter_towncode,
@@ -451,6 +503,16 @@ server <- function(input, output, session) {
           facility_filter = input$filter_facility,
           fosarea_filter = input$filter_fosarea
         )
+      } else if (isTRUE(input$use_webster)) {
+        town_codes <- get_webster_town_codes(
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+        sections <- get_webster_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
       } else {
         town_codes <- get_town_codes(
           facility_filter = input$filter_facility,
@@ -486,6 +548,12 @@ server <- function(input, output, session) {
       # Use site type specific functions
       if (!is.null(input$site_type) && input$site_type == "structures") {
         sections <- get_structure_sections_by_towncode(
+          towncode_filter = input$filter_towncode,
+          facility_filter = input$filter_facility,
+          fosarea_filter = input$filter_fosarea
+        )
+      } else if (isTRUE(input$use_webster)) {
+        sections <- get_webster_sections_by_towncode(
           towncode_filter = input$filter_towncode,
           facility_filter = input$filter_facility,
           fosarea_filter = input$filter_fosarea
@@ -688,6 +756,8 @@ server <- function(input, output, session) {
       tryCatch({
         if (!is.null(input$site_type) && input$site_type == "structures") {
           data <- get_structures_with_sections()
+        } else if (isTRUE(input$use_webster)) {
+          data <- get_webster_breeding_sites()
         } else {
           data <- get_breeding_sites_with_sections()
         }
@@ -827,7 +897,10 @@ server <- function(input, output, session) {
       split_type,
       progress_fn = function(pct, detail) {
         setProgress(value = 0.25 + pct * 0.65, detail = detail)
-      }
+      },
+      double_sided = isTRUE(input$double_sided),
+      watermark_fields = input$watermark_fields,
+      cards_per_page = as.integer(input$cards_per_page)
     )
     
     setProgress(value = 0.95, detail = "Rendering cards...")
@@ -944,7 +1017,10 @@ server <- function(input, output, session) {
         split_type,
         progress_fn = function(pct, detail) {
           setProgress(value = 0.15 + pct * 0.70, detail = detail)
-        }
+        },
+        double_sided = isTRUE(input$double_sided),
+        watermark_fields = input$watermark_fields,
+        cards_per_page = as.integer(input$cards_per_page)
       )
       
       setProgress(value = 0.90, detail = "Writing file...")

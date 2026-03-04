@@ -13,7 +13,7 @@
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE, watermark_fields = NULL, cards_per_page = 6) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -48,7 +48,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     drone = "Drone",
     
     # Dynamic columns from JK table (common extras)
-    ra = "RA",
+    ra = "Restricted",
     airmap_num = "Airmap #",
     partialtrt = "Partial Trt",
     perimacres = "Perim Acres",
@@ -75,12 +75,31 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   )
   
   # Start HTML with print-friendly CSS
-  html <- '
+  grid_rows <- ceiling(cards_per_page / 2)
+  
+  # ---- Density scaling ----
+  # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller
+  card_scale <- 6 / cards_per_page  # 1.0, 0.75, 0.6, 0.5
+  # Page margins shrink to reclaim space at higher density
+  page_margin <- switch(as.character(cards_per_page),
+    "6"  = "0.5in",
+    "8"  = "0.4in",
+    "10" = "0.3in",
+    "12" = "0.25in",
+    "0.5in"
+  )
+  margin_num <- as.numeric(gsub("in", "", page_margin))
+  # Usable print area on letter paper (8.5 x 11)
+  usable_height <- 11 - 2 * margin_num
+  # Gap between cards scales down
+  grid_gap <- max(2, round(15 * card_scale))
+  
+  html <- paste0('
   <style>
     @media print {
       @page {
         size: letter;
-        margin: 0.5in;
+        margin: ', page_margin, ';
       }
       .page-break {
         page-break-after: always;
@@ -103,9 +122,10 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     .card-page {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: repeat(3, auto);
-      gap: 15px;
+      grid-template-rows: repeat(', grid_rows, ', 1fr);
+      gap: ', grid_gap, 'px;
       margin-bottom: 20px;
+      box-sizing: border-box;
     }
     
     .section-card {
@@ -115,6 +135,13 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       font-family: Arial, sans-serif;
       font-size: 11px;
       position: relative;
+      transform: scale(', card_scale, ');
+      transform-origin: top left;
+      width: ', round(100 / card_scale), '%;
+      height: ', round(100 / card_scale), '%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
     
     .prehatch-overlay {
@@ -283,6 +310,69 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
+    .ra-field { 
+      background-color: #FFB6C1 !important; 
+      background: #FFB6C1 !important; 
+      padding: 2px 6px; 
+      border-radius: 3px; 
+      font-weight: bold; 
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+
+    /* Watermark styles - semi-transparent overlays at bottom of card */
+    .watermark-container {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      padding: 10px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .watermark-item {
+      font-size: 14px;
+      font-weight: bold;
+      padding: 4px 12px;
+      border-radius: 4px;
+      opacity: 0.54;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    .watermark-culex {
+      background-color: rgba(50, 205, 50, 0.35) !important;
+      background: rgba(50, 205, 50, 0.35) !important;
+      color: #000 !important;
+    }
+    .watermark-spring-aedes {
+      background-color: rgba(255, 213, 128, 0.4) !important;
+      background: rgba(255, 213, 128, 0.4) !important;
+      color: #000 !important;
+    }
+    .watermark-perturbans {
+      background-color: rgba(65, 105, 225, 0.35) !important;
+      background: rgba(65, 105, 225, 0.35) !important;
+      color: #000 !important;
+    }
+    .watermark-sample {
+      background-color: rgba(255, 182, 193, 0.4) !important;
+      background: rgba(255, 182, 193, 0.4) !important;
+      color: #000 !important;
+    }
+    .watermark-prehatch-calc {
+      background-color: rgba(255, 200, 200, 0.35) !important;
+      background: rgba(255, 200, 200, 0.35) !important;
+      color: #CC0000 !important;
+      font-size: 16px;
+    }
+
     .prehatch-overlay {
       position: absolute;
       bottom: 10px;
@@ -358,6 +448,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     .card-table {
       width: 100%;
       border-collapse: collapse;
+      flex: 1;
     }
     
     .card-table th {
@@ -392,28 +483,6 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       background: #f0f0f0;
     }
     
-    .page-footer {
-      position: fixed;
-      bottom: 10px;
-      right: 20px;
-      font-size: 8px;
-      color: #999;
-      font-style: italic;
-      z-index: 1000;
-    }
-    
-    @media print {
-      .page-footer {
-        position: fixed;
-        bottom: 0.5in;
-        right: 0.5in;
-        font-size: 8pt;
-        color: #999 !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
-    }
-    
     @media screen {
       .cards-container {
         padding: 20px;
@@ -426,10 +495,18 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
       }
     }
+    
+    /* Print: constrain card-page to exact page height so cards fit */
+    @media print {
+      .card-page {
+        height: ', usable_height, 'in;
+        overflow: hidden;
+      }
+    }
   </style>
   
   <div class="cards-container">
-  '
+  ')
   
   # =========================================================================
   # OPTIMIZATION: Pre-build table header + empty rows (identical for all cards)
@@ -475,7 +552,8 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   build_card <- function(row) {
     generate_card_html(row, title_fields, table_fields, num_rows,
                        field_labels, facility_map, fos_map,
-                       prebuilt_table_header, prebuilt_table_footer)
+                       prebuilt_table_header, prebuilt_table_footer,
+                       watermark_fields)
   }
   
   # Handle splitting by section, priority, and/or type
@@ -523,7 +601,6 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     for (grp_idx in seq_along(group_data_list)) {
       grp_data <- group_data_list[[grp_idx]]
       
-      cards_per_page <- 6
       num_pages <- ceiling(nrow(grp_data) / cards_per_page)
       
       for (page in 1:num_pages) {
@@ -548,11 +625,17 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
         html_parts[[part_idx]] <- '</div>\n'
         part_idx <- part_idx + 1
       }
+      
+      # Double-sided printing: if this group used an odd number of pages,
+      # add a blank page so the next group starts on a front side
+      if (double_sided && !is_last_group && (num_pages %% 2 == 1)) {
+        html_parts[[part_idx]] <- '<div class="card-page page-break" style="visibility:hidden;">&nbsp;</div>\n'
+        part_idx <- part_idx + 1
+      }
     }
     
   } else {
-    # Normal mode: group cards into pages of 6 without section splits
-    cards_per_page <- 6
+    # Normal mode: group cards into pages without section splits
     num_pages <- ceiling(nrow(data) / cards_per_page)
     
     for (page in 1:num_pages) {
@@ -575,7 +658,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     }
   }
   
-  html_parts[[part_idx]] <- '</div><div class="page-footer">Section Cards by Alex Dyakin</div>'
+  html_parts[[part_idx]] <- '</div>'
   
   # Single collapse at the end (much faster than incremental paste0)
   return(paste0(html_parts, collapse = ""))
@@ -595,7 +678,8 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
 #' @return HTML string for one card
 generate_card_html <- function(row, title_fields, table_fields, num_rows, 
                                field_labels, facility_map, fos_map,
-                               prebuilt_table_header = NULL, prebuilt_table_footer = NULL) {
+                               prebuilt_table_header = NULL, prebuilt_table_footer = NULL,
+                               watermark_fields = NULL) {
   html <- ''
   
   # Track if we need prehatch overlay (computed at end)
@@ -672,11 +756,18 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
                         label, '</span></div>\n')
         }
         # If not Y, don't show anything
+      } else if (field == "ra") {
+        # Restricted Area - only show if Y with pink background
+        if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
+          html <- paste0(html, '        <div class="info-item"><span class="ra-field">',
+                        'Restricted</span></div>\n')
+        }
+        # If not Y, don't show anything
       } else if (field == "prehatch") {
         # Prehatch with blue background
         if (!is.na(value) && value != "") {
-          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="prehatch-field">', value, '</span></div>\n')
+          html <- paste0(html, '        <div class="info-item"><span class="prehatch-field">',
+                        toupper(value), '</span></div>\n')
         }
       } else if (field == "status_udw") {
         # Structure status (D/W/U) with color coding
@@ -720,8 +811,7 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         # Priority with color coding based on value
         if (!is.na(value) && value != "") {
           priority_class <- paste0("priority-", tolower(value))
-          html <- paste0(html, '        <div class="info-item"><span class="info-label">',
-                        label, ':</span> <span class="', priority_class, '">', value, '</span></div>\n')
+          html <- paste0(html, '        <div class="info-item"><span class="', priority_class, '">', toupper(value), '</span></div>\n')
         }
       } else if (field == "remarks") {
         # Remarks get special styling - larger and full width (skip if empty)
@@ -774,7 +864,42 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
     html <- paste0(html, '    </table>\n')
   }
   
-  # Add prehatch overlay if calculated
+  # Add watermark overlays at bottom of card (on top of table columns, semi-transparent)
+  if (!is.null(watermark_fields) && length(watermark_fields) > 0) {
+    wm_items <- character(0)
+    
+    for (wm_field in watermark_fields) {
+      if (wm_field == "culex" && "culex" %in% names(row) &&
+          !is.na(row[["culex"]]) && toupper(row[["culex"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-culex">Culex</span>')
+      } else if (wm_field == "spr_aedes" && "spr_aedes" %in% names(row) &&
+                 !is.na(row[["spr_aedes"]]) && toupper(row[["spr_aedes"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-spring-aedes">Spring Aedes</span>')
+      } else if (wm_field == "perturbans" && "perturbans" %in% names(row) &&
+                 !is.na(row[["perturbans"]]) && toupper(row[["perturbans"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-perturbans">Perturbans</span>')
+      } else if (wm_field == "prehatch_calc") {
+        prehatch_val <- row[["prehatch"]]
+        acres_val <- row[["acres"]]
+        if (!is.na(prehatch_val) && prehatch_val != "" &&
+            !is.na(acres_val) && !is.na(as.numeric(acres_val))) {
+          calc_val <- max(round(as.numeric(acres_val) * 2.5, 2), 0.05)
+          wm_items <- c(wm_items, paste0('<span class="watermark-item watermark-prehatch-calc">2.5/ac<br>',
+                                          sprintf("%.2f", calc_val), '</span>'))
+        }
+      } else if (wm_field == "sample" && "sample" %in% names(row) &&
+                 !is.na(row[["sample"]]) && toupper(row[["sample"]]) == "Y") {
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-sample">Sample Site</span>')
+      }
+    }
+    
+    if (length(wm_items) > 0) {
+      html <- paste0(html, '    <div class="watermark-container">\n      ',
+                     paste0(wm_items, collapse = '\n      '), '\n    </div>\n')
+    }
+  }
+  
+  # Add prehatch overlay if calculated (legacy - used when prehatch_calc is in title_fields)
   if (!is.null(prehatch_overlay_value)) {
     html <- paste0(html, '    <div class="prehatch-overlay">\n')
     html <- paste0(html, '      <div class="prehatch-rate">2.5/ac</div>\n')

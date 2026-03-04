@@ -78,6 +78,7 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   
   status_colors <- get_status_colors(theme = theme)
   display_as_average <- isTRUE(metric_config$display_as_average)
+  display_as_goal <- isTRUE(metric_config$display_as_goal)
   stacked_mode <- isTRUE(metric_config$chart_stacked_mode)
   labels <- if (!is.null(metric_config$chart_labels)) {
     metric_config$chart_labels
@@ -97,7 +98,15 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       y_active = if (stacked_mode) active else pmax(0, active - expiring),
       y_expiring = expiring,
       pct = if (display_as_average) round(active, 1) else ceiling(100 * active / pmax(1, total)),
-      tooltip_text = if (display_as_average) {
+      tooltip_text = if (display_as_goal) {
+        paste0(
+          display_name, "\n",
+          labels$active, ": ", format(active, big.mark = ","), " / ",
+          labels$total, ": ", format(total, big.mark = ","),
+          ifelse(expiring > 0, paste0("\n", labels$expiring, ": ", format(expiring, big.mark = ",")), ""),
+          click_hint
+        )
+      } else if (display_as_average) {
         paste0(
           display_name, "\n",
           labels$active, ": ", format(active, big.mark = ","), "\n",
@@ -116,12 +125,13 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       }
     )
   
-  # Order: zone charts use P1/P2 factor, facility/FOS charts sort by total desc
+  # Order: zone charts use P1/P2 factor, facility/FOS charts use alphabetical
   is_zone_chart <- all(data$display_name %in% c("P1", "P2"))
   if (is_zone_chart) {
     data$display_name <- factor(data$display_name, levels = c("P1", "P2"))
   } else {
-    data$display_name <- reorder(data$display_name, -data$y_total)
+    alpha_levels <- sort(unique(as.character(data$display_name)))
+    data$display_name <- factor(data$display_name, levels = rev(alpha_levels))
   }
   
   # Layered bar chart: red background → orange (expiring+active) → green (active)
@@ -438,7 +448,10 @@ create_percentage_chart <- function(data, theme = "MMCD") {
   status_colors <- get_status_colors(theme = theme)
   
   # Create percentage bar chart
-  p <- ggplot(data, aes(x = reorder(display_name, pct_active), y = pct_active, text = tooltip_text)) +
+  alpha_levels <- sort(unique(as.character(data$display_name)))
+  data$display_name <- factor(data$display_name, levels = rev(alpha_levels))
+  
+  p <- ggplot(data, aes(x = display_name, y = pct_active, text = tooltip_text)) +
     geom_bar(stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
     geom_hline(yintercept = 100, linetype = "dashed", color = "gray50") +
     coord_flip() +
@@ -680,8 +693,9 @@ create_yearly_grouped_chart <- function(data, title, y_label, theme = "MMCD", ov
   n_groups <- length(groups)
   
   if (n_groups == 1) {
-    # Single group - use theme primary color
-    group_colors <- setNames("#ff9500", groups)  # Cattail orange
+    # Single group - use active status color from theme
+    status_colors <- get_status_colors(theme = theme)
+    group_colors <- setNames(unname(status_colors["active"]), groups)
   } else {
     # Multiple groups - use facility colors
     group_colors <- setNames(

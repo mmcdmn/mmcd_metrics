@@ -2,6 +2,86 @@
 # Minimal shared code - prefer inline patterns over wrapper functions
 
 # =============================================================================
+# CACHED DATA LOADING FOR INDIVIDUAL APPS
+# =============================================================================
+# Wraps any app's load_raw_data() with Redis DB query caching (2-min TTL).
+# Call this instead of load_raw_data() directly to get automatic caching.
+
+#' Load data with Redis caching (2-min TTL for DB query results)
+#' @param app_name Short name for the app (e.g., "catch_basin_status")
+#' @param ... All arguments to pass through to load_raw_data()
+#' @return The result of load_raw_data(), cached if possible
+cached_load_raw_data <- function(app_name, ...) {
+  if (exists("get_cached_db_query", mode = "function")) {
+    args <- list(...)
+    cached <- tryCatch({
+      get_cached_db_query(
+        paste0("raw:", app_name),
+        load_func = function() load_raw_data(...),
+        app_name, args
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  load_raw_data(...)
+}
+
+#' Load cached stat box data (2-min TTL)
+#' @param app_name Short name for the app
+#' @param data The data to compute stats from
+#' @param calc_func A function that computes stats from data
+#' @return Cached or freshly computed stat values
+cached_stat_calculation <- function(app_name, data, calc_func) {
+  if (exists("get_cached_stat_box", mode = "function")) {
+    data_hash <- digest::digest(data, algo = "xxhash64")
+    cached <- tryCatch({
+      get_cached_stat_box(
+        paste0("app_stat:", app_name),
+        calc_func = calc_func,
+        app_name, data_hash
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) return(cached)
+  }
+  calc_func()
+}
+
+#' Load cached chart object (2-min TTL)
+#' @param app_name Short name for the app
+#' @param chart_id Chart identifier within the app
+#' @param data Data feeding the chart (used for cache key)
+#' @param render_func Function that creates the plotly chart
+#' @param ... Additional key parameters (theme, chart_type, etc.)
+#' @return Cached or freshly rendered plotly object
+cached_chart <- function(app_name, chart_id, data, render_func, ...) {
+  if (exists("get_cached_chart", mode = "function")) {
+    data_hash <- digest::digest(data, algo = "xxhash64")
+    cached <- tryCatch({
+      get_cached_chart(
+        paste0("app_chart:", app_name, ":", chart_id),
+        render_func = NULL,
+        app_name, chart_id, data_hash, ...
+      )
+    }, error = function(e) NULL)
+    if (!is.null(cached)) {
+      return(cached)
+    }
+  }
+  
+  chart <- render_func()
+  
+  # Store in cache
+  if (exists("set_app_cached_redis", mode = "function") && exists("build_cache_key", mode = "function")) {
+    data_hash <- digest::digest(data, algo = "xxhash64")
+    cache_key <- build_cache_key("chart", paste0("app_chart:", app_name, ":", chart_id),
+                                  app_name, chart_id, data_hash, ...)
+    tryCatch(set_app_cached_redis(cache_key, chart, ttl = TTL_2_MIN), error = function(e) NULL)
+  }
+  
+  chart
+}
+
+# =============================================================================
 # COLOR MAPPING UTILITIES (shared because they're complex)
 # =============================================================================
 

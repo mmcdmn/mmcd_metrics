@@ -29,6 +29,7 @@ suppressPackageStartupMessages({
 
 # Source shared database helpers (adjust path since we're in unified/ subfolder)
 source("../../../shared/db_helpers.R")
+source("../../../shared/config.R")
 source("../../../shared/stat_box_helpers.R")
 
 # Source overview framework - THE REGISTRY IS THE SINGLE SOURCE OF TRUTH
@@ -52,6 +53,14 @@ tryCatch({
   get_foremen_lookup()
   message("[overview] Lookup tables preloaded")
 }, error = function(e) message("[overview] Preload warning: ", e$message))
+
+# Eagerly load app environments (parse each app's data_functions.R once at startup
+# instead of on the first user request, saving ~2-3 seconds on initial load)
+message("[overview] Preloading app data environments...")
+tryCatch({
+  get_app_envs()
+  message("[overview] App environments preloaded")
+}, error = function(e) message("[overview] App env preload warning: ", e$message))
 
 # Load environment variables
 load_env_vars()
@@ -84,13 +93,22 @@ parse_unified_params <- function(query_string) {
     if (length(metrics_filter) == 0) metrics_filter <- NULL
   }
   
-  # Parse zone filter
-  zone_filter <- "1,2"  # default
+  # Parse zone filter — read default from config
+  config_zone_default <- tryCatch(get_display_setting("default_zone_filter"), error = function(e) "P1 and P2 SEPARATE")
+  zone_filter <- switch(config_zone_default,
+    "P1 Only"            = "1",
+    "P2 Only"            = "2",
+    "P1 and P2"          = "1,2",
+    "P1 and P2 SEPARATE" = "separate",
+    "separate"  # fallback
+  )
   if (!is.null(query$zone)) {
     if (query$zone == "1") {
       zone_filter <- "1"
     } else if (query$zone == "2") {
       zone_filter <- "2"
+    } else if (query$zone == "1,2") {
+      zone_filter <- "1,2"
     } else if (query$zone == "separate") {
       zone_filter <- "separate"
     }

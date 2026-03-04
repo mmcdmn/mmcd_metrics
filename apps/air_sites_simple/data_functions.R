@@ -112,7 +112,7 @@ load_air_treatments <- function(start_year, end_year, zone_filter = c("1", "2"),
     
     query_template <- "
       SELECT 
-        t.inspdate, b.facility, g.zone, b.sitecode, b.acres,
+        t.inspdate, b.facility, g.zone, g.fosarea, b.sitecode, b.acres,
         COALESCE(mt.effect_days, 14) as effect_days
       FROM %s t
       JOIN loc_breeding_sites b ON t.sitecode = b.sitecode

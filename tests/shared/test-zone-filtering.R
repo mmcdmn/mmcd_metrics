@@ -26,20 +26,38 @@ resolve_project_file <- function(rel_path) {
 # SETUP: Source required modules
 # =============================================================================
 
-# Ensure metric_registry and data functions are available
+# Ensure metric_registry, data functions, and navigate_to_overview are available
+# NOTE: navigate_to_overview moved from ui_helper.R (deleted) to dynamic_server.R
+#       in refactor_3. We need Shiny stubs to source dynamic_server.R outside Shiny.
 tryCatch({
   metric_registry_file <- resolve_project_file("apps/overview/metric_registry.R")
   data_functions_file <- resolve_project_file("apps/overview/data_functions.R")
-  ui_helper_file <- resolve_project_file("apps/overview/ui_helper.R")
+  historical_file <- resolve_project_file("apps/overview/historical_functions.R")
+  dynamic_server_file <- resolve_project_file("apps/overview/dynamic_server.R")
 
   if (!is.na(metric_registry_file)) source(metric_registry_file)
   if (!is.na(data_functions_file)) source(data_functions_file)
-  if (!is.na(ui_helper_file)) source(ui_helper_file)
+
+  # Stub Shiny server-only functions so dynamic_server.R can be sourced
+  if (!exists("observeEvent", mode = "function")) {
+    observeEvent <- function(...) invisible(NULL)
+    renderPlotly <- function(...) invisible(NULL)
+    renderUI <- function(...) invisible(NULL)
+    renderText <- function(...) invisible(NULL)
+    reactive <- function(...) invisible(NULL)
+    eventReactive <- function(...) invisible(NULL)
+    outputOptions <- function(...) invisible(NULL)
+    event_data <- function(...) NULL
+    req <- function(...) invisible(NULL)
+  }
+
+  if (!is.na(historical_file)) source(historical_file)
+  if (!is.na(dynamic_server_file)) source(dynamic_server_file)
 
   if (exists("navigate_to_overview", mode = "function")) {
     cat("✓ Overview modules loaded for zone filtering tests\n")
   } else {
-    cat("✗ Overview modules not available for zone filtering tests\n")
+    cat("✗ navigate_to_overview not found after sourcing dynamic_server.R\n")
   }
 }, error = function(e) {
   cat("✗ Overview modules failed:", e$message, "\n")

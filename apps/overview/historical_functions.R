@@ -454,7 +454,6 @@ load_historical_comparison_data <- function(metric,
   
   # ==========================================================================
   # CACHE PATH: Yearly grouped metrics (e.g., cattail_treatments)
-  # Skip cache when facility_filter is set (cache is district-wide)
   # ==========================================================================
   if (is.null(facility_filter) &&
       isTRUE(config$historical_type == "yearly_grouped") &&

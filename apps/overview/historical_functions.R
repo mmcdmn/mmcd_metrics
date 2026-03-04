@@ -57,76 +57,6 @@ if (file.exists(cache_file)) {
 # CONFIGURATION
 # =============================================================================
 
-#' Efficiently load only current year data with minimal queries
-#' Optimized version that avoids loading full historical archives
-#' @param metric_id Metric to load
-#' @param current_year Year to load
-#' @param zone_filter Zones to include
-#' @return List with minimal current year data
-load_current_year_efficiently <- function(metric_id, current_year, zone_filter = c("1", "2")) {
-  registry <- get_metric_registry()
-  config <- registry[[metric_id]]
-  
-  if (is.null(config)) {
-    return(list(treatments = data.frame()))
-  }
-  
-  apps_base <- get_apps_base_path()
-  app_folder <- config$app_folder
-  
-  # Fix path construction - when running from workspace root, apps_base should be "apps"
-  if (apps_base == "../.." && file.exists("apps")) {
-    apps_base <- "apps"
-  }
-  
-  data_file <- file.path(apps_base, app_folder, "data_functions.R")
-  
-  if (!file.exists(data_file)) {
-    return(list(treatments = data.frame()))
-  }
-  
-  env <- new.env(parent = globalenv())
-  source(data_file, local = env, chdir = TRUE)
-  
-  tryCatch({
-    # Try to use load_raw_data with specific current year constraints (no archive)
-    if ("load_raw_data" %in% names(env)) {
-      # Use current date to limit query scope
-      end_date <- Sys.Date()
-      start_date <- as.Date(paste0(current_year, "-01-01"))
-      
-      result <- env$load_raw_data(
-        analysis_date = end_date,
-        include_archive = FALSE,  # KEY: Don't include archive data
-        start_year = current_year,
-        end_year = current_year
-      )
-      
-      # Filter by zone and date range
-      if (!is.null(result$treatments) && nrow(result$treatments) > 0) {
-        result$treatments <- result$treatments %>%
-          filter(
-            inspdate >= start_date,
-            inspdate <= end_date
-          )
-          
-        if ("zone" %in% names(result$treatments) && !is.null(zone_filter)) {
-          result$treatments <- result$treatments %>% filter(zone %in% zone_filter)
-        }
-      }
-      
-      return(result)
-    } else {
-      # Fallback to original method
-      return(NULL)
-    }
-    
-  }, error = function(e) {
-    # Return NULL to trigger fallback
-    return(NULL)
-  })
-}
-
 # =============================================================================
 # SHARED VALUE COLUMN HELPER
 # =============================================================================
@@ -155,12 +85,28 @@ assign_value_column <- function(treatments, config) {
 
 #' Load current year data for cache path (helper function)
 #' Handles both active treatment metrics and simple count metrics
+#' Results are cached via get_cached_curyr_data (3-min TTL) to avoid redundant
+#' DB queries when multiple views/metrics request the same current year data.
 #' @param metric Metric ID
 #' @param analysis_year Year to load
 #' @param zone_filter Zone filter
 #' @param config Metric config from registry
 #' @return Data frame with time_period, week_num, value, group_label columns
 load_current_year_for_cache <- function(metric, analysis_year, zone_filter, config) {
+  # Use tiered cache helper (3-min TTL) if available
+  cache_id <- paste0(metric, ":", analysis_year, ":", paste(sort(zone_filter), collapse = "_"))
+  if (exists("get_cached_curyr_data", mode = "function")) {
+    return(get_cached_curyr_data(cache_id, function() {
+      .load_current_year_for_cache_uncached(metric, analysis_year, zone_filter, config)
+    }))
+  }
+
+  # Fallback: direct call without caching
+  .load_current_year_for_cache_uncached(metric, analysis_year, zone_filter, config)
+}
+
+#' Uncached implementation of load_current_year_for_cache
+.load_current_year_for_cache_uncached <- function(metric, analysis_year, zone_filter, config) {
   tryCatch({
     raw_data <- load_app_historical_data(metric, analysis_year, analysis_year, zone_filter)
     
@@ -197,6 +143,8 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
         treatments$treatment_id <- treatments$catchbasin_id
       }
       
+      weekly_list <- vector("list", 53L)
+      widx <- 0L
       for (week_start in seq.Date(start_date, end_date, by = "week")) {
         # Convert back to Date (R for loop strips Date class)
         week_start <- as.Date(week_start, origin = "1970-01-01")
@@ -212,11 +160,13 @@ load_current_year_for_cache <- function(metric, analysis_year, zone_filter, conf
               distinct(treatment_id, .keep_all = TRUE)
           }
           week_value <- sum(active$value, na.rm = TRUE)
-          weekly_data <- bind_rows(weekly_data, data.frame(
+          widx <- widx + 1L
+          weekly_list[[widx]] <- data.frame(
             year = analysis_year, week_num = week_num, value = week_value
-          ))
+          )
         }
       }
+      weekly_data <- if (widx > 0) do.call(rbind, weekly_list[1:widx]) else data.frame()
     } else {
       weekly_data <- treatments %>%
         mutate(year = year(inspdate), week_num = week(inspdate)) %>%
@@ -278,23 +228,32 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
     return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   }
   
-  apps_base <- get_apps_base_path()
-  app_folder <- config$app_folder
-  
-  # Fix path construction - when running from workspace root, apps_base should be "apps"
-  if (apps_base == "../.." && file.exists("apps")) {
-    apps_base <- "apps"
+  # Use cached app environments if available (normal app context)
+  # Fallback to direct sourcing when called from cache_utilities.R or standalone scripts
+  env <- NULL
+  if (exists("get_app_envs", mode = "function")) {
+    app_envs <- get_app_envs()
+    env <- app_envs[[metric_id]]
   }
   
-  data_file <- file.path(apps_base, app_folder, "data_functions.R")
+  # Fallback: source the app's data_functions.R directly into a fresh environment
+  if (is.null(env)) {
+    apps_base <- get_apps_base_path()
+    app_folder <- config$app_folder
+    data_file <- file.path(apps_base, app_folder, "data_functions.R")
+    if (file.exists(data_file)) {
+      env <- new.env(parent = globalenv())
+      tryCatch(
+        source(data_file, local = env, chdir = TRUE),
+        error = function(e) cat("ERROR sourcing", data_file, ":", e$message, "\n")
+      )
+    }
+  }
   
-  if (!file.exists(data_file)) {
-    cat("ERROR: data_functions.R not found for", metric_id, "\n")
+  if (is.null(env) || length(ls(env)) == 0) {
+    cat("ERROR: No app environment loaded for", metric_id, "\n")
     return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   }
-  
-  env <- new.env(parent = globalenv())
-  source(data_file, local = env, chdir = TRUE)
   
   tryCatch({
     if ("load_raw_data" %in% names(env)) {
@@ -511,7 +470,6 @@ load_historical_comparison_data <- function(metric,
   
   # ==========================================================================
   # CACHE PATH: Yearly grouped metrics (e.g., cattail_treatments)
-  # Skip cache when facility_filter is set (cache is district-wide)
   # ==========================================================================
   if (is.null(facility_filter) &&
       isTRUE(config$historical_type == "yearly_grouped") &&
@@ -669,8 +627,9 @@ load_historical_comparison_data <- function(metric,
     # Determine if zone-level reporting is possible
     has_zone_data <- "zone" %in% names(treatments)
     
-    # Generate weeks for all years in range
-    weekly_data <- data.frame()
+    # Generate weeks for all years in range — collect in list, bind once at end
+    weekly_list <- vector("list", (end_year - start_year + 1) * 53L)
+    widx <- 0L
     
     for (yr in start_year:end_year) {
       start_date <- as.Date(paste0(yr, "-01-01"))
@@ -715,28 +674,33 @@ load_historical_comparison_data <- function(metric,
               left_join(zone_values, by = "zone") %>%
               mutate(value = ifelse(is.na(value), 0, value),
                      year = yr, week_num = week_num)
-            weekly_data <- bind_rows(weekly_data, zone_row)
+            widx <- widx + 1L
+            weekly_list[[widx]] <- zone_row
           } else {
             week_value <- sum(active_on_friday$value, na.rm = TRUE)
-            weekly_data <- bind_rows(weekly_data, data.frame(
+            widx <- widx + 1L
+            weekly_list[[widx]] <- data.frame(
               year = yr, week_num = week_num, value = week_value
-            ))
+            )
           }
         } else {
           # No active treatments — emit zeros (zone-aware or single row)
           if (has_zone_data) {
-            weekly_data <- bind_rows(weekly_data, data.frame(
+            widx <- widx + 1L
+            weekly_list[[widx]] <- data.frame(
               zone = zone_filter, year = yr, week_num = week_num, value = 0,
               stringsAsFactors = FALSE
-            ))
+            )
           } else {
-            weekly_data <- bind_rows(weekly_data, data.frame(
+            widx <- widx + 1L
+            weekly_list[[widx]] <- data.frame(
               year = yr, week_num = week_num, value = 0
-            ))
+            )
           }
         }
       }
     }
+    weekly_data <- if (widx > 0) do.call(rbind, weekly_list[1:widx]) else data.frame()
   } else {
     # =========================================================================
     # SIMPLE TREATMENT COUNT (by week of treatment date)
@@ -889,219 +853,4 @@ load_historical_comparison_data <- function(metric,
   }
   
   result
-}
-
-# =============================================================================
-# LEGACY SUPPORT - load_historical_metric_data (wraps new function)
-# =============================================================================
-
-#' Load historical data for any metric (legacy interface)
-#' 
-#' @param metric Metric ID
-#' @param start_year Start year
-#' @param end_year End year
-#' @param group_by Grouping: "mmcd_all", "zone", "facility"
-#' @param time_period Aggregation: "yearly" or "weekly"
-#' @param display_metric Metric to display
-#' @param zone_filter Vector of zones
-#' @return Data frame with time_period, group_label, value columns
-#' @export
-load_historical_metric_data <- function(metric,
-                                        start_year = NULL,
-                                        end_year = NULL,
-                                        group_by = "mmcd_all",
-                                        time_period = "weekly",
-                                        display_metric = "treatment_acres",
-                                        zone_filter = c("1", "2")) {
-  
-  # Get default year range if not specified
-  if (is.null(start_year) || is.null(end_year)) {
-    years <- get_historical_year_range(5)
-    start_year <- years$start_year
-    end_year <- years$end_year
-  }
-  
-  # Load raw data from app
-  raw_data <- load_app_historical_data(metric, start_year, end_year, zone_filter)
-  
-  if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) {
-    return(data.frame())
-  }
-  
-  treatments <- raw_data$treatments
-  treatments$inspdate <- as.Date(treatments$inspdate)
-  
-  # Get registry config
-  registry <- get_metric_registry()
-  config <- registry[[metric]]
-  has_acres <- isTRUE(config$has_acres)
-  
-  # Determine value
-  if (has_acres && display_metric == "treatment_acres") {
-    acres_col <- if ("treated_acres" %in% names(treatments)) "treated_acres" 
-                 else if ("acres" %in% names(treatments)) "acres"
-                 else NULL
-    if (!is.null(acres_col)) {
-      treatments$value <- treatments[[acres_col]]
-    } else {
-      treatments$value <- 1
-    }
-  } else {
-    treatments$value <- 1
-  }
-  
-  # Add time_period column
-  if (time_period == "yearly") {
-    treatments <- treatments %>%
-      mutate(time_period = as.character(year(inspdate)))
-  } else {
-    treatments <- treatments %>%
-      mutate(time_period = paste0(year(inspdate), "-W", sprintf("%02d", week(inspdate))))
-  }
-  
-  # Apply grouping
-  if (group_by == "mmcd_all") {
-    result <- treatments %>%
-      group_by(time_period) %>%
-      summarize(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(group_label = "All MMCD")
-  } else if (group_by == "zone" && "zone" %in% names(treatments)) {
-    result <- treatments %>%
-      group_by(time_period, zone) %>%
-      summarize(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(group_label = paste0("P", zone))
-  } else if (group_by == "facility" && "facility" %in% names(treatments)) {
-    result <- treatments %>%
-      group_by(time_period, facility) %>%
-      summarize(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(group_label = facility)
-  } else {
-    result <- treatments %>%
-      group_by(time_period) %>%
-      summarize(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
-      mutate(group_label = "All MMCD")
-  }
-  
-  result %>% select(time_period, group_label, value)
-}
-
-# =============================================================================
-# CHART CREATION
-# =============================================================================
-
-#' Create a historical trend line chart
-#' 
-#' @param data Data frame with time_period, group_label, value columns
-#' @param title Chart title
-#' @param y_label Y-axis label
-#' @param theme Color theme
-#' @return Plotly chart
-#' @export
-create_historical_line_chart <- function(data, title = "Historical Trend", 
-                                         y_label = "Acres", theme = "MMCD") {
-  if (is.null(data) || nrow(data) == 0) {
-    return(plotly_empty() %>% layout(title = list(text = title)))
-  }
-  
-  # Get colors - use consistent historical comparison colors
-  hist_colors <- get_historical_comparison_colors(theme = theme)
-  
-  # Create line chart with consistent colors
-  p <- plot_ly() %>%
-    layout(
-      xaxis = list(title = "", tickangle = -45),
-      yaxis = list(title = y_label),
-      legend = list(orientation = "h", y = -0.2),
-      margin = list(l = 60, r = 20, t = 30, b = 80),
-      hovermode = "closest"
-    ) %>%
-    config(displayModeBar = FALSE)
-  
-  # Add traces with consistent colors
-  for (group in unique(data$group_label)) {
-    group_data <- data[data$group_label == group, ]
-    
-    # Determine color based on group label
-    color <- if (grepl("Year Avg", group)) {
-      hist_colors[["5-Year Avg"]]
-    } else {
-      hist_colors[["current_year"]]
-    }
-    
-    p <- p %>% add_trace(
-      data = group_data,
-      x = ~time_period, 
-      y = ~value,
-      name = group,
-      type = 'scatter', 
-      mode = 'lines+markers',
-      line = list(color = color),
-      marker = list(color = color),
-      hovertemplate = paste(
-        "<b>%{x}</b><br>",
-        "%{y:,.0f}<br>",
-        "<extra>%{fullData.name}</extra>"
-      )
-    )
-  }
-  
-  return(p)
-}
-
-#' Create a historical stacked bar chart
-#' 
-#' @param data Data frame with time_period, group_label, value columns
-#' @param title Chart title
-#' @param y_label Y-axis label
-#' @param theme Color theme
-#' @return Plotly chart
-#' @export
-create_historical_bar_chart <- function(data, title = "Historical Trend",
-                                        y_label = "Acres", theme = "MMCD") {
-  if (is.null(data) || nrow(data) == 0) {
-    return(plotly_empty() %>% layout(title = list(text = title)))
-  }
-  
-  # Get colors - use consistent historical comparison colors  
-  hist_colors <- get_historical_comparison_colors(theme = theme)
-  
-  # Create stacked bar chart with consistent colors
-  p <- plot_ly() %>%
-    layout(
-      barmode = 'stack',
-      xaxis = list(title = ""),
-      yaxis = list(title = y_label),
-      legend = list(orientation = "h", y = -0.2),
-      margin = list(l = 60, r = 20, t = 30, b = 80)
-    ) %>%
-    config(displayModeBar = FALSE)
-  
-  # Add traces with consistent colors
-  for (group in unique(data$group_label)) {
-    group_data <- data[data$group_label == group, ]
-    
-    # Determine color based on group label
-    color <- if (grepl("Year Avg", group)) {
-      hist_colors[["5-Year Avg"]]
-    } else {
-      hist_colors[["current_year"]]
-    }
-    
-    p <- p %>% add_trace(
-      data = group_data,
-      x = ~time_period, 
-      y = ~value,
-      name = group,
-      type = 'bar',
-      marker = list(color = color),
-      hovertemplate = paste(
-        "<b>%{x}</b><br>",
-        "%{y:,.0f}<br>",
-        "<extra>%{fullData.name}</extra>"
-      )
-    )
-  }
-    config(displayModeBar = FALSE)
-  
-  return(p)
 }

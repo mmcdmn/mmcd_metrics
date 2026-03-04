@@ -19,6 +19,7 @@ cache:
     color_mappings: 604800         # 7 days  — status/facility/FOS color maps
     facility_historical: 86400     # 24 hours — facility-filtered historical averages
     general: 300                   # 5 min   — general app-level cache
+    current_year: 180              # 3 min   — current-year live data
     db_queries: 120                # 2 min   — raw database query results
     charts: 120                    # 2 min   — rendered plotly chart objects
     stat_boxes: 120                # 2 min   — computed stat box values

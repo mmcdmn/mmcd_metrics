@@ -162,9 +162,31 @@ regenerate_historical_cache <- function(zone_filter = c("1", "2")) {
   cat("=== REGENERATING HISTORICAL AVERAGES CACHE ===\n")
   cat("This may take several minutes...\n\n")
   
-  # Source required files
-  source('metric_registry.R')
-  source('historical_functions.R')
+  # Source required files — resolve paths dynamically so this works from any
+
+  # working directory (e.g., apps/overview/unified/, apps/overview/, or workspace root)
+  .resolve_overview_file <- function(filename) {
+    candidates <- c(
+      filename,                                              # apps/overview/
+      file.path("..", filename),                              # apps/overview/unified/
+      file.path("apps", "overview", filename),               # workspace root
+      file.path("/srv/shiny-server/apps/overview", filename) # Docker
+    )
+    for (p in candidates) {
+      if (file.exists(p)) return(p)
+    }
+    stop(sprintf("Cannot find %s from working directory %s", filename, getwd()))
+  }
+  
+  # Only re-source if the functions aren't already available (e.g., when run
+
+  # standalone via generate_cache.R).  Inside the running app they're already loaded.
+  if (!exists("get_metric_registry", mode = "function")) {
+    source(.resolve_overview_file("metric_registry.R"))
+  }
+  if (!exists("load_historical_comparison_data", mode = "function")) {
+    source(.resolve_overview_file("historical_functions.R"))
+  }
   
   current_year <- as.numeric(format(Sys.Date(), "%Y"))
   registry <- get_metric_registry()

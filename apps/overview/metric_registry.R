@@ -28,18 +28,6 @@ if (!requireNamespace("shiny", quietly = TRUE)) {
 # CONFIGURATION HELPERS
 # =============================================================================
 
-#' Get the year range for historical data
-#' @param n_years Number of years to include (default 5, includes current year)
-#' @return List with start_year and end_year
-#' @export
-get_historical_year_range <- function(n_years = 5) {
-  current_year <- as.numeric(format(Sys.Date(), "%Y"))
-  list(
-    start_year = current_year - n_years + 1,
-    end_year = current_year
-  )
-}
-
 #' Get the path to the apps folder
 #' Works from: apps/overview/district, apps/overview/facilities, apps/overview, apps/district_overview
 #' @return Character string path to apps folder
@@ -64,12 +52,24 @@ get_apps_base_path <- function() {
 # METRIC DEFINITIONS - EDIT THIS LIST TO ADD/REMOVE METRICS
 # =============================================================================
 
+# Module-level cache for metric registry (built once per session)
+.registry_cache <- NULL
+
 #' Get the registry of all available metrics
 #' THIS IS THE ONLY PLACE TO ADD/REMOVE METRICS
+#' Uses lazy caching - builds the list once then returns cached copy.
 #' 
 #' @return List of metric configurations
 #' @export
 get_metric_registry <- function() {
+  if (!is.null(.registry_cache)) return(.registry_cache)
+  .registry_cache <<- .build_metric_registry()
+  .registry_cache
+}
+
+#' Build the metric registry list (internal)
+#' @return List of metric configurations
+.build_metric_registry <- function() {
   list(
     # =========================================================================
     # VECTOR CATEGORY - Catch basins, structures, SUCO

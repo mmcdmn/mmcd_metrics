@@ -127,13 +127,6 @@ is_metric_cacheable <- function(metric) {
   metric %in% get_cacheable_metrics()
 }
 
-#' Check if a metric IS currently cached
-#' @param metric The metric name to check  
-#' @return TRUE if metric has cache data
-is_metric_cached <- function(metric) {
-  metric %in% get_cached_metrics()
-}
-
 # =============================================================================
 # CACHE MANAGEMENT FUNCTIONS
 # =============================================================================
@@ -216,6 +209,19 @@ get_cache_status <- function() {
 #' @return Updated cache object
 regenerate_cache <- function(metrics = NULL, zone_filter = c("1", "2")) {
   ensure_registry_loaded()
+  
+  # Source data_functions.R first (provides get_app_envs needed by historical_functions)
+  data_paths <- c(
+    "/srv/shiny-server/apps/overview/data_functions.R",
+    "../overview/data_functions.R",
+    "../../apps/overview/data_functions.R"
+  )
+  for (p in data_paths) {
+    if (file.exists(p)) {
+      source(p, local = FALSE)
+      break
+    }
+  }
   
   # Source historical functions
   hist_paths <- c(
@@ -490,10 +496,4 @@ refresh_lookup_caches <- function() {
   
   cat("Lookup cache refresh complete\n")
   invisible(results)
-}
-
-#' Get lookup cache file path for display (legacy compat)
-#' @return Description of cache backend
-get_lookup_cache_path <- function() {
-  "Redis (mmcd:lookup_cache)"
 }

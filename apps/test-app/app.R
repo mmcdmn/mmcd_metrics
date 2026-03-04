@@ -196,17 +196,20 @@ ui <- dashboardPage(
             icon = icon("layer-group"),
             fluidRow(
               column(8,
-                verbatimTextOutput("tieredCacheStatus")
+                verbatimTextOutput("tieredCacheStatus"),
+                DT::dataTableOutput("tieredCacheTable")
               ),
               column(4,
                 div(class = "config-section",
-                  h5("Short-lived (2 min)"),
+                  h5("Short-lived (2-3 min)"),
                   actionButton("clearDbCache", "DB Queries", 
                                icon = icon("database"), class = "btn-warning btn-sm btn-block"),
                   actionButton("clearChartCache", "Charts", 
                                icon = icon("chart-bar"), class = "btn-warning btn-sm btn-block"),
                   actionButton("clearStatCache", "Stat Boxes", 
-                               icon = icon("calculator"), class = "btn-warning btn-sm btn-block")
+                               icon = icon("calculator"), class = "btn-warning btn-sm btn-block"),
+                  actionButton("clearCuryrCache", "Current Year", 
+                               icon = icon("calendar"), class = "btn-warning btn-sm btn-block")
                 ),
                 br(),
                 div(class = "config-section",
@@ -216,7 +219,11 @@ ui <- dashboardPage(
                   actionButton("clearColorCache", "Color Maps", 
                                icon = icon("palette"), class = "btn-danger btn-sm btn-block"),
                   actionButton("clearFacHistCache", "Facility Historical", 
-                               icon = icon("building"), class = "btn-danger btn-sm btn-block")
+                               icon = icon("building"), class = "btn-danger btn-sm btn-block"),
+                  actionButton("clearHistFacCache", "Hist Avg (Fac)", 
+                               icon = icon("history"), class = "btn-danger btn-sm btn-block"),
+                  actionButton("clearHistFosCache", "Hist Avg (FOS)", 
+                               icon = icon("history"), class = "btn-danger btn-sm btn-block")
                 ),
                 br(),
                 fluidRow(
@@ -741,6 +748,30 @@ server <- function(input, output, session) {
     tiered_trigger(tiered_trigger() + 1)
   })
   
+  observeEvent(input$clearCuryrCache, {
+    tryCatch({
+      n <- clear_cache_tier("curyr")
+      lookup_log_message(sprintf("Cleared current year cache (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  observeEvent(input$clearHistFacCache, {
+    tryCatch({
+      n <- clear_cache_tier("hist_fac")
+      lookup_log_message(sprintf("Cleared hist avg (fac) (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
+  observeEvent(input$clearHistFosCache, {
+    tryCatch({
+      n <- clear_cache_tier("hist_fos")
+      lookup_log_message(sprintf("Cleared hist avg (fos) (%d keys)", n))
+    }, error = function(e) lookup_log_message(paste("Error:", e$message)))
+    tiered_trigger(tiered_trigger() + 1)
+  })
+  
   observeEvent(input$clearAllTieredCache, {
     tryCatch({
       clear_cache_tier("all")
@@ -792,6 +823,17 @@ server <- function(input, output, session) {
       )
     }, error = function(e) paste("Error:", e$message))
   })
+  
+  output$tieredCacheTable <- renderDT({
+    tiered_trigger()
+    input$refreshTieredStatus
+    invalidateLater(10000)
+    tryCatch({
+      get_tiered_cache_inventory()
+    }, error = function(e) {
+      data.frame(Tier = "Error", Keys = 0, TTL = e$message, stringsAsFactors = FALSE)
+    })
+  }, options = list(dom = "t", pageLength = 15))
   
   # ===========================================================================
   # RUNTIME & ROUTING

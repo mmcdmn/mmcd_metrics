@@ -97,17 +97,12 @@ tryCatch({
   cat("✓ stat_box_helpers.R loaded\n")
 }, error = function(e) cat("✗ stat_box_helpers.R failed:", e$message, "\n"))
 
-tryCatch({
-  source("shared/server_utilities.R")
-  cat("✓ server_utilities.R loaded\n")
-}, error = function(e) cat("✗ server_utilities.R failed:", e$message, "\n"))
-
 # Re-load test stubs AFTER db_helpers to override DB-dependent functions
 if (TESTING_MODE_ISOLATED) {
   source("tests/test_stubs.R")
 }
 
-# Load overview modules for URL router tests
+# Load overview modules (ui_helper.R and url_router.R removed in refactor_3)
 tryCatch({
   source("apps/overview/metric_registry.R")
   cat("✓ metric_registry.R loaded\n")
@@ -117,16 +112,6 @@ tryCatch({
   source("apps/overview/data_functions.R")
   cat("✓ data_functions.R loaded\n")
 }, error = function(e) cat("✗ data_functions.R failed:", e$message, "\n"))
-
-tryCatch({
-  source("apps/overview/ui_helper.R")
-  cat("✓ ui_helper.R loaded\n")
-}, error = function(e) cat("✗ ui_helper.R failed:", e$message, "\n"))
-
-tryCatch({
-  source("apps/overview/url_router.R")
-  cat("✓ url_router.R loaded\n")
-}, error = function(e) cat("✗ url_router.R failed:", e$message, "\n"))
 
 # =============================================================================
 # RUN TESTS

@@ -39,213 +39,11 @@ get_cached_current_week_value <- function(metric_id, analysis_date, zone_filter 
   value
 }
 
-#' Clear the current week cache (call when data might have changed)
-clear_current_week_cache <- function() {
-  rm(list = ls(envir = .current_week_cache), envir = .current_week_cache)
-}
-
 # =============================================================================
 # DYNAMIC DATA LOADERS - Iterate through registry
 # =============================================================================
 
-#' Load current data for all metrics dynamically
-#' @param inputs List with: custom_today, expiring_days, zone_filter, separate_zones
-#' @param group_by One of: "zone", "facility", "fos"
-#' @param progress_callback Optional function(metric_name, i, n) to update progress
-#' @return Named list of data frames keyed by metric_id
-#' @export
-load_all_current_data <- function(inputs, group_by = "zone", progress_callback = NULL) {
-  metrics <- get_active_metrics()
-  n_metrics <- length(metrics)
-  registry <- get_metric_registry()
-  
-  # Determine which load function to use
-  load_fn <- switch(group_by,
-    "zone" = load_data_by_zone,
-    "facility" = load_data_by_facility,
-    load_data_by_zone
-  )
-  
-  results <- list()
-  for (i in seq_along(metrics)) {
-    metric_id <- metrics[i]
-    config <- registry[[metric_id]]
-    
-    # Update progress if callback provided
-    if (!is.null(progress_callback)) {
-      progress_callback(config$display_name, i, n_metrics)
-    }
-    
-    cat("Loading", metric_id, "for", group_by, "...\n")
-    
-    # Override zone_filter for metrics that ignore it (e.g., SUCO)
-    effective_zone_filter <- if (isTRUE(config$ignore_zone_filter)) {
-      c("1", "2")
-    } else {
-      inputs$zone_filter
-    }
-    
-    results[[metric_id]] <- tryCatch({
-      load_fn(
-        metric = metric_id,
-        analysis_date = inputs$custom_today,
-        expiring_days = inputs$expiring_days,
-        zone_filter = effective_zone_filter,
-        separate_zones = if (!is.null(inputs$separate_zones)) inputs$separate_zones else FALSE
-      )
-    }, error = function(e) {
-      cat("ERROR loading", metric_id, ":", e$message, "\n")
-      data.frame()
-    })
-  }
-  
-  results
-}
 
-#' Load historical data for all metrics dynamically
-#' @param overview_type One of: "district", "facilities", "fos"
-#' @param zone_filter Vector of zones to include
-#' @param progress_callback Optional function(metric_name, i, n) to update progress
-#' @param analysis_date Date to use as "current year" for comparison
-#' @return Named list of data frames keyed by metric_id
-#' @export
-load_all_historical_data <- function(overview_type, zone_filter = c("1", "2"), progress_callback = NULL, analysis_date = NULL, metrics_filter = NULL) {
-  # Use filtered metrics if provided, otherwise get all historical metrics
-  all_historical <- get_historical_metrics()
-  metrics <- if (!is.null(metrics_filter)) {
-    intersect(metrics_filter, all_historical)
-  } else {
-    all_historical
-  }
-  n_metrics <- length(metrics)
-  registry <- get_metric_registry()
-  overview_config <- get_overview_config(overview_type)
-  
-  # Use 10 years to calculate 10-year averages
-  years <- get_historical_year_range(10, analysis_date)
-  
-  results <- list()
-  for (i in seq_along(metrics)) {
-    metric_id <- metrics[i]
-    config <- registry[[metric_id]]
-    
-    # Update progress if callback provided
-    if (!is.null(progress_callback)) {
-      progress_callback(config$display_name, i, n_metrics)
-    }
-    
-    cat("Loading historical", metric_id, "...\n")
-    
-    results[[metric_id]] <- tryCatch({
-      load_historical_comparison_data(
-        metric = metric_id,
-        start_year = years$start_year,
-        end_year = years$end_year,
-        display_metric = config$display_metric,
-        zone_filter = zone_filter,
-        analysis_date = analysis_date,
-        overview_type = overview_type
-      )
-    }, error = function(e) {
-      cat("ERROR loading historical", metric_id, ":", e$message, "\n")
-      list(average = data.frame(), current = data.frame(), total_count = 0)
-    })
-  }
-  
-  results
-}
-
-# =============================================================================
-# DYNAMIC OUTPUT SETUP - Create renderPlotly for each metric
-# =============================================================================
-
-#' Setup current chart outputs for all metrics
-#' @param output Shiny output object
-#' @param data_reactive Reactive returning named list of data
-#' @param theme_reactive Reactive returning current theme  
-#' @param chart_function Function to create charts (create_zone_chart or create_overview_chart)
-#' @param input Shiny input object for chart type selection
-#' @export
-setup_current_chart_outputs <- function(output, data_reactive, theme_reactive, chart_function, input = NULL) {
-  metrics <- get_active_metrics()
-  registry <- get_metric_registry()
-  
-  lapply(metrics, function(metric_id) {
-    config <- registry[[metric_id]]
-    output_id <- paste0(metric_id, "_chart")
-    
-    # Use local() to capture the correct metric_id for each iteration
-    local({
-      local_metric_id <- metric_id
-      local_config <- config
-      
-      output[[output_id]] <- renderPlotly({
-        req(data_reactive())
-        data <- data_reactive()[[local_metric_id]]
-        
-        if (is.null(data) || nrow(data) == 0) {
-          return(create_empty_chart(local_config$display_name, "No data available"))
-        }
-        
-        # Check if this metric supports chart type selection
-        chart_type <- "bar"  # default
-        if (!is.null(input) && !is.null(local_config$chart_types) && length(local_config$chart_types) > 1) {
-          chart_type_input <- input[[paste0(local_metric_id, "_chart_type")]]
-          if (!is.null(chart_type_input)) {
-            chart_type <- chart_type_input
-          }
-        }
-        
-        current_theme <- theme_reactive()
-        
-        # Try Redis chart cache (2-min TTL)
-        chart <- NULL
-        if (exists("get_cached_chart", mode = "function")) {
-          data_hash <- digest::digest(data, algo = "xxhash64")
-          chart <- tryCatch({
-            get_cached_chart(
-              paste0("current:", local_metric_id),
-              render_func = NULL,  # will build manually below if miss
-              local_metric_id, chart_type, current_theme, data_hash
-            )
-          }, error = function(e) NULL)
-        }
-        
-        if (is.null(chart)) {
-          # Build chart
-          chart <- if (chart_type == "pie" && "pie" %in% local_config$chart_types) {
-            create_overview_pie_chart(
-              data = data,
-              title = paste(local_config$display_name, "Progress"),
-              theme = current_theme,
-              metric_type = local_metric_id
-            )
-          } else {
-            chart_function(
-              data = data,
-              title = paste(local_config$display_name, "Progress"),
-              y_label = local_config$y_label,
-              theme = current_theme,
-              metric_type = local_metric_id
-            )
-          }
-          
-          # Cache the built chart
-          if (exists("set_app_cached_redis", mode = "function")) {
-            cache_key <- build_cache_key("chart", paste0("current:", local_metric_id),
-                                          local_metric_id, chart_type, current_theme,
-                                          digest::digest(data, algo = "xxhash64"))
-            tryCatch(set_app_cached_redis(cache_key, chart, ttl = TTL_2_MIN), error = function(e) NULL)
-          }
-        }
-        
-        chart
-      })
-    })
-  })
-  
-  invisible(NULL)
-}
 
 # =============================================================================
 # DETAIL VALUE BOXES GENERATOR
@@ -627,48 +425,54 @@ get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2
   }
 }
 
-#' Get historical average for a SPECIFIC FACILITY for a metric and week
-#' Computes on-the-fly by loading 10-year historical data for that facility
+#' Get historical average for a specific entity (facility or FOS) for a metric and week
+#' Unified function replacing get_historical_week_avg_by_facility and get_historical_week_avg_by_fos.
+#' Computes on-the-fly by loading 10-year historical data filtered by entity.
 #' For active treatment metrics (use_active_calculation=TRUE), computes
-#' active-on-Friday values with effect_days and dedup — same logic as FOS version.
+#' active-on-Friday values with effect_days and dedup.
+#' Cached in Redis with 7-day TTL for fast repeat access.
 #' @param metric_id Metric ID
 #' @param week_num Week number
-#' @param facility Facility short name to filter
+#' @param entity_col Column name to filter on (e.g., "facility", "fosarea", "foreman")
+#' @param entity_value Value to filter for in that column
 #' @param zone_filter Zone filter
+#' @param cache_prefix Redis cache key prefix (e.g., "hist_fac" or "hist_fos")
 #' @return Historical average value or NULL if not available
-get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, zone_filter = c("1", "2")) {
-  # Check Redis cache first (facility-level historical avg, 7-day TTL)
-  cache_key <- paste0("hist_fac:", metric_id, ":", facility, ":w", week_num)
+get_historical_week_avg_by_entity <- function(metric_id, week_num, entity_col, entity_value,
+                                               zone_filter = c("1", "2"), cache_prefix = "hist_entity") {
+  # Check Redis cache first (7-day TTL)
+  cache_key <- paste0(cache_prefix, ":", metric_id, ":", entity_value, ":w", week_num)
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
     cached <- tryCatch(redis_get(cache_key), error = function(e) NULL)
     if (!is.null(cached)) return(cached)
   }
+  
   tryCatch({
     registry <- get_metric_registry()
     config <- registry[[metric_id]]
     if (is.null(config)) return(NULL)
     
-    # Year range for 10-year average
     current_year <- lubridate::year(Sys.Date())
     start_year <- current_year - 9
     
     # Load from in-memory cache (avoids repeated 10yr DB loads per render pass)
     raw_data <- get_cached_raw_historical(metric_id, zone_filter)
-    
     if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
     
     treatments <- raw_data$treatments
     
-    # Filter to specific facility
-    if (!"facility" %in% names(treatments)) return(NULL)
-    treatments <- treatments[treatments$facility == facility, ]
+    # Filter to specific entity
+    if (!entity_col %in% names(treatments)) {
+      cat("[DEBUG] No", entity_col, "column in", metric_id, "treatments for historical avg\n")
+      return(NULL)
+    }
+    treatments <- treatments[as.character(treatments[[entity_col]]) == as.character(entity_value), ]
     if (nrow(treatments) == 0) return(NULL)
     
     # Add week number
     treatments$week_num <- lubridate::week(treatments$inspdate)
     
     # For active treatment metrics, compute what's active on each week's Friday
-    # (same logic as get_historical_week_avg_by_fos)
     use_active <- isTRUE(config$use_active_calculation)
     
     if (use_active) {
@@ -677,12 +481,11 @@ get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, z
         treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
       }
       treatments$treatment_end <- treatments$inspdate + treatments$effect_days
-      
-      # Assign value column
       treatments <- assign_value_column(treatments, config)
       
-      # Compute weekly active values across all years
-      yearly_values <- data.frame()
+      # Compute weekly active values across all years — collect in list, bind once
+      yearly_list <- vector("list", current_year - start_year)
+      idx <- 0L
       for (yr in start_year:(current_year - 1)) {
         start_date <- as.Date(paste0(yr, "-01-01"))
         end_date <- as.Date(paste0(yr, "-12-31"))
@@ -709,10 +512,12 @@ get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, z
           } else {
             week_value <- 0
           }
-          yearly_values <- rbind(yearly_values, data.frame(year = yr, value = week_value))
+          idx <- idx + 1L
+          yearly_list[[idx]] <- data.frame(year = yr, value = week_value)
         }
       }
       
+      yearly_values <- if (idx > 0) do.call(rbind, yearly_list[1:idx]) else data.frame()
       if (nrow(yearly_values) == 0) return(NULL)
       result_val <- mean(yearly_values$value, na.rm = TRUE)
       
@@ -750,145 +555,37 @@ get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, z
     result_val
     
   }, error = function(e) {
-    cat("[DEBUG] Error in get_historical_week_avg_by_facility:", e$message, "\n")
+    cat("[DEBUG] Error in get_historical_week_avg_by_entity:", entity_col, "=", entity_value, ":", e$message, "\n")
     NULL
   })
 }
 
-#' Get historical average for a SPECIFIC FOS (Field Operations Supervisor) area
-#' Computes on-the-fly by loading 10-year historical data filtered by fosarea/foreman
-#' Cached in Redis with 7-day TTL for fast repeat access
+#' Get historical average for a SPECIFIC FACILITY (convenience wrapper)
+#' @param metric_id Metric ID
+#' @param week_num Week number
+#' @param facility Facility short name
+#' @param zone_filter Zone filter
+#' @return Historical average value or NULL
+get_historical_week_avg_by_facility <- function(metric_id, week_num, facility, zone_filter = c("1", "2")) {
+  get_historical_week_avg_by_entity(metric_id, week_num, "facility", facility, zone_filter, "hist_fac")
+}
+
+#' Get historical average for a SPECIFIC FOS area (convenience wrapper)
 #' @param metric_id Metric ID
 #' @param week_num Week number
 #' @param fos_emp_num FOS employee number (fosarea value)
 #' @param zone_filter Zone filter
-#' @return Historical average value or NULL if not available
+#' @return Historical average value or NULL
 get_historical_week_avg_by_fos <- function(metric_id, week_num, fos_emp_num, zone_filter = c("1", "2")) {
-  # Check Redis cache first (FOS-level historical avg, 7-day TTL)
-  cache_key <- paste0("hist_fos:", metric_id, ":", fos_emp_num, ":w", week_num)
-  if (exists("redis_is_active", mode = "function") && redis_is_active()) {
-    cached <- tryCatch(redis_get(cache_key), error = function(e) NULL)
-    if (!is.null(cached)) return(cached)
+  # FOS data may use "fosarea" or "foreman" column name
+  fos_col <- NULL
+  raw_data <- get_cached_raw_historical(metric_id, zone_filter)
+  if (!is.null(raw_data$treatments)) {
+    if ("fosarea" %in% names(raw_data$treatments)) fos_col <- "fosarea"
+    else if ("foreman" %in% names(raw_data$treatments)) fos_col <- "foreman"
   }
-  
-  tryCatch({
-    registry <- get_metric_registry()
-    config <- registry[[metric_id]]
-    if (is.null(config)) return(NULL)
-    
-    # Year range for 10-year average (needed by active treatment calculation loop)
-    current_year <- lubridate::year(Sys.Date())
-    start_year <- current_year - 9
-    
-    # Load from in-memory cache (avoids repeated 10yr DB loads per render pass)
-    raw_data <- get_cached_raw_historical(metric_id, zone_filter)
-    
-    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
-    
-    treatments <- raw_data$treatments
-    
-    # Filter to specific FOS area
-    # Different apps use different column names: fosarea or foreman
-    fos_col <- if ("fosarea" %in% names(treatments)) {
-      "fosarea"
-    } else if ("foreman" %in% names(treatments)) {
-      "foreman"
-    } else {
-      cat("[DEBUG] No fosarea/foreman column in", metric_id, "treatments for FOS historical\n")
-      return(NULL)
-    }
-    
-    treatments <- treatments[as.character(treatments[[fos_col]]) == as.character(fos_emp_num), ]
-    if (nrow(treatments) == 0) return(NULL)
-    
-    # Add week number
-    treatments$week_num <- lubridate::week(treatments$inspdate)
-    
-    # For active treatment metrics, compute what's active on each week's Friday
-    use_active <- isTRUE(config$use_active_calculation)
-    
-    if (use_active) {
-      # Active treatment calculation (same logic as historical_functions.R)
-      if (!"effect_days" %in% names(treatments)) {
-        treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
-      }
-      treatments$treatment_end <- treatments$inspdate + treatments$effect_days
-      
-      # Assign value column
-      treatments <- assign_value_column(treatments, config)
-      
-      # Compute weekly active values across all years
-      yearly_values <- data.frame()
-      for (yr in start_year:(current_year - 1)) {
-        start_date <- as.Date(paste0(yr, "-01-01"))
-        end_date <- as.Date(paste0(yr, "-12-31"))
-        week_start_dates <- seq.Date(start_date, end_date, by = "week")
-        
-        for (ws in week_start_dates) {
-          ws <- as.Date(ws, origin = "1970-01-01")
-          wf <- ws + 4  # Friday
-          if (lubridate::year(wf) != yr) next
-          wn <- lubridate::week(wf)
-          if (wn != week_num) next
-          
-          active_on_friday <- treatments[treatments$inspdate <= wf & treatments$treatment_end >= wf, ]
-          if (nrow(active_on_friday) > 0) {
-            # Dedup by site
-            if ("sitecode" %in% names(active_on_friday)) {
-              active_on_friday <- active_on_friday[order(-as.numeric(active_on_friday$treatment_end)), ]
-              active_on_friday <- active_on_friday[!duplicated(active_on_friday$sitecode), ]
-            } else if ("catchbasin_id" %in% names(active_on_friday)) {
-              active_on_friday <- active_on_friday[order(-as.numeric(active_on_friday$treatment_end)), ]
-              active_on_friday <- active_on_friday[!duplicated(active_on_friday$catchbasin_id), ]
-            }
-            week_value <- sum(active_on_friday$value, na.rm = TRUE)
-          } else {
-            week_value <- 0
-          }
-          yearly_values <- rbind(yearly_values, data.frame(year = yr, value = week_value))
-        }
-      }
-      
-      if (nrow(yearly_values) == 0) return(NULL)
-      result_val <- mean(yearly_values$value, na.rm = TRUE)
-      
-    } else {
-      # Simple count/sum by week
-      week_treatments <- treatments[treatments$week_num == week_num, ]
-      if (nrow(week_treatments) == 0) return(NULL)
-      
-      # Assign value column
-      if (isTRUE(config$has_acres)) {
-        acres_col <- if ("treated_acres" %in% names(week_treatments)) "treated_acres"
-                     else if ("acres" %in% names(week_treatments)) "acres" else NULL
-        week_treatments$value <- if (!is.null(acres_col)) week_treatments[[acres_col]] else 1
-      } else if ("value" %in% names(week_treatments)) {
-        week_treatments$value <- as.numeric(week_treatments$value)
-      } else {
-        week_treatments$value <- 1
-      }
-      
-      # Calculate average across years
-      yearly_values <- week_treatments %>%
-        dplyr::mutate(year = lubridate::year(inspdate)) %>%
-        dplyr::group_by(year) %>%
-        dplyr::summarise(yearly_value = sum(value, na.rm = TRUE), .groups = "drop")
-      
-      if (nrow(yearly_values) == 0) return(NULL)
-      result_val <- mean(yearly_values$yearly_value, na.rm = TRUE)
-    }
-    
-    # Cache in Redis (7-day TTL)
-    if (exists("redis_is_active", mode = "function") && redis_is_active()) {
-      tryCatch(redis_set(cache_key, result_val, ttl = 604800), error = function(e) NULL)
-    }
-    
-    result_val
-    
-  }, error = function(e) {
-    cat("[DEBUG] Error in get_historical_week_avg_by_fos:", e$message, "\n")
-    NULL
-  })
+  if (is.null(fos_col)) return(NULL)
+  get_historical_week_avg_by_entity(metric_id, week_num, fos_col, fos_emp_num, zone_filter, "hist_fos")
 }
 
 #' Get current week's value for a metric from database
@@ -1138,11 +835,6 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
   }
   
   result
-}
-
-#' Simple color-only wrapper for backward compatibility
-get_dynamic_value_box_color <- function(metric_id, current_value, analysis_date, config) {
-  get_dynamic_value_box_info(metric_id, current_value, analysis_date, config)$color
 }
 
 # =============================================================================
@@ -1902,7 +1594,8 @@ build_overview_server <- function(input, output, session,
   })
   
   # Historical data loading with progress bar (continues the same progress bar)
-  # ALWAYS loaded — value box coloring depends on weekly historical comparisons.
+  # Loaded on demand for chart rendering. Value box coloring no longer blocks on this —
+  # it uses get_cached_current_week_value() (Redis-cached) as a fast fallback.
   # The `include_historical` flag only controls whether chart outputs are created.
   historical_data <- {
     eventReactive(input$refresh, {
@@ -2393,17 +2086,16 @@ build_overview_server <- function(input, output, session,
     })
     analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    # Get historical data
-    hist_data <- tryCatch(historical_data(), error = function(e) {
-      message("[RENDER-UI] historical_data() ERROR: ", e$message)
-      NULL
-    })
+    # PERFORMANCE: Do NOT wait for historical_data() here.
+    # Value box colors use get_cached_current_week_value() fallback when
+    # historical_data is NULL, which is fast (Redis-cached).
+    # Historical data is only needed for chart rendering (loaded on demand).
     
     message("[RENDER-UI] About to call generate_summary_stats")
     
     # Generate value boxes
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, NULL, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
       message("[RENDER-UI] generate_summary_stats SUCCESS")
       stats
     }, error = function(e) {
@@ -2428,6 +2120,47 @@ build_overview_server <- function(input, output, session,
   # which causes Shiny to suspend this output and never render it.
   # This tells Shiny to always render it regardless of visibility.
   outputOptions(output, "summary_stats", suspendWhenHidden = FALSE)
+  
+  # =========================================================================
+  # AUTO-POPULATE HISTORICAL CACHE (runs once at startup)
+  # =========================================================================
+  # If historical cache is empty, auto-regenerate it so value box colors work.
+  # This runs ONCE when current_data fires (data is loaded), not inside renderUI.
+  .hist_populated <- reactiveVal(FALSE)
+  observeEvent(current_data(), {
+    if (!.hist_populated()) {
+      .hist_populated(TRUE)
+      cache <- load_hist_cache()
+      if (is.null(cache)) {
+        showNotification(
+          "Historical cache is empty — computing 10-year averages for value box colors. This may take a minute on first load...",
+          type = "warning", duration = NULL, id = "hist_cache_notify"
+        )
+        tryCatch({
+          if (exists("regenerate_historical_cache", mode = "function")) {
+            regen_cache <- regenerate_historical_cache()
+            if (!is.null(regen_cache) && length(regen_cache$averages) > 0) {
+              .hist_cache$data <- regen_cache
+              showNotification(
+                paste("Historical cache populated:", length(regen_cache$averages), "metrics cached. Refresh to see colored value boxes."),
+                type = "message", duration = 10, id = "hist_cache_notify"
+              )
+            }
+          }
+        }, error = function(e) {
+          showNotification(
+            paste("Historical cache regeneration failed:", e$message),
+            type = "error", duration = 10, id = "hist_cache_notify"
+          )
+        })
+      } else {
+        showNotification(
+          paste("Historical averages loaded from cache (", length(cache$averages), " metrics)"),
+          type = "message", duration = 5
+        )
+      }
+    }
+  }, once = FALSE, ignoreInit = TRUE)
   
   # Fallback: if summary_stats renderUI fails before sending hideLoadingSkeleton
   # (e.g., req(current_data()) throws because the reactive errored),
@@ -2581,4 +2314,107 @@ build_overview_server <- function(input, output, session,
     historical_data = historical_data,
     refresh_inputs = refresh_inputs
   )
+}
+
+# =============================================================================
+# NAVIGATION HELPER
+# =============================================================================
+
+#' Navigate to another overview view (district -> facilities -> fos)
+#' Builds a URL with parameters and sends a JavaScript navigate message.
+#' @param session Shiny session
+#' @param target Target view: "facilities_overview", "fos_overview", or "district"
+#' @param zone_clicked Zone value (various formats: "P1", "1", "separate", etc.)
+#' @param analysis_date Analysis date
+#' @param expiring_days Expiring days setting
+#' @param color_theme Current color theme
+#' @param metric_id Optional metric ID to filter
+#' @param facility_clicked Optional facility name for FOS drill-down
+#' @param zone_filter_raw Optional raw zone filter to preserve in URL
+#' @export
+navigate_to_overview <- function(session, target, zone_clicked, analysis_date, expiring_days, color_theme = "MMCD", metric_id = NULL, facility_clicked = NULL, zone_filter_raw = NULL) {
+  # Sanitize inputs: convert NA to NULL, handle zero-length vectors
+  if (length(zone_clicked) == 0 || (length(zone_clicked) == 1 && is.na(zone_clicked))) zone_clicked <- NULL
+  if (length(facility_clicked) == 0 || (length(facility_clicked) == 1 && is.na(facility_clicked))) facility_clicked <- NULL
+  if (length(zone_filter_raw) == 0 || (length(zone_filter_raw) == 1 && is.na(zone_filter_raw))) zone_filter_raw <- NULL
+
+  # Debug the input
+  cat("DEBUG navigate_to_overview: zone_clicked =", zone_clicked, "class =", class(zone_clicked), "\n")
+  cat("DEBUG navigate_to_overview: target =", target, "facility_clicked =", facility_clicked, "zone_filter_raw =", zone_filter_raw, "\n")
+
+  # Extract zone number from different possible formats.
+  # zone_clicked can be:
+  #   1. A filter mode value ("separate", "1", "2", "1,2") from parent filter
+  #   2. A clicked zone value ("P1", "P2") from bar click
+  #   3. A numeric point index (0, 1) from Plotly
+  zone_num <- NA
+
+  if (is.character(zone_clicked)) {
+    # Handle filter mode values from parent (highest priority)
+    if (zone_clicked == "separate") {
+      zone_num <- "separate"
+    } else if (zone_clicked == "1,2") {
+      zone_num <- NULL  # Omit from URL - combined is the default
+    } else if (zone_clicked %in% c("1", "2")) {
+      zone_num <- zone_clicked
+    }
+    # Handle clicked zone values (backward compatibility with bar clicks)
+    else if (zone_clicked == "P1") {
+      zone_num <- "1"
+    } else if (zone_clicked == "P2") {
+      zone_num <- "2"
+    }
+  } else if (is.numeric(zone_clicked)) {
+    # Handle Plotly point index (0 = first point = P1, 1 = second point = P2)
+    if (zone_clicked == 0) {
+      zone_num <- "1"
+    } else if (zone_clicked == 1) {
+      zone_num <- "2"
+    }
+  }
+
+  # Fallback: if zone_num is still NA (couldn't parse), clear it
+  if (!is.null(zone_num) && length(zone_num) == 1 && is.na(zone_num)) {
+    if (!is.null(zone_clicked)) {
+      cat("WARNING: Could not determine zone from clicked value:", zone_clicked, "\n")
+    }
+    zone_num <- NULL
+  }
+
+  cat("DEBUG: Final zone_num =", zone_num, "\n")
+
+  # Map target to unified app view
+  view_param <- switch(target,
+    "facilities_overview" = "facility",
+    "fos_overview" = "fos",
+    "district"  # default
+  )
+
+  # Build URL with parameters for unified app
+  base_url <- "/overview/"
+  params <- list()
+  params$view <- view_param
+  if (!is.null(zone_num) && !is.na(zone_num)) {
+    params$zone <- zone_num
+  }
+  # Add metric filter if specified
+  if (!is.null(metric_id)) {
+    params$metric <- metric_id
+  }
+  # Add facility filter if specified (for FOS drill-down)
+  if (!is.null(facility_clicked) && facility_clicked != "all") {
+    params$facility <- facility_clicked
+  }
+  params$date <- as.character(analysis_date)
+  params$expiring <- expiring_days
+  params$theme <- color_theme
+
+  # Build query string
+  query_parts <- paste(names(params), params, sep="=", collapse="&")
+  url <- paste0(base_url, "?", query_parts)
+
+  cat("DEBUG: Final URL =", url, "\n")
+
+  # Navigate using JavaScript
+  session$sendCustomMessage("navigate", url)
 }

@@ -520,14 +520,14 @@ build_cache_key <- function(prefix, ...) {
   paste0(prefix, ":", hash)
 }
 
-#' Get cached DB query result (2-min TTL)
+#' Get cached DB query result (5-min TTL)
 #' @param cache_id Descriptive ID (e.g., "catch_basin_zone")
 #' @param load_func Function to load data on cache miss
 #' @param ... Additional parameters for cache key uniqueness
 #' @return Cached or freshly loaded data
 get_cached_db_query <- function(cache_id, load_func, ...) {
   key <- build_cache_key(CACHE_PREFIX_DB, cache_id, ...)
-  get_app_cached_redis(key, load_func, ttl = TTL_2_MIN)
+  get_app_cached_redis(key, load_func, ttl = TTL_5_MIN)
 }
 
 #' Get cached chart object (2-min TTL)

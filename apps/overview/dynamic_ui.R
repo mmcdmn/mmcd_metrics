@@ -768,6 +768,17 @@ get_overview_js <- function() {
           sessionStorage.setItem(cacheKey, statsWrapper.innerHTML);
         } catch(e) { /* storage full - ignore */ }
       }
+      // Save the analysis date so back-nav restores it (not today's date)
+      // NOTE: #custom_today is a div wrapper; the actual value is in the inner <input>
+      var dateVal = $('#custom_today input').val();
+      if (dateVal) {
+        sessionStorage.setItem('mmcd_date_cache_' + window.location.href, dateVal);
+      }
+      // Save zone filter too
+      var zoneVal = $('#zone_filter').val();
+      if (zoneVal) {
+        sessionStorage.setItem('mmcd_zone_cache_' + window.location.href, zoneVal);
+      }
       // Mark that we're navigating forward (drill-down) so target page auto-loads
       sessionStorage.setItem('mmcd_auto_refresh', 'true');
       window.location.href = url;
@@ -793,6 +804,36 @@ get_overview_js <- function() {
           }
           if (initialPrompt) initialPrompt.style.display = 'none';
           if (loadingSkeleton) loadingSkeleton.style.display = 'none';
+          
+          // Restore analysis date so re-drill uses the same date, not today
+          var savedDate = sessionStorage.getItem('mmcd_date_cache_' + window.location.href);
+          if (savedDate && savedDate !== 'undefined') {
+            // Use Shiny's own input binding to set the date properly
+            // This is exactly what updateDateInput() does server-side
+            var dateEl = document.getElementById('custom_today');
+            if (dateEl) {
+              var binding = $(dateEl).data('shiny-input-binding');
+              if (binding) {
+                binding.receiveMessage(dateEl, {value: savedDate});
+              } else {
+                // Fallback: target the inner <input> with datepicker API
+                var $inp = $(dateEl).find('input');
+                if ($inp.length) {
+                  if (typeof $inp.bsDatepicker === 'function') {
+                    $inp.bsDatepicker('update', savedDate);
+                  } else {
+                    $inp.datepicker('update', savedDate);
+                  }
+                  $inp.trigger('change');
+                }
+              }
+            }
+          }
+          // Restore zone filter
+          var savedZone = sessionStorage.getItem('mmcd_zone_cache_' + window.location.href);
+          if (savedZone && savedZone !== 'undefined') {
+            $('#zone_filter').val(savedZone).trigger('change');
+          }
           // Done — user sees previous content instantly, no refresh needed
           return;
         }
@@ -814,6 +855,15 @@ get_overview_js <- function() {
         try {
           sessionStorage.setItem(cacheKey, statsWrapper.innerHTML);
         } catch(e) { /* storage full - ignore */ }
+        // Also save the date and zone for this page (inner <input> has the actual value)
+        var dateVal = $('#custom_today input').val();
+        if (dateVal) {
+          try { sessionStorage.setItem('mmcd_date_cache_' + window.location.href, dateVal); } catch(e) {}
+        }
+        var zoneVal = $('#zone_filter').val();
+        if (zoneVal) {
+          try { sessionStorage.setItem('mmcd_zone_cache_' + window.location.href, zoneVal); } catch(e) {}
+        }
       }
     });
     
@@ -1377,14 +1427,8 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       )
     ),
     
-    # Detail Boxes Container (for facilities AND FOS view click-to-expand)
-    div(id = "facility_detail_container",
-      class = "facility-detail-section",
-      style = "margin-top: 20px;",
-      uiOutput("facility_detail_boxes")
-    ),
-    
     # Main Charts Container (only for drill-down views - district charts are now in category sections)
+    # Placed BEFORE detail boxes so charts appear right after value boxes, not at page bottom
     div(class = "dashboard-container",
       # For drill-down view, show current progress and historical side-by-side
       # EXCEPT for FOS overview with specific FOS (those use hidden charts behind value boxes)
@@ -1404,6 +1448,13 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       }
       # District view charts are now embedded in category sections
       # FOS overview charts are embedded in generate_summary_stats per-metric sections
+    ),
+
+    # Detail Boxes Container (for facilities AND FOS view click-to-expand)
+    div(id = "facility_detail_container",
+      class = "facility-detail-section",
+      style = "margin-top: 20px;",
+      uiOutput("facility_detail_boxes")
     ),
 
     # Color Theme selector at the bottom

@@ -1594,7 +1594,8 @@ build_overview_server <- function(input, output, session,
   })
   
   # Historical data loading with progress bar (continues the same progress bar)
-  # ALWAYS loaded — value box coloring depends on weekly historical comparisons.
+  # Loaded on demand for chart rendering. Value box coloring no longer blocks on this —
+  # it uses get_cached_current_week_value() (Redis-cached) as a fast fallback.
   # The `include_historical` flag only controls whether chart outputs are created.
   historical_data <- {
     eventReactive(input$refresh, {
@@ -2085,17 +2086,16 @@ build_overview_server <- function(input, output, session,
     })
     analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
     
-    # Get historical data
-    hist_data <- tryCatch(historical_data(), error = function(e) {
-      message("[RENDER-UI] historical_data() ERROR: ", e$message)
-      NULL
-    })
+    # PERFORMANCE: Do NOT wait for historical_data() here.
+    # Value box colors use get_cached_current_week_value() fallback when
+    # historical_data is NULL, which is fast (Redis-cached).
+    # Historical data is only needed for chart rendering (loaded on demand).
     
     message("[RENDER-UI] About to call generate_summary_stats")
     
     # Generate value boxes
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, hist_data, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, NULL, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
       message("[RENDER-UI] generate_summary_stats SUCCESS")
       stats
     }, error = function(e) {
@@ -2120,6 +2120,47 @@ build_overview_server <- function(input, output, session,
   # which causes Shiny to suspend this output and never render it.
   # This tells Shiny to always render it regardless of visibility.
   outputOptions(output, "summary_stats", suspendWhenHidden = FALSE)
+  
+  # =========================================================================
+  # AUTO-POPULATE HISTORICAL CACHE (runs once at startup)
+  # =========================================================================
+  # If historical cache is empty, auto-regenerate it so value box colors work.
+  # This runs ONCE when current_data fires (data is loaded), not inside renderUI.
+  .hist_populated <- reactiveVal(FALSE)
+  observeEvent(current_data(), {
+    if (!.hist_populated()) {
+      .hist_populated(TRUE)
+      cache <- load_hist_cache()
+      if (is.null(cache)) {
+        showNotification(
+          "Historical cache is empty — computing 10-year averages for value box colors. This may take a minute on first load...",
+          type = "warning", duration = NULL, id = "hist_cache_notify"
+        )
+        tryCatch({
+          if (exists("regenerate_historical_cache", mode = "function")) {
+            regen_cache <- regenerate_historical_cache()
+            if (!is.null(regen_cache) && length(regen_cache$averages) > 0) {
+              .hist_cache$data <- regen_cache
+              showNotification(
+                paste("Historical cache populated:", length(regen_cache$averages), "metrics cached. Refresh to see colored value boxes."),
+                type = "message", duration = 10, id = "hist_cache_notify"
+              )
+            }
+          }
+        }, error = function(e) {
+          showNotification(
+            paste("Historical cache regeneration failed:", e$message),
+            type = "error", duration = 10, id = "hist_cache_notify"
+          )
+        })
+      } else {
+        showNotification(
+          paste("Historical averages loaded from cache (", length(cache$averages), " metrics)"),
+          type = "message", duration = 5
+        )
+      }
+    }
+  }, once = FALSE, ignoreInit = TRUE)
   
   # Fallback: if summary_stats renderUI fails before sending hideLoadingSkeleton
   # (e.g., req(current_data()) throws because the reactive errored),

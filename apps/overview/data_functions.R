@@ -75,7 +75,7 @@ load_metric_data <- function(metric,
                              expiring_days = NULL,
                              zone_filter = c("1", "2")) {
   
-  # Try Redis cache for DB query results (2-min TTL)
+  # Try Redis cache for DB query results (5-min TTL — underlying data changes at most daily)
   if (exists("get_cached_db_query", mode = "function")) {
     cached <- tryCatch({
       get_cached_db_query(

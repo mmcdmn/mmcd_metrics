@@ -212,11 +212,29 @@ load_app_historical_data <- function(metric_id, start_year, end_year, zone_filte
     return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   }
   
-  # Use cached app environments instead of re-sourcing on every call
-  app_envs <- get_app_envs()
-  env <- app_envs[[metric_id]]
+  # Use cached app environments if available (normal app context)
+  # Fallback to direct sourcing when called from cache_utilities.R or standalone scripts
+  env <- NULL
+  if (exists("get_app_envs", mode = "function")) {
+    app_envs <- get_app_envs()
+    env <- app_envs[[metric_id]]
+  }
   
+  # Fallback: source the app's data_functions.R directly into a fresh environment
   if (is.null(env)) {
+    apps_base <- get_apps_base_path()
+    app_folder <- config$app_folder
+    data_file <- file.path(apps_base, app_folder, "data_functions.R")
+    if (file.exists(data_file)) {
+      env <- new.env(parent = globalenv())
+      tryCatch(
+        source(data_file, local = env, chdir = TRUE),
+        error = function(e) cat("ERROR sourcing", data_file, ":", e$message, "\n")
+      )
+    }
+  }
+  
+  if (is.null(env) || length(ls(env)) == 0) {
     cat("ERROR: No app environment loaded for", metric_id, "\n")
     return(list(sites = data.frame(), treatments = data.frame(), total_count = 0))
   }

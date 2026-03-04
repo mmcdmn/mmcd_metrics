@@ -210,6 +210,19 @@ get_cache_status <- function() {
 regenerate_cache <- function(metrics = NULL, zone_filter = c("1", "2")) {
   ensure_registry_loaded()
   
+  # Source data_functions.R first (provides get_app_envs needed by historical_functions)
+  data_paths <- c(
+    "/srv/shiny-server/apps/overview/data_functions.R",
+    "../overview/data_functions.R",
+    "../../apps/overview/data_functions.R"
+  )
+  for (p in data_paths) {
+    if (file.exists(p)) {
+      source(p, local = FALSE)
+      break
+    }
+  }
+  
   # Source historical functions
   hist_paths <- c(
     "/srv/shiny-server/apps/overview/historical_functions.R",

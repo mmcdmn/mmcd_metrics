@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SUCO Analysis Dashboard - Technical Notes</title>
+    <title>SUCO History App – Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,596 +122,181 @@
 </head>
 <body>
     <div class="container">
-<h1>SUCO Analysis Dashboard - Technical Notes</h1>
+<h1>SUCO History App – Technical Notes</h1>
 
-<h2>Overview</h2>
-<p>This Shiny app provides comprehensive analysis of SUCO inspections across multiple perspectives:</p>
-<ol>
-<li><strong>Current Data</strong> - Analysis of current year SUCO inspections</li>
-<li><strong>All Data (Current + Archive)</strong> - Historical analysis combining current and archived data</li>
-</ul>
+<h2>Database Tables &amp; Entities</h2>
 
-<p>Each perspective includes:</p>
+<p>| Table | Key Columns Used |</p>
+<p>|---|---|</p>
+<p>| <code>dbadult<em>insp</em>current</code> | <code>id</code>, <code>ainspecnum</code>, <code>facility</code>, <code>foreman</code>, <code>inspdate</code>, <code>sitecode</code>, <code>address1</code>, <code>park_name</code>, <code>survtype</code>, <code>fieldcount</code>, <code>comments</code>, <code>x</code>, <code>y</code>, <code>geometry</code> |</p>
+<p>| <code>dbadult<em>insp</em>archive</code> | Same columns as current |</p>
+<p>| <code>loc_harborage</code> | <code>sitecode</code>, <code>facility</code>, <code>foreman</code>, <code>startdate</code>, <code>enddate</code> |</p>
+<p>| <code>gis_sectcode</code> | <code>sectcode</code>, <code>facility</code>, <code>fosarea</code>, <code>zone</code> |</p>
+<p>| <code>dbadult<em>species</em>current</code> | <code>ainspecnum</code>, <code>spp</code>, <code>cnt</code> |</p>
+<p>| <code>dbadult<em>species</em>archive</code> | <code>ainspecnum</code>, <code>spp</code>, <code>cnt</code> |</p>
+
+<p>Additional lookup tables accessed via shared helpers:</p>
 <ul>
-<li><strong>Graph</strong> - Time series visualization of SUCO counts</li>
-<li><strong>Map</strong> - Spatial distribution of SUCO locations</li>
-<li><strong>Summary Table</strong> - Aggregated statistics by facility/FOS</li>
-<li><strong>Detailed Samples</strong> - Individual SUCO inspection records</li>
-<li><strong>Top Locations</strong> - Most visited locations or locations with most species</li>
-</ul>
-
-<h2>Data Sources</h2>
-
-<h3>Tables Used</h3>
-
-<h4>Primary Inspection Tables</h4>
-<ul>
-<li><strong><code>dbadult<em>insp</em>current</code></strong> - Active adult surveillance inspection records</li>
-<ul>
-<li>Contains ongoing inspections for current operations</li>
-<li>Fields: <code>id</code>, <code>ainspecnum</code>, <code>facility</code>, <code>foreman</code>, <code>inspdate</code>, <code>sitecode</code>, <code>address1</code>, <code>park_name</code>, <code>survtype</code>, <code>fieldcount</code>, <code>comments</code>, <code>x</code>, <code>y</code>, <code>geometry</code></li>
-<li><strong>survtype = '7'</strong> identifies SUCO inspections</li>
-<li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>dbadult<em>insp</em>archive</code></strong> - Historical adult surveillance inspection records</li>
-<ul>
-<li>Contains closed/archived inspections from previous years</li>
-<li>Same schema as current table</li>
-<li><strong>NOTE</strong>: Does NOT have <code>enddate</code> column</li>
-</ul>
-</ul>
-
-<h4>Species Tables</h4>
-<ul>
-<li><strong><code>dbadult<em>species</em>current</code></strong> - Species counts for current inspections</li>
-<ul>
-<li>Links to inspections via <code>ainspecnum</code></li>
-<li>Fields: <code>ainspecnum</code>, <code>spp</code> (species code), <code>cnt</code> (count)</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>dbadult<em>species</em>archive</code></strong> - Species counts for archived inspections</li>
-<ul>
-<li>Same schema as current species table</li>
-</ul>
-</ul>
-
-<h4>Supporting Tables</h4>
-<ul>
-<li><strong><code>loc_harborage</code></strong> - Harborage site lifecycle and assignment tracking</li>
-<ul>
-<li><strong>AUTHORITATIVE SOURCE</strong> for foreman and facility assignments</li>
-<li>Fields: <code>sitecode</code>, <code>facility</code>, <code>foreman</code>, <code>startdate</code>, <code>enddate</code></li>
-<li>Used to determine which FOS/facility was responsible at time of inspection</li>
-<li><strong>Join logic</strong>: <code>s.inspdate &gt;= h.startdate AND (h.enddate IS NULL OR s.inspdate &lt;= h.enddate)</code></li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>gis_sectcode</code></strong> - Section/zone information</li>
-<ul>
-<li>Links site codes to geographic zones (P1 = zone '1', P2 = zone '2')</li>
-<li>Fields: <code>sectcode</code>, <code>facility</code>, <code>fosarea</code>, <code>zone</code></li>
-<li><strong>Fallback</strong> for facility if harborage doesn't have data</li>
-<li><strong>Join pattern</strong> (FIXED November 2025):</li>
-</ul>
-</ul>
-<p>    ```sql</p>
-<p>    LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)</p>
-<p>    ```</p>
-<ul>
-<li><strong>Note</strong>: Uses precise 7-character sectcode match to avoid ambiguous zone assignments</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>lookup_specieslist</code></strong> - Species name lookup</li>
-<ul>
-<li>Maps species codes to genus and species names</li>
-<li>Fields: <code>sppcode</code>, <code>genus</code>, <code>species</code></li>
-</ul>
-</ul>
-
-<h3>Survtype Codes</h3>
-<ul>
-<li><strong>survtype '7'</strong> - SUCO inspections (this is the focus of the app)</li>
-<li>Other survtypes are filtered out</li>
-</ul>
-
-<h3>Data Hierarchy and Fallback Logic</h3>
-
-<p>The app uses a cascading fallback approach for facility and foreman assignment:</p>
-
-<pre><code class="sql">
--- Facility assignment (in order of preference):
-COALESCE(h.facility, g.facility, s.facility) as facility
-
--- Foreman assignment (in order of preference):
-COALESCE(h.foreman, s.foreman) as foreman
-</code></pre>
-
-<p><strong>Why this hierarchy?</strong></p>
-<ol>
-<li><strong><code>loc_harborage</code></strong> is the most accurate source for practical assignments</li>
-<li><strong><code>gis_sectcode</code></strong> provides geographic-based facility assignment</li>
-<li><strong>Original inspection data</strong> (<code>s.facility</code>, <code>s.foreman</code>) is the final fallback</li>
-</ul>
-
-<h2>Query Patterns</h2>
-
-<h3>Current Data Query Pattern</h3>
-<pre><code class="sql">
-SELECT
-  s.id, s.ainspecnum, 
-  COALESCE(h.facility, g.facility, s.facility) as facility,
-  COALESCE(h.foreman, s.foreman) as foreman,
-  s.inspdate, s.sitecode,
-  s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
-  s.x, s.y,
-  g.zone
-FROM public.dbadult_insp_current s
-LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
-  AND s.inspdate &gt;= h.startdate 
-  AND (h.enddate IS NULL OR s.inspdate &lt;= h.enddate)
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
-WHERE s.survtype = '7'
-  AND s.inspdate BETWEEN [start_date] AND [end_date]
-</code></pre>
-
-<h3>All Data Query Pattern</h3>
-<p>Same as current data query, but queries both <code>dbadult<em>insp</em>current</code> and <code>dbadult<em>insp</em>archive</code>, then combines with <code>bind_rows()</code>.</p>
-
-<h3>Species Data Integration</h3>
-<p>After retrieving inspection data:</p>
-<ol>
-<li>Query species tables for all <code>ainspecnum</code> values</li>
-<li>Join with <code>lookup_specieslist</code> for species names</li>
-<li>Use enhanced species mapping from <code>db_helpers.R</code></li>
-<li>Create species summary for each SUCO inspection</li>
-</ul>
-
-<h2>Key Features</h2>
-
-<h3>Date Controls</h3>
-
-<h4>Date Shortcut Buttons</h4>
-<ul>
-<li><strong>This Year</strong> - Sets date range to Jan 1 of current year through today</li>
-<li><strong>This Month</strong> - Sets date range to first day of current month through today</li>
-<li><strong>This Week</strong> - Sets date range to Monday of current week through today</li>
-</ul>
-
-<h4>Year Range Slider (All Data Tab Only)</h4>
-<ul>
-<li>Allows multi-year selection for historical analysis</li>
-<li>Min: 2015, Max: Current year</li>
-<li>Automatically syncs with custom date range</li>
-</ul>
-
-<h4>Custom Date Range</h4>
-<ul>
-<li>Allows precise date selection</li>
-<li>Behavior depends on active tab:</li>
-<ul>
-<li><strong>Current Data Tab</strong>: Restricted to current year only</li>
-<li><strong>All Data Tab</strong>: Full date range available</li>
-</ul>
-</ul>
-
-<h3>Grouping Options</h3>
-
-<h4>MMCD (All)</h4>
-<ul>
-<li>Aggregates all SUCOs across entire organization</li>
-<li>No facility or FOS breakdown</li>
-</ul>
-
-<h4>Facility</h4>
-<ul>
-<li>Groups by facility assignment</li>
-<li>Uses facility colors from <code>db_helpers.R</code></li>
-<li>Shows facility full names in displays</li>
-</ul>
-
-<h4>FOS (Field Operations Supervisor)</h4>
-<ul>
-<li>Groups by foreman assignment</li>
-<li>Uses foreman colors from <code>db_helpers.R</code> (facility-based)</li>
-<li>Shows foreman short names in displays</li>
-</ul>
-
-<h3>Filter Options</h3>
-
-<h4>Zone Filter</h4>
-<ul>
-<li><strong>P1 + P2</strong> - Both zones combined</li>
-<li><strong>P1</strong> - Primary zone only (zone = '1')</li>
-<li><strong>P2</strong> - Secondary zone only (zone = '2')</li>
-</ul>
-
-<h4>Facility Filter</h4>
-<ul>
-<li>Multi-select dropdown</li>
-<li>Populated from <code>get<em>facility</em>lookup()</code></li>
-<li>"All" option includes all facilities</li>
-</ul>
-
-<h4>FOS Filter</h4>
-<ul>
-<li>Multi-select dropdown</li>
-<li>Dynamically populated based on selected facility</li>
-<li>Shows foreman short names</li>
-<li>"All" option includes all foremen</li>
-</ul>
-
-<h4>Species Filter</h4>
-<ul>
-<li>Single-select dropdown</li>
-<li>Dynamically populated from available species in date range</li>
-<li>Uses enhanced species mapping for display names</li>
-<li>Filters SUCOs to only those containing the selected species</li>
-</ul>
-
-<h3>Graph Types</h3>
-
-<p>The app supports multiple visualization types:</p>
-<ul>
-<li><strong>Bar</strong> - Side-by-side bars</li>
-<li><strong>Stacked Bar</strong> - Stacked bars (default)</li>
-<li><strong>Line</strong> - Line chart</li>
-<li><strong>Point</strong> - Scatter plot</li>
-<li><strong>Area</strong> - Filled area chart</li>
-</ul>
-
-<h3>Top Locations Display Modes</h3>
-
-<h4>Most Visited</h4>
-<ul>
-<li>Shows locations with most SUCO samples</li>
-<li>Each segment represents one SUCO sample</li>
-<li>Colors indicate sample date (gradient from old to new)</li>
-</ul>
-
-<h4>Most Species</h4>
-<ul>
-<li>Shows locations with highest species counts</li>
-<li>Each segment represents one SUCO sample</li>
-<li>Colors indicate sample date (gradient from old to new)</li>
-<li>Can be filtered to specific species</li>
-</ul>
-
-<h2>Tab 1: Graph</h2>
-
-<h3>Purpose</h3>
-<p>Visualize SUCO inspection trends over time, grouped by facility, FOS, or all MMCD.</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Time Interval</strong>: Weekly (Monday start date)</li>
-<li><strong>Average Line</strong> (All Data tab only): Shows average SUCOs per week across entire date range</li>
-<li><strong>Year Boundaries</strong>: Vertical lines separate different years</li>
-<li><strong>Epi Week Labels</strong>: X-axis uses epidemiological week numbers</li>
-</ul>
-
-<h3>Calculation Logic</h3>
-
-<h4>Step 1: Aggregate by Time Group</h4>
-<pre><code class="r">
-data %&gt;%
-  mutate(time_group = week_start) %&gt;%  # Monday of each week
-  group_by(time_group, [group_by_column]) %&gt;%
-  summarize(
-    count = n(),
-    total_fieldcount = sum(fieldcount, na.rm = TRUE),
-    epi_week_label = first(epi_week_label),
-    .groups = "drop"
-  )
-</code></pre>
-
-<h4>Step 2: Create Plot with Color Mapping</h4>
-<ul>
-<li><strong>Facility grouping</strong>: Uses <code>get<em>facility</em>base_colors()</code></li>
-<li><strong>FOS grouping</strong>: Maps foreman numbers to facility-based colors via <code>get<em>foreman</em>colors()</code></li>
-<li><strong>MMCD grouping</strong>: Single blue color</li>
-</ul>
-
-<h4>Step 3: Add Average Line (All Data Only)</h4>
-<pre><code class="r">
-# Calculate total SUCOs per week (across all groups)
-weekly_totals &lt;- data %&gt;%
-  group_by(time_group) %&gt;%
-  summarize(total_count = sum(count, na.rm = TRUE))
-
-avg_sucos_per_week &lt;- mean(weekly_totals$total_count, na.rm = TRUE)
-
-# Add horizontal line at average
-geom_hline(yintercept = avg_sucos_per_week, color = "red", linetype = "dashed")
-</code></pre>
-
-<h2>Tab 2: Map</h2>
-
-<h3>Purpose</h3>
-<p>Display spatial distribution of SUCO inspections with interactive markers.</p>
-
-<h3>Marker Sizing Logic</h3>
-<p>Markers are sized based on species count using a staged approach:</p>
-
-<pre><code class="r">
-marker_size = case_when(
-  display_species_count == 0 ~ 4,      # No species
-  display_species_count == 1 ~ 6,      # 1 species
-  display_species_count &lt;= 5 ~ 8,      # 2-5 species
-  display_species_count &lt;= 10 ~ 10,    # 6-10 species
-  display_species_count &lt;= 20 ~ 12,    # 11-20 species
-  display_species_count &lt;= 30 ~ 14,    # 21-30 species
-  display_species_count &lt;= 50 ~ 16,    # 31-50 species
-  display_species_count &lt;= 75 ~ 18,    # 51-75 species
-  display_species_count &lt;= 100 ~ 20,   # 76-100 species
-  TRUE ~ 22                             # 100+ species
-)
-</code></pre>
-
-<h3>Overlapping Point Handling</h3>
-<p>When multiple SUCOs occur at the same location:</p>
-<pre><code class="r">
-# Add small random offset (max 0.0001 degrees ≈ 11 meters)
-longitude_adj = longitude + runif(n(), -0.0001, 0.0001)
-latitude_adj = latitude + runif(n(), -0.0001, 0.0001)
-</code></pre>
-
-<h3>Color Schemes</h3>
-
-<h4>Facility Map</h4>
-<ul>
-<li>Uses <code>get<em>facility</em>base<em>colors()</code> from <code>db</em>helpers.R</code></li>
-<li>Each facility has a distinct color</li>
-<li>Legend shows facility full names</li>
-</ul>
-
-<h4>FOS Map</h4>
-<ul>
-<li>Uses <code>get<em>foreman</em>colors()</code> from <code>db_helpers.R</code></li>
-<li>Colors are facility-based (same facility = similar color shades)</li>
-<li>Legend ordered by facility, then foreman</li>
-<li>Shows foreman short names</li>
-</ul>
-
-<h4>MMCD Map</h4>
-<ul>
-<li>Single blue color (<code>#1f77b4</code>)</li>
-<li>No facility/FOS differentiation</li>
-</ul>
-
-<h3>Popup Content</h3>
-<pre><code class="">
-Date: [inspdate]
-Facility: [facility full name]
-FOS: [foreman short name]
-Location: [location]
-Species Count: [display_species_count]
-Species Found:
-  [species_name]: [count]
-  [species_name]: [count]
-  ...
-</code></pre>
-
-<h3>Basemap Options</h3>
-<ul>
-<li><strong>OpenStreetMap</strong> - Standard OSM tiles</li>
-<li><strong>Carto Light</strong> - Clean, minimal basemap (default)</li>
-<li><strong>Terrain</strong> - Topographic map</li>
-<li><strong>Esri Satellite</strong> - Satellite imagery</li>
-</ul>
-
-<h2>Tab 3: Summary Table</h2>
-
-<h3>Purpose</h3>
-<p>Provide aggregated statistics grouped by facility or FOS.</p>
-
-<h3>Columns</h3>
-
-<h4>MMCD (All) Grouping</h4>
-<p>| Column | Description |</p>
-<p>|--------|-------------|</p>
-<p>| Total_SUCOs | Total number of SUCO inspections |</p>
-<p>| Total_Locations | Count of unique sitecodes |</p>
-<p>| Total<em>Species</em>Count | Sum of all species counts |</p>
-<p>| First_SUCO | Earliest inspection date |</p>
-<p>| Last_SUCO | Most recent inspection date |</p>
-
-<h4>Facility Grouping</h4>
-<p>| Column | Description |</p>
-<p>|--------|-------------|</p>
-<p>| Facility | Facility short code |</p>
-<p>| Facility_Name | Facility full name |</p>
-<p>| Total_SUCOs | Total SUCO inspections |</p>
-<p>| Total_Locations | Unique locations |</p>
-<p>| Total<em>Species</em>Count | Sum of species counts |</p>
-<p>| First_SUCO | Earliest inspection |</p>
-<p>| Last_SUCO | Most recent inspection |</p>
-
-<h4>FOS Grouping</h4>
-<p>| Column | Description |</p>
-<p>|--------|-------------|</p>
-<p>| FOS | Foreman employee number |</p>
-<p>| Name | Foreman short name |</p>
-<p>| Facility | Assigned facility |</p>
-<p>| Total_SUCOs | Total SUCO inspections |</p>
-<p>| Total_Locations | Unique locations |</p>
-<p>| Total<em>Species</em>Count | Sum of species counts |</p>
-<p>| First_SUCO | Earliest inspection |</p>
-<p>| Last_SUCO | Most recent inspection |</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Includes zeros</strong>: Shows all facilities/foremen even with 0 SUCOs in selected date range</li>
-<li><strong>Sorted by activity</strong>: Ordered by Total_SUCOs descending</li>
-<li><strong>Searchable</strong>: Built-in search functionality</li>
-<li><strong>Paginated</strong>: 15 rows per page</li>
-</ul>
-
-<h2>Tab 4: Detailed Samples</h2>
-
-<h3>Purpose</h3>
-<p>Show individual SUCO inspection records with full details.</p>
-
-<h3>Columns</h3>
-<ul>
-<li><strong>Date</strong> - Inspection date</li>
-<li><strong>Facility</strong> - Facility full name</li>
-<li><strong>FOS</strong> - Foreman short name</li>
-<li><strong>Zone</strong> - P1 or P2</li>
-<li><strong>Sitecode</strong> - Site identifier</li>
-<li><strong>Location</strong> - Park name or address</li>
-<li><strong>Species_Count</strong> - Total count (or filtered species count)</li>
-<li><strong>Species_Found</strong> - Semicolon-separated species list with counts</li>
-</ul>
-
-<h3>Filtering Behavior</h3>
-<p>When a species filter is applied:</p>
-<ul>
-<li>Only shows SUCOs containing that species</li>
-<li>Species_Count shows count of filtered species only</li>
-<li>Sorted by Species_Count descending</li>
-</ul>
-
-<h3>Display Features</h3>
-<ul>
-<li><strong>Scrollable</strong>: Horizontal scroll for wide content</li>
-<li><strong>Searchable</strong>: Can search across all columns</li>
-<li><strong>Paginated</strong>: 25 rows per page</li>
-<li><strong>Truncated species list</strong>: Long species lists are abbreviated with "..."</li>
-</ul>
-
-<h2>Tab 5: Top Locations</h2>
-
-<h3>Purpose</h3>
-<p>Identify and visualize locations with most SUCO activity or highest species diversity.</p>
-
-<h3>Display Modes</h3>
-
-<h4>Most Visited</h4>
-<ul>
-<li>Shows top 25 locations by number of SUCO samples</li>
-<li>Each horizontal segment = one SUCO sample</li>
-<li>Color gradient = sample date (older → darker, newer → lighter)</li>
-<li>Y-axis label: "Individual Samples"</li>
-</ul>
-
-<h4>Most Species</h4>
-<ul>
-<li>Shows top 25 locations by total species count</li>
-<li>Each horizontal segment = one SUCO sample with species count</li>
-<li>Color gradient = sample date</li>
-<li>Y-axis label: "Species Count per Sample"</li>
-<li>When species filter applied: shows count of that specific species</li>
-</ul>
-
-<h3>Interactive Features</h3>
-<ul>
-<li><strong>Click to map</strong>: Clicking a bar switches to Map tab and zooms to that location</li>
-<li><strong>Hover details</strong>: Shows date, location, and species found</li>
-<li><strong>Stacked bars</strong>: Multiple samples at same location stack vertically</li>
-</ul>
-
-<h3>Sample Coloring</h3>
-<p>Uses viridis color scale for date gradient:</p>
-<pre><code class="r">
-fill = date_numeric  # Continuous numeric date value
-scale_fill_viridis_c(option = "viridis", name = "Date")
-</code></pre>
-
-<h2>Code Organization</h2>
-
-<h3>File Structure</h3>
-<pre><code class="">
-suco_history/
-├── app.R                    # Main UI and server logic
-├── data_functions.R         # Database queries and data processing
-├── display_functions.R      # Visualization functions
-└── ui_helpers.R             # UI interaction handlers
-</code></pre>
-
-<h3>Design Principles</h3>
-<ol>
-<li><strong>Separation of Concerns</strong>: UI/server in <code>app.R</code>, all SQL in <code>data_functions.R</code></li>
-<li><strong>No SQL in app.R</strong>: Every query wrapped in a function</li>
-<li><strong>Reusable Components</strong>: Same map/plot/table functions for both current and all data</li>
-<li><strong>Consistent Patterns</strong>: Parallel structure for current and all data tabs</li>
-</ul>
-
-<h3>Function Files</h3>
-
-<h4>data_functions.R</h4>
-<p>Core data retrieval and processing:</p>
-<ul>
-<li><code>get<em>available</em>species(date_range)</code> - Populate species filter dropdown</li>
-<li><code>get<em>suco</em>data(data<em>source, date</em>range)</code> - Main data query function</li>
-<li><code>filter<em>suco</em>data(data, ...)</code> - Apply user filters</li>
-<li><code>create<em>spatial</em>data(data, species_filter)</code> - Prepare data for mapping</li>
-<li><code>aggregate<em>suco</em>data(data, group<em>by, zone</em>filter)</code> - Time series aggregation</li>
-<li><code>create<em>summary</em>stats(data, group<em>by, data</em>source)</code> - Summary table data</li>
-<li><code>get<em>top</em>locations(data, mode, species_filter)</code> - Top locations data</li>
-<li><code>create<em>detailed</em>samples<em>table(data, species</em>filter)</code> - Detailed table data</li>
-</ul>
-
-<h4>display_functions.R</h4>
-<p>Visualization rendering:</p>
-<ul>
-<li><code>create<em>suco</em>map(data, input, data_source)</code> - Leaflet map creation</li>
-<li><code>create<em>location</em>plotly(data, data_source, mode)</code> - Top locations chart</li>
-<li><code>create<em>trend</em>plot(aggregated_data, ...)</code> - Time series plot</li>
-<li><code>convert<em>zone</em>selection(zone_input)</code> - Helper for zone filtering</li>
-</ul>
-
-<h4>ui_helpers.R</h4>
-<p>UI interaction handlers:</p>
-<ul>
-<li><code>handle<em>date</em>shortcut(shortcut_type, ...)</code> - Date button handlers</li>
-<li><code>handle<em>year</em>range_change(...)</code> - Year slider updates</li>
-<li><code>handle<em>date</em>range_change(...)</code> - Date picker updates</li>
-<li><code>set<em>updating</em>flags(...)</code> - Prevent infinite update loops</li>
-</ul>
-
-<h3>Shared Utilities (shared/db_helpers.R)</h3>
-<ul>
-<li><code>get<em>db</em>connection()</code> - Database connection helper</li>
-<li><code>get<em>facility</em>lookup()</code> - Facility codes and full names</li>
-<li><code>get<em>foremen</em>lookup()</code> - Foreman numbers, names, and facilities</li>
-<li><code>get<em>facility</em>base_colors()</code> - Color mapping for facilities</li>
-<li><code>get<em>foreman</em>colors()</code> - Color mapping for foremen (facility-based)</li>
-<li><code>get<em>species</em>lookup()</code> - Species code to name mapping</li>
-<li><code>get<em>enhanced</em>species_mapping()</code> - Enhanced species display names</li>
-</ul>
-
-<h2>Common Data Patterns</h2>
-
-<h3>Species Summary Creation</h3>
-<p>For each SUCO inspection (<code>ainspecnum</code>):</p>
-<ol>
-<li>Join inspection with species tables</li>
-<li>Join species codes with lookup table</li>
-<li>Apply enhanced species mapping</li>
-<li>Aggregate species by name and count</li>
-<li>Format as HTML for popups:</li>
-</ul>
-<p>   ```</p>
-<p>   Species Name 1: 50</p>
-<p>   Species Name 2: 32</p>
-<p>   Species Name 3: 15</p>
-<p>   Others: 25</p>
-<p>   ```</p>
-<ol>
-<li>Limit to top 5 species to keep popups manageable</li>
+<li>Species lookup via <code>get<em>species</em>lookup()</code> — <code>sppcode</code>, <code>genus</code>, <code>species</code></li>
+<li>Facility lookup via <code>get<em>facility</em>lookup()</code> — <code>short<em>name</code>, <code>full</em>name</code></li>
+<li>Foremen lookup via <code>get<em>foremen</em>lookup()</code> — <code>emp_num</code>, <code>shortname</code>, <code>facility</code></li>
 </ul>
 
 <hr>
 
-<p><em>Last updated: November 2025</em></p>
+<h2>SQL Queries</h2>
+
+<h3>1. Main SUCO Inspections — Current Table</h3>
+
+<pre><code class="sql">
+SELECT DISTINCT ON (s.id)
+  s.id, s.ainspecnum,
+  COALESCE(g.facility, h.facility, s.facility) as facility,
+  COALESCE(g.fosarea, h.foreman, s.foreman) as foreman,
+  s.inspdate, s.sitecode,
+  s.address1, s.park_name, s.survtype, s.fieldcount, s.comments,
+  COALESCE(s.x, ST_X(ST_Transform(s.geometry, 4326))) as x,
+  COALESCE(s.y, ST_Y(ST_Transform(s.geometry, 4326))) as y,
+  ST_AsText(s.geometry) as geometry_text,
+  COALESCE(g.zone,
+    CASE WHEN h.sitecode LIKE '%%P1%%' THEN '1'
+         WHEN h.sitecode LIKE '%%P2%%' THEN '2'
+         ELSE NULL END) as zone,
+  'current' as source_table
+FROM public.dbadult_insp_current s
+LEFT JOIN public.loc_harborage h ON s.sitecode = h.sitecode
+  AND s.inspdate &gt;= h.startdate
+  AND (h.enddate IS NULL OR s.inspdate &lt;= h.enddate)
+LEFT JOIN public.gis_sectcode g ON g.sectcode = left(s.sitecode, 7)
+WHERE s.survtype = '7'
+  AND s.inspdate BETWEEN '%s' AND '%s'
+ORDER BY s.id, h.startdate DESC NULLS LAST
+</code></pre>
+
+<blockquote><code>survtype = '7'</code> identifies SUCO inspections. Facility/foreman/zone are resolved via COALESCE chain: <code>gis<em>sectcode</code> → <code>loc</em>harborage</code> → inspection record itself.</blockquote>
+
+<h3>2. Main SUCO Inspections — Archive Table</h3>
+
+<p>Identical structure to current query, from <code>public.dbadult<em>insp</em>archive</code>, with <code>'archive'</code> as <code>source_table</code>.</p>
+
+<h3>3. Species Data</h3>
+
+<pre><code class="sql">
+SELECT ainspecnum, spp, cnt FROM public.dbadult_species_current WHERE ainspecnum IS NOT NULL
+</code></pre>
+
+<pre><code class="sql">
+SELECT ainspecnum, spp, cnt FROM public.dbadult_species_archive WHERE ainspecnum IS NOT NULL
+</code></pre>
+
+<h3>4. Table Strategy</h3>
+
+<p>Uses <code>get<em>historical</em>year<em>ranges(con, "public.dbadult</em>insp<em>current", "public.dbadult</em>insp_archive", "inspdate")</code> to determine which tables have data for the requested date range.</p>
+
+<hr>
+
+<h2>R-Side Logic</h2>
+
+<h3>Species Processing (data_functions.R)</h3>
+
+<ul>
+<li>Left-joins inspection data to species tables on <code>ainspecnum</code></li>
+<li><code>get<em>enhanced</em>species_mapping()</code> maps numeric species codes to display names</li>
+<li>Per-inspection: top 5 species with counts, remainder grouped as "Others"</li>
+<li>Two return modes: one-row-per-SUCO (concatenated summary) or one-row-per-species (for species charts)</li>
+</ul>
+
+<h3>Hardcoded SUCO-Relevant Species List</h3>
+
+<p>Five species (from 2025 analysis, ordered by frequency):</p>
+<ol>
+<li><em>Aedes triseriatus</em> (401), 2. <em>Aedes japonicus</em> (266), 3. <em>Culex tarsalis</em> (124), 4. <em>Culiseta melanura</em> (5), 5. <em>Aedes albopictus</em> (2)</li>
+</ul>
+
+<h3>Date/Time Calculations</h3>
+
+<ul>
+<li><code>week<em>start = floor</em>date(inspdate, "week", week_start = 1)</code> — Monday-anchored weeks</li>
+<li><code>epi<em>week = epiweek(inspdate)</code>, <code>epi</em>year = epiyear(inspdate)</code> — epidemiological week/year</li>
+<li><code>location = COALESCE(park_name, address1, sitecode)</code> — display name priority</li>
+</ul>
+
+<h3>Spatial Data Creation (data_functions.R)</h3>
+
+<ul>
+<li>Converts <code>x</code>/<code>y</code> to <code>sf</code> objects with CRS 4326</li>
+<li>Overlapping points: random jitter ±0.0001° (~11m) per coordinate group</li>
+<li>10-stage marker sizing based on species count (0 → size 4, 1 → 6, 2-5 → 8, ... 100+ → 22)</li>
+<li>Species grouping mode: one point per species per location with count-based sizing</li>
+<li>Marker opacity: 0.35 for zero-species locations, 0.8 for others; border weight 4 for zero-species, 1.5 for positive</li>
+</ul>
+
+<h3>Target Line Logic (app.R)</h3>
+
+<ul>
+<li>72 SUCOs/week target — shown only if <code>max(count) &gt;= 30</code></li>
+<li>Average line — <code>mean()</code> of non-zero weekly totals</li>
+</ul>
+
+<h3>Map Rendering (display_functions.R)</h3>
+
+<ul>
+<li>Four map modes: MMCD All (single blue), Facility (color palette), Foreman (FOS palette), Species (species-aware with "Multiple species" support)</li>
+<li>Species map: circular offset pattern (0.0003° ≈ 33m) for overlapping per-species points</li>
+<li>Harborage polygons conditionally loaded, hidden by default, shown at zoom ≥ 13</li>
+<li>Background layers: facility boundaries + zone boundaries as overlay groups</li>
+</ul>
+
+<hr>
+
+<h2>Shapefiles</h2>
+
+<p>Geometry is sourced from:</p>
+
+<ol>
+<li><strong>PostGIS</strong> — <code>dbadult<em>insp</em>current/archive.geometry</code> column, extracted via <code>ST<em>AsText(s.geometry)</code> and <code>ST</em>X/ST<em>Y(ST</em>Transform(s.geometry, 4326))</code></li>
+<li><strong>Facility/zone shapefiles</strong> (via <code>load<em>background</em>layers()</code> in <code>shared/geometry_helpers.R</code>):</li>
+<ul>
+<li><code>shared/Q<em>to</em>R/data/facility_boundaries.shp</code></li>
+<li><code>shared/Q<em>to</em>R/data/zone_boundaries.shp</code></li>
+<li><strong>Harborage shapefiles</strong> (via <code>load<em>harborage</em>layers()</code> in <code>shared/geometry_helpers.R</code>, conditional when enabled):</li>
+<li>Directory scanned: <code>shared/Q<em>to</em>R/data/harborages/</code></li>
+<li>Folder pattern: one subfolder per facility (e.g., <code>shared/Q<em>to</em>R/data/harborages/SJ/</code>)</li>
+<li>File pattern inside each facility folder: <code>*<em>harborages.shp</code> (example: <code>8202</em>harborages.shp</code>)</li>
+<li>Foreman filtering is applied by parsing emp_num from filename prefix (e.g., <code>8202</code>)</li>
+</ul>
+</ul>
+
+<hr>
+
+<h2>Shared Functions Used</h2>
+
+<p>| Function | Source File |</p>
+<p>|---|---|</p>
+<p>| <code>get<em>db</em>connection()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>historical</em>year<em>ranges()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>species</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>enhanced</em>species<em>mapping()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foremen</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>is<em>valid</em>filter()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>make<em>sitecode</em>link()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>base<em>colors()</code> | <code>shared/color</em>themes.R</code> |</p>
+<p>| <code>map<em>foreman</em>emp<em>to</em>colors()</code> | <code>shared/color_themes.R</code> |</p>
+<p>| <code>get<em>species</em>display<em>colors()</code> | <code>shared/color</em>themes.R</code> |</p>
+<p>| <code>get<em>foreman</em>display<em>names()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>display<em>names()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>set<em>app</em>name()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>export<em>csv</em>safe()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>load<em>background</em>layers()</code> | <code>shared/geometry_helpers.R</code> |</p>
+<p>| <code>add<em>background</em>layers()</code> | <code>shared/geometry_helpers.R</code> |</p>
+<p>| <code>load<em>harborage</em>layers()</code> | <code>shared/geometry_helpers.R</code> |</p>
+<p>| <code>add<em>harborage</em>layer()</code> | <code>shared/geometry_helpers.R</code> |</p>
+<p>| <code>calculate<em>map</em>bounds()</code> | <code>shared/geometry_helpers.R</code> |</p>
+<p>| <code>apply<em>map</em>bounds()</code> | <code>shared/geometry_helpers.R</code> |</p>
     </div>
 </body>
 </html>

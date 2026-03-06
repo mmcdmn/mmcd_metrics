@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cattail Inspections Progress Dashboard - Technical Documentation</title>
+    <title>Cattail Inspections – Developer Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,593 +122,158 @@
 </head>
 <body>
     <div class="container">
-<h1>Cattail Inspections Progress Dashboard - Technical Documentation</h1>
+<h1>Cattail Inspections – Developer Notes</h1>
 
-<h2>Overview</h2>
-<p>Dashboard to track cattail inspection progress against goals with historical comparison analysis.</p>
+<h2>Database Tables &amp; Entities</h2>
 
-<hr>
+<p>| Table | Purpose |</p>
+<p>|-------|---------|</p>
+<p>| <code>dblarv<em>insptrt</em>current</code> | Current-year inspection/treatment records |</p>
+<p>| <code>dblarv<em>insptrt</em>archive</code> | Historical inspection/treatment records |</p>
+<p>| <code>loc<em>breeding</em>sites</code> | Site master — <code>sitecode</code>, <code>acres</code>, <code>enddate</code> (NULL = active) |</p>
+<p>| <code>gis_sectcode</code> | Zone/facility lookup — join on <code>LEFT(sitecode, 7) = sectcode</code>; provides <code>zone</code> ('1'=P1, '2'=P2) and <code>facility</code> |</p>
+<p>| <code>cattail<em>pctcomplete</em>base</code> | Inspection goals per facility — <code>p1<em>totsitecount</code>, <code>p2</em>totsitecount</code> |</p>
 
-<h2>Data Sources</h2>
-
-<h3>Action Codes</h3>
-<ul>
-<li><strong>Action '9'</strong>: Cattail inspections (primary focus)</li>
-<li>All other action codes are filtered out</li>
-</ul>
-
-<h3>Key Database Tables</h3>
-<ul>
-<li><strong><code>dblarv<em>insptrt</em>archive</code></strong>: Historical inspection records</li>
-<li><strong><code>dblarv<em>insptrt</em>current</code></strong>: Current year inspection records</li>
-<li><strong><code>loc<em>breeding</em>sites</code></strong>: Site master data with acres and enddate</li>
-<li><strong><code>gis_sectcode</code></strong>: Zone and facility assignments (P1/P2 zones)</li>
-<li><strong><code>cattail<em>pctcomplete</em>base</code></strong>: Site count goals by facility (p1<em>totsitecount, p2</em>totsitecount)</li>
-</ul>
-
-<h3>Critical Data Fields</h3>
-<ul>
-<li><strong><code>sitecode</code></strong>: Unique site identifier</li>
-<li><strong><code>facility</code></strong>: Facility code from gis_sectcode (NOT from inspection records)</li>
-<li><strong><code>zone</code></strong>: P1 (zone='1') or P2 (zone='2') from gis_sectcode</li>
-<li><strong><code>inspdate</code></strong>: Date of inspection</li>
-<li><strong><code>wet</code></strong>: Whether site was wet during inspection</li>
-<li><strong><code>numdip</code></strong>: Number of larvae found per dip</li>
-<li><strong><code>acres_plan</code></strong>: Planned acres for treatment (from inspection record)</li>
-<li><strong><code>acres</code></strong>: Actual site acres (from loc<em>breeding</em>sites)</li>
-<li><strong><code>enddate</code></strong>: Site end date (NULL = active site)</li>
-</ul>
+<p>All queries filter <code>action = '9'</code> (cattail inspection action code).</p>
 
 <hr>
 
-<h2>Inspection Counting Logic</h2>
+<h2>SQL Queries</h2>
 
-<h3>Single Inspection Per Site Rule</h3>
-<p><strong>CRITICAL</strong>: Each site should only be counted ONCE per query period, regardless of how many times it was inspected.</p>
-
-<p><strong>Method</strong>: Use <code>ROW_NUMBER()</code> window function partitioned by sitecode, ordered by most recent inspection:</p>
-<pre><code class="sql">
-ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn
-WHERE rn = 1  -- Only the most recent inspection per site
-</code></pre>
-
-<h3>Active Sites Filter</h3>
-<p><strong>CRITICAL</strong>: Always filter by enddate to exclude closed/inactive sites:</p>
-<pre><code class="sql">
-LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-</code></pre>
-
-<h3>Reinspect Field (DEPRECATED)</h3>
-<p>The <code>reinspect</code> field is <strong>NOT RELIABLE</strong> for counting logic:</p>
-<ul>
-<li><code>reinspect = 't'</code> means "should be re-inspected" but doesn't guarantee it happened</li>
-<li><code>reinspect = 'f'</code> or <code>NULL</code> is the first inspection</li>
-<li><strong>Solution</strong>: Ignore the <code>reinspect</code> field entirely and use <code>ROW_NUMBER()</code> to ensure one count per site</li>
-</ul>
-
-<hr>
-
-<h2>Progress vs Goal Tab</h2>
-
-<h3>Query 1: Get Inspection Counts by Facility and Zone</h3>
-
-<p><strong>Purpose</strong>: Count unique sites inspected per facility/zone for comparison against goals.</p>
+<h3>1. Progress Counts by Facility/Zone (<code>data<em>functions.R → load</em>raw_data</code>)</h3>
 
 <pre><code class="sql">
-WITH all_inspections AS (
-  SELECT 
-    a.facility,
-    a.sitecode,
-    a.inspdate,
-    g.zone,
-    ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn
+WITH valid_sites AS (
+  SELECT sitecode 
+  FROM public.loc_breeding_sites 
+  WHERE (enddate IS NULL OR enddate &gt; :analysis_date)
+),
+all_inspections AS (
+  SELECT a.facility, a.sitecode, a.inspdate, g.zone
   FROM (
-    -- Archive records
-    SELECT facility, sitecode, inspdate 
-    FROM public.dblarv_insptrt_archive
+    SELECT facility, sitecode, inspdate FROM public.dblarv_insptrt_archive
     WHERE action = '9'
-      AND EXTRACT(YEAR FROM inspdate) = 2025  -- Selected year
-      AND inspdate &lt;= '2025-12-04'            -- Custom "today" date
-    
+      AND EXTRACT(YEAR FROM inspdate) = :year
+      AND inspdate &lt;= :analysis_date
     UNION ALL
-    
-    -- Current records
-    SELECT facility, sitecode, inspdate 
-    FROM public.dblarv_insptrt_current
+    SELECT facility, sitecode, inspdate FROM public.dblarv_insptrt_current
     WHERE action = '9'
-      AND EXTRACT(YEAR FROM inspdate) = 2025  -- Selected year
-      AND inspdate &lt;= '2025-12-04'            -- Custom "today" date
+      AND EXTRACT(YEAR FROM inspdate) = :year
+      AND inspdate &lt;= :analysis_date
   ) a
-  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-  WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
+  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 7) = g.sectcode
+  WHERE a.sitecode IN (SELECT sitecode FROM valid_sites)
 )
-SELECT 
-  facility,
-  zone,
-  COUNT(DISTINCT sitecode) AS inspections
+SELECT facility, zone, COUNT(DISTINCT sitecode) AS inspections
 FROM all_inspections
-WHERE rn = 1  -- Only most recent inspection per site
 GROUP BY facility, zone
+ORDER BY facility, zone
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>✅ Uses <code>LEFT(a.sitecode, 7)</code> for exact sectcode matching</li>
-<li>✅ Filters active sites with enddate check</li>
-<li>✅ Uses ROW_NUMBER() to count each site only once</li>
-<li>✅ UNION ALL combines archive and current tables</li>
-<li>✅ Groups by facility and zone for P1/P2 separation</li>
-</ul>
-
-<h3>Query 2: Get Site Details for Table Display</h3>
-
-<p><strong>Purpose</strong>: Retrieve detailed information for each site contributing to the progress chart.</p>
+<h3>2. Goals Lookup (<code>data<em>functions.R → load</em>raw_data</code>)</h3>
 
 <pre><code class="sql">
-WITH all_inspections AS (
-  SELECT 
-    a.facility,
-    a.sitecode,
-    a.inspdate,
-    a.wet,
-    a.numdip,
-    g.zone,
-    ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn
+SELECT facility, p1_totsitecount, p2_totsitecount
+FROM public.cattail_pctcomplete_base
+</code></pre>
+
+<h3>3. Historical Treatments (daily counts) (<code>data<em>functions.R → load</em>historical_treatments</code>)</h3>
+
+<p>Same CTE structure as #1 but uses <code>BETWEEN :start<em>year AND :end</em>year</code> on year and groups by <code>facility, zone, inspdate</code>.</p>
+
+<h3>4. Progress Site Detail (<code>progress<em>functions.R → get</em>progress<em>sites</em>detail</code>)</h3>
+
+<pre><code class="sql">
+WITH valid_sites AS (
+  SELECT sitecode FROM public.loc_breeding_sites
+  WHERE (enddate IS NULL OR enddate &gt; :custom_today)
+),
+all_inspections AS (
+  SELECT a.facility, a.sitecode, a.inspdate, a.wet, a.numdip, g.zone,
+         ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn
   FROM (
-    -- Archive records
-    SELECT facility, sitecode, inspdate, wet, numdip 
-    FROM public.dblarv_insptrt_archive
-    WHERE action = '9'
-      AND EXTRACT(YEAR FROM inspdate) = 2025
-      AND inspdate &lt;= '2025-12-04'
-    
+    SELECT facility, sitecode, inspdate, wet, numdip FROM public.dblarv_insptrt_archive
+    WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = :year AND inspdate &lt;= :custom_today
     UNION ALL
-    
-    -- Current records
-    SELECT facility, sitecode, inspdate, wet, numdip 
-    FROM public.dblarv_insptrt_current
-    WHERE action = '9'
-      AND EXTRACT(YEAR FROM inspdate) = 2025
-      AND inspdate &lt;= '2025-12-04'
+    SELECT facility, sitecode, inspdate, wet, numdip FROM public.dblarv_insptrt_current
+    WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = :year AND inspdate &lt;= :custom_today
   ) a
-  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
+  LEFT JOIN public.gis_sectcode g ON LEFT(a.sitecode, 7) = g.sectcode
+  WHERE a.sitecode IN (SELECT sitecode FROM valid_sites)
 )
-SELECT 
-  ai.facility,
-  ai.sitecode,
-  ai.inspdate,
-  ai.wet,
-  ai.numdip,
-  COALESCE(b.acres, 0) as acres
+SELECT ai.facility, ai.sitecode, ai.inspdate, ai.wet, ai.numdip, ai.zone,
+       COALESCE(b.acres, 0) as acres
 FROM all_inspections ai
 LEFT JOIN public.loc_breeding_sites b ON ai.sitecode = b.sitecode
-WHERE ai.rn = 1                    -- Most recent inspection only
-  AND ai.zone = '1'                -- Selected zone (P1 or P2)
-  AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-ORDER BY ai.facility, ai.inspdate DESC
+WHERE ai.rn = 1 AND :zone_filter
+ORDER BY ai.facility, ai.zone, ai.inspdate DESC
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
+<h3>5. Historical Comparison – Baseline &amp; Current Year (<code>historical<em>functions.R → get</em>historical<em>progress</em>data</code>)</h3>
+
+<p>Two parallel queries with identical structure: one for <code>EXTRACT(YEAR) &gt;= start<em>year AND &lt;= end</em>year</code> (baseline) and one for <code>EXTRACT(YEAR) = current_year</code>. Both use:</p>
+
 <ul>
-<li>✅ Returns individual site records (not aggregated)</li>
-<li>✅ Includes wet, numdip, and acres for detailed analysis</li>
-<li>✅ Filters by selected zone (P1 or P2 based on goal selection)</li>
-<li>✅ One row per site (most recent inspection)</li>
+<li>CTE <code>all_inspections</code> filtered by action='9', zone condition, facility filter, enddate check, and <code>(reinspect IS NULL OR reinspect = 'f')</code></li>
+<li>Nested subquery with <code>FIRST<em>VALUE(COALESCE(acres</em>plan, acres)) OVER (PARTITION BY facility, sitecode ORDER BY inspdate DESC)</code> to pick best acres value per site</li>
+<li>Final aggregation: <code>COUNT(DISTINCT sitecode)::integer as site<em>count</code>, <code>SUM(acres)::numeric as acre</em>count</code></li>
+<li>Dynamic GROUP BY: by <code>facility</code> only, or by <code>facility, zone</code> when zone option = "separate"</li>
 </ul>
 
-<hr>
+<h3>6. Sites Table – All or Unchecked (<code>historical<em>functions.R → get</em>sites<em>table</em>data</code>)</h3>
 
-<h2>Historical Comparison Tab</h2>
+<p><strong>"All" mode</strong>: <code>ROW_NUMBER() OVER (PARTITION BY sitecode, facility ORDER BY inspdate DESC)</code> with <code>rn = 1</code> across historical year range. Returns most recent inspection per site.</p>
 
-<h3>Query 3: Historical Baseline (Multi-Year Average)</h3>
-
-<p><strong>Purpose</strong>: Calculate average inspection counts over previous N years (excluding current year).</p>
-
-<pre><code class="sql">
-WITH all_inspections AS (
-  SELECT 
-    a.facility,
-    a.sitecode,
-    g.zone
-  FROM public.dblarv_insptrt_archive a
-  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-  WHERE a.action = '9'
-    AND EXTRACT(YEAR FROM a.inspdate) &gt;= 2022  -- Start year (current - hist_years)
-    AND EXTRACT(YEAR FROM a.inspdate) &lt;= 2024  -- End year (current - 1)
-    AND g.zone = '1'                            -- Zone filter (P1, P2, combined, or separate)
-    AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-  
-  UNION ALL
-  
-  SELECT 
-    a.facility,
-    a.sitecode,
-    g.zone
-  FROM public.dblarv_insptrt_current a
-  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-  WHERE a.action = '9'
-    AND EXTRACT(YEAR FROM a.inspdate) &gt;= 2022
-    AND EXTRACT(YEAR FROM a.inspdate) &lt;= 2024
-    AND g.zone = '1'
-    AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-)
-SELECT 
-  facility,
-  zone,
-  COUNT(DISTINCT sitecode)::integer as site_count,
-  SUM(DISTINCT_ACRES.acres)::numeric as acre_count
-FROM (
-  SELECT DISTINCT
-    facility,
-    sitecode,
-    zone,
-    FIRST_VALUE(COALESCE(acres_plan, acres)) OVER (
-      PARTITION BY facility, sitecode 
-      ORDER BY inspdate DESC
-    ) as acres
-  FROM (
-    -- Get acres_plan from inspection records
-    SELECT 
-      ai.facility,
-      ai.sitecode,
-      ai.zone,
-      a.inspdate,
-      a.acres_plan,
-      b.acres
-    FROM all_inspections ai
-    LEFT JOIN public.dblarv_insptrt_archive a 
-      ON ai.sitecode = a.sitecode AND ai.facility = a.facility
-    LEFT JOIN public.loc_breeding_sites b ON ai.sitecode = b.sitecode
-    WHERE a.action = '9'
-      AND EXTRACT(YEAR FROM a.inspdate) &gt;= 2022
-      AND EXTRACT(YEAR FROM a.inspdate) &lt;= 2024
-    
-    UNION ALL
-    
-    SELECT 
-      ai.facility,
-      ai.sitecode,
-      ai.zone,
-      a.inspdate,
-      a.acres_plan,
-      b.acres
-    FROM all_inspections ai
-    LEFT JOIN public.dblarv_insptrt_current a 
-      ON ai.sitecode = a.sitecode AND ai.facility = a.facility
-    LEFT JOIN public.loc_breeding_sites b ON ai.sitecode = b.sitecode
-    WHERE a.action = '9'
-      AND EXTRACT(YEAR FROM a.inspdate) &gt;= 2022
-      AND EXTRACT(YEAR FROM a.inspdate) &lt;= 2024
-  ) site_acres
-) DISTINCT_ACRES
-GROUP BY facility, zone
-ORDER BY facility, zone
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>✅ CTE filters to historical years only (excludes current year)</li>
-<li>✅ Nested query calculates acres using FIRST_VALUE window function</li>
-<li>✅ Prefers <code>acres<em>plan</code> from inspection, falls back to <code>acres</code> from loc</em>breeding_sites</li>
-<li>✅ COUNT DISTINCT ensures one count per site across all historical years</li>
-<li>✅ Returns both site<em>count and acre</em>count metrics</li>
-</ul>
-
-<h3>Query 4: Current Year Progress</h3>
-
-<p><strong>Purpose</strong>: Count inspections completed in the current year for comparison against historical baseline.</p>
-
-<pre><code class="sql">
-WITH all_inspections AS (
-  SELECT 
-    a.facility,
-    a.sitecode,
-    g.zone
-  FROM public.dblarv_insptrt_archive a
-  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-  WHERE a.action = '9'
-    AND EXTRACT(YEAR FROM a.inspdate) = 2025  -- Current year only
-    AND g.zone = '1'                          -- Zone filter
-    AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-  
-  UNION ALL
-  
-  SELECT 
-    a.facility,
-    a.sitecode,
-    g.zone
-  FROM public.dblarv_insptrt_current a
-  LEFT JOIN public.gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-  LEFT JOIN public.loc_breeding_sites b ON a.sitecode = b.sitecode
-  WHERE a.action = '9'
-    AND EXTRACT(YEAR FROM a.inspdate) = 2025
-    AND g.zone = '1'
-    AND (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-)
-SELECT 
-  facility,
-  zone,
-  COUNT(DISTINCT sitecode)::integer as site_count,
-  SUM(DISTINCT_ACRES.acres)::numeric as acre_count
-FROM (
-  SELECT DISTINCT
-    facility,
-    sitecode,
-    zone,
-    FIRST_VALUE(COALESCE(acres_plan, acres)) OVER (
-      PARTITION BY facility, sitecode 
-      ORDER BY inspdate DESC
-    ) as acres
-  FROM (
-    SELECT 
-      ai.facility,
-      ai.sitecode,
-      ai.zone,
-      a.inspdate,
-      a.acres_plan,
-      b.acres
-    FROM all_inspections ai
-    LEFT JOIN public.dblarv_insptrt_archive a 
-      ON ai.sitecode = a.sitecode AND ai.facility = a.facility
-    LEFT JOIN public.loc_breeding_sites b ON ai.sitecode = b.sitecode
-    WHERE a.action = '9'
-      AND EXTRACT(YEAR FROM a.inspdate) = 2025
-    
-    UNION ALL
-    
-    SELECT 
-      ai.facility,
-      ai.sitecode,
-      ai.zone,
-      a.inspdate,
-      a.acres_plan,
-      b.acres
-    FROM all_inspections ai
-    LEFT JOIN public.dblarv_insptrt_current a 
-      ON ai.sitecode = a.sitecode AND ai.facility = a.facility
-    LEFT JOIN public.loc_breeding_sites b ON ai.sitecode = b.sitecode
-    WHERE a.action = '9'
-      AND EXTRACT(YEAR FROM a.inspdate) = 2025
-  ) site_acres
-) DISTINCT_ACRES
-GROUP BY facility, zone
-ORDER BY facility, zone
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>✅ Identical structure to historical query but filtered to current year only</li>
-<li>✅ Enables side-by-side comparison: Current Year vs Historical Baseline</li>
-<li>✅ Both queries share same zone filtering logic for consistency</li>
-</ul>
-
-<hr>
-
-<h2>Zone Filtering Options</h2>
-
-<h3>User Interface Options:</h3>
+<p><strong>"Unchecked" mode</strong>: Four CTEs:</p>
 <ol>
-<li><strong>P1 Only</strong> (<code>hist_zone = "p1"</code>)</li>
-<ul>
-<li>SQL: <code>AND g.zone = '1'</code></li>
-<li>Groups by facility only</li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>P2 Only</strong> (<code>hist_zone = "p2"</code>)</li>
-<ul>
-<li>SQL: <code>AND g.zone = '2'</code></li>
-<li>Groups by facility only</li>
-</ul>
+<li><code>historical_sites</code> — DISTINCT sitecodes from archive+current in historical year range</li>
+<li><code>current<em>year</em>sites</code> — DISTINCT sitecodes inspected in current year</li>
+<li><code>unchecked_sites</code> — LEFT JOIN anti-pattern to find sites in #1 but not in #2</li>
+<li><code>ranked_inspections</code> — most recent inspection for unchecked sites only</li>
 </ul>
 
-<ol>
-<li><strong>P1 and P2 Combined</strong> (<code>hist_zone = "combined"</code>)</li>
-<ul>
-<li>SQL: <code>AND g.zone IN ('1', '2')</code></li>
-<li>Groups by facility only (aggregates both zones)</li>
-</ul>
-</ul>
+<h3>7. Treatment Planning (COMMENTED OUT in app.R) (<code>planned<em>treatment</em>functions.R</code>)</h3>
 
-<ol>
-<li><strong>P1 and P2 Separate</strong> (<code>hist_zone = "separate"</code>)</li>
-<ul>
-<li>SQL: <code>AND g.zone IN ('1', '2')</code></li>
-<li>Groups by facility AND zone (shows separate bars)</li>
-</ul>
-</ul>
-
-<h3>Implementation Pattern:</h3>
-<pre><code class="r">
-# Dynamic SQL generation based on zone selection
-if (hist_zone == "p1") {
-  zone_condition &lt;- "AND g.zone = '1'"
-  group_by_clause &lt;- "GROUP BY facility"
-} else if (hist_zone == "p2") {
-  zone_condition &lt;- "AND g.zone = '2'"
-  group_by_clause &lt;- "GROUP BY facility"
-} else if (hist_zone == "combined") {
-  zone_condition &lt;- "AND g.zone IN ('1', '2')"
-  group_by_clause &lt;- "GROUP BY facility"
-} else if (hist_zone == "separate") {
-  zone_condition &lt;- "AND g.zone IN ('1', '2')"
-  group_by_clause &lt;- "GROUP BY facility, zone"
-}
-</code></pre>
+<p>Queries <code>dblarv<em>insptrt</em>current</code> for <code>action='9'</code> with non-null <code>acres<em>plan</code>, grouped by <code>airgrnd</em>plan</code> (A/D/G/N/U) and <code>facility</code>. This entire tab is disabled — code exists but is not wired into the UI.</p>
 
 <hr>
 
-<h2>Metrics: Sites vs Acres</h2>
+<h2>R-Side Logic</h2>
 
-<h3>Site-Based Metric (Primary)</h3>
 <ul>
-<li><strong>Source</strong>: COUNT(DISTINCT sitecode)</li>
-<li><strong>Goal Source</strong>: <code>cattail<em>pctcomplete</em>base</code> (p1<em>totsitecount, p2</em>totsitecount)</li>
-<li><strong>Use Case</strong>: Measures number of unique locations inspected</li>
-<li><strong>Progress Calculation</strong>: <code>(sites<em>inspected / goal</em>sites) * 100</code></li>
-</ul>
-
-<h3>Acre-Based Metric (Secondary)</h3>
-<ul>
-<li><strong>Source</strong>: SUM of acres per unique site</li>
-<li><strong>Acre Priority</strong>: <code>COALESCE(acres_plan, acres)</code> - Prefers planned acres, falls back to site master acres</li>
-<li><strong>No Goals</strong>: Acre goals NOT stored in database</li>
-<li><strong>Use Case</strong>: Measures total area coverage</li>
-<li><strong>Note</strong>: Source table in image uses acres for % calculation (different methodology)</li>
-</ul>
-
-<h3>Key Difference:</h3>
-<ul>
-<li><strong>App uses SITES</strong> for % complete (matches database goals)</li>
-<li><strong>Source table uses ACRES</strong> for % complete (no goals available in database)</li>
-<li>Both are valid but measure different aspects of progress</li>
+<li><strong>Overview registry compatible</strong>: <code>load<em>raw</em>data()</code> returns <code>list(sites, treatments, total<em>count, goal</em>count, pre_aggregated = TRUE)</code> so the overview app can call it directly.</li>
+<li><strong>Zone option mapping</strong>: UI selections ("total", "p1", "p2", "separate") are mapped to <code>zone_filter</code> vectors and SQL <code>WHERE</code> clauses dynamically.</li>
+<li><strong>Facility display names</strong>: <code>map<em>facility</em>names()</code> converts short codes to full names for chart labels.</li>
+<li><strong>Progress value boxes</strong>: Color-coded by completion percentage — green (≥100%), yellow (≥75%), orange (≥50%), red (&lt;50%). In "separate" mode, each box shows <code>P1: x% | P2: y%</code>.</li>
+<li><strong>Sitecode links</strong>: <code>make<em>sitecode</em>link()</code> creates clickable links to <code>data.mmcd.org</code> map in DT tables.</li>
+<li><strong>Historical comparison metric</strong>: User toggles between "sites" (<code>COUNT DISTINCT sitecode</code>) and "acres" (<code>SUM</code> of <code>COALESCE(acres_plan, acres)</code>) — both use same queries, just different output columns.</li>
+<li><strong>Chart rendering</strong>: Progress tab uses <code>ggplotly()</code> directly; historical tab delegates to shared <code>create<em>trend</em>chart()</code> with <code>chart<em>type = "grouped</em>bar"</code>.</li>
+<li><strong>Lookup preloading</strong>: <code>get<em>facility</em>lookup()</code> and <code>get<em>foremen</em>lookup()</code> are called at startup outside the server function to cache lookups.</li>
 </ul>
 
 <hr>
 
-<h2>Value Box Color Coding</h2>
+<h2>Shapefiles</h2>
 
-<p>Progress indicators use color thresholds:</p>
-<pre><code class="r">
-if (pct_complete &gt;= 100) {
-  color &lt;- "green"    # Goal met or exceeded
-} else if (pct_complete &gt;= 75) {
-  color &lt;- "yellow"   # 75-99% complete
-} else if (pct_complete &gt;= 50) {
-  color &lt;- "orange"   # 50-74% complete
-} else {
-  color &lt;- "red"      # Below 50% complete
-}
-</code></pre>
+<p>None. This app does not load or display any spatial data.</p>
 
 <hr>
 
-<h2>Common Pitfalls &amp; Solutions</h2>
+<h2>Shared Functions Used</h2>
 
-<h3>❌ WRONG: Using reinspect field for counting</h3>
-<pre><code class="sql">
-WHERE (a.reinspect IS NULL OR a.reinspect = 'f')  -- Unreliable!
-</code></pre>
-
-<h3>✅ CORRECT: Use ROW_NUMBER() for single count per site</h3>
-<pre><code class="sql">
-ROW_NUMBER() OVER (PARTITION BY a.sitecode ORDER BY a.inspdate DESC) as rn
-WHERE rn = 1
-</code></pre>
-
-<h3>❌ WRONG: Ambiguous zone assignment with pattern matching</h3>
-<pre><code class="sql">
-LEFT JOIN gis_sectcode g ON LEFT(sitecode, 6) || '-' = g.sectcode
-  OR LEFT(sitecode, 6) || 'N' = g.sectcode  -- Matches multiple sectcodes!
-</code></pre>
-
-<h3>✅ CORRECT: Exact sectcode matching</h3>
-<pre><code class="sql">
-LEFT JOIN gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-</code></pre>
-
-<h3>❌ WRONG: Forgetting to filter inactive sites</h3>
-<pre><code class="sql">
--- Missing enddate filter allows closed sites!
-</code></pre>
-
-<h3>✅ CORRECT: Always filter by enddate</h3>
-<pre><code class="sql">
-LEFT JOIN loc_breeding_sites b ON a.sitecode = b.sitecode
-WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-</code></pre>
-
-<h3>❌ WRONG: Using facility from inspection records</h3>
-<pre><code class="sql">
-SELECT a.facility  -- May be outdated or incorrect
-FROM dblarv_insptrt_archive a
-</code></pre>
-
-<h3>✅ CORRECT: Using facility from gis_sectcode</h3>
-<pre><code class="sql">
-SELECT g.facility  -- Always current, zone-aware
-FROM dblarv_insptrt_archive a
-LEFT JOIN gis_sectcode g ON g.sectcode = LEFT(a.sitecode, 7)
-</code></pre>
-
-<hr>
-
-<h2>Database Schema References</h2>
-
-<h3>gis_sectcode (Zone Master Table)</h3>
-<pre><code class="">
-sectcode (varchar) - First 7 characters of sitecode
-zone (varchar)     - '1' (P1) or '2' (P2)
-facility (varchar) - Facility code
-</code></pre>
-
-<h3>loc<em>breeding</em>sites (Site Master Table)</h3>
-<pre><code class="">
-sitecode (varchar) - Unique site identifier
-acres (numeric)    - Site acreage
-enddate (date)     - Site closure date (NULL = active)
-</code></pre>
-
-<h3>cattail<em>pctcomplete</em>base (Goal Table)</h3>
-<pre><code class="">
-facility (varchar)        - Facility code
-p1_totsitecount (integer) - P1 site goal
-p2_totsitecount (integer) - P2 site goal
-comments (text)           - Goal notes/updates
-</code></pre>
-
-<h3>dblarv<em>insptrt</em>archive / current (Inspection Tables)</h3>
-<pre><code class="">
-sitecode (varchar)    - Site identifier
-facility (varchar)    - Facility (DO NOT USE - use gis_sectcode.facility)
-action (varchar)      - '9' for inspections
-inspdate (date)       - Inspection date
-wet (boolean)         - Site wet during inspection
-numdip (integer)      - Larvae count per dip
-acres_plan (numeric)  - Planned treatment acres
-reinspect (boolean)   - Re-inspection flag (UNRELIABLE - DO NOT USE)
-</code></pre>
-
-<hr>
-
-<h2>File Structure</h2>
-
-<pre><code class="">
-apps/cattail_inspections/
-├── app.R                     # Main UI and server logic
-├── progress_functions.R      # Progress vs Goal queries and charts
-├── historical_functions.R    # Historical comparison queries and charts
-├── ui_helper.R              # UI component functions
-├── data_functions.R         # Shared data processing utilities
-├── display_functions.R      # Shared visualization utilities
-└── NOTES.md                 # This documentation file
-</code></pre>
-
-<hr>
-
-<h2>Version History</h2>
-
-<ul>
-<li><strong>December 2025</strong>: Complete query rewrite with corrected zone assignment logic</li>
-<ul>
-<li>Fixed ambiguous sectcode JOIN pattern</li>
-<li>Removed unreliable reinspect field dependency</li>
-<li>Added mandatory loc<em>breeding</em>sites enddate filter</li>
-<li>Documented all SQL queries with exact syntax</li>
-<li>Clarified single-count-per-site methodology</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong>November 2025</strong>: Added site details table with downloadable CSV</li>
-<li><strong>October 2025</strong>: Added historical comparison tab with zone filtering</li>
-</ul>
+<p>| Function | Source |</p>
+<p>|----------|--------|</p>
+<p>| <code>get<em>db</em>connection()</code> / <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>lookup()</code> / <code>get<em>foremen</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>map<em>facility</em>names()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>is<em>valid</em>filter()</code> / <code>build<em>sql</em>in<em>list()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>make<em>sitecode</em>link()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>export<em>csv</em>safe()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>status</em>colors()</code> / <code>get<em>treatment</em>plan<em>colors()</code> | <code>shared/db</em>helpers.R</code> / <code>shared/color_themes.R</code> |</p>
+<p>| <code>create<em>trend</em>chart()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>set<em>app</em>name()</code> | <code>shared/server_utilities.R</code> |</p>
     </div>
 </body>
 </html>

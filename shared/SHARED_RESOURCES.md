@@ -34,7 +34,7 @@ This folder contains shared utilities and resources used across all apps in the 
   - `extract_to_csv_then_shp.R` - Two-stage CSV then shapefile export
   - `create_section_boundaries.R` - Minimal section boundaries extraction
   - `data/` - Extracted shapefiles including VectorIndexAreasA2025.shp (12 grouped areas from 3207 sections)
-  - See `Q_to_R/README.md` for detailed usage instructions
+  - See `Q_to_R/GEOSPATIAL_EXTRACTION.md` for detailed usage instructions
 
 ### Documentation Sync System
 - **`sync_all_docs.R`** - Universal documentation sync script (main logic)
@@ -105,7 +105,7 @@ The system automatically discovers new apps when you add `NOTES.md` files - no c
 - `extract_to_csv_then_shp.R` - CSV export with shapefile conversion
 - `create_section_boundaries.R` - Essential section boundaries only
 
-See `Q_to_R/README.md` for complete geospatial data extraction documentation.
+See `Q_to_R/GEOSPATIAL_EXTRACTION.md` for complete geospatial data extraction documentation.
 
 ## Requirements
 

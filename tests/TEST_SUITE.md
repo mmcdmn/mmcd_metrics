@@ -10,7 +10,7 @@ This folder contains unit tests for the MMCD Metrics dashboard applications usin
 tests/
 ├── testthat.R           # Main test runner
 ├── test_stubs.R         # Mock/stub functions for isolated testing
-├── README.md            # This file
+├── TEST_SUITE.md        # This file
 ├── shared/              # Tests for shared modules
 │   ├── test-color-themes.R
 │   ├── test-database-connection.R

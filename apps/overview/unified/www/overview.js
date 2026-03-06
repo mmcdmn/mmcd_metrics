@@ -423,6 +423,29 @@ $(document).on('click', '.drill-down-btn', function(e) {
   }
 });
 
+// --- Mobile: resize all visible Plotly charts on window resize / orientation change ---
+(function() {
+  var resizeTimer;
+  function resizeAllPlotly() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {
+      if (!window.Plotly) return;
+      document.querySelectorAll('.category-chart.visible .js-plotly-plot, .chart-panel-wrapper.visible .js-plotly-plot').forEach(function(el) {
+        if (el && el.layout) {
+          try {
+            Plotly.Plots.resize(el);
+          } catch(e) { /* ignore */ }
+        }
+      });
+    }, 250);
+  }
+  window.addEventListener('resize', resizeAllPlotly);
+  window.addEventListener('orientationchange', function() {
+    // orientationchange needs extra delay for viewport to settle
+    setTimeout(resizeAllPlotly, 500);
+  });
+})();
+
 // Legacy: Chart type toggle functionality (kept for backwards compatibility)
 $(document).on('click', '.chart-toggle-btn', function() {
   var btn = $(this);

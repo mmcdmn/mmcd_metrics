@@ -1,0 +1,565 @@
+/* Overview Dashboard Styles - Externalized for caching & reduced payload */
+
+.dashboard-container {
+  padding: 10px;
+}
+.chart-panel {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 15px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  min-height: 200px;
+  overflow: hidden;
+}
+.chart-panel-wrapper {
+  height: 0;
+  visibility: hidden;
+  transition: all 0.3s ease-out;
+  opacity: 0;
+  max-width: 0;
+  flex: 0 0 0;
+  margin: 0;
+  padding: 0;
+}
+.chart-panel-wrapper.visible {
+  height: auto;
+  visibility: visible;
+  opacity: 1;
+  max-width: none;
+  flex: 1 1 400px;
+  margin: 0 0 20px 0;
+  padding: 10px;
+}
+.charts-flex-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+  justify-content: flex-start;
+  align-items: stretch;
+}
+/* Dynamic sizing based on visible chart count */
+.charts-flex-container .chart-panel-wrapper.visible:only-child {
+  flex: 1 1 100%;
+  max-width: 100%;
+}
+.inline-chart {
+  min-width: 350px;
+}
+.inline-chart.visible {
+  flex: 1 1 calc(50% - 8px);
+}
+.drilldown-chart {
+  max-width: 100% !important;
+  width: 100%;
+  margin: 20px 0;
+}
+/* Comparison banner shown when chart is expanded */
+.comparison-banner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 15px;
+  padding: 10px 15px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  background: #f0f4f8;
+  border: 1px solid #d0d7de;
+}
+.comparison-banner .separator { color: #999; }
+.comparison-banner .current { color: #333; }
+.comparison-banner .historical { color: #666; }
+.comparison-banner .diff.positive { color: #16a34a; font-weight: 600; }
+.comparison-banner .diff.negative { color: #dc2626; font-weight: 600; }
+.comparison-banner.positive { background: #dcfce7; border-color: #86efac; }
+.comparison-banner.negative { background: #fee2e2; border-color: #fca5a5; }
+@media (max-width: 768px) {
+  .inline-chart {
+    flex: 1 1 100%;
+    min-width: 300px;
+  }
+}
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.stat-box-clickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+}
+.stat-box-clickable:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+}
+.stat-box-clickable.active {
+  outline: 3px solid #333;
+  outline-offset: 2px;
+}
+.stat-box-clickable::after {
+  content: 'Click to view chart';
+  position: absolute;
+  bottom: 5px;
+  right: 10px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.stat-box-clickable.active::after {
+  content: 'Click to hide chart';
+}
+/* Info button on stat boxes — replaces the metric icon */
+.stat-box-info-btn:hover {
+  background: rgba(255,255,255,0.45) !important;
+}
+/* Info button on chart titles */
+.chart-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e0e0e0;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  margin-left: 8px;
+  border: 1px solid #ccc;
+  transition: all 0.2s;
+  vertical-align: middle;
+}
+.chart-info-btn:hover {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+.info-popover {
+  position: fixed;
+  z-index: 1050;
+  background: #ffffff;
+  color: #333;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  padding: 14px 16px;
+  min-width: 240px;
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.5;
+  animation: popoverFadeIn 0.15s ease;
+}
+.info-popover::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  transform: rotate(45deg);
+  box-shadow: -2px -2px 4px rgba(0,0,0,0.08);
+}
+@keyframes popoverFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.info-popover .info-description {
+  margin-bottom: 8px;
+}
+.info-popover .info-wiki-link {
+  display: inline-block;
+  margin-top: 4px;
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+.info-popover .info-wiki-link:hover {
+  text-decoration: underline;
+}
+.info-popover .info-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: #999;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.info-popover .info-close:hover {
+  color: #333;
+}
+/* Category grouping styles */
+.metrics-by-category {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  overflow: visible;
+}
+.category-section {
+  width: 100%;
+  max-width: 100%;
+  margin-bottom: 20px;
+  overflow: visible;
+}
+.category-section .row {
+  display: flex;
+  flex-wrap: wrap;
+  margin-left: -15px;
+  margin-right: -15px;
+}
+.category-section .col-md-4 {
+  display: flex;
+  flex-direction: column;
+  padding-left: 15px;
+  padding-right: 15px;
+  margin-bottom: 15px;
+}
+/* Charts within category sections - use specific class to avoid Bootstrap .row conflict */
+.category-section .charts-grid-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+  margin-top: 15px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.category-section .category-chart {
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 8px;
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
+}
+.drill-down-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  font-size: 11px;
+  padding: 3px 10px;
+  background: #2c5aa0;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.8;
+  z-index: 10;
+  transition: opacity 0.2s, background 0.2s;
+}
+.drill-down-btn:hover {
+  opacity: 1;
+  background: #1e3c72;
+}
+.drill-down-btn i {
+  margin-right: 3px;
+}
+.category-section .category-chart.visible {
+  display: block !important;
+  animation: fadeIn 0.3s ease-in;
+}
+/* Remove all size classes - let content determine height */
+.category-section .category-chart .plotly {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+.category-section .category-chart .chart-panel {
+  width: 100%;
+  max-width: 100%;
+}
+/* Constrain plotly within container */
+.category-chart .js-plotly-plot,
+.category-chart .plot-container,
+.category-chart .svg-container {
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+/* Ensure legend is visible - uiOutput creates shiny-html-output wrapper */
+.category-chart .shiny-html-output {
+  display: block !important;
+  visibility: visible !important;
+  min-height: 20px;
+}
+.category-chart .chart-legend {
+  display: flex !important;
+  visibility: visible !important;
+  font-size: 11px !important;
+  padding: 4px 0 !important;
+  gap: 12px !important;
+  justify-content: center;
+}
+/* Compact chart title for category charts */
+.category-chart .chart-title {
+  font-size: 12px;
+  margin-bottom: 4px;
+  padding-bottom: 3px;
+}
+.category-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 8px;
+  padding-left: 8px;
+  border-left: 3px solid #2c5aa0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+/* Facility detail section styles */
+.facility-detail-section {
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+  border-radius: 10px;
+  padding: 20px;
+  margin: 15px 0;
+  border: 1px solid #ddd;
+  animation: fadeIn 0.3s ease-in-out;
+  display: none;
+}
+.facility-detail-section.visible {
+  display: block !important;
+}
+.facility-detail-header {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #2c5aa0;
+}
+.facility-detail-boxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+.facility-detail-boxes .stat-box {
+  flex: 1 1 150px;
+  min-width: 140px;
+  max-width: 200px;
+}
+/* Facility clickable hints */
+.stat-box-clickable[data-facility]::after {
+  content: 'Click for details';
+}
+
+/* Loading Skeleton Styles */
+.skeleton-box {
+  background: linear-gradient(90deg, #f0f0f0 25%, transparent 37%, transparent 63%, #f0f0f0 75%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  height: 120px; /* Match typical stat-box height */
+  margin-bottom: 15px;
+  position: relative;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: -100% 50%; }
+}
+.skeleton-content {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.skeleton-title {
+  width: 80%;
+  height: 16px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+.skeleton-value {
+  width: 60%;
+  height: 28px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.skeleton-icon {
+  width: 24px;
+  height: 24px;
+  background: #e0e0e0;
+  border-radius: 50%;
+  margin-bottom: 10px;
+}
+/* Category skeleton */
+.skeleton-category {
+  margin-bottom: 25px;
+}
+.skeleton-category-header {
+  width: 150px;
+  height: 14px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+
+/* Smooth transition between skeleton and real content */
+#summary_stats_container {
+  min-height: 140px; /* Prevent layout jump */
+  transition: opacity 0.3s ease-in-out;
+}
+
+/* Initial prompt before first Refresh */
+.initial-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  color: #888;
+  font-size: 16px;
+  border: 2px dashed #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+  margin: 10px 0;
+}
+.initial-prompt i {
+  margin-right: 10px;
+  font-size: 20px;
+  color: #aaa;
+}
+
+/* Loading state visual feedback */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  color: #666;
+  font-size: 14px;
+  margin-bottom: 15px;
+}
+.loading-indicator i {
+  margin-right: 8px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.stat-box-clickable[data-facility].active::after {
+  content: 'Click to hide details';
+}
+/* FOS stat box hints */
+.stat-box-clickable[data-fos]::after {
+  content: 'FOS Area';
+}
+.stat-box-clickable[data-fos].active::after {
+  content: 'Selected';
+}
+@media (min-width: 1200px) {
+  .category-section {
+    flex: 0 1 48%;
+  }
+}
+@media (min-width: 1600px) {
+  .category-section {
+    flex: 0 1 24%;
+  }
+}
+.chart-title {
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: #333;
+  border-bottom: 2px solid #007bff;
+  padding-bottom: 5px;
+}
+.summary-box {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+.summary-box h4 {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+.summary-box .stat-value {
+  font-size: 36px;
+  font-weight: bold;
+  margin: 5px 0;
+}
+.summary-box .stat-label {
+  font-size: 14px;
+  opacity: 0.85;
+  margin: 0;
+}
+.page-header {
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  color: white;
+  padding: 20px 30px;
+  margin: -15px -15px 20px -15px;
+  border-radius: 0;
+}
+.page-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+}
+.page-header .subtitle {
+  opacity: 0.8;
+  font-size: 14px;
+  margin-top: 5px;
+}
+.controls-panel {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.last-updated {
+  text-align: right;
+  color: #666;
+  font-size: 12px;
+  font-style: italic;
+}
+.historical-section {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 3px solid #eee;
+}
+.historical-section h3 {
+  color: #1e3c72;
+  margin-bottom: 20px;
+}
+.chart-toggle-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  background: #f8f9fa;
+  color: #333;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.chart-toggle-btn:hover {
+  background: #e9ecef;
+  border-color: #999;
+}
+.chart-toggle-btn.active {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}

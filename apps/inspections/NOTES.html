@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Site Inspection Analytics - Technical Notes</title>
+    <title>Inspections App – Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,302 +122,216 @@
 </head>
 <body>
     <div class="container">
-<h1>Site Inspection Analytics - Technical Notes</h1>
+<h1>Inspections App – Technical Notes</h1>
 
-<h2>Overview</h2>
-<p>This Shiny app provides comprehensive analytics for mosquito breeding site inspections across MMCD operations. It includes site coverage gap analysis, wet site frequency tracking, and larvae threshold monitoring to optimize field operations and surveillance effectiveness.</p>
+<h2>Database Tables &amp; Entities</h2>
 
-<p><strong>Key Features</strong>:</p>
-<ul>
-<li><strong>Site Analytics</strong>: Total sites, wet frequency analysis, and summary statistics</li>
-<li><strong>Larvae Threshold Analysis</strong>: Sites exceeding larvae counts with frequency tracking</li>
-<li><strong>Coverage Gaps</strong>: Sites with inspection gaps or never inspected</li>
-<li><strong>Unified Filtering</strong>: Consistent filter system across all analytics tabs</li>
-</ul>
+<p>| Table | Key Columns Used |</p>
+<p>|---|---|</p>
+<p>| <code>loc<em>breeding</em>sites</code> | <code>sitecode</code>, <code>enddate</code>, <code>air_gnd</code>, <code>priority</code>, <code>drone</code>, <code>acres</code>, <code>prehatch</code> |</p>
+<p>| <code>gis_sectcode</code> | <code>sectcode</code>, <code>facility</code>, <code>fosarea</code>, <code>zone</code> |</p>
+<p>| <code>dblarv<em>insptrt</em>current</code> | <code>sitecode</code>, <code>inspdate</code>, <code>action</code>, <code>numdip</code>, <code>wet</code>, <code>sampnum_yr</code> |</p>
+<p>| <code>dblarv<em>insptrt</em>archive</code> | Same columns as current |</p>
+<p>| <code>dblarv<em>sample</em>current</code> | <code>sampnum_yr</code>, <code>redblue</code> |</p>
+<p>| <code>dblarv<em>sample</em>archive</code> | <code>sampnum_yr</code>, <code>redblue</code> |</p>
 
-<h2>Data Sources</h2>
+<hr>
 
-<h3>Tables Used in Queries</h3>
+<h2>SQL Queries</h2>
 
-<h4>1. <code>loc<em>breeding</em>sites</code> - Site Registry</h4>
-<p><strong>Entities Retrieved:</strong></p>
-<ul>
-<li><code>sitecode</code> - Unique site identifier  </li>
-<li><code>air_gnd</code> - Site type ('A'=Air, 'G'=Ground)</li>
-<li><code>priority</code> - Site priority (RED, YELLOW, GREEN, BLUE)</li>
-<li><code>enddate</code> - Site termination date (NULL for active sites)</li>
-<li><code>drone</code> - Drone site designation ('Y' for drone sites)</li>
-</ul>
+<h3>1. Overview Registry Fast Path — Prehatch Ground Sites</h3>
 
-<p><strong>Usage:</strong> Primary site information, filtered by <code>enddate IS NULL</code> for active sites only</p>
+<pre><code class="sql">
+SELECT b.sitecode, sc.facility, sc.fosarea, sc.zone
+FROM loc_breeding_sites b
+INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+WHERE (b.enddate IS NULL OR b.enddate &gt; '%s'::date)
+  AND b.air_gnd = 'G'
+  AND b.prehatch IS NOT NULL
+</code></pre>
 
-<h4>2. <code>gis_sectcode</code> - Geographic/Administrative Data (AUTHORITATIVE SOURCE)</h4>
-<p><strong>Entities Retrieved:</strong></p>
-<ul>
-<li><code>sectcode</code> - 7-character section code (joins to left 7 chars of sitecode)</li>
-<li><code>facility</code> - Facility name (Sr, Nr, Er, Wr, etc.)</li>
-<li><code>fosarea</code> - FOS area code (4-digit formatted emp_num like "0203", "1904")  </li>
-<li><code>zone</code> - Zone designation ('1' for P1, '2' for P2)</li>
-</ul>
+<h3>2. Overview Registry Fast Path — Latest Red Bug Sample (current)</h3>
 
-<p><strong>Usage:</strong> Authoritative source for all facility/fosarea/zone data used in filtering</p>
+<pre><code class="sql">
+SELECT i.sitecode, MAX(i.inspdate) AS last_insp
+FROM dblarv_insptrt_current i
+INNER JOIN dblarv_sample_current s ON i.sampnum_yr = s.sampnum_yr
+WHERE i.inspdate IS NOT NULL
+  AND i.sampnum_yr IS NOT NULL
+  AND s.redblue = 'R'
+GROUP BY i.sitecode
+</code></pre>
 
-<h4>3. <code>dblarv<em>insptrt</em>current</code> - Current Inspection Records</h4>
-<p><strong>Entities Retrieved:</strong></p>
-<ul>
-<li><code>sitecode</code> - Site identifier (joins to loc<em>breeding</em>sites)</li>
-<li><code>inspdate</code> - Inspection date</li>
-<li><code>action</code> - Action code ('1','2','3','4', etc.)</li>
-<li><code>numdip</code> - Larvae dip count (numeric)</li>
-<li><code>wet</code> - Wet condition ('0'=dry, '1'-'9'=wet levels, 'A'=flooded)</li>
-</ul>
+<h3>3. Overview Registry Fast Path — Latest Red Bug Sample (archive, chunked)</h3>
 
-<p><strong>Usage:</strong> Recent inspection data with action filtering: <code>(action IN ('1','2','4') OR (action = '3' AND wet = '0'))</code></p>
+<pre><code class="sql">
+SELECT i.sitecode, MAX(i.inspdate) AS archive_insp
+FROM dblarv_insptrt_archive i
+INNER JOIN dblarv_sample_archive s ON i.sampnum_yr = s.sampnum_yr
+WHERE i.sitecode IN (%s)
+  AND i.inspdate IS NOT NULL
+  AND i.sampnum_yr IS NOT NULL
+  AND i.inspdate &gt;= '%s'::date - interval '5 years'
+  AND s.redblue = 'R'
+GROUP BY i.sitecode
+</code></pre>
 
-<h4>4. <code>dblarv<em>insptrt</em>archive</code> - Historical Inspection Records  </h4>
-<p><strong>Entities Retrieved:</strong></p>
-<ul>
-<li>Same fields as <code>dblarv<em>insptrt</em>current</code></li>
-<li>Historical inspection records from previous years</li>
-</ul>
+<blockquote>Archive queries are chunked in batches of 5000 sitecodes via IN-clause.</blockquote>
 
-<p><strong>Usage:</strong> Combined with current table via UNION ALL for complete inspection history</p>
-
-<h4>5. <code>employee_list</code> - FOS Personnel Data</h4>
-<p><strong>Entities Retrieved:</strong></p>
-<ul>
-<li><code>emp<em>num</code> - Employee number (maps to gis</em>sectcode.fosarea when formatted as 4-digit)</li>
-<li><code>shortname</code> - Foreman short name (e.g., "Andrew M.", "Sarah K.")</li>
-<li><code>facility</code> - Facility assignment</li>
-<li><code>emp_type</code> - Employee type (filtered to 'FieldSuper')</li>
-<li><code>active</code> - Active status (filtered to true)</li>
-</ul>
-
-<p><strong>Usage:</strong> Maps UI foreman choices to fosarea codes for filtering: <code>sprintf("%04d", emp_num)</code></p>
-
-
-<h3>Site Type Filtering</h3>
-<ul>
-<li><strong>Air Sites</strong>: <code>air_gnd = 'A'</code> - Aerial treatment sites</li>
-<li><strong>Ground Sites</strong>: <code>air_gnd = 'G'</code> - Ground-accessible treatment sites</li>
-<li><strong>Both</strong>: No air_gnd filtering applied</li>
-</ul>
-
-<h3>Inspection Action Codes (BASED ON ACTUAL FILTERING LOGIC)</h3>
-<p><strong>Note:</strong> Specific action descriptions not documented - filter logic based on inspection requirements:</p>
-<ul>
-<li><strong>Action '1'</strong>: Always included as valid inspection</li>
-<li><strong>Action '2'</strong>: Always included as valid inspection  </li>
-<li><strong>Action '3'</strong>: Only included when <code>wet = '0'</code> (dry site inspection)</li>
-<li><strong>Action '4'</strong>: Always included as valid inspection</li>
-<li><strong>Filter Logic:</strong> <code>(action IN ('1','2','4') OR (action = '3' AND wet = '0'))</code></li>
-</ul>
-
-<h3>Wet Field Logic </h3>
-<p>The <code>wet</code> field uses numeric values, not Y/N:</p>
-<ul>
-<li><strong>'0'</strong>: Dry site (no standing water)</li>
-<li><strong>'1'-'9'</strong>: Various levels of wet conditions (1=minimal, 9=very wet)</li>
-<li><strong>'A'</strong>: Flooded site (equivalent to &gt;100% wet, maximum wet condition)</li>
-<li><strong>Analysis</strong>: Any wet value &gt; 0 or = 'A' counts as "wet" for frequency calculations</li>
-</ul>
-
-<h3>Priority System</h3>
-<ul>
-<li><strong>RED</strong>: Highest priority sites requiring frequent inspection</li>
-<li><strong>YELLOW</strong>: Medium priority sites  </li>
-<li><strong>GREEN</strong>: Lower priority sites</li>
-<li><strong>BLUE</strong>: Routine monitoring sites</li>
-<li><strong>NULL</strong>: Sites without assigned priority</li>
-</ul>
-
-<h3>Drone Site Classification</h3>
-<ul>
-<li><strong>Drone Sites</strong>: Identified by <code>drone = 'Y'</code> in <code>loc<em>breeding</em>sites</code> table</li>
-<li><strong>Non-Drone Sites</strong>: Sites where <code>drone IS NULL OR drone != 'Y'</code></li>
-<li><strong>Filter Options</strong>:</li>
-<ul>
-<li><strong>All Sites</strong>: No drone filtering (default)</li>
-<li><strong>Drone Sites Only</strong>: Show only <code>drone = 'Y'</code> sites</li>
-<li><strong>Non-Drone Sites Only</strong>: Show only non-drone sites</li>
-</ul>
-</ul>
-
-<h2>App Architecture </h2>
-
-<h3>Multi-Tab Dashboard</h3>
-<p>The app now features three main analytics tabs:</p>
-
-<h4>1. Site Analytics Tab</h4>
-<ul>
-<li><strong>Total Sites Count</strong>: Active sites matching filters</li>
-<li><strong>Wet Frequency Analysis</strong>: How often sites are found wet (wet &gt; 0 or wet = 'A')</li>
-<li><strong>Summary Statistics</strong>: Comprehensive site metrics</li>
-<li><strong>Shared Filtering</strong>: Uses unified years_back filter</li>
-</ul>
-
-<h4>2. Larvae Threshold Tab  </h4>
-<ul>
-<li><strong>High Larvae Sites</strong>: Sites exceeding larvae threshold with frequency analysis</li>
-<li><strong>Frequency Metrics</strong>: How often sites exceed thresholds (not just maximum counts)</li>
-<li><strong>Threshold Configuration</strong>: Adjustable larvae count threshold</li>
-<li><strong>Exceedance Tracking</strong>: Total inspections, exceedances, and frequency percentages</li>
-</ul>
-
-<h4>3. Coverage Gaps Tab</h4>
-<ul>
-<li><strong>Inspection Gaps</strong>: Sites with inspection coverage gaps</li>
-<li><strong>Never Inspected</strong>: Sites without any inspection records</li>
-<li><strong>Gap Threshold</strong>: Configurable years since last inspection</li>
-</ul>
-
-<h2>Data Processing Pipeline</h2>
-
-<h3>Comprehensive Data Function</h3>
-<p><strong>Function</strong>: <code>get<em>comprehensive</em>inspection<em>data()</code> in <code>data</em>functions.R</code></p>
-<p><strong>Purpose</strong>: Single source for all inspection data with proper filtering</p>
+<h3>4. Main Comprehensive Query (normal app mode)</h3>
 
 <pre><code class="sql">
 WITH filtered_sites AS (
-  SELECT 
-    b.sitecode,
-    sc.facility,
-    sc.fosarea, 
-    sc.zone,
-    b.air_gnd,
-    b.priority,
-    b.drone
+  SELECT
+    b.sitecode, sc.facility, sc.fosarea, sc.zone,
+    b.air_gnd, b.priority, b.drone, b.acres, b.prehatch
   FROM loc_breeding_sites b
   INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-  WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)
-  [additional_site_filters]
+  WHERE (b.enddate IS NULL OR b.enddate &gt; '%s'::date)
+    %s  -- dynamic filter clause
 ),
-all_inspections AS (
-  SELECT 
-    fs.*,
-    i.inspdate,
-    i.action,
-    i.numdip,
-    i.wet
-  FROM filtered_sites fs
-  LEFT JOIN (
-    SELECT sitecode, inspdate, action, numdip, wet
-    FROM dblarv_insptrt_current
-    WHERE (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
+site_years AS (
+  SELECT
+    sitecode,
+    array_to_string(
+      array_agg(DISTINCT EXTRACT(year FROM inspdate)::text
+                ORDER BY EXTRACT(year FROM inspdate)::text), ', '
+    ) as years_with_data
+  FROM (
+    SELECT sitecode, inspdate FROM dblarv_insptrt_current WHERE inspdate IS NOT NULL
     UNION ALL
-    SELECT sitecode, inspdate, action, numdip, wet
-    FROM dblarv_insptrt_archive
-    WHERE (action IN ('1','2','4') OR (action = '3' AND wet = '0'))
-  ) i ON fs.sitecode = i.sitecode
+    SELECT sitecode, inspdate FROM dblarv_insptrt_archive WHERE inspdate IS NOT NULL
+  ) all_inspections
+  GROUP BY sitecode
 )
-SELECT * FROM all_inspections
-ORDER BY sitecode, inspdate DESC
+SELECT
+  fs.sitecode, fs.facility, fs.fosarea, fs.zone,
+  fs.air_gnd, fs.priority, fs.drone, fs.acres, fs.prehatch,
+  COALESCE(sy.years_with_data, 'No data') as years_with_data,
+  i.inspdate, i.action, i.numdip, i.wet
+FROM filtered_sites fs
+LEFT JOIN site_years sy ON fs.sitecode = sy.sitecode
+LEFT JOIN (
+  SELECT sitecode, inspdate, action, numdip, wet FROM dblarv_insptrt_current
+  UNION ALL
+  SELECT sitecode, inspdate, action, numdip, wet FROM dblarv_insptrt_archive
+) i ON fs.sitecode = i.sitecode
+ORDER BY fs.sitecode, i.inspdate DESC
 </code></pre>
 
-<h3>Analytics Functions </h3>
+<h3>5. Site Choices Helper</h3>
 
-<h4>Wet Frequency Analysis</h4>
-<p><strong>Function</strong>: <code>get<em>wet</em>frequency<em>from</em>data()</code></p>
-<p><strong>Logic</strong>: </p>
-<ul>
-<li>Filters data by years_back parameter</li>
-<li>Counts total inspections per site</li>
-<li>Counts "wet" inspections (wet &gt; 0 or wet = 'A')</li>
-<li>Calculates wet frequency percentage</li>
-<li>Applies minimum inspection threshold</li>
+<pre><code class="sql">
+SELECT DISTINCT facility, fosarea, zone
+FROM gis_sectcode
+ORDER BY facility, fosarea, zone
+</code></pre>
+
+<hr>
+
+<h2>R-Side Logic</h2>
+
+<h3>Two Execution Paths in <code>load<em>raw</em>data()</code></h3>
+
+<ol>
+<li><strong>Overview registry fast path</strong> (<code>status<em>types = character(0)</code>): Three separate queries for prehatch ground sites + red bug detection from <code>dblarv</em>sample<em>current/archive</code> (<code>redblue = 'R'</code>). Archive chunked in 5000-sitecode batches. Returns <code>list(sites, treatments, pre</em>aggregated = TRUE)</code>.</li>
 </ul>
 
-<h4>High Larvae Analysis  </h4>
-<p><strong>Function</strong>: <code>get<em>high</em>larvae<em>sites</em>from_data()</code></p>
-<p><strong>Logic</strong>:</p>
-<ul>
-<li>Filters to sites with numdip data within years_back timeframe</li>
-<li>Groups by site characteristics</li>
-<li>Calculates frequency metrics:</li>
-<ul>
-<li><code>total_inspections</code>: Count of all inspections</li>
-<li><code>threshold_exceedances</code>: Count of inspections &gt;= threshold</li>
-<li><code>exceedance_frequency</code>: Percentage of inspections exceeding threshold</li>
-<li><code>max<em>numdip</code>, <code>avg</em>numdip</code>: Larvae count statistics</li>
-<li><code>first<em>high</em>date</code>, <code>last<em>high</em>date</code>: Date tracking</li>
-</ul>
+<ol>
+<li><strong>Normal app path</strong>: Single CTE query joining sites → inspections (current UNION ALL archive) with a <code>site_years</code> CTE aggregating distinct inspection years per site.</li>
 </ul>
 
-<h4>Summary Statistics</h4>
-<p><strong>Function</strong>: <code>get<em>summary</em>stats<em>from</em>data()</code></p>
-<p><strong>Metrics</strong>:</p>
+<h3>Filter Building</h3>
+
 <ul>
-<li>Total active sites</li>
-<li>Sites with inspections vs. never inspected</li>
-<li>Inspection frequency distributions</li>
-<li>Wet site statistics</li>
-<li>Priority breakdown</li>
+<li>Uses <code>build<em>sql</em>in_list()</code> for facility, zone, priority</li>
+<li>FOS area filter maps <code>shortname</code> → <code>emp<em>num</code> via <code>get</em>foremen_lookup()</code>, zero-pads to 4 digits</li>
+<li>Drone filter: <code>"drone<em>only"</code> → <code>b.drone = 'Y'</code>; <code>"no</em>drone"</code> → <code>(b.drone IS NULL OR b.drone != 'Y')</code></li>
+</ul>
+
+<h3>Spring Filtering (R-side, post-query)</h3>
+
+<p>Uses <code>get<em>spring</em>date<em>thresholds()</code> for per-year cutoff dates. <code>is</em>spring<em>inspection()</code> checks <code>inspdate &gt;= Jan 1</code> AND <code>inspdate &lt; spring</em>cutoff</code>. Recalculates <code>years<em>with</em>data</code> for spring-only records. Preserves all sites even without spring inspections.</p>
+
+<h3>Prehatch Filtering (R-side)</h3>
+
+<p><code>filter(!is.na(prehatch))</code> — applied post-query.</p>
+
+<h3>Action Filter Rule</h3>
+
+<p>Used in inspection gaps, larvae threshold, and summary stats:</p>
+<pre><code class="r">
+action %in% c('1','2','4') | (action == '3' &amp; wet == '0')
+</code></pre>
+<p>Includes inspections with actions 1/2/4 unconditionally, and action 3 only when <code>wet == '0'</code> (dry).</p>
+
+<h3>Inspection Gaps Analysis (<code>get<em>inspection</em>gaps<em>from</em>data()</code>)</h3>
+
+<ul>
+<li>Applies action filter, groups by site, takes most recent <code>inspdate</code></li>
+<li>No matching record → "Never Inspected" (date = <code>1900-01-01</code>, days = 999999)</li>
+<li>Last inspection before <code>ref<em>date - years</em>gap</code> → "Inspection Gap"</li>
+</ul>
+
+<h3>Wet Frequency Analysis (<code>get<em>wet</em>frequency<em>from</em>data()</code>)</h3>
+
+<ul>
+<li><strong>No action filtering</strong> — uses all records with <code>!is.na(wet)</code> and within cutoff date</li>
+<li>Wet = any of <code>'1'-'9'</code> or <code>'A'</code>; <code>'A'</code> = flooded</li>
+<li>Calculates <code>wet<em>percentage</code> and <code>flooded</em>percentage</code> per site</li>
+<li>Filters to <code>total<em>inspections &gt;= min</em>inspections</code></li>
+</ul>
+
+<h3>High Larvae Analysis (<code>get<em>high</em>larvae<em>sites</em>from_data()</code>)</h3>
+
+<ul>
+<li>Applies action filter, filters to <code>inspdate &gt;= cutoff_date</code> and <code>!is.na(numdip)</code></li>
+<li>Per-site: <code>total<em>inspections</code>, <code>threshold</em>exceedances</code> (count of <code>numdip &gt;= threshold</code>), <code>max<em>dip</em>count</code>, <code>avg<em>dip</em>count</code>, <code>exceedance_frequency</code> (percentage)</li>
+<li>Sorted by exceedance frequency descending</li>
+</ul>
+
+<h3>Facility Gap Analysis (<code>get<em>facility</em>gap_analysis()</code>)</h3>
+
+<p>Joins total sites (distinct sitecodes by facility + fosarea) with gap sites, calculates gap vs. recently-inspected percentages.</p>
+
+<h3>Display: Conditional DT Styling</h3>
+
+<ul>
+<li><strong>Inspection Gaps table</strong>: <code>Days Since</code> colored by interval (green &lt; 365d &lt; yellow &lt; 730d &lt; orange &lt; 1095d &lt; red). Never Inspected rows → pink background.</li>
+<li><strong>Wet Frequency table</strong>: <code>wet<em>percentage</code> → 7-tier blue gradient (10/20/40/60/80/95%). <code>flooded</em>percentage</code> → 7-tier green gradient (5/10/20/40/60/80%).</li>
+<li><strong>High Larvae table</strong>: <code>exceedance<em>frequency</code> → 7-tier purple-to-red gradient (5/10/25/50/75/90%). <code>avg</em>dip_count</code> → 6-tier blue-to-orange gradient (1/3/6/12/25).</li>
 </ul>
 
 <hr>
 
-<h2>SQL Queries Reference </h2>
+<h2>Shapefiles</h2>
 
-<h3>1. Comprehensive Inspection Data Query </h3>
-<p><strong>Function</strong>: <code>get<em>comprehensive</em>inspection<em>data()</code> in <code>data</em>functions.R</code>  </p>
-<p><strong>Purpose</strong>: Single source for all inspection analytics</p>
+<p><strong>None.</strong> No <code>.shp</code>, <code>.gpkg</code>, or PostGIS geometry used in this app.</p>
 
-<p>[SQL structure shown above in Data Processing Pipeline]</p>
-
-<h3>2. High Larvae Sites Analysis </h3>
-<p><strong>Function</strong>: <code>get<em>high</em>larvae<em>sites</em>from_data()</code> </p>
-<p><strong>Purpose</strong>: Sites exceeding larvae thresholds with frequency analysis</p>
-
-<pre><code class="sql">
-filtered_data %&gt;%
-  filter(!is.na(numdip), 
-         !is.na(inspdate),
-         inspdate &gt;= cutoff_date) %&gt;%
-  group_by(sitecode, facility, fosarea, zone, air_gnd, priority) %&gt;%
-  summarise(
-    total_inspections = n(),
-    threshold_exceedances = sum(numdip &gt;= threshold, na.rm = TRUE),
-    max_numdip = max(numdip, na.rm = TRUE),
-    avg_numdip = round(mean(numdip, na.rm = TRUE), 1),
-    last_high_date = max(inspdate[numdip &gt;= threshold], na.rm = TRUE),
-    first_high_date = min(inspdate[numdip &gt;= threshold], na.rm = TRUE),
-    .groups = 'drop'
-  ) %&gt;%
-  filter(threshold_exceedances &gt; 0) %&gt;%
-  mutate(
-    exceedance_frequency = round(100.0 * threshold_exceedances / total_inspections, 1)
-  )
-</code></pre>
-
-<h3>3. Wet Frequency Analysis </h3>
-<p><strong>Function</strong>: <code>get<em>wet</em>frequency<em>from</em>data()</code></p>
-<p><strong>Purpose</strong>: Track how often sites have standing water</p>
-
-<pre><code class="sql">
-# R/dplyr equivalent of wet frequency calculation
-filtered_data %&gt;%
-  filter(!is.na(inspdate), inspdate &gt;= cutoff_date) %&gt;%
-  mutate(
-    is_wet = case_when(
-      wet == "A" ~ TRUE,           # A = flooded (&gt;100%)
-      wet == "0" ~ FALSE,          # 0 = dry
-      as.numeric(wet) &gt; 0 ~ TRUE,  # 1-9 = various wet levels
-      TRUE ~ FALSE
-    )
-  ) %&gt;%
-  group_by(sitecode, facility, fosarea, zone, air_gnd, priority) %&gt;%
-  summarise(
-    total_inspections = n(),
-    wet_inspections = sum(is_wet, na.rm = TRUE),
-    .groups = 'drop'
-  ) %&gt;%
-  filter(total_inspections &gt;= min_inspections) %&gt;%
-  mutate(
-    wet_frequency = round(100.0 * wet_inspections / total_inspections, 1)
-  )
-</code></pre>
 <hr>
 
+<h2>Shared Functions Used</h2>
+
+<p>| Function | Source File |</p>
+<p>|---|---|</p>
+<p>| <code>get<em>db</em>connection()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>is<em>valid</em>filter()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>build<em>sql</em>in<em>list()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>foremen</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foreman</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>priority</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>spring</em>date<em>thresholds()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>make<em>sitecode</em>link()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>set<em>app</em>name()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>export<em>csv</em>safe()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>map<em>facility</em>names()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>create<em>distribution</em>chart()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>cached<em>load</em>raw<em>data()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>create<em>stat</em>box()</code> | <code>shared/stat<em>box</em>helpers.R</code> |</p>
+<p>| <code>get<em>status</em>colors()</code> | <code>shared/color_themes.R</code> |</p>
     </div>
 </body>
 </html>

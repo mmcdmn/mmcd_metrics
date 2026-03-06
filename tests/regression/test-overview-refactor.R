@@ -536,9 +536,9 @@ test_that("create_overview_chart registers plotly click when clickable", {
   content <- readLines(display_file, warn = FALSE)
   content_text <- paste(content, collapse = "\n")
   
-  # Must set plotly source for click events
+  # Must set plotly source for click events (native plot_ly uses source= arg)
   expect_true(
-    grepl("plotly_args\\$source <- metric_type", content_text),
+    grepl("source = if \\(clickable\\) metric_type", content_text),
     info = "create_overview_chart must set plotly source for click events"
   )
   
@@ -550,7 +550,7 @@ test_that("create_overview_chart registers plotly click when clickable", {
   
   # Bars must have key aesthetic for click identification
   expect_true(
-    grepl("key = as\\.character\\(display_name\\)", content_text),
+    grepl("key = ~as\\.character\\(display_name\\)", content_text),
     info = "Bars must have key = as.character(display_name) for click identification"
   )
 })

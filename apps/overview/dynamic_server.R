@@ -2094,9 +2094,11 @@ build_overview_server <- function(input, output, session,
     message("[RENDER-UI] About to call generate_summary_stats")
     
     # Generate value boxes
+    render_start <- proc.time()
     result <- tryCatch({
       stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, NULL, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
-      message("[RENDER-UI] generate_summary_stats SUCCESS")
+      render_elapsed <- (proc.time() - render_start)[["elapsed"]]
+      message(sprintf("[RENDER-UI] generate_summary_stats SUCCESS (%.2fs)", render_elapsed))
       stats
     }, error = function(e) {
       message("[RENDER-UI] generate_summary_stats ERROR: ", e$message)

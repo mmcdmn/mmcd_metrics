@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Section Cards - Technical Notes</title>
+    <title>Section Cards App – Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,150 +122,298 @@
 </head>
 <body>
     <div class="container">
-<h1>Section Cards - Technical Notes</h1>
+<h1>Section Cards App – Technical Notes</h1>
 
-<h2>Overview</h2>
-<p>This app generates printable field cards for:</p>
-<ol>
-<li><strong>Air/Ground Sites</strong> (breeding sites)</li>
-<li><strong>Structures</strong></li>
-</ul>
+<h2>Database Tables &amp; Entities</h2>
 
-<p>Air/Ground mode supports two data sources:</p>
-<ul>
-<li><strong>QGIS method (default):</strong> <code>public.loc<em>breeding</em>site<em>cards</em>sjsreast2</code></li>
-<li><strong>Webster method:</strong> <code>public.loc<em>breeding</em>sites</code> + <code>public.gis_sectcode</code></li>
-</ul>
+<p>| Table | Key Columns Used |</p>
+<p>|---|---|</p>
+<p>| <code>loc<em>breeding</em>site<em>cards</em>sjsreast2</code> | <code>sitecode</code>, <code>priority</code>, <code>acres</code>, <code>type</code>, <code>air<em>gnd</code>, <code>culex</code>, <code>spr</em>aedes</code>, <code>coq_pert</code> (→ <code>perturbans</code>), <code>prehatch</code>, <code>remarks</code>, <code>drone</code>, <code>sample</code>, <code>facility</code>, <code>zone</code>, <code>foreman</code> (→ <code>fosarea</code>), <code>ra</code>, plus all dynamic columns discovered at runtime |</p>
+<p>| <code>loc<em>breeding</em>sites</code> | <code>sitecode</code>, <code>priority</code>, <code>acres</code>, <code>type</code>, <code>air<em>gnd</code>, <code>culex</code>, <code>spr</em>aedes</code>, <code>coq_pert</code> (→ <code>perturbans</code>), <code>prehatch</code>, <code>remarks</code>, <code>drone</code>, <code>sample</code>, <code>enddate</code> |</p>
+<p>| <code>loc<em>cxstruct</code> | <code>sitecode</code>, <code>s</em>type</code>, <code>status_udw</code>, <code>sqft</code>, <code>priority</code>, <code>culex</code>, <code>chambers</code>, <code>comments</code> (→ <code>remarks</code>), <code>enddate</code> |</p>
+<p>| <code>gis_sectcode</code> | <code>sectcode</code>, <code>facility</code>, <code>zone</code>, <code>fosarea</code> |</p>
+<p>| <code>information<em>schema.columns</code> | <code>column</em>name</code>, <code>table<em>schema</code>, <code>table</em>name</code>, <code>ordinal_position</code> |</p>
 
-<p>UI toggle (Air/Ground only): <strong>Use Webster data (no custom columns)</strong></p>
+<hr>
 
-<h2>Data Sources</h2>
+<h2>SQL Queries</h2>
 
-<h3>Core Database Tables</h3>
-<ul>
-<li><strong><code>public.loc<em>breeding</em>site<em>cards</em>sjsreast2</code></strong></li>
-<ul>
-<li>Includes app-facing values for <code>facility</code>, <code>zone</code>, <code>foreman</code></li>
-<li>Supports dynamic extra columns (<code>[DB] ...</code> options)</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>public.loc<em>breeding</em>sites</code></strong></li>
-<ul>
-<li>Webster Air/Ground source when toggle is ON</li>
-<li>Core breeding-site fields only</li>
-<li>Requires section join to resolve geography/assignment fields</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>public.gis_sectcode</code></strong></li>
-<ul>
-<li>Provides <code>sectcode</code>, <code>facility</code>, <code>zone</code>, <code>fosarea</code></li>
-<li>Used by Webster Air/Ground mode and Structures mode</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>public.loc_cxstruct</code></strong></li>
-<ul>
-<li>Structures source</li>
-</ul>
-</ul>
-
-<h2>Table Comparison (QGIS vs Webster)</h2>
-
-<h3>Where Facility and Foreman/FOS filters come from</h3>
-
-<h4>QGIS method (<code>loc<em>breeding</em>site<em>cards</em>sjsreast2</code>)</h4>
-<ul>
-<li><strong>Facility filter source:</strong> <code>loc<em>breeding</em>site<em>cards</em>sjsreast2.facility</code></li>
-<li><strong>Foreman/FOS filter source:</strong> <code>loc<em>breeding</em>site<em>cards</em>sjsreast2.foreman</code></li>
-<li>App-level mapping: <code>fosarea = foreman</code></li>
-</ul>
-
-<h4>Webster method (<code>loc<em>breeding</em>sites</code> + <code>gis_sectcode</code>)</h4>
-<ul>
-<li><strong>Facility filter source:</strong> <code>gis_sectcode.facility</code></li>
-<li><strong>Foreman/FOS filter source:</strong> <code>gis_sectcode.fosarea</code></li>
-<li><strong>Not sourced from:</strong> <code>loc<em>breeding</em>sites.foreman</code></li>
-</ul>
-
-<h3>Other differences</h3>
-<ul>
-<li><strong>Section</strong></li>
-<ul>
-<li>QGIS: <code>left(sitecode, 7)</code></li>
-<li>Webster: <code>gis_sectcode.sectcode</code></li>
-</ul>
-<li><strong>Zone</strong></li>
-<ul>
-<li>QGIS: <code>loc<em>breeding</em>site<em>cards</em>sjsreast2.zone</code></li>
-<li>Webster: <code>gis_sectcode.zone</code></li>
-</ul>
-</ul>
-
-
-<h2>Data Collection Strategy</h2>
-
-<h3>QGIS method pattern</h3>
-<p>Single-table read from <code>public.loc<em>breeding</em>site<em>cards</em>sjsreast2</code>.</p>
-
-<h3>Webster method pattern</h3>
-<p>Join-based read:</p>
-<pre><code class="sql">
-FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
-WHERE b.enddate IS NULL
-</code></pre>
-
-<h2>App Flow</h2>
-
-<h3>Filter cascade (Air/Ground)</h3>
-<ol>
-<li>Facility</li>
-<li>FOS Area</li>
-<li>Town Code</li>
-<li>Section</li>
-</ul>
-
-
-
-<h2>Key Files</h2>
-<ul>
-<li><code>app.R</code> - mode switching, filter cascade, card generation/download</li>
-<li><code>data_functions.R</code> - query helpers for current/Webster/structures</li>
-<li><code>display_functions.R</code> - card HTML/CSS rendering</li>
-<li><code>ui_helper.R</code> - filter and configuration controls</li>
-</ul>
-
-<h2>SQL Reference</h2>
-<p>used in <code>get<em>webster</em>breeding_sites()</code>:</p>
+<h3>1. Dynamic Column Discovery</h3>
 
 <pre><code class="sql">
-SELECT
-  b.sitecode,
-  b.priority,
-  b.acres,
-  b.type,
-  b.air_gnd,
-  b.culex,
-  b.spr_aedes,
-  b.coq_pert as perturbans,
-  b.prehatch,
-  b.remarks,
-  b.drone,
-  b.sample,
-  g.facility as facility,
-  g.zone,
-  g.fosarea,
-  g.sectcode as section
-FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)
-WHERE b.enddate IS NULL
-ORDER BY b.sitecode
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'loc_breeding_site_cards_sjsreast2'
+ORDER BY ordinal_position
+# Section Cards App – Technical Notes
+
+## Database Tables &amp; Entities
+
+| Table | Key Columns Used |
+|---|---|
+| `loc_breeding_site_cards_sjsreast2` | `sitecode`, `priority`, `acres`, `type`, `air_gnd`, `culex`, `spr_aedes`, `coq_pert` (→ `perturbans`), `prehatch`, `remarks`, `drone`, `sample`, `facility`, `zone`, `foreman` (→ `fosarea`), `ra`, plus all dynamic columns discovered at runtime |
+| `loc_breeding_sites` | `sitecode`, `priority`, `acres`, `type`, `air_gnd`, `culex`, `spr_aedes`, `coq_pert` (→ `perturbans`), `prehatch`, `remarks`, `drone`, `sample`, `enddate` |
+| `loc_cxstruct` | `sitecode`, `s_type`, `status_udw`, `sqft`, `priority`, `culex`, `chambers`, `comments` (→ `remarks`), `enddate` |
+| `gis_sectcode` | `sectcode`, `facility`, `zone`, `fosarea` |
+| `information_schema.columns` | `column_name`, `table_schema`, `table_name`, `ordinal_position` |
+
+---
+
+## SQL Queries
+
+### 1. Dynamic Column Discovery
+
 </code></pre>
+<p>SELECT column_name</p>
+<p>FROM information_schema.columns</p>
+<p>WHERE table_schema = 'public'</p>
+<p>    AND table<em>name = 'loc</em>breeding<em>site</em>cards_sjsreast2'</p>
+<p>ORDER BY ordinal_position</p>
+<pre><code class="">
+
+### 2. Dynamic Columns With Data Check
+
+</code></pre>
+<p>SELECT CASE WHEN COUNT(NULLIF({col}::text, '')) &gt; 0 THEN 1 ELSE 0 END AS {col}, ...</p>
+<p>FROM public."loc<em>breeding</em>site<em>cards</em>sjsreast2"</p>
+<p>[WHERE facility = '{facility<em>filter}' AND foreman = '{fosarea</em>filter}']</p>
+<pre><code class="">
+
+### 3. Custom Table Filter Options
+
+</code></pre>
+<p>SELECT DISTINCT</p>
+<p>    facility,</p>
+<p>    left(sitecode, 7) as section,</p>
+<p>    foreman as fosarea</p>
+<p>FROM public."loc<em>breeding</em>site<em>cards</em>sjsreast2"</p>
+<p>WHERE facility IS NOT NULL AND sitecode IS NOT NULL AND foreman IS NOT NULL</p>
+<p>    [AND facility = '{facility_filter}']</p>
+<p>    [AND foreman = '{fosarea_filter}']</p>
+<p>ORDER BY facility, left(sitecode, 7), foreman</p>
+<pre><code class="">
+
+### 4. Custom Town Codes
+
+</code></pre>
+<p>SELECT DISTINCT left(sitecode, 4) as towncode</p>
+<p>FROM public."loc<em>breeding</em>site<em>cards</em>sjsreast2"</p>
+<p>WHERE sitecode IS NOT NULL AND foreman IS NOT NULL</p>
+<p>    [AND facility = '{facility_filter}']</p>
+<p>    [AND foreman = '{fosarea_filter}']</p>
+<p>ORDER BY left(sitecode, 4)</p>
+<pre><code class="">
+
+### 5. Custom Sections by Town Code
+
+</code></pre>
+<p>SELECT DISTINCT left(sitecode, 7) as sectcode</p>
+<p>FROM public."loc<em>breeding</em>site<em>cards</em>sjsreast2"</p>
+<p>WHERE sitecode IS NOT NULL AND foreman IS NOT NULL</p>
+<p>    [AND left(sitecode, 4) = '{towncode_filter}']</p>
+<p>    [AND facility = '{facility_filter}']</p>
+<p>    [AND foreman = '{fosarea_filter}']</p>
+<p>ORDER BY left(sitecode, 7)</p>
+<pre><code class="">
+
+### 6. Custom Breeding Sites
+
+</code></pre>
+<p>SELECT</p>
+<p>    sitecode, priority, acres, type, air_gnd,</p>
+<p>    culex, spr<em>aedes, coq</em>pert as perturbans,</p>
+<p>    prehatch, remarks, drone, sample,</p>
+<p>    facility, zone, foreman, foreman as fosarea, ra,</p>
+<p>    left(sitecode, 7) as section</p>
+<p>    [, {dynamic<em>col1}, {dynamic</em>col2}, ...]</p>
+<p>FROM public."loc<em>breeding</em>site<em>cards</em>sjsreast2"</p>
+<p>ORDER BY sitecode</p>
+<pre><code class="">
+
+### 7. Webster Breeding Sites
+
+</code></pre>
+<p>SELECT</p>
+<p>    b.sitecode, b.priority, b.acres, b.type, b.air_gnd,</p>
+<p>    b.culex, b.spr<em>aedes, b.coq</em>pert as perturbans,</p>
+<p>    b.prehatch, b.remarks, b.drone, b.sample,</p>
+<p>    g.facility as facility, g.zone, g.fosarea,</p>
+<p>    g.sectcode as section</p>
+<p>FROM public.loc<em>breeding</em>sites b</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)</p>
+<p>WHERE b.enddate IS NULL</p>
+<p>ORDER BY b.sitecode</p>
+<pre><code class="">
+
+### 8. Webster Filter Options
+
+</code></pre>
+<p>SELECT DISTINCT</p>
+<p>    g.facility, g.sectcode as section, g.fosarea</p>
+<p>FROM public.loc<em>breeding</em>sites b</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)</p>
+<p>WHERE b.enddate IS NULL AND g.facility IS NOT NULL AND b.sitecode IS NOT NULL</p>
+<p>    [AND g.facility = '{facility_filter}']</p>
+<p>    [AND g.fosarea = '{fosarea_filter}']</p>
+<p>ORDER BY g.facility, g.sectcode, g.fosarea</p>
+<pre><code class="">
+
+### 9. Webster Town Codes
+
+</code></pre>
+<p>SELECT DISTINCT left(b.sitecode, 4) as towncode</p>
+<p>FROM public.loc<em>breeding</em>sites b</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)</p>
+<p>WHERE b.enddate IS NULL AND b.sitecode IS NOT NULL AND g.facility IS NOT NULL</p>
+<p>    [AND g.facility = '{facility_filter}']</p>
+<p>    [AND g.fosarea = '{fosarea_filter}']</p>
+<p>ORDER BY left(b.sitecode, 4)</p>
+<pre><code class="">
+
+### 10. Webster Sections by Town Code
+
+</code></pre>
+<p>SELECT DISTINCT g.sectcode</p>
+<p>FROM public.loc<em>breeding</em>sites b</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode, 7)</p>
+<p>WHERE b.enddate IS NULL AND b.sitecode IS NOT NULL AND g.facility IS NOT NULL</p>
+<p>    [AND left(b.sitecode, 4) = '{towncode_filter}']</p>
+<p>    [AND g.facility = '{facility_filter}']</p>
+<p>    [AND g.fosarea = '{fosarea_filter}']</p>
+<p>    AND g.sectcode IS NOT NULL</p>
+<p>ORDER BY g.sectcode</p>
+<pre><code class="">
+
+### 11. Structures
+
+</code></pre>
+<p>SELECT</p>
+<p>    loc.sitecode, loc.s<em>type, loc.status</em>udw, loc.sqft,</p>
+<p>    loc.priority, loc.culex, loc.chambers,</p>
+<p>    loc.comments as remarks,</p>
+<p>    g.sectcode as section, g.zone, g.facility, g.fosarea</p>
+<p>FROM public.loc_cxstruct loc</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(loc.sitecode, 7)</p>
+<p>WHERE loc.enddate IS NULL</p>
+<p>ORDER BY loc.sitecode</p>
+<pre><code class="">
+
+### 12. Structure Town Codes
+
+</code></pre>
+<p>SELECT DISTINCT left(g.sectcode, 4) as towncode</p>
+<p>FROM public.loc_cxstruct loc</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(loc.sitecode, 7)</p>
+<p>WHERE loc.enddate IS NULL AND g.sectcode IS NOT NULL</p>
+<p>    [AND g.facility = '{facility_filter}']</p>
+<p>    [AND g.fosarea = '{fosarea_filter}']</p>
+<p>ORDER BY left(g.sectcode, 4)</p>
+<pre><code class="">
+
+### 13. Structure Sections by Town Code
+
+</code></pre>
+<p>SELECT DISTINCT g.sectcode</p>
+<p>FROM public.loc_cxstruct loc</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(loc.sitecode, 7)</p>
+<p>WHERE loc.enddate IS NULL AND g.sectcode IS NOT NULL</p>
+<p>    [AND left(g.sectcode, 4) = '{towncode_filter}']</p>
+<p>    [AND g.facility = '{facility_filter}']</p>
+<p>    [AND g.fosarea = '{fosarea_filter}']</p>
+<p>ORDER BY g.sectcode</p>
+<pre><code class="">
+
+### 14. Structure Filter Options
+
+</code></pre>
+<p>SELECT DISTINCT</p>
+<p>    g.facility, g.sectcode as section, g.fosarea, loc.s_type</p>
+<p>FROM public.loc_cxstruct loc</p>
+<p>LEFT JOIN public.gis_sectcode g ON g.sectcode = left(loc.sitecode, 7)</p>
+<p>WHERE loc.enddate IS NULL AND g.facility IS NOT NULL</p>
+<p>    [AND g.facility = '{facility_filter}']</p>
+<p>    [AND g.fosarea = '{fosarea_filter}']</p>
+<p>ORDER BY g.facility, g.sectcode, g.fosarea</p>
+<pre><code class="">
+
+---
+
+## R-Side Logic
+
+### Three Data Source Paths
+
+1. **Custom table** (`breeding` + `use_webster = FALSE`): Queries `loc_breeding_site_cards_sjsreast2` directly; facility/zone/foreman are columns in the table; supports dynamic column discovery via `information_schema`.
+2. **Webster table** (`breeding` + `use_webster = TRUE`): Queries `loc_breeding_sites` joined to `gis_sectcode`; no dynamic columns; filters on `enddate IS NULL`.
+3. **Structures** (`structures`): Queries `loc_cxstruct` joined to `gis_sectcode`; filters on `enddate IS NULL`.
+
+### Dynamic Column Discovery
+
+- `get_dynamic_columns()` queries `information_schema.columns` for `loc_breeding_site_cards_sjsreast2`, subtracts `CORE_BREEDING_COLS` + `EXCLUDED_INTERNAL_COLS` (including `geom`), returns the remainder as dynamic columns (e.g., `airmap_num`, `partialtrt`, `perimacres`).
+- `get_dynamic_cols_with_data()` checks which dynamic columns have any non-null/non-empty values for the current facility/foreman filter using `COUNT(NULLIF(col::text, ''))`.
+- Dynamic columns appear in the UI title-field checkboxes (prefixed `[DB]`).
+
+### Data Sanitization (`sanitize_breeding_data()`)
+
+Normalizes differences between custom and Webster table formats:
+- Trims whitespace on all character columns
+- Converts empty strings → `NA` for flag fields (`culex`, `spr_aedes`, `drone`, `sample`, `perturbans`, `prehatch`)
+- Uppercases flag fields, `priority`, `air_gnd`
+- Truncates `air_gnd` to 1 character
+- Coerces `acres` and `type` to numeric
+- Sets `NA` remarks to empty string
+
+### Cascading Filter Logic
+
+Filters cascade: **Facility → FOS Area → Town Code → Section**. Each `observeEvent` re-queries the appropriate function (custom, Webster, or Structure variant) to update downstream choices. Zone is independent.
+
+### Prehatch Calculation
+
+When `prehatch_calc` is selected as a watermark or title field:
+</code></pre>
+<p>calculation = max(round(as.numeric(acres) * 2.5, 2), 0.05)</p>
+<pre><code class="">
+Displays as a red overlay with "2.5/ac" label and the computed value.
+
+### Card Generation &amp; Pagination
+
+- `generate_section_cards_html()` creates print-optimized HTML with configurable cards per page (6/8/10/12)
+- Cards grouped/split by any combination of: section, priority, structure type
+- Double-sided mode pads odd-page groups with a blank page
+- Pre-builds table header and empty rows once, reuses for all cards
+- Progress callback reports every 50 cards
+
+### Priority Color Coding
+
+`GREEN` → `#90EE90`, `RED` → `#FFB6C1`, `YELLOW` → `#FFFFE0`, `BLUE` → `#ADD8E6`, `ORANGE` → `#FFD580`, `PURPLE` → `#E6D5FF`.
+
+### Special Field Display
+
+- **Culex / Spring Aedes / Perturbans / Sample / RA**: Only shown if value is `"Y"` — displayed as colored badges
+- **Chambers**: Only shown for PR-type structures with value &gt; 0
+- **Status (D/W/U)**: Mapped to Dry/Wet/Unknown with color coding
+- **Facility / Foreman**: Codes resolved to human names via lookup maps at display time
+
+---
+
+## Shapefiles
+
+**None.** No `.shp`, `.gpkg`, or PostGIS geometry used. The `geom` column in `loc_breeding_site_cards_sjsreast2` is explicitly listed in `EXCLUDED_INTERNAL_COLS` and excluded from queries.
+
+---
+
+## Shared Functions Used
+
+| Function | Source File |
+|---|---|
+| `get_db_connection()` | `shared/db_helpers.R` |
+| `safe_disconnect()` | `shared/db_helpers.R` |
+| `set_app_name()` | `shared/db_helpers.R` |
+| `load_env_vars()` | `shared/server_utilities.R` |
+| `get_facility_lookup()` | `shared/db_helpers.R` |
+| `get_foremen_lookup()` | `shared/db_helpers.R` |
+| `get_structure_type_choices()` | `shared/db_helpers.R` |
+
     </div>
 </body>
 </html>

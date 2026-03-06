@@ -76,12 +76,6 @@
 .comparison-banner .diff.negative { color: #dc2626; font-weight: 600; }
 .comparison-banner.positive { background: #dcfce7; border-color: #86efac; }
 .comparison-banner.negative { background: #fee2e2; border-color: #fca5a5; }
-@media (max-width: 768px) {
-  .inline-chart {
-    flex: 1 1 100%;
-    min-width: 300px;
-  }
-}
 @keyframes slideDown {
   from {
     opacity: 0;
@@ -562,4 +556,265 @@
   background: #007bff;
   color: white;
   border-color: #007bff;
+}
+
+/* Extra-small phones (< 400px) */
+@media (max-width: 400px) {
+  .stat-box-clickable > div > div:first-child > div:first-child {
+    font-size: 18px !important;
+  }
+  .stat-box-clickable > div {
+    padding: 10px 8px !important;
+    min-height: 70px !important;
+  }
+  .page-header h1 {
+    font-size: 16px;
+  }
+  .page-header .subtitle {
+    font-size: 11px;
+  }
+  .comparison-banner {
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+}
+
+/* ==========================================================================
+   MOBILE RESPONSIVE OVERRIDES
+   Placed LAST in the file so these rules override all desktop rules above.
+   Breakpoint: 768px (standard tablet/phone threshold)
+   ========================================================================== */
+@media (max-width: 768px) {
+  .inline-chart {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  /* --- Mobile: Full-width stat boxes --- */
+  .dashboard-container {
+    padding: 5px;
+  }
+  .category-section .row,
+  .facility-stat-boxes .row,
+  .fos-stat-boxes .row,
+  .fos-metric-boxes .row {
+    flex-direction: column;
+  }
+  .category-section .col-md-4,
+  .category-section .col-md-3,
+  .category-section .col-md-2,
+  .category-section [class*="col-md-"],
+  .category-section [class*="col-sm-"],
+  .facility-stat-boxes [class*="col-md-"],
+  .facility-stat-boxes [class*="col-sm-"],
+  .fos-stat-boxes [class*="col-md-"],
+  .fos-stat-boxes [class*="col-sm-"],
+  .fos-metric-boxes [class*="col-md-"],
+  .fos-metric-boxes [class*="col-sm-"],
+  .metrics-by-category [class*="col-sm-"],
+  .metrics-by-category [class*="col-md-"] {
+    width: 100% !important;
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  /* --- Mobile: Charts grid single column --- */
+  .charts-grid-row {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+
+  /* --- Mobile: Chart panels full-width --- */
+  .chart-panel-wrapper.visible {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding: 5px;
+  }
+  .chart-panel {
+    min-height: 150px;
+    padding: 6px;
+  }
+
+  /* --- Mobile: Stack side-by-side current/historical charts --- */
+  .category-chart .row,
+  .chart-panel-wrapper .row {
+    flex-direction: column !important;
+  }
+  .category-chart .col-sm-6,
+  .category-chart .col-md-6,
+  .chart-panel-wrapper .col-sm-6,
+  .chart-panel-wrapper .col-md-6 {
+    width: 100% !important;
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .category-chart .col-sm-6 > div,
+  .category-chart .col-md-6 > div,
+  .chart-panel-wrapper .col-sm-6 > div,
+  .chart-panel-wrapper .col-md-6 > div {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* --- Mobile: Stat box text sizing --- */
+  .stat-box-clickable > div > div:first-child > div:first-child {
+    font-size: 22px !important;
+  }
+  .stat-box-clickable > div > div:first-child > div:last-child {
+    font-size: 12px !important;
+  }
+  .stat-box-clickable > div {
+    padding: 14px 12px !important;
+    min-height: 80px !important;
+  }
+  .stat-box-clickable > div > div:last-child {
+    font-size: 28px !important;
+  }
+  .stat-box-clickable > div > div:last-child img {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  /* --- Mobile: Tap hint text --- */
+  .stat-box-clickable::after {
+    font-size: 9px !important;
+    bottom: 3px !important;
+    right: 6px !important;
+    content: 'Tap to view chart' !important;
+  }
+  .stat-box-clickable.active::after {
+    content: 'Tap to hide chart' !important;
+  }
+  .stat-box-clickable[data-facility]::after {
+    content: 'Tap for details' !important;
+  }
+  .stat-box-clickable[data-facility].active::after {
+    content: 'Tap to hide details' !important;
+  }
+  .stat-box-clickable[data-fos]::after {
+    content: 'Tap for FOS' !important;
+  }
+  .stat-box-clickable[data-fos].active::after {
+    content: 'Selected' !important;
+  }
+
+  /* --- Mobile: Comparison banner stacks vertically --- */
+  .comparison-banner {
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    font-size: 12px;
+    text-align: center;
+  }
+  .comparison-banner .separator {
+    display: none;
+  }
+
+  /* --- Mobile: Facility detail boxes --- */
+  .facility-detail-section {
+    padding: 12px;
+    margin: 10px 0;
+  }
+  .facility-detail-boxes {
+    flex-direction: column;
+  }
+  .facility-detail-boxes .stat-box {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  /* --- Mobile: Info popover --- */
+  .info-popover {
+    left: 10px !important;
+    right: 10px !important;
+    max-width: calc(100vw - 20px) !important;
+    min-width: 0 !important;
+  }
+
+  /* --- Mobile: Chart title and legend --- */
+  .chart-title {
+    font-size: 14px !important;
+    padding-bottom: 3px !important;
+  }
+  .category-chart .chart-title {
+    font-size: 11px !important;
+  }
+  .chart-legend,
+  .category-chart .chart-legend {
+    font-size: 10px !important;
+    gap: 8px !important;
+    flex-wrap: wrap;
+  }
+
+  /* --- Mobile: Drill-down button --- */
+  .drill-down-btn {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+    bottom: auto !important;
+    right: auto !important;
+    text-align: center;
+    padding: 8px 10px;
+    font-size: 13px;
+    opacity: 1;
+  }
+
+  /* --- Mobile: Plotly containers scale to viewport --- */
+  .category-chart .js-plotly-plot,
+  .category-chart .plot-container,
+  .category-chart .svg-container,
+  .chart-panel .js-plotly-plot,
+  .chart-panel .plot-container,
+  .chart-panel .svg-container {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* --- Mobile: Page header compact --- */
+  .page-header {
+    padding: 12px 15px;
+    margin: -10px -10px 15px -10px;
+  }
+  .page-header h1 {
+    font-size: 20px !important;
+  }
+  .page-header .subtitle {
+    font-size: 12px;
+  }
+
+  /* --- Mobile: Controls panel stacks vertically --- */
+  .controls-panel {
+    padding: 12px;
+  }
+  .controls-panel .row {
+    flex-direction: column;
+  }
+  .controls-panel [class*="col-sm-"],
+  .controls-panel [class*="col-md-"] {
+    width: 100% !important;
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+    margin-bottom: 8px;
+  }
+  .controls-panel .btn-lg {
+    font-size: 14px;
+    padding: 10px;
+  }
+
+  /* --- Mobile: Loading skeleton boxes smaller --- */
+  .skeleton-box {
+    height: 80px;
+  }
+
+  /* --- Mobile: Category sections full width --- */
+  .category-section {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
 }

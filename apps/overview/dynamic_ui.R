@@ -351,6 +351,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     
     # Include overview-specific CSS and JS
     tags$head(
+      tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, maximum-scale=5"),
       get_overview_css(),
       get_overview_js()
     ),

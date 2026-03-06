@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trap Surveillance Dashboard</title>
+    <title>Trap Surveillance App – Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,58 +122,366 @@
 </head>
 <body>
     <div class="container">
-<h1>Trap Surveillance Dashboard</h1>
+<h1>Trap Surveillance App – Technical Notes</h1>
 
-<h2>Overview</h2>
-<p>Displays mosquito vector abundance, MLE/MIR infection rates, and Vector Index by <strong>Vector Index Area</strong> using pre-calculated database views. This is the production version — the legacy <code>trap<em>survillance</em>test</code> app used in-app KNN calculations; this version reads directly from materialized views.</p>
+<h2>Database Tables &amp; Entities</h2>
 
-<h2>Data Sources</h2>
+<p>| Table | Key Columns Used |</p>
+<p>|---|---|</p>
+<p>| <code>dbadult<em>mon</em>nt<em>co2</em>forvectorabundance</code> | <code>viarea</code>, <code>loc<em>code</code>, <code>inspdate</code>, <code>year</code>, <code>yrwk</code>, <code>epiweek</code>, <code>spp</em>name</code>, <code>mosqcount</code> |</p>
+<p>| <code>dbvirus<em>mle</em>yrwk<em>area</code> | <code>mle</em>id</code>, <code>yrwk</code>, <code>viarea</code>, <code>p</code> (→ <code>mle</code>), <code>lower</code> (→ <code>mle<em>lower</code>), <code>upper</code> (→ <code>mle</em>upper</code>) |</p>
+<p>| <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code> | <code>mle<em>id</code>, <code>yrwk</code>, <code>viarea</code>, <code>spp</em>code</code>, <code>p</code> (→ <code>mle</code>), <code>lower</code>, <code>upper</code> |</p>
+<p>| <code>dbvirus<em>mle</em>yrwk</code> | <code>mle_id</code>, <code>yrwk</code>, <code>p</code> (→ <code>mle</code>), <code>lower</code>, <code>upper</code> |</p>
+<p>| <code>dbvirus<em>mir</em>yrwk<em>area</code> | <code>mir</em>id</code>, <code>year</code>, <code>yrwk</code>, <code>viarea</code>, <code>positive</code>, <code>total</code> (→ <code>total<em>pools</code>), <code>mosquitoes</code> (→ <code>total</em>mosquitoes</code>), <code>mir</code> |</p>
+<p>| <code>dbvirus<em>mir</em>yrwk<em>area</em>spp</code> | <code>mir<em>id</code>, <code>year</code>, <code>yrwk</code>, <code>viarea</code>, <code>spp</em>code</code>, <code>positive</code>, <code>total</code>, <code>mosquitoes</code>, <code>mir</code> |</p>
+<p>| <code>dbvirus<em>mir</em>yrwk</code> | <code>mir_id</code>, <code>yrwk</code>, <code>positive</code>, <code>total</code>, <code>mosquitoes</code>, <code>mir</code> |</p>
+<p>| <code>loc<em>vectorindexareas</em>sections_a</code> | <code>viareaa</code> (→ <code>viarea</code>), <code>geom</code>, <code>area</code> |</p>
+<p>| <code>loc<em>mondaynight</code> | <code>loc</em>code</code>, <code>loc<em>facility</code>, <code>zone</code>, <code>virus</em>test</code>, <code>geom</code> |</p>
+<p>| <code>dbadult<em>insp</em>current</code> | <code>ainspecnum</code>, <code>sampnum<em>yr</code>, <code>loc</em>code</code>, <code>inspdate</code>, <code>facility</code>, <code>survtype</code>, <code>network_type</code>, <code>missing</code> |</p>
+<p>| <code>dbadult<em>insp</em>archive</code> | Same columns as current |</p>
+<p>| <code>dbvirus<em>pool</code> | <code>poolnum</code>, <code>sampnum</em>yr</code>, <code>spp<em>code</code>, <code>count</code> (→ <code>pool</em>size</code>) |</p>
+<p>| <code>dbvirus<em>pool</em>test</code> | <code>poolnum</code>, <code>result</code>, <code>target</code>, <code>date</code> (→ <code>test_date</code>) |</p>
+<p>| <code>lookup_specieslist</code> | <code>sppcode</code>, <code>genus</code>, <code>species</code> |</p>
+<p>| <code>lookup<em>weeknum</code> | <code>wknumyr</code>, <code>week</em>days</code> |</p>
 
-<p>| View/Table                           | Purpose                                                                                   |</p>
-<p>|--------------------------------------|-------------------------------------------------------------------------------------------|</p>
-<p>| <code>dbadult<em>mon</em>nt<em>co2</em>forvectorabundance</code> | Monday night CO₂ trap counts by species, trap location, and yrwk                       |</p>
-<p>| <code>dbvirus<em>mle</em>yrwk_area</code>              | Pre-calculated MLE by week × VI area (all Cx species combined)                            |</p>
-<p>| <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code>          | Pre-calculated MLE by week × VI area × species                                            |</p>
-<p>| <code>dbvirus<em>mir</em>yrwk_area</code>              | Pre-calculated MIR by week × VI area                                                      |</p>
-<p>| <code>dbvirus<em>mir</em>yrwk<em>area</em>spp</code>          | Pre-calculated MIR by week × VI area × species                                            |</p>
-<p>| <code>dbvirus<em>mle</em>yrwk</code>                   | District-wide MLE by week (for trend chart)                                               |</p>
-<p>| <code>loc<em>vectorindexareas</em>sections_a</code>    | Section polygons with <code>viareaa</code> grouping, dissolved into 12 VI areas                      |</p>
+<hr>
 
-<h2>Metrics</h2>
+<h2>SQL Queries</h2>
 
+<h3>1. Abundance by Year/Week/Species</h3>
+
+<pre><code class="sql">
+SELECT viarea, loc_code, inspdate, year, yrwk, epiweek, spp_name, mosqcount
+FROM dbadult_mon_nt_co2_forvectorabundance
+WHERE {dynamic clauses: year =, yrwk =, spp_name =}
+ORDER BY yrwk DESC, viarea, loc_code
+</code></pre>
+
+<h3>2. Abundance Aggregated by Area</h3>
+
+<pre><code class="sql">
+SELECT viarea,
+       SUM(mosqcount) as total_count,
+       COUNT(DISTINCT loc_code) as num_traps,
+       CASE WHEN COUNT(DISTINCT loc_code) &gt; 0
+            THEN ROUND(SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code), 2)
+            ELSE 0 END as avg_per_trap
+FROM dbadult_mon_nt_co2_forvectorabundance
+WHERE yrwk = {yrwk} AND spp_name = '{spp_name}'
+GROUP BY viarea
+ORDER BY viarea
+</code></pre>
+
+<h3>3. MLE by Area (total Cx)</h3>
+
+<pre><code class="sql">
+SELECT mle_id, yrwk, viarea,
+       p::numeric as mle, lower::numeric as mle_lower, upper::numeric as mle_upper
+FROM dbvirus_mle_yrwk_area
+WHERE yrwk = '{yrwk}'
+ORDER BY viarea
+</code></pre>
+
+<h3>4. MLE by Area × Species</h3>
+
+<pre><code class="sql">
+SELECT mle_id, yrwk, viarea, spp_code,
+       p::numeric as mle, lower::numeric as mle_lower, upper::numeric as mle_upper
+FROM dbvirus_mle_yrwk_area_spp
+WHERE yrwk = '{yrwk}' AND spp_code = '{spp_code}'
+ORDER BY viarea
+</code></pre>
+
+<h3>5. MLE District-Wide Trend</h3>
+
+<pre><code class="sql">
+SELECT mle_id, yrwk, p::numeric as mle,
+       lower::numeric as mle_lower, upper::numeric as mle_upper
+FROM dbvirus_mle_yrwk
+WHERE yrwk::text LIKE '{year}%'
+ORDER BY yrwk
+</code></pre>
+
+<h3>6. MLE Multi-Year Average by Epiweek</h3>
+
+<pre><code class="sql">
+SELECT (yrwk::integer % 100) AS week,
+       AVG(p::numeric) AS avg_mle
+FROM dbvirus_mle_yrwk
+WHERE (yrwk::integer / 100) BETWEEN {start_year} AND {end_year}
+GROUP BY (yrwk::integer % 100)
+ORDER BY week
+</code></pre>
+
+<h3>7. Abundance Multi-Year Average by Epiweek</h3>
+
+<pre><code class="sql">
+SELECT epiweek AS week,
+       SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+FROM dbadult_mon_nt_co2_forvectorabundance
+WHERE year BETWEEN {start_year} AND {end_year}
+  AND spp_name = '{spp_name}'
+GROUP BY epiweek
+ORDER BY epiweek
+</code></pre>
+
+<h3>8. MIR by Area (total Cx)</h3>
+
+<pre><code class="sql">
+SELECT mir_id, year, yrwk, viarea,
+       positive::integer as positive, total::integer as total_pools,
+       mosquitoes::integer as total_mosquitoes, mir::numeric as mir
+FROM dbvirus_mir_yrwk_area
+WHERE yrwk = '{yrwk}'
+ORDER BY viarea
+</code></pre>
+
+<h3>9. MIR by Area × Species</h3>
+
+<pre><code class="sql">
+SELECT mir_id, year, yrwk, viarea, spp_code,
+       positive::integer as positive, total::integer as total_pools,
+       mosquitoes::integer as total_mosquitoes, mir::numeric as mir
+FROM dbvirus_mir_yrwk_area_spp
+WHERE yrwk = '{yrwk}' AND spp_code = '{spp_code}'
+ORDER BY viarea
+</code></pre>
+
+<h3>10. MIR District-Wide Trend</h3>
+
+<pre><code class="sql">
+SELECT mir_id, yrwk,
+       positive::integer as positive, total::integer as total_pools,
+       mosquitoes::integer as total_mosquitoes, mir::numeric as mir
+FROM dbvirus_mir_yrwk
+WHERE yrwk::text LIKE '{year}%'
+ORDER BY yrwk
+</code></pre>
+
+<h3>11. MIR Multi-Year Average by Epiweek</h3>
+
+<pre><code class="sql">
+SELECT (yrwk::integer % 100) AS week,
+       AVG(mir::numeric) AS avg_mir
+FROM dbvirus_mir_yrwk
+WHERE (yrwk::integer / 100) BETWEEN {start_year} AND {end_year}
+GROUP BY (yrwk::integer % 100)
+ORDER BY week
+</code></pre>
+
+<h3>12. Traps for Week (large CTE)</h3>
+
+<pre><code class="sql">
+WITH week_abundance AS (
+  SELECT loc_code, inspdate, mosqcount
+  FROM dbadult_mon_nt_co2_forvectorabundance
+  WHERE yrwk = {yrwk_int} AND spp_name = 'Total_Cx_vectors'
+),
+week_inspections AS (
+  SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate,
+         i.facility, i.survtype
+  FROM dbadult_insp_current i
+  WHERE i.network_type = 'mnt' AND i.survtype = '6' AND i.missing IS NULL
+    AND calc_week_num(i.inspdate) = {yrwk_int}
+  UNION ALL
+  SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate,
+         i.facility, i.survtype
+  FROM dbadult_insp_archive i
+  WHERE i.network_type = 'mnt' AND i.survtype = '6' AND i.missing IS NULL
+    AND calc_week_num(i.inspdate) = {yrwk_int}
+),
+trap_pools AS (
+  SELECT wi.loc_code, wi.sampnum_yr, p.poolnum, p.spp_code,
+         p.count as pool_size, t.result, t.target, t.date as test_date,
+         ls.genus, ls.species
+  FROM week_inspections wi
+  JOIN dbvirus_pool p ON wi.sampnum_yr = p.sampnum_yr
+  LEFT JOIN dbvirus_pool_test t ON p.poolnum = t.poolnum
+  LEFT JOIN lookup_specieslist ls ON p.spp_code = CAST(ls.sppcode AS VARCHAR)
+  WHERE t.target = '{virus_target}' OR t.target IS NULL
+)
+SELECT wa.loc_code, wi.facility, wa.inspdate,
+       wa.mosqcount as cx_vector_count,
+       mn.loc_facility, mn.zone, mn.virus_test,
+       ST_X(ST_Transform(mn.geom, 4326)) as lon,
+       ST_Y(ST_Transform(mn.geom, 4326)) as lat,
+       tp.poolnum, tp.spp_code, tp.pool_size, tp.result,
+       tp.target, tp.test_date, tp.genus, tp.species
+FROM week_abundance wa
+JOIN week_inspections wi ON wi.loc_code = wa.loc_code AND wi.inspdate = wa.inspdate
+LEFT JOIN loc_mondaynight mn ON mn.loc_code = wa.loc_code
+LEFT JOIN trap_pools tp ON tp.loc_code = wa.loc_code
+WHERE mn.geom IS NOT NULL
+ORDER BY wa.loc_code
+</code></pre>
+
+<blockquote>Uses server-side DB function <code>calc<em>week</em>num(inspdate)</code> to match inspections to yrwk.</blockquote>
+
+<h3>13. VI Area Geometries (dissolved)</h3>
+
+<pre><code class="sql">
+SELECT viareaa as viarea,
+       ST_Transform(ST_Union(geom), 4326) as geom,
+       COUNT(*) as num_sections,
+       SUM(area) as total_area
+FROM loc_vectorindexareas_sections_a
+GROUP BY viareaa
+ORDER BY viareaa
+</code></pre>
+
+<h3>14. Vector Index Area Trend (CTE)</h3>
+
+<pre><code class="sql">
+WITH abundance AS (
+  SELECT viarea, yrwk,
+         SUM(mosqcount) as total_count,
+         COUNT(DISTINCT loc_code) as num_traps,
+         CASE WHEN COUNT(DISTINCT loc_code) &gt; 0
+              THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code) ELSE 0 END as avg_per_trap
+  FROM dbadult_mon_nt_co2_forvectorabundance
+  WHERE year = {year} AND spp_name = '{spp_name}'
+  GROUP BY viarea, yrwk
+),
+infection AS (
+  SELECT viarea, yrwk,
+         {infection_col} as infection_rate
+  FROM {infection_table} inf
+  WHERE yrwk::text LIKE '{year}%' {spp_filter}
+)
+SELECT a.viarea, a.yrwk, a.avg_per_trap,
+       COALESCE(i.infection_rate, 0) as infection_rate,
+       a.avg_per_trap * COALESCE(i.infection_rate, 0) as vector_index
+FROM abundance a
+LEFT JOIN infection i ON a.viarea = i.viarea AND a.yrwk::text = i.yrwk::text
+ORDER BY a.viarea, a.yrwk
+</code></pre>
+
+<blockquote><code>infection<em>table</code> is <code>dbvirus</em>mle<em>yrwk</em>area[<em>spp]</code> for MLE or <code>dbvirus</em>mir<em>yrwk</em>area[_spp]</code> for MIR.</blockquote>
+
+<h3>15. Available Weeks</h3>
+
+<pre><code class="sql">
+SELECT DISTINCT a.yrwk, a.epiweek, a.year, l.week_days
+FROM dbadult_mon_nt_co2_forvectorabundance a
+LEFT JOIN lookup_weeknum l ON a.yrwk::text = l.wknumyr::text
+WHERE a.year = {year}
+ORDER BY a.yrwk DESC
+</code></pre>
+
+<h3>16. Available Years</h3>
+
+<pre><code class="sql">
+SELECT DISTINCT year
+FROM dbadult_mon_nt_co2_forvectorabundance
+ORDER BY year DESC
+</code></pre>
+
+<h3>17. Overview — Latest Week + VI Computation</h3>
+
+<pre><code class="sql">
+-- Find latest yrwk
+SELECT MAX(yrwk) as yrwk
+FROM dbadult_mon_nt_co2_forvectorabundance
+WHERE year = {query_year} AND inspdate &lt;= '{analysis_date}'::date
+
+-- Compute VI per area for that week
+WITH abundance AS (
+  SELECT viarea, SUM(mosqcount) AS total_count,
+         COUNT(DISTINCT loc_code) AS num_traps,
+         CASE WHEN COUNT(DISTINCT loc_code) &gt; 0
+              THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code) ELSE 0 END AS avg_per_trap
+  FROM dbadult_mon_nt_co2_forvectorabundance
+  WHERE yrwk = {target_yrwk} AND spp_name = '{spp_name}'
+  GROUP BY viarea
+),
+infection AS (
+  SELECT viarea,
+         CASE WHEN p IS NOT NULL AND p::text &lt;&gt; 'NULL' AND p::text &lt;&gt; ''
+              THEN p::numeric ELSE 0 END AS mle
+  FROM dbvirus_mle_yrwk_area
+  WHERE yrwk = '{target_yrwk}'
+)
+SELECT a.viarea, a.avg_per_trap, COALESCE(i.mle, 0) AS mle,
+       a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
+FROM abundance a LEFT JOIN infection i ON a.viarea = i.viarea
+ORDER BY vector_index DESC NULLS LAST
+</code></pre>
+
+<hr>
+
+<h2>R-Side Logic</h2>
+
+<h3>Species Mapping (data_functions.R)</h3>
+
+<p><code>SPECIES_MAP</code> maps 5 identifiers to <code>(code, label)</code> pairs:</p>
 <ul>
-<li><strong>Abundance (N):</strong> Average mosquitoes per trap per night for the selected week</li>
-<li><strong>MLE:</strong> Maximum Likelihood Estimate of infection rate (pre-calculated, Firth method)</li>
-<li><strong>MIR:</strong> Minimum Infection Rate = (positive pools / total mosquitoes) × 1000</li>
-<li><strong>Vector Index (VI):</strong> N × P where P = infection rate (MLE or MIR/1000)</li>
+<li><code>"Total<em>Cx</em>vectors"</code> → code <code>NULL</code> (uses area-level tables, not species-specific)</li>
+<li><code>"Cx<em>pipiens</em>33"</code> → <code>"33"</code>, <code>"Cx<em>restuans</em>34"</code> → <code>"34"</code>, <code>"Cx<em>tarsalis</em>36"</code> → <code>"36"</code>, <code>"Cx<em>restuans/pipiens</em>372"</code> → <code>"372"</code></li>
 </ul>
 
-<h2>Species</h2>
+<p>When code is <code>NULL</code>, queries hit <code>dbvirus<em>mle</em>yrwk<em>area</code>; otherwise <code>dbvirus</em>mle<em>yrwk</em>area_spp</code>.</p>
+
+<h3>MIR SE Computation (R-side)</h3>
+
+<pre><code class="r">
+p_hat = positive / total_mosquitoes
+mir_se = sqrt(p_hat * (1 - p_hat) / total_mosquitoes) * 1000
+</code></pre>
+
+<p>MLE SE derived from CI: <code>SE = (upper - lower) / (2 × 1.96)</code>.</p>
+
+<h3>Trap Aggregation (data_functions.R)</h3>
+
+<p>Raw join returns multiple rows per trap (one per pool). Aggregated via <code>group<em>by(loc</em>code)</code>:</p>
 <ul>
-<li><strong>Total Cx Vectors</strong> — all Culex combined; uses <code>dbvirus<em>mle</em>yrwk_area</code> (no species filter)</li>
-<li><strong>Cx. pipiens (33)</strong> — uses <code>dbvirus<em>mle</em>yrwk<em>area</em>spp</code> with <code>spp_code = '33'</code></li>
-<li><strong>Cx. restuans (34)</strong> — spp_code = '34'</li>
-<li><strong>Cx. tarsalis (36)</strong> — spp_code = '36'</li>
-<li><strong>Cx. restuans/pipiens (372)</strong> — spp_code = '372'</li>
+<li><code>num_pools = sum(!is.na(poolnum))</code></li>
+<li><code>num_positive = sum(result == "Pos")</code></li>
+<li><code>pool<em>details</em>html</code> = HTML table with pool#, genus+species, size, result (color-coded red/green)</li>
+<li>Converted to <code>sf</code> via <code>st<em>as</em>sf(coords = c("lon", "lat"), crs = 4326)</code></li>
 </ul>
 
-<h2>Key Differences from Legacy App (<code>trap<em>survillance</em>test</code>)</h2>
-<ol>
-<li><strong>No KNN calculations</strong> — legacy computed per-section k-NN weighted averages; this uses area-level pre-calculated data</li>
-<li><strong>No PooledInfRate dependency</strong> — MLE is pre-calculated in the database</li>
-<li><strong>Area-based, not section-based</strong> — displays 12 VI areas instead of ~3,200 individual sections</li>
-<li><strong>Much faster</strong> — simple SELECT queries vs. heavy spatial computation</li>
-<li><strong>Week-based navigation</strong> — browse by yrwk instead of analysis date</li>
-</ul>
+<h3>Map Choropleth Breaks (display_functions.R)</h3>
 
-<h2>Files</h2>
+<p>Non-linear fixed breaks by metric:</p>
 <ul>
-<li><code>app.R</code> — Shiny app entry point</li>
-<li><code>ui_helper.R</code> — Dashboard UI layout</li>
-<li><code>data_functions.R</code> — All database queries and data fetching</li>
-<li><code>display_functions.R</code> — Leaflet map rendering</li>
-<li><code>NOTES.md</code> — This file</li>
+<li><strong>Abundance</strong>: <code>[0, 1, 3, 7, 12, 20, 30]</code></li>
+<li><strong>MLE infection</strong>: <code>[0, 0.001, 0.005, 0.01, 0.02, 0.04, 0.06]</code></li>
+<li><strong>MIR infection</strong>: <code>[0, 2, 5, 15, 30, 60, 100]</code></li>
+<li><strong>Vector Index</strong>: <code>[0, 0.02, 0.08, 0.2, 0.5, 1.0, 2.0]</code></li>
 </ul>
+
+<p>Palette: 7-step yellow-to-red (<code>colorBin</code>). Values beyond max break are clamped.</p>
+
+<hr>
+
+<h2>Shapefiles</h2>
+
+<p>| File | Location | Purpose |</p>
+<p>|---|---|---|</p>
+<p>| <code>recent<em>trap</em>locations.shp</code> | <code>shared/Q<em>to</em>R/data/</code> | All trap locations as fallback when no week selected. Fields: <code>survtype</code>, <code>facility</code>, <code>inspdate</code>. |</p>
+<p>| <code>VectorIndexAreasA2025.shp</code> | <code>shared/Q<em>to</em>R/data/</code> | Fallback if DB geometry load fails. Dissolved by <code>VIareaA</code> column. |</p>
+<p>| <code>facility<em>boundaries.shp</code> | <code>shared/Q</em>to_R/data/</code> | Background facility boundary layer |</p>
+<p>| <code>zone<em>boundaries.shp</code> | <code>shared/Q</em>to_R/data/</code> | Background zone boundary layer |</p>
+<p>| <code>Counties<em>4326.shp</code> | <code>apps/mosquito</em>surveillance_map/shp/</code> | Background county boundaries |</p>
+
+<p>PostGIS geometry is also used:</p>
+<ul>
+<li><code>loc<em>vectorindexareas</em>sections<em>a.geom</code> — dissolved via <code>ST</em>Union</code> → VI area polygons</li>
+<li><code>loc<em>mondaynight.geom</code> — trap point locations extracted as lon/lat via <code>ST</em>Transform</code></li>
+<li><code>calc<em>week</em>num()</code> — server-side DB function matching inspections to yrwk</li>
+</ul>
+
+<hr>
+
+<h2>Shared Functions Used</h2>
+
+<p>| Function | Source File |</p>
+<p>|---|---|</p>
+<p>| <code>get<em>db</em>connection()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>theme</em>palette()</code> | <code>shared/color_themes.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>export<em>csv</em>safe()</code> | <code>shared/server_utilities.R</code> |</p>
     </div>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drone Sites Treatment Tracking - Technical Notes</title>
+    <title>Drone App – Technical Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,836 +122,154 @@
 </head>
 <body>
     <div class="container">
-<h1>Drone Sites Treatment Tracking - Technical Notes</h1>
+<h1>Drone App – Technical Notes</h1>
 
-<h2>Overview</h2>
-<p>This Shiny app tracks drone-treated mosquito breeding sites across four perspectives:</p>
-<ol>
-<li><strong>Current Progress</strong> - Sites with active/expiring treatments, aggregated by facility, FOS, or section</li>
-<li><strong>Map</strong> - Interactive map showing drone sites with color-coded treatment status markers</li>
-<li><strong>Historical Trends</strong> - Multi-year trends in drone treatments (sites, treatments, or acres)</li>
-<li><strong>Site Statistics</strong> - Site-level statistics showing average, largest, and smallest treated sites</li>
-</ul>
+<h2>Database Tables &amp; Entities</h2>
 
-<h2>Data Sources</h2>
-
-<h3>Core Database Tables and Columns</h3>
-
-<h4>Primary Treatment Tables</h4>
-<ul>
-<li><strong><code>public.dblarv<em>insptrt</em>current</code></strong> - Active larval treatment records</li>
-<ul>
-<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code>, <code>amts</code></li>
-<li><strong>Drone Filter</strong>: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code></li>
-<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code> - must join for these</li>
-<li><strong>Data Quality</strong>: Contains ongoing treatments, some may be planned vs executed</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>public.dblarv<em>insptrt</em>archive</code></strong> - Historical larval treatment records  </li>
-<ul>
-<li><strong>Key Columns</strong>: <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>,  <code>foreman</code>, <code>action</code>, <code>amts</code></li>
-<li><strong>Drone Filter</strong>: <code>action = 'D'</code> (archive table only uses action column)</li>
-<li><strong>Missing Columns</strong>: Does NOT contain <code>zone</code>, <code>enddate</code>, <code>prehatch</code>, <code>airgrnd_plan</code> - must join for these</li>
-<li><strong>Data Quality</strong>: Historical closed treatments, generally more reliable than current</li>
-</ul>
-</ul>
-
-<h4>Essential Supporting Tables</h4>
-<ul>
-<li><strong><code>public.loc<em>breeding</em>sites</code></strong> - Site master data</li>
-<ul>
-<li><strong>Key Columns</strong>: </li>
-<ul>
-<li><code>sitecode</code>, <code>facility</code> (composite key)</li>
-<li><code>acres</code> (site capacity, not treated acres)</li>
-<li><code>enddate</code> (<strong>CRITICAL</strong>: NULL = active site, NOT NULL = closed site)</li>
-<li><code>prehatch</code> (boolean: site treats pre-hatch mosquitoes)</li>
-<li><code>drone</code> (values: 'Y', 'M', 'C' for drone-capable sites)</li>
-<li><code>air_gnd</code> (alternate drone designation, value: 'D')</li>
-<li><code>geom</code> (PostGIS geometry data for mapping, UTM projection)</li>
-</ul>
-<li><strong>Critical Join Logic</strong>: <strong>MUST filter <code>enddate IS NULL</code></strong> or risk including closed sites</li>
-<li><strong>Data Quality</strong>: Multiple rows per sitecode possible with different enddates</li>
-<li><strong>Usage</strong>: Source of truth for site characteristics, active status, and spatial coordinates</li>
-<li><strong>Spatial Data</strong>: Geometry stored in UTM projection, requires <code>ST_Transform(geom, 4326)</code> for web mapping</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>public.gis_sectcode</code></strong> - Geographic section mapping and zone assignments</li>
-<ul>
-<li><strong>Key Columns</strong>:</li>
-<ul>
-<li><code>sectcode</code> (7-character section identifier, e.g. '191031N')</li>
-<li><code>zone</code> (values: '1' = P1, '2' = P2)</li>
-<li><code>fosarea</code> (FOS employee number assignment)</li>
-</ul>
-<li><strong>Join Pattern</strong>: <code>LEFT JOIN public.gis_sectcode sc ON left(sitecode,7) = sc.sectcode</code></li>
-<li><strong>Sitecode Formats Handled</strong>:</li>
-<ul>
-<li>Standard: <code>190208-003</code> → sectcode <code>1902080</code></li>
-<li>Directional: <code>191102W010</code> → sectcode <code>1911020</code> </li>
-</ul>
-<li><strong>Data Quality</strong>: Authoritative source for zone and FOS assignments</li>
-</ul>
-</ul>
-
-<ul>
-<li><strong><code>public.mattype<em>list</em>targetdose</code></strong> - Material effectiveness and dosage data</li>
-<ul>
-<li><strong>Key Columns</strong>:</li>
-<ul>
-<li><code>matcode</code> (material identifier, joins to treatment tables)</li>
-<li><code>effect_days</code> (treatment effectiveness duration in days)</li>
-</ul>
-<li><strong>Default Logic</strong>: When <code>effect_days IS NULL</code>, assume 14 days</li>
-<li><strong>Usage</strong>: Calculate treatment end dates: <code>inspdate + effect_days</code></li>
-</ul>
-</ul>
-
-<h3>Data Collection Strategy</h3>
-
-<h4>Key Join Patterns Used Throughout Application</h4>
-
-<p><strong>Standard Treatment-to-Site Join Pattern:</strong></p>
-<pre><code class="sql">
--- Connect treatment records with site information
-FROM public.dblarv_insptrt_current t
-LEFT JOIN public.loc_breeding_sites b ON t.sitecode = b.sitecode AND t.facility = b.facility
-LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-  AND e.emp_type = 'FieldSuper' AND e.active = true
-LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-WHERE (b.enddate IS NULL OR b.enddate &gt; CURRENT_DATE)  -- Active sites only
-  AND (t.airgrnd_plan = 'D' OR t.action = 'D')         -- Drone treatments only
-</code></pre>
-
-<p><strong>Note</strong>: See "SQL Queries Reference" section below for complete, up-to-date query implementations.</p>
-
-<h4>Critical Data Integration Notes</h4>
-
-<p><strong>Sitecode Format Handling:</strong></p>
-<ul>
-<li><strong>Standard Format</strong>: <code>190208-003</code> (7-digit section + dash + site num)</li>
-<li><strong>Directional Format</strong>: <code>191102W010</code> (6-digit + direction + site num)</li>
-<li><strong>Join Logic</strong>: <code>left(sitecode,7)</code> extracts section code for both formats</li>
-<li><strong>Example</strong>: Both <code>190208-003</code> and <code>191102W010</code> → sectcodes <code>1902080</code> and <code>1911020</code></li>
-</ul>
-
-<p><strong>Treatment vs Site Acres:</strong></p>
-<ul>
-<li><strong>Site Acres</strong>: <code>loc<em>breeding</em>sites.acres</code> = site capacity/potential treatment area</li>
-<li><strong>Treated Acres</strong>: <code>dblarv<em>insptrt</em>*.acres</code> = actual area treated in specific application</li>
-<li><strong>Usage</strong>: Site acres for capacity analysis, treated acres for actual treatment metrics</li>
-</ul>
-
-<p><strong>Foreman Assignment Logic:</strong></p>
-<ul>
-<li><strong>Site Foreman</strong>: <code>gis_sectcode.fosarea</code> → jurisdictional responsibility</li>
-<li><strong>Treatment Foreman</strong>: <code>dblarv<em>insptrt</em>*.foreman</code> → who performed the treatment  </li>
-<li><strong>App Standard</strong>: Uses site foreman (jurisdictional) for filtering and grouping</li>
-</ul>
-
-<p><strong>Zone Assignment:</strong></p>
-<ul>
-<li><strong>P1 Sites</strong>: <code>gis_sectcode.zone = '1'</code> (Primary zone)</li>
-<li><strong>P2 Sites</strong>: <code>gis_sectcode.zone = '2'</code> (Secondary zone)</li>
-<li><strong>Missing Zones</strong>: Some sites may not have zone assignments in gis_sectcode</li>
-</ul>
-
-<p><strong>Treatment Effectiveness Calculation:</strong></p>
-<ul>
-<li><strong>Formula</strong>: <code>treatment<em>end</em>date = inspdate + COALESCE(effect_days, 14)</code></li>
-<li><strong>Active Status</strong>: <code>treatment<em>end</em>date &gt;= CURRENT<em>DATE</code> (or analysis</em>date)</li>
-<li><strong>Material Lookup</strong>: Join <code>mattype<em>list</em>targetdose</code> for specific <code>effect_days</code></li>
-</ul>
-
-<h3>Chart Type Options</h3>
-
-<p><strong>Stacked Bar Chart (Default)</strong>:</p>
-<ul>
-<li><strong>Best for</strong>: Showing total volume and individual contributions</li>
-<li><strong>Usage</strong>: Cumulative view of all groups combined</li>
-<li><strong>Visual</strong>: Traditional stacked bars, groups stack vertically</li>
-</ul>
-
-<p><strong>Grouped Bar Chart</strong>:</p>
-<ul>
-<li><strong>Best for</strong>: Direct comparison between groups</li>
-<li><strong>Usage</strong>: Side-by-side comparison of facilities/FOS performance</li>
-<li><strong>Visual</strong>: Bars grouped side-by-side for each time period</li>
-</ul>
-
-<p><strong>Line Chart</strong>:</p>
-<ul>
-<li><strong>Best for</strong>: Trend analysis and pattern identification</li>
-<li><strong>Usage</strong>: Tracking changes over time for each group</li>
-<li><strong>Visual</strong>: Connected lines with data points for each group</li>
-</ul>
-
-<p><strong>Area Chart</strong>:</p>
-<ul>
-<li><strong>Best for</strong>: Visual emphasis of volume and trends</li>
-<li><strong>Usage</strong>: Highlighting magnitude of treatment activity</li>
-<li><strong>Visual</strong>: Filled areas under trend lines</li>
-</ul>
-
-<p><strong>Step Chart</strong>:</p>
-<ul>
-<li><strong>Best for</strong>: Discrete changes and threshold analysis</li>
-<li><strong>Usage</strong>: Showing step-wise changes in treatment levels</li>
-<li><strong>Visual</strong>: Step-wise lines connecting data points</li>
-</ul>
-
-<h3>Chart Type Behavior</h3>
-
-<p><strong>With Percentages Enabled</strong>:</p>
-<ul>
-<li><strong>Stacked Bar &amp; Area</strong>: Shows percentage distribution (0-100%)</li>
-<li><strong>Line Chart</strong>: Shows percentage trends over time</li>
-<li><strong>Grouped Bar</strong>: Percentages not applicable (disabled)</li>
-</ul>
-
-<p><strong>With Zone Separation</strong>:</p>
-<ul>
-<li>All chart types support P1/P2 zone differentiation</li>
-<li>Alpha transparency applied: P1 (solid), P2 (faded)</li>
-<li>Colors remain consistent across chart types</li>
-</ul>
-
-<p><strong>Time Period Compatibility</strong>:</p>
-<ul>
-<li>All chart types work with both yearly and weekly periods</li>
-<li>Weekly charts automatically adjust text sizing for readability</li>
-<li>Line charts particularly effective for weekly trend analysis</li>
-</ul>
-
-<h3>Time Period Options</h3>
-<p><strong>Yearly View (Default)</strong>:</p>
-<ul>
-<li>Shows one bar per year in the selected range</li>
-<li>Useful for long-term trend analysis</li>
-<li>Better for multi-year comparisons</li>
-<li>Less cluttered display</li>
-</ul>
-
-<p><strong>Weekly View</strong>:</p>
-<ul>
-<li>Shows one bar per week in the selected range</li>
-<li>Provides detailed seasonal and short-term patterns</li>
-<li>Useful for identifying weekly treatment patterns</li>
-<li>More detailed but potentially dense for large date ranges</li>
-<li>Week format: "YYYY-W##" (e.g., "2024-W15" for week 15 of 2024)</li>
-</ul>
-
-
-
-<h2>Tab 3: Site Statistics</h2>
-
-<h3>Purpose</h3>
-<p>Analyze site-level treatment statistics and identify largest/smallest drone sites.</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Show selector</strong> - Average, Largest, or Smallest site sizes</li>
-<li><strong>Year Range selectors</strong> - Start Year and End Year (2010-2025)</li>
-<li><strong>Site Rankings tables</strong> - Top 10 largest and smallest individual treatments</li>
-<li><strong>Zone filter</strong> - Shared with other tabs</li>
-<li><strong>Facility/FOS filters</strong> - Shared with other tabs</li>
-<li><strong>Group By selector</strong> - Facility or FOS</li>
-</ul>
-
-<h3>Data Flow</h3>
-<ol>
-<li>Query individual treatment records via <code>get<em>sitecode</em>data()</code>:</li>
-<ul>
-<li>Query both archive and current tables for drone treatments</li>
-<li>Join with <code>loc<em>breeding</em>sites</code> for zone, foreman, prehatch info</li>
-<li>Each row = one treatment instance with recorded acres</li>
-<li>Filter by year range and user selections</li>
-</ul>
-</ul>
-
-<ol>
-<li>Aggregate via <code>get<em>site</em>stats_data()</code>:</li>
-<ul>
-<li>Group by facility or FOS</li>
-<li>Calculate statistics:</li>
-<ul>
-<li><code>avg<em>site</em>acres</code>: Mean of all treatment acres in group</li>
-<li><code>min<em>site</em>acres</code>: Smallest single treatment in group</li>
-<li><code>max<em>site</em>acres</code>: Largest single treatment in group</li>
-<li><code>n_treatments</code>: Total treatment count</li>
-</ul>
-</ul>
-</ul>
-
-<h3>Visualization</h3>
-<ul>
-<li><strong>Horizontal bar chart</strong> (coord_flip)</li>
-<li><strong>X-axis</strong>: Facility or FOS name </li>
-<li><strong>Y-axis</strong>: Acres (average, min, or max based on selection)</li>
-<li>Bars sorted by value (largest at top)</li>
-<li>Colors match Current Progress tab</li>
-</ul>
-
-
-
-<h3>Site Rankings Tables</h3>
-<ul>
-<li><strong>Largest Sites Table</strong>: Top 10 treatments by acres</li>
-<li><strong>Smallest Sites Table</strong>: Top 10 smallest treatments (filters out 0 acres)</li>
-<li>Columns: Sitecode, Treated Acres, Facility, Material, Year</li>
-<li>Shows individual treatment instances, not aggregated</li>
-</ul>
-
-<h2>Tab 4: Map</h2>
-
-<h3>Purpose</h3>
-<p>Provide interactive map visualization of drone sites with color-coded treatment status markers.</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Interactive Leaflet Map</strong> with OpenStreetMap tiles</li>
-<li><strong>Color-coded markers</strong> by treatment status:</li>
-<ul>
-<li><strong>Blue</strong>: Active treatments</li>
-<li><strong>Orange</strong>: Expiring treatments (within specified days)</li>
-<li><strong>Red</strong>: Expired treatments</li>
-<li><strong>Gray</strong>: No treatment recorded</li>
-</ul>
-<li><strong>Site popups</strong> with detailed information:</li>
-<ul>
-<li>Sitecode, facility, zone, site acres</li>
-<li>Treatment status and last treatment details</li>
-<li>Last material used and treated acres</li>
-</ul>
-<li><strong>Map legend</strong> showing treatment status color scheme</li>
-<li><strong>Data table</strong> below map with site details and filtering</li>
-<li><strong>Shared filters</strong> with other tabs (zone, facility, FOS, prehatch, expiring days)</li>
-</ul>
-
-<h3>Data Flow</h3>
-<ol>
-<li>Load spatial data via <code>load<em>spatial</em>data()</code>:</li>
-<ul>
-<li>Uses <code>load<em>raw</em>data()</code> with <code>include_geometry = TRUE</code></li>
-<li>Extracts coordinates using <code>ST<em>Transform(ST</em>Centroid(geom), 4326)</code></li>
-<li>Applies same filters as Current Progress tab</li>
-<li>Calculates treatment status for each site</li>
-</ul>
-</ul>
-
-<ol>
-<li>Process spatial data:</li>
-<ul>
-<li>Join sites with latest treatment information</li>
-<li>Calculate treatment status based on end date vs current date</li>
-<li>Filter sites to only those with valid coordinates</li>
-<li>Convert to sf object for leaflet mapping</li>
-</ul>
-</ul>
-
-<h3>Visualization</h3>
-<ul>
-<li><strong>Base map</strong>: OpenStreetMap tiles via leaflet providers</li>
-<li><strong>Markers</strong>: CircleMarkers with 8px radius, black borders</li>
-<li><strong>Colors</strong>: Based on treatment status using predefined palette</li>
-<li><strong>Popups</strong>: HTML-formatted with site and treatment details</li>
-<li><strong>Legend</strong>: Bottom-right position showing status colors</li>
-<li><strong>Bounds</strong>: Automatic map fitting to data extent</li>
-</ul>
-
-<h3>Coordinate Transformation</h3>
-<ul>
-<li><strong>Source</strong>: PostGIS geometry in UTM projection (EPSG:26915)</li>
-<li><strong>Target</strong>: WGS84 decimal degrees (EPSG:4326) for web mapping</li>
-<li><strong>SQL Transform</strong>: <code>ST<em>X(ST</em>Transform(ST_Centroid(geom), 4326))</code> for longitude</li>
-<li><strong>Coordinate Range</strong>: Minnesota extent (~-93.8 to -92.8 lng, 44.6 to 45.4 lat)</li>
-</ul>
-
-<h2>Code Organization</h2>
-
-<h3>File Structure</h3>
-<pre><code class="">
-drone/
-├── app.R                           # Main app - UI orchestration and server logic
-├── ui_helper.R                     # UI definition (drone_ui function)
-├── data_functions.R                # All database queries and data processing
-├── display_functions.R             # Visualization helpers and color mapping
-├── historical_functions.R          # Historical trends data and plotting
-└── NOTES.md                        # This file
-</code></pre>
-<h3>Key Functions by File</h3>
-
-<h4>app.R</h4>
-<ul>
-<li><code>refresh_inputs()</code> - Captures all UI inputs when refresh clicked (prevents reactive reruns)</li>
-<li><code>raw_data()</code> - Loads and processes data ONLY when refresh button clicked</li>
-<li><code>processed<em>data()</code> - Accesses current progress processed data from raw</em>data result</li>
-<li><code>sitecode_data()</code> - Loads site statistics data when refresh clicked</li>
-<li><code>map<em>spatial</em>data()</code> - Loads spatial data with geometry for map visualization when refresh clicked</li>
-<li><code>server()</code> - Main server function with output renderers for all four tabs</li>
-<li>Map section outputs:</li>
-<ul>
-<li><code>output$mapDescription</code> - Dynamic description text for map tab</li>
-<li><code>output$droneMap</code> - Leaflet map with color-coded markers</li>
-<li><code>output$mapDataTable</code> - Data table showing site details with treatment status</li>
-</ul>
-</ul>
-
-<h4>data_functions.R</h4>
-<ul>
-<li><code>load<em>raw</em>data()</code> - Queries drone sites and treatments from database with analysis date and geometry support</li>
-<li><code>apply<em>data</em>filters()</code> - Applies facility, FOS, and prehatch filters to processed data</li>
-<li><code>get<em>sitecode</em>data()</code> - Individual treatment records for site statistics with zone/FOS data</li>
-<li><code>get<em>site</em>stats_data()</code> - Aggregates treatment data by group for site statistics</li>
-<li><code>load<em>spatial</em>data()</code> - Loads spatial data with coordinates and treatment status for mapping</li>
-</ul>
-
-<h4>display_functions.R</h4>
-<ul>
-<li><code>create<em>zone</em>groups()</code> - Creates combined group labels for zone separation</li>
-<li><code>get<em>visualization</em>colors()</code> - Returns appropriate colors for grouping type with zone support</li>
-<li><code>process<em>current</em>data()</code> - Processes filtered data for current progress display with expiring logic</li>
-<li><code>create<em>historical</em>plot()</code> - Generates historical trends visualization with multiple chart types</li>
-</ul>
-
-<h4>historical_functions.R</h4>
-<ul>
-<li><code>create<em>historical</em>data()</code> - Creates historical dataset with time period and zone separation logic</li>
-<li><code>get<em>historical</em>processed<em>data()</code> - Processes and aggregates historical data with combined</em>group handling</li>
-<li><code>get<em>shared</em>historical_data()</code> - Queries shared historical treatment data</li>
-</ul>
-
-<h4>ui_helper.R</h4>
-<ul>
-<li><code>drone_ui()</code> - Main UI definition function with tabPanel layout and all input controls</li>
-</ul>
+<p>| Table | Key Columns Used |</p>
+<p>|---|---|</p>
+<p>| <code>loc<em>breeding</em>sites</code> | <code>sitecode</code>, <code>facility</code>, <code>acres</code>, <code>prehatch</code>, <code>drone</code>, <code>air_gnd</code>, <code>enddate</code>, <code>startdate</code>, <code>geom</code> |</p>
+<p>| <code>gis_sectcode</code> | <code>sectcode</code>, <code>facility</code>, <code>zone</code>, <code>fosarea</code> |</p>
+<p>| <code>employee<em>list</code> | <code>emp</em>num</code>, <code>emp_type</code>, <code>active</code> |</p>
+<p>| <code>dblarv<em>insptrt</em>current</code> | <code>sitecode</code>, <code>facility</code>, <code>inspdate</code>, <code>matcode</code>, <code>acres</code>, <code>foreman</code>, <code>action</code>, <code>airgrnd_plan</code>, <code>amts</code> |</p>
+<p>| <code>dblarv<em>insptrt</em>archive</code> | Same as current minus <code>airgrnd_plan</code> |</p>
+<p>| <code>mattype<em>list</em>targetdose</code> | <code>matcode</code>, <code>effect_days</code> |</p>
 
 <hr>
 
-<h2>Data Collection and Aggregation Logic</h2>
+<h2>SQL Queries</h2>
 
-<h3>Overview of Data Processing Pipeline</h3>
-<p>The drone app follows a consistent pattern for data collection and aggregation across all four tabs. Data processing is done <strong>outside of SQL</strong> - SQL queries return raw records which are then aggregated using R/dplyr operations.</p>
-
-<h3>Core Aggregation Methods</h3>
-
-<h4>Total Sites vs Total Acres Calculation</h4>
-<p><strong>IMPORTANT</strong>: Both total sites and total acres calculations are performed <strong>outside of SQL</strong> using R aggregation functions.</p>
-
-<p><strong>Total Sites Calculation:</strong></p>
-<pre><code class="r">
-# Count UNIQUE sites (not treatments)
-total_sites &lt;- drone_sites %&gt;%
-  group_by(!!sym(group_col)) %&gt;%
-  summarize(total_sites = n(), .groups = "drop")  # n() counts rows = sites
-
-# For zone separation
-total_sites &lt;- drone_sites %&gt;%
-  group_by(combined_group, zone) %&gt;%
-  summarize(total_sites = n(), .groups = "drop")
-</code></pre>
-
-<p><strong>Total Acres Calculation:</strong></p>
-<pre><code class="r">
-# Sum acres from SITE records (loc_breeding_sites.acres)
-total_acres &lt;- drone_sites %&gt;%
-  group_by(!!sym(group_col)) %&gt;%
-  summarize(total_acres = sum(acres, na.rm = TRUE), .groups = "drop")
-</code></pre>
-
-<p><strong>Treatment Sites vs Treatment Acres:</strong></p>
-<pre><code class="r">
-# Count unique SITES with active treatments (not treatment instances)
-active_sites &lt;- drone_treatments %&gt;%
-  filter(is_active) %&gt;%
-  group_by(!!sym(group_col)) %&gt;%
-  summarize(active_sites = n_distinct(sitecode), .groups = "drop")
-
-# Sum TREATED acres from treatment records (treated_acres)
-active_acres &lt;- drone_treatments %&gt;%
-  filter(is_active) %&gt;%
-  group_by(!!sym(group_col)) %&gt;%
-  summarize(active_acres = sum(acres, na.rm = TRUE), .groups = "drop")
-</code></pre>
-
-<h4>Historical Metrics Aggregation</h4>
-<p><strong>All historical aggregations are done in R after SQL returns raw records:</strong></p>
-
-<p><strong>Time Period Creation</strong></p>
-<pre><code class="r">
-# Weekly aggregation
-if (hist_time_period == "weekly") {
-  all_data &lt;- all_data %&gt;%
-    mutate(
-      year = year(inspdate),
-      week = week(inspdate),
-      time_period = paste0(year, "-W", sprintf("%02d", week)),
-      time_sort = year * 100 + week
-    )
-} else {
-  # Yearly aggregation (default)
-  all_data &lt;- all_data %&gt;%
-    mutate(
-      time_period = as.character(year),
-      time_sort = year
-    )
-}
-</code></pre>
-
-<p><strong>Sites Metric:</strong></p>
-<pre><code class="r">
-# Count unique sites treated per group per time period
-if (hist_display_metric == "sites") {
-  results &lt;- all_data %&gt;%
-    group_by(!!group_var, !!time_var, time_sort) %&gt;%
-    summarize(count = n_distinct(sitecode), .groups = "drop")
-}
-</code></pre>
-
-<p><strong>Treatments Metric:</strong></p>
-<pre><code class="r">
-# Count total treatment instances per group per time period
-if (hist_display_metric == "treatments") {
-  results &lt;- all_data %&gt;%
-    group_by(!!group_var, !!time_var, time_sort) %&gt;%
-    summarize(count = n(), .groups = "drop")  # n() counts all treatment records
-}
-</code></pre>
-
-<p><strong>Acres Metric:</strong></p>
-<pre><code class="r">
-# Sum treated acres from treatment records per group per time period
-if (hist_display_metric == "acres") {
-  results &lt;- all_data %&gt;%
-    group_by(!!group_var, !!time_var, time_sort) %&gt;%
-    summarize(count = sum(treated_acres, na.rm = TRUE), .groups = "drop")
-}
-</code></pre>
-
-<h4>Site Statistics Aggregation</h4>
-<p><strong>Site statistics are calculated from individual treatment records:</strong></p>
-
-<pre><code class="r">
-# Calculate statistics from individual treatment records
-site_stats &lt;- sitecode_data_raw %&gt;%
-  group_by(!!sym(group_col)) %&gt;%
-  summarize(
-    avg_site_acres = mean(acres, na.rm = TRUE),      # Average of all treatment acres
-    min_site_acres = min(acres, na.rm = TRUE),       # Smallest single treatment
-    max_site_acres = max(acres, na.rm = TRUE),       # Largest single treatment
-    n = n_distinct(sitecode),                        # Count unique sites
-    n_treatments = n(),                              # Count total treatments
-    .groups = "drop"
-  )
-</code></pre>
-
-<h3>Key Aggregation Principles</h3>
-
-<ol>
-<li><strong>DISTINCT Counting</strong>: Always use <code>n_distinct(sitecode)</code> when counting sites to avoid double-counting</li>
-<li><strong>Treatment vs Site Acres</strong>: </li>
-<ul>
-<li><strong>Site acres</strong>: From <code>loc<em>breeding</em>sites.acres</code> (site capacity)</li>
-<li><strong>Treatment acres</strong>: From <code>dblarv<em>insptrt</em>*.acres</code> (actual treated area)</li>
-<li><strong>R-based Aggregation</strong>: All calculations use R/dplyr <code>group_by()</code> and <code>summarize()</code></li>
-<li><strong>Zone Separation</strong>: When zones are separated, aggregation includes both <code>group</code> and <code>zone</code> columns</li>
-<li><strong>Missing Values</strong>: Use <code>na.rm = TRUE</code> in all sum/mean calculations</li>
-</ul>
-</ul>
-
-<h3>Data Sources vs Aggregation Separation</h3>
-
-<p><strong>SQL Queries</strong>: Return raw, individual records</p>
-<ul>
-<li><code>load<em>raw</em>data()</code>: Returns individual site records and treatment records</li>
-<li><code>get<em>sitecode</em>data()</code>: Returns individual treatment instances</li>
-<li><code>get<em>shared</em>historical_data()</code>: Returns individual historical treatments</li>
-</ul>
-
-<p><strong>R Aggregation</strong>: Processes raw records into summaries</p>
-<ul>
-<li><code>process<em>current</em>data()</code>: Aggregates sites and treatments by group</li>
-<li><code>get<em>site</em>stats_data()</code>: Calculates statistics from treatment records</li>
-<li>Historical functions: Aggregate treatments by group and year</li>
-</ul>
-
-<h3>Treatment Status Logic (R-based)</h3>
-<p><strong>Active Treatment Calculation:</strong></p>
-<pre><code class="r">
-drone_treatments &lt;- drone_treatments %&gt;%
-  mutate(
-    inspdate = as.Date(inspdate),
-    effect_days = ifelse(is.na(effect_days), 14, effect_days),  # Default 14 days
-    treatment_end_date = inspdate + effect_days,
-    is_active = treatment_end_date &gt;= current_date
-  )
-</code></pre>
-
-<p><strong>Expiring Treatment Calculation:</strong></p>
-<pre><code class="r">
-drone_treatments &lt;- drone_treatments %&gt;%
-  mutate(
-    is_expiring = is_active &amp; 
-                  treatment_end_date &gt;= expiring_start_date &amp; 
-                  treatment_end_date &lt;= expiring_end_date
-  )
-</code></pre>
-
-<h2>SQL Queries Reference</h2>
-
-<p>This section documents all SQL queries used in the drone app for reference and troubleshooting.</p>
-
-<h3>1. Current Drone Sites Query</h3>
-<p><strong>Function</strong>: <code>load<em>raw</em>data()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load active drone sites with zone and FOS information</p>
+<h3>1. Drone Sites (loc<em>breeding</em>sites)</h3>
 
 <pre><code class="sql">
-SELECT b.sitecode, g.facility, b.acres, b.prehatch, b.drone, 
-       CASE 
-         WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
-         ELSE NULL
-       END as foreman, 
-       g.zone,
-       left(b.sitecode,7) as sectcode
-FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
-LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
-  AND e.emp_type = 'FieldSuper' 
-  AND e.active = true
+SELECT b.sitecode, b.facility, b.acres, b.prehatch, b.drone, b.air_gnd,
+       g.zone, g.fosarea AS fos,
+       ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) AS lng,
+       ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) AS lat
+FROM loc_breeding_sites b
+LEFT JOIN gis_sectcode g ON b.sectcode = g.sectcode
 WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
-  AND b.enddate IS NULL
+  AND (b.enddate IS NULL OR b.enddate &gt;= CURRENT_DATE)
+  AND (b.startdate IS NULL OR b.startdate &lt;= CURRENT_DATE)
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>Uses <code>loc<em>breeding</em>sites</code> as primary source, joined with <code>gis_sectcode</code> for zone/FOS data</li>
-<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(b.sitecode,7)</code> ensures exact match</li>
-<li>Filters for active drone sites (<code>enddate IS NULL</code>)</li>
-<li>Gets zone, FOS area from gis_sectcode via exact sectcode matching</li>
-<li>Joins with employee_list to validate active field supervisors</li>
-<li><strong>Fixed</strong>: Previous broad OR logic incorrectly matched multiple sectcodes (e.g., 191819- AND 191819E)</li>
-</ul>
+<blockquote>Geometry columns are conditionally included only when <code>include<em>geometry = TRUE</code>. The <code>ST</em>Transform(ST_Centroid(...), 4326)</code> converts UTM centroids to WGS84 lon/lat.</blockquote>
 
-<h3>2. Current Treatments Query</h3>
-<p><strong>Function</strong>: <code>load<em>raw</em>data()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load current drone treatments with zone/FOS data and effectiveness duration</p>
+<h3>2. Current Treatments (dblarv<em>insptrt</em>current)</h3>
 
 <pre><code class="sql">
-SELECT t.sitecode, t.inspdate, t.matcode, t.acres as treated_acres, t.foreman, m.effect_days,
-       g.facility, g.zone, g.fosarea
-FROM public.dblarv_insptrt_current t
-LEFT JOIN public.mattype_list_targetdose m ON t.matcode = m.matcode
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
+SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres,
+       t.foreman, t.action, t.airgrnd_plan, t.amts,
+       g.zone, g.fosarea AS fos,
+       m.effect_days
+FROM dblarv_insptrt_current t
+LEFT JOIN gis_sectcode g ON t.sectcode = g.sectcode
+LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
 WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
+  AND t.inspdate &gt;= '{start_date}'
+  AND t.inspdate &lt;= '{end_date}'
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li>Filters drone treatments: <code>airgrnd_plan = 'D'</code> OR <code>action = 'D'</code></li>
-<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(t.sitecode,7)</code> ensures exact match</li>
-<li>Joins with mattype<em>list</em>targetdose for treatment duration</li>
-<li>Gets facility, zone, and fosarea from gis_sectcode via exact sectcode matching</li>
-<li><strong>Fixed</strong>: Prevents ambiguous zone assignments when multiple sectcodes exist (e.g., 191819- vs 191819E)</li>
-</ul>
+<h3>3. Archive Treatments (dblarv<em>insptrt</em>archive)</h3>
 
-<h3>3. Individual Treatment Records Query (Site Statistics)</h3>
-<p><strong>Function</strong>: <code>get<em>sitecode</em>data()</code> in <code>data_functions.R</code>  </p>
-<p><strong>Purpose</strong>: Get individual treatment records for site statistics analysis</p>
+<pre><code class="sql">
+SELECT t.sitecode, t.facility, t.inspdate, t.matcode, t.acres,
+       t.foreman, t.action, t.amts,
+       g.zone, g.fosarea AS fos,
+       m.effect_days
+FROM dblarv_insptrt_archive t
+LEFT JOIN gis_sectcode g ON t.sectcode = g.sectcode
+LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
+WHERE t.action = 'D'
+  AND t.inspdate &gt;= '{start_date}'
+  AND t.inspdate &lt;= '{end_date}'
+</code></pre>
+
+<blockquote>Archive table has no <code>airgrnd_plan</code> column — only <code>action = 'D'</code> is used.</blockquote>
+
+<h3>4. Site Statistics CTE</h3>
 
 <pre><code class="sql">
 WITH treatment_data AS (
-    SELECT 
-        t.facility, 
-        t.sitecode, 
-        t.inspdate, 
-        t.matcode, 
-        t.amts as amount_used,
-        t.acres as recorded_acres,
-        t.foreman as treatment_foreman,
-        EXTRACT(YEAR FROM t.inspdate) as year
-    FROM public.dblarv_insptrt_current t
-    WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
-        AND t.inspdate &lt;= '[analysis_date]'
-        AND t.matcode IS NOT NULL
-        AND t.acres IS NOT NULL
-        AND t.acres &gt; 0
-    
-    UNION ALL
-    
-    SELECT 
-        t.facility, 
-        t.sitecode, 
-        t.inspdate, 
-        t.matcode, 
-        t.amts as amount_used,
-        t.acres as recorded_acres,
-        t.foreman as treatment_foreman,
-        EXTRACT(YEAR FROM t.inspdate) as year
-    FROM public.dblarv_insptrt_archive t
-    WHERE t.action = 'D'
-        AND EXTRACT(YEAR FROM t.inspdate) BETWEEN [start_year] AND [end_year]
-        AND t.inspdate &lt;= '[analysis_date]'
-        AND t.matcode IS NOT NULL
-        AND t.acres IS NOT NULL
-        AND t.acres &gt; 0
+  -- current + archive UNION ALL, filtered by date range and drone action
 ),
--- Get deduplicated location data for prehatch info and zone
 location_data AS (
-    SELECT DISTINCT ON (b.sitecode, b.facility)
-        b.sitecode, 
-        b.facility, 
-        b.prehatch,
-        CASE 
-          WHEN e.emp_num IS NOT NULL AND e.active = true THEN sc.fosarea
-          ELSE NULL
-        END as foreman,
-        sc.zone
-    FROM public.loc_breeding_sites b
-    LEFT JOIN public.gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
-    LEFT JOIN public.employee_list e ON sc.fosarea = e.emp_num 
-      AND e.emp_type = 'FieldSuper' 
-      AND e.active = true
-    ORDER BY b.sitecode, b.facility
+  SELECT sitecode, facility, acres
+  FROM loc_breeding_sites
+  WHERE (drone IN ('Y','M','C') OR air_gnd = 'D')
+    AND (enddate IS NULL OR enddate &gt;= CURRENT_DATE)
+    AND (startdate IS NULL OR startdate &lt;= CURRENT_DATE)
 )
--- Return individual treatment records, not aggregated
-SELECT DISTINCT
-    t.sitecode,
-    t.facility,
-    t.recorded_acres as acres,
-    t.inspdate,
-    t.year,
-    t.matcode,
-    l.zone,
-    l.foreman,
-    l.prehatch,
-    -- Add a unique treatment ID for identification
-    ROW_NUMBER() OVER (ORDER BY t.sitecode, t.inspdate) as treatment_id
-FROM treatment_data t
-LEFT JOIN location_data l ON t.sitecode = l.sitecode AND t.facility = l.facility
-ORDER BY t.sitecode, t.inspdate DESC
+SELECT l.sitecode, l.facility, l.acres,
+       COUNT(t.inspdate) AS n_treatments,
+       MAX(t.inspdate) AS last_treatment
+FROM location_data l
+LEFT JOIN treatment_data t ON l.sitecode = t.sitecode
+GROUP BY l.sitecode, l.facility, l.acres
 </code></pre>
 
-<p><strong>Key Points</strong>:</p>
+<hr>
+
+<h2>R-Side Logic</h2>
+
+<h3>Treatment Status Classification (data_functions.R)</h3>
+
 <ul>
-<li>Combines current and archive tables with UNION ALL</li>
-<li>Uses CTEs for better organization and performance</li>
-<li>Filters out zero-acre treatments</li>
-<li><strong>Analysis date filter</strong>: Excludes treatments recorded after the specified analysis date</li>
-<li>Joins with location data for zone and FOS information</li>
-<li>Returns individual treatment records, not aggregated</li>
+<li><code>treatment<em>end</em>date = inspdate + effect<em>days</code> (defaults to 0 if <code>effect</em>days</code> is NA)</li>
+<li><code>is<em>active = treatment</em>end<em>date &gt;= current</em>date</code></li>
+<li><code>is<em>expiring = is</em>active &amp; treatment<em>end</em>date &lt;= (current_date + 7)</code></li>
+<li><code>expiring</code> is a <strong>subset</strong> of <code>active</code>, not a separate category</li>
+<li>Expired count = total − active</li>
 </ul>
 
-<h3>4. Historical Treatment Data Query (Combined Archive + Current)</h3>
-<p><strong>Function</strong>: <code>get<em>shared</em>historical<em>data()</code> in <code>historical</em>functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load historical treatment data with zone/FOS information from both archive and current</p>
 
-<pre><code class="sql">
--- Historical treatments from archive
-SELECT 
-    t.facility, 
-    t.sitecode, 
-    t.inspdate, 
-    t.action, 
-    t.matcode, 
-    t.amts as amount, 
-    t.acres as treated_acres,
-    g.zone,
-    g.fosarea as foreman
-FROM public.dblarv_insptrt_archive t
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
-WHERE t.action = 'D'
-  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-  AND t.inspdate &lt;= ?
+<h3>Drone Type Filtering</h3>
 
-UNION ALL
-
--- Recent treatments from current
-SELECT 
-    t.facility, 
-    t.sitecode, 
-    t.inspdate, 
-    t.action, 
-    t.matcode, 
-    t.amts as amount, 
-    t.acres as treated_acres,
-    g.zone,
-    g.fosarea as foreman
-FROM public.dblarv_insptrt_current t
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(t.sitecode,7)
-WHERE (t.airgrnd_plan = 'D' OR t.action = 'D')
-  AND EXTRACT(YEAR FROM t.inspdate) BETWEEN ? AND ?
-  AND t.inspdate &lt;= ?
-</code></pre>
-
-<p><strong>Key Points</strong>:</p>
 <ul>
-<li>Combines archive and current treatment tables with UNION ALL</li>
-<li><strong>PRECISE SECTCODE MATCHING</strong>: Uses exact sectcode matching in both queries</li>
-<li>Filters drone treatments by action/airgrnd_plan</li>
-<li>Includes year range and analysis date filtering</li>
-<li>Returns treatment data with accurate zone/FOS information</li>
-<li><strong>Fixed</strong>: Ensures consistent zone assignments across historical data</li>
+<li>Sites: <code>drone IN ('Y', 'M', 'C') OR air_gnd = 'D'</code></li>
+<li>Current treatments: <code>airgrnd_plan = 'D' OR action = 'D'</code></li>
+<li>Archive treatments: <code>action = 'D'</code> only</li>
 </ul>
 
-<h3>5. Spatial Data Query (Map Functionality)</h3>
-<p><strong>Function</strong>: <code>load<em>raw</em>data()</code> with <code>include<em>geometry = TRUE</code> in <code>data</em>functions.R</code>  </p>
-<p><strong>Purpose</strong>: Load drone sites with spatial coordinates for interactive mapping</p>
 
-<pre><code class="sql">
-SELECT 
-    b.sitecode, 
-    g.facility, 
-    b.acres, 
-    b.prehatch, 
-    b.drone, 
-    CASE 
-        WHEN e.emp_num IS NOT NULL AND e.active = true THEN g.fosarea
-        ELSE NULL
-    END as foreman, 
-    g.zone,
-    left(b.sitecode,7) as sectcode,
-    ST_X(ST_Transform(ST_Centroid(b.geom), 4326)) as lng, 
-    ST_Y(ST_Transform(ST_Centroid(b.geom), 4326)) as lat
-FROM public.loc_breeding_sites b
-LEFT JOIN public.gis_sectcode g ON g.sectcode = left(b.sitecode,7)
-LEFT JOIN public.employee_list e ON g.fosarea = e.emp_num 
-    AND e.emp_type = 'FieldSuper' 
-    AND e.active = true
-WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')
-    AND b.enddate IS NULL
-    AND b.geom IS NOT NULL
-</code></pre>
+<hr>
 
-<p><strong>Key Points</strong>:</p>
-<ul>
-<li><strong>PRECISE SECTCODE MATCHING</strong>: <code>g.sectcode = left(b.sitecode,7)</code> ensures exact match</li>
-<li>Transforms geometry from UTM (EPSG:26915) to WGS84 (EPSG:4326) for leaflet compatibility</li>
-<li>Extracts centroid coordinates as lng/lat for marker placement  </li>
-<li>Filters for active drone sites with valid geometry data</li>
-<li>Zone data crucial for color-coding map markers by treatment status</li>
-<li><strong>Fixed</strong>: Prevents incorrect zone assignment that would affect marker colors (e.g., 191819-045 correctly shows zone 1, not zone 2)</li>
-</ul>
-<p>LEFT JOIN public.employee<em>list e ON g.fosarea = e.emp</em>num </p>
-<p>    AND e.emp_type = 'FieldSuper' </p>
-<p>    AND e.active = true</p>
-<p>WHERE (b.drone IN ('Y', 'M', 'C') OR b.air_gnd = 'D')</p>
-<p>    AND b.enddate IS NULL </p>
-<p>    AND b.geom IS NOT NULL</p>
-<pre><code class="">
+<h2>Shapefiles</h2>
 
-**Key Points**:
-- **Geometry Transform**: `ST_Transform(ST_Centroid(b.geom), 4326)` converts UTM to WGS84 decimal degrees
-- **Coordinate Extraction**: `ST_X()` and `ST_Y()` extract longitude and latitude values
-- **Geometry Filter**: `b.geom IS NOT NULL` ensures only sites with valid coordinates
-- **Web Mapping Ready**: Coordinates returned in standard web mercator projection (EPSG:4326)
-- **Centroid Calculation**: Uses centroid of polygon geometry for point markers
-- **Minnesota Extent**: Typical coordinates range -93.8 to -92.8 longitude, 44.6 to 45.4 latitude
+<p><strong>None.</strong> All geometry comes from PostGIS (<code>loc<em>breeding</em>sites.geom</code>), transformed to WGS84 via <code>ST<em>Transform(ST</em>Centroid(geom), 4326)</code> in SQL, then converted to <code>sf</code> in R.</p>
+
+<hr>
+
+<h2>Shared Functions Used</h2>
+
+<p>| Function | Source File |</p>
+<p>|---|---|</p>
+<p>| <code>get<em>db</em>connection()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foremen</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foreman</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>table</em>strategy()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>apply<em>standard</em>data<em>filters()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>is<em>valid</em>filter()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>cached<em>load</em>raw<em>data()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>make<em>sitecode</em>link()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>export<em>csv</em>safe()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>set<em>app</em>name()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>load<em>env</em>vars()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>map<em>facility</em>names()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>apply<em>historical</em>group<em>labels()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>summarize<em>historical</em>data()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>create<em>trend</em>chart()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>map<em>facility</em>display<em>names</em>to<em>colors()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>map<em>foreman</em>display<em>names</em>to<em>colors()</code> | <code>shared/server</em>utilities.R</code> |</p>
+<p>| <code>create<em>stat</em>box()</code> | <code>shared/stat<em>box</em>helpers.R</code> |</p>
+<p>| <code>get<em>status</em>colors()</code> | <code>shared/color_themes.R</code> |</p>
+<p>| <code>get<em>facility</em>base<em>colors()</code> | <code>shared/color</em>themes.R</code> |</p>
+<p>| <code>get<em>foreman</em>colors()</code> | <code>shared/color_themes.R</code> |</p>
+<p>| <code>get<em>themed</em>foreman<em>colors()</code> | <code>shared/color</em>themes.R</code> |</p>
     </div>
 </body>
 </html>

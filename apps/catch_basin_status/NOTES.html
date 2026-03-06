@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Catch Basin Status - Technical Notes</title>
+    <title>Catch Basin Status — Developer Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,550 +122,167 @@
 </head>
 <body>
     <div class="container">
-<h1>Catch Basin Status - Technical Notes</h1>
+<h1>Catch Basin Status — Developer Notes</h1>
 
-<h2>Overview</h2>
-<p>This Shiny app tracks catch basin treatment status across MMCD facilities, providing comprehensive monitoring of wet catch basins and their treatment coverage. The app focuses on structures that hold water (wet status) and tracks their treatment history to identify coverage gaps and expiring treatments.</p>
+<h2>Database Tables &amp; Entities</h2>
 
-<p><strong>Key Features</strong>:</p>
-<ul>
-<li><strong>Status Overview</strong>: Summary statistics and visual charts of catch basin treatment status</li>
-<li><strong>Detailed View</strong>: Site-by-site breakdown with treatment details and download capabilities</li>
-<li><strong>Historical Analysis</strong>: Multi-year trends in catch basin treatments</li>
-<li><strong>Unified Filtering</strong>: Consistent filter system across all tabs</li>
-</ul>
+<p>| Table | Purpose |</p>
+<p>|-------|---------|</p>
+<p>| <code>loc<em>catchbasin</code> | Catch basin registry. Key columns: <code>gid</code> (PK), <code>sitecode</code>, <code>facility</code>, <code>status</em>udw</code> (<code>'W'</code>=wet, <code>'D'</code>=dry, <code>'U'</code>=unknown), <code>lettergrp</code> (<code>'Z'</code>=excluded), <code>enddate</code> (NULL=active). |</p>
+<p>| <code>gis_sectcode</code> | Section → facility / zone / fosarea mapping. Joined via <code>LEFT(sitecode, 7) = sectcode</code>. |</p>
+<p>| <code>gis_facility</code> | Facility list with <code>abbrv</code> short codes. Used in CROSS JOIN to build the outer scaffold of all facility/section combos. |</p>
+<p>| <code>dblarv<em>insptrt</em>current</code> | Current-year inspection/treatment records. Joined to catch basins via <code>dblarv<em>treatment</em>catchbasin</code>. Key columns: <code>pkey_pg</code>, <code>sitecode</code>, <code>inspdate</code>, <code>insptime</code>, <code>matcode</code>. |</p>
+<p>| <code>dblarv<em>insptrt</em>archive</code> | Archive inspection/treatment records. Same schema as current. |</p>
+<p>| <code>dblarv<em>treatment</em>catchbasin</code> | Links treatments to individual catch basins (current year). Columns: <code>treatment<em>id</code> → <code>pkey</em>pg</code>, <code>catchbasin<em>id</code> → <code>loc</em>catchbasin.gid</code>, <code>status</code> (<code>'T'</code>=treated, <code>'S'</code>=skipped, <code>'P'</code>=planned). |</p>
+<p>| <code>dblarv<em>treatment</em>cb_archive</code> | Archive version of the catch-basin treatment linkage table. |</p>
+<p>| <code>mattype<em>list</em>targetdose</code> | Material metadata. <code>effect<em>days</code> (default 150 for CB), <code>days</em>retrt_early</code>. Joined via <code>matcode</code>. |</p>
+<p>| <code>employee_list</code> | Employee lookup for FOS name mapping. |</p>
 
-<h2>Data Sources</h2>
+<h2>SQL Queries</h2>
 
-<h3>Core Database Tables and Columns</h3>
+<h3>Main status query (<code>load<em>raw</em>data()</code>)</h3>
 
-<h4>1. <code>loc_catchbasin</code> - Catch Basin Registry</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li><code>gid</code> - Unique catch basin identifier (primary key)</li>
-<li><code>sitecode</code> - Site identifier</li>
-<li><code>facility</code> - Facility name</li>
-<li><code>status_udw</code> - Wet/dry status:</li>
-<ul>
-<li><strong>'W'</strong> - Wet (catch basin contains water) - PRIMARY FOCUS</li>
-<li><strong>'D'</strong> - Dry (catch basin has no water)</li>
-<li><strong>'U'</strong> - Unknown (status not determined)</li>
-</ul>
-<li><code>lettergrp</code> - Letter group classification</li>
-<ul>
-<li><strong>'Z'</strong> - Excluded from analysis (special designation)</li>
-</ul>
-<li><code>enddate</code> - Termination date (NULL = active catch basin, NOT NULL = closed)</li>
-</ul>
+<p>Returns pre-aggregated counts per section. The outer scaffold ensures every facility/section combination appears even with zero counts.</p>
 
-<p><strong>Critical Filters</strong>:</p>
-<ul>
-<li><strong>Active Sites</strong>: <code>enddate IS NULL</code> - Only analyze catch basins that are still active</li>
-<li><strong>Wet Sites</strong>: <code>status_udw = 'W'</code> - Focus on catch basins with standing water</li>
-<li><strong>Valid Sites</strong>: <code>lettergrp &lt;&gt; 'Z'</code> - Exclude special Z-designated sites</li>
-</ul>
-
-<p><strong>Usage</strong>: Primary catch basin inventory and wet/dry status tracking</p>
-
-<h4>2. <code>gis_sectcode</code> - Geographic Section Mapping (AUTHORITATIVE SOURCE)</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li><code>sectcode</code> - 7-character section code (joins to <code>LEFT(sitecode, 7)</code>)</li>
-<li><code>facility</code> - Facility name (Sr, E, Sj, Wp, etc.)</li>
-<li><code>fosarea</code> - FOS area code (4-digit formatted emp_num like "0203", "1904")</li>
-<li><code>zone</code> - Zone designation:</li>
-<ul>
-<li><strong>'1'</strong> - P1 (Primary zone)</li>
-<li><strong>'2'</strong> - P2 (Secondary zone)</li>
-</ul>
-</ul>
-
-<p><strong>Join Pattern</strong>: <code>LEFT JOIN gis<em>sectcode sc ON LEFT(loc</em>catchbasin.sitecode, 7) = sc.sectcode</code></p>
-
-<p><strong>Usage</strong>: Authoritative source for facility, fosarea, and zone assignments</p>
-
-<h4>3. <code>dblarv<em>insptrt</em>current</code> - Current Treatment Records</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li><code>pkey_pg</code> - Primary key (links to treatment detail tables)</li>
-<li><code>sitecode</code> - Site identifier</li>
-<li><code>inspdate</code> - Inspection/treatment date</li>
-<li><code>insptime</code> - Inspection/treatment time (for ordering when dates match)</li>
-<li><code>matcode</code> - Material code (joins to mattype<em>list</em>targetdose)</li>
-</ul>
-
-<p><strong>Usage</strong>: Current year catch basin treatment records</p>
-
-<h4>4. <code>dblarv<em>insptrt</em>archive</code> - Historical Treatment Records</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li>Same structure as <code>dblarv<em>insptrt</em>current</code></li>
-<li>Contains historical treatment data from previous years</li>
-</ul>
-
-<p><strong>Usage</strong>: Historical catch basin treatment data for multi-year analysis</p>
-
-<h4>5. <code>dblarv<em>treatment</em>catchbasin</code> - Treatment Detail (Current)</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li><code>treatment<em>id</code> - Links to <code>dblarv</em>insptrt<em>current.pkey</em>pg</code></li>
-<li><code>catchbasin<em>id</code> - Links to <code>loc</em>catchbasin.gid</code></li>
-<li><code>status</code> - Treatment status:</li>
-<ul>
-<li><strong>'T'</strong> - Treated (treatmented)</li>
-<li><strong>'S'</strong> - Skipped (treatment planned but skipped)</li>
-</ul>
-</ul>
-
-
-<p><strong>Join Pattern</strong>: <code>JOIN dblarv<em>treatment</em>catchbasin ON dblarv<em>insptrt</em>current.pkey<em>pg = dblarv</em>treatment<em>catchbasin.treatment</em>id</code></p>
-
-<p><strong>Usage</strong>: Links treatments to specific catch basins and provides treatment status flags</p>
-
-<h4>6. <code>dblarv<em>treatment</em>cb_archive</code> - Treatment Detail (Archive)</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li>Same structure as <code>dblarv<em>treatment</em>catchbasin</code></li>
-<li>Historical treatment detail records</li>
-</ul>
-
-<p><strong>Usage</strong>: Historical treatment-to-catchbasin linkage</p>
-
-<h4>7. <code>mattype<em>list</em>targetdose</code> - Material Effectiveness Data</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li><code>matcode</code> - Material identifier</li>
-<li><code>effect_days</code> - Treatment effectiveness duration in days</li>
-<li><code>days<em>retrt</em>early</code> - Days before expiration to flag as "expiring"</li>
-</ul>
-
-<p><strong>Default Values</strong>:</p>
-<ul>
-<li><strong>effect_days</strong>: Defaults to 150 days if NULL</li>
-<li><strong>expiring threshold</strong>: User-configurable (default 14 days)</li>
-</ul>
-
-<p><strong>Usage</strong>: Calculate treatment end dates and expiring status</p>
-
-<h4>8. <code>employee_list</code> - FOS Personnel Data</h4>
-<p><strong>Key Columns</strong>:</p>
-<ul>
-<li><code>emp<em>num</code> - Employee number (maps to gis</em>sectcode.fosarea)</li>
-<li><code>shortname</code> - Foreman short name</li>
-<li><code>facility</code> - Facility assignment</li>
-<li><code>emp_type</code> - Employee type (filtered to 'FieldSuper')</li>
-<li><code>active</code> - Active status (filtered to true)</li>
-</ul>
-
-<p><strong>FOS Code Format</strong>: <code>sprintf("%04d", emp_num)</code> - Convert to 4-digit string for matching</p>
-
-<p><strong>Usage</strong>: Maps fosarea codes to readable foreman names for filtering</p>
-
-<h3>Data Collection Strategy</h3>
-
-<h4>Treatment Status Logic</h4>
-
-<p>The app calculates catch basin treatment status using age-based logic:</p>
-
-<p><strong>Status Definitions</strong>:</p>
-<ol>
-<li><strong>Treated</strong>: Treatment age ≤ effect_days AND status NOT 'S' or 'P'</li>
-<li><strong>Expiring</strong>: Treatment age &gt; (effect<em>days - expiring</em>days) AND age ≤ effect_days</li>
-<li><strong>Expired</strong>: Treatment age &gt; effect_days</li>
-<li><strong>Skipped</strong>: Treatment status = 'S' (planned but skipped)</li>
-<li><strong>?</strong>: Treatment status = 'P' ()</li>
-<li><strong>Skipped-Expiring</strong>: Skipped treatment nearing end of theoretical effectiveness</li>
-</ul>
-
-<p><strong>Age Calculation</strong>:</p>
 <pre><code class="sql">
-date_part('days', analysis_date::timestamp - inspdate::timestamp) AS age
+SELECT o.facility, o.zone, o.fosarea, o.sectcode,
+       COALESCE(wet.total_count, 0)::integer  AS total_count,
+       COALESCE(t.active_count, 0)::integer   AS active_count,
+       COALESCE(t.expiring_count, 0)::integer AS expiring_count,
+       COALESCE(t.expired_count, 0)::integer  AS expired_count
+
+FROM (
+  -- Scaffold: every facility × section combination
+  SELECT DISTINCT g.abbrv AS facility, sc.zone, sc.fosarea, sc.sectcode
+  FROM gis_facility g
+  CROSS JOIN gis_sectcode sc
+  WHERE g.abbrv IN (:facility_list)
+    -- optional: AND sc.fosarea IN (:foreman_filter)
+    -- optional: AND sc.zone IN (:zone_filter)
+) o
+
+LEFT JOIN (
+  -- Wet catch basin counts per section
+  SELECT facility, LEFT(sitecode, 7) AS sectcode, COUNT(*) AS total_count
+  FROM loc_catchbasin
+  LEFT JOIN gis_sectcode sc ON LEFT(sitecode, 7) = sc.sectcode
+  WHERE (enddate IS NULL OR enddate &gt; :analysis_date)
+    AND lettergrp &lt;&gt; 'Z' AND status_udw = 'W'
+  GROUP BY facility, LEFT(sitecode, 7)
+) wet ON wet.facility = o.facility AND wet.sectcode = o.sectcode
+
+LEFT JOIN (
+  -- Treatment status counts per section (inner DISTINCT ON gets latest treatment per basin)
+  SELECT cbstat.facility, cbstat.sectcode,
+         COUNT(*) FILTER (WHERE active_status IN ('treated','expiring')) AS active_count,
+         COUNT(*) FILTER (WHERE active_status = 'expiring')             AS expiring_count,
+         COUNT(*) FILTER (WHERE active_status = 'expired')              AS expired_count
+  FROM (
+    SELECT s_tcb.gid, s_tcb.facility, s_tcb.sectcode, s_tcb.status_udw,
+      CASE
+        WHEN age &gt; COALESCE(effect_days, 150) THEN 'expired'
+        WHEN age &gt; (COALESCE(effect_days, 150) - :expiring_days) THEN
+          CASE WHEN status = 'S' THEN 'skipped-expiring' ELSE 'expiring' END
+        WHEN status = 'S' THEN 'skipped'
+        WHEN status = 'P' THEN 'planned'
+        ELSE 'treated'
+      END AS active_status
+    FROM (
+      SELECT DISTINCT ON (loc_catchbasin.gid)
+        loc_catchbasin.gid, loc_catchbasin.facility,
+        LEFT(loc_catchbasin.sitecode, 7) AS sectcode,
+        loc_catchbasin.status_udw, loc_catchbasin.lettergrp, loc_catchbasin.enddate,
+        insptrt.pkey_pg AS insptrt_id,
+        DATE_PART('days', :analysis_date::timestamp - insptrt.inspdate::timestamp) AS age,
+        dblarv_treatment_catchbasin.status,
+        mattype_list_targetdose.effect_days
+      FROM &lt;insptrt_table&gt; insptrt
+      JOIN dblarv_treatment_catchbasin ON insptrt.pkey_pg = dblarv_treatment_catchbasin.treatment_id
+      JOIN loc_catchbasin ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
+      JOIN mattype_list_targetdose USING (matcode)
+      LEFT JOIN gis_sectcode sc ON LEFT(loc_catchbasin.sitecode, 7) = sc.sectcode
+      WHERE insptrt.inspdate &lt;= :analysis_date
+      ORDER BY loc_catchbasin.gid, insptrt.inspdate DESC, insptrt.insptime DESC
+    ) s_tcb
+  ) cbstat
+  WHERE cbstat.status_udw = 'W'
+  GROUP BY cbstat.facility, cbstat.sectcode
+) t ON t.facility = o.facility AND t.sectcode = o.sectcode
+
+ORDER BY o.facility, o.zone, o.fosarea, o.sectcode
 </code></pre>
 
-<p><strong>Treatment Status SQL Logic</strong>:</p>
-<pre><code class="sql">
-CASE
-  WHEN age &gt; COALESCE(effect_days::integer, 150)::double precision 
-    THEN 'expired'
-  WHEN age &gt; (COALESCE(effect_days::integer, 150) - expiring_days)::double precision 
-    THEN CASE
-      WHEN status = 'S' THEN 'skipped-expiring'
-      ELSE 'expiring'
-    END
-  WHEN status = 'S' THEN 'skipped'
-  WHEN status = 'P' THEN 'planned'
-  ELSE 'treated'
-END AS active_status
-</code></pre>
+<p><code>&lt;insptrt<em>table&gt;</code> is <code>dblarv</em>insptrt<em>current</code> or chosen by <code>get</em>table<em>strategy(analysis</em>date)</code>.</p>
 
-<h4>Key Join Patterns</h4>
+<h3>Historical yearly query (<code>load<em>historical</em>cb_data()</code>)</h3>
 
-<p><strong>Standard Treatment Query</strong>:</p>
 <pre><code class="sql">
--- Get latest treatment per catch basin with status calculation
-SELECT DISTINCT ON (loc_catchbasin.gid)
-  loc_catchbasin.gid,
-  loc_catchbasin.facility,
-  LEFT(loc_catchbasin.sitecode, 7) AS sectcode,
-  loc_catchbasin.status_udw,
-  dblarv_insptrt_current.pkey_pg AS insptrt_id,
-  date_part('days', analysis_date::timestamp - 
-    dblarv_insptrt_current.inspdate::timestamp) AS age,
-  dblarv_treatment_catchbasin.status,
-  mattype_list_targetdose.effect_days
-FROM dblarv_insptrt_current
-JOIN dblarv_treatment_catchbasin 
-  ON dblarv_insptrt_current.pkey_pg = dblarv_treatment_catchbasin.treatment_id
-JOIN loc_catchbasin 
-  ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
+SELECT loc_catchbasin.facility, sc.zone, sc.fosarea,
+       LEFT(loc_catchbasin.sitecode, 7) AS sectcode,
+       EXTRACT(YEAR FROM insptrt.inspdate) AS treatment_year,
+       COUNT(*) AS total_count,
+       COUNT(*) FILTER (WHERE tcb.status IN ('A','W')) AS active_count,
+       ...
+FROM &lt;insptrt_table&gt; insptrt
+JOIN &lt;treatment_cb_table&gt; tcb ON insptrt.pkey_pg = tcb.treatment_id
+JOIN loc_catchbasin ON tcb.catchbasin_id = loc_catchbasin.gid
 JOIN mattype_list_targetdose USING (matcode)
 LEFT JOIN gis_sectcode sc ON LEFT(loc_catchbasin.sitecode, 7) = sc.sectcode
-WHERE dblarv_insptrt_current.inspdate &lt;= analysis_date
-  AND loc_catchbasin.status_udw = 'W'
-  AND loc_catchbasin.lettergrp &lt;&gt; 'Z'
-ORDER BY loc_catchbasin.gid, 
-         dblarv_insptrt_current.inspdate DESC, 
-         dblarv_insptrt_current.insptime DESC
+WHERE EXTRACT(YEAR FROM insptrt.inspdate) BETWEEN :start_year AND :end_year
+  AND loc_catchbasin.status_udw = 'W' AND loc_catchbasin.lettergrp &lt;&gt; 'Z'
+GROUP BY facility, zone, fosarea, sectcode, treatment_year
 </code></pre>
 
-<p><strong>Note</strong>: <code>DISTINCT ON (loc_catchbasin.gid)</code> ensures only the most recent treatment per catch basin is returned.</p>
+<p>Runs against both <code><em>current</code> and <code></em>archive</code> tables; results are <code>bind_rows()</code>'d.</p>
 
-<h2>Tab 1: Status Overview</h2>
+<h3>Historical raw treatments (<code>load<em>historical</em>treatments()</code>)</h3>
 
-<h3>Purpose</h3>
-<p>Display current status of wet catch basins with treatment coverage statistics and visual charts.</p>
+<p>Returns individual treatment rows for weekly active-treatment analysis:</p>
 
-<h3>Key Features</h3>
-<ul>
-<li><strong>Value boxes</strong> showing summary statistics:</li>
-<ul>
-<li>Total wet catch basins</li>
-<li>Wet catch basins with active treatment</li>
-<li>Treatment coverage percentage</li>
-<li>Expiring treatments count</li>
-<li>Expired treatments count</li>
-</ul>
-<li><strong>Layered bar chart</strong> showing treatment status by group (MMCD, facility, FOS, or section)</li>
-<li><strong>Site Filter</strong> - All Sites, Expiring Only, or Expiring + Expired</li>
-<li><strong>Expiring Days slider</strong> - Configurable threshold for expiring treatments (1-60 days, default 14)</li>
-<li><strong>Date simulation</strong> - "Pretend Today is" date picker for status analysis</li>
-<li><strong>Zone filters</strong> - P1 Only, P2 Only, P1 and P2 Separate, Combined P1+P2</li>
-<li><strong>Group By selector</strong> - All MMCD, Facility, FOS, or Section</li>
-</ul>
-
-<h3>Metrics Explained</h3>
-
-<p><strong>Total Wet Catch Basins</strong>:</p>
-<ul>
-<li>Count of all catch basins with <code>status_udw = 'W'</code></li>
-<li>Filtered by: <code>enddate IS NULL</code> (active) AND <code>lettergrp &lt;&gt; 'Z'</code> (valid sites)</li>
-<li>This is the denominator for coverage calculations</li>
-</ul>
-
-<p><strong>Wet CB with Active Treatment</strong>:</p>
-<ul>
-<li>Count of wet catch basins with active_status IN ('treated', 'expiring')</li>
-<li>Includes both fully active and expiring treatments</li>
-<li>This is the numerator for coverage percentage</li>
-</ul>
-
-<p><strong>Treatment Coverage %</strong>:</p>
-<ul>
-<li>Formula: <code>(Active Treatment Count / Total Wet CB Count) × 100</code></li>
-<li>Indicates percentage of wet catch basins with current protection</li>
-<li>Color-coded: Green (≥75%), Orange (50-74%), Red (&lt;50%)</li>
-</ul>
-
-<p><strong>Expiring</strong>:</p>
-<ul>
-<li>Count of catch basins with active_status = 'expiring'</li>
-<li>Treatments nearing expiration within user-defined threshold (default 14 days)</li>
-<li>Alerts operators to catch basins needing retreatment soon</li>
-</ul>
-
-<p><strong>Expired</strong>:</p>
-<ul>
-<li>Count of catch basins with active_status = 'expired'</li>
-<li>Treatments that have exceeded their effective duration</li>
-<li>Indicates catch basins needing immediate attention</li>
-</ul>
-
-<h3>Visualization</h3>
-
-<p><strong>Layered Bar Chart</strong>:</p>
-<ul>
-<li><strong>Gray background bar</strong>: Total wet catch basins (shows total inventory)</li>
-<li><strong>Green bar</strong>: Catch basins with active treatments (treated + expiring)</li>
-<li><strong>Orange overlay</strong>: Expiring treatments (subset of green bar)</li>
-</ul>
-
-<p><strong>Color Mapping</strong>:</p>
-<ul>
-<li><strong>Facility grouping</strong>: Uses facility-specific colors from db_helpers</li>
-<li><strong>FOS grouping</strong>: Inherits facility colors based on FOS assignment</li>
-<li><strong>Section grouping</strong>: Inherits facility colors based on section location</li>
-<li><strong>MMCD All</strong>: Uses status colors (green for active, orange for expiring)</li>
-</ul>
-
-<p><strong>Zone Handling</strong>:</p>
-<ul>
-<li><strong>Combined zones</strong>: Aggregates P1 and P2 into single bars per group</li>
-<li><strong>Separate zones</strong>: Shows P1 and P2 as distinct bars (e.g., "Anoka P1", "Anoka P2")</li>
-<li><strong>Zone differentiation</strong>: P1 = solid colors, P2 = faded (alpha transparency)</li>
-</ul>
-
-<h2>Tab 2: Detailed View</h2>
-
-<h3>Purpose</h3>
-<p>Provide detailed site-by-site view of catch basin treatment status with filtering and download capabilities.</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Detailed data table</strong> showing:</li>
-<ul>
-<li>Facility, Zone, FOS area, Section code</li>
-<li>Total wet catch basins</li>
-<li>Active treatments count</li>
-<li>Expiring treatments count</li>
-<li>Expired treatments count</li>
-<li>Treatment coverage percentage</li>
-<li>Untreated count</li>
-</ul>
-<li><strong>Download CSV</strong> functionality for filtered data</li>
-<li><strong>Same filters</strong> as Status Overview tab</li>
-<li><strong>Sortable columns</strong> and searchable interface</li>
-<li><strong>Pagination</strong> for large datasets</li>
-</ul>
-
-<h3>Data Table Features</h3>
-<ul>
-<li><strong>Responsive design</strong> with horizontal scrolling</li>
-<li><strong>Center-aligned</strong> numeric columns</li>
-<li><strong>Percentage formatting</strong> (1 decimal place)</li>
-<li><strong>Row highlighting</strong> on hover</li>
-<li><strong>Conditional formatting</strong> for coverage percentages</li>
-</ul>
-
-<h2>Tab 3: Historical Analysis</h2>
-
-<h3>Purpose</h3>
-<p>Analyze multi-year trends in catch basin treatment activity across time periods.</p>
-
-<h3>Key Features</h3>
-<ul>
-<li><strong>Display Metric selector</strong>:</li>
-<ul>
-<li><strong>Yearly - Total Treatments</strong>: Count of all treatment instances (catch basins treated multiple times contribute multiple counts)</li>
-<li><strong>Yearly - Unique Wet CB Treated</strong>: Count of unique catch basins treated (each counted once regardless of retreatment frequency)</li>
-<li><strong>Weekly - Active Treatments</strong>: Count of treatments active on Friday of each week (shows treatment coverage over time)</li>
-</ul>
-<li><strong>Time Period selector</strong>: Weekly or Yearly aggregation</li>
-<li><strong>Year Range controls</strong>: Start Year and End Year (configurable range)</li>
-<li><strong>Chart Type selector</strong>: Line, Bar, Area, or Stacked charts</li>
-<li><strong>Zone filter</strong>: P1, P2, or both (shared with other tabs)</li>
-<li><strong>Facility/FOS filters</strong>: Shared with other tabs</li>
-<li><strong>Group By selector</strong>: All MMCD, Facility, or FOS</li>
-</ul>
-
-<h3>Data Flow</h3>
-
-<ol>
-<li><strong>Query historical data</strong> via <code>get<em>catch</em>basin<em>historical</em>data()</code>:</li>
-<ul>
-<li>Combines current and archive treatment tables</li>
-<li>Filters for wet catch basins (<code>status_udw = 'W'</code>)</li>
-<li>Excludes Z-designated sites (<code>lettergrp &lt;&gt; 'Z'</code>)</li>
-<li>Applies year range filter</li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>Process time periods</strong>:</li>
-<ul>
-<li><strong>Weekly</strong>: Create week numbers (YYYY-W## format) based on Friday of each week</li>
-<li><strong>Yearly</strong>: Use year values directly</li>
-</ul>
-</ul>
-
-<ol>
-<li><strong>Aggregate by metric</strong>:</li>
-<ul>
-<li><strong>Total Treatments</strong>: Count all treatment records <code>n()</code></li>
-<li><strong>Unique Wet CB</strong>: Count distinct catch basins <code>n<em>distinct(catchbasin</em>id)</code></li>
-<li><strong>Active Treatments (weekly)</strong>: For each Friday, count treatments where:</li>
-<ul>
-<li><code>inspdate + effect<em>days &gt;= friday</em>date</code> (treatment still active on Friday)</li>
-</ul>
-</ul>
-</ul>
-
-
-<h2>Refresh Pattern</h2>
-
-<h3>Current Tab Refresh</h3>
-<ul>
-<li>Triggered by <strong>Refresh</strong> button</li>
-<li>Captures all filter inputs when clicked:</li>
-<ul>
-<li>Zone filter (P1, P2, combined, or separate)</li>
-<li>Facility filter</li>
-<li>Foreman filter</li>
-<li>Group by selection</li>
-<li>Custom analysis date</li>
-<li>Expiring days threshold</li>
-<li>Expiring filter (all, expiring only, expiring + expired)</li>
-</ul>
-</ul>
-
-<h3>Historical Tab Refresh</h3>
-<ul>
-<li>Triggered by <strong>Historical Refresh</strong> button</li>
-<li>Captures historical-specific inputs:</li>
-<ul>
-<li>Display metric selection</li>
-<li>Time period (weekly/yearly)</li>
-<li>Year range (start/end)</li>
-<li>Chart type</li>
-<li>All shared filters (zone, facility, foreman)</li>
-</ul>
-</ul>
-
-<p><strong>Rationale</strong>: Separate refresh buttons allow users to configure complex filter combinations and query expensive data only when ready, improving performance and user control.</p>
-
-<h2>Function Reference</h2>
-
-<h3>Data Functions (data_functions.R)</h3>
-
-<p><strong><code>load<em>catch</em>basin<em>data(facility</em>filter, foreman<em>filter, zone</em>filter, custom<em>today, expiring</em>days)</code></strong></p>
-<ul>
-<li>Loads catch basin status data with treatment calculations</li>
-<li>Applies facility, foreman, and zone filters</li>
-<li>Calculates treatment age and status for custom analysis date</li>
-<li>Returns aggregated data by facility, zone, fosarea, and sectcode</li>
-</ul>
-
-<p><strong><code>process<em>catch</em>basin<em>data(data, group</em>by, combine<em>zones, expiring</em>filter)</code></strong></p>
-<ul>
-<li>Processes raw data into grouped summaries</li>
-<li>Applies expiring filter (all sites, expiring only, or expiring + expired)</li>
-<li>Groups by mmcd_all, facility, foreman, or sectcode</li>
-<li>Calculates percentages and untreated counts</li>
-<li>Returns processed data with display<em>name and group</em>name fields</li>
-</ul>
-
-<h3>Historical Functions (historical_functions.R)</h3>
-
-<p><strong><code>get<em>catch</em>basin<em>historical</em>data(start<em>year, end</em>year, facility<em>filter, zone</em>filter, foreman_filter)</code></strong></p>
-<ul>
-<li>Queries historical treatment data from current and archive tables</li>
-<li>Combines data using UNION ALL</li>
-<li>Filters by year range, facility, zone, and foreman</li>
-<li>Returns treatment records with sectcode, facility, zone, fosarea, dates, and effect_days</li>
-</ul>
-
-<p><strong><code>process<em>historical</em>data(data, time<em>period, display</em>metric, group<em>by, combine</em>zones)</code></strong></p>
-<ul>
-<li>Processes historical data into time-series format</li>
-<li>Creates weekly or yearly aggregations</li>
-<li>Calculates selected metric (total treatments, unique catch basins, or active treatments)</li>
-<li>Groups by selected dimension (all MMCD, facility, or FOS)</li>
-<li>Returns time-series data ready for charting</li>
-</ul>
-
-<h3>Display Functions (display_functions.R)</h3>
-
-<p><strong><code>create<em>status</em>chart(data, group<em>by, expiring</em>filter, theme)</code></strong></p>
-<ul>
-<li>Creates layered bar chart with status visualization</li>
-<li>Uses theme-aware colors</li>
-<li>Implements three-layer design (total wet, active, expiring)</li>
-<li>Returns ggplot object</li>
-</ul>
-
-<p><strong><code>create<em>details</em>table(data)</code></strong></p>
-<ul>
-<li>Creates interactive DataTable with catch basin details</li>
-<li>Formats percentages and numeric columns</li>
-<li>Implements sorting and searching</li>
-<li>Returns DT::datatable object</li>
-</ul>
-
-<h3>UI Helper Functions (ui_helper.R)</h3>
-
-<p><strong><code>catch<em>basin</em>ui()</code></strong></p>
-<ul>
-<li>Creates complete UI structure</li>
-<li>Implements sidebar filter panel</li>
-<li>Creates tabbed main panel (Overview, Detailed View, Historical Analysis)</li>
-<li>Returns fluidPage UI object</li>
-</ul>
-
-<p><strong><code>create<em>sidebar</em>filters()</code></strong></p>
-<ul>
-<li>Creates comprehensive filter panel</li>
-<li>Includes all filter inputs (zone, facility, foreman, date, expiring days)</li>
-<li>Implements refresh buttons for current and historical tabs</li>
-<li>Returns tagList of filter inputs</li>
-</ul>
-
-<p><strong><code>create<em>overview</em>value_boxes()</code></strong></p>
-<ul>
-<li>Creates value box container for overview metrics</li>
-<li>Returns fluidRow with 5 value boxes</li>
-</ul>
-
-<h2>File Structure</h2>
-
-<pre><code class="">
-apps/catch_basin_status/
-├── app.R                       # Main application UI and server logic
-├── data_functions.R            # Data loading and processing
-├── historical_functions.R      # Historical data queries and processing
-├── display_functions.R         # Chart and table creation
-├── ui_helper.R                 # UI component functions
-└── NOTES.md                    # This file - technical documentation
+<pre><code class="sql">
+SELECT trt.inspdate, loc.facility, sc.zone, sc.fosarea,
+       loc.gid AS catchbasin_id, COALESCE(mat.effect_days, 28) AS effect_days
+FROM &lt;insptrt_table&gt; trt
+JOIN &lt;treatment_cb_table&gt; tcb ON trt.pkey_pg = tcb.treatment_id
+JOIN loc_catchbasin loc ON tcb.catchbasin_id = loc.gid
+JOIN mattype_list_targetdose mat USING (matcode)
+LEFT JOIN gis_sectcode sc ON LEFT(loc.sitecode, 7) = sc.sectcode
+WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN :start AND :end
+  AND loc.status_udw = 'W' AND loc.lettergrp &lt;&gt; 'Z'
 </code></pre>
 
-<h2>Notes and Considerations</h2>
+<p>Archive query also filters <code>trt.action = '6'</code>.</p>
 
-<h3>Catch Basin vs Site Distinction</h3>
+<h2>R-Side Logic</h2>
+
 <ul>
-<li><strong>Catch Basins</strong>: Individual storm drain structures (gid in loc_catchbasin)</li>
-<li><strong>Sites</strong>: Can contain multiple catch basins (sitecode grouping)</li>
-<li><strong>This app</strong>: Focuses on individual catch basin tracking, not site-level aggregation</li>
+<li><strong>Pre-aggregated output</strong>: The main query returns counts per section (not per-basin rows) because there are 50K+ catch basins. A <code>pre_aggregated = TRUE</code> flag tells downstream code to sum counts rather than count rows.</li>
+<li><strong>Treatment status classification</strong>: Age-based status in SQL: <code>treated</code> → <code>expiring</code> → <code>expired</code>, with <code>skipped</code>/<code>planned</code> overrides based on treatment <code>status</code> column.</li>
+<li><strong>Effect days default</strong>: 150 days for catch basin materials (vs 14 for air sites).</li>
+<li><strong>Weekly active treatment chart</strong>: For each Friday in the range, R filters to treatments where <code>inspdate &lt;= friday AND inspdate + effect<em>days &gt;= friday</code>, then counts distinct <code>catchbasin</em>id</code> values.</li>
+<li><strong>Grouping</strong>: Data can be grouped by MMCD-wide, facility, FOS, or section, with optional zone separation (P1/P2 side-by-side or combined).</li>
+<li><strong>Coverage %</strong>: <code>(active<em>count / total</em>count) * 100</code> — color-coded green ≥75%, orange 50-74%, red &lt;50%.</li>
 </ul>
 
-<h3>Treatment Status Priority</h3>
-<ol>
-<li><strong>Expired</strong>: Highest priority - needs immediate treatment</li>
-<li><strong>Expiring</strong>: Second priority - needs treatment soon</li>
-<li><strong>Treated</strong>: Actively protected</li>
-<li><strong>Skipped/Planned</strong>: Special statuses for operational tracking</li>
-</ul>
+<h2>Shapefiles</h2>
 
-<h3>Performance Considerations</h3>
-<ul>
-<li>Historical queries can be expensive (multi-year data)</li>
-<li>Separate refresh buttons allow users to control when expensive queries execute</li>
-<li>DISTINCT ON clause ensures efficient retrieval of latest treatment per catch basin</li>
-<li>Zone filtering should be applied early in query for best performance</li>
-</ul>
+<p>None.</p>
 
-<h3>Data Quality Notes</h3>
-<ul>
-<li><strong>lettergrp = 'Z'</strong>: Special designation excluded from all analyses</li>
-<li><strong>status_udw</strong>: Maintained through field inspections, may have lag time</li>
-<li><strong>enddate</strong>: Some catch basins may have enddate set in future for planned closures</li>
-<li><strong>Treatment dates</strong>: Archive table contains complete historical record; current table updated in real-time</li>
-</ul>
+<h2>Shared Functions Used</h2>
 
-<h3>Future Enhancements</h3>
-<ul>
-<li>Add spatial mapping tab showing catch basin locations</li>
-<li>Implement treatment frequency analysis (retreatment intervals)</li>
-<li>Add material effectiveness comparison</li>
-<li>Include weather correlation analysis for wet/dry status changes</li>
-</ul>
+<p>| Function | Source |</p>
+<p>|----------|--------|</p>
+<p>| <code>get<em>db</em>connection()</code> / <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>is<em>valid</em>filter()</code> / <code>build<em>sql</em>in<em>list()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>build<em>sql</em>in<em>clause()</code> / <code>build</em>sql<em>equals</em>clause()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>table</em>strategy()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>historical</em>year<em>ranges()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>lookup()</code> / <code>get<em>foremen</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>choices()</code> / <code>get<em>foreman</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>apply<em>standard</em>data<em>filters()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>create<em>stat</em>box()</code> / <code>create<em>status</em>stat<em>box()</code> | <code>shared/stat</em>box_helpers.R</code> |</p>
+<p>| <code>set<em>app</em>name()</code> / <code>load<em>env</em>vars()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/server</em>utilities.R</code> |</p>
     </div>
 </body>
 </html>

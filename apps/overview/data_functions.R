@@ -197,7 +197,9 @@ load_metric_data <- function(metric,
       )
     
     # Get all facilities to show goal even if no SUCOs
-    all_facilities <- get_facility_lookup()
+    # Exclude MO (Main Office) - they don't participate in SUCO goals
+    all_facilities <- get_facility_lookup() %>%
+      filter(short_name != "MO")
     
     result <- data.frame(
       facility = all_facilities$short_name,

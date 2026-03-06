@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Air Inspection Checklist</title>
+    <title>Air Inspection Checklist — Developer Notes</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -122,43 +122,133 @@
 </head>
 <body>
     <div class="container">
-<h1>Air Inspection Checklist</h1>
+<h1>Air Inspection Checklist — Developer Notes</h1>
 
-<h2>Purpose</h2>
-<p>Checklist view of RED air sites showing whether each site has been inspected within a configurable lookback period. Organized by FOS area and section for easy field verification.</p>
+<h2>Database Tables &amp; Entities</h2>
 
-<h2>Features</h2>
+<p>| Table | Purpose |</p>
+<p>|-------|---------|</p>
+<p>| <code>loc<em>breeding</em>sites</code> | Source of RED air sites (<code>air<em>gnd='A'</code>, <code>priority='RED'</code>). Columns: <code>sitecode</code>, <code>acres</code>, <code>enddate</code>, <code>air</em>gnd</code>, <code>priority</code>. |</p>
+<p>| <code>gis_sectcode</code> | Maps sitecodes to facility, zone, fosarea, sectcode via <code>LEFT(sitecode, 7) = sectcode</code>. |</p>
+<p>| <code>dblarv<em>insptrt</em>current</code> | Current-year inspections &amp; treatments. Used for inspection lookback (actions <code>'2','4'</code>) and recent treatments (actions <code>'3','A','D'</code>). |</p>
+<p>| <code>dblarv<em>insptrt</em>archive</code> | Same schema as above; used when <code>analysis<em>date</code> falls in a prior year (via <code>get</em>table_strategy()</code>). |</p>
+<p>| <code>dblarv<em>sample</em>current</code> | Lab sample results. Joined on <code>sampnum_yr</code> to get <code>redblue</code> (R/B bug type) and <code>missing</code> flag. |</p>
+<p>| <code>dblarv<em>sample</em>archive</code> | Archive version of sample table; used when querying prior years. |</p>
+<p>| <code>mattype<em>list</em>targetdose</code> | Material metadata. Joined on <code>matcode</code> to get <code>effect_days</code> and <code>prehatch</code> flag for active-treatment logic. |</p>
+<p>| <code>loc<em>breeding</em>site<em>cards</em>sjsreast2</code> | Card/AirMap lookup. Joined on <code>sitecode</code> to get <code>airmap_num</code> for sub-grouping. |</p>
+<p>| <code>employee<em>list</code> | Employee names. Joined on <code>emp</em>num</code> to resolve inspector shortname from <code>emp1</code>. |</p>
+
+<h2>SQL Query</h2>
+
+<p>The main query is a single CTE-based statement built in <code>get<em>checklist</em>data()</code>:</p>
+
+<pre><code class="sql">
+WITH RedAirSites AS (
+  SELECT DISTINCT ON (b.sitecode)
+    b.sitecode, b.acres,
+    sc.facility, sc.zone, sc.fosarea, sc.sectcode
+  FROM loc_breeding_sites b
+  LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
+  WHERE (b.enddate IS NULL OR b.enddate &gt; :analysis_date)
+    AND b.air_gnd = 'A'
+    AND b.priority = 'RED'
+    AND sc.facility IN (:facility_filter)   -- optional
+    AND sc.fosarea  IN (:foreman_filter)    -- optional
+    AND sc.zone     IN (:zone_filter)       -- optional
+  ORDER BY b.sitecode, b.enddate NULLS LAST
+),
+
+RecentInspections AS (
+  SELECT i.sitecode, i.inspdate, i.numdip, i.emp1, i.sampnum_yr,
+         ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
+  FROM &lt;inspection_table&gt; i
+  WHERE i.inspdate BETWEEN :lookback_start AND :analysis_date
+    AND i.action IN ('2','4')
+    AND i.sitecode IN (SELECT sitecode FROM RedAirSites)
+),
+
+RecentTreatments AS (
+  SELECT t.sitecode, t.inspdate AS last_treatment_date, t.matcode, t.mattype,
+         COALESCE(mt.effect_days, 14) AS effect_days,
+         t.inspdate + INTERVAL '1 day' * COALESCE(mt.effect_days, 14) AS treatment_expiry,
+         COALESCE(mt.prehatch, FALSE) AS is_prehatch,
+         ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC) AS rn
+  FROM &lt;inspection_table&gt; t
+  LEFT JOIN mattype_list_targetdose mt ON t.matcode = mt.matcode
+  WHERE t.inspdate &lt;= :analysis_date
+    AND t.action IN ('3','A','D')
+    AND t.matcode IS NOT NULL AND t.matcode != ''
+    AND t.sitecode IN (SELECT sitecode FROM RedAirSites)
+),
+
+ActiveTreatmentSites AS (
+  SELECT sitecode, mattype AS active_material,
+         last_treatment_date AS active_trt_date,
+         treatment_expiry AS active_trt_expiry, is_prehatch
+  FROM RecentTreatments
+  WHERE rn = 1 AND treatment_expiry &gt; :analysis_date
+),
+
+LabResults AS (
+  SELECT ls.sampnum_yr, ls.redblue, ls.missing
+  FROM &lt;sample_table&gt; ls
+  WHERE ls.sampnum_yr IS NOT NULL
+)
+
+SELECT
+  s.*, cards.airmap_num,
+  i.inspdate AS last_insp_date, i.numdip AS dip_count,
+  i.emp1 AS inspector_emp, emp.shortname AS inspector_name,
+  i.sampnum_yr, lr.redblue, lr.missing AS lab_missing,
+  CASE WHEN i.sitecode IS NOT NULL THEN TRUE ELSE FALSE END AS was_inspected,
+  CASE WHEN ats.sitecode IS NOT NULL THEN TRUE ELSE FALSE END AS has_active_treatment,
+  ats.active_material, ats.active_trt_date, ats.active_trt_expiry,
+  COALESCE(ats.is_prehatch, FALSE) AS is_prehatch
+FROM RedAirSites s
+LEFT JOIN RecentInspections i      ON s.sitecode = i.sitecode AND i.rn = 1
+LEFT JOIN LabResults lr             ON i.sampnum_yr = lr.sampnum_yr
+LEFT JOIN ActiveTreatmentSites ats  ON s.sitecode = ats.sitecode
+LEFT JOIN loc_breeding_site_cards_sjsreast2 cards ON s.sitecode = cards.sitecode
+LEFT JOIN employee_list emp         ON i.emp1 = emp.emp_num::text
+ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
+</code></pre>
+
+<p><code>&lt;inspection<em>table&gt;</code> is <code>dblarv</em>insptrt<em>current</code> or <code>dblarv</em>insptrt<em>archive</code> depending on <code>get</em>table<em>strategy(analysis</em>date)</code>. Same pattern for <code>&lt;sample_table&gt;</code>.</p>
+
+<h2>R-Side Logic</h2>
+
 <ul>
-<li>Filter by Facility and FOS (FOS choices filter by selected facility)</li>
-<li>Adjustable lookback days (1-7, default 2)</li>
-<li>Show only unfinished (un-inspected) sites</li>
-<li>Employee number and dip count shown for completed inspections</li>
-<li>Red/Blue bug status badges from lab sample results</li>
-<li>URL parameter support: <code>?facility=N&amp;fos=Rosa&amp;lookback=3</code></li>
+<li><strong>Table strategy</strong>: <code>get<em>table</em>strategy(analysis<em>date)</code> decides whether to query <code></em>current</code> or <code>_archive</code> tables based on the analysis date year.</li>
+<li><strong>Prehatch filtering</strong>: After the query, sites with an active prehatch treatment are removed unless the user enables the "Show Prehatch Treatment Sites" toggle (<code>include<em>active</em>treatment</code>).</li>
+<li><strong>FOS display names</strong>: <code>fosarea</code> (emp<em>num) is mapped to human-readable names via <code>get</em>foreman<em>display</em>names()</code>.</li>
+<li><strong>AirMap grouping</strong>: Sites are grouped first by FOS, then by <code>airmap_num</code> (from the cards table), then by <code>sectcode</code>.</li>
+<li><strong>Bug status derivation</strong>: Each site is classified as <code>Red Bugs</code>, <code>Blue Bugs</code>, <code>Pending Lab</code>, <code>No Bugs</code>, or <code>No Sample</code> based on <code>redblue</code> and <code>missing</code> columns from the lab results.</li>
+<li><strong>Inspector display</strong>: Falls back from <code>employee_list.shortname</code> → <code>emp1</code> number → blank.</li>
+<li><strong>JSON generation at startup</strong>: Writes <code>www/facilities.json</code> and <code>www/foremen.json</code> for use by the root <code>index.html</code> landing page filters.</li>
 </ul>
 
-<h2>URL Parameters</h2>
-<p>| Parameter | Description | Example |</p>
-<p>|-----------|-------------|---------|</p>
-<p>| <code>facility</code> | Facility short code | <code>N</code>, <code>E</code>, <code>Sr</code> |</p>
-<p>| <code>fos</code> | FOS shortname(s), comma-separated | <code>Rosa</code>, <code>Rosa,Abbey</code> |</p>
-<p>| <code>lookback</code> | Lookback days (1-7) | <code>3</code> |</p>
+<h2>Shapefiles</h2>
 
-<h2>Data Source</h2>
-<ul>
-<li><strong>Sites</strong>: <code>loc<em>breeding</em>sites</code> (air_gnd='A', priority='RED')</li>
-<li><strong>Sections/FOS</strong>: <code>gis<em>sectcode</code> (fosarea maps to employee</em>list.emp_num)</li>
-<li><strong>Inspections</strong>: <code>dblarv<em>insptrt</em>current</code> (actions '2','4')</li>
-<li><strong>Lab Samples</strong>: <code>dblarv<em>sample</em>current</code> (redblue column for bug type)</li>
-</ul>
+<p>None.</p>
 
-<h2>File Structure</h2>
-<p>| File | Purpose |</p>
-<p>|------|---------|</p>
-<p>| <code>app.R</code> | Main application entry point, server logic, URL parsing |</p>
-<p>| <code>data_functions.R</code> | Database queries and data processing |</p>
-<p>| <code>display_functions.R</code> | Checklist HTML generation and summary boxes |</p>
-<p>| <code>ui_helper.R</code> | Shiny UI definition |</p>
+<h2>Shared Functions Used</h2>
+
+<p>| Function | Source |</p>
+<p>|----------|--------|</p>
+<p>| <code>get<em>db</em>connection()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>safe<em>disconnect()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>is<em>valid</em>filter()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>build<em>sql</em>in<em>list()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>get<em>table</em>strategy()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foremen</em>lookup()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>facility</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foreman</em>choices()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>get<em>foreman</em>display<em>names()</code> | <code>shared/db</em>helpers.R</code> |</p>
+<p>| <code>make<em>sitecode</em>link()</code> | <code>shared/db_helpers.R</code> |</p>
+<p>| <code>set<em>app</em>name()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>load<em>env</em>vars()</code> | <code>shared/server_utilities.R</code> |</p>
+<p>| <code>get<em>universal</em>text<em>css()</code> | <code>shared/server</em>utilities.R</code> |</p>
     </div>
 </body>
 </html>

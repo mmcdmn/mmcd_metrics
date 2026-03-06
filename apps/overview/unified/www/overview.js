@@ -1,5 +1,7 @@
 // Overview Dashboard JavaScript - Externalized for caching & reduced payload
 
+// --- Performance timing ---
+window._mmcdPerf = { pageStart: performance.now() };
 // Unified info button handler — works for BOTH stat boxes and chart titles
 $(document).on('click', '.stat-box-info-btn, .chart-info-btn', function(e) {
   e.stopPropagation();
@@ -197,6 +199,7 @@ window.addEventListener('pagehide', function() {
 
 // Clear banners and reset active states when refresh is clicked
 $(document).on('click', '#refresh', function() {
+  window._mmcdPerf.refreshStart = performance.now();
   // Remove all comparison banners (they will be stale after refresh)
   $('.comparison-banner').remove();
   // Close all open charts and reset active states
@@ -210,6 +213,8 @@ $(document).on('click', '#refresh', function() {
 
 // Handler to swap skeleton for real content when data is ready
 Shiny.addCustomMessageHandler('hideLoadingSkeleton', function(msg) {
+  var renderMs = Math.round(performance.now() - (window._mmcdPerf.refreshStart || window._mmcdPerf.pageStart));
+  console.log('[PERF] Server render → content ready: ' + renderMs + 'ms');
   $('#initial_prompt_static').hide();
   $('#loading_skeleton_static').fadeOut(200, function() {
     $('#summary_stats_wrapper').fadeIn(300);

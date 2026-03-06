@@ -72,6 +72,7 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL, metric_conf
 #' @export
 create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_type = "default",
                                   metric_config = NULL, clickable = FALSE) {
+  chart_start <- proc.time()
   if (is.null(data) || nrow(data) == 0) {
     return(create_empty_chart(title, "No data available"))
   }
@@ -189,6 +190,9 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
     config(displayModeBar = FALSE, scrollZoom = FALSE)
   
   if (clickable) p <- p %>% event_register("plotly_click")
+  
+  chart_elapsed <- (proc.time() - chart_start)[["elapsed"]]
+  message(sprintf("[PERF] create_overview_chart '%s' (n=%d): %.3fs", metric_type, nrow(data), chart_elapsed))
   
   return(p)
 }

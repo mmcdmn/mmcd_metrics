@@ -134,68 +134,63 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
     data$display_name <- factor(data$display_name, levels = rev(alpha_levels))
   }
   
-  # Layered bar chart: red background → orange (expiring+active) → green (active)
-  # For stacked_mode: red background, then green at y_active, then orange stacked on top
   # cattail_treatments uses lighter red background to show progress "filling up"
   red_alpha <- if (metric_type == "cattail_treatments") 0.15 else 0.3
+  red_fill <- paste0("rgba(211,47,47,", red_alpha, ")")
   
+  # Build native plot_ly horizontal bar chart (avoids expensive ggplotly conversion)
+  # Layered bars: red background (total) → orange (expiring) → green (active)
   if (stacked_mode) {
     # Stacked mode: green bar from 0 to active, orange bar from active to active+expiring
-    p <- ggplot(data, aes(x = display_name)) +
-      geom_bar(aes(y = y_total, text = tooltip_text, key = as.character(display_name)),
-               stat = "identity", fill = "#D32F2F", alpha = red_alpha) +
-      geom_bar(aes(y = y_active + y_expiring, key = as.character(display_name)),
-               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-      geom_bar(aes(y = y_active, key = as.character(display_name)),
-               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-      coord_flip() +
-      labs(title = NULL, x = NULL, y = y_label) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 14),
-        axis.title = element_text(face = "bold", size = 12),
-        axis.text = element_text(size = if (clickable) 14 else 11, face = "bold"),
-        axis.text.y = element_text(face = "bold"),
-        panel.grid.minor = element_blank(),
-        legend.position = "none"
-      )
+    p <- plot_ly(data, y = ~display_name, source = if (clickable) metric_type else NULL) %>%
+      add_bars(x = ~y_total, hovertext = ~tooltip_text, hoverinfo = "text",
+               key = ~as.character(display_name),
+               marker = list(color = red_fill),
+               name = "Total", showlegend = FALSE) %>%
+      add_bars(x = ~(y_active + y_expiring), hovertext = ~tooltip_text, hoverinfo = "text",
+               key = ~as.character(display_name),
+               marker = list(color = unname(status_colors["planned"])),
+               name = "Expiring", showlegend = FALSE) %>%
+      add_bars(x = ~y_active, hovertext = ~tooltip_text, hoverinfo = "text",
+               key = ~as.character(display_name),
+               marker = list(color = unname(status_colors["active"]), opacity = 0.9),
+               name = "Active", showlegend = FALSE)
   } else {
-    # Overlay mode (default): green from 0 to active-expiring, orange from 0 to active
-    p <- ggplot(data, aes(x = display_name)) +
-      geom_bar(aes(y = y_total, text = tooltip_text, key = as.character(display_name)),
-               stat = "identity", fill = "#D32F2F", alpha = red_alpha) +
-      geom_bar(aes(y = y_expiring + y_active, key = as.character(display_name)),
-               stat = "identity", fill = unname(status_colors["planned"]), alpha = 1) +
-      geom_bar(aes(y = y_active, key = as.character(display_name)),
-               stat = "identity", fill = unname(status_colors["active"]), alpha = 0.9) +
-      coord_flip() +
-      labs(title = NULL, x = NULL, y = y_label) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 14),
-        axis.title = element_text(face = "bold", size = 12),
-        axis.text = element_text(size = if (clickable) 14 else 11, face = "bold"),
-        axis.text.y = element_text(face = "bold"),
-        panel.grid.minor = element_blank(),
-        legend.position = "none"
-      )
+    # Overlay mode (default): red total, orange for expiring+active, green for active only
+    p <- plot_ly(data, y = ~display_name, source = if (clickable) metric_type else NULL) %>%
+      add_bars(x = ~y_total, hovertext = ~tooltip_text, hoverinfo = "text",
+               key = ~as.character(display_name),
+               marker = list(color = red_fill),
+               name = "Total", showlegend = FALSE) %>%
+      add_bars(x = ~(y_expiring + y_active), hovertext = ~tooltip_text, hoverinfo = "text",
+               key = ~as.character(display_name),
+               marker = list(color = unname(status_colors["planned"])),
+               name = "Expiring", showlegend = FALSE) %>%
+      add_bars(x = ~y_active, hovertext = ~tooltip_text, hoverinfo = "text",
+               key = ~as.character(display_name),
+               marker = list(color = unname(status_colors["active"]), opacity = 0.9),
+               name = "Active", showlegend = FALSE)
   }
   
-  # Convert to plotly
-  plotly_args <- list(p = p, tooltip = "text")
-  if (clickable) plotly_args$source <- metric_type
-  
-  plotly_chart <- do.call(ggplotly, plotly_args) %>%
+  # Apply layout to match previous ggplot styling
+  p <- p %>%
     layout(
+      barmode = "overlay",
+      xaxis = list(title = y_label, tickfont = list(size = 12, face = "bold")),
+      yaxis = list(title = "", tickfont = list(size = if (clickable) 14 else 11,
+                                               face = "bold"),
+                   categoryorder = "trace"),
       autosize = TRUE,
-      margin = list(l = if (clickable) 50 else 80, r = 10, t = if (clickable) 10 else 5, b = 40),
-      hoverlabel = list(bgcolor = "white", font = list(size = 12), bordercolor = "black")
+      margin = list(l = if (clickable) 50 else 80, r = 10,
+                    t = if (clickable) 10 else 5, b = 40),
+      hoverlabel = list(bgcolor = "white", font = list(size = 12), bordercolor = "black"),
+      showlegend = FALSE
     ) %>%
     config(displayModeBar = FALSE, scrollZoom = FALSE)
   
-  if (clickable) plotly_chart <- plotly_chart %>% event_register("plotly_click")
+  if (clickable) p <- p %>% event_register("plotly_click")
   
-  return(plotly_chart)
+  return(p)
 }
 
 # create_zone_chart is now an alias for create_overview_chart with clickable=TRUE
@@ -361,15 +356,15 @@ create_overview_pie_chart <- function(data, title, theme = "MMCD", metric_type =
 #' @return Plotly chart object
 #' @export
 create_empty_chart <- function(title, message) {
-  p <- ggplot() +
-    annotate("text", x = 0.5, y = 0.5, label = message, size = 6, color = "gray50") +
-    theme_void() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14, hjust = 0.5)
-    ) +
-    labs(title = title)
-  
-  ggplotly(p) %>%
+  plot_ly() %>%
+    add_annotations(
+      text = message, x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+      showarrow = FALSE, font = list(size = 18, color = "gray50")
+    ) %>%
+    layout(
+      title = list(text = title, font = list(size = 14, face = "bold"), x = 0.5),
+      xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)
+    ) %>%
     config(displayModeBar = FALSE)
 }
 

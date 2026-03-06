@@ -1,372 +1,314 @@
-# MMCD Metrics - Optimization Analysis
-## Generated: December 17, 2025
+# MMCD Metrics — Performance Optimization Plan
+## Updated: March 4, 2026
 
 ## Executive Summary
 
-Analyzed 18+ apps and shared resources. Found significant opportunities for:
-- **Code reuse** through shared helper functions
-- **Database connection pooling** to reduce overhead
-- **Query optimization** with caching
-- **Removal of unused functions** to reduce bundle size
+The overview dashboards (FOS, facility, district) have identifiable performance
+bottlenecks in three areas: **chart rendering** (ggplotly conversion overhead),
+**historical computation** (O(years × 52 × N) nested loops), and **payload
+size** (~50KB inline CSS/JS shipped uncompressed on every page load). The FOS
+view amplifies the historical loop problem by calling
+`get_historical_week_avg_by_entity()` up to 120 times (20 FOS × 6 metrics),
+each re-running the year/week loop even though the raw 10-year data is already
+cached in memory.
+
+R is single-threaded, so metric loading cannot be parallelized within a Shiny
+session. Instead, this plan focuses on making each operation faster, eliminating
+redundant work, and reducing what the browser must download.
 
 ---
 
-##  Key Findings
+## Architecture Context
 
-### 1. **Excessive Repeated Patterns** 
+| Component | Detail |
+|-----------|--------|
+| **Workers** | 3 Shiny processes on ports 3839-3841 behind OpenResty |
+| **Routing** | Lua-based load-aware sticky routing (Redis + shared dict, 10-min TTL) |
+| **Caching** | Redis (shared, 128MB) + in-memory R environments (per-worker) |
+| **Charts** | Pre-rendered with `suspendWhenHidden = FALSE` for instant display on click |
+| **Docker** | Single container: Redis + 3 Shiny workers + OpenResty |
 
-#### Database Connection Management IMPLEMENTED
-**Issue**: Every app creates new connections repeatedly  
-**Found in**: All 18 apps  
-**Impact**: Overhead on every query, potential connection exhaustion
+All optimizations must be compatible with this multi-worker, sticky-session
+architecture. Changes to Redis are visible to all workers; in-memory changes
+are per-worker only.
 
-**Current Pattern**:
-```r
-con <- get_db_connection()
-data <- dbGetQuery(con, query)
-dbDisconnect(con)
+---
+
+## Priority 0 — Quick Wins
+
+### 0.1 Add gzip Compression to nginx 
+
+**Problem:** The initial HTML response includes ~1,078 lines of inline CSS/JS
+(~50KB uncompressed). JSON responses from Shiny and Plotly payloads are also
+sent uncompressed. No `gzip` directive exists in `nginx.conf`.
+
+**Fix:** Add gzip configuration in the `http {}` block of `nginx.conf`:
+
+```nginx
+gzip on;
+gzip_vary on;
+gzip_proxied any;
+gzip_comp_level 4;
+gzip_min_length 1024;
+gzip_types text/plain text/css application/javascript application/json
+           text/xml application/xml application/xml+rss text/javascript;
 ```
 
-** SOLUTION IMPLEMENTED**: Connection pooling in `shared/db_pool.R`
+**Impact:** ~70% reduction in transfer size for HTML, CSS, JS, and JSON
+responses. Directly reduces page load time, especially on slower connections.
+No interaction with load balancing — gzip is applied at the nginx layer before
+the response reaches the client, regardless of which worker served it.
 
-**What was created**:
-- `shared/db_pool.R` - Connection pool manager (maintains 1-15 persistent connections)
-- Updated `shared/db_helpers.R` - Automatically uses pool when available
-- `shared/CONNECTION_POOLING_GUIDE.md` - Migration guide
-- `shared/test_connection_pool.R` - Test script
+**Effort:** 5 minutes. **Risk:** None.
 
-**Benefits**:
-- ✅ **Backward compatible** - All existing apps automatically benefit (no code changes required!)
-- ✅ **20-40% faster** initial loads
-- ✅ **Prevents connection exhaustion** under load
--  **Auto-reconnection** if connections drop
+### 0.2 Migrate `create_overview_chart()` from ggplotly to native plot_ly 
 
-**Status**: Ready to use! Run `source("shared/test_connection_pool.R")` to verify.
+**Problem:** `ggplotly()` converts a ggplot2 object to Plotly by serializing
+the entire ggplot structure, then re-parsing it — this costs 100-500ms per
+chart. With `suspendWhenHidden = FALSE` pre-rendering all 11 metric charts,
+this adds 1-5 seconds to every page load.
 
----
+**Current code** (`display_functions.R` L80-196): Uses `ggplot()` +
+`geom_bar(stat="identity")` + `coord_flip()` + `theme_minimal()` to build
+horizontal bar charts, then `do.call(ggplotly, ...)` to convert. The features
+used are simple: layered horizontal bars with custom fill colors, tooltip text
+via `aes(text=...)`, click events via `aes(key=...)`, and basic `theme()`
+adjustments. No facets, no coord_polar, no custom geoms.
 
-#### Lookup Functions Called Repeatedly
-**Issue**: `get_facility_lookup()`, `get_foremen_lookup()`, `get_species_lookup()` called multiple times per session
+**Fix:** Replace with native `plot_ly(type = "bar", orientation = "h")`.
+The same file already has 4 working native `plot_ly()` functions to follow as
+templates: `create_overview_pie_chart()` (L279), `create_comparison_chart()`
+(L430), `create_yearly_grouped_chart()` (L616). Also convert
+`create_empty_chart()` (L363-375) — trivial replacement.
 
-**Found in**:
-- suco_history: 10+ calls to get_facility_lookup()
-- cattail_treatments: 8+ calls to get_foremen_lookup()
-- struct_trt: 12+ calls to both
+**What breaks:** Nothing functionally. The layered bar approach translates
+directly to multiple `add_trace()` calls. Tooltips use `hovertext` instead of
+`aes(text=...)`. Click events use `event_register("plotly_click")` + `key`
+parameter — identical pattern. Visual styling may need minor tweaking to match
+the ggplot theme.
 
-**Impact**: Each call queries the database, even though data rarely changes
+**Impact:** 100-500ms savings per chart × 11 metrics = **1-5s faster page load**.
 
-**Recommendation**: Cache lookup tables in Shiny reactive values
-
----
-
-### 2. **Shared Code Opportunities** 
-
-#### Common Data Processing Patterns
-
-**Pattern A: Site-to-Section Joining**
-Used in: air_sites_simple, drone, ground_prehatch_progress, cattail_treatments, struct_trt
-
-```sql
-LEFT JOIN public.gis_sectcode sc ON LEFT(b.sitecode,7) = sc.sectcode
-```
-
-**Recommendation**: Create `join_site_to_section()` helper in db_helpers.R
+**Effort:** 2-3 hours. **Risk:** Low — visual regression in bar chart styling
+(verify side-by-side).
 
 ---
 
-**Pattern B: Facility Name Mapping**
-Duplicated in 12 apps:
+## Priority 1 — High Impact
+
+### 1.1 Vectorize Active-on-Friday Nested Loops 
+
+**Problem:** Three functions share the same O(years × 52 × N) nested loop
+pattern that iterates through every week of every year, calling
+`dplyr::filter()` on the full treatments table each iteration:
+
+1. `calculate_historical_weekly()` — `historical_functions.R` L634-700 — full
+   nested `for yr` × `for week_start` (10 years × 52 weeks = 520 iterations)
+2. `.load_current_year_for_cache_uncached()` — `historical_functions.R` L149-170
+   — single-year version (~52 iterations)
+3. `get_historical_week_avg_by_entity()` — `dynamic_server.R` L495-527 —
+   per-entity version, skips non-matching weeks but still loops through all
+   520 to find the target week
+
+**The active-on-Friday logic:** For each week, find all treatments where
+`inspdate <= friday AND treatment_end >= friday`, dedup by `treatment_id`
+(keep longest `treatment_end`), sum values. This is a classic interval overlap
+problem.
+
+**Fix (vectorized approach using dplyr — no new dependencies):**
 
 ```r
-map_facility_names <- function(data, facility_column = "facility") {
-  facility_lookup <- get_facility_lookup()
-  facility_map <- setNames(facility_lookup$full_name, facility_lookup$short_name)
-  data[[facility_column]] <- facility_map[data[[facility_column]]]
-  return(data)
+# Pre-compute all Fridays for the date range
+fridays <- data.frame(
+  friday = seq.Date(as.Date(paste0(start_year, "-01-01")),
+                    as.Date(paste0(end_year, "-12-31")), by = "week") + 4
+) %>%
+  mutate(year = year(friday), week_num = week(friday)) %>%
+  filter(year(friday) == year)  # remove year-boundary spills
+
+# Cross-join: every treatment × every Friday where it's active
+active <- inner_join(
+  treatments %>% select(treatment_id, inspdate, treatment_end, value),
+  fridays,
+  by = character(),  # cross join
+  relationship = "many-to-many"
+) %>%
+  filter(inspdate <= friday, treatment_end >= friday) %>%
+  group_by(treatment_id, year, week_num) %>%
+  slice_max(treatment_end, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  group_by(year, week_num) %>%
+  summarise(value = sum(value, na.rm = TRUE), .groups = "drop")
+```
+
+This replaces 520 sequential `dplyr::filter()` calls with a single vectorized
+join + group_by.
+
+**Impact:** Significant on cache miss — especially for FOS view where
+`get_historical_week_avg_by_entity()` is called 120+ times.
+
+**Effort:** 3-4 hours. **Risk:** Medium — must preserve edge cases.
+
+### 1.2 Move Inline CSS/JS to External Browser-Cacheable Files 
+
+**Problem:** `get_overview_css()` (~565 lines, `dynamic_ui.R` L104-669) and
+`get_overview_js()` (~513 lines, L674-1187) embed all styling and behavior as
+inline `tags$style(HTML(...))` and `tags$script(HTML(...))`. This ~50KB payload
+is sent in the HTML on **every page load** and cannot be browser-cached.
+
+**Fix:** Extract to `apps/overview/www/overview.css` and
+`apps/overview/www/overview.js`. Update the R functions to return external
+references:
+
+```r
+get_overview_css <- function() {
+  tags$head(tags$link(rel = "stylesheet", type = "text/css", href = "overview.css"))
+}
+
+get_overview_js <- function() {
+  tags$script(src = "overview.js")
 }
 ```
 
-**Recommendation**: Already in db_helpers.R but not consistently used. Update all apps.
+Shiny automatically serves files from each app's `www/` subdirectory — this
+already works for the 7 image assets in `apps/overview/www/assets/`.
+
+**Load balancing compatibility:** Works perfectly because:
+- Sticky routing ensures all requests from a session go to the same worker
+- Every worker has identical file copies (baked into the Docker image)
+- Even without sticky sessions, files are identical across workers
+- Browser caches these files after first load → 0 bytes on subsequent loads
+
+**Impact:** After first visit, saves ~50KB (or ~15KB with gzip) on every
+subsequent page load.
+
+**Effort:** 1-2 hours. **Risk:** Low.
 
 ---
 
-**Pattern C: Treatment Status Calculation**
-Similar logic in: drone, ground_prehatch_progress, cattail_treatments, struct_trt, air_sites_simple
+## Priority 2 — Medium Impact
 
-```r
-# Calculate if treatment is active/expiring/overdue
-treatment_end_date <- inspdate + days(effect_days)
-is_active <- treatment_end_date >= analysis_date
-is_expiring <- treatment_end_date >= (analysis_date - 7) & 
-               treatment_end_date < (analysis_date + 7)
-is_overdue <- treatment_end_date < analysis_date
+### 2.1 Batch FOS/Facility Historical Averages in a Single Pass
+
+**Problem:** The FOS view calls `get_dynamic_value_box_info()` inside nested
+loops: `lapply(all_fos, ...)` × `for (metric_id in metrics)` = ~120 calls
+(`dynamic_server.R` L1161-1256). Each call chains through
+`get_historical_week_avg_by_fos()` → `get_historical_week_avg_by_entity()`
+(L441-560), which filters the raw 10-year data to one entity and runs the
+year/week loop. The facility view has a similar pattern with ~42 calls.
+
+**Fix:** Add a batch function `get_all_entity_week_averages()` that:
+1. Loads the raw data once via `get_cached_raw_historical()`
+2. For the target `week_num`, computes active-on-Friday for ALL entities in
+   a single vectorized pass (group_by entity + year, summarise)
+3. Stores the full entity→avg map in Redis with key
+   `hist_batch:{metric_id}:w{week_num}` and 7-day TTL
+4. Returns the full named list
+
+**Impact:** Reduces ~120 separate loop computations to 1 vectorized computation.
+
+**Effort:** 3-4 hours. **Risk:** Low — adds alongside existing per-entity path.
+
+### 2.2 Async Cache Regeneration with Scheduled Refresh
+
+**Problem:** When the historical average cache is >14 days stale,
+`.trigger_background_repopulate()` runs `regenerate_historical_cache()`
+**synchronously** despite its name, blocking the first user request
+(`historical_cache.R` L124-138).
+
+**Fix (two parts):**
+
+**Part A — Async regeneration:** Add `callr` as a dependency. Replace the
+synchronous call with `callr::r_bg()` to run in a separate R process.
+Return stale data immediately while the background process refreshes Redis.
+
+**Part B — Scheduled refresh:** Add a cron-like loop in `startup.sh` that
+runs regeneration every 12 hours:
+```bash
+(while true; do sleep 43200; Rscript -e '
+  source("historical_cache.R"); regenerate_historical_cache()
+' >> /var/log/cache-warmup.log 2>&1; done) &
+disown
 ```
+Add a Redis lock key (`mmcd:regen_lock` with 30-min expiry) so only one
+process regenerates at a time.
 
-**Recommendation**: Create `calculate_treatment_status()` in shared helpers
+**Impact:** Eliminates the "first request after cache expiry" freeze.
 
----
-
-### 3. **Unused Functions** ✅ IMPLEMENTED
-
-#### In db_helpers.R
-
-**Status**: Cleanup complete!
-
-**Functions Removed** (8 total):
-1. ✅ `source_color_themes()` - Internal helper, replaced with direct source() calls  
-2. ✅ `get_db_pool()` - Superseded by `get_pool()` in db_pool.R
-3. ✅ `get_virus_target_names()` - Never called, `get_virus_target_choices()` used instead
-4. ✅ `get_species_code_map()` - Superseded by `get_enhanced_species_mapping()`
-5. ✅ `get_date_range_choices()` - Unused, apps use custom date pickers
-6. ✅ `format_display_date()` - Never implemented/used
-7. ✅ `get_mosquito_species_shapes()` - Never called
-8. ✅ `clean_data_for_csv()` - Unused, apps handle CSV directly
-
-**Impact**:
-- **207 lines removed** (12% reduction)
-- **8 functions removed** (from 41 → 33 functions)
-- **Cleaner codebase** with less maintenance burden
-- **File size**: 1,726 lines → 1,519 lines
-
-**Kept Functions** (Verified as Used):
-- `get_spring_date_thresholds()` - Used in inspections app ✓
-- `get_structure_type_choices()` - Used in catch_basin_status ✓
-- `get_virus_target_choices()` - Used for trap surveillance ✓
-- `get_shiny_colors()` - Used in test-app ✓
-- All other functions verified in active use
+**Effort:** 2-3 hours. **Risk:** Low.
 
 ---
 
-### 4. **Database Query Inefficiencies** 
+## Priority 3 — Nice to Have
 
-#### Issue A: N+1 Query Pattern
-**Found in**: suco_history display_functions.R
+### 3.1 Limit Plotly Resize to Visible Charts
 
-```r
-# Called for EVERY site in loop
-foreman_names <- sapply(foreman, function(f) {
-  matches <- which(trimws(as.character(foremen_lookup$emp_num)) == foreman_str)
-  # ...
-})
-```
+**Problem:** `dynamic_ui.R` ~L865 calls Plotly resize on ALL charts including
+hidden pre-rendered ones.
 
-**Fix**: Pre-process lookup mapping before the loop
+**Fix:** Change `$('.plotly').each(...)` to `$('.plotly:visible').each(...)`.
 
----
+**Effort:** 1 minute. **Risk:** None.
 
-#### Issue B: Large JOIN without filters
-**Found in**: Multiple apps loading breeding sites
+### 3.2 Hoist Lookup Calls Above Metric Loop
 
-```sql
-SELECT * FROM loc_breeding_sites b
-LEFT JOIN gis_sectcode g ON ...
--- Then filter in R
-```
+**Problem:** `get_foremen_lookup()` and `get_facility_lookup()` called inside
+the per-metric uncached path in `data_functions.R`.
 
-**Recommendation**: Push filters to SQL WHERE clause
+**Fix:** Call once in parent function, pass as parameters.
+
+**Effort:** 30 minutes. **Risk:** None.
 
 ---
 
-#### Issue C: Dual Archive/Current Queries
-**Pattern in**: suco_history, drone, cattail_treatments
+## Deferred / Not Implementing
 
-```sql
-SELECT ... FROM dblarv_insptrt_current ...
-UNION ALL
-SELECT ... FROM dblarv_insptrt_archive ...
-```
-
-**Issue**: When only current data needed, still defining archive query
-**Recommendation**: Conditional query construction
+| Item | Reason |
+|------|--------|
+| **Parallelize metric loading** | R is single-threaded; `future` adds complexity for marginal gain since workers already provide process-level parallelism |
+| **Remove `suspendWhenHidden = FALSE`** | Pre-rendering is intentional — charts must be ready when user clicks value boxes |
+| **Replace Redis `KEYS` with `SCAN`** | `KEYS` is only used in admin/diagnostic paths, not hot paths; current usage is acceptable |
+| **Change TTL values** | Current TTLs are appropriate for the data refresh patterns |
+| **Reduce Lua retry count** | Current 10-retry with 1s delay works well for startup scenarios |
 
 ---
 
-### 5. **UI/Display Optimization** 
+## Implementation Order
 
-#### Issue: Repeated Theme Function Calls
-Every plot recreation calls:
-- `get_facility_base_colors(theme = theme)`
-- `get_themed_foreman_colors(theme = theme)`
+Given a time constraint, implement in this order for maximum impact:
 
-**Recommendation**: Cache theme colors in reactive value
+1. **gzip** (5 min) — immediate transfer size reduction
+2. **ggplotly → plot_ly migration** (2-3 hrs) — 1-5s page load improvement
+3. **Externalize CSS/JS** (1-2 hrs) — browser caching for repeat visits
+4. **Vectorize loops** (3-4 hrs) — faster historical calculations
+5. **Batch entity averages** (3-4 hrs) — FOS view N+1 elimination
+6. **Async cache regen** (2-3 hrs) — eliminates first-request freeze
 
----
-
-#### Issue: Large Popup Text Construction
-In suco_history, building HTML for every marker in mutate():
-
-```r
-popup_text = paste0("<b>Date:</b> ", inspdate, "<br>",
-                    "<b>Facility:</b> ", ..., "<br>",
-                    "<b>FOS:</b> ", ..., "<br>", ...)
-```
-
-**Better**: Use leaflet's label parameter with sprintf for templates
+Total estimated effort: ~13-18 hours across all priorities.
 
 ---
 
-### 6. **File Organization** 
+## Verification Plan
 
-#### shared/ folder
-**Current**: All helpers in single 1674-line db_helpers.R
-
-**Recommendation**:
-```
-shared/
-├── db_helpers.R            # Core DB connection & lookups (400 lines)
-├── color_helpers.R         # Color themes & palettes (300 lines)
-├── treatment_helpers.R     # Treatment status calculations (200 lines)
-├── spatial_helpers.R       # Geometry & mapping utilities (150 lines)
-└── ui_helpers.R           # Common UI components (150 lines)
-```
+| Change | Verification |
+|--------|-------------|
+| gzip | `curl -H "Accept-Encoding: gzip" -sI http://localhost:3838/ \| grep Content-Encoding` → `gzip` |
+| plot_ly migration | Visual comparison of bar charts; click-to-drill-down works; tooltips match |
+| External CSS/JS | Browser DevTools → Network tab shows `overview.css`/`overview.js` as separate cached requests (304 on reload) |
+| Vectorized loops | `Rscript tests/testthat.R` — existing historical tests pass |
+| Batch averages | FOS view load time before/after with browser DevTools |
+| Async regen | First request after cache expiry returns immediately with stale data |
 
 ---
 
-### 7. **Missing Opportunities** 
+## Previous Optimizations (Completed)
 
-#### Common UI Components Not Shared
-- Date range pickers (every app has own CSS)
-- Filter panels (repeated structure)
-- Stat boxes/cards (similar but not identical)
-- Download buttons (inconsistent styling)
+These were implemented in prior work and are documented here for reference:
 
-**Recommendation**: Create `shared/ui_components.R`
-
----
-
-#### Common Data Validation Not Shared
-- Checking for empty data frames
-- Handling NULL dates
-- Validating filter selections
-
-**Recommendation**: Add to db_helpers.R
-
----
-
-## Impact Estimates
-
-### High Priority (Immediate Impact)
-1. **Lookup caching**: 30-50% reduction in DB queries
-2. **Connection pooling**: 20-40% faster initial loads
-3. **Remove unused code**: 15-20% smaller bundle
-
-### Medium Priority (Quality of Life)
-4. **Shared treatment status calc**: Consistency across 5 apps
-5. **UI component library**: 50% less duplicated UI code
-6. **File organization**: Easier maintenance
-
-### Low Priority (Nice to Have)
-7. **Query optimization**: Marginal gains, already quite fast
-8. **Theme caching**: Barely noticeable improvement
-
----
-
-##  Recommended Actions
-
-### Phase 1: Quick Wins (1-2 days)
-1. Add lookup caching to db_helpers.R
-2. Update all apps to use cached lookups
-3. Remove confirmed unused functions
-4. Create treatment_status helper function
-
-### Phase 2: Structural (3-5 days)
-5. Implement connection pooling
-6. Split db_helpers.R into modules
-7. Create shared UI components library
-8. Standardize data processing patterns
-
-### Phase 3: Optimization (2-3 days)
-9. Push SQL filters to WHERE clauses
-10. Optimize large UNION queries
-11. Implement theme color caching
-12. Add data validation helpers
-
----
-
-##  Code Examples for Improvements
-
-### 1. Cached Lookups Pattern
-
-```r
-# In server function (app.R)
-cached_lookups <- reactiveValues(
-  facilities = NULL,
-  foremen = NULL,
-  species = NULL,
-  last_refresh = NULL
-)
-
-# Refresh every 24 hours or on demand
-observe({
-  if (is.null(cached_lookups$last_refresh) || 
-      difftime(Sys.time(), cached_lookups$last_refresh, units = "hours") > 24) {
-    cached_lookups$facilities <- get_facility_lookup()
-    cached_lookups$foremen <- get_foremen_lookup()
-    cached_lookups$species <- get_species_lookup()
-    cached_lookups$last_refresh <- Sys.time()
-  }
-})
-```
-
-### 2. Connection Pool (db_helpers.R addition)
-
-```r
-# At top of db_helpers.R
-.mmcd_pool <- NULL
-
-get_db_pool <- function() {
-  if (is.null(.mmcd_pool)) {
-    load_env_vars()
-    .mmcd_pool <<- pool::dbPool(
-      RPostgres::Postgres(),
-      host = Sys.getenv("POSTGRES_HOST"),
-      port = as.integer(Sys.getenv("POSTGRES_PORT")),
-      dbname = Sys.getenv("POSTGRES_DB"),
-      user = Sys.getenv("POSTGRES_USER"),
-      password = Sys.getenv("POSTGRES_PASSWORD"),
-      minSize = 1,
-      maxSize = 10
-    )
-  }
-  return(.mmcd_pool)
-}
-
-# Use: conn <- get_db_pool()  # No disconnect needed!
-```
-
-### 3. Shared Treatment Status Calculator
-
-```r
-calculate_treatment_status <- function(inspdate, effect_days, 
-                                      analysis_date = Sys.Date(), 
-                                      expiring_window = 7) {
-  treatment_end_date <- as.Date(inspdate) + lubridate::days(effect_days)
-  
-  list(
-    treatment_end_date = treatment_end_date,
-    is_active = treatment_end_date >= analysis_date,
-    is_expiring = treatment_end_date >= (analysis_date - expiring_window) & 
-                  treatment_end_date <= (analysis_date + expiring_window),
-    is_overdue = treatment_end_date < analysis_date,
-    days_until_expiry = as.numeric(difftime(treatment_end_date, analysis_date, units = "days"))
-  )
-}
-```
-
----
-
-##  Performance Baseline Recommendations
-
-Before optimizing, establish baselines:
-
-1. **Query timing**: Log top 5 slowest queries per app
-2. **Memory usage**: Peak RAM during typical session
-3. **Connection count**: Max simultaneous DB connections
-4. **Load time**: Initial app load to interactive
-5. **User actions**: Time for filter change → data update
-
-**Tool**: Add `{profvis}` profiling to each app for 1 week
-
----
-
-
+- **Connection pooling** (`shared/db_pool.R`) — reduced per-query connection overhead
+- **Redis tiered caching** (`shared/redis_cache.R`) — shared cache across workers with TTL tiers (2min–7day)
+- **Load-aware sticky routing** (`lua/proxy_handler.lua`) — prevents hotspot workers
+- **WebSocket detection** (`nginx.conf`) — separate handler for Shiny WebSocket connections
+- **Historical cache warm-up** (`startup.sh`) — pre-populates cache on container start
+- **Current-year cache helper** (`get_cached_curyr_data()`) — 3-min TTL for current year data
+- **Back-navigation date persistence** (`dynamic_ui.R`) — saves/restores date on browser back button

@@ -187,6 +187,62 @@ This document tracks user feedback and feature requests that have not yet been i
 
 ---
 
+## Trap Surveillance / Vector Index
+
+### Drill-Down Date Carry
+- **Issue:** When drilling down in the Vector Index, the selected week/date is not carried forward
+- **Requested Enhancement:** If you drill down, carry the date in for the week so context is preserved
+- **Priority:** Medium
+- **Status:** Not Started
+
+### Vector Index Map — Gravid Traps Missing
+- **Source:** NR (internal note, shared for tracking)
+- **Issue:** The Vector Index map displays CO2 traps tested but does not include locations of Gravid traps tested and positive. Gravid traps are not included in the materialized view used for Vector Abundance data.
+- **Requested Enhancement:** Add Gravid trap data to the materialized view and display on map
+- **Priority:** High
+- **Status:** Not Started
+- **Notes:** Will need to figure out how to incorporate Gravid traps into the existing materialized view
+
+### Trap Status Map — Species Filter Not Working
+- **Source:** NR
+- **Issue:** The Trap Status map always reflects "all Culex species" regardless of what's selected in the Species filter
+- **Requested Enhancement:** Make Trap Status map respond to the Species filter selection
+- **Priority:** High
+- **Status:** Not Started
+
+### Map Layer Toggle Behavior
+- **Source:** NR
+- **Issue:** Layer toggle (turning layers on/off) is handy, but layers seem to pop back on when you change a filter
+- **Requested Enhancement:** Preserve layer visibility state across filter changes
+- **Priority:** Medium
+- **Status:** Not Started
+
+### Map Blink on Filter Change
+- **Source:** NR
+- **Issue:** There's an odd map "blink" when you change a filter that makes it look like it's refreshing the map, but it hasn't actually updated
+- **Requested Enhancement:** Either eliminate the visual blink or make it a real refresh
+- **Priority:** Low
+- **Status:** Not Started
+
+---
+
+## New App Requests
+
+### Species Presence/Absence Map
+- **Requested By:** Internal discussion
+- **Description:** A map similar to the Vector Index map but for tracking presence/absence of specific mosquito species across the district over multiple years. Section-based. Should allow comparison of different years and different species. Focus on **larvae, not adults**.
+- **Possible Enhancement:** Could also include an abundance view, though abundance mapping is tricky (inconsistent sampling effort, varying trap types, etc.)
+- **Key Requirements:**
+  - Section-level granularity
+  - Year-over-year comparison
+  - Species selection (multi-species comparison)
+  - Larvae data only
+- **Priority:** Medium
+- **Status:** Not Started
+- **Notes:** Abundance is desirable but may require careful normalization to be meaningful
+
+---
+
 ## Additional Apps - Pending Feedback
 
 ### Catch Basin Status
@@ -208,9 +264,6 @@ This document tracks user feedback and feature requests that have not yet been i
 - *No feedback recorded yet*
 
 ### Section Cards
-- *No feedback recorded yet*
-
-### Trap Surveillance Test
 - *No feedback recorded yet*
 
 ---

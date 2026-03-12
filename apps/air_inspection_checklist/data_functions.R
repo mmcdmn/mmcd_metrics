@@ -128,6 +128,14 @@ get_checklist_data <- function(facility_filter = NULL,
           ls.missing
         FROM %s ls
         WHERE ls.sampnum_yr IS NOT NULL
+      ),
+
+      -- Deduplicated employee lookup (one row per emp_num, prefer active)
+      EmployeeLookup AS (
+        SELECT DISTINCT ON (emp_num) emp_num, shortname
+        FROM employee_list
+        WHERE active = true
+        ORDER BY emp_num, pkey DESC
       )
 
       SELECT
@@ -156,7 +164,7 @@ get_checklist_data <- function(facility_filter = NULL,
       LEFT JOIN LabResults lr ON i.sampnum_yr = lr.sampnum_yr
       LEFT JOIN ActiveTreatmentSites ats ON s.sitecode = ats.sitecode
       LEFT JOIN \"loc_breeding_site_cards_sjsreast2\" cards ON s.sitecode = cards.sitecode
-      LEFT JOIN employee_list emp ON i.emp1 = emp.emp_num::text
+      LEFT JOIN EmployeeLookup emp ON i.emp1 = emp.emp_num::text
       ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
     ",
       as.character(analysis_date),
@@ -265,4 +273,33 @@ summarize_checklist <- function(data) {
     red_bugs = red_bugs,
     blue_bugs = blue_bugs
   )
+}
+
+
+#' Get active field employees grouped by facility and FOS
+#' Used to generate employees.json for the index page employee picker
+#' @return Data frame with emp_num, shortname, facility, fieldsuper, fos_name
+get_field_employees <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+
+  tryCatch({
+    employees <- dbGetQuery(con, "
+      SELECT e.emp_num, e.shortname, e.emp_type, e.facility, e.fieldsuper,
+             f.shortname AS fos_name
+      FROM employee_list e
+      LEFT JOIN employee_list f ON e.fieldsuper = f.emp_num
+        AND f.active = true AND f.emp_type = 'FieldSuper'
+      WHERE e.active = true
+        AND e.fieldsuper IS NOT NULL
+        AND e.emp_type NOT IN ('Pilot', 'Insp-Recpt', 'Insp-Lab')
+      ORDER BY e.facility, e.shortname
+    ")
+    safe_disconnect(con)
+    return(employees)
+  }, error = function(e) {
+    cat("ERROR in get_field_employees:", e$message, "\n")
+    if (!is.null(con)) safe_disconnect(con)
+    return(data.frame())
+  })
 }

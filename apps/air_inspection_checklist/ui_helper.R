@@ -7,143 +7,15 @@ air_inspection_checklist_ui <- function() {
   fluidPage(
     get_universal_text_css(),
     tags$head(
-      tags$style(HTML("
-        .checklist-section {
-          margin-bottom: 20px;
-        }
-        .checklist-header {
-          background-color: #2c5aa0;
-          color: white;
-          padding: 8px 12px;
-          border-radius: 4px 4px 0 0;
-          font-size: 16px;
-          font-weight: bold;
-        }
-        .section-subheader {
-          background-color: #e8eef5;
-          padding: 6px 12px;
-          font-weight: bold;
-          font-size: 14px;
-          border-bottom: 1px solid #ccc;
-        }
-        .section-inner-subheader {
-          background-color: #f0f4f8;
-          padding: 4px 12px 4px 24px;
-          font-weight: 600;
-          font-size: 13px;
-          color: #495057;
-          border-bottom: 1px solid #dee2e6;
-          border-top: 1px solid #dee2e6;
-        }
-        .checklist-item {
-          padding: 6px 12px;
-          border-bottom: 1px solid #eee;
-          display: flex;
-          align-items: center;
-          font-size: 13px;
-        }
-        .checklist-item:hover {
-          background-color: #f8f9fa;
-        }
-        .item-done {
-          color: #28a745;
-        }
-        .item-not-done {
-          color: #dc3545;
-        }
-        .item-sitecode {
-          width: 140px;
-          font-weight: bold;
-        }
-        .item-status-icon {
-          width: 30px;
-          text-align: center;
-          font-size: 16px;
-        }
-        .item-details {
-          flex: 1;
-          color: #666;
-          font-size: 12px;
-        }
-        .item-bug-badge {
-          display: inline-block;
-          padding: 2px 8px;
-          border-radius: 10px;
-          font-size: 11px;
-          font-weight: bold;
-          margin-left: 8px;
-        }
-        .bug-red {
-          background-color: #dc3545;
-          color: white;
-        }
-        .bug-blue {
-          background-color: #007bff;
-          color: white;
-        }
-        .bug-pending {
-          background-color: #ffc107;
-          color: #333;
-        }
-        .bug-none {
-          background-color: #6c757d;
-          color: white;
-        }
-        .badge-treatment {
-          padding: 2px 8px;
-          border-radius: 10px;
-          font-size: 11px;
-          font-weight: bold;
-          margin-left: 8px;
-          background-color: #6f42c1;
-          color: white;
-        }
-        .item-active-trt {
-          background-color: #f3eefb;
-        }
-        .summary-box {
-          text-align: center;
-          padding: 15px;
-          border-radius: 8px;
-          margin-bottom: 10px;
-        }
-        .summary-number {
-          font-size: 28px;
-          font-weight: bold;
-        }
-        .summary-label {
-          font-size: 12px;
-          color: #666;
-        }
-        /* AirMap collapsible sub-headers */
-        .airmap-toggle {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          transition: background-color 0.15s;
-        }
-        .airmap-toggle:hover {
-          background-color: #dde4ef;
-        }
-        .airmap-chevron {
-          transition: transform 0.2s;
-          font-size: 12px;
-          width: 16px;
-        }
-        .airmap-toggle.open .airmap-chevron {
-          transform: rotate(90deg);
-        }
-      ")),
-      # JavaScript for collapsible AirMap sections
-      tags$script(HTML("
-        $(document).on('click', '.airmap-toggle', function() {
-          var target = $(this).data('target');
-          var panel = $('#' + target);
-          $(this).toggleClass('open');
-          panel.slideToggle(200);
-        });
-      "))
+      tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, maximum-scale=5"),
+      tags$link(rel = "stylesheet", type = "text/css", href = "checklist.css"),
+      tags$script(src = "checklist.js")
     ),
+
+    # Mobile sidebar toggle button (hidden on desktop via CSS)
+    tags$button(id = "sidebar-toggle", HTML("&#9776; Filters")),
+    # Overlay behind mobile drawer
+    div(class = "sidebar-overlay"),
 
     titlePanel("Air Inspection Checklist"),
 

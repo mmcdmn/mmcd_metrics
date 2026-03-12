@@ -1,0 +1,354 @@
+/* Air Inspection Checklist - Styles */
+
+/* ====================== Base layout ====================== */
+.checklist-section {
+  margin-bottom: 20px;
+}
+.checklist-header {
+  background-color: #2c5aa0;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px 4px 0 0;
+  font-size: 16px;
+  font-weight: bold;
+}
+.section-subheader {
+  background-color: #e8eef5;
+  padding: 6px 12px;
+  font-weight: bold;
+  font-size: 14px;
+  border-bottom: 1px solid #ccc;
+}
+.section-inner-subheader {
+  background-color: #f0f4f8;
+  padding: 4px 12px 4px 24px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #495057;
+  border-bottom: 1px solid #dee2e6;
+  border-top: 1px solid #dee2e6;
+}
+
+/* ====================== Checklist items ====================== */
+.checklist-item {
+  padding: 6px 12px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+}
+.checklist-item:hover {
+  background-color: #f8f9fa;
+}
+.item-done  { color: #28a745; }
+.item-not-done { color: #dc3545; }
+.item-sitecode {
+  width: 140px;
+  font-weight: bold;
+}
+.item-status-icon {
+  width: 30px;
+  text-align: center;
+  font-size: 16px;
+}
+.item-details {
+  flex: 1;
+  color: #666;
+  font-size: 12px;
+}
+
+/* ====================== Bug badges ====================== */
+.item-bug-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  margin-left: 8px;
+}
+.bug-red     { background-color: #dc3545; color: white; }
+.bug-blue    { background-color: #007bff; color: white; }
+.bug-pending { background-color: #ffc107; color: #333;  }
+.bug-none    { background-color: #6c757d; color: white; }
+
+/* ====================== Treatment badge ====================== */
+.badge-treatment {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  margin-left: 8px;
+  background-color: #6f42c1;
+  color: white;
+}
+.item-active-trt {
+  background-color: #f3eefb;
+}
+
+/* ====================== Summary boxes ====================== */
+.summary-box {
+  text-align: center;
+  padding: 15px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.summary-number {
+  font-size: 28px;
+  font-weight: bold;
+}
+.summary-label {
+  font-size: 12px;
+  color: #666;
+}
+
+/* ====================== AirMap collapsible ====================== */
+.airmap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.15s;
+}
+.airmap-toggle:hover {
+  background-color: #dde4ef;
+}
+.airmap-chevron {
+  transition: transform 0.2s;
+  font-size: 12px;
+  width: 16px;
+}
+.airmap-toggle.open .airmap-chevron {
+  transform: rotate(90deg);
+}
+
+/* ====================== Claim styling ====================== */
+.checklist-item.item-claimed {
+  background-color: #fff3cd;
+  border-left: 4px solid #ffc107;
+}
+.checklist-item.item-claimed:hover {
+  background-color: #ffecb5;
+}
+.claim-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  margin-left: 8px;
+  background-color: #ffc107;
+  color: #333;
+  white-space: nowrap;
+}
+.claim-badge.claim-mismatch {
+  background-color: #fd7e14;
+  color: white;
+}
+
+/* Warning detail: hidden on desktop, shown on mobile below the item */
+.claim-warning-detail {
+  display: none;
+  font-size: 11px;
+  color: #856404;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.item-claim-warning .claim-warning-detail {
+  display: none; /* still hide on desktop; shown via hover/title attribute */
+}
+
+/* ====================== Employee bar ====================== */
+.employee-bar {
+  background: linear-gradient(135deg, #2c5aa0, #1e3d6f);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.employee-bar .emp-name {
+  font-weight: bold;
+}
+.employee-bar .emp-hint {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.no-employee-bar {
+  background-color: #f8d7da;
+  color: #721c24;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+/* ====================== Mobile sidebar toggle button ====================== */
+#sidebar-toggle {
+  display: none; /* hidden on desktop */
+}
+
+/* ========================================================================= */
+/* MOBILE RESPONSIVE (≤ 768px)                                               */
+/* ========================================================================= */
+@media (max-width: 768px) {
+
+  /* --- Sidebar: off-canvas drawer --- */
+  .col-sm-3, .col-sm-4 {
+    position: fixed;
+    top: 0;
+    left: -280px;
+    width: 270px !important;
+    height: 100vh;
+    z-index: 1050;
+    background: #fff;
+    overflow-y: auto;
+    transition: left 0.25s ease;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.3);
+    padding: 16px !important;
+  }
+  .col-sm-3.sidebar-open,
+  .col-sm-4.sidebar-open {
+    left: 0;
+  }
+
+  /* Overlay behind drawer */
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 1040;
+  }
+  body.sidebar-overlay-active .sidebar-overlay {
+    display: block;
+  }
+
+  /* Show the hamburger toggle */
+  #sidebar-toggle {
+    display: inline-block;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 1060;
+    background: #2c5aa0;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  }
+
+  /* Main panel takes full width */
+  .col-sm-9, .col-sm-8 {
+    width: 100% !important;
+    padding: 0 8px !important;
+    margin-top: 50px; /* room for hamburger button */
+  }
+
+  /* Title smaller */
+  h2, .title-panel h2 {
+    font-size: 18px !important;
+    margin-top: 50px;
+  }
+
+  /* Summary boxes: 2-column grid */
+  .checklist-value-boxes {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px !important;
+  }
+  .summary-box {
+    padding: 10px 6px;
+    min-width: 0 !important;
+  }
+  .summary-number {
+    font-size: 22px;
+  }
+  .summary-label {
+    font-size: 11px;
+  }
+
+  /* Checklist items: stack vertically */
+  .checklist-item {
+    flex-wrap: wrap;
+    padding: 8px 8px;
+    gap: 2px;
+  }
+  .item-status-icon {
+    width: 24px;
+    font-size: 14px;
+  }
+  .item-sitecode {
+    width: auto;
+    flex: 1;
+    font-size: 13px;
+  }
+  .item-details {
+    width: 100%;
+    flex: none;
+    padding-left: 24px;
+    margin-top: 2px;
+    font-size: 11px;
+  }
+
+  /* Bug/claim/treatment badges wrap nicely */
+  .item-bug-badge,
+  .claim-badge,
+  .badge-treatment {
+    font-size: 10px;
+    padding: 1px 6px;
+    margin-left: 4px;
+  }
+
+  /* Show warning detail text on mobile (since hover/title isn't practical) */
+  .item-claim-warning .claim-warning-detail {
+    display: block;
+    width: 100%;
+    padding-left: 24px;
+  }
+
+  /* Employee bar stacks */
+  .employee-bar {
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    padding: 8px 12px;
+  }
+  .employee-bar .emp-hint {
+    font-size: 11px;
+  }
+
+  /* Section headers tighter */
+  .checklist-header {
+    font-size: 14px;
+    padding: 6px 10px;
+  }
+  .section-subheader {
+    font-size: 13px;
+    padding: 5px 10px;
+  }
+  .section-inner-subheader {
+    font-size: 12px;
+    padding: 3px 10px 3px 16px;
+  }
+}
+
+/* Extra small phones */
+@media (max-width: 400px) {
+  .checklist-value-boxes {
+    grid-template-columns: 1fr !important;
+  }
+  .summary-number {
+    font-size: 20px;
+  }
+  .checklist-header {
+    font-size: 13px;
+  }
+  .item-sitecode {
+    font-size: 12px;
+  }
+}

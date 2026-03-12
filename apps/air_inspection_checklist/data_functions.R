@@ -128,6 +128,14 @@ get_checklist_data <- function(facility_filter = NULL,
           ls.missing
         FROM %s ls
         WHERE ls.sampnum_yr IS NOT NULL
+      ),
+
+      -- Deduplicated employee lookup (one row per emp_num, prefer active)
+      EmployeeLookup AS (
+        SELECT DISTINCT ON (emp_num) emp_num, shortname
+        FROM employee_list
+        WHERE active = true
+        ORDER BY emp_num, pkey DESC
       )
 
       SELECT
@@ -156,7 +164,7 @@ get_checklist_data <- function(facility_filter = NULL,
       LEFT JOIN LabResults lr ON i.sampnum_yr = lr.sampnum_yr
       LEFT JOIN ActiveTreatmentSites ats ON s.sitecode = ats.sitecode
       LEFT JOIN \"loc_breeding_site_cards_sjsreast2\" cards ON s.sitecode = cards.sitecode
-      LEFT JOIN employee_list emp ON i.emp1 = emp.emp_num::text
+      LEFT JOIN EmployeeLookup emp ON i.emp1 = emp.emp_num::text
       ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
     ",
       as.character(analysis_date),

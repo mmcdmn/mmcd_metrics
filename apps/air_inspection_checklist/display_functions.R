@@ -199,7 +199,14 @@ build_checklist_html <- function(data, show_unfinished_only = FALSE) {
 
           item_css <- paste("checklist-item", if (has_trt) "item-active-trt" else "")
 
+          # Data attributes for JavaScript claim feature
+          inspector_emp_val <- if (!is.na(row$inspector_emp)) as.character(row$inspector_emp) else ""
+          inspected_val <- if (is_done) "true" else "false"
+
           item <- div(class = item_css,
+                      `data-sitecode` = row$sitecode,
+                      `data-inspector-emp` = inspector_emp_val,
+                      `data-inspected` = inspected_val,
                       div(class = "item-status-icon", icon_html),
                       div(class = "item-sitecode", HTML(make_sitecode_link(row$sitecode))),
                       detail_div,

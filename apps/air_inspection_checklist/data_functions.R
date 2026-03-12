@@ -266,3 +266,32 @@ summarize_checklist <- function(data) {
     blue_bugs = blue_bugs
   )
 }
+
+
+#' Get active field employees grouped by facility and FOS
+#' Used to generate employees.json for the index page employee picker
+#' @return Data frame with emp_num, shortname, facility, fieldsuper, fos_name
+get_field_employees <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+
+  tryCatch({
+    employees <- dbGetQuery(con, "
+      SELECT e.emp_num, e.shortname, e.emp_type, e.facility, e.fieldsuper,
+             f.shortname AS fos_name
+      FROM employee_list e
+      LEFT JOIN employee_list f ON e.fieldsuper = f.emp_num
+        AND f.active = true AND f.emp_type = 'FieldSuper'
+      WHERE e.active = true
+        AND e.fieldsuper IS NOT NULL
+        AND e.emp_type NOT IN ('Pilot', 'Insp-Recpt', 'Insp-Lab')
+      ORDER BY e.facility, e.shortname
+    ")
+    safe_disconnect(con)
+    return(employees)
+  }, error = function(e) {
+    cat("ERROR in get_field_employees:", e$message, "\n")
+    if (!is.null(con)) safe_disconnect(con)
+    return(data.frame())
+  })
+}

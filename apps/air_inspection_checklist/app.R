@@ -49,7 +49,8 @@ tryCatch({
     list(
       code = row$shortname,
       label = display_name,
-      facility = row$facility
+      facility = row$facility,
+      emp_num = row$emp_num
     )
   })
   
@@ -57,6 +58,22 @@ tryCatch({
   if (!dir.exists("www")) dir.create("www")
   writeLines(jsonlite::toJSON(facilities, auto_unbox = TRUE), "www/facilities.json")
   writeLines(jsonlite::toJSON(foremen, auto_unbox = TRUE), "www/foremen.json")
+
+  # Generate employees JSON for the index page employee picker
+  employees_df <- get_field_employees()
+  if (nrow(employees_df) > 0) {
+    employees <- lapply(seq_len(nrow(employees_df)), function(i) {
+      row <- employees_df[i, ]
+      list(
+        emp_num = row$emp_num,
+        label = row$shortname,
+        facility = row$facility,
+        fieldsuper = row$fieldsuper
+      )
+    })
+    writeLines(jsonlite::toJSON(employees, auto_unbox = TRUE), "www/employees.json")
+    message("[air_inspection_checklist] employees.json generated: ", nrow(employees_df), " employees")
+  }
   
   message("[air_inspection_checklist] Filter JSON files generated successfully")
 }, error = function(e) {
@@ -82,6 +99,7 @@ server <- function(input, output, session) {
 
   url_facility <- if (!is.null(query$facility) && query$facility != "" && query$facility != "all") query$facility else NULL
   url_fos      <- if (!is.null(query$fos) && query$fos != "") query$fos else NULL
+  url_emp      <- if (!is.null(query$emp) && query$emp != "") query$emp else NULL
   url_lookback <- NULL
   if (!is.null(query$lookback) && query$lookback != "") {
     lb <- as.integer(query$lookback)
@@ -90,6 +108,32 @@ server <- function(input, output, session) {
 
   # Flag: has the URL FOS parameter been consumed yet?
   url_fos_pending <- reactiveVal(!is.null(url_fos))
+
+  # ===========================================================================
+  # SEND EMPLOYEE INFO TO CLIENT (for claim feature)
+  # ===========================================================================
+  observe({
+    if (!is.null(url_emp)) {
+      # Look up the employee name from the DB
+      emp_name <- url_emp
+      tryCatch({
+        con <- get_db_connection()
+        if (!is.null(con)) {
+          result <- dbGetQuery(con, sprintf(
+            "SELECT shortname FROM employee_list WHERE emp_num = %s AND active = true LIMIT 1",
+            dbQuoteLiteral(con, url_emp)
+          ))
+          safe_disconnect(con)
+          if (nrow(result) > 0) emp_name <- result$shortname[1]
+        }
+      }, error = function(e) message("[air_inspection_checklist] Employee lookup warning: ", e$message))
+
+      session$sendCustomMessage("set_employee", list(
+        emp_num = url_emp,
+        emp_name = emp_name
+      ))
+    }
+  })
 
   # ===========================================================================
   # INITIALIZE FACILITY + LOOKBACK (runs once, FOS is handled below)

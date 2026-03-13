@@ -49,6 +49,7 @@ ui <- dashboardPage(
       menuItem("Runtime & Routing", tabName = "runtime", icon = icon("server")),
       menuItem("App Config", tabName = "config", icon = icon("cog")),
       menuItem("Metric Registry", tabName = "registry", icon = icon("list")),
+      menuItem("Site Claims", tabName = "claims", icon = icon("map-pin")),
       hr(style = "margin: 5px 15px; border-color: #444;"),
       menuItem("Color Reference", tabName = "colors", icon = icon("palette")),
       hr(style = "margin: 5px 15px; border-color: #444;"),
@@ -379,6 +380,27 @@ ui <- dashboardPage(
               solidHeader = TRUE, width = 12,
             p(class = "text-muted", "All metrics from apps/overview/metric_registry.R"),
             DTOutput("registryTable")
+          )
+        )
+      ),
+      
+      # =====================================================================
+      # SITE CLAIMS TAB
+      # =====================================================================
+      tabItem(tabName = "claims",
+        fluidRow(
+          valueBoxOutput("claimTotal", width = 4),
+          valueBoxOutput("claimToday", width = 4),
+          valueBoxOutput("claimDays", width = 4)
+        ),
+        fluidRow(
+          box(title = "Claims by Date", status = "primary", solidHeader = TRUE, width = 6,
+            DTOutput("claimsByDate"),
+            br(),
+            actionButton("refreshClaims", "Refresh", icon = icon("sync"), class = "btn-sm btn-info")
+          ),
+          box(title = "Today's Claims (detail)", status = "info", solidHeader = TRUE, width = 6,
+            DTOutput("claimsDetail")
           )
         )
       ),
@@ -1453,6 +1475,92 @@ server <- function(input, output, session) {
       check.names = FALSE, stringsAsFactors = FALSE
     )
   }, escape = FALSE, options = list(pageLength = 10, dom = 't'))
+  
+  # ===========================================================================
+  # SITE CLAIMS
+  # ===========================================================================
+  
+  CLAIM_HASH_PREFIX <- "claim"
+  
+  claim_data <- reactiveVal(NULL)
+  
+  # Fetch claim stats from Redis
+  fetch_claim_stats <- function() {
+    today <- Sys.Date()
+    dates <- format(today - 0:6, "%Y-%m-%d")
+    by_date <- list()
+    total <- 0L
+    for (d in dates) {
+      key <- paste0(CLAIM_HASH_PREFIX, ":", d)
+      n <- tryCatch(length(redis_hkeys(key)), error = function(e) 0L)
+      if (n > 0) by_date[[d]] <- n
+      total <- total + n
+    }
+    list(total = total, by_date = by_date, today_count = by_date[[dates[1]]] %||% 0L)
+  }
+  
+  # Fetch today's detailed claims
+  fetch_today_claims <- function() {
+    today_str <- format(Sys.Date(), "%Y-%m-%d")
+    key <- paste0(CLAIM_HASH_PREFIX, ":", today_str)
+    raw <- tryCatch(redis_hgetall(key), error = function(e) list())
+    if (length(raw) == 0) return(data.frame(Sitecode = character(), Employee = character(),
+                                             `Emp #` = character(), `Claimed At` = character(),
+                                             check.names = FALSE, stringsAsFactors = FALSE))
+    rows <- lapply(names(raw), function(sc) {
+      cl <- raw[[sc]]
+      data.frame(
+        Sitecode = sc,
+        Employee = cl$emp_name %||% "?",
+        `Emp #` = cl$emp_num %||% "?",
+        `Claimed At` = cl$time %||% "?",
+        check.names = FALSE, stringsAsFactors = FALSE
+      )
+    })
+    do.call(rbind, rows)
+  }
+  
+  observe({
+    input$refreshClaims
+    claim_data(fetch_claim_stats())
+  })
+  
+  output$claimTotal <- renderValueBox({
+    stats <- claim_data()
+    if (is.null(stats)) stats <- fetch_claim_stats()
+    valueBox(stats$total, "Total Claims (7d)", icon = icon("map-pin"), color = "blue")
+  })
+  
+  output$claimToday <- renderValueBox({
+    stats <- claim_data()
+    if (is.null(stats)) stats <- fetch_claim_stats()
+    valueBox(stats$today_count, "Today's Claims", icon = icon("calendar-day"), color = "green")
+  })
+  
+  output$claimDays <- renderValueBox({
+    stats <- claim_data()
+    if (is.null(stats)) stats <- fetch_claim_stats()
+    active_days <- length(stats$by_date)
+    valueBox(active_days, "Active Days", icon = icon("calendar-week"), color = "yellow")
+  })
+  
+  output$claimsByDate <- renderDT({
+    input$refreshClaims
+    stats <- fetch_claim_stats()
+    if (length(stats$by_date) == 0) {
+      return(data.frame(Date = "No claims", Claims = 0L, stringsAsFactors = FALSE))
+    }
+    data.frame(
+      Date = names(stats$by_date),
+      Claims = as.integer(unlist(stats$by_date)),
+      stringsAsFactors = FALSE
+    )
+  }, options = list(pageLength = 7, dom = 't'), rownames = FALSE)
+  
+  output$claimsDetail <- renderDT({
+    input$refreshClaims
+    fetch_today_claims()
+  }, options = list(pageLength = 10, dom = 'tp'), rownames = FALSE)
 }
 
 shinyApp(ui = ui, server = server)

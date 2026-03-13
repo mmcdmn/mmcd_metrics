@@ -1,5 +1,6 @@
 // Air Inspection Checklist - JavaScript
 // Externalized for caching & reduced payload
+// Claims are stored in Redis (server-side) and synced via Shiny custom messages.
 
 // =========================================================================
 // AirMap collapsible toggle
@@ -12,33 +13,24 @@ $(document).on('click', '.airmap-toggle', function() {
 });
 
 // =========================================================================
-// Claim feature using localStorage
+// Claim feature — Redis-backed via Shiny messages
 // =========================================================================
 var currentEmployee = null; // {emp_num, emp_name}
+var currentClaims = {};     // sitecode -> {emp_num, emp_name, time, claim_date}
 
 // Receive employee info from server
 Shiny.addCustomMessageHandler('set_employee', function(data) {
   currentEmployee = data;
   renderEmployeeBar();
-  applyClaimsToUI();
+  // Request current claims from server
+  Shiny.setInputValue('request_claims', Math.random());
 });
 
-function getClaimsKey() {
-  // Key scoped to date so claims reset daily
-  var today = new Date().toISOString().slice(0, 10);
-  return 'air_checklist_claims_' + today;
-}
-
-function getClaims() {
-  try {
-    var raw = localStorage.getItem(getClaimsKey());
-    return raw ? JSON.parse(raw) : {};
-  } catch(e) { return {}; }
-}
-
-function saveClaims(claims) {
-  localStorage.setItem(getClaimsKey(), JSON.stringify(claims));
-}
+// Receive claims state from server (Redis)
+Shiny.addCustomMessageHandler('claims_update', function(claims) {
+  currentClaims = claims || {};
+  applyClaimsToUI();
+});
 
 function toggleClaim(sitecode) {
   if (!currentEmployee) {
@@ -46,19 +38,18 @@ function toggleClaim(sitecode) {
     return;
   }
 
-  var claims = getClaims();
-  var existing = claims[sitecode];
+  var existing = currentClaims[sitecode];
 
   if (existing && existing.emp_num === currentEmployee.emp_num) {
     // Unclaim own claim
-    delete claims[sitecode];
-    saveClaims(claims);
-    applyClaimToRow(sitecode, null);
+    Shiny.setInputValue('unclaim_site', {
+      sitecode: sitecode
+    }, {priority: 'event'});
     return;
   }
 
   if (existing && existing.emp_num !== currentEmployee.emp_num) {
-    // Someone else already claimed this site — ask for confirmation
+    // Someone else already claimed — ask for confirmation
     var ok = confirm(
       'Site ' + sitecode + ' is already claimed by ' + existing.emp_name + '.\n\n' +
       'Do you want to replace their claim with yours?'
@@ -66,35 +57,25 @@ function toggleClaim(sitecode) {
     if (!ok) return;
   }
 
-  // Set claim
-  claims[sitecode] = {
+  // Set claim via server -> Redis
+  Shiny.setInputValue('claim_site', {
+    sitecode: sitecode,
     emp_num: currentEmployee.emp_num,
-    emp_name: currentEmployee.emp_name,
-    time: new Date().toISOString()
-  };
-  saveClaims(claims);
-  applyClaimToRow(sitecode, claims[sitecode]);
+    emp_name: currentEmployee.emp_name
+  }, {priority: 'event'});
 }
 
 function applyClaimsToUI() {
-  var claims = getClaims();
-  // Apply to every row that has a claim
-  Object.keys(claims).forEach(function(sitecode) {
-    applyClaimToRow(sitecode, claims[sitecode]);
+  // Clear all existing claim badges first
+  $('.claim-badge, .claim-warning-detail').remove();
+  $('.checklist-item').removeClass('item-claimed item-claim-warning');
+
+  // Apply each claim
+  Object.keys(currentClaims).forEach(function(sitecode) {
+    applyClaimToRow(sitecode, currentClaims[sitecode]);
   });
-  // Also scan rows that are inspected but have NO claim (late-claim warning not applicable,
-  // but we keep rows clean)
 }
 
-/**
- * Determine the warning reason for a claim badge.
- * Returns an object { type, message } or null if no warning.
- *
- * Warning cases:
- *   - "inspected-no-claim": Site was inspected but was never claimed beforehand
- *     (only relevant when we can compare times; for now we flag if claimed AFTER inspect)
- *   - "inspector-mismatch": Someone else inspected the site, not the claimer
- */
 function getClaimWarning(row, claimData) {
   var inspectorEmp = row.attr('data-inspector-emp') || '';
   var wasInspected = row.attr('data-inspected') === 'true';
@@ -111,14 +92,10 @@ function getClaimWarning(row, claimData) {
   }
 
   // Case 2: Site was inspected before it was claimed
-  // We store claim time as ISO string; inspdate is just a date on the row
-  // Since claims are localStorage (no server time), we check: if the row was
-  // already inspected when the claim was made, it's a late claim.
   var inspDate = row.attr('data-insp-date') || '';
   if (inspDate && claimData.time) {
     var claimDate = claimData.time.slice(0, 10); // YYYY-MM-DD
     if (inspDate <= claimDate) {
-      // Inspected on or before the claim date — claim came after inspection
       return {
         type: 'inspected-before-claim',
         message: 'This site was inspected on ' + inspDate +
@@ -135,8 +112,8 @@ function applyClaimToRow(sitecode, claimData) {
   var row = $('[data-sitecode="' + sitecode + '"]');
   if (row.length === 0) return;
 
-  // Remove existing claim badges & warning icons
-  row.find('.claim-badge').remove();
+  // Remove existing claim badges & warning detail
+  row.find('.claim-badge, .claim-warning-detail').remove();
   row.removeClass('item-claimed item-claim-warning');
 
   if (!claimData) return;

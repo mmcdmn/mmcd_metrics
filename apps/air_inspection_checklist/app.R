@@ -136,6 +136,40 @@ server <- function(input, output, session) {
   })
 
   # ===========================================================================
+  # CLAIM HANDLERS (Redis-backed, shared across all workers)
+  # ===========================================================================
+
+  # Client requests to set a claim
+  observeEvent(input$claim_site, {
+    msg <- input$claim_site
+    if (is.null(msg$sitecode) || is.null(msg$emp_num) || is.null(msg$emp_name)) return()
+    set_claim(msg$sitecode, msg$emp_num, msg$emp_name)
+    # Send updated claims back to client
+    send_claims_to_client()
+  })
+
+  # Client requests to remove a claim
+  observeEvent(input$unclaim_site, {
+    msg <- input$unclaim_site
+    if (is.null(msg$sitecode)) return()
+    remove_claim(msg$sitecode)
+    send_claims_to_client()
+  })
+
+  # Client requests the current state of all claims
+  observeEvent(input$request_claims, {
+    send_claims_to_client()
+  })
+
+  # Helper: send all claims within lookback window to client
+  send_claims_to_client <- function() {
+    lb <- if (!is.null(input$lookback_days)) input$lookback_days else 2
+    analysis <- if (!is.null(input$analysis_date)) input$analysis_date else Sys.Date()
+    claims <- get_claims(lookback_days = lb, analysis_date = analysis)
+    session$sendCustomMessage("claims_update", claims)
+  }
+
+  # ===========================================================================
   # INITIALIZE FACILITY + LOOKBACK (runs once, FOS is handled below)
   # ===========================================================================
   observe({
@@ -184,9 +218,28 @@ server <- function(input, output, session) {
   })
 
   # ===========================================================================
-  # REFRESH BUTTON - Capture inputs and load data
+  # REFRESH TRIGGER — fires on initial load AND on button click
   # ===========================================================================
-  refresh_inputs <- eventReactive(input$refresh, {
+  refresh_trigger <- reactiveVal(0)
+
+  # Auto-fire once inputs are ready (runs once on session start)
+  observe({
+    # Wait for facility_filter to be populated (signals inputs are ready)
+    req(input$facility_filter)
+    isolate(refresh_trigger(refresh_trigger() + 1))
+  })
+
+  # Manual refresh button
+  observeEvent(input$refresh, {
+    refresh_trigger(refresh_trigger() + 1)
+  })
+
+  # ===========================================================================
+  # CAPTURE INPUTS — recalculated whenever refresh fires
+  # ===========================================================================
+  refresh_inputs <- reactive({
+    refresh_trigger()
+
     # Convert facility filter
     fac <- if (is.null(input$facility_filter) || input$facility_filter == "all") {
       NULL
@@ -220,7 +273,7 @@ server <- function(input, output, session) {
       zone = zone_vals,
       show_active_treatment = isTRUE(input$show_active_treatment)
     )
-  }, ignoreNULL = FALSE)
+  })
 
   # ===========================================================================
   # REACTIVE DATA

@@ -303,3 +303,79 @@ get_field_employees <- function() {
     return(data.frame())
   })
 }
+
+
+# =============================================================================
+# CLAIM FUNCTIONS (Redis-backed, shared across all workers)
+# =============================================================================
+
+CLAIM_HASH_PREFIX <- "claim"
+CLAIM_TTL <- 604800L  # 7 days — covers max lookback window
+
+#' Build Redis hash key for claims on a given date
+#' @param date Character date "YYYY-MM-DD"
+#' @return Key like "claim:2026-03-13"
+claim_hash_key <- function(date) {
+  paste0(CLAIM_HASH_PREFIX, ":", date)
+}
+
+#' Set a claim for a sitecode on a given date
+#' @param sitecode Character sitecode
+#' @param emp_num Character employee number
+#' @param emp_name Character employee display name
+#' @param date Character date "YYYY-MM-DD" (default today)
+#' @return TRUE/FALSE
+set_claim <- function(sitecode, emp_num, emp_name, date = format(Sys.Date(), "%Y-%m-%d")) {
+  claim_data <- list(
+    emp_num  = emp_num,
+    emp_name = emp_name,
+    time     = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  )
+  redis_hset(claim_hash_key(date), sitecode, claim_data, ttl = CLAIM_TTL)
+}
+
+#' Remove a claim for a sitecode on a given date
+#' @param sitecode Character sitecode
+#' @param date Character date "YYYY-MM-DD" (default today)
+#' @return Number deleted
+remove_claim <- function(sitecode, date = format(Sys.Date(), "%Y-%m-%d")) {
+  redis_hdel(claim_hash_key(date), sitecode)
+}
+
+#' Get all claims within a lookback window
+#' @param lookback_days Integer number of days to look back
+#' @param analysis_date Date to use as reference (default Sys.Date())
+#' @return Named list: sitecode -> list(emp_num, emp_name, time, claim_date)
+get_claims <- function(lookback_days = 2, analysis_date = Sys.Date()) {
+  all_claims <- list()
+  for (d in 0:lookback_days) {
+    date_str <- format(as.Date(analysis_date) - d, "%Y-%m-%d")
+    day_claims <- redis_hgetall(claim_hash_key(date_str))
+    if (length(day_claims) > 0) {
+      for (sc in names(day_claims)) {
+        # Newer claims (closer to analysis_date) take precedence
+        if (is.null(all_claims[[sc]])) {
+          claim <- day_claims[[sc]]
+          claim$claim_date <- date_str
+          all_claims[[sc]] <- claim
+        }
+      }
+    }
+  }
+  all_claims
+}
+
+#' Get count of active claims (for admin/test-app display)
+#' @return List with total count and per-date breakdown
+get_claim_stats <- function() {
+  today <- Sys.Date()
+  dates <- format(today - 0:6, "%Y-%m-%d")
+  counts <- list()
+  total <- 0L
+  for (d in dates) {
+    n <- length(redis_hkeys(claim_hash_key(d)))
+    if (n > 0) counts[[d]] <- n
+    total <- total + n
+  }
+  list(total = total, by_date = counts)
+}

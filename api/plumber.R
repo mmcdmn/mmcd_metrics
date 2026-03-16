@@ -5,7 +5,7 @@
 # api/filters.R is a deprecated legacy file and is NOT run in the container.
 #
 # STARTED BY: startup.sh  (Rscript /srv/api/run_plumber.R)
-# INTERNAL PORT: 3845 (never exposed externally)
+# INTERNAL PORT: 9000 (never exposed externally)
 # EXTERNAL URL:  https://metrics.mmcd.org/v1/...
 #
 # ─── CHANGING THE API KEY ────────────────────────────────────────────────────

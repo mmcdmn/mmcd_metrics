@@ -13,6 +13,8 @@
 
 set -e
 
+PLUMBER_PORT=9000
+
 # --------------- Create .env file from Docker env vars ---------------
 echo "# Environment variables for MMCD Dashboard" > /srv/shiny-server/.env
 echo "DB_HOST=${DB_HOST}" >> /srv/shiny-server/.env
@@ -153,20 +155,21 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     redis-cli -h 127.0.0.1 DEL "mmcd:route_log" > /dev/null 2>&1
     echo "  Workers registered, load counters initialized"
 
-    # Start Plumber REST API on internal port 3845
+        # Start Plumber REST API on dedicated internal port 9000.
+        # Do not use the Shiny worker range (3839+), or /v1 will hit Shiny instead.
     # nginx routes all /v1/* traffic here; never exposed directly to clients
-    echo "Starting Plumber REST API on port 3845..."
+        echo "Starting Plumber REST API on port ${PLUMBER_PORT}..."
     Rscript -e '
       library(plumber)
       pr <- plumber::plumb("/srv/api/plumber.R")
-      pr$run(host="127.0.0.1", port=3845, swagger=FALSE)
+            pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
     ' > /var/log/plumber-api.log 2>&1 &
     PIDS+=($!)
-    echo "   Plumber API on 127.0.0.1:3845  (PID ${PIDS[-1]})"
+        echo "   Plumber API on 127.0.0.1:${PLUMBER_PORT}  (PID ${PIDS[-1]})"
 
     # Wait for Plumber to be ready before starting nginx
     RETRIES=0
-    while ! bash -c "echo > /dev/tcp/127.0.0.1/3845" 2>/dev/null; do
+        while ! bash -c "echo > /dev/tcp/127.0.0.1/${PLUMBER_PORT}" 2>/dev/null; do
         RETRIES=$((RETRIES + 1))
         if [ $RETRIES -ge 20 ]; then
             echo "   Plumber not ready after 20s — starting nginx anyway"
@@ -229,18 +232,18 @@ if [ "$LISTEN_PORT" != "3838" ]; then
     sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/shiny-server/shiny-server.conf
 fi
 
-# Start Plumber REST API on internal port 3845 (single-worker mode)
+# Start Plumber REST API on dedicated internal port 9000 (single-worker mode)
 # nginx is not running in this mode, so requests reach Shiny directly
 # on $LISTEN_PORT; but the API still needs to run for any configured
 # upstream proxy (e.g. AWS ALB) that forwards /v1/* to this container.
-echo "Starting Plumber REST API on port 3845..."
+echo "Starting Plumber REST API on port ${PLUMBER_PORT}..."
 Rscript -e '
   library(plumber)
   pr <- plumber::plumb("/srv/api/plumber.R")
-  pr$run(host="127.0.0.1", port=3845, swagger=FALSE)
+    pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
 ' > /var/log/plumber-api.log 2>&1 &
 API_PID=$!
-echo "  ✓ Plumber API on 127.0.0.1:3845  (PID $API_PID)"
+echo "  ✓ Plumber API on 127.0.0.1:${PLUMBER_PORT}  (PID $API_PID)"
 
 SHINY_INSTANCE_ID="1" SHINY_INSTANCE_PORT="$LISTEN_PORT" exec /usr/bin/shiny-server
 cleanup

@@ -310,7 +310,7 @@ get_field_employees <- function() {
 # =============================================================================
 
 CLAIM_HASH_PREFIX <- "claim"
-CLAIM_TTL <- 604800L  # 7 days — covers max lookback window
+CLAIM_TTL <- 172800L  # 2 days
 
 #' Build Redis hash key for claims on a given date
 #' @param date Character date "YYYY-MM-DD"

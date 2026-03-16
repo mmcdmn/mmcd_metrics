@@ -38,6 +38,25 @@
 #   - get_stub_gis_sectcode()           # Section code geography
 #   - get_stub_facilities()             # Facility code lookup
 #
+# From stub_section_cards.R:
+#   - get_stub_breeding_site_cards()    # JK table breeding sites with dynamic cols
+#   - get_stub_dynamic_columns()        # Dynamic column names from JK table
+#   - get_stub_jk_filter_options()      # JK table filter options
+#   - get_stub_jk_town_codes()          # JK table town codes
+#   - get_stub_webster_breeding_sites() # Webster table breeding sites
+#   - get_stub_webster_filter_options() # Webster table filter options
+#   - get_stub_structures_with_sections() # Structures + gis_sectcode
+#   - get_stub_structure_filter_options() # Structure filter options
+#   - get_stub_structure_town_codes()   # Structure town codes
+#
+# From stub_air_checklist.R:
+#   - get_stub_checklist_data()         # Full enriched checklist (post-processing)
+#   - get_stub_checklist_data_uninspected() # Checklist with no inspections
+#   - get_stub_air_field_employees()    # Field employees for checklist
+#   - get_stub_mattype_list()           # Material types with effect days
+#   - get_stub_dblarv_sample()          # Lab sample results
+#   - get_stub_checklist_summary()      # Checklist summary stats
+#
 # Get the directory where this script lives
 # Use a more robust approach that works from different calling contexts
 get_stub_directory <- function() {
@@ -79,7 +98,8 @@ stub_dir <- get_stub_directory()
 cat("Loading stubs from directory:", stub_dir, "\n")
 
 stub_files <- c("stub_loc_cxstruct.R", "stub_treatments.R", "stub_breeding_sites.R", 
-                "stub_catchbasin.R", "stub_employees.R", "stub_suco_data.R")
+                "stub_catchbasin.R", "stub_employees.R", "stub_suco_data.R",
+                "stub_section_cards.R", "stub_air_checklist.R")
 
 for (stub_file in stub_files) {
   stub_path <- file.path(stub_dir, stub_file)

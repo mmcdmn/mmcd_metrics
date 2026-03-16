@@ -194,12 +194,93 @@
 /* ========================================================================= */
 @media (max-width: 768px) {
 
+  /* Strong overrides to beat global !important typography rules */
+  .title-panel h2,
+  h2 {
+    font-size: 22px !important;
+    line-height: 1.2 !important;
+  }
+  .checklist-header {
+    font-size: 19px !important;
+    line-height: 1.25 !important;
+  }
+  .section-subheader {
+    font-size: 17px !important;
+    line-height: 1.3 !important;
+  }
+  .section-inner-subheader {
+    font-size: 16px !important;
+    line-height: 1.3 !important;
+  }
+  .checklist-item {
+    font-size: 17px !important;
+    line-height: 1.35 !important;
+  }
+  .item-sitecode {
+    font-size: 18px !important;
+  }
+  .item-details {
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+  }
+  .item-bug-badge,
+  .claim-badge,
+  .badge-treatment {
+    font-size: 15px !important;
+    line-height: 1.3 !important;
+  }
+  .summary-number {
+    font-size: 32px !important;
+  }
+  .summary-label {
+    font-size: 15px !important;
+  }
+  .employee-bar {
+    font-size: 18px !important;
+  }
+  .employee-bar .emp-name {
+    font-size: 20px !important;
+  }
+  .employee-bar .emp-hint {
+    font-size: 16px !important;
+  }
+  .no-employee-bar {
+    font-size: 16px !important;
+  }
+  .item-claim-warning .claim-warning-detail {
+    font-size: 15px !important;
+  }
+
+  /* Filter controls in sidebar */
+  .well label,
+  .well .control-label {
+    font-size: 16px !important;
+  }
+  .well .form-control,
+  .well input[type='text'],
+  .well input[type='number'],
+  .well input[type='date'],
+  .well select,
+  .well textarea {
+    font-size: 18px !important;
+    min-height: 50px !important;
+  }
+  .well .btn {
+    font-size: 18px !important;
+    min-height: 50px !important;
+  }
+  .well .selectize-input,
+  .well .selectize-dropdown,
+  .well .selectize-dropdown .option {
+    font-size: 18px !important;
+  }
+
   /* --- Sidebar: off-canvas drawer --- */
   .col-sm-3, .col-sm-4 {
     position: fixed;
     top: 0;
-    left: -280px;
-    width: 270px !important;
+    left: -300px;
+    width: 280px !important;
     height: 100vh;
     z-index: 1050;
     background: #fff;
@@ -229,126 +310,239 @@
   #sidebar-toggle {
     display: inline-block;
     position: fixed;
-    top: 10px;
-    left: 10px;
+    top: 8px;
+    left: 8px;
     z-index: 1060;
     background: #2c5aa0;
     color: white;
     border: none;
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 18px;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 22px;
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
 
   /* Main panel takes full width */
   .col-sm-9, .col-sm-8 {
     width: 100% !important;
-    padding: 0 8px !important;
-    margin-top: 50px; /* room for hamburger button */
+    padding: 0 6px !important;
+    margin-top: 54px; /* room for hamburger button */
   }
 
-  /* Title smaller */
+  /* Title smaller but readable */
   h2, .title-panel h2 {
-    font-size: 18px !important;
-    margin-top: 50px;
+    font-size: 22px !important;
+    margin-top: 54px;
   }
 
-  /* Summary boxes: 2-column grid */
+  /* Employee bar: larger, stacked, prominent */
+  .employee-bar {
+    flex-direction: column;
+    gap: 6px;
+    font-size: 18px;
+    padding: 12px 16px;
+    border-radius: 10px;
+  }
+  .employee-bar .emp-name {
+    font-size: 20px;
+  }
+  .employee-bar .emp-hint {
+    font-size: 16px;
+    opacity: 0.85;
+  }
+  .no-employee-bar {
+    font-size: 16px;
+    padding: 12px 16px;
+  }
+
+  /* Summary boxes: 2-column grid with larger text */
   .checklist-value-boxes {
     display: grid !important;
     grid-template-columns: 1fr 1fr;
-    gap: 8px !important;
+    gap: 10px !important;
   }
   .summary-box {
-    padding: 10px 6px;
+    padding: 14px 8px;
     min-width: 0 !important;
+    border-radius: 12px;
   }
   .summary-number {
-    font-size: 22px;
+    font-size: 32px;
   }
   .summary-label {
-    font-size: 11px;
+    font-size: 15px;
   }
 
-  /* Checklist items: stack vertically */
+  /* Section headers: larger for touch targets */
+  .checklist-header {
+    font-size: 19px;
+    padding: 10px 12px;
+    border-radius: 8px 8px 0 0;
+  }
+  .section-subheader {
+    font-size: 17px;
+    padding: 8px 12px;
+  }
+  .section-inner-subheader {
+    font-size: 16px;
+    padding: 6px 12px 6px 20px;
+  }
+
+  /* Checklist items: larger touch targets & font */
   .checklist-item {
     flex-wrap: wrap;
-    padding: 8px 8px;
-    gap: 2px;
+    padding: 12px 10px;
+    gap: 4px;
+    min-height: 48px; /* minimum touch target */
+    font-size: 17px;
   }
   .item-status-icon {
-    width: 24px;
-    font-size: 14px;
+    width: 28px;
+    font-size: 22px;
   }
   .item-sitecode {
     width: auto;
     flex: 1;
-    font-size: 13px;
+    font-size: 18px;
+    font-weight: 700;
   }
   .item-details {
     width: 100%;
     flex: none;
-    padding-left: 24px;
-    margin-top: 2px;
-    font-size: 11px;
+    padding-left: 28px;
+    margin-top: 4px;
+    font-size: 16px;
+    line-height: 1.5;
   }
 
-  /* Bug/claim/treatment badges wrap nicely */
-  .item-bug-badge,
-  .claim-badge,
+  /* AirMap toggles: bigger tap target */
+  .airmap-toggle {
+    padding: 10px 12px;
+    font-size: 17px;
+    min-height: 44px;
+  }
+  .airmap-chevron {
+    font-size: 16px;
+    width: 20px;
+  }
+
+  /* Bug/claim/treatment badges: larger & more readable */
+  .item-bug-badge {
+    font-size: 15px;
+    padding: 3px 10px;
+    margin-left: 6px;
+    border-radius: 12px;
+  }
+  .claim-badge {
+    font-size: 15px;
+    padding: 3px 10px;
+    margin-left: 6px;
+    border-radius: 12px;
+  }
   .badge-treatment {
-    font-size: 10px;
-    padding: 1px 6px;
-    margin-left: 4px;
+    font-size: 15px;
+    padding: 3px 10px;
+    margin-left: 6px;
+    border-radius: 12px;
   }
 
-  /* Show warning detail text on mobile (since hover/title isn't practical) */
+  /* Show warning detail text on mobile (since hover isn't practical) */
   .item-claim-warning .claim-warning-detail {
     display: block;
     width: 100%;
-    padding-left: 24px;
+    padding-left: 28px;
+    font-size: 15px;
+    margin-top: 6px;
   }
 
-  /* Employee bar stacks */
-  .employee-bar {
-    flex-direction: column;
-    gap: 4px;
-    font-size: 13px;
-    padding: 8px 12px;
-  }
-  .employee-bar .emp-hint {
-    font-size: 11px;
+  /* Claimed items: more visible on mobile */
+  .checklist-item.item-claimed {
+    border-left-width: 5px;
+    padding-left: 8px;
   }
 
-  /* Section headers tighter */
-  .checklist-header {
+  /* Sidebar form elements: larger for touch */
+  .well {
+    padding: 12px !important;
+  }
+  .well .form-group {
+    margin-bottom: 12px;
+  }
+  .well .form-control {
+    font-size: 18px !important;
+    height: 50px !important;
+    padding: 8px 12px !important;
+  }
+  .well .btn {
+    font-size: 18px !important;
+    padding: 10px 16px !important;
+    min-height: 50px;
+  }
+  .well label {
+    font-size: 16px !important;
+    margin-bottom: 4px;
+  }
+  .well .irs {
+    /* slider widget */
+    margin-top: 8px;
+  }
+}
+
+/* Mid-small phones */
+@media (max-width: 480px) {
+  .title-panel h2,
+  h2 {
+    font-size: 20px !important;
+  }
+  .summary-number {
+    font-size: 30px;
+  }
+  .summary-label {
     font-size: 14px;
-    padding: 6px 10px;
+  }
+  .checklist-header {
+    font-size: 18px;
   }
   .section-subheader {
-    font-size: 13px;
-    padding: 5px 10px;
+    font-size: 16px;
   }
-  .section-inner-subheader {
-    font-size: 12px;
-    padding: 3px 10px 3px 16px;
+  .item-sitecode {
+    font-size: 17px;
+  }
+  .item-details {
+    font-size: 15px;
+  }
+  .item-bug-badge,
+  .claim-badge,
+  .badge-treatment {
+    font-size: 14px;
   }
 }
 
 /* Extra small phones */
 @media (max-width: 400px) {
+  .title-panel h2,
+  h2 {
+    font-size: 19px !important;
+  }
   .checklist-value-boxes {
     grid-template-columns: 1fr !important;
   }
   .summary-number {
-    font-size: 20px;
+    font-size: 28px;
   }
   .checklist-header {
-    font-size: 13px;
+    font-size: 17px;
   }
   .item-sitecode {
-    font-size: 12px;
+    font-size: 16px;
+  }
+  .item-details {
+    font-size: 14px;
+  }
+  .checklist-item {
+    padding: 10px 8px;
+    font-size: 15px;
   }
 }

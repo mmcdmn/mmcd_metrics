@@ -402,6 +402,29 @@ ui <- dashboardPage(
           box(title = "Today's Claims (detail)", status = "info", solidHeader = TRUE, width = 6,
             DTOutput("claimsDetail")
           )
+        ),
+        fluidRow(
+          box(title = "Delete Claims", status = "danger", solidHeader = TRUE, width = 12,
+            fluidRow(
+              column(3,
+                dateInput("claimDeleteDate", "Date",
+                          value = Sys.Date(),
+                          min = Sys.Date() - 6, max = Sys.Date())
+              ),
+              column(3,
+                selectInput("claimDeleteFOS", "FOS Area",
+                            choices = c("All FOS Areas" = "all"))
+              ),
+              column(3,
+                br(),
+                actionButton("claimDeleteConfirm", "Delete Selected",
+                             icon = icon("trash"), class = "btn-danger btn-sm")
+              )
+            ),
+            br(),
+            verbatimTextOutput("claimDeleteStatus"),
+            DTOutput("claimDeletePreviewTable")
+          )
         )
       ),
       
@@ -1561,6 +1584,134 @@ server <- function(input, output, session) {
     input$refreshClaims
     fetch_today_claims()
   }, options = list(pageLength = 10, dom = 'tp'), rownames = FALSE)
+  
+  # ===========================================================================
+  # CLAIM DELETION
+  # ===========================================================================
+  
+  claim_delete_status <- reactiveVal("")
+  claim_preview_data <- reactiveVal(NULL)
+  
+  # Populate FOS dropdown from DB on load
+  observe({
+    fos <- tryCatch(get_foremen_lookup(), error = function(e) data.frame())
+    if (nrow(fos) > 0) {
+      choices <- c("All FOS Areas" = "all",
+                   setNames(fos$emp_num, paste0(fos$shortname, " (", fos$facility, ") - ", fos$emp_num)))
+      updateSelectInput(session, "claimDeleteFOS", choices = choices)
+    }
+  })
+  
+  # Fetch claims for a date, enriched with FOS area from DB
+  fetch_claims_with_fos <- function(date_str) {
+    key <- paste0(CLAIM_HASH_PREFIX, ":", date_str)
+    raw <- tryCatch(redis_hgetall(key), error = function(e) list())
+    if (length(raw) == 0) return(data.frame(
+      sitecode = character(), employee = character(), emp_num = character(),
+      claimed_at = character(), fosarea = character(), facility = character(),
+      stringsAsFactors = FALSE
+    ))
+    
+    sitecodes <- names(raw)
+    rows <- lapply(sitecodes, function(sc) {
+      cl <- raw[[sc]]
+      data.frame(
+        sitecode = sc,
+        employee = cl$emp_name %||% "?",
+        emp_num = cl$emp_num %||% "?",
+        claimed_at = cl$time %||% "?",
+        stringsAsFactors = FALSE
+      )
+    })
+    df <- do.call(rbind, rows)
+    
+    # Enrich with FOS area from gis_sectcode
+    sectcodes <- unique(substr(df$sitecode, 1, 7))
+    # Validate sectcode format (7 chars, alphanumeric + dash only)
+    sectcodes <- sectcodes[grepl("^[0-9A-Za-z\\-]{7}$", sectcodes)]
+    con <- tryCatch(get_db_connection(), error = function(e) NULL)
+    if (!is.null(con) && length(sectcodes) > 0) {
+      sect_sql <- paste0("'", paste(sectcodes, collapse = "','"), "'")
+      fos_data <- tryCatch(
+        dbGetQuery(con, paste0(
+          "SELECT sectcode, fosarea, facility FROM gis_sectcode WHERE sectcode IN (", sect_sql, ")"
+        )),
+        error = function(e) data.frame()
+      )
+      safe_disconnect(con)
+      if (nrow(fos_data) > 0) {
+        df$sectcode <- substr(df$sitecode, 1, 7)
+        df <- merge(df, fos_data, by = "sectcode", all.x = TRUE)
+        df$sectcode <- NULL
+      } else {
+        df$fosarea <- NA_character_
+        df$facility <- NA_character_
+      }
+    } else {
+      df$fosarea <- NA_character_
+      df$facility <- NA_character_
+    }
+    df
+  }
+  
+  # Auto-update preview when date or FOS filter changes
+  observe({
+    date_str <- format(input$claimDeleteDate, "%Y-%m-%d")
+    fos_filter <- input$claimDeleteFOS
+    input$refreshClaims  # also refresh on manual refresh
+    
+    df <- fetch_claims_with_fos(date_str)
+    
+    if (nrow(df) == 0) {
+      claim_delete_status(paste0("No claims found for ", date_str))
+      claim_preview_data(NULL)
+      return()
+    }
+    
+    if (fos_filter != "all") {
+      df <- df[!is.na(df$fosarea) & df$fosarea == fos_filter, , drop = FALSE]
+    }
+    
+    if (nrow(df) == 0) {
+      claim_delete_status(paste0("No claims match filter for ", date_str))
+      claim_preview_data(NULL)
+    } else {
+      claim_delete_status(paste0("Found ", nrow(df), " claims for ", date_str,
+                                 if (fos_filter != "all") paste0(" (FOS: ", fos_filter, ")")))
+      claim_preview_data(df)
+    }
+  })
+  
+  # Delete selected (by date + FOS filter)
+  observeEvent(input$claimDeleteConfirm, {
+    df <- claim_preview_data()
+    if (is.null(df) || nrow(df) == 0) {
+      claim_delete_status("Nothing to delete. Click Preview first.")
+      return()
+    }
+    
+    date_str <- format(input$claimDeleteDate, "%Y-%m-%d")
+    key <- paste0(CLAIM_HASH_PREFIX, ":", date_str)
+    deleted <- 0L
+    for (sc in df$sitecode) {
+      n <- tryCatch(redis_hdel(key, sc), error = function(e) 0L)
+      deleted <- deleted + n
+    }
+    
+    claim_delete_status(paste0("Deleted ", deleted, " claims from ", date_str))
+    claim_preview_data(NULL)
+    claim_data(fetch_claim_stats())  # refresh stats
+  })
+  
+  output$claimDeleteStatus <- renderText({
+    claim_delete_status()
+  })
+  
+  output$claimDeletePreviewTable <- renderDT({
+    df <- claim_preview_data()
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    df[, c("sitecode", "employee", "emp_num", "claimed_at", "fosarea", "facility")]
+  }, options = list(pageLength = 20, dom = 'tp'), rownames = FALSE)
 }
 
 shinyApp(ui = ui, server = server)

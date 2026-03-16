@@ -21,6 +21,11 @@ echo "DB_USER=${DB_USER}" >> /srv/shiny-server/.env
 echo "DB_PASSWORD=${DB_PASSWORD}" >> /srv/shiny-server/.env
 echo "DB_NAME=${DB_NAME}" >> /srv/shiny-server/.env
 
+# ─────────────────────────────────────────────────────────────────────────────
+# API KEY — used by the Plumber REST API to protect private endpoints.
+# ─────────────────────────────────────────────────────────────────────────────
+echo "API_KEYS=${API_KEYS:-mmcd-sheets-abc123xyz}" >> /srv/shiny-server/.env
+
 # Write runtime mode so R apps know the actual deployment state
 echo "ENABLE_NGINX=${ENABLE_NGINX:-false}" >> /srv/shiny-server/.env
 echo "SHINY_WORKERS=${SHINY_WORKERS:-3}" >> /srv/shiny-server/.env
@@ -147,6 +152,29 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     redis-cli -h 127.0.0.1 DEL "mmcd:route_log" > /dev/null 2>&1
     echo "  Workers registered, load counters initialized"
 
+    # Start Plumber REST API on internal port 3845
+    # nginx routes all /v1/* traffic here; never exposed directly to clients
+    echo "Starting Plumber REST API on port 3845..."
+    Rscript -e '
+      library(plumber)
+      pr <- plumber::plumb("/srv/api/plumber.R")
+      pr$run(host="127.0.0.1", port=3845, swagger=FALSE)
+    ' > /var/log/plumber-api.log 2>&1 &
+    PIDS+=($!)
+    echo "   Plumber API on 127.0.0.1:3845  (PID ${PIDS[-1]})"
+
+    # Wait for Plumber to be ready before starting nginx
+    RETRIES=0
+    while ! bash -c "echo > /dev/tcp/127.0.0.1/3845" 2>/dev/null; do
+        RETRIES=$((RETRIES + 1))
+        if [ $RETRIES -ge 20 ]; then
+            echo "   Plumber not ready after 20s — starting nginx anyway"
+            break
+        fi
+        sleep 1
+    done
+    [ $RETRIES -lt 20 ] && echo "   Plumber is ready"
+
     # Start OpenResty (load balancer on :3838)
     openresty -c /etc/nginx/nginx.conf -g 'daemon off;' &
     PIDS+=($!)
@@ -199,6 +227,19 @@ echo ""
 if [ "$LISTEN_PORT" != "3838" ]; then
     sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/shiny-server/shiny-server.conf
 fi
+
+# Start Plumber REST API on internal port 3845 (single-worker mode)
+# nginx is not running in this mode, so requests reach Shiny directly
+# on $LISTEN_PORT; but the API still needs to run for any configured
+# upstream proxy (e.g. AWS ALB) that forwards /v1/* to this container.
+echo "Starting Plumber REST API on port 3845..."
+Rscript -e '
+  library(plumber)
+  pr <- plumber::plumb("/srv/api/plumber.R")
+  pr$run(host="127.0.0.1", port=3845, swagger=FALSE)
+' > /var/log/plumber-api.log 2>&1 &
+API_PID=$!
+echo "  ✓ Plumber API on 127.0.0.1:3845  (PID $API_PID)"
 
 SHINY_INSTANCE_ID="1" SHINY_INSTANCE_PORT="$LISTEN_PORT" exec /usr/bin/shiny-server
 cleanup

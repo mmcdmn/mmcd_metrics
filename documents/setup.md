@@ -390,6 +390,94 @@ docker logs --tail 120 mmcd-local
 
 Tip: Use a hard browser refresh (Ctrl+F5) after restart to avoid cached JS/CSS.
 
+#### Secure API Layer (Public + Private Endpoints)
+
+This repo includes a Plumber API at [api/filters.R](../api/filters.R) with:
+
+- Public endpoints (no auth):
+  - `GET /v1/public/health`
+  - `GET /v1/public/facilities`
+  - `GET /v1/public/foremen`
+- Private endpoints (API key required):
+  - `GET /v1/private/sectcodes`
+
+Authentication for private routes uses one of these headers:
+
+- `Authorization: Bearer <token>`
+- `X-API-Key: <token>`
+
+Set one or more valid tokens via environment variable (comma-separated):
+
+```bash
+API_KEYS=token1,token2,token3
+```
+
+Example calls:
+
+```bash
+# Public route
+curl http://localhost:3838/v1/public/health
+
+# Private route with API key
+curl -H "Authorization: Bearer token1" \
+  "http://localhost:3838/v1/private/sectcodes?facility=MO&limit=100"
+```
+
+SQL injection protection pattern used by this API:
+
+- Validate all user inputs first (length, allowed characters, numeric bounds)
+- Use parameterized SQL (`DBI::sqlInterpolate`) for values
+- Never concatenate raw request values directly into SQL strings
+- Use allow-lists for any dynamic identifiers (table or column names)
+
+#### Google Sheets Live Data + Editable Columns
+
+Yes, this is possible and is a good workflow.
+
+Recommended pattern:
+
+1. Keep API data in a read-only tab, such as `Raw_Data`.
+2. Keep user edits in a separate tab, such as `User_Notes`.
+3. Use a stable key (for example `sectcode`) to join data with formulas (`XLOOKUP`/`INDEX-MATCH`) or Apps Script.
+4. Refresh `Raw_Data` on a schedule (for example every 5 minutes) using Google Apps Script.
+5. Never write user-edited columns back into `Raw_Data`; keep them in `User_Notes` so refreshes do not overwrite edits.
+
+Minimal Apps Script example (pull private API data into `Raw_Data`):
+
+```javascript
+function refreshSectcodes() {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('MMCD_API_KEY');
+  const url = 'https://your-api-host/v1/private/sectcodes?limit=500';
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: {
+      'Authorization': 'Bearer ' + apiKey
+    },
+    muteHttpExceptions: false
+  });
+
+  const payload = JSON.parse(response.getContentText());
+  const rows = payload.data || [];
+
+  const sheet = SpreadsheetApp.getActive().getSheetByName('Raw_Data');
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, 4).setValues([['sectcode', 'facility', 'fosarea', 'zone']]);
+
+  if (rows.length > 0) {
+    const values = rows.map(r => [r.sectcode, r.facility, r.fosarea, r.zone]);
+    sheet.getRange(2, 1, values.length, 4).setValues(values);
+  }
+}
+```
+
+Security tips for Sheets integration:
+
+- Store API keys in Script Properties, not in sheet cells.
+- Restrict API keys by environment and rotate keys periodically.
+- Keep private API endpoints behind HTTPS only.
+- If possible, put a reverse proxy in front of the API with rate limiting and IP restrictions.
+
 #### Common Windows Docker Troubleshooting
 
 - Error: `exec /startup.sh: no such file or directory`

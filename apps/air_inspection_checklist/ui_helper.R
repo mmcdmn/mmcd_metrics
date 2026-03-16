@@ -4,12 +4,20 @@
 #' Create the main UI for the air inspection checklist app
 #' @return Shiny UI object
 air_inspection_checklist_ui <- function() {
+  css_mtime <- suppressWarnings(as.integer(file.info("www/checklist.css")$mtime))
+  js_mtime <- suppressWarnings(as.integer(file.info("www/checklist.js")$mtime))
+  if (is.na(css_mtime)) css_mtime <- as.integer(Sys.time())
+  if (is.na(js_mtime)) js_mtime <- as.integer(Sys.time())
+
+  css_href <- paste0("checklist.css?v=", css_mtime)
+  js_src <- paste0("checklist.js?v=", js_mtime)
+
   fluidPage(
     get_universal_text_css(),
     tags$head(
       tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, maximum-scale=5"),
-      tags$link(rel = "stylesheet", type = "text/css", href = "checklist.css"),
-      tags$script(src = "checklist.js")
+      tags$link(rel = "stylesheet", type = "text/css", href = css_href),
+      tags$script(src = js_src)
     ),
 
     # Mobile sidebar toggle button (hidden on desktop via CSS)

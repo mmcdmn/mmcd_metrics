@@ -1,73 +1,68 @@
 // ============================================================================
 // AIR INSPECTION WORKLOAD MANAGER — Google Apps Script
 // ============================================================================
-// Fetches RED air checklist data for [Sr] facility from the MMCD Metrics API.
+// Fetches air checklist data from the MMCD Metrics API.
 // Creates per-FOS tabs with color coding, claim tracking, and progress stats.
 //
 // SETUP:
 //   1. Open your Google Sheet → Extensions → Apps Script
 //   2. Paste this entire script
-//   3. Go to Project Settings → Script Properties. Add these two values:
+//   3. Go to Project Settings → Script Properties. Add:
 //       API_BASE:  https://metrics.mmcd.org/v1
 //       API_KEY:   <your key>
 //   4. Run refreshChecklist() or attach it to a button / time trigger
 // ============================================================================
 
+// ── CHANGE THESE TO CUSTOMIZE ────────────────────────────────────────────────
 const CONFIG = {
-  FACILITY:  'SR',
-  ZONE:      '1,2',
+  FACILITY:       'SR',             // Facility code: SR, MO, E, Wp, Wm, N, Sj
+  ZONE:           '1,2',            // Zones: '1', '2', or '1,2'
+  PRIORITIES:     'YELLOW,RED',     // Priority filter: RED, YELLOW, BLUE, GREEN, PURPLE (comma-sep, '' for all)
+  MAP_LINK:       '',               // Air Site Map link (shown in Summary)
+  CONTACTS_LINK:  '',               // Contacts sheet link (shown in Summary)
 };
 
-// Read API_BASE and API_KEY from Script Properties (set in Project Settings)
 function getProp_(key) {
   const val = PropertiesService.getScriptProperties().getProperty(key);
-  if (!val) throw new Error('Missing Script Property: ' + key + '. Go to Project Settings → Script Properties and add it.');
+  if (!val) throw new Error('Missing Script Property: ' + key);
   return val;
 }
 
-// ── Column definitions ──────────────────────────────────────────────────────
-// DB-sourced columns (auto-filled, protected from accidental edits)
-const DB_COLUMNS = [
-  'Township', 'Section', 'Sitecode', 'Priority', 'Acres', 'AirMap', 'Status',
-  'Inspector', '#/Dip', '% Wet', 'Sample #', 'Bug Status',
-  'RA', 'Remarks', 'Treatment',
+// ── Column layout ────────────────────────────────────────────────────────────
+const ALL_COLUMNS = [
+  'Sitecode', 'Claim Emp ID', 'Acres', 'RA', 'AirMap', 'Status',
+  'Priority', '#/Dip', '% Wet', 'Sample #', 'Bug Status',
+  'Remarks', 'Treatment', 'New Notes', 'Drone', 'Needs Sample',
 ];
-// Manual columns (editable by employees — preserved across refreshes)
-const MANUAL_COLUMNS = ['Claim Emp ID', 'New Notes', 'Drone', 'Needs Sample'];
-const ALL_COLUMNS    = [...DB_COLUMNS, ...MANUAL_COLUMNS];
+const MANUAL_COL_NAMES = ['Claim Emp ID', 'New Notes', 'Drone', 'Needs Sample'];
+const MANUAL_INDICES   = MANUAL_COL_NAMES.map(n => ALL_COLUMNS.indexOf(n));
 
-// Header row positions
-const STATS_ROW  = 1;   // Overview bar
-const FILTER_ROW = 2;   // Filter / info bar
-const HEADER_ROW = 3;   // Column headers
-const DATA_START = 4;   // First data row
+const STATS_ROW  = 1;
+const FILTER_ROW = 2;
+const HEADER_ROW = 3;
+const DATA_START = 4;
 
-// Colors
 const C = {
-  HEADER_BG:      '#1a237e',   // dark indigo — table header background
-  MANUAL_HEADER_BG:'#0b5ed7',  // blue for editable columns
-  HEADER_FG:      '#ffffff',   // white — table header text color
-  SECTION_BAR_BG: '#000000',   // black section separator
-  TOWN_BAR_BG:    '#263238',   // township separator
-  TOWN_BAR_FG:    '#ffffff',
-  DONE_BG:        '#e8f5e9',   // light green — inspected
-  CLAIMED_BG:     '#e3f2fd',   // light blue — claimed but not inspected
-  TODO_BG:        '#ffffff',   // white — unclaimed, not inspected
-  PRIORITY_RED:   '#f8d7da',
-  PRIORITY_YELLOW:'#fff3cd',
-  PRIORITY_BLUE:  '#d1ecf1',
-  PRIORITY_GREEN: '#d4edda',
-  PRIORITY_PURPLE:'#e2d6f3',
-  RED_BUGS:       '#ffcdd2',   // light red — red bug indicator
-  PENDING_LAB:    '#fff9c4',   // light yellow — pending lab results
-  BLUE_BUGS:      '#bbdefb',   // light blue — blue bug indicator
-  RA_BG:          '#f3e5f5',   // light purple — restricted area
-  STATS_BG:       '#fafafa',   // near-white grey — stats box background
-  REMAIN_RED:     '#c62828',   // dark red — remaining count (high/bad)
-  REMAIN_GREEN:   '#2e7d32',   // dark green — remaining count (low/good)
-  PCT_GREEN:      '#e8f5e9',   // light green — percentage threshold good
-  PCT_YELLOW:     '#fff9c4',   // light yellow — percentage threshold warning
-  PCT_RED:        '#ffcdd2',   // light red — percentage threshold bad
+  HEADER_BG:       '#1a237e',
+  MANUAL_HEADER_BG:'#0b5ed7',
+  HEADER_FG:       '#ffffff',
+  DONE_BG:         '#e8f5e9',
+  CLAIMED_BG:      '#e3f2fd',
+  PRIORITY_RED:    '#f8d7da',
+  PRIORITY_YELLOW: '#fff3cd',
+  PRIORITY_BLUE:   '#d1ecf1',
+  PRIORITY_GREEN:  '#d4edda',
+  PRIORITY_PURPLE: '#e2d6f3',
+  RED_BUGS:        '#ffcdd2',
+  PENDING_LAB:     '#fff9c4',
+  BLUE_BUGS:       '#bbdefb',
+  RA_BG:           '#f3e5f5',
+  STATS_BG:        '#fafafa',
+  REMAIN_RED:      '#c62828',
+  REMAIN_GREEN:    '#2e7d32',
+  PCT_GREEN:       '#e8f5e9',
+  PCT_YELLOW:      '#fff9c4',
+  PCT_RED:         '#ffcdd2',
 };
 
 
@@ -75,42 +70,31 @@ const C = {
 // ENTRY POINTS
 // ════════════════════════════════════════════════════════════════════════════
 
-/** Main refresh — call from button or trigger */
 function refreshChecklist() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  // 1. Get threshold-based lookback
   const thresholdDays = getThresholdLookback_();
-
-  // 2. Fetch Sr facility data
   const rows = fetchChecklistData_(thresholdDays);
   if (!rows || rows.length === 0) {
-    SpreadsheetApp.getUi().alert('No Sr RED air sites returned from API.');
+    SpreadsheetApp.getUi().alert('No air sites returned for ' + CONFIG.PRIORITIES + ' priorities.');
     return;
   }
 
-  // 3. Save existing manual edits before overwriting
   const manualSnap = snapshotManualData_(ss);
 
-  // 4. Group by FOS
   const byFos = {};
   for (const r of rows) {
     const fos = r.fos_name || 'Unknown FOS';
     (byFos[fos] = byFos[fos] || []).push(r);
   }
 
-  // 5. Write each FOS tab
   for (const fos of Object.keys(byFos).sort()) {
     writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, thresholdDays);
   }
 
-  // 6. Write summary tab
   writeSummary_(ss, byFos, thresholdDays);
-
   SpreadsheetApp.flush();
 }
 
-/** Alias so triggers / buttons bound to either name work */
 function refreshAirChecklist() { refreshChecklist(); }
 
 
@@ -135,10 +119,11 @@ function fetchChecklistData_(lookback) {
   const base = getProp_('API_BASE');
   const key  = getProp_('API_KEY');
 
-  const url = base + '/private/air-checklist'
+  let url = base + '/private/air-checklist'
     + '?facility=' + CONFIG.FACILITY
     + '&lookback_days=' + lookback
     + '&zone=' + encodeURIComponent(CONFIG.ZONE);
+  if (CONFIG.PRIORITIES) url += '&priority=' + encodeURIComponent(CONFIG.PRIORITIES);
 
   const r = UrlFetchApp.fetch(url, {
     method: 'get',
@@ -162,15 +147,8 @@ function fetchChecklistData_(lookback) {
 // MANUAL DATA PRESERVATION
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Reads every existing FOS tab and builds a map:
- *   { "TabName::sitecode" → [ClaimedBy, NewNotes, Drone, NeedsSample] }
- */
 function snapshotManualData_(ss) {
   const snap = {};
-  const mStart = DB_COLUMNS.length + 1;          // first manual column
-  const mCount = MANUAL_COLUMNS.length;
-
   for (const sh of ss.getSheets()) {
     const name = sh.getName();
     if (name === 'Summary' || name === 'Config') continue;
@@ -178,14 +156,14 @@ function snapshotManualData_(ss) {
     if (last < DATA_START) continue;
 
     const numRows = last - DATA_START + 1;
-    const codes  = sh.getRange(DATA_START, 1, numRows, 1).getValues();     // col A
-    const manual = sh.getRange(DATA_START, mStart, numRows, mCount).getValues();
+    const allData = sh.getRange(DATA_START, 1, numRows, ALL_COLUMNS.length).getValues();
 
     for (let i = 0; i < numRows; i++) {
-      const sc = String(codes[i][0]).trim();
+      const sc = String(allData[i][0]).trim();   // col 1 = Sitecode
       if (!sc) continue;
-      const hasAny = manual[i].some(v => v !== '' && v != null);
-      if (hasAny) snap[name + '::' + sc] = manual[i];
+      const manualVals = MANUAL_INDICES.map(idx => allData[i][idx]);
+      const hasAny = manualVals.some(v => v !== '' && v != null);
+      if (hasAny) snap[name + '::' + sc] = manualVals;
     }
   }
   return snap;
@@ -202,7 +180,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
   sh.clear();
   sh.clearConditionalFormatRules();
 
-  // Sort by township, section, not-inspected first, then sitecode
+  // Sort by township, section, uninspected first, then sitecode
   rows.sort((a, b) => {
     return (a.township_name || '').localeCompare(b.township_name || '')
         || (a.sectcode || '').localeCompare(b.sectcode || '')
@@ -231,7 +209,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
 
   // ── Row 2: Info bar ────────────────────────────────────────────────────
   sh.getRange(FILTER_ROW, 1, 1, ALL_COLUMNS.length).merge()
-    .setValue(`${tabName} | Sr Facility | Claim sites by typing your Emp ID in "Claim Emp ID" | Last Refresh: ${new Date().toLocaleString()}`)
+    .setValue(`${tabName} | ${CONFIG.FACILITY} Facility | Claim sites by typing your Emp ID in "Claim Emp ID" | Last Refresh: ${new Date().toLocaleString()}`)
     .setFontSize(10).setFontColor('#666666')
     .setBackground(C.STATS_BG);
 
@@ -240,139 +218,94 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
   hdr.setValues([ALL_COLUMNS])
      .setBackground(C.HEADER_BG).setFontColor(C.HEADER_FG)
      .setFontWeight('bold').setHorizontalAlignment('center');
-  const manualStart = DB_COLUMNS.length + 1;
-  sh.getRange(HEADER_ROW, manualStart, 1, MANUAL_COLUMNS.length)
-    .setBackground(C.MANUAL_HEADER_BG);
+  for (const colName of MANUAL_COL_NAMES) {
+    sh.getRange(HEADER_ROW, ALL_COLUMNS.indexOf(colName) + 1)
+      .setBackground(C.MANUAL_HEADER_BG);
+  }
 
-  // ── Row 4+: Data rows ─────────────────────────────────────────────────
+  // ── Row 4+: Data rows (no separator rows — borders between sections) ──
   if (rows.length === 0) { finalizeTab_(sh); return; }
 
-  const townGroups = {};
+  const grid = [];
   for (const row of rows) {
-    const townFallback = (row.sitecode || '').substring(0, 4);
-    const town = (row.township_name || '').trim() || townFallback || 'Unknown Township';
-    const section = row.sectcode || 'No Section';
-    if (!townGroups[town]) townGroups[town] = {};
-    if (!townGroups[town][section]) townGroups[town][section] = [];
-    townGroups[town][section].push(row);
-  }
-
-  const output = [];
-  const townNames = Object.keys(townGroups).sort();
-  for (const town of townNames) {
-    output.push({ type: 'town', label: `TOWNSHIP: ${town}` });
-    const sections = Object.keys(townGroups[town]).sort();
-    for (const section of sections) {
-      output.push({ type: 'section', label: `Section ${section}` });
-      const secRows = townGroups[town][section].sort((a, b) => {
-        return ((a.was_inspected === b.was_inspected) ? 0 : (a.was_inspected ? 1 : -1))
-          || (a.sitecode || '').localeCompare(b.sitecode || '');
-      });
-      for (const row of secRows) {
-        const done = row.was_inspected;
-        const dbVals = [
-          town,
-          row.sectcode   || '',
-          row.sitecode   || '',
-          row.priority   || '',
-          row.acres      != null ? row.acres : '',
-          row.airmap_num || '',
-          done ? 'Y' : '',
-          done ? (row.inspector_name || '') : '',
-          row.dip_count  != null ? row.dip_count : '',
-          row.pct_wet    != null ? row.pct_wet : '',
-          row.sampnum_yr || '',
-          row.bug_status || '',
-          row.restricted_area ? 'Y' : '',
-          row.remarks    || '',
-          row.has_active_treatment ? (row.active_material || 'Y') : '',
-        ];
-        const key = tabName + '::' + (row.sitecode || '');
-        const manual = manualSnap[key] || new Array(MANUAL_COLUMNS.length).fill('');
-        output.push({ type: 'data', row, values: [...dbVals, ...manual] });
+    const done = row.was_inspected;
+    const vals = [
+      row.sitecode   || '',
+      '',                                                       // Claim Emp ID (from snapshot)
+      row.acres      != null ? row.acres : '',
+      row.restricted_area ? 'Y' : '',
+      row.airmap_num || '',
+      done ? 'Y' : '',
+      row.priority   || '',
+      row.dip_count  != null ? row.dip_count : '',
+      row.pct_wet    != null ? row.pct_wet : '',
+      row.sampnum_yr || '',
+      row.bug_status || '',
+      row.remarks    || '',
+      row.has_active_treatment ? (row.active_material || 'Y') : '',
+      '',                                                       // New Notes
+      '',                                                       // Drone
+      '',                                                       // Needs Sample
+    ];
+    // Overlay manual snapshot
+    const key = tabName + '::' + (row.sitecode || '');
+    if (manualSnap[key]) {
+      for (let j = 0; j < MANUAL_COL_NAMES.length; j++) {
+        vals[MANUAL_INDICES[j]] = manualSnap[key][j] || '';
       }
     }
+    grid.push(vals);
   }
-
-  const grid = output.map(item => {
-    if (item.type === 'data') return item.values;
-    return [item.label, ...new Array(ALL_COLUMNS.length - 1).fill('')];
-  });
 
   sh.getRange(DATA_START, 1, grid.length, ALL_COLUMNS.length).setValues(grid);
 
-  // ── Styling and color coding (row by row) ─────────────────────────────
-  for (let i = 0; i < output.length; i++) {
+  // ── Styling: row colors, priority, bug status, RA ──────────────────────
+  const statusCol = ALL_COLUMNS.indexOf('Status') + 1;
+  const priCol    = ALL_COLUMNS.indexOf('Priority') + 1;
+  const bugCol    = ALL_COLUMNS.indexOf('Bug Status') + 1;
+  const raCol     = ALL_COLUMNS.indexOf('RA') + 1;
+  const claimCol  = ALL_COLUMNS.indexOf('Claim Emp ID') + 1;
+
+  for (let i = 0; i < rows.length; i++) {
     const r   = DATA_START + i;
-    const entry = output[i];
-
-    if (entry.type === 'town') {
-      const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
-      rng.merge().setBackground(C.TOWN_BAR_BG).setFontColor(C.TOWN_BAR_FG)
-        .setFontWeight('bold').setFontSize(12).setHorizontalAlignment('left');
-      sh.setRowHeight(r, 28);
-      continue;
-    }
-
-    if (entry.type === 'section') {
-      const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
-      rng.merge().setBackground(C.SECTION_BAR_BG).setFontColor('#ffffff')
-        .setFontWeight('bold').setHorizontalAlignment('left');
-      sh.setRowHeight(r, 24);
-      continue;
-    }
-
-    const row = entry.row;
+    const row = rows[i];
     const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
-    const claimedBy = String(entry.values[DB_COLUMNS.length] || '').trim();
+    const claimedBy = String(grid[i][claimCol - 1] || '').trim();
 
-    // Row background
     if (row.was_inspected) {
       rng.setBackground(C.DONE_BG);
+      sh.getRange(r, statusCol)
+        .setFontColor(C.REMAIN_GREEN).setFontWeight('bold')
+        .setHorizontalAlignment('center');
     } else if (claimedBy) {
       rng.setBackground(C.CLAIMED_BG);
     }
 
-    // Status column — green bold checkmark
-    const statusCol = DB_COLUMNS.indexOf('Status') + 1;
-    if (row.was_inspected) {
-      sh.getRange(r, statusCol)
-        .setFontColor(C.REMAIN_GREEN).setFontWeight('bold')
-        .setHorizontalAlignment('center');
-    }
-
     // Priority cell
-    const priCol = DB_COLUMNS.indexOf('Priority') + 1;
     const pri = String(row.priority || '').toUpperCase();
-    if (pri === 'RED') sh.getRange(r, priCol).setBackground(C.PRIORITY_RED).setFontWeight('bold');
-    if (pri === 'YELLOW') sh.getRange(r, priCol).setBackground(C.PRIORITY_YELLOW).setFontWeight('bold');
-    if (pri === 'BLUE') sh.getRange(r, priCol).setBackground(C.PRIORITY_BLUE).setFontWeight('bold');
-    if (pri === 'GREEN') sh.getRange(r, priCol).setBackground(C.PRIORITY_GREEN).setFontWeight('bold');
-    if (pri === 'PURPLE') sh.getRange(r, priCol).setBackground(C.PRIORITY_PURPLE).setFontWeight('bold');
+    const priColors = { RED: C.PRIORITY_RED, YELLOW: C.PRIORITY_YELLOW, BLUE: C.PRIORITY_BLUE, GREEN: C.PRIORITY_GREEN, PURPLE: C.PRIORITY_PURPLE };
+    if (priColors[pri]) sh.getRange(r, priCol).setBackground(priColors[pri]).setFontWeight('bold');
 
     // Bug Status cell
-    const bugCol = DB_COLUMNS.indexOf('Bug Status') + 1;
-    if (row.bug_status === 'Red Bugs') {
-      sh.getRange(r, bugCol).setBackground(C.RED_BUGS).setFontWeight('bold');
-    } else if (row.bug_status === 'Pending Lab') {
-      sh.getRange(r, bugCol).setBackground(C.PENDING_LAB);
-    } else if (row.bug_status === 'Blue Bugs') {
-      sh.getRange(r, bugCol).setBackground(C.BLUE_BUGS);
-    }
+    if (row.bug_status === 'Red Bugs')    sh.getRange(r, bugCol).setBackground(C.RED_BUGS).setFontWeight('bold');
+    else if (row.bug_status === 'Pending Lab') sh.getRange(r, bugCol).setBackground(C.PENDING_LAB);
+    else if (row.bug_status === 'Blue Bugs')   sh.getRange(r, bugCol).setBackground(C.BLUE_BUGS);
 
     // RA cell
-    const raCol = DB_COLUMNS.indexOf('RA') + 1;
-    if (row.restricted_area) {
-      sh.getRange(r, raCol).setBackground(C.RA_BG).setFontWeight('bold');
+    if (row.restricted_area) sh.getRange(r, raCol).setBackground(C.RA_BG).setFontWeight('bold');
+  }
+
+  // ── Section borders: thick black bottom border at section/township breaks ─
+  for (let i = 0; i < rows.length - 1; i++) {
+    const curSect = rows[i].sectcode || '';
+    const nxtSect = rows[i + 1].sectcode || '';
+    if (curSect !== nxtSect) {
+      sh.getRange(DATA_START + i, 1, 1, ALL_COLUMNS.length)
+        .setBorder(null, null, true, null, null, null, '#000000', SpreadsheetApp.BorderStyle.SOLID_THICK);
     }
   }
 
   finalizeTab_(sh);
-
-  // Protect DB columns (warning only — doesn't lock)
-  const prot = sh.getRange(DATA_START, 1, grid.length, DB_COLUMNS.length).protect();
-  prot.setDescription('Auto-filled from database — edit the blue columns on the right');
-  prot.setWarningOnly(true);
 }
 
 
@@ -385,89 +318,104 @@ function writeSummary_(ss, byFos, thresholdDays) {
   if (!sh) sh = ss.insertSheet('Summary', 0);
   sh.clear();
 
-  const sumHeaders = ['FOS', 'Total', 'Inspected', 'Remaining', '% Done', 'Red Bugs', 'Claimed'];
+  const fosNames = Object.keys(byFos).sort();
+  const numCols  = 2 + fosNames.length;   // "Air Stats" + "Totals" + each FOS
 
-  // Aggregate totals
-  let totalAll = 0, doneAll = 0, redAll = 0, claimedAll = 0;
-  const fosStats = [];
-  for (const fos of Object.keys(byFos).sort()) {
-    const sites = byFos[fos];
-    const t = sites.length;
-    const d = sites.filter(r => r.was_inspected).length;
-    const rem = t - d;
-    const pct = t > 0 ? Math.round(100 * d / t) : 0;
-    const rb  = sites.filter(r => r.bug_status === 'Red Bugs').length;
+  // Compute per-FOS stats
+  let totalAll = 0, checkedAll = 0, threshAll = 0, remAll = 0, trtAcresAll = 0;
+  const stats = {};
+  for (const fos of fosNames) {
+    const sites   = byFos[fos];
+    const total   = sites.length;
+    const checked = sites.filter(r => r.was_inspected).length;
+    const atThr   = sites.filter(r => !r.was_inspected && r.has_active_treatment).length;
+    const rem     = total - checked - atThr;
+    const pctDone = total > 0 ? (100 * checked / total) : 0;
+    const trtAcres = sites
+      .filter(r => r.has_active_treatment)
+      .reduce((s, r) => s + (parseFloat(r.acres) || 0), 0);
+    const pctTHR  = total > 0 ? (100 * atThr / total) : 0;
+    stats[fos] = { total, checked, atThr, rem, pctDone, trtAcres, pctTHR };
+    totalAll += total; checkedAll += checked; threshAll += atThr; trtAcresAll += trtAcres;
+  }
+  remAll = totalAll - checkedAll - threshAll;
+  const pctDoneAll = totalAll > 0 ? (100 * checkedAll / totalAll) : 0;
+  const pctTHRAll  = totalAll > 0 ? (100 * threshAll / totalAll) : 0;
 
-    // Count claims from existing sheet
-    const tab = ss.getSheetByName(safeName_(fos));
-    let claimed = 0;
-    if (tab && tab.getLastRow() >= DATA_START) {
-      const claimCol = DB_COLUMNS.length + 1;
-      const vals = tab.getRange(DATA_START, claimCol,
-                                tab.getLastRow() - DATA_START + 1, 1).getValues();
-      claimed = vals.filter(v => String(v[0]).trim()).length;
-    }
+  // Row 1: Header
+  sh.getRange(1, 1, 1, numCols)
+    .setValues([['Air Stats', 'Totals', ...fosNames]])
+    .setFontWeight('bold').setBackground(C.HEADER_BG).setFontColor(C.HEADER_FG);
 
-    fosStats.push([fos, t, d, rem, pct + '%', rb, claimed]);
-    totalAll += t; doneAll += d; redAll += rb; claimedAll += claimed;
+  // Rows 2-8: Stats
+  const metricsData = [
+    ['Total Air Sites',    totalAll,                  ...fosNames.map(f => stats[f].total)],
+    ['# of sites checked', checkedAll,                ...fosNames.map(f => stats[f].checked)],
+    ['# of sites rem.',    remAll,                    ...fosNames.map(f => stats[f].rem)],
+    ['# at Threshold',     threshAll,                 ...fosNames.map(f => stats[f].atThr)],
+    ['% Done',             pctDoneAll.toFixed(2),     ...fosNames.map(f => stats[f].pctDone.toFixed(2))],
+    ['Treatment Acres',    trtAcresAll.toFixed(2),    ...fosNames.map(f => stats[f].trtAcres.toFixed(2))],
+    ['% Breeding THR',    pctTHRAll.toFixed(2),       ...fosNames.map(f => stats[f].pctTHR.toFixed(2))],
+  ];
+  sh.getRange(2, 1, metricsData.length, numCols).setValues(metricsData);
+  sh.getRange(2, 1, metricsData.length, 1).setFontWeight('bold');
+
+  // Color-code % Done row
+  const pctRow = 6;
+  for (let c = 2; c <= numCols; c++) {
+    const v = parseFloat(sh.getRange(pctRow, c).getValue());
+    sh.getRange(pctRow, c).setBackground(v >= 90 ? C.PCT_GREEN : v >= 60 ? C.PCT_YELLOW : C.PCT_RED);
   }
 
-  const remAll = totalAll - doneAll;
-  const pctAll = totalAll > 0 ? Math.round(100 * doneAll / totalAll) : 0;
+  let r = 2 + metricsData.length + 1;   // blank row after stats
 
-  // Title
-  sh.getRange(1, 1, 1, sumHeaders.length).merge()
-    .setValue('Sr Facility Inspection Summary')
-    .setFontSize(16).setFontWeight('bold').setBackground('#f5f5f5');
+  // Links
+  if (CONFIG.MAP_LINK) {
+    sh.getRange(r, 1).setValue('Air Site Map w/ FOS areas').setFontWeight('bold');
+    sh.getRange(r, 2).setValue(CONFIG.MAP_LINK);
+    r++;
+  }
+  if (CONFIG.CONTACTS_LINK) {
+    sh.getRange(r, 1).setValue('Contacts').setFontWeight('bold');
+    sh.getRange(r, 2).setValue(CONFIG.CONTACTS_LINK);
+    r++;
+  }
+  r++;
 
-  // Global stats
-  const globalText = remAll === 0
-    ? `All ${totalAll} sites inspected | Threshold: ${thresholdDays}`
-    : `Remaining: ${remAll} | ${doneAll}/${totalAll} (${pctAll}%) | Red Bugs: ${redAll} | Claimed: ${claimedAll} | Threshold: ${thresholdDays} | ${new Date().toLocaleString()}`;
+  // Township tables
+  const allRows = [];
+  for (const fos of fosNames) allRows.push(...byFos[fos]);
+  const townships = getTownshipRows_(allRows);
 
-  sh.getRange(2, 1, 1, sumHeaders.length).merge()
-    .setValue(globalText)
-    .setFontSize(12).setFontWeight('bold')
-    .setFontColor(remAll === 0 ? C.REMAIN_GREEN : C.REMAIN_RED)
-    .setBackground(C.STATS_BG);
+  // Table 1: All Townships in Township Order
+  sh.getRange(r, 1).setValue('All Townships in Township Order')
+    .setFontWeight('bold').setFontSize(11);
+  r++;
+  sh.getRange(r, 1, 1, 4).setValues([['Townships', 'Code', 'FOS', 'Done?']])
+    .setFontWeight('bold').setBackground('#e0e0e0');
+  r++;
+  const byTownOrder = [...townships].sort((a, b) => a.town.localeCompare(b.town) || a.code.localeCompare(b.code));
+  for (const t of byTownOrder) {
+    sh.getRange(r, 1, 1, 4).setValues([[t.town, t.code, t.fos, t.done ? 'Y' : 'FALSE']]);
+    r++;
+  }
+  r++;
 
-  // Spacer
-  sh.getRange(3, 1).setValue('');
-
-  // Table header
-  sh.getRange(4, 1, 1, sumHeaders.length).setValues([sumHeaders])
-    .setBackground(C.HEADER_BG).setFontColor(C.HEADER_FG)
-    .setFontWeight('bold').setHorizontalAlignment('center');
-
-  // FOS rows
-  for (let i = 0; i < fosStats.length; i++) {
-    const r = 5 + i;
-    sh.getRange(r, 1, 1, sumHeaders.length).setValues([fosStats[i]]);
-
-    const pctNum = parseInt(fosStats[i][4]);
-    const pctBg = pctNum >= 90 ? C.PCT_GREEN : pctNum >= 60 ? C.PCT_YELLOW : C.PCT_RED;
-    sh.getRange(r, 5).setBackground(pctBg).setHorizontalAlignment('center');
-
-    const rem = fosStats[i][3];
-    sh.getRange(r, 4).setFontColor(rem > 0 ? C.REMAIN_RED : C.REMAIN_GREEN)
-                      .setFontWeight('bold');
-
-    if (fosStats[i][5] > 0) {
-      sh.getRange(r, 6).setBackground(C.RED_BUGS).setFontWeight('bold');
-    }
+  // Table 2: All Townships Separated By FOS
+  sh.getRange(r, 1).setValue('All Townships Separated By FOS')
+    .setFontWeight('bold').setFontSize(11);
+  r++;
+  sh.getRange(r, 1, 1, 4).setValues([['Townships', 'Code', 'FOS', 'Done?']])
+    .setFontWeight('bold').setBackground('#e0e0e0');
+  r++;
+  const byFosOrder = [...townships].sort((a, b) => a.fos.localeCompare(b.fos) || a.town.localeCompare(b.town));
+  for (const t of byFosOrder) {
+    sh.getRange(r, 1, 1, 4).setValues([[t.town, t.code, t.fos, t.done ? 'Y' : 'FALSE']]);
+    r++;
   }
 
-  // Totals row
-  const totRow = 5 + fosStats.length;
-  sh.getRange(totRow, 1, 1, sumHeaders.length)
-    .setValues([['TOTAL', totalAll, doneAll, remAll, pctAll + '%', redAll, claimedAll]])
-    .setFontWeight('bold')
-    .setBackground('#e0e0e0');
-  const tPctBg = pctAll >= 90 ? C.PCT_GREEN : pctAll >= 60 ? C.PCT_YELLOW : C.PCT_RED;
-  sh.getRange(totRow, 5).setBackground(tPctBg);
-
-  sh.setFrozenRows(4);
-  for (let c = 1; c <= sumHeaders.length; c++) sh.autoResizeColumn(c);
+  sh.setFrozenRows(1);
+  for (let c = 1; c <= Math.max(numCols, 4); c++) sh.autoResizeColumn(c);
 }
 
 
@@ -475,36 +423,72 @@ function writeSummary_(ss, byFos, thresholdDays) {
 // HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 
+function getTownshipRows_(rows) {
+  const groups = {};
+  for (const r of rows) {
+    const town = r.township_name || 'Unknown';
+    const fos  = r.fos_name || 'Unknown';
+    const key  = town + '|||' + fos;
+    if (!groups[key]) groups[key] = { town, fos, sects: new Set(), allDone: true };
+    if (r.sectcode) groups[key].sects.add(r.sectcode);
+    if (!r.was_inspected) groups[key].allDone = false;
+  }
+
+  const result = [];
+  for (const g of Object.values(groups)) {
+    const sects = [...g.sects].sort();
+    if (sects.length === 0) {
+      result.push({ town: g.town, code: '', fos: g.fos, done: g.allDone });
+      continue;
+    }
+    const town4 = sects[0].substring(0, 4);
+    const secNums = [...new Set(sects.map(s => parseInt(s.substring(4, 6), 10)))].sort((a, b) => a - b);
+    if (secNums.length === 0) {
+      result.push({ town: g.town, code: town4 + '-', fos: g.fos, done: g.allDone });
+      continue;
+    }
+    // Find contiguous ranges
+    const ranges = [];
+    let start = secNums[0], end = secNums[0];
+    for (let i = 1; i < secNums.length; i++) {
+      if (secNums[i] <= end + 1) { end = secNums[i]; }
+      else { ranges.push([start, end]); start = secNums[i]; end = secNums[i]; }
+    }
+    ranges.push([start, end]);
+
+    for (const [s, e] of ranges) {
+      const code = s === e
+        ? town4 + String(s).padStart(2, '0') + '-'
+        : town4 + String(s).padStart(2, '0') + '-' + String(e).padStart(2, '0');
+      result.push({ town: g.town, code, fos: g.fos, done: g.allDone });
+    }
+  }
+  return result;
+}
+
 function finalizeTab_(sh) {
   sh.setFrozenRows(HEADER_ROW);
-  // Row 1 and Row 2 are merged across many columns. Freezing a single column
-  // across a merged range causes a Google Sheets exception.
   sh.setFrozenColumns(0);
   const widthMap = {
-    'Township': 190,
-    'Section': 120,
-    'Sitecode': 115,
-    'Priority': 85,
+    'Sitecode': 120,
+    'Claim Emp ID': 110,
     'Acres': 70,
+    'RA': 45,
     'AirMap': 70,
     'Status': 55,
-    'Inspector': 130,
+    'Priority': 85,
     '#/Dip': 60,
     '% Wet': 65,
     'Sample #': 100,
     'Bug Status': 110,
-    'RA': 45,
     'Remarks': 320,
     'Treatment': 120,
-    'Claim Emp ID': 110,
     'New Notes': 260,
     'Drone': 80,
     'Needs Sample': 110,
   };
   for (let c = 1; c <= ALL_COLUMNS.length; c++) {
-    const colName = ALL_COLUMNS[c - 1];
-    const width = widthMap[colName] || 100;
-    sh.setColumnWidth(c, width);
+    sh.setColumnWidth(c, widthMap[ALL_COLUMNS[c - 1]] || 100);
   }
 }
 

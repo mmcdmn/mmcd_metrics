@@ -20,6 +20,7 @@
 # Public  (no key):  GET /v1/public/health
 #                    GET /v1/public/facilities
 #                    GET /v1/public/foremen
+#                    GET /v1/public/threshold
 #
 # Private (key req): GET /v1/private/sectcodes
 #                    GET /v1/private/air-checklist
@@ -226,6 +227,51 @@ function() {
   )
 }
 
+#* Current inspection threshold (lookback days) based on spring ACT4-P1 date.
+#* Returns 1 before the threshold date, 2 on/after. Resets to 1 on Jan 1.
+#* @get /v1/public/threshold
+#* @json
+function() {
+  tryCatch({
+    today <- Sys.Date()
+    current_year <- as.integer(format(today, "%Y"))
+
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
+
+    qry <- DBI::sqlInterpolate(con,
+      "SELECT date_start
+       FROM   public.lookup_threshold_larv
+       WHERE  description = 'ACT4-P1'
+         AND  EXTRACT(year FROM date_start) = ?yr
+         AND  NOT (EXTRACT(month FROM date_start) = 1
+                   AND EXTRACT(day FROM date_start) = 1)
+       ORDER  BY date_start
+       LIMIT  1",
+      yr = current_year
+    )
+    result <- DBI::dbGetQuery(con, qry)
+
+    if (nrow(result) > 0) {
+      threshold_date <- as.Date(result$date_start[1])
+      lookback <- if (today >= threshold_date) 2L else 1L
+    } else {
+      threshold_date <- NULL
+      lookback <- 1L
+    }
+
+    list(
+      lookback_days    = lookback,
+      threshold_date   = if (!is.null(threshold_date)) as.character(threshold_date) else NA,
+      as_of            = as.character(today),
+      year             = current_year
+    )
+  }, error = function(e) {
+    list(lookback_days = 2L, threshold_date = NA,
+         as_of = as.character(Sys.Date()), error = e$message)
+  })
+}
+
 
 # =============================================================================
 # ── PRIVATE ENDPOINTS  (API key required)
@@ -336,6 +382,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
           i.sitecode,
           i.inspdate,
           i.numdip,
+          i.wet,
           i.emp1,
           i.sampnum_yr,
           ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
@@ -400,8 +447,13 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         (i.sitecode IS NOT NULL)            AS was_inspected,
         i.inspdate                          AS last_insp_date,
         i.numdip                            AS dip_count,
+        i.wet                               AS pct_wet,
         emp.shortname                       AS inspector_name,
         i.sampnum_yr,
+        COALESCE(cards.remarks, '')          AS remarks,
+        COALESCE(cards.ra, FALSE)            AS restricted_area,
+        COALESCE(cards.drone, FALSE)         AS drone,
+        COALESCE(cards.sample, FALSE)        AS needs_sample,
         CASE
           WHEN i.sitecode IS NULL
             OR i.sampnum_yr IS NULL

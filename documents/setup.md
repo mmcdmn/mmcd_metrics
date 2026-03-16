@@ -330,6 +330,79 @@ docker run -p 3838:3838 \
 
 Access the dashboard at: `http://localhost:3838`
 
+### Windows (Docker Desktop + WSL2) Quick Start
+
+Use this section when working on Windows and testing the full local stack (OpenResty/nginx + multiple Shiny workers).
+
+```powershell
+# 1) Install Docker Desktop (one time)
+winget install --id Docker.DockerDesktop -e
+
+# 2) Verify WSL2 backend is available
+wsl --status
+wsl -l -v
+
+# 3) Verify Docker engine is ready
+docker version
+```
+
+If Docker is installed but `docker` is not recognized in your current PowerShell session, open a new terminal window and run `docker version` again.
+
+#### Build and Run Using Existing `.env`
+
+From the repository root:
+
+```powershell
+cd C:\Users\yourusername\Documents\mmcd_metrics
+
+# Build image (repo uses lowercase "dockerfile")
+docker build -f dockerfile -t mmcd-dashboard:local .
+
+# Run container with your existing .env values
+docker run -d --name mmcd-local -p 3838:3838 --env-file .env mmcd-dashboard:local
+
+# Confirm startup and mode
+docker ps --filter "name=mmcd-local"
+docker logs --tail 200 mmcd-local
+```
+
+Open: `http://localhost:3838`
+
+#### Rebuild Loop After Code Changes (Windows)
+
+Most changes in this repo are copied into the image at build time. To see updates, rebuild and restart:
+
+```powershell
+cd C:\Users\yourusername\Documents\mmcd_metrics
+
+# Stop/remove old container
+docker rm -f mmcd-local
+
+# Rebuild image from latest source
+docker build -f dockerfile -t mmcd-dashboard:local .
+
+# Start fresh container with same env file
+docker run -d --name mmcd-local -p 3838:3838 --env-file .env mmcd-dashboard:local
+
+# Check logs
+docker logs --tail 120 mmcd-local
+```
+
+Tip: Use a hard browser refresh (Ctrl+F5) after restart to avoid cached JS/CSS.
+
+#### Common Windows Docker Troubleshooting
+
+- Error: `exec /startup.sh: no such file or directory`
+  - Cause: line endings in `startup.sh` are CRLF.
+  - Fix: keep the Dockerfile step that normalizes line endings (`sed -i 's/\r$//' /startup.sh`) and rebuild.
+
+- Error: Docker daemon not running
+  - Start Docker Desktop, wait until status is "Engine running", then retry.
+
+- Port already in use on 3838
+  - Stop the previous container: `docker rm -f mmcd-local`
+  - Or map a different host port: `-p 3839:3838`
+
 ### AWS Deployment with Secure Environment Variables
 
 For AWS deployment, **DO NOT** copy .env files to the container. Instead, use AWS Secrets Manager or environment variables:

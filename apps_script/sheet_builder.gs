@@ -28,12 +28,12 @@ function getProp_(key) {
 // ── Column definitions ──────────────────────────────────────────────────────
 // DB-sourced columns (auto-filled, protected from accidental edits)
 const DB_COLUMNS = [
-  'Sitecode', 'Acres', 'Section', 'AirMap', 'Status',
+  'Township', 'Section', 'Sitecode', 'Priority', 'Acres', 'AirMap', 'Status',
   'Inspector', '#/Dip', '% Wet', 'Sample #', 'Bug Status',
   'RA', 'Remarks', 'Treatment',
 ];
 // Manual columns (editable by employees — preserved across refreshes)
-const MANUAL_COLUMNS = ['Claimed By', 'New Notes', 'Drone', 'Needs Sample'];
+const MANUAL_COLUMNS = ['Claim Emp ID', 'New Notes', 'Drone', 'Needs Sample'];
 const ALL_COLUMNS    = [...DB_COLUMNS, ...MANUAL_COLUMNS];
 
 // Header row positions
@@ -45,10 +45,19 @@ const DATA_START = 4;   // First data row
 // Colors
 const C = {
   HEADER_BG:      '#1a237e',   // dark indigo — table header background
+  MANUAL_HEADER_BG:'#0b5ed7',  // blue for editable columns
   HEADER_FG:      '#ffffff',   // white — table header text color
+  SECTION_BAR_BG: '#000000',   // black section separator
+  TOWN_BAR_BG:    '#263238',   // township separator
+  TOWN_BAR_FG:    '#ffffff',
   DONE_BG:        '#e8f5e9',   // light green — inspected
   CLAIMED_BG:     '#e3f2fd',   // light blue — claimed but not inspected
   TODO_BG:        '#ffffff',   // white — unclaimed, not inspected
+  PRIORITY_RED:   '#f8d7da',
+  PRIORITY_YELLOW:'#fff3cd',
+  PRIORITY_BLUE:  '#d1ecf1',
+  PRIORITY_GREEN: '#d4edda',
+  PRIORITY_PURPLE:'#e2d6f3',
   RED_BUGS:       '#ffcdd2',   // light red — red bug indicator
   PENDING_LAB:    '#fff9c4',   // light yellow — pending lab results
   BLUE_BUGS:      '#bbdefb',   // light blue — blue bug indicator
@@ -71,10 +80,10 @@ function refreshChecklist() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // 1. Get threshold-based lookback
-  const lookback = getThresholdLookback_();
+  const thresholdDays = getThresholdLookback_();
 
   // 2. Fetch Sr facility data
-  const rows = fetchChecklistData_(lookback);
+  const rows = fetchChecklistData_(thresholdDays);
   if (!rows || rows.length === 0) {
     SpreadsheetApp.getUi().alert('No Sr RED air sites returned from API.');
     return;
@@ -92,11 +101,11 @@ function refreshChecklist() {
 
   // 5. Write each FOS tab
   for (const fos of Object.keys(byFos).sort()) {
-    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, lookback);
+    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, thresholdDays);
   }
 
   // 6. Write summary tab
-  writeSummary_(ss, byFos, lookback);
+  writeSummary_(ss, byFos, thresholdDays);
 
   SpreadsheetApp.flush();
 }
@@ -187,16 +196,17 @@ function snapshotManualData_(ss) {
 // FOS TAB WRITER
 // ════════════════════════════════════════════════════════════════════════════
 
-function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
+function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
   let sh = ss.getSheetByName(tabName);
   if (!sh) sh = ss.insertSheet(tabName);
   sh.clear();
   sh.clearConditionalFormatRules();
 
-  // Sort: not-inspected first, then by section → sitecode
+  // Sort by township, section, not-inspected first, then sitecode
   rows.sort((a, b) => {
-    if (a.was_inspected !== b.was_inspected) return a.was_inspected ? 1 : -1;
-    return (a.sectcode || '').localeCompare(b.sectcode || '')
+    return (a.township_name || '').localeCompare(b.township_name || '')
+        || (a.sectcode || '').localeCompare(b.sectcode || '')
+        || ((a.was_inspected === b.was_inspected) ? 0 : (a.was_inspected ? 1 : -1))
         || (a.sitecode || '').localeCompare(b.sitecode || '');
   });
 
@@ -208,8 +218,8 @@ function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
 
   // ── Row 1: Stats banner ────────────────────────────────────────────────
   const statsText = remaining === 0
-    ? `✅  All ${total} sites inspected!`
-    : `🔴  Remaining: ${remaining}   |   Inspected: ${inspected} / ${total}  (${pct}%)   |   Red Bugs: ${redBugs}   |   Lookback: ${lookback} day(s)`;
+    ? `All ${total} sites inspected | Threshold: ${thresholdDays}`
+    : `Remaining: ${remaining} | Inspected: ${inspected} / ${total} (${pct}%) | Red Bugs: ${redBugs} | Threshold: ${thresholdDays}`;
 
   sh.getRange(STATS_ROW, 1, 1, ALL_COLUMNS.length).merge()
     .setValue(statsText)
@@ -221,7 +231,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
 
   // ── Row 2: Info bar ────────────────────────────────────────────────────
   sh.getRange(FILTER_ROW, 1, 1, ALL_COLUMNS.length).merge()
-    .setValue(`${tabName}  —  Sr Facility  |  Last Refresh: ${new Date().toLocaleString()}`)
+    .setValue(`${tabName} | Sr Facility | Claim sites by typing your Emp ID in "Claim Emp ID" | Last Refresh: ${new Date().toLocaleString()}`)
     .setFontSize(10).setFontColor('#666666')
     .setBackground(C.STATS_BG);
 
@@ -230,41 +240,91 @@ function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
   hdr.setValues([ALL_COLUMNS])
      .setBackground(C.HEADER_BG).setFontColor(C.HEADER_FG)
      .setFontWeight('bold').setHorizontalAlignment('center');
+  const manualStart = DB_COLUMNS.length + 1;
+  sh.getRange(HEADER_ROW, manualStart, 1, MANUAL_COLUMNS.length)
+    .setBackground(C.MANUAL_HEADER_BG);
 
   // ── Row 4+: Data rows ─────────────────────────────────────────────────
   if (rows.length === 0) { finalizeTab_(sh); return; }
 
-  const grid = [];
+  const townGroups = {};
   for (const row of rows) {
-    const done = row.was_inspected;
-    const dbVals = [
-      row.sitecode   || '',                                        // Sitecode
-      row.acres      != null ? row.acres : '',                     // Acres
-      row.sectcode   || '',                                        // Section
-      row.airmap_num || '',                                        // AirMap
-      done ? '✓' : '',                                             // Status
-      done ? (row.inspector_name || '') : '',                      // Inspector
-      row.dip_count  != null ? row.dip_count : '',                 // #/Dip
-      row.pct_wet    != null ? row.pct_wet : '',                   // % Wet
-      row.sampnum_yr || '',                                        // Sample #
-      row.bug_status || '',                                        // Bug Status
-      row.restricted_area ? 'YES' : '',                            // RA
-      row.remarks    || '',                                        // Remarks
-      row.has_active_treatment ? (row.active_material || 'Yes') : '',  // Treatment
-    ];
-    const key = tabName + '::' + (row.sitecode || '');
-    const manual = manualSnap[key] || new Array(MANUAL_COLUMNS.length).fill('');
-    grid.push([...dbVals, ...manual]);
+    const townFallback = (row.sitecode || '').substring(0, 4);
+    const town = (row.township_name || '').trim() || townFallback || 'Unknown Township';
+    const section = row.sectcode || 'No Section';
+    if (!townGroups[town]) townGroups[town] = {};
+    if (!townGroups[town][section]) townGroups[town][section] = [];
+    townGroups[town][section].push(row);
   }
+
+  const output = [];
+  const townNames = Object.keys(townGroups).sort();
+  for (const town of townNames) {
+    output.push({ type: 'town', label: `TOWNSHIP: ${town}` });
+    const sections = Object.keys(townGroups[town]).sort();
+    for (const section of sections) {
+      output.push({ type: 'section', label: `Section ${section}` });
+      const secRows = townGroups[town][section].sort((a, b) => {
+        return ((a.was_inspected === b.was_inspected) ? 0 : (a.was_inspected ? 1 : -1))
+          || (a.sitecode || '').localeCompare(b.sitecode || '');
+      });
+      for (const row of secRows) {
+        const done = row.was_inspected;
+        const dbVals = [
+          town,
+          row.sectcode   || '',
+          row.sitecode   || '',
+          row.priority   || '',
+          row.acres      != null ? row.acres : '',
+          row.airmap_num || '',
+          done ? 'Y' : '',
+          done ? (row.inspector_name || '') : '',
+          row.dip_count  != null ? row.dip_count : '',
+          row.pct_wet    != null ? row.pct_wet : '',
+          row.sampnum_yr || '',
+          row.bug_status || '',
+          row.restricted_area ? 'Y' : '',
+          row.remarks    || '',
+          row.has_active_treatment ? (row.active_material || 'Y') : '',
+        ];
+        const key = tabName + '::' + (row.sitecode || '');
+        const manual = manualSnap[key] || new Array(MANUAL_COLUMNS.length).fill('');
+        output.push({ type: 'data', row, values: [...dbVals, ...manual] });
+      }
+    }
+  }
+
+  const grid = output.map(item => {
+    if (item.type === 'data') return item.values;
+    return [item.label, ...new Array(ALL_COLUMNS.length - 1).fill('')];
+  });
 
   sh.getRange(DATA_START, 1, grid.length, ALL_COLUMNS.length).setValues(grid);
 
-  // ── Color coding (row by row) ─────────────────────────────────────────
-  for (let i = 0; i < rows.length; i++) {
+  // ── Styling and color coding (row by row) ─────────────────────────────
+  for (let i = 0; i < output.length; i++) {
     const r   = DATA_START + i;
-    const row = rows[i];
+    const entry = output[i];
+
+    if (entry.type === 'town') {
+      const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
+      rng.merge().setBackground(C.TOWN_BAR_BG).setFontColor(C.TOWN_BAR_FG)
+        .setFontWeight('bold').setFontSize(12).setHorizontalAlignment('left');
+      sh.setRowHeight(r, 28);
+      continue;
+    }
+
+    if (entry.type === 'section') {
+      const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
+      rng.merge().setBackground(C.SECTION_BAR_BG).setFontColor('#ffffff')
+        .setFontWeight('bold').setHorizontalAlignment('left');
+      sh.setRowHeight(r, 24);
+      continue;
+    }
+
+    const row = entry.row;
     const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
-    const claimedBy = String(grid[i][DB_COLUMNS.length] || '').trim();
+    const claimedBy = String(entry.values[DB_COLUMNS.length] || '').trim();
 
     // Row background
     if (row.was_inspected) {
@@ -280,6 +340,15 @@ function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
         .setFontColor(C.REMAIN_GREEN).setFontWeight('bold')
         .setHorizontalAlignment('center');
     }
+
+    // Priority cell
+    const priCol = DB_COLUMNS.indexOf('Priority') + 1;
+    const pri = String(row.priority || '').toUpperCase();
+    if (pri === 'RED') sh.getRange(r, priCol).setBackground(C.PRIORITY_RED).setFontWeight('bold');
+    if (pri === 'YELLOW') sh.getRange(r, priCol).setBackground(C.PRIORITY_YELLOW).setFontWeight('bold');
+    if (pri === 'BLUE') sh.getRange(r, priCol).setBackground(C.PRIORITY_BLUE).setFontWeight('bold');
+    if (pri === 'GREEN') sh.getRange(r, priCol).setBackground(C.PRIORITY_GREEN).setFontWeight('bold');
+    if (pri === 'PURPLE') sh.getRange(r, priCol).setBackground(C.PRIORITY_PURPLE).setFontWeight('bold');
 
     // Bug Status cell
     const bugCol = DB_COLUMNS.indexOf('Bug Status') + 1;
@@ -301,7 +370,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
   finalizeTab_(sh);
 
   // Protect DB columns (warning only — doesn't lock)
-  const prot = sh.getRange(DATA_START, 1, rows.length, DB_COLUMNS.length).protect();
+  const prot = sh.getRange(DATA_START, 1, grid.length, DB_COLUMNS.length).protect();
   prot.setDescription('Auto-filled from database — edit the blue columns on the right');
   prot.setWarningOnly(true);
 }
@@ -311,7 +380,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, lookback) {
 // SUMMARY TAB
 // ════════════════════════════════════════════════════════════════════════════
 
-function writeSummary_(ss, byFos, lookback) {
+function writeSummary_(ss, byFos, thresholdDays) {
   let sh = ss.getSheetByName('Summary');
   if (!sh) sh = ss.insertSheet('Summary', 0);
   sh.clear();
@@ -348,13 +417,13 @@ function writeSummary_(ss, byFos, lookback) {
 
   // Title
   sh.getRange(1, 1, 1, sumHeaders.length).merge()
-    .setValue('📊  Sr Facility — Inspection Summary')
+    .setValue('Sr Facility Inspection Summary')
     .setFontSize(16).setFontWeight('bold').setBackground('#f5f5f5');
 
   // Global stats
   const globalText = remAll === 0
-    ? `✅  All ${totalAll} sites inspected!`
-    : `🔴  Remaining: ${remAll}   |   ${doneAll}/${totalAll} (${pctAll}%)   |   Red Bugs: ${redAll}   |   Claimed: ${claimedAll}   |   Lookback: ${lookback} day(s)   |   ${new Date().toLocaleString()}`;
+    ? `All ${totalAll} sites inspected | Threshold: ${thresholdDays}`
+    : `Remaining: ${remAll} | ${doneAll}/${totalAll} (${pctAll}%) | Red Bugs: ${redAll} | Claimed: ${claimedAll} | Threshold: ${thresholdDays} | ${new Date().toLocaleString()}`;
 
   sh.getRange(2, 1, 1, sumHeaders.length).merge()
     .setValue(globalText)
@@ -408,11 +477,35 @@ function writeSummary_(ss, byFos, lookback) {
 
 function finalizeTab_(sh) {
   sh.setFrozenRows(HEADER_ROW);
-  sh.setFrozenColumns(1);
-  for (let c = 1; c <= ALL_COLUMNS.length; c++) sh.autoResizeColumn(c);
-  // Narrow status column
-  const statusIdx = DB_COLUMNS.indexOf('Status') + 1;
-  sh.setColumnWidth(statusIdx, 50);
+  // Row 1 and Row 2 are merged across many columns. Freezing a single column
+  // across a merged range causes a Google Sheets exception.
+  sh.setFrozenColumns(0);
+  const widthMap = {
+    'Township': 190,
+    'Section': 120,
+    'Sitecode': 115,
+    'Priority': 85,
+    'Acres': 70,
+    'AirMap': 70,
+    'Status': 55,
+    'Inspector': 130,
+    '#/Dip': 60,
+    '% Wet': 65,
+    'Sample #': 100,
+    'Bug Status': 110,
+    'RA': 45,
+    'Remarks': 320,
+    'Treatment': 120,
+    'Claim Emp ID': 110,
+    'New Notes': 260,
+    'Drone': 80,
+    'Needs Sample': 110,
+  };
+  for (let c = 1; c <= ALL_COLUMNS.length; c++) {
+    const colName = ALL_COLUMNS[c - 1];
+    const width = widthMap[colName] || 100;
+    sh.setColumnWidth(c, width);
+  }
 }
 
 function safeName_(name) {

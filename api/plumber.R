@@ -154,6 +154,16 @@ validate_lookback <- function(v) {
   n
 }
 
+# Priority: optional comma-separated list (RED, YELLOW, BLUE, GREEN, PURPLE)
+validate_priority <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
+  valid <- c("RED", "YELLOW", "BLUE", "GREEN", "PURPLE")
+  parts <- trimws(toupper(unlist(strsplit(as.character(v), ",", fixed = TRUE))))
+  bad <- parts[!parts %in% valid]
+  if (length(bad) > 0) stop(paste0("invalid priority: ", paste(bad, collapse = ",")))
+  parts
+}
+
 # Build a SQL IN clause from already-validated values.
 # Uses dbQuoteString as a second safety layer — even if validation is bypassed
 # somehow, the driver will quote values correctly.
@@ -313,7 +323,7 @@ function(facility = NULL, limit = 500, res) {
 }
 
 
-#* RED air site checklist — inspection, active treatment, and lab bug status.
+#* Air site checklist — inspection, active treatment, and lab bug status.
 #* Mirrors the Shiny Air Inspection Checklist app.
 #* Use this endpoint to drive a live Google Sheet that stays in sync with the DB.
 #*
@@ -322,10 +332,11 @@ function(facility = NULL, limit = 500, res) {
 #* @param zone         Zones to include: "1", "2", or "1,2"  (default "1,2")
 #* @param lookback_days How many days back to look for inspections (1–14, default 2)
 #* @param as_of        Analysis date YYYY-MM-DD (default today)
+#* @param priority     Optional priority filter (comma-sep): RED, YELLOW, BLUE, GREEN, PURPLE
 #* @get /v1/private/air-checklist
 #* @json
 function(facility = NULL, foreman = NULL, zone = "1,2",
-         lookback_days = 2, as_of = NULL, res) {
+         lookback_days = 2, as_of = NULL, priority = NULL, res) {
   tryCatch({
 
     # ── 1. Validate every parameter (no raw user string touches SQL)
@@ -333,6 +344,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
     fos_emp_v <- validate_foreman(foreman)
     zone_v    <- validate_zone(zone)
     lb_v      <- validate_lookback(lookback_days)
+    pri_v     <- validate_priority(priority)
     date_v    <- validate_date(as_of)
     start_v   <- date_v - lb_v
 
@@ -361,6 +373,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
     fac_clause <- safe_in(con, "sc.facility", fac_v)
     fos_clause <- safe_in(con, "sc.fosarea",  fos_emp_v)
     zon_clause <- safe_in(con, "sc.zone",     zone_v)
+    pri_clause <- safe_in(con, "b.priority",  pri_v)
 
     # Dates: already validated as R Date objects; only converted to string here
     d_sql  <- as.character(date_v)
@@ -375,7 +388,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
         WHERE (b.enddate IS NULL OR b.enddate > '", d_sql, "')
           AND b.air_gnd = 'A'
-          AND b.priority = 'RED'
+          ", pri_clause, "
           ", fac_clause, "
           ", fos_clause, "
           ", zon_clause, "
@@ -507,6 +520,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
       lookback_days   = lb_v,
       facility_filter = facility %||% "all",
       foreman_filter  = foreman  %||% "all",
+      priority_filter = if (!is.null(pri_v)) paste(pri_v, collapse = ",") else "all",
       data            = rows,
       refreshed_at    = as.character(Sys.time())
     )

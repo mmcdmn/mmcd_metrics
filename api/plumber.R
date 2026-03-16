@@ -105,10 +105,15 @@ clean_limit <- function(v, default = 500L, max_val = 5000L) {
 # Facility: format check THEN allow-list against live DB lookup
 validate_facility <- function(v) {
   if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
-  s <- toupper(trimws(as.character(v)))
+  s <- trimws(as.character(v))
   if (nchar(s) > 8L || !grepl("^[A-Za-z0-9]+$", s)) stop("invalid facility code")
-  valid <- tryCatch(unique(toupper(get_facility_lookup()$facility)), error = function(e) character(0))
-  if (length(valid) > 0 && !s %in% valid) stop(paste0("unknown facility: ", s))
+  lkp <- tryCatch(get_facility_lookup(), error = function(e) NULL)
+  if (!is.null(lkp) && nrow(lkp) > 0) {
+    # Case-insensitive match, but return the DB-cased value
+    match_row <- lkp[tolower(lkp$short_name) == tolower(s), ]
+    if (nrow(match_row) == 0) stop(paste0("unknown facility: ", s))
+    return(match_row$short_name[1])
+  }
   s
 }
 
@@ -450,10 +455,10 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         i.wet                               AS pct_wet,
         emp.shortname                       AS inspector_name,
         i.sampnum_yr,
-        COALESCE(cards.remarks, '')          AS remarks,
-        COALESCE(cards.ra, FALSE)            AS restricted_area,
-        COALESCE(cards.drone, FALSE)         AS drone,
-        COALESCE(cards.sample, FALSE)        AS needs_sample,
+        COALESCE(cards.remarks, '')                          AS remarks,
+        (COALESCE(cards.ra, '') != '')                       AS restricted_area,
+        (COALESCE(cards.drone, '') IN ('Y','M'))             AS drone,
+        (COALESCE(cards.sample, '') != '')                   AS needs_sample,
         CASE
           WHEN i.sitecode IS NULL
             OR i.sampnum_yr IS NULL

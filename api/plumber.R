@@ -369,7 +369,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
     query <- paste0("
       WITH RedAirSites AS (
         SELECT DISTINCT ON (b.sitecode)
-          b.sitecode, b.acres,
+          b.sitecode, b.acres, b.priority,
           sc.facility, sc.zone, sc.fosarea, sc.sectcode
         FROM loc_breeding_sites b
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
@@ -438,16 +438,25 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         FROM employee_list
         WHERE active = true AND emp_type = 'FieldSuper'
         ORDER BY emp_num, pkey DESC
+      ),
+
+      TownLookup AS (
+        SELECT DISTINCT
+          LPAD(CAST(towncode AS text), 4, '0') AS towncode4,
+          city
+        FROM lookup_towncode_name
       )
 
       SELECT
         s.sitecode,
         ROUND(s.acres::numeric, 2)          AS acres,
+        s.priority,
         s.facility,
         s.zone,
         fl.fos_name,
         s.fosarea,
         s.sectcode,
+        COALESCE(town.city, LEFT(s.sitecode, 4)) AS township_name,
         cards.airmap_num,
         (i.sitecode IS NOT NULL)            AS was_inspected,
         i.inspdate                          AS last_insp_date,
@@ -479,9 +488,10 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
       LEFT JOIN ActiveTreatments at     ON s.sitecode = at.sitecode
       LEFT JOIN loc_breeding_site_cards_sjsreast2 cards
                                         ON s.sitecode = cards.sitecode
+      LEFT JOIN TownLookup town        ON LEFT(s.sitecode, 4) = town.towncode4
       LEFT JOIN Employees emp           ON i.emp1 = emp.emp_num::text
       LEFT JOIN FosNames fl             ON s.fosarea = fl.emp_num::text
-      ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
+      ORDER BY s.fosarea, town.city NULLS LAST, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
     ")
 
     rows <- DBI::dbGetQuery(con, query)

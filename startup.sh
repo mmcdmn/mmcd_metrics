@@ -20,6 +20,7 @@ echo "DB_PORT=${DB_PORT}" >> /srv/shiny-server/.env
 echo "DB_USER=${DB_USER}" >> /srv/shiny-server/.env
 echo "DB_PASSWORD=${DB_PASSWORD}" >> /srv/shiny-server/.env
 echo "DB_NAME=${DB_NAME}" >> /srv/shiny-server/.env
+echo "Alex is reall cool"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # API KEY — used by the Plumber REST API to protect private endpoints.

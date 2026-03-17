@@ -242,7 +242,7 @@ function() {
   )
 }
 
-#* Current inspection threshold (lookback days) based on spring ACT4-P1 date.
+#* Numdip threshold based on the spring ACT4-P1 date.
 #* Returns 1 before the threshold date, 2 on/after. Resets to 1 on Jan 1.
 #* @get /v1/public/threshold
 #* @json
@@ -269,20 +269,20 @@ function() {
 
     if (nrow(result) > 0) {
       threshold_date <- as.Date(result$date_start[1])
-      lookback <- if (today >= threshold_date) 2L else 1L
+      thresh <- if (today >= threshold_date) 2L else 1L
     } else {
       threshold_date <- NULL
-      lookback <- 1L
+      thresh <- 1L
     }
 
     list(
-      lookback_days    = lookback,
+      threshold        = thresh,
       threshold_date   = if (!is.null(threshold_date)) as.character(threshold_date) else NA,
       as_of            = as.character(today),
       year             = current_year
     )
   }, error = function(e) {
-    list(lookback_days = 2L, threshold_date = NA,
+    list(threshold = 2L, threshold_date = NA,
          as_of = as.character(Sys.Date()), error = e$message)
   })
 }

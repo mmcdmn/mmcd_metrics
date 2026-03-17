@@ -15,9 +15,11 @@
 
 // ── CHANGE THESE TO CUSTOMIZE ────────────────────────────────────────────────
 const CONFIG = {
-  FACILITY:       'SR',             // Facility code: SR, MO, E, Wp, Wm, N, Sj
+  FACILITY:       'Sr',             // Facility code: Sr, MO, E, Wp, Wm, N, Sj
   ZONE:           '1,2',            // Zones: '1', '2', or '1,2'
   PRIORITIES:     'YELLOW,RED',     // Priority filter: RED, YELLOW, BLUE, GREEN, PURPLE (comma-sep, '' for all)
+  LOOKBACK_DAYS:  2,                // Days back to check for inspections (1–14)
+  REFRESH_MINUTES: 1,               // Auto-refresh interval in minutes (1, 5, 10, 15, 30)
   MAP_LINK:       '',               // Air Site Map link (shown in Summary)
   CONTACTS_LINK:  '',               // Contacts sheet link (shown in Summary)
 };
@@ -72,14 +74,15 @@ const C = {
 
 function refreshChecklist() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const thresholdDays = getThresholdLookback_();
-  const rows = fetchChecklistData_(thresholdDays);
+  const thresholdNum = getThreshold_();
+  const rows = fetchChecklistData_();
   if (!rows || rows.length === 0) {
-    SpreadsheetApp.getUi().alert('No air sites returned for ' + CONFIG.PRIORITIES + ' priorities.');
+    Logger.log('No air sites returned for ' + CONFIG.PRIORITIES + ' priorities.');
     return;
   }
 
   const manualSnap = snapshotManualData_(ss);
+  const hiddenSnap = snapshotHiddenRows_(ss);
 
   const byFos = {};
   for (const r of rows) {
@@ -88,40 +91,67 @@ function refreshChecklist() {
   }
 
   for (const fos of Object.keys(byFos).sort()) {
-    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, thresholdDays);
+    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, thresholdNum);
   }
 
-  writeSummary_(ss, byFos, thresholdDays);
+  // Re-hide rows that were hidden before refresh
+  restoreHiddenRows_(ss, hiddenSnap);
+
+  writeSummary_(ss, byFos, thresholdNum);
   SpreadsheetApp.flush();
 }
 
 function refreshAirChecklist() { refreshChecklist(); }
+
+/**
+ * Run this ONCE to set up automatic refresh.
+ * Uses CONFIG.REFRESH_MINUTES (default 1 min).
+ * Go to Apps Script → Run → setupAutoRefresh
+ */
+function setupAutoRefresh() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'refreshChecklist') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('refreshChecklist')
+    .timeBased()
+    .everyMinutes(CONFIG.REFRESH_MINUTES)
+    .create();
+  Logger.log('Auto-refresh set: every ' + CONFIG.REFRESH_MINUTES + ' minute(s).');
+}
+
+/** Remove the automatic refresh trigger */
+function removeAutoRefresh() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'refreshChecklist') ScriptApp.deleteTrigger(t);
+  });
+  Logger.log('Auto-refresh removed.');
+}
 
 
 // ════════════════════════════════════════════════════════════════════════════
 // API CALLS
 // ════════════════════════════════════════════════════════════════════════════
 
-function getThresholdLookback_() {
+function getThreshold_() {
   try {
     const base = getProp_('API_BASE');
     const r = UrlFetchApp.fetch(base + '/public/threshold',
                                 { muteHttpExceptions: true });
     if (r.getResponseCode() === 200) {
       const j = JSON.parse(r.getContentText());
-      return j.lookback_days || 2;
+      return j.threshold || 2;
     }
   } catch (e) { Logger.log('threshold: ' + e.message); }
   return 2;
 }
 
-function fetchChecklistData_(lookback) {
+function fetchChecklistData_() {
   const base = getProp_('API_BASE');
   const key  = getProp_('API_KEY');
 
   let url = base + '/private/air-checklist'
     + '?facility=' + CONFIG.FACILITY
-    + '&lookback_days=' + lookback
+    + '&lookback_days=' + CONFIG.LOOKBACK_DAYS
     + '&zone=' + encodeURIComponent(CONFIG.ZONE);
   if (CONFIG.PRIORITIES) url += '&priority=' + encodeURIComponent(CONFIG.PRIORITIES);
 
@@ -169,16 +199,64 @@ function snapshotManualData_(ss) {
   return snap;
 }
 
+/** Snapshot which sitecodes have hidden rows, keyed by tab name */
+function snapshotHiddenRows_(ss) {
+  const snap = {};
+  for (const sh of ss.getSheets()) {
+    const name = sh.getName();
+    if (name === 'Summary' || name === 'Config') continue;
+    const last = sh.getLastRow();
+    if (last < DATA_START) continue;
+
+    const numRows = last - DATA_START + 1;
+    const codes = sh.getRange(DATA_START, 1, numRows, 1).getValues();
+    const hidden = new Set();
+    for (let i = 0; i < numRows; i++) {
+      if (sh.isRowHiddenByUser(DATA_START + i)) {
+        const sc = String(codes[i][0]).trim();
+        if (sc) hidden.add(sc);
+      }
+    }
+    if (hidden.size > 0) snap[name] = hidden;
+  }
+  return snap;
+}
+
+/** After data is rewritten, re-hide rows matching the snapshot */
+function restoreHiddenRows_(ss, hiddenSnap) {
+  for (const [tabName, hiddenSet] of Object.entries(hiddenSnap)) {
+    const sh = ss.getSheetByName(tabName);
+    if (!sh) continue;
+    const last = sh.getLastRow();
+    if (last < DATA_START) continue;
+
+    const numRows = last - DATA_START + 1;
+    const codes = sh.getRange(DATA_START, 1, numRows, 1).getValues();
+    for (let i = 0; i < numRows; i++) {
+      const sc = String(codes[i][0]).trim();
+      if (sc && hiddenSet.has(sc)) {
+        sh.hideRows(DATA_START + i);
+      }
+    }
+  }
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // FOS TAB WRITER
 // ════════════════════════════════════════════════════════════════════════════
 
-function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
+function writeFosTab_(ss, tabName, rows, manualSnap, thresholdNum) {
   let sh = ss.getSheetByName(tabName);
-  if (!sh) sh = ss.insertSheet(tabName);
-  sh.clear();
-  sh.clearConditionalFormatRules();
+  const isNew = !sh;
+  if (isNew) sh = ss.insertSheet(tabName);
+
+  // Remove protections from prior runs (prevents "Edit anyway?" warnings)
+  if (!isNew) {
+    const prots = sh.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+    if (prots.length) prots.forEach(p => p.remove());
+    sh.showRows(1, sh.getMaxRows());
+  }
 
   // Sort by township, section, uninspected first, then sitecode
   rows.sort((a, b) => {
@@ -194,44 +272,41 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
   const pct       = total > 0 ? Math.round(100 * inspected / total) : 0;
   const redBugs   = rows.filter(r => r.bug_status === 'Red Bugs').length;
 
-  // ── Row 1: Stats banner ────────────────────────────────────────────────
   const statsText = remaining === 0
-    ? `All ${total} sites inspected | Threshold: ${thresholdDays}`
-    : `Remaining: ${remaining} | Inspected: ${inspected} / ${total} (${pct}%) | Red Bugs: ${redBugs} | Threshold: ${thresholdDays}`;
+    ? `All ${total} sites inspected | Threshold: ${thresholdNum}`
+    : `Remaining: ${remaining} | Inspected: ${inspected} / ${total} (${pct}%) | Red Bugs: ${redBugs} | Threshold: ${thresholdNum}`;
+  const infoText = `${tabName} | ${CONFIG.FACILITY} Facility | Claim sites by typing your Emp ID in "Claim Emp ID" | Last Refresh: ${new Date().toLocaleString()}`;
 
-  sh.getRange(STATS_ROW, 1, 1, ALL_COLUMNS.length).merge()
-    .setValue(statsText)
-    .setFontSize(13).setFontWeight('bold')
-    .setFontColor(remaining === 0 ? C.REMAIN_GREEN : C.REMAIN_RED)
-    .setBackground(C.STATS_BG)
-    .setVerticalAlignment('middle');
-  sh.setRowHeight(STATS_ROW, 36);
-
-  // ── Row 2: Info bar ────────────────────────────────────────────────────
-  sh.getRange(FILTER_ROW, 1, 1, ALL_COLUMNS.length).merge()
-    .setValue(`${tabName} | ${CONFIG.FACILITY} Facility | Claim sites by typing your Emp ID in "Claim Emp ID" | Last Refresh: ${new Date().toLocaleString()}`)
-    .setFontSize(10).setFontColor('#666666')
-    .setBackground(C.STATS_BG);
-
-  // ── Row 3: Column headers ──────────────────────────────────────────────
-  const hdr = sh.getRange(HEADER_ROW, 1, 1, ALL_COLUMNS.length);
-  hdr.setValues([ALL_COLUMNS])
-     .setBackground(C.HEADER_BG).setFontColor(C.HEADER_FG)
-     .setFontWeight('bold').setHorizontalAlignment('center');
-  for (const colName of MANUAL_COL_NAMES) {
-    sh.getRange(HEADER_ROW, ALL_COLUMNS.indexOf(colName) + 1)
-      .setBackground(C.MANUAL_HEADER_BG);
+  if (isNew) {
+    // First run: merge, format, headers, column widths
+    sh.getRange(STATS_ROW, 1, 1, ALL_COLUMNS.length).merge()
+      .setValue(statsText).setFontSize(13).setFontWeight('bold')
+      .setFontColor(remaining === 0 ? C.REMAIN_GREEN : C.REMAIN_RED)
+      .setBackground(C.STATS_BG).setVerticalAlignment('middle');
+    sh.setRowHeight(STATS_ROW, 36);
+    sh.getRange(FILTER_ROW, 1, 1, ALL_COLUMNS.length).merge()
+      .setValue(infoText).setFontSize(10).setFontColor('#666666').setBackground(C.STATS_BG);
+    sh.getRange(HEADER_ROW, 1, 1, ALL_COLUMNS.length)
+      .setValues([ALL_COLUMNS]).setBackground(C.HEADER_BG).setFontColor(C.HEADER_FG)
+      .setFontWeight('bold').setHorizontalAlignment('center');
+    for (const colName of MANUAL_COL_NAMES) {
+      sh.getRange(HEADER_ROW, ALL_COLUMNS.indexOf(colName) + 1).setBackground(C.MANUAL_HEADER_BG);
+    }
+  } else {
+    // Update: just overwrite the two text values (merge/formatting persists)
+    sh.getRange(STATS_ROW, 1).setValue(statsText)
+      .setFontColor(remaining === 0 ? C.REMAIN_GREEN : C.REMAIN_RED);
+    sh.getRange(FILTER_ROW, 1).setValue(infoText);
   }
 
-  // ── Row 4+: Data rows (no separator rows — borders between sections) ──
-  if (rows.length === 0) { finalizeTab_(sh); return; }
+  if (rows.length === 0) { if (isNew) finalizeTab_(sh); return; }
 
   const grid = [];
   for (const row of rows) {
     const done = row.was_inspected;
     const vals = [
       row.sitecode   || '',
-      '',                                                       // Claim Emp ID (from snapshot)
+      '',
       row.acres      != null ? row.acres : '',
       row.restricted_area ? 'Y' : '',
       row.airmap_num || '',
@@ -243,11 +318,8 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
       row.bug_status || '',
       row.remarks    || '',
       row.has_active_treatment ? (row.active_material || 'Y') : '',
-      '',                                                       // New Notes
-      '',                                                       // Drone
-      '',                                                       // Needs Sample
+      '', '', '',
     ];
-    // Overlay manual snapshot
     const key = tabName + '::' + (row.sitecode || '');
     if (manualSnap[key]) {
       for (let j = 0; j < MANUAL_COL_NAMES.length; j++) {
@@ -257,55 +329,68 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
     grid.push(vals);
   }
 
-  sh.getRange(DATA_START, 1, grid.length, ALL_COLUMNS.length).setValues(grid);
+  const numCols = ALL_COLUMNS.length;
 
-  // ── Styling: row colors, priority, bug status, RA ──────────────────────
-  const statusCol = ALL_COLUMNS.indexOf('Status') + 1;
-  const priCol    = ALL_COLUMNS.indexOf('Priority') + 1;
-  const bugCol    = ALL_COLUMNS.indexOf('Bug Status') + 1;
-  const raCol     = ALL_COLUMNS.indexOf('RA') + 1;
-  const claimCol  = ALL_COLUMNS.indexOf('Claim Emp ID') + 1;
+  // Capture old extent BEFORE writing new data
+  const oldLastRow = sh.getLastRow();
 
-  for (let i = 0; i < rows.length; i++) {
-    const r   = DATA_START + i;
-    const row = rows[i];
-    const rng = sh.getRange(r, 1, 1, ALL_COLUMNS.length);
-    const claimedBy = String(grid[i][claimCol - 1] || '').trim();
+  // Overwrite data in place — sheet is NEVER blank
+  sh.getRange(DATA_START, 1, grid.length, numCols).setValues(grid);
 
-    if (row.was_inspected) {
-      rng.setBackground(C.DONE_BG);
-      sh.getRange(r, statusCol)
-        .setFontColor(C.REMAIN_GREEN).setFontWeight('bold')
-        .setHorizontalAlignment('center');
-    } else if (claimedBy) {
-      rng.setBackground(C.CLAIMED_BG);
-    }
-
-    // Priority cell
-    const pri = String(row.priority || '').toUpperCase();
-    const priColors = { RED: C.PRIORITY_RED, YELLOW: C.PRIORITY_YELLOW, BLUE: C.PRIORITY_BLUE, GREEN: C.PRIORITY_GREEN, PURPLE: C.PRIORITY_PURPLE };
-    if (priColors[pri]) sh.getRange(r, priCol).setBackground(priColors[pri]).setFontWeight('bold');
-
-    // Bug Status cell
-    if (row.bug_status === 'Red Bugs')    sh.getRange(r, bugCol).setBackground(C.RED_BUGS).setFontWeight('bold');
-    else if (row.bug_status === 'Pending Lab') sh.getRange(r, bugCol).setBackground(C.PENDING_LAB);
-    else if (row.bug_status === 'Blue Bugs')   sh.getRange(r, bugCol).setBackground(C.BLUE_BUGS);
-
-    // RA cell
-    if (row.restricted_area) sh.getRange(r, raCol).setBackground(C.RA_BG).setFontWeight('bold');
+  // Clear leftover rows from previous refresh (if old data was longer)
+  const newLastRow = DATA_START + grid.length - 1;
+  if (oldLastRow > newLastRow) {
+    sh.getRange(newLastRow + 1, 1, oldLastRow - newLastRow, numCols)
+      .clearContent().clearFormat();
   }
 
-  // ── Section borders: thick black bottom border at section/township breaks ─
+  // ── Batch styling ──────────────────────────────────────────────────────
+  const statusIdx = ALL_COLUMNS.indexOf('Status');
+  const priIdx    = ALL_COLUMNS.indexOf('Priority');
+  const bugIdx    = ALL_COLUMNS.indexOf('Bug Status');
+  const raIdx     = ALL_COLUMNS.indexOf('RA');
+  const claimIdx  = ALL_COLUMNS.indexOf('Claim Emp ID');
+  const priColorMap = { RED: C.PRIORITY_RED, YELLOW: C.PRIORITY_YELLOW, BLUE: C.PRIORITY_BLUE, GREEN: C.PRIORITY_GREEN, PURPLE: C.PRIORITY_PURPLE };
+
+  const bgColors = [], fontColors = [], fontWeights = [], hAligns = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const claimedBy = String(grid[i][claimIdx] || '').trim();
+    const rowBg = row.was_inspected ? C.DONE_BG : claimedBy ? C.CLAIMED_BG : null;
+    const bg = new Array(numCols).fill(rowBg);
+    const fc = new Array(numCols).fill(null);
+    const fw = new Array(numCols).fill(null);
+    const ha = new Array(numCols).fill(null);
+
+    if (row.was_inspected) {
+      fc[statusIdx] = C.REMAIN_GREEN; fw[statusIdx] = 'bold'; ha[statusIdx] = 'center';
+    }
+    const pri = String(row.priority || '').toUpperCase();
+    if (priColorMap[pri]) { bg[priIdx] = priColorMap[pri]; fw[priIdx] = 'bold'; }
+    if (row.bug_status === 'Red Bugs')       { bg[bugIdx] = C.RED_BUGS; fw[bugIdx] = 'bold'; }
+    else if (row.bug_status === 'Pending Lab') { bg[bugIdx] = C.PENDING_LAB; }
+    else if (row.bug_status === 'Blue Bugs')   { bg[bugIdx] = C.BLUE_BUGS; }
+    if (row.restricted_area) { bg[raIdx] = C.RA_BG; fw[raIdx] = 'bold'; }
+
+    bgColors.push(bg); fontColors.push(fc); fontWeights.push(fw); hAligns.push(ha);
+  }
+
+  const dataRange = sh.getRange(DATA_START, 1, rows.length, numCols);
+  dataRange.setBackgrounds(bgColors);
+  dataRange.setFontColors(fontColors);
+  dataRange.setFontWeights(fontWeights);
+  dataRange.setHorizontalAlignments(hAligns);
+
+  // Clear all old borders then re-apply section breaks
+  dataRange.setBorder(false, false, false, false, false, false);
   for (let i = 0; i < rows.length - 1; i++) {
-    const curSect = rows[i].sectcode || '';
-    const nxtSect = rows[i + 1].sectcode || '';
-    if (curSect !== nxtSect) {
-      sh.getRange(DATA_START + i, 1, 1, ALL_COLUMNS.length)
+    if ((rows[i].sectcode || '') !== (rows[i + 1].sectcode || '')) {
+      sh.getRange(DATA_START + i, 1, 1, numCols)
         .setBorder(null, null, true, null, null, null, '#000000', SpreadsheetApp.BorderStyle.SOLID_THICK);
     }
   }
 
-  finalizeTab_(sh);
+  if (isNew) finalizeTab_(sh);
 }
 
 
@@ -313,7 +398,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, thresholdDays) {
 // SUMMARY TAB
 // ════════════════════════════════════════════════════════════════════════════
 
-function writeSummary_(ss, byFos, thresholdDays) {
+function writeSummary_(ss, byFos, thresholdNum) {
   let sh = ss.getSheetByName('Summary');
   if (!sh) sh = ss.insertSheet('Summary', 0);
   sh.clear();
@@ -395,9 +480,10 @@ function writeSummary_(ss, byFos, thresholdDays) {
     .setFontWeight('bold').setBackground('#e0e0e0');
   r++;
   const byTownOrder = [...townships].sort((a, b) => a.town.localeCompare(b.town) || a.code.localeCompare(b.code));
-  for (const t of byTownOrder) {
-    sh.getRange(r, 1, 1, 4).setValues([[t.town, t.code, t.fos, t.done ? 'Y' : 'FALSE']]);
-    r++;
+  const townData1 = byTownOrder.map(t => [t.town, t.code, t.fos, t.done ? 'Y' : 'FALSE']);
+  if (townData1.length) {
+    sh.getRange(r, 1, townData1.length, 4).setValues(townData1);
+    r += townData1.length;
   }
   r++;
 
@@ -409,9 +495,10 @@ function writeSummary_(ss, byFos, thresholdDays) {
     .setFontWeight('bold').setBackground('#e0e0e0');
   r++;
   const byFosOrder = [...townships].sort((a, b) => a.fos.localeCompare(b.fos) || a.town.localeCompare(b.town));
-  for (const t of byFosOrder) {
-    sh.getRange(r, 1, 1, 4).setValues([[t.town, t.code, t.fos, t.done ? 'Y' : 'FALSE']]);
-    r++;
+  const townData2 = byFosOrder.map(t => [t.town, t.code, t.fos, t.done ? 'Y' : 'FALSE']);
+  if (townData2.length) {
+    sh.getRange(r, 1, townData2.length, 4).setValues(townData2);
+    r += townData2.length;
   }
 
   sh.setFrozenRows(1);
@@ -424,46 +511,19 @@ function writeSummary_(ss, byFos, thresholdDays) {
 // ════════════════════════════════════════════════════════════════════════════
 
 function getTownshipRows_(rows) {
+  // Township code = first 4 digits of the sitecode. One row per (code, FOS).
   const groups = {};
   for (const r of rows) {
-    const town = r.township_name || 'Unknown';
-    const fos  = r.fos_name || 'Unknown';
-    const key  = town + '|||' + fos;
-    if (!groups[key]) groups[key] = { town, fos, sects: new Set(), allDone: true };
-    if (r.sectcode) groups[key].sects.add(r.sectcode);
+    const town  = r.township_name || 'Unknown';
+    const fos   = r.fos_name || 'Unknown';
+    const code4 = r.sectcode ? r.sectcode.substring(0, 4) : '';
+    const key   = code4 + '|||' + fos;
+    if (!groups[key]) groups[key] = { town, code: code4, fos, allDone: true };
     if (!r.was_inspected) groups[key].allDone = false;
   }
-
-  const result = [];
-  for (const g of Object.values(groups)) {
-    const sects = [...g.sects].sort();
-    if (sects.length === 0) {
-      result.push({ town: g.town, code: '', fos: g.fos, done: g.allDone });
-      continue;
-    }
-    const town4 = sects[0].substring(0, 4);
-    const secNums = [...new Set(sects.map(s => parseInt(s.substring(4, 6), 10)))].sort((a, b) => a - b);
-    if (secNums.length === 0) {
-      result.push({ town: g.town, code: town4 + '-', fos: g.fos, done: g.allDone });
-      continue;
-    }
-    // Find contiguous ranges
-    const ranges = [];
-    let start = secNums[0], end = secNums[0];
-    for (let i = 1; i < secNums.length; i++) {
-      if (secNums[i] <= end + 1) { end = secNums[i]; }
-      else { ranges.push([start, end]); start = secNums[i]; end = secNums[i]; }
-    }
-    ranges.push([start, end]);
-
-    for (const [s, e] of ranges) {
-      const code = s === e
-        ? town4 + String(s).padStart(2, '0') + '-'
-        : town4 + String(s).padStart(2, '0') + '-' + String(e).padStart(2, '0');
-      result.push({ town: g.town, code, fos: g.fos, done: g.allDone });
-    }
-  }
-  return result;
+  return Object.values(groups).map(g => ({
+    town: g.town, code: g.code, fos: g.fos, done: g.allDone,
+  }));
 }
 
 function finalizeTab_(sh) {

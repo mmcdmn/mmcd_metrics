@@ -10,15 +10,17 @@
 //       API_BASE:  https://metrics.mmcd.org/v1
 //       API_KEY:   <your key>
 //   3. Run exportRawData()
+//   4. (Optional) Run setupAutoRefresh() once to auto-refresh
 // ============================================================================
 
 // ── FILTERS — change these to control what data is pulled ────────────────────
 const FILTERS = {
-  FACILITY:      'SR',           // Facility: SR, MO, E, W, N, Sj  ('' = all)
-  ZONE:          '1,2',          // Zone: '1', '2', '1,2'
-  PRIORITY:      'YELLOW,RED',   // Priority: RED, YELLOW, BLUE, GREEN, PURPLE  ('' = all)
-  LOOKBACK_DAYS: 2,              // Days back for inspections: 1–14
-  // FOREMAN:    '',              // FOS shortname filter (optional)
+  FACILITY:        'SR',           // Facility: SR, MO, E, W, N, Sj  ('' = all)
+  ZONE:            '1,2',          // Zone: '1', '2', '1,2'
+  PRIORITY:        'YELLOW,RED',   // Priority: RED, YELLOW, BLUE, GREEN, PURPLE  ('' = all)
+  LOOKBACK_DAYS:   2,              // Days back for inspections: 1–14
+  REFRESH_MINUTES: 1,              // Auto-refresh interval in minutes (1, 5, 10, 15, 30)
+  // FOREMAN:      '',             // FOS shortname filter (optional)
 };
 
 function getProp_(key) {
@@ -43,14 +45,14 @@ function exportRawData() {
   });
 
   if (resp.getResponseCode() !== 200) {
-    SpreadsheetApp.getUi().alert('API error ' + resp.getResponseCode() + ':\n' + resp.getContentText());
+    Logger.log('API error ' + resp.getResponseCode() + ': ' + resp.getContentText());
     return;
   }
 
   const payload = JSON.parse(resp.getContentText());
   const rows = Array.isArray(payload) ? payload : payload.data || [];
   if (!rows.length) {
-    SpreadsheetApp.getUi().alert('No data returned for current filters.');
+    Logger.log('No data returned for current filters.');
     return;
   }
 
@@ -69,5 +71,25 @@ function exportRawData() {
   sh.setFrozenRows(1);
   headers.forEach((_, i) => sh.autoResizeColumn(i + 1));
 
-  SpreadsheetApp.getUi().alert(data.length + ' rows exported to "Raw Data" tab.');
+  Logger.log(data.length + ' rows exported to Raw Data tab.');
+}
+
+/** Run ONCE to set up auto-refresh. Uses FILTERS.REFRESH_MINUTES. */
+function setupAutoRefresh() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'exportRawData') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('exportRawData')
+    .timeBased()
+    .everyMinutes(FILTERS.REFRESH_MINUTES)
+    .create();
+  Logger.log('Auto-refresh set: every ' + FILTERS.REFRESH_MINUTES + ' minute(s).');
+}
+
+/** Remove the auto-refresh trigger */
+function removeAutoRefresh() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'exportRawData') ScriptApp.deleteTrigger(t);
+  });
+  Logger.log('Auto-refresh removed.');
 }

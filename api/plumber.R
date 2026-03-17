@@ -391,6 +391,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
       WITH RedAirSites AS (
         SELECT DISTINCT ON (b.sitecode)
           b.sitecode, b.acres, b.priority,
+          b.drone AS site_drone, b.remarks AS site_remarks, b.sample AS site_sample,
           sc.facility, sc.zone, sc.fosarea, sc.sectcode
         FROM loc_breeding_sites b
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
@@ -485,10 +486,10 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         i.wet                               AS pct_wet,
         emp.shortname                       AS inspector_name,
         i.sampnum_yr,
-        COALESCE(cards.remarks, '')                          AS remarks,
+        COALESCE(NULLIF(cards.remarks, ''), s.site_remarks, '') AS remarks,
         (COALESCE(cards.ra, '') != '')                       AS restricted_area,
-        (COALESCE(cards.drone, '') IN ('Y','M'))             AS drone,
-        (COALESCE(cards.sample, '') != '')                   AS needs_sample,
+        (COALESCE(s.site_drone, '') IN ('Y','M'))            AS drone,
+        (COALESCE(s.site_sample, '') != '')                  AS needs_sample,
         CASE
           WHEN i.sitecode IS NULL
             OR i.sampnum_yr IS NULL

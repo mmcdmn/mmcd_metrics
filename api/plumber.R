@@ -22,8 +22,10 @@
 #                    GET /v1/public/foremen
 #                    GET /v1/public/threshold
 #
-# Private (key req): GET /v1/private/sectcodes
-#                    GET /v1/private/air-checklist
+# Private (key req): GET  /v1/private/sectcodes
+#                    GET  /v1/private/air-checklist
+#                    GET  /v1/private/claims
+#                    POST /v1/private/claims
 #
 # =============================================================================
 
@@ -35,6 +37,12 @@ library(DBI)
 # ── Shared helpers: DB connection, lookup tables, table strategy, SQL helpers
 source("/srv/shiny-server/shared/db_helpers.R")
 source("/srv/shiny-server/shared/app_libraries.R")
+source("/srv/shiny-server/shared/redis_cache.R")
+
+# Claim constants (same as air_inspection_checklist/data_functions.R)
+CLAIM_HASH_PREFIX <- "claim"
+CLAIM_TTL <- 172800L  # 2 days
+claim_hash_key <- function(date) paste0(CLAIM_HASH_PREFIX, ":", date)
 
 load_env_vars()
 
@@ -195,7 +203,7 @@ to_choice_list <- function(choices, all_label) {
 function(req, res) {
   res$setHeader("Access-Control-Allow-Origin", "*")
   res$setHeader("Access-Control-Allow-Headers", "Authorization, X-API-Key, Content-Type")
-  res$setHeader("Access-Control-Allow-Methods", "GET, OPTIONS")
+  res$setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
   if (identical(req$REQUEST_METHOD, "OPTIONS")) {
     res$status <- 204
     return(list())
@@ -525,4 +533,114 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
       refreshed_at    = as.character(Sys.time())
     )
   }, error = function(e) api_error(res, 400, e$message))
+}
+
+
+#* Get active claims from the Redis cache.
+#* Returns all claims within the lookback window so sheets/apps can stay in sync.
+#* @param lookback_days How many days back to retrieve claims (default 2, max 14)
+#* @get /v1/private/claims
+#* @json
+function(lookback_days = 2, res) {
+  tryCatch({
+    lb <- suppressWarnings(as.integer(lookback_days %||% 2L))
+    if (is.na(lb) || lb < 1L) lb <- 2L
+    if (lb > 14L) lb <- 14L
+
+    all_claims <- list()
+    today <- Sys.Date()
+    for (d in 0:lb) {
+      date_str <- format(today - d, "%Y-%m-%d")
+      day_claims <- redis_hgetall(claim_hash_key(date_str))
+      if (length(day_claims) > 0) {
+        for (sc in names(day_claims)) {
+          if (is.null(all_claims[[sc]])) {
+            claim <- day_claims[[sc]]
+            claim$claim_date <- date_str
+            all_claims[[sc]] <- claim
+          }
+        }
+      }
+    }
+
+    # Convert to a flat list of objects for JSON
+    claims_list <- lapply(names(all_claims), function(sc) {
+      c <- all_claims[[sc]]
+      list(
+        sitecode   = sc,
+        emp_num    = c$emp_num   %||% "",
+        emp_name   = c$emp_name  %||% "",
+        time       = c$time      %||% "",
+        claim_date = c$claim_date %||% ""
+      )
+    })
+
+    list(
+      count  = length(claims_list),
+      data   = claims_list,
+      as_of  = as.character(today)
+    )
+  }, error = function(e) api_error(res, 500, e$message))
+}
+
+
+#* Upsert claims into the Redis cache.
+#* Accepts a JSON array of claim objects. Each must have sitecode and emp_num.
+#* Existing claims for the same sitecode on the same date are overwritten.
+#* @param req The raw request (body is parsed below)
+#* @post /v1/private/claims
+#* @json
+function(req, res) {
+  tryCatch({
+    body <- tryCatch(jsonlite::fromJSON(req$postBody, simplifyVector = FALSE),
+                     error = function(e) NULL)
+    if (is.null(body)) return(api_error(res, 400, "invalid JSON body"))
+
+    # Accept either a plain array or { "claims": [...] }
+    claims <- if (is.list(body) && !is.null(body$claims)) body$claims else body
+    if (!is.list(claims)) return(api_error(res, 400, "expected array of claim objects"))
+
+    today <- format(Sys.Date(), "%Y-%m-%d")
+    saved <- 0L
+    errors <- list()
+
+    for (cl in claims) {
+      sc  <- trimws(as.character(cl$sitecode %||% ""))
+      emp <- trimws(as.character(cl$emp_num  %||% ""))
+
+      if (!nzchar(sc)) {
+        errors <- c(errors, list("missing sitecode"))
+        next
+      }
+      if (!nzchar(emp)) {
+        errors <- c(errors, list(paste0("missing emp_num for ", sc)))
+        next
+      }
+
+      # Validate: only alphanumeric, dash, space (prevent injection into Redis keys)
+      if (!grepl("^[A-Za-z0-9 _-]+$", sc) || nchar(sc) > 32L) {
+        errors <- c(errors, list(paste0("invalid sitecode: ", sc)))
+        next
+      }
+      if (!grepl("^[A-Za-z0-9 _-]+$", emp) || nchar(emp) > 32L) {
+        errors <- c(errors, list(paste0("invalid emp_num: ", emp)))
+        next
+      }
+
+      emp_name <- trimws(as.character(cl$emp_name %||% emp))
+      claim_data <- list(
+        emp_num  = emp,
+        emp_name = emp_name,
+        time     = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+      )
+      ok <- redis_hset(claim_hash_key(today), sc, claim_data, ttl = CLAIM_TTL)
+      if (ok) saved <- saved + 1L
+    }
+
+    list(
+      saved  = saved,
+      errors = if (length(errors) > 0) errors else NULL,
+      date   = today
+    )
+  }, error = function(e) api_error(res, 500, e$message))
 }

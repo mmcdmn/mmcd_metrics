@@ -158,7 +158,7 @@ Each FOS (Field Operations Supervisor) gets their own tab. The tab is named afte
 | Column | Source | Description |
 |--------|--------|-------------|
 | Sitecode | API | Unique breeding site ID |
-| Claim Emp ID | **Manual** | FOS staff types their Employee ID here to claim a site |
+| Claim Emp ID | **Synced** | FOS staff types their Employee ID here to claim a site. **Synced with Redis** — claims made in the Shiny app appear here, and claims typed here appear in the Shiny app. |
 | Acres | API | Site acreage |
 | RA | API | Restricted area flag (Y if restricted) |
 | AirMap | API | Air map reference number |
@@ -192,11 +192,28 @@ You can right-click rows and **Hide rows** to collapse inspected sites or sites 
 
 ### Claiming workflow
 
-1. staff opens the sheet and finds their tab
+Claims are **synced between Google Sheets and the Shiny Air Inspection Checklist app** via the Redis cache. Both systems share the same claim data through the API.
+
+**How it works:**
+
+1. Staff opens the sheet and finds their tab
 2. They scan for unclaimed, uninspected sites (no green background, no Claim Emp ID)
 3. They type their Employee ID in the **Claim Emp ID** column for the sites they plan to inspect
 4. Claimed rows turn light blue so others can see what's taken
 5. After inspection, the next refresh will show Status = Y and a green background
+
+**Claim sync (every refresh cycle):**
+
+1. The script fetches all active claims from the Redis cache (via `GET /v1/private/claims`)
+2. It snapshots all Claim Emp ID values currently in the sheet
+3. It merges them: **the most recent action wins**
+   - If a claim exists in Redis but the sheet cell is empty → Redis claim fills the cell (someone claimed it in the Shiny app)
+   - If the sheet cell has a value but Redis doesn't → the sheet claim is pushed to Redis (someone claimed it in the sheet)
+   - If both have a value → the sheet value wins (typing in the sheet is the most recent human action)
+   - If both are empty → nothing happens
+4. After writing all tabs, any new sheet-originated claims are POSTed to Redis so the Shiny app sees them
+
+**Important timing note:** Since the sheet refreshes every ~1 minute, there is a short window where a claim made in Sheets won't be visible in the Shiny app (and vice versa). In the worst case, it may take up to ~2 minutes for claims to sync between systems. This is expected.
 
 ### Summary Tab
 

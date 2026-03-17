@@ -193,6 +193,73 @@ Authorization: Bearer <your-key>
 
 ---
 
+### GET `/v1/private/claims`
+
+Returns all active site claims from the Redis cache. Claims are stored per-date and looked up across the lookback window. The most recent claim per sitecode wins.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `lookback_days` | integer | No | 2 | How many days back to retrieve claims (1–14) |
+
+**Response:**
+```json
+{
+  "count": 5,
+  "data": [
+    {
+      "sitecode": "19011301",
+      "emp_num": "12345",
+      "emp_name": "Eric S.",
+      "time": "2026-03-17T10:15:30",
+      "claim_date": "2026-03-17"
+    },
+    ...
+  ],
+  "as_of": "2026-03-17"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sitecode` | string | The claimed site ID |
+| `emp_num` | string | Employee number of the claimer |
+| `emp_name` | string | Display name of the claimer |
+| `time` | string | ISO timestamp when the claim was made |
+| `claim_date` | string | The date partition the claim is stored under |
+
+---
+
+### POST `/v1/private/claims`
+
+Create or update claims in the Redis cache. Accepts a JSON body with an array of claim objects. Each claim is stored under today's date with a 2-day TTL.
+
+**Request body:**
+```json
+{
+  "claims": [
+    { "sitecode": "19011301", "emp_num": "12345", "emp_name": "Eric S." },
+    { "sitecode": "19011302", "emp_num": "67890", "emp_name": "Monica W." }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sitecode` | string | Yes | Site to claim (alphanumeric, max 32 chars) |
+| `emp_num` | string | Yes | Employee number (alphanumeric, max 32 chars) |
+| `emp_name` | string | No | Display name (defaults to emp_num if omitted) |
+
+**Response:**
+```json
+{
+  "saved": 2,
+  "errors": null,
+  "date": "2026-03-17"
+}
+```
+
+---
+
 ## Error Responses
 
 All errors return a JSON object with an `error` field:

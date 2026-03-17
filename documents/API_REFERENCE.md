@@ -180,10 +180,10 @@ Authorization: Bearer <your-key>
 | `pct_wet` | number | Percentage of site that is wet |
 | `inspector_name` | string | Name of inspector who did the most recent inspection |
 | `sampnum_yr` | string | Sample number (year-based) |
-| `remarks` | string | Site card remarks |
-| `restricted_area` | boolean | Site is in a restricted area |
-| `drone` | boolean | Site requires drone access |
-| `needs_sample` | boolean | Site is flagged for sampling |
+| `remarks` | string | Site remarks (from `loc_breeding_sites`, overridden by card remarks if present) |
+| `restricted_area` | boolean | Site is in a restricted area (from cards) |
+| `drone` | boolean | Site requires drone access (from `loc_breeding_sites`) |
+| `needs_sample` | boolean | Site is flagged for sampling (from `loc_breeding_sites`) |
 | `bug_status` | string | Lab result status: `Red Bugs`, `Blue Bugs`, `Pending Lab`, `No Bugs`, or `No Sample` |
 | `has_active_treatment` | boolean | Has an unexpired treatment |
 | `active_material` | string | Material type of active treatment |

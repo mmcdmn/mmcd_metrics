@@ -83,7 +83,6 @@ function refreshChecklist() {
 
   const manualSnap = snapshotManualData_(ss);
   const hiddenSnap = snapshotHiddenRows_(ss);
-  const redisClaims = fetchClaims_();   // { sitecode: { emp_num, emp_name, time } }
 
   const byFos = {};
   for (const r of rows) {
@@ -91,18 +90,12 @@ function refreshChecklist() {
     (byFos[fos] = byFos[fos] || []).push(r);
   }
 
-  // Merge claims: sheet vs Redis — most recent wins
-  const mergedClaims = mergeSheetAndRedisClaims_(manualSnap, redisClaims);
-
   for (const fos of Object.keys(byFos).sort()) {
-    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, mergedClaims, thresholdNum);
+    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, thresholdNum);
   }
 
   // Re-hide rows that were hidden before refresh
   restoreHiddenRows_(ss, hiddenSnap);
-
-  // Push any claims that originated from the sheet back to Redis
-  pushNewClaimsToRedis_(manualSnap, redisClaims);
 
   writeSummary_(ss, byFos, thresholdNum);
   SpreadsheetApp.flush();
@@ -179,91 +172,6 @@ function fetchChecklistData_() {
        : [];
 }
 
-/** Fetch active claims from Redis via the API */
-function fetchClaims_() {
-  try {
-    const base = getProp_('API_BASE');
-    const key  = getProp_('API_KEY');
-    const r = UrlFetchApp.fetch(
-      base + '/private/claims?lookback_days=' + CONFIG.LOOKBACK_DAYS,
-      { headers: { 'Authorization': 'Bearer ' + key }, muteHttpExceptions: true }
-    );
-    if (r.getResponseCode() === 200) {
-      const j = JSON.parse(r.getContentText());
-      const list = Array.isArray(j) ? j : (j.data || []);
-      const map = {};
-      for (const c of list) {
-        if (c.sitecode && c.emp_num) {
-          map[c.sitecode] = { emp_num: String(c.emp_num), emp_name: c.emp_name || '', time: c.time || '' };
-        }
-      }
-      return map;
-    }
-  } catch (e) { Logger.log('fetchClaims_: ' + e.message); }
-  return {};
-}
-
-/**
- * Merge sheet claims and Redis claims. Most-recent wins.
- * Sheet claims have no timestamp — they are treated as "right now" (newest).
- * Redis claims have a timestamp.
- * Returns { sitecode: emp_num_string }
- */
-function mergeSheetAndRedisClaims_(manualSnap, redisClaims) {
-  const merged = {};
-
-  // Start with all Redis claims
-  for (const sc of Object.keys(redisClaims)) {
-    merged[sc] = redisClaims[sc].emp_num;
-  }
-
-  // Sheet claims overwrite because typing in the sheet is the most recent action.
-  // But if the sheet cell is empty and Redis has a claim, Redis wins.
-  const claimColIdx = MANUAL_COL_NAMES.indexOf('Claim Emp ID');  // 0
-  for (const snapKey of Object.keys(manualSnap)) {
-    const sitecode = snapKey.split('::')[1];
-    if (!sitecode) continue;
-    const sheetEmp = String(manualSnap[snapKey][claimColIdx] || '').trim();
-    if (sheetEmp) {
-      // Sheet has a value — sheet wins (user just typed it)
-      merged[sitecode] = sheetEmp;
-    }
-    // If sheetEmp is empty, Redis value (if any) is already in merged
-  }
-
-  return merged;
-}
-
-/** Push sheet-only claims (not already in Redis) to the API */
-function pushNewClaimsToRedis_(manualSnap, redisClaims) {
-  const claimColIdx = MANUAL_COL_NAMES.indexOf('Claim Emp ID');
-  const toPush = [];
-  for (const snapKey of Object.keys(manualSnap)) {
-    const sitecode = snapKey.split('::')[1];
-    if (!sitecode) continue;
-    const sheetEmp = String(manualSnap[snapKey][claimColIdx] || '').trim();
-    if (!sheetEmp) continue;
-    // Push if Redis doesn't have this claim, or if the emp_num differs
-    const rc = redisClaims[sitecode];
-    if (!rc || String(rc.emp_num).trim() !== sheetEmp) {
-      toPush.push({ sitecode: sitecode, emp_num: sheetEmp, emp_name: sheetEmp });
-    }
-  }
-  if (toPush.length === 0) return;
-  try {
-    const base = getProp_('API_BASE');
-    const key  = getProp_('API_KEY');
-    UrlFetchApp.fetch(base + '/private/claims', {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { 'Authorization': 'Bearer ' + key },
-      payload: JSON.stringify({ claims: toPush }),
-      muteHttpExceptions: true,
-    });
-    Logger.log('Pushed ' + toPush.length + ' claim(s) to Redis.');
-  } catch (e) { Logger.log('pushClaims_: ' + e.message); }
-}
-
 
 // ════════════════════════════════════════════════════════════════════════════
 // MANUAL DATA PRESERVATION
@@ -338,7 +246,7 @@ function restoreHiddenRows_(ss, hiddenSnap) {
 // FOS TAB WRITER
 // ════════════════════════════════════════════════════════════════════════════
 
-function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum) {
+function writeFosTab_(ss, tabName, rows, manualSnap, thresholdNum) {
   let sh = ss.getSheetByName(tabName);
   const isNew = !sh;
   if (isNew) sh = ss.insertSheet(tabName);
@@ -417,11 +325,6 @@ function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum)
       for (let j = 0; j < MANUAL_COL_NAMES.length; j++) {
         vals[MANUAL_INDICES[j]] = manualSnap[key][j] || '';
       }
-    }
-    // Apply merged claim (Redis or sheet, whichever is most recent)
-    const sc = row.sitecode || '';
-    if (mergedClaims[sc]) {
-      vals[MANUAL_INDICES[0]] = mergedClaims[sc];  // Claim Emp ID
     }
     grid.push(vals);
   }

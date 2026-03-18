@@ -41,6 +41,10 @@ air_inspection_checklist_ui <- function() {
         selectInput("foreman_filter", "FOS:",
                     choices = NULL),
 
+        selectizeInput("priority_filter", "Priority:",
+                       choices = NULL, multiple = TRUE,
+                       options = list(placeholder = "Loading...")),
+
         selectInput("zone_filter", "Zone Display:",
                     choices = c("P1 Only" = "1",
                                 "P2 Only" = "2",
@@ -63,7 +67,7 @@ air_inspection_checklist_ui <- function() {
         
         hr(),
         div(style = "font-size: 12px; color: #888; padding: 5px;",
-            p(icon("info-circle"), " RED air sites checked for inspections in the last N days."),
+            p(icon("info-circle"), " Air sites checked for inspections in the last N days."),
             p(icon("check-circle", class = "item-done"), " = Inspected (with employee # and dip count)"),
             p(icon("times-circle", class = "item-not-done"), " = Not inspected")
         )

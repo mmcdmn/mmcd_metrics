@@ -26,6 +26,7 @@
 #                    GET  /v1/private/air-checklist
 #                    GET  /v1/private/claims
 #                    POST /v1/private/claims
+#                    POST /v1/private/claims/remove
 #
 # =============================================================================
 
@@ -643,5 +644,41 @@ function(req, res) {
       errors = if (length(errors) > 0) errors else NULL,
       date   = today
     )
+  }, error = function(e) api_error(res, 500, e$message))
+}
+
+
+#* Remove claims from the Redis cache.
+#* Accepts a JSON object with a "sitecodes" array.
+#* Removes each sitecode's claim from all dates in the lookback window.
+#* @param req The raw request (body is parsed below)
+#* @post /v1/private/claims/remove
+#* @json
+function(req, res) {
+  tryCatch({
+    body <- tryCatch(jsonlite::fromJSON(req$postBody, simplifyVector = FALSE),
+                     error = function(e) NULL)
+    if (is.null(body)) return(api_error(res, 400, "invalid JSON body"))
+
+    sitecodes <- body$sitecodes
+    if (is.null(sitecodes)) return(api_error(res, 400, "expected sitecodes array"))
+
+    today <- Sys.Date()
+    removed <- 0L
+
+    for (sc in sitecodes) {
+      sc <- trimws(as.character(sc %||% ""))
+      if (!nzchar(sc)) next
+      if (!grepl("^[A-Za-z0-9 _-]+$", sc) || nchar(sc) > 32L) next
+
+      # Remove from all dates in the lookback window
+      for (d in 0:2) {
+        date_str <- format(today - d, "%Y-%m-%d")
+        redis_hdel(claim_hash_key(date_str), sc)
+      }
+      removed <- removed + 1L
+    }
+
+    list(removed = removed, date = format(today, "%Y-%m-%d"))
   }, error = function(e) api_error(res, 500, e$message))
 }

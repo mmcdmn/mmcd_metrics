@@ -26,6 +26,7 @@ get_checklist_data <- function(facility_filter = NULL,
                                lookback_days = 2,
                                analysis_date = Sys.Date(),
                                zone_filter = "1",
+                               priority_filter = "RED",
                                include_active_treatment = FALSE) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
@@ -51,6 +52,13 @@ get_checklist_data <- function(facility_filter = NULL,
       zone_condition <- sprintf("AND sc.zone IN (%s)", zone_list)
     }
 
+    # Priority filter
+    priority_condition <- "AND b.priority = 'RED'"  # safe default
+    if (!is.null(priority_filter) && length(priority_filter) > 0) {
+      priority_list <- build_sql_in_list(priority_filter)
+      priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
+    }
+
     # Determine which inspection table to use
     table_info <- get_table_strategy(analysis_date)
     inspection_table <- if (table_info$query_archive) "dblarv_insptrt_archive" else "dblarv_insptrt_current"
@@ -71,7 +79,7 @@ get_checklist_data <- function(facility_filter = NULL,
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
         WHERE (b.enddate IS NULL OR b.enddate > '%s')
           AND b.air_gnd = 'A'
-          AND b.priority = 'RED'
+          %s
           %s
           %s
           %s
@@ -168,6 +176,7 @@ get_checklist_data <- function(facility_filter = NULL,
       ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
     ",
       as.character(analysis_date),
+      priority_condition,
       facility_condition,
       foreman_condition,
       zone_condition,

@@ -178,6 +178,16 @@ server <- function(input, output, session) {
     updateSelectInput(session, "facility_filter",
                       choices = facility_choices, selected = selected_facility)
 
+    # Priority filter — default to RED
+    priority_choices_raw <- get_priority_choices(include_all = FALSE)
+    url_priority <- NULL
+    if (!is.null(query$priority) && query$priority != "" && query$priority != "all") {
+      url_priority <- toupper(trimws(unlist(strsplit(query$priority, ","))))
+    }
+    updateSelectizeInput(session, "priority_filter",
+                         choices = priority_choices_raw,
+                         selected = if (!is.null(url_priority)) url_priority else "RED")
+
     if (!is.null(url_lookback)) {
       updateSliderInput(session, "lookback_days", value = url_lookback)
     }
@@ -264,6 +274,13 @@ server <- function(input, output, session) {
       "1"
     }
 
+    # Parse priority filter
+    priority_vals <- if (!is.null(input$priority_filter) && length(input$priority_filter) > 0) {
+      input$priority_filter
+    } else {
+      "RED"
+    }
+
     list(
       facility = fac,
       foreman = fos,
@@ -271,6 +288,7 @@ server <- function(input, output, session) {
       analysis_date = input$analysis_date,
       show_unfinished = input$show_unfinished_only,
       zone = zone_vals,
+      priority_filter = priority_vals,
       show_active_treatment = isTRUE(input$show_active_treatment)
     )
   })
@@ -289,6 +307,7 @@ server <- function(input, output, session) {
         lookback_days = params$lookback_days,
         analysis_date = params$analysis_date,
         zone_filter = params$zone,
+        priority_filter = params$priority_filter,
         include_active_treatment = params$show_active_treatment
       )
       incProgress(0.7)

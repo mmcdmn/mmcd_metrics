@@ -235,10 +235,8 @@ function mergeSheetAndRedisClaims_(manualSnap, redisClaims, previousClaims) {
 
   // Build current sheet claim state from snapshot
   const sheetClaims = {};  // sitecode → emp string (or '')
-  for (const snapKey of Object.keys(manualSnap)) {
-    const sitecode = snapKey.split('::')[1];
-    if (!sitecode) continue;
-    sheetClaims[sitecode] = String(manualSnap[snapKey][claimColIdx] || '').trim();
+  for (const sc of Object.keys(manualSnap)) {
+    sheetClaims[sc] = String(manualSnap[sc][claimColIdx] || '').trim();
   }
 
   // Resolve every sitecode that appears on a sheet tab
@@ -344,9 +342,11 @@ function snapshotManualData_(ss) {
       const sc = String(allData[i][0]).trim();   // col 1 = Sitecode
       if (!sc) continue;
       const manualVals = MANUAL_INDICES.map(idx => allData[i][idx]);
-      snap[name + '::' + sc] = manualVals;
+      // Key by sitecode only (globally unique) — immune to tab-name drift
+      snap[sc] = manualVals;
     }
   }
+  Logger.log('snapshotManualData_: captured ' + Object.keys(snap).length + ' sitecodes');
   return snap;
 }
 
@@ -471,7 +471,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum)
       row.has_active_treatment ? (row.active_material || 'Y') : '',
       '', '', '',
     ];
-    const key = tabName + '::' + (row.sitecode || '');
+    const key = row.sitecode || '';
     if (manualSnap[key]) {
       for (let j = 0; j < MANUAL_COL_NAMES.length; j++) {
         vals[MANUAL_INDICES[j]] = manualSnap[key][j] || '';

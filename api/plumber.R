@@ -606,6 +606,18 @@ function(req, res) {
     saved <- 0L
     errors <- list()
 
+    # Build emp_num → shortname lookup so sheet claims (which only have IDs) get real names
+    emp_name_lookup <- tryCatch({
+      con <- get_db_connection()
+      if (!is.null(con)) {
+        rows <- dbGetQuery(con, "
+          SELECT DISTINCT ON (emp_num) emp_num::text, shortname
+          FROM employee_list
+          ORDER BY emp_num, enddate NULLS LAST")
+        setNames(rows$shortname, rows$emp_num)
+      } else character(0)
+    }, error = function(e) character(0))
+
     for (cl in claims) {
       sc  <- trimws(as.character(cl$sitecode %||% ""))
       emp <- trimws(as.character(cl$emp_num  %||% ""))
@@ -630,6 +642,10 @@ function(req, res) {
       }
 
       emp_name <- trimws(as.character(cl$emp_name %||% emp))
+      # If caller sent emp_num as the name (e.g. from Sheets), resolve to real name
+      if (emp_name == emp && !is.null(emp_name_lookup[emp]) && !is.na(emp_name_lookup[emp])) {
+        emp_name <- emp_name_lookup[emp]
+      }
       claim_data <- list(
         emp_num  = emp,
         emp_name = emp_name,

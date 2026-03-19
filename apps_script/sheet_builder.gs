@@ -73,6 +73,13 @@ const C = {
 // ════════════════════════════════════════════════════════════════════════════
 
 function refreshChecklist() {
+  // Prevent overlapping executions (trigger could fire while previous run is still going)
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    Logger.log('Skipping refresh — another execution is still running.');
+    return;
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const thresholdNum = getThreshold_();
   const rows = fetchChecklistData_();
@@ -84,7 +91,9 @@ function refreshChecklist() {
   const manualSnap = snapshotManualData_(ss);
   const hiddenSnap = snapshotHiddenRows_(ss);
   const redisClaims = fetchClaims_();   // { sitecode: { emp_num, emp_name, time } }
-  const previousClaims = loadPreviousClaims_();
+  Logger.log('fetchClaims_: ' + Object.keys(redisClaims).length + ' claims from Redis: '
+    + Object.keys(redisClaims).join(', '));
+  const claimState = loadClaimState_();
 
   const byFos = {};
   for (const r of rows) {
@@ -92,12 +101,34 @@ function refreshChecklist() {
     (byFos[fos] = byFos[fos] || []).push(r);
   }
 
-  // Merge claims: compare sheet vs Redis vs previous state
-  const { merged: mergedClaims, toRemove, toAdd } =
-    mergeSheetAndRedisClaims_(manualSnap, redisClaims, previousClaims);
+  // Merge claims: compare sheet vs Redis vs saved state
+  const { merged: mergedClaims, toRemove, toAdd, newState } =
+    mergeSheetAndRedisClaims_(manualSnap, redisClaims, claimState);
 
+  const allLateClaimEdits = {};
   for (const fos of Object.keys(byFos).sort()) {
-    writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, mergedClaims, thresholdNum);
+    const edits = writeFosTab_(ss, safeName_(fos), byFos[fos], manualSnap, mergedClaims, thresholdNum);
+    if (edits) Object.assign(allLateClaimEdits, edits);
+  }
+
+  // Reconcile late claim edits: user edited claim cells during the API window
+  // The merge already ran on stale snapshot, so we fix toRemove/toAdd/newState here.
+  for (const [sc, freshClaim] of Object.entries(allLateClaimEdits)) {
+    const redisVal = redisClaims[sc] ? String(redisClaims[sc].emp_num || '').trim() : '';
+    if (freshClaim) {
+      // User added or changed a claim during the API window
+      if (freshClaim !== (mergedClaims[sc] || '')) {
+        toAdd.push({ sitecode: sc, emp_num: freshClaim });
+      }
+      newState[sc] = freshClaim;
+      Logger.log('LATE-EDIT CLAIM ADD ' + sc + ': "' + freshClaim + '"');
+    } else {
+      // User cleared a claim during the API window
+      if (redisVal) toRemove.push(sc);
+      newState[sc] = '__REMOVED__';
+      delete mergedClaims[sc];
+      Logger.log('LATE-EDIT CLAIM REMOVE ' + sc + ' (redisVal=' + redisVal + ')');
+    }
   }
 
   // Re-hide rows that were hidden before refresh
@@ -109,8 +140,8 @@ function refreshChecklist() {
   // Remove explicitly deleted claims from Redis
   if (toRemove.length > 0) removeClaimsFromRedis_(toRemove);
 
-  // Save the final claim state for next-refresh comparison
-  savePreviousClaims_(mergedClaims);
+  // Save the claim state for next-refresh comparison (single atomic save)
+  saveClaimState_(newState);
 
   writeSummary_(ss, byFos, thresholdNum);
   SpreadsheetApp.flush();
@@ -212,64 +243,125 @@ function fetchClaims_() {
 }
 
 /**
- * Merge sheet claims and Redis claims using previous-refresh state.
+ * Merge sheet claims and Redis claims using saved claim state.
  *
- * Logic per sitecode on the sheet:
- *   sheet changed (sheet != prev) ──► sheet wins (add / remove)
- *   sheet unchanged (sheet == prev) ──► Redis is authoritative
+ * claimState stores THREE kinds of values per sitecode:
+ *   'empId'      — an active claim was displayed
+ *   ''           — no claim was displayed (Redis may populate it next time)
+ *   '__REMOVED__' — user explicitly removed a claim; block Redis until confirmed gone
  *
- * This handles:
- *   • User types new claim     → pushed to Redis
- *   • User clears a claim      → removed from Redis
- *   • Shiny app adds claim     → appears on sheet next refresh
- *   • Shiny app removes claim  → disappears from sheet next refresh
+ * Sitecodes NOT in claimState are new to the sheet → Redis is authoritative.
  *
- * Returns { merged, toRemove, toAdd }
+ * Returns { merged, toRemove, toAdd, newState }
  */
-function mergeSheetAndRedisClaims_(manualSnap, redisClaims, previousClaims) {
+function mergeSheetAndRedisClaims_(manualSnap, redisClaims, claimState) {
+  const REMOVED = '__REMOVED__';
   const merged   = {};
   const toRemove = [];   // sitecodes to delete from Redis
   const toAdd    = [];   // { sitecode, emp_num } to push to Redis
+  const newState = {};   // what to save for next cycle
 
   const claimColIdx = MANUAL_COL_NAMES.indexOf('Claim Emp ID');  // 0
 
   // Build current sheet claim state from snapshot
   const sheetClaims = {};  // sitecode → emp string (or '')
-  for (const snapKey of Object.keys(manualSnap)) {
-    const sitecode = snapKey.split('::')[1];
-    if (!sitecode) continue;
-    sheetClaims[sitecode] = String(manualSnap[snapKey][claimColIdx] || '').trim();
+  for (const sc of Object.keys(manualSnap)) {
+    sheetClaims[sc] = String(manualSnap[sc][claimColIdx] || '').trim();
   }
 
   // Resolve every sitecode that appears on a sheet tab
   for (const sc of Object.keys(sheetClaims)) {
     const sheetVal = sheetClaims[sc];
-    const prevVal  = previousClaims[sc] || '';
-    const redisVal = redisClaims[sc] ? String(redisClaims[sc].emp_num || '').trim() : '';
+    const stateEntry = claimState[sc];               // undefined | '' | empId | '__REMOVED__'
+    const isPending  = stateEntry === REMOVED;
+    const prevVal    = isPending ? '' : (stateEntry || '');
+    const isNew      = stateEntry === undefined;     // first time on the sheet
+    const redisVal   = redisClaims[sc] ? String(redisClaims[sc].emp_num || '').trim() : '';
 
-    if (sheetVal && sheetVal !== prevVal) {
-      // User typed or changed a claim → sheet wins
-      merged[sc] = sheetVal;
-      if (sheetVal !== redisVal) toAdd.push({ sitecode: sc, emp_num: sheetVal });
-    } else if (!sheetVal && prevVal) {
-      // User cleared a claim that was shown last refresh → explicit removal
-      if (redisVal) toRemove.push(sc);
-      // merged stays empty for this sc
-    } else if (redisVal) {
-      // No user change — Redis is authoritative
-      merged[sc] = redisVal;
+    // Log any sitecode where something interesting is happening
+    if (sheetVal || prevVal || redisVal || isPending) {
+      Logger.log('MERGE ' + sc + ': sheet="' + sheetVal + '" state="' + String(stateEntry)
+        + '" prev="' + prevVal + '" redis="' + redisVal + '" isNew=' + isNew + ' isPending=' + isPending);
     }
-    // else: no claim anywhere
+
+    if (isPending) {
+      // ── Pending removal from a previous cycle ──
+      if (sheetVal) {
+        // User typed a new claim → cancel the removal
+        merged[sc] = sheetVal;
+        newState[sc] = sheetVal;
+        if (sheetVal !== redisVal) toAdd.push({ sitecode: sc, emp_num: sheetVal });
+        Logger.log('  → CANCEL PENDING, use sheet: ' + sheetVal);
+      } else if (redisVal) {
+        // Redis still has it → keep blocking, re-try removal
+        toRemove.push(sc);
+        newState[sc] = REMOVED;
+        Logger.log('  → RE-TRY REMOVE (Redis still has it)');
+      } else {
+        Logger.log('  → REMOVAL COMPLETE (Redis confirmed gone)');
+      }
+
+    } else if (isNew) {
+      // ── First time this sitecode appears on the sheet ──
+      if (sheetVal) {
+        merged[sc] = sheetVal;
+        newState[sc] = sheetVal;
+        if (sheetVal !== redisVal) toAdd.push({ sitecode: sc, emp_num: sheetVal });
+        Logger.log('  → NEW: use sheet claim: ' + sheetVal);
+      } else if (redisVal) {
+        merged[sc] = redisVal;
+        newState[sc] = redisVal;
+        Logger.log('  → NEW: use Redis claim: ' + redisVal);
+      }
+
+    } else if (sheetVal !== prevVal) {
+      // ── User changed the claim cell ──
+      if (sheetVal) {
+        // Added or changed claim
+        merged[sc] = sheetVal;
+        newState[sc] = sheetVal;
+        if (sheetVal !== redisVal) toAdd.push({ sitecode: sc, emp_num: sheetVal });
+        Logger.log('  → CHANGED: push to Redis: ' + sheetVal);
+      } else {
+        // Cleared claim → explicit removal
+        if (redisVal) toRemove.push(sc);
+        newState[sc] = REMOVED;
+        Logger.log('  → CLEARED: mark removed (redisVal=' + redisVal + ')');
+      }
+
+    } else {
+      // ── No user change → Redis is authoritative ──
+      if (redisVal) {
+        merged[sc] = redisVal;
+        newState[sc] = redisVal;
+        Logger.log('  → UNCHANGED: use Redis: ' + redisVal);
+      } else if (prevVal) {
+        // Had a claim last time, Redis lost it → keep sheet value
+        merged[sc] = prevVal;
+        newState[sc] = prevVal;
+        Logger.log('  → UNCHANGED: keep prev: ' + prevVal);
+      }
+    }
   }
 
   // Redis claims for sitecodes NOT on any sheet tab → carry forward
   for (const sc of Object.keys(redisClaims)) {
     if (!(sc in sheetClaims)) {
-      merged[sc] = String(redisClaims[sc].emp_num || '').trim();
+      const stateEntry = claimState[sc];
+      if (stateEntry === REMOVED) {
+        toRemove.push(sc);
+        newState[sc] = REMOVED;
+      } else {
+        merged[sc] = String(redisClaims[sc].emp_num || '').trim();
+        newState[sc] = merged[sc];
+      }
     }
   }
 
-  return { merged, toRemove, toAdd };
+  const pendingCount = Object.values(newState).filter(v => v === REMOVED).length;
+  Logger.log('mergeSheetAndRedisClaims_: toRemove=' + toRemove.length
+    + ' toAdd=' + toAdd.length + ' pending=' + pendingCount);
+  return { merged, toRemove, toAdd, newState };
 }
 
 /** Push claim additions to Redis via the API */
@@ -297,30 +389,44 @@ function removeClaimsFromRedis_(sitecodes) {
   try {
     const base = getProp_('API_BASE');
     const key  = getProp_('API_KEY');
-    UrlFetchApp.fetch(base + '/private/claims/remove', {
+    const r = UrlFetchApp.fetch(base + '/private/claims/remove', {
       method: 'post',
       contentType: 'application/json',
       headers: { 'Authorization': 'Bearer ' + key },
       payload: JSON.stringify({ sitecodes: sitecodes }),
       muteHttpExceptions: true,
     });
-    Logger.log('Removed ' + sitecodes.length + ' claim(s) from Redis.');
-  } catch (e) { Logger.log('removeClaimsFromRedis_: ' + e.message); }
+    const code = r.getResponseCode();
+    Logger.log('removeClaimsFromRedis_: HTTP ' + code
+      + ' | sites: ' + sitecodes.join(',') + ' | body: ' + r.getContentText());
+  } catch (e) { Logger.log('removeClaimsFromRedis_ ERROR: ' + e.message); }
 }
 
-/** Save the final merged-claims map for next-refresh comparison */
-function savePreviousClaims_(claims) {
+/**
+ * Save claim state — single atomic write.
+ * Values: empId string for active claims, '__REMOVED__' for pending removals.
+ */
+function saveClaimState_(state) {
   try {
-    PropertiesService.getDocumentProperties()
-      .setProperty('PREV_CLAIMS', JSON.stringify(claims));
-  } catch (e) { Logger.log('savePreviousClaims_: ' + e.message); }
+    const json = JSON.stringify(state || {});
+    PropertiesService.getDocumentProperties().setProperty('CLAIM_STATE', json);
+    Logger.log('saveClaimState_: ' + Object.keys(state || {}).length + ' entries, '
+      + json.length + ' bytes');
+  } catch (e) { Logger.log('saveClaimState_ ERROR: ' + e.message); }
 }
 
-/** Load the claims map that was saved at the end of the previous refresh */
-function loadPreviousClaims_() {
+/** Load claim state from previous refresh */
+function loadClaimState_() {
   try {
-    const raw = PropertiesService.getDocumentProperties().getProperty('PREV_CLAIMS');
-    return raw ? JSON.parse(raw) : {};
+    // Try new CLAIM_STATE key first, fall back to legacy PREV_CLAIMS
+    const raw = PropertiesService.getDocumentProperties().getProperty('CLAIM_STATE')
+             || PropertiesService.getDocumentProperties().getProperty('PREV_CLAIMS');
+    const state = raw ? JSON.parse(raw) : {};
+    const entries = Object.keys(state).length;
+    const removedCount = Object.values(state).filter(v => v === '__REMOVED__').length;
+    Logger.log('loadClaimState_: ' + entries + ' entries, ' + removedCount + ' pending removals'
+      + (entries <= 30 ? ' | data=' + raw : ''));
+    return state;
   } catch (e) { return {}; }
 }
 
@@ -344,9 +450,11 @@ function snapshotManualData_(ss) {
       const sc = String(allData[i][0]).trim();   // col 1 = Sitecode
       if (!sc) continue;
       const manualVals = MANUAL_INDICES.map(idx => allData[i][idx]);
-      snap[name + '::' + sc] = manualVals;
+      // Key by sitecode only (globally unique) — immune to tab-name drift
+      snap[sc] = manualVals;
     }
   }
+  Logger.log('snapshotManualData_: captured ' + Object.keys(snap).length + ' sitecodes');
   return snap;
 }
 
@@ -450,7 +558,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum)
     sh.getRange(FILTER_ROW, 1).setValue(infoText);
   }
 
-  if (rows.length === 0) { if (isNew) finalizeTab_(sh); return; }
+  if (rows.length === 0) { if (isNew) finalizeTab_(sh); return {}; }
 
   const grid = [];
   for (const row of rows) {
@@ -471,7 +579,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum)
       row.has_active_treatment ? (row.active_material || 'Y') : '',
       '', '', '',
     ];
-    const key = tabName + '::' + (row.sitecode || '');
+    const key = row.sitecode || '';
     if (manualSnap[key]) {
       for (let j = 0; j < MANUAL_COL_NAMES.length; j++) {
         vals[MANUAL_INDICES[j]] = manualSnap[key][j] || '';
@@ -486,6 +594,43 @@ function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum)
   }
 
   const numCols = ALL_COLUMNS.length;
+  const lateClaimEdits = {};  // sitecode → new claim value (from late edits)
+
+  // ── Late-edit guard: re-read manual columns to catch edits made during API calls ──
+  // The initial snapshot was taken ~60-80s ago. Any user edits since then would be
+  // overwritten. Re-read the sheet NOW and merge any changes into the grid.
+  if (!isNew) {
+    const currentLast = sh.getLastRow();
+    if (currentLast >= DATA_START) {
+      const nFresh = currentLast - DATA_START + 1;
+      const freshData = sh.getRange(DATA_START, 1, nFresh, numCols).getValues();
+      const freshMap = {};  // sitecode → full row array
+      for (let f = 0; f < nFresh; f++) {
+        const sc = String(freshData[f][0]).trim();
+        if (sc) freshMap[sc] = freshData[f];
+      }
+      let lateEdits = 0;
+      for (let i = 0; i < grid.length; i++) {
+        const sc = String(grid[i][0]).trim();
+        if (!sc || !freshMap[sc]) continue;
+        for (let j = 0; j < MANUAL_INDICES.length; j++) {
+          const idx = MANUAL_INDICES[j];
+          const freshVal = String(freshMap[sc][idx] || '').trim();
+          const snapVal  = String((manualSnap[sc] || [])[j] || '').trim();
+          if (freshVal !== snapVal) {
+            // User edited this cell during the execution window → use fresh value
+            grid[i][idx] = freshMap[sc][idx];
+            lateEdits++;
+            // Track late claim edits so refreshChecklist can update Redis/state
+            if (idx === MANUAL_INDICES[0]) {  // Claim Emp ID column
+              lateClaimEdits[sc] = freshVal;
+            }
+          }
+        }
+      }
+      if (lateEdits > 0) Logger.log('writeFosTab_ ' + tabName + ': captured ' + lateEdits + ' late edit(s)');
+    }
+  }
 
   // Capture old extent BEFORE writing new data
   const oldLastRow = sh.getLastRow();
@@ -547,6 +692,7 @@ function writeFosTab_(ss, tabName, rows, manualSnap, mergedClaims, thresholdNum)
   }
 
   if (isNew) finalizeTab_(sh);
+  return lateClaimEdits;
 }
 
 

@@ -170,6 +170,18 @@ server <- function(input, output, session) {
   }
 
   # ===========================================================================
+  # AUTO-POLL CLAIMS (every 10 seconds via existing Shiny WebSocket)
+  # Redis hash reads are ~1-5 ms, so this adds negligible server load.
+  # When claims change, the UI updates instantly without a full data refresh.
+  # ===========================================================================
+  claims_timer <- reactiveTimer(10000)  # 10 seconds
+
+  observe({
+    claims_timer()
+    send_claims_to_client()
+  })
+
+  # ===========================================================================
   # INITIALIZE FACILITY + LOOKBACK (runs once, FOS is handled below)
   # ===========================================================================
   observe({

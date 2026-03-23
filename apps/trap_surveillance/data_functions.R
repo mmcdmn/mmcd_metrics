@@ -709,14 +709,14 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
       FROM dbadult_insp_current i
       WHERE i.network_type = 'mnt'
-        AND i.survtype IN ('5', '6')
+        AND i.survtype IN ('4', '5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
       UNION ALL
       SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
       FROM dbadult_insp_archive i
       WHERE i.network_type = 'mnt'
-        AND i.survtype IN ('5', '6')
+        AND i.survtype IN ('4', '5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
     ),
@@ -743,7 +743,9 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       wi.facility,
       wi.inspdate,
       wi.survtype,
-      CASE WHEN wi.survtype = '5' THEN 'Gravid' ELSE 'CO2' END as trap_type,
+      CASE WHEN wi.survtype = '5' THEN 'Gravid'
+           WHEN wi.survtype = '4' THEN 'Elevated CO2'
+           ELSE 'CO2' END as trap_type,
       COALESCE(wa.mosqcount, 0) as cx_vector_count,
       mn.loc_facility,
       mn.zone,
@@ -820,9 +822,10 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
     # Convert to sf for leaflet
     traps_sf <- st_as_sf(trap_summary, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
     
-    message(sprintf("Week %d: %d traps (%d CO2, %d Gravid) — %d with pools, %d positive",
+    message(sprintf("Week %d: %d traps (%d CO2, %d Elevated CO2, %d Gravid) — %d with pools, %d positive",
                     yrwk_int, nrow(trap_summary),
                     sum(trap_summary$trap_type == "CO2"),
+                    sum(trap_summary$trap_type == "Elevated CO2"),
                     sum(trap_summary$trap_type == "Gravid"),
                     sum(trap_summary$num_pools > 0),
                     sum(trap_summary$num_positive > 0)))

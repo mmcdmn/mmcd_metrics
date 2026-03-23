@@ -709,14 +709,14 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
       FROM dbadult_insp_current i
       WHERE i.network_type = 'mnt'
-        AND i.survtype = '6'
+        AND i.survtype IN ('5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
       UNION ALL
       SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
       FROM dbadult_insp_archive i
       WHERE i.network_type = 'mnt'
-        AND i.survtype = '6'
+        AND i.survtype IN ('5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
     ),
@@ -739,10 +739,12 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       WHERE t.target = '%s' OR t.target IS NULL
     )
     SELECT 
-      wa.loc_code,
+      wi.loc_code,
       wi.facility,
-      wa.inspdate,
-      wa.mosqcount as cx_vector_count,
+      wi.inspdate,
+      wi.survtype,
+      CASE WHEN wi.survtype = '5' THEN 'Gravid' ELSE 'CO2' END as trap_type,
+      COALESCE(wa.mosqcount, 0) as cx_vector_count,
       mn.loc_facility,
       mn.zone,
       mn.virus_test,
@@ -756,12 +758,12 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       tp.test_date,
       tp.genus,
       tp.species
-    FROM week_abundance wa
-    JOIN week_inspections wi ON wi.loc_code = wa.loc_code AND wi.inspdate = wa.inspdate
-    LEFT JOIN loc_mondaynight mn ON mn.loc_code = wa.loc_code
-    LEFT JOIN trap_pools tp ON tp.loc_code = wa.loc_code
+    FROM week_inspections wi
+    LEFT JOIN week_abundance wa ON wa.loc_code = wi.loc_code AND wa.inspdate = wi.inspdate
+    LEFT JOIN loc_mondaynight mn ON mn.loc_code = wi.loc_code
+    LEFT JOIN trap_pools tp ON tp.loc_code = wi.loc_code
     WHERE mn.geom IS NOT NULL
-    ORDER BY wa.loc_code",
+    ORDER BY wi.loc_code",
     yrwk_int, yrwk_int, yrwk_int, virus_target
   )
   
@@ -779,6 +781,7 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       summarise(
         facility = first(facility),
         inspdate = first(inspdate),
+        trap_type = first(trap_type),
         cx_vector_count = first(cx_vector_count),
         lon = first(lon),
         lat = first(lat),
@@ -817,8 +820,10 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
     # Convert to sf for leaflet
     traps_sf <- st_as_sf(trap_summary, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
     
-    message(sprintf("Week %d: %d traps (%d with pools, %d with positive pools)",
+    message(sprintf("Week %d: %d traps (%d CO2, %d Gravid) — %d with pools, %d positive",
                     yrwk_int, nrow(trap_summary),
+                    sum(trap_summary$trap_type == "CO2"),
+                    sum(trap_summary$trap_type == "Gravid"),
                     sum(trap_summary$num_pools > 0),
                     sum(trap_summary$num_positive > 0)))
     

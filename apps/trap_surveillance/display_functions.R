@@ -13,11 +13,15 @@ source("../../shared/color_themes.R")
 
 build_trap_status_legend_html <- function() {
   paste0(
-    "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;line-height:1.4;'>",
+    "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;line-height:1.6;'>",
     "<strong>Trap Status</strong><br/>",
     "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#e74c3c;border:1px solid #333;margin-right:6px;'></span>Positive pool(s)<br/>",
     "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#3498db;border:1px solid #333;margin-right:6px;'></span>Tested, all negative<br/>",
-    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#FFD700;border:1px solid #333;margin-right:6px;'></span>No pools tested",
+    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#FFD700;border:1px solid #333;margin-right:6px;'></span>No pools tested<br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<strong>Trap Type</strong><br/>",
+    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;border:1px solid #333;margin-right:6px;'></span>CO2 (thin border)<br/>",
+    "<span style='display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;border:2px solid #333;margin-right:6px;'></span>Gravid (thick border)",
     "</div>"
   )
 }
@@ -236,10 +240,16 @@ render_surveillance_map <- function(combined_data, areas_sf,
   overlay_groups <- c("Vector Index Areas", "Facilities", "Counties", "Zones")
   
   if (!is.null(week_traps) && nrow(week_traps) > 0) {
+    # Ensure trap_type column exists (backwards compatible)
+    if (!"trap_type" %in% names(week_traps)) {
+      week_traps$trap_type <- "CO2"
+    }
+    
     # Week-active traps with pool details
     trap_popup <- sprintf(
-      "<strong>Trap: %s</strong><br/>Facility: %s | Zone: %s<br/><hr/><strong>Cx Vector Count: %d</strong><br/>Inspection: %s<br/><hr/><strong>Pools (%d total, %d positive):</strong><br/>%s",
+      "<strong>Trap: %s</strong> <span style='color:#888;'>(%s)</span><br/>Facility: %s | Zone: %s<br/><hr/><strong>Cx Vector Count: %d</strong><br/>Inspection: %s<br/><hr/><strong>Pools (%d total, %d positive):</strong><br/>%s",
       week_traps$loc_code,
+      week_traps$trap_type,
       week_traps$facility,
       ifelse(is.na(week_traps$zone), "N/A", week_traps$zone),
       as.integer(week_traps$cx_vector_count),
@@ -254,19 +264,39 @@ render_surveillance_map <- function(combined_data, areas_sf,
                  ifelse(week_traps$num_pools > 0, "#3498db",      # Blue = tested, all negative
                         "#FFD700"))                                # Gold = no pools tested
     
-    m <- m %>%
-      addCircleMarkers(
-        data = week_traps,
-        radius = 5,
-        color = "#333",
-        fillColor = trap_fill,
-        fillOpacity = 0.85,
-        weight = 1,
-        popup = trap_popup,
-        options = pathOptions(pane = "traps"),
-        group = "Trap Locations"
-      )
-    overlay_groups <- c(overlay_groups, "Trap Locations")
+    # Split by trap type for different marker shapes
+    co2_idx <- which(week_traps$trap_type == "CO2")
+    grav_idx <- which(week_traps$trap_type == "Gravid")
+    
+    if (length(co2_idx) > 0) {
+      m <- m %>%
+        addCircleMarkers(
+          data = week_traps[co2_idx, ],
+          radius = 5,
+          color = "#333",
+          fillColor = trap_fill[co2_idx],
+          fillOpacity = 0.85,
+          weight = 1,
+          popup = trap_popup[co2_idx],
+          options = pathOptions(pane = "traps"),
+          group = "CO2 Traps"
+        )
+    }
+    if (length(grav_idx) > 0) {
+      m <- m %>%
+        addCircleMarkers(
+          data = week_traps[grav_idx, ],
+          radius = 6,
+          color = "#333",
+          fillColor = trap_fill[grav_idx],
+          fillOpacity = 0.85,
+          weight = 2,
+          popup = trap_popup[grav_idx],
+          options = pathOptions(pane = "traps"),
+          group = "Gravid Traps"
+        )
+    }
+    overlay_groups <- c(overlay_groups, "CO2 Traps", "Gravid Traps")
     m <- m %>% addControl(html = build_trap_status_legend_html(), position = "topright")
   } else if (!is.null(all_traps) && nrow(all_traps) > 0) {
     # Fallback: shapefile traps (no pool details)
@@ -439,9 +469,12 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
   # Trap markers
   overlay_groups <- c("Vector Index Areas", "Facilities", "Counties")
   if (!is.null(week_traps) && nrow(week_traps) > 0) {
+    if (!"trap_type" %in% names(week_traps)) week_traps$trap_type <- "CO2"
+    
     trap_popup <- sprintf(
-      "<strong>Trap: %s</strong><br/>Facility: %s | Zone: %s<br/><hr/><strong>Cx Count: %d</strong> | Pools: %d (%d pos)<br/>%s",
+      "<strong>Trap: %s</strong> <span style='color:#888;'>(%s)</span><br/>Facility: %s | Zone: %s<br/><hr/><strong>Cx Count: %d</strong> | Pools: %d (%d pos)<br/>%s",
       week_traps$loc_code,
+      week_traps$trap_type,
       week_traps$facility,
       ifelse(is.na(week_traps$zone), "N/A", week_traps$zone),
       as.integer(week_traps$cx_vector_count),
@@ -451,13 +484,27 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
     )
     trap_fill <- ifelse(week_traps$num_positive > 0, "#e74c3c",
                  ifelse(week_traps$num_pools > 0, "#3498db", "#FFD700"))
-    m <- m %>%
-      addCircleMarkers(data = week_traps, radius = 5, color = "#333",
-                       fillColor = trap_fill, fillOpacity = 0.85, weight = 1,
-                       popup = trap_popup,
-                       options = pathOptions(pane = "traps"),
-                       group = "Trap Locations")
-    overlay_groups <- c(overlay_groups, "Trap Locations")
+    
+    co2_idx <- which(week_traps$trap_type == "CO2")
+    grav_idx <- which(week_traps$trap_type == "Gravid")
+    
+    if (length(co2_idx) > 0) {
+      m <- m %>%
+        addCircleMarkers(data = week_traps[co2_idx, ], radius = 5, color = "#333",
+                         fillColor = trap_fill[co2_idx], fillOpacity = 0.85, weight = 1,
+                         popup = trap_popup[co2_idx],
+                         options = pathOptions(pane = "traps"),
+                         group = "CO2 Traps")
+    }
+    if (length(grav_idx) > 0) {
+      m <- m %>%
+        addCircleMarkers(data = week_traps[grav_idx, ], radius = 6, color = "#333",
+                         fillColor = trap_fill[grav_idx], fillOpacity = 0.85, weight = 2,
+                         popup = trap_popup[grav_idx],
+                         options = pathOptions(pane = "traps"),
+                         group = "Gravid Traps")
+    }
+    overlay_groups <- c(overlay_groups, "CO2 Traps", "Gravid Traps")
     m <- m %>% addControl(html = build_trap_status_legend_html(), position = "topright")
   } else if (!is.null(all_traps) && nrow(all_traps) > 0) {
     m <- m %>%

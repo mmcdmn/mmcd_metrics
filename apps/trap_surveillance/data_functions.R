@@ -235,12 +235,19 @@ fetch_abundance_avg_by_epiweek <- function(current_year, n_years, spp_name = "To
   start_year <- as.integer(current_year) - n_years
   end_year   <- as.integer(current_year) - 1
   
+  # Two-step aggregation: avg_per_trap per year+week first, then average across years
   q <- sprintf(
-    "SELECT epiweek AS week,
-            SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
-     FROM dbadult_mon_nt_co2_forvectorabundance
-     WHERE year BETWEEN %d AND %d
-       AND spp_name = '%s'
+    "WITH yearly_weekly AS (
+       SELECT year, epiweek,
+              SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year BETWEEN %d AND %d
+         AND spp_name = '%s'
+       GROUP BY year, epiweek
+     )
+     SELECT epiweek AS week,
+            AVG(avg_per_trap) AS avg_per_trap
+     FROM yearly_weekly
      GROUP BY epiweek
      ORDER BY epiweek",
     start_year, end_year, spp_name
@@ -503,6 +510,173 @@ fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors",
     data
   }, error = function(e) {
     warning(paste("VI area trend query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
+# DISTRICT-WIDE VECTOR INDEX TREND - with CI bounds (like MLE/MIR trends)
+# =============================================================================
+
+# District-wide Vector Index trend with CI bounds.
+# VI = avg_per_trap × infection_rate; CI from MLE bounds.
+fetch_vi_district_trend <- function(year, spp_name = "Total_Cx_vectors",
+                                     infection_metric = "mle") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  spp_code <- spp_name_to_code(spp_name)
+  
+  if (infection_metric == "mle") {
+    if (is.null(spp_code)) {
+      infection_cte <- sprintf(
+        "SELECT yrwk, p::numeric AS infection_rate,
+                lower::numeric AS rate_lower, upper::numeric AS rate_upper
+         FROM dbvirus_mle_yrwk
+         WHERE yrwk::text LIKE '%s%%'",
+        as.character(year))
+    } else {
+      infection_cte <- sprintf(
+        "SELECT yrwk,
+                AVG(p::numeric) AS infection_rate,
+                AVG(lower::numeric) AS rate_lower,
+                AVG(upper::numeric) AS rate_upper
+         FROM dbvirus_mle_yrwk_area_spp
+         WHERE yrwk::text LIKE '%s%%' AND spp_code = '%s'
+         GROUP BY yrwk",
+        as.character(year), spp_code)
+    }
+  } else {
+    # MIR mode — compute SE from positive/mosquitoes for CI
+    if (is.null(spp_code)) {
+      infection_cte <- sprintf(
+        "SELECT yrwk,
+                mir::numeric / 1000.0 AS infection_rate,
+                GREATEST(mir::numeric / 1000.0 -
+                  CASE WHEN mosquitoes > 0
+                       THEN SQRT((positive::numeric / mosquitoes) * (1.0 - positive::numeric / mosquitoes) / mosquitoes)
+                       ELSE 0 END, 0) AS rate_lower,
+                mir::numeric / 1000.0 +
+                  CASE WHEN mosquitoes > 0
+                       THEN SQRT((positive::numeric / mosquitoes) * (1.0 - positive::numeric / mosquitoes) / mosquitoes)
+                       ELSE 0 END AS rate_upper
+         FROM dbvirus_mir_yrwk
+         WHERE yrwk::text LIKE '%s%%'",
+        as.character(year))
+    } else {
+      infection_cte <- sprintf(
+        "SELECT yrwk,
+                AVG(mir::numeric) / 1000.0 AS infection_rate,
+                AVG(mir::numeric) / 1000.0 AS rate_lower,
+                AVG(mir::numeric) / 1000.0 AS rate_upper
+         FROM dbvirus_mir_yrwk_area_spp
+         WHERE yrwk::text LIKE '%s%%' AND spp_code = '%s'
+         GROUP BY yrwk",
+        as.character(year), spp_code)
+    }
+  }
+  
+  q <- sprintf(
+    "WITH abundance AS (
+       SELECT yrwk,
+              SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year = %d AND spp_name = '%s'
+       GROUP BY yrwk
+     ),
+     infection AS (%s)
+     SELECT a.yrwk,
+            a.avg_per_trap,
+            COALESCE(i.infection_rate, 0) AS infection_rate,
+            COALESCE(i.rate_lower, 0) AS rate_lower,
+            COALESCE(i.rate_upper, 0) AS rate_upper,
+            a.avg_per_trap * COALESCE(i.infection_rate, 0) AS vector_index,
+            a.avg_per_trap * COALESCE(i.rate_lower, 0) AS vi_lower,
+            a.avg_per_trap * COALESCE(i.rate_upper, 0) AS vi_upper
+     FROM abundance a
+     LEFT JOIN infection i ON a.yrwk::text = i.yrwk::text
+     ORDER BY a.yrwk",
+    as.integer(year), spp_name, infection_cte
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(substr(as.character(data$yrwk), 5, 6))
+    message(sprintf("VI district trend: %d weeks for year %s", nrow(data), year))
+    data
+  }, error = function(e) {
+    warning(paste("VI district trend query failed:", e$message))
+    NULL
+  })
+}
+
+# Multi-year average Vector Index by epiweek (for 5yr/10yr avg lines)
+fetch_vi_avg_by_epiweek <- function(current_year, n_years,
+                                     spp_name = "Total_Cx_vectors",
+                                     infection_metric = "mle") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  start_year <- as.integer(current_year) - n_years
+  end_year   <- as.integer(current_year) - 1
+  spp_code <- spp_name_to_code(spp_name)
+  
+  if (infection_metric == "mle") {
+    if (is.null(spp_code)) {
+      infection_join <- "LEFT JOIN dbvirus_mle_yrwk m ON wa.yrwk::text = m.yrwk::text"
+      infection_col <- "COALESCE(m.p::numeric, 0)"
+    } else {
+      infection_join <- sprintf(
+        "LEFT JOIN (SELECT yrwk, AVG(p::numeric) AS p
+                    FROM dbvirus_mle_yrwk_area_spp WHERE spp_code = '%s' GROUP BY yrwk) m
+         ON wa.yrwk::text = m.yrwk::text", spp_code)
+      infection_col <- "COALESCE(m.p, 0)"
+    }
+  } else {
+    if (is.null(spp_code)) {
+      infection_join <- "LEFT JOIN dbvirus_mir_yrwk m ON wa.yrwk::text = m.yrwk::text"
+      infection_col <- "COALESCE(m.mir::numeric / 1000.0, 0)"
+    } else {
+      infection_join <- sprintf(
+        "LEFT JOIN (SELECT yrwk, AVG(mir::numeric) AS mir
+                    FROM dbvirus_mir_yrwk_area_spp WHERE spp_code = '%s' GROUP BY yrwk) m
+         ON wa.yrwk::text = m.yrwk::text", spp_code)
+      infection_col <- "COALESCE(m.mir / 1000.0, 0)"
+    }
+  }
+  
+  q <- sprintf(
+    "WITH week_abundance AS (
+       SELECT year, epiweek, yrwk,
+              SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year BETWEEN %d AND %d AND spp_name = '%s'
+       GROUP BY year, epiweek, yrwk
+     ),
+     week_vi AS (
+       SELECT wa.year, wa.epiweek,
+              wa.avg_per_trap * %s AS vector_index
+       FROM week_abundance wa
+       %s
+     )
+     SELECT epiweek AS week,
+            AVG(vector_index) AS avg_vi
+     FROM week_vi
+     GROUP BY epiweek
+     ORDER BY epiweek",
+    start_year, end_year, spp_name,
+    infection_col, infection_join
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(data$week)
+    message(sprintf("VI %d-yr avg: %d weeks from %d-%d", n_years, nrow(data), start_year, end_year))
+    data
+  }, error = function(e) {
+    warning(paste("VI avg query failed:", e$message))
     NULL
   })
 }

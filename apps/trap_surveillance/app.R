@@ -377,60 +377,76 @@ server <- function(input, output, session) {
   output$vi_trend_plot <- plotly::renderPlotly({
     req(input$year, input$species)
     
+    infection_met <- input$infection_metric %||% "mle"
+    
     withProgress(message = "Loading vector index trend...", value = 0.3, {
-      vi_data <- fetch_vi_area_trend(
-        year = as.integer(input$year), 
+      trend_data <- fetch_vi_district_trend(
+        year = as.integer(input$year),
         spp_name = input$species,
-        infection_metric = input$infection_metric %||% "mle"
+        infection_metric = infection_met
       )
       setProgress(1)
     })
     
-    if (is.null(vi_data) || nrow(vi_data) == 0) {
+    if (is.null(trend_data) || nrow(trend_data) == 0) {
       return(plotly::plot_ly() %>%
                plotly::layout(title = "No vector index data available"))
     }
     
-    # District-wide average per week (for bold black line)
-    vi_district <- vi_data %>%
-      dplyr::group_by(yrwk, week) %>%
-      dplyr::summarise(
-        vector_index = mean(vector_index, na.rm = TRUE),
-        .groups = "drop"
-      )
+    infection_label <- if (infection_met == "mle") "MLE" else "MIR"
     
-    infection_label <- if ((input$infection_metric %||% "mle") == "mle") "MLE" else "MIR"
+    # Fetch 5-year and 10-year VI averages
+    avg_5yr  <- fetch_vi_avg_by_epiweek(input$year, 5, input$species, infection_met)
+    avg_10yr <- fetch_vi_avg_by_epiweek(input$year, 10, input$species, infection_met)
     
-    p <- ggplot(vi_data, aes(x = week, y = vector_index, color = viarea)) +
-      geom_line(linewidth = 0.8, alpha = 0.6) +
-      geom_point(size = 1.5, alpha = 0.6)
+    # Build linetype scale dynamically based on available data
+    lt_values <- c(setNames("solid", as.character(input$year)))
+    lt_colors <- c("#c0392b")
+    has_5yr  <- !is.null(avg_5yr) && nrow(avg_5yr) > 0
+    has_10yr <- !is.null(avg_10yr) && nrow(avg_10yr) > 0
     
-    # District-wide average
-    p <- p + geom_line(data = vi_district, aes(x = week, y = vector_index, color = NULL),
-                       color = "#2c3e50", linewidth = 1.3, linetype = "solid",
-                       inherit.aes = FALSE)
+    p <- ggplot(trend_data, aes(x = week, y = vector_index)) +
+      geom_ribbon(aes(ymin = vi_lower, ymax = vi_upper), alpha = 0.2, fill = "#c0392b")
+    
+    # Add 10-year avg line (behind 5-year)
+    if (has_10yr) {
+      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_vi, linetype = "10-yr Avg"),
+                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
+      lt_values <- c(lt_values, "10-yr Avg" = "dotted")
+      lt_colors <- c(lt_colors, "#e67e22")
+    }
+    # Add 5-year avg line
+    if (has_5yr) {
+      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_vi, linetype = "5-yr Avg"),
+                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
+      lt_values <- c(lt_values, "5-yr Avg" = "dashed")
+      lt_colors <- c(lt_colors, "#27ae60")
+    }
     
     p <- p +
+      geom_line(aes(linetype = as.character(input$year)), color = "#c0392b", linewidth = 1) +
+      geom_point(color = "#c0392b", size = 2) +
+      scale_linetype_manual(
+        name = "",
+        values = lt_values,
+        guide = guide_legend(override.aes = list(color = lt_colors))
+      ) +
       labs(
-        title = sprintf("Vector Index by Area — %s — %s (%s)", input$year,
+        title = sprintf("District-Wide Vector Index — %s — %s (%s)", input$year,
                         SPECIES_MAP[[input$species]]$label %||% input$species, infection_label),
-        subtitle = "VI = Avg/Trap × Infection Rate | Bold black = district avg",
         x = "Epiweek",
-        y = "Vector Index (N × P)",
-        color = "VI Area"
+        y = "Vector Index (N × P)"
       ) +
       theme_minimal() +
-      theme(text = element_text(size = 12),
-            legend.position = "right",
-            plot.subtitle = element_text(size = 10, color = "#666"))
+      theme(text = element_text(size = 13),
+            legend.position = "bottom",
+            legend.margin = margin(t = 5, b = 0),
+            plot.margin = margin(b = 40))
     
-    plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+    plotly::ggplotly(p, tooltip = c("x", "y")) %>%
       plotly::layout(
-        annotations = list(
-          list(text = "Bold black = district avg",
-               x = 0.5, y = 1.05, xref = "paper", yref = "paper",
-               showarrow = FALSE, font = list(size = 11, color = "#666"))
-        )
+        legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
+        margin = list(b = 80)
       )
   })
   

@@ -450,6 +450,67 @@ server <- function(input, output, session) {
       )
   })
   
+  # -------------------------------------------------------------------------
+  # VECTOR INDEX BY AREA TREND PLOT (per area colored lines + district avg)
+  # -------------------------------------------------------------------------
+  output$vi_area_trend_plot <- plotly::renderPlotly({
+    req(input$year, input$species)
+    
+    infection_met <- input$infection_metric %||% "mle"
+    
+    withProgress(message = "Loading VI by area...", value = 0.3, {
+      vi_data <- fetch_vi_area_trend(
+        year = as.integer(input$year),
+        spp_name = input$species,
+        infection_metric = infection_met
+      )
+      setProgress(1)
+    })
+    
+    if (is.null(vi_data) || nrow(vi_data) == 0) {
+      return(plotly::plot_ly() %>%
+               plotly::layout(title = "No vector index data available"))
+    }
+    
+    # District-wide average per week
+    vi_district <- vi_data %>%
+      dplyr::group_by(yrwk, week) %>%
+      dplyr::summarise(
+        vector_index = mean(vector_index, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    infection_label <- if (infection_met == "mle") "MLE" else "MIR"
+    
+    p <- ggplot(vi_data, aes(x = week, y = vector_index, color = viarea)) +
+      geom_line(linewidth = 0.8, alpha = 0.6) +
+      geom_point(size = 1.5, alpha = 0.6) +
+      geom_line(data = vi_district, aes(x = week, y = vector_index),
+               color = "#2c3e50", linewidth = 1.3, linetype = "solid",
+               inherit.aes = FALSE) +
+      labs(
+        title = sprintf("Vector Index by Area \u2014 %s \u2014 %s (%s)", input$year,
+                        SPECIES_MAP[[input$species]]$label %||% input$species, infection_label),
+        subtitle = "Bold black = district avg",
+        x = "Epiweek",
+        y = "Vector Index (N \u00d7 P)",
+        color = "VI Area"
+      ) +
+      theme_minimal() +
+      theme(text = element_text(size = 12),
+            legend.position = "right",
+            plot.subtitle = element_text(size = 10, color = "#666"))
+    
+    plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      plotly::layout(
+        annotations = list(
+          list(text = "Bold black = district avg",
+               x = 0.5, y = 1.05, xref = "paper", yref = "paper",
+               showarrow = FALSE, font = list(size = 11, color = "#666"))
+        )
+      )
+  })
+  
   # =========================================================================
   # DATA TABLE — with CI and SE columns
   # =========================================================================

@@ -706,23 +706,47 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
         AND spp_name = 'Total_Cx_vectors'
     ),
     week_inspections AS (
-      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
+      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.sitecode, i.inspdate, i.facility, i.survtype,
+             COALESCE(NULLIF(i.loc_code::text, ''), 'SITE:' || i.sitecode) as eff_loc_code
       FROM dbadult_insp_current i
-      WHERE i.network_type = 'mnt'
+      WHERE (i.network_type = 'mnt' OR i.network_type IS NULL)
         AND i.survtype IN ('4', '5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
       UNION ALL
-      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
+      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.sitecode, i.inspdate, i.facility, i.survtype,
+             COALESCE(NULLIF(i.loc_code::text, ''), 'SITE:' || i.sitecode) as eff_loc_code
       FROM dbadult_insp_archive i
-      WHERE i.network_type = 'mnt'
+      WHERE (i.network_type = 'mnt' OR i.network_type IS NULL)
         AND i.survtype IN ('4', '5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
     ),
+    fallback_sites AS (
+      SELECT DISTINCT sitecode
+      FROM week_inspections
+      WHERE loc_code IS NULL OR loc_code = ''
+    ),
+    harb_locations AS (
+      SELECT DISTINCT ON (h.sitecode) h.sitecode,
+             ST_X(ST_Centroid(ST_Transform(h.geom, 4326))) as harb_lon,
+             ST_Y(ST_Centroid(ST_Transform(h.geom, 4326))) as harb_lat
+      FROM loc_harborage h
+      INNER JOIN fallback_sites fs ON fs.sitecode = h.sitecode
+      WHERE h.geom IS NOT NULL
+      ORDER BY h.sitecode, h.startdate DESC NULLS LAST, h.gid DESC
+    ),
+    sect_locations AS (
+      SELECT sc.sectcode,
+             ST_X(ST_Centroid(ST_Transform(sc.the_geom, 4326))) as sect_lon,
+             ST_Y(ST_Centroid(ST_Transform(sc.the_geom, 4326))) as sect_lat
+      FROM gis_sectcode sc
+      INNER JOIN (SELECT DISTINCT left(sitecode, 7) as sect FROM fallback_sites) fs
+        ON sc.sectcode = fs.sect
+    ),
     trap_pools AS (
       SELECT 
-        wi.loc_code,
+        wi.eff_loc_code,
         wi.sampnum_yr,
         p.poolnum,
         p.spp_code,
@@ -739,7 +763,7 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       WHERE t.target = '%s' OR t.target IS NULL
     )
     SELECT 
-      wi.loc_code,
+      wi.eff_loc_code as loc_code,
       wi.facility,
       wi.inspdate,
       wi.survtype,
@@ -750,8 +774,8 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       mn.loc_facility,
       mn.zone,
       mn.virus_test,
-      ST_X(ST_Transform(mn.geom, 4326)) as lon,
-      ST_Y(ST_Transform(mn.geom, 4326)) as lat,
+      COALESCE(ST_X(ST_Transform(mn.geom, 4326)), h.harb_lon, sc.sect_lon) as lon,
+      COALESCE(ST_Y(ST_Transform(mn.geom, 4326)), h.harb_lat, sc.sect_lat) as lat,
       tp.poolnum,
       tp.spp_code,
       tp.pool_size,
@@ -763,9 +787,11 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
     FROM week_inspections wi
     LEFT JOIN week_abundance wa ON wa.loc_code = wi.loc_code AND wa.inspdate = wi.inspdate
     LEFT JOIN loc_mondaynight mn ON mn.loc_code = wi.loc_code
-    LEFT JOIN trap_pools tp ON tp.loc_code = wi.loc_code
-    WHERE mn.geom IS NOT NULL
-    ORDER BY wi.loc_code",
+    LEFT JOIN harb_locations h ON h.sitecode = wi.sitecode
+    LEFT JOIN sect_locations sc ON sc.sectcode = left(wi.sitecode, 7)
+    LEFT JOIN trap_pools tp ON tp.eff_loc_code = wi.eff_loc_code
+    WHERE (mn.geom IS NOT NULL OR h.harb_lon IS NOT NULL OR sc.sect_lon IS NOT NULL)
+    ORDER BY wi.eff_loc_code",
     yrwk_int, yrwk_int, yrwk_int, virus_target
   )
   

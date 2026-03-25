@@ -78,10 +78,11 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   grid_rows <- ceiling(cards_per_page / 2)
   
   # ---- Density scaling ----
-  # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller
-  card_scale <- 6 / cards_per_page  # 1.0, 0.75, 0.6, 0.5
+  # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller, fewer = capped at 1.0
+  card_scale <- min(1.0, 6 / cards_per_page)  # 4->1.0, 6->1.0, 8->0.75, 10->0.6, 12->0.5
   # Page margins shrink to reclaim space at higher density
   page_margin <- switch(as.character(cards_per_page),
+    "4"  = "0.5in",
     "6"  = "0.5in",
     "8"  = "0.4in",
     "10" = "0.3in",
@@ -89,18 +90,94 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     "0.5in"
   )
   margin_num <- as.numeric(gsub("in", "", page_margin))
-  # Usable print area on letter paper (8.5 x 11)
-  usable_height <- 11 - 2 * margin_num
+  # Usable print area on letter paper (8.5 x 11).
+  # This is set as the card-page height. Since card-page has padding = page_margin
+  # and box-sizing: border-box, the CONTENT area is (11 - 2*margin) - 2*margin.
+  # But we set usable_height = 11 (the full page) because @page margin is 0.
+  usable_height <- 11
   # Gap between cards scales down
   grid_gap <- max(2, round(15 * card_scale))
   
+  # ---- Dynamic font / row sizing ----
+  # Content area inside card-page after padding is subtracted (border-box)
+  content_height_in <- 11 - 2 * margin_num
+  # Available height per card in px (96 dpi: 1in = 96px)
+  card_height_px <- (content_height_in * 96 / grid_rows) - grid_gap
+  # Account for card border (2px top + 2px bottom)
+  card_height_px <- card_height_px - 4
+
+  # Baseline VISIBLE sizes (what the user sees after scale transform)
+  base_title_font   <- 14
+  base_remarks_font <- 11
+  base_info_font    <- 9
+  base_header_pad   <- 6
+  base_header_gap   <- 3
+  base_th_font      <- 9
+  base_td_height    <- 25
+  base_td_pad       <- 4
+  base_td_font      <- 10
+
+  # ---- Squeeze: computed against VISIBLE card height ----
+  # card_height_px is the grid cell = the visible size on paper.
+  # Base sizes are also visible sizes. Squeeze is purely: does it fit?
+  hdr1 <- base_title_font * 1.15 + base_remarks_font * 1.15 * 3 + base_header_gap * 3 + 2 * base_header_pad + 4
+  th1  <- base_th_font * 1.15 + 2 * base_td_pad + 2
+  rows_space1 <- card_height_px - hdr1 - th1
+  td1 <- rows_space1 / num_rows
+  squeeze1 <- min(1.0, td1 / base_td_height)
+
+  # Pass 2: re-estimate header with squeezed fonts, reclaim space
+  s1_title   <- max(7, floor(base_title_font   * squeeze1))
+  s1_remarks <- max(6, floor(base_remarks_font * squeeze1))
+  s1_hpad    <- max(1, floor(base_header_pad   * squeeze1))
+  s1_hgap    <- max(1, floor(base_header_gap   * squeeze1))
+  s1_th      <- max(5, floor(base_th_font      * squeeze1))
+  s1_tdpad   <- max(1, floor(base_td_pad       * squeeze1))
+  hdr2 <- s1_title * 1.15 + s1_remarks * 1.15 * 3 + s1_hgap * 3 + 2 * s1_hpad + 4
+  th2  <- s1_th * 1.15 + 2 * s1_tdpad + 2
+  rows_space2 <- card_height_px - hdr2 - th2
+  td2 <- rows_space2 / num_rows
+  squeeze <- min(1.0, td2 / base_td_height)
+
+  # Compute VISIBLE sizes (what the user sees on paper)
+  vis_title_font   <- max(7,  floor(base_title_font   * squeeze))
+  vis_remarks_font <- max(6,  floor(base_remarks_font * squeeze))
+  vis_info_font    <- max(6,  floor(base_info_font    * squeeze))
+  vis_header_pad   <- max(1,  floor(base_header_pad   * squeeze))
+  vis_header_gap   <- max(1,  floor(base_header_gap   * squeeze))
+  vis_th_font      <- max(5,  floor(base_th_font      * squeeze))
+  vis_td_pad       <- max(1,  floor(base_td_pad       * squeeze))
+  vis_td_font      <- max(6,  floor(base_td_font      * squeeze))
+
+  # CSS variables must be set in INTERNAL px (before scale transform).
+  # The card is rendered at 1/card_scale size then scaled down by card_scale,
+  # so we divide visible sizes by card_scale to get internal values.
+  sc_title_font   <- round(vis_title_font   / card_scale)
+  sc_remarks_font <- round(vis_remarks_font / card_scale)
+  sc_info_font    <- round(vis_info_font    / card_scale)
+  sc_header_pad   <- round(vis_header_pad   / card_scale)
+  sc_header_gap   <- round(vis_header_gap   / card_scale)
+  sc_th_font      <- round(vis_th_font      / card_scale)
+  sc_td_pad       <- round(vis_td_pad       / card_scale)
+  sc_td_font      <- round(vis_td_font      / card_scale)
+  # Badge padding
+  sc_badge_vpad <- max(1, round(2 * squeeze / card_scale))
+  sc_badge_hpad <- max(2, round(4 * squeeze / card_scale))
+  
   html <- paste0('
+  <!-- DEBUG: cards_per_page=', cards_per_page, ' num_rows=', num_rows,
+  ' card_scale=', card_scale, ' card_height_px=', round(card_height_px,1),
+  ' squeeze=', round(squeeze,3),
+  ' vis_title=', vis_title_font, ' sc_title=', sc_title_font,
+  ' vis_info=', vis_info_font, ' sc_info=', sc_info_font,
+  ' vis_remarks=', vis_remarks_font, ' sc_remarks=', sc_remarks_font, ' -->
   <style>
-    /* @page must be inline — CSS custom properties are not supported in @page.
-       Not wrapped in @media print because @page is inherently paged-media. */
+    /* @page margin set to 0 so Chrome does not render its default
+       headers (date/time) and footers (URL/page numbers).
+       Content spacing is handled via padding on .card-page. */
     @page {
       size: letter;
-      margin: ', page_margin, ';
+      margin: 0;
     }
     /* CSS custom properties set per-render for density scaling */
     :root {
@@ -109,6 +186,15 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       --sc-grid-rows: ', grid_rows, ';
       --sc-grid-gap: ', grid_gap, 'px;
       --sc-card-scale: ', card_scale, ';
+      --sc-title-font: ', sc_title_font, 'px;
+      --sc-remarks-font: ', sc_remarks_font, 'px;
+      --sc-info-font: ', sc_info_font, 'px;
+      --sc-header-pad: ', sc_header_pad, 'px;
+      --sc-header-gap: ', sc_header_gap, 'px;
+      --sc-th-font: ', sc_th_font, 'px;
+      --sc-td-pad: ', sc_td_pad, 'px;
+      --sc-td-font: ', sc_td_font, 'px;
+      --sc-badge-pad: ', sc_badge_vpad, 'px ', sc_badge_hpad, 'px;
     }
   </style>
   

@@ -96,11 +96,12 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   
   html <- paste0('
   <style>
-    /* @page must be inline — CSS custom properties are not supported in @page.
-       Not wrapped in @media print because @page is inherently paged-media. */
+    /* @page margin set to 0 so Chrome does not render its default
+       headers (date/time) and footers (URL/page numbers).
+       Content spacing is handled via padding on .card-page. */
     @page {
       size: letter;
-      margin: ', page_margin, ';
+      margin: 0;
     }
     /* CSS custom properties set per-render for density scaling */
     :root {

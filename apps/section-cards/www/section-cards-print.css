@@ -37,8 +37,11 @@
     height: auto;
     max-height: var(--sc-usable-height, 10in);
     overflow: hidden;
+    /* @page margin is 0 (to suppress browser headers/footers),
+       so we use padding here for content spacing instead. */
     margin: 0 !important;
-    padding: 0 !important;
+    padding: var(--sc-page-margin, 0.25in) !important;
+    box-sizing: border-box;
     page-break-inside: avoid;
     break-inside: avoid;
   }

@@ -1,0 +1,228 @@
+/* ============================================================
+   section-cards-print.css
+   Print and screen styles for Section Cards.
+   Density / page-margin CSS variables are set inline by R.
+   ============================================================ */
+
+/* ---------- Print rules ---------- */
+@media print {
+  /* NOTE: @page margin is set via inline <style> from R because
+     @page does not support CSS custom properties in most browsers. */
+
+  .page-break {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Force colors to print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  .cards-container {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .card-page {
+    /* Use max-height instead of height to prevent exact-page-fill
+       causing an auto page-break PLUS the explicit page-break-after,
+       which creates a phantom blank page in Chrome. */
+    height: auto;
+    max-height: var(--sc-usable-height, 10in);
+    overflow: hidden;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* First card-page must not have any top spacing */
+  .card-page:first-child {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  /* Blank separator pages inserted by JS for double-sided printing */
+  .blank-separator {
+    height: 1px;
+    visibility: hidden;
+    page-break-after: always;
+    break-after: page;
+  }
+  /* Last element should not force a trailing blank */
+  .blank-separator:last-child,
+  .card-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
+
+/* ---------- Shared (screen + print) ---------- */
+.cards-container {
+  width: 100%;
+}
+
+.card-page {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(var(--sc-grid-rows, 3), 1fr);
+  gap: var(--sc-grid-gap, 15px);
+  margin-bottom: 20px;
+  box-sizing: border-box;
+}
+
+.section-card {
+  border: 2px solid #333;
+  page-break-inside: avoid;
+  background: white;
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+  position: relative;
+  transform: scale(var(--sc-card-scale, 1));
+  transform-origin: top left;
+  width: calc(100% / var(--sc-card-scale, 1));
+  height: calc(100% / var(--sc-card-scale, 1));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Card header ---------- */
+.card-header {
+  background: #f0f0f0;
+  border-bottom: 2px solid #333;
+  padding: 8px;
+}
+.card-title {
+  font-size: 16px;
+  font-weight: bold;
+  margin: 0 0 5px 0;
+  color: #000;
+}
+.card-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 5px;
+  margin-top: 5px;
+}
+.info-item { font-size: 10px; }
+.info-item.remarks {
+  font-size: 12px;
+  grid-column: 1 / -1;
+  margin-top: 3px;
+}
+.info-item.special-label {
+  font-size: 9px;
+  padding: 2px 4px;
+  background: #d0d0d0;
+  border-radius: 3px;
+  display: inline-block;
+}
+.info-label { font-weight: bold; color: #555; }
+
+/* ---------- Priority badges ---------- */
+.priority-green  { background-color: #90EE90 !important; background: #90EE90 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-red    { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-yellow { background-color: #FFFFE0 !important; background: #FFFFE0 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-blue   { background-color: #ADD8E6 !important; background: #ADD8E6 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-orange { background-color: #FFD580 !important; background: #FFD580 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-purple { background-color: #E6D5FF !important; background: #E6D5FF !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+
+/* ---------- Field highlight badges ---------- */
+.culex-field         { background-color: #32CD32 !important; background: #32CD32 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.sample-field        { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.spring-aedes-field  { background-color: #FFD580 !important; background: #FFD580 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.perturbans-field    { background-color: #4169E1 !important; background: #4169E1 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; color: white !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.prehatch-field      { background-color: #DDA0DD !important; background: #DDA0DD !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.ra-field            { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+
+/* ---------- Structure status badges ---------- */
+.status-dry     { background-color: #F4A460 !important; background: #F4A460 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.status-wet     { background-color: #4682B4 !important; background: #4682B4 !important; color: white !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.status-unknown { background-color: #D3D3D3 !important; background: #D3D3D3 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.structure-type { background-color: #9370DB !important; background: #9370DB !important; color: white !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+
+/* ---------- Prehatch overlay ---------- */
+.prehatch-overlay {
+  position: absolute;
+  bottom: 10px; right: 10px;
+  text-align: right;
+  color: red !important;
+  font-weight: bold;
+  font-size: 14px;
+  z-index: 10;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important; color-adjust: exact !important;
+}
+.prehatch-rate  { color: red !important; font-size: 12px; }
+.prehatch-value { color: red !important; font-size: 16px; font-weight: bold; }
+
+/* ---------- Watermark overlays ---------- */
+.watermark-container {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  display: flex; flex-wrap: wrap;
+  justify-content: center; align-items: center;
+  gap: 8px; padding: 10px;
+  z-index: 5; pointer-events: none;
+}
+.watermark-item {
+  font-size: 14px; font-weight: bold;
+  padding: 4px 12px; border-radius: 4px; opacity: 0.54;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important; color-adjust: exact !important;
+}
+.watermark-culex         { background: rgba(50,205,50,0.35) !important; color: #000 !important; }
+.watermark-spring-aedes  { background: rgba(255,213,128,0.4) !important; color: #000 !important; }
+.watermark-perturbans    { background: rgba(65,105,225,0.35) !important; color: #000 !important; }
+.watermark-sample        { background: rgba(255,182,193,0.4) !important; color: #000 !important; }
+.watermark-prehatch-calc { background: rgba(255,200,200,0.35) !important; color: #CC0000 !important; font-size: 16px; }
+
+/* ---------- Card data table ---------- */
+.card-table { width: 100%; border-collapse: collapse; flex: 1; }
+.card-table th {
+  background: #e0e0e0;
+  border: 1px solid #333;
+  padding: 4px; font-size: 9px; font-weight: bold; text-align: center;
+}
+.card-table th.col-odd  { background: #f0f0f0; }
+.card-table th.col-even { background: #e8e8e8; }
+.card-table td {
+  border: 1px solid #333;
+  padding: 4px; height: 25px; font-size: 10px;
+}
+.card-table td.col-odd  { background: #fafafa; }
+.card-table td.col-even { background: #f0f0f0; }
+
+/* ---------- Screen-only preview chrome ---------- */
+@media screen {
+  .cards-container {
+    padding: 20px;
+    background: #f5f5f5;
+  }
+  .card-page {
+    background: white;
+    padding: 20px;
+    margin-bottom: 40px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  /* Show blank separators as a light dashed box on screen */
+  .blank-separator {
+    border: 2px dashed #ccc;
+    background: #fafafa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font-size: 14px;
+    margin-bottom: 40px;
+    min-height: 60px;
+  }
+}

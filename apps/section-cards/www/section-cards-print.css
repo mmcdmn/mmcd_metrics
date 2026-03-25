@@ -31,11 +31,10 @@
   }
 
   .card-page {
-    /* Use max-height instead of height to prevent exact-page-fill
-       causing an auto page-break PLUS the explicit page-break-after,
-       which creates a phantom blank page in Chrome. */
-    height: auto;
-    max-height: var(--sc-usable-height, 10in);
+    /* Fill the full printed page so the grid stretches cards to
+       100% of available space.  box-sizing: border-box keeps the
+       padding inside the declared height. */
+    height: var(--sc-usable-height, 10in);
     overflow: hidden;
     /* @page margin is 0 (to suppress browser headers/footers),
        so we use padding here for content spacing instead. */
@@ -44,12 +43,6 @@
     box-sizing: border-box;
     page-break-inside: avoid;
     break-inside: avoid;
-  }
-
-  /* First card-page must not have any top spacing */
-  .card-page:first-child {
-    margin-top: 0 !important;
-    padding-top: 0 !important;
   }
 
   /* Blank separator pages inserted by JS for double-sided printing */
@@ -101,29 +94,36 @@
 .card-header {
   background: #f0f0f0;
   border-bottom: 2px solid #333;
-  padding: 8px;
+  padding: var(--sc-header-pad, 8px);
+  overflow: hidden;
 }
 .card-title {
-  font-size: 16px;
+  font-size: var(--sc-title-font, 16px);
   font-weight: bold;
-  margin: 0 0 5px 0;
+  margin: 0 0 var(--sc-header-gap, 3px) 0;
   color: #000;
+  line-height: 1.15;
 }
 .card-info {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-  gap: 5px;
-  margin-top: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sc-header-gap, 3px);
+  margin-top: var(--sc-header-gap, 3px);
 }
-.info-item { font-size: 10px; }
+.info-item { font-size: var(--sc-info-font, 10px); line-height: 1.2; white-space: nowrap; }
 .info-item.remarks {
-  font-size: 12px;
-  grid-column: 1 / -1;
-  margin-top: 3px;
+  font-size: var(--sc-remarks-font, 10px);
+  width: 100%;
+  margin-top: var(--sc-header-gap, 3px);
+  line-height: 1.2;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 .info-item.special-label {
-  font-size: 9px;
-  padding: 2px 4px;
+  font-size: var(--sc-info-font, 9px);
+  padding: 1px 3px;
   background: #d0d0d0;
   border-radius: 3px;
   display: inline-block;
@@ -131,26 +131,26 @@
 .info-label { font-weight: bold; color: #555; }
 
 /* ---------- Priority badges ---------- */
-.priority-green  { background-color: #90EE90 !important; background: #90EE90 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.priority-red    { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.priority-yellow { background-color: #FFFFE0 !important; background: #FFFFE0 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.priority-blue   { background-color: #ADD8E6 !important; background: #ADD8E6 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.priority-orange { background-color: #FFD580 !important; background: #FFD580 !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.priority-purple { background-color: #E6D5FF !important; background: #E6D5FF !important; padding: 2px 6px; border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-green  { background-color: #90EE90 !important; background: #90EE90 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-red    { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-yellow { background-color: #FFFFE0 !important; background: #FFFFE0 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-blue   { background-color: #ADD8E6 !important; background: #ADD8E6 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-orange { background-color: #FFD580 !important; background: #FFD580 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-purple { background-color: #E6D5FF !important; background: #E6D5FF !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 
 /* ---------- Field highlight badges ---------- */
-.culex-field         { background-color: #32CD32 !important; background: #32CD32 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.sample-field        { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.spring-aedes-field  { background-color: #FFD580 !important; background: #FFD580 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.perturbans-field    { background-color: #4169E1 !important; background: #4169E1 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; color: white !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.prehatch-field      { background-color: #DDA0DD !important; background: #DDA0DD !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.ra-field            { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.culex-field         { background-color: #32CD32 !important; background: #32CD32 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.sample-field        { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.spring-aedes-field  { background-color: #FFD580 !important; background: #FFD580 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.perturbans-field    { background-color: #4169E1 !important; background: #4169E1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; color: white !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.prehatch-field      { background-color: #DDA0DD !important; background: #DDA0DD !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.ra-field            { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 
 /* ---------- Structure status badges ---------- */
-.status-dry     { background-color: #F4A460 !important; background: #F4A460 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.status-wet     { background-color: #4682B4 !important; background: #4682B4 !important; color: white !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.status-unknown { background-color: #D3D3D3 !important; background: #D3D3D3 !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.structure-type { background-color: #9370DB !important; background: #9370DB !important; color: white !important; padding: 2px 6px; border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.status-dry     { background-color: #F4A460 !important; background: #F4A460 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.status-wet     { background-color: #4682B4 !important; background: #4682B4 !important; color: white !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.status-unknown { background-color: #D3D3D3 !important; background: #D3D3D3 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.structure-type { background-color: #9370DB !important; background: #9370DB !important; color: white !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 
 /* ---------- Prehatch overlay ---------- */
 .prehatch-overlay {
@@ -193,13 +193,14 @@
 .card-table th {
   background: #e0e0e0;
   border: 1px solid #333;
-  padding: 4px; font-size: 9px; font-weight: bold; text-align: center;
+  padding: var(--sc-td-pad, 4px); font-size: var(--sc-th-font, 9px); font-weight: bold; text-align: center;
 }
 .card-table th.col-odd  { background: #f0f0f0; }
 .card-table th.col-even { background: #e8e8e8; }
+.card-table tbody { width: 100%; }
 .card-table td {
   border: 1px solid #333;
-  padding: 4px; height: 25px; font-size: 10px;
+  padding: var(--sc-td-pad, 4px); font-size: var(--sc-td-font, 10px);
 }
 .card-table td.col-odd  { background: #fafafa; }
 .card-table td.col-even { background: #f0f0f0; }

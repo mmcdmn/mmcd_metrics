@@ -477,3 +477,190 @@ create_facility_gap_chart <- function(facility_analysis, theme = "MMCD") {
   
   return(p)
 }
+
+# =============================================================================
+# RED BUG GAP DISPLAY FUNCTIONS
+# =============================================================================
+
+# Format red bug gap data for table display
+format_red_bug_gaps <- function(data) {
+  if (nrow(data) == 0) return(data.frame())
+  
+  result <- data %>%
+    mutate(
+      `Site Code` = sitecode,
+      `Facility` = facility,
+      `FOS` = fos_name,
+      `Zone` = zone,
+      `Air/Ground` = air_gnd,
+      `Priority` = priority,
+      `Last Red Bug` = case_when(
+        is.na(last_red_bug_date) ~ "Never",
+        TRUE ~ format(last_red_bug_date, "%Y-%m-%d")
+      ),
+      `Days Since` = days_since_red_bug,
+      `Status` = red_bug_status
+    ) %>%
+    select(`Site Code`, `Facility`, `FOS`, `Zone`, `Air/Ground`, `Priority`,
+           `Last Red Bug`, `Days Since`, `Status`)
+  
+  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
+  result
+}
+
+# Render the red bug gap table
+render_red_bug_gap_table <- function(data, theme = "MMCD") {
+  formatted_data <- format_red_bug_gaps(data)
+  
+  if (nrow(formatted_data) == 0) {
+    return(DT::datatable(data.frame(Message = "No sites found with red bug gaps"),
+                        rownames = FALSE, options = list(dom = 't')))
+  }
+  
+  status_colors <- get_status_colors(theme = theme)
+  
+  DT::datatable(
+    formatted_data,
+    escape = FALSE,
+    rownames = FALSE,
+    options = list(
+      pageLength = 25,
+      autoWidth = TRUE,
+      scrollX = TRUE,
+      order = list(list(7, 'desc')),
+      initComplete = JS(
+        "function(settings, json) {",
+        "$(this.api().table().container()).find('table').css('font-size', '14px');",
+        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
+        "}"
+      )
+    ),
+    filter = 'top',
+    class = 'compact stripe hover'
+  ) %>%
+  DT::formatStyle(
+    'Status',
+    backgroundColor = DT::styleEqual(
+      c('Never Found', 'Red Bug Gap'),
+      c('#ffebee', status_colors['planned'])
+    )
+  ) %>%
+  DT::formatStyle(
+    'Days Since',
+    backgroundColor = DT::styleInterval(
+      cuts = c(365, 730, 1095, 1825),
+      values = c("#e8f5e8", "#ffeb3b", "#ff9800", "#f44336", "#b71c1c")
+    )
+  ) %>%
+  DT::formatCurrency('Days Since', currency = "", digits = 0, mark = ",") %>%
+  DT::formatString('Days Since', suffix = " days")
+}
+
+# Create red bug gap chart by facility - stacked percentage bar chart
+create_red_bug_facility_chart <- function(facility_analysis, theme = "MMCD") {
+  if (nrow(facility_analysis) == 0) return(NULL)
+  
+  facility_analysis <- map_facility_names(facility_analysis)
+  status_colors <- get_status_colors(theme = theme)
+  
+  overall_found_pct <- round(100 * sum(facility_analysis$recently_found_sites) / 
+                             sum(facility_analysis$total_sites), 1)
+  
+  p <- plot_ly(facility_analysis) %>%
+    add_trace(
+      x = ~facility_display, y = ~recently_found_percentage,
+      type = 'bar', name = "Red Bugs Found Recently",
+      text = ~paste("Recently Found:", recently_found_percentage, "%<br>",
+                   recently_found_sites, " of ", total_sites, " sites"),
+      hovertemplate = "%{text}<extra></extra>",
+      marker = list(color = status_colors["active"], line = list(color = 'white', width = 1))
+    ) %>%
+    add_trace(
+      x = ~facility_display, y = ~gap_percentage,
+      type = 'bar', name = "No Red Bugs (Gap)",
+      text = ~paste("No Red Bugs:", gap_percentage, "%<br>",
+                   gap_sites, " of ", total_sites, " sites"),
+      hovertemplate = "%{text}<extra></extra>",
+      marker = list(color = status_colors["needs_treatment"])
+    ) %>%
+    layout(
+      title = list(text = "Red Bug Gap Analysis by Facility", 
+                  font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),
+      xaxis = list(
+        title = list(text = "Facility", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+        tickangle = -45,
+        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
+      ),
+      yaxis = list(
+        title = list(text = "Percentage of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
+        range = c(0, 115)
+      ),
+      barmode = 'stack',
+      margin = list(l = 80, r = 30, t = 80, b = 200),
+      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.25,
+                   font = list(size = 18, family = "Arial, sans-serif")),
+      font = list(size = 18, family = "Arial, sans-serif"),
+      annotations = list(
+        text = paste0("Overall: ", overall_found_pct, "% of sites have had red bugs found recently."),
+        showarrow = FALSE, x = 0.5, y = -0.98, xref = "paper", yref = "paper",
+        font = list(size = 16, color = "#666", family = "Arial, sans-serif")
+      )
+    )
+  
+  return(p)
+}
+
+# Create red bug gap chart by FOS (foreman) - stacked percentage bar chart
+create_red_bug_fos_chart <- function(fos_analysis, theme = "MMCD") {
+  if (nrow(fos_analysis) == 0) return(NULL)
+  
+  status_colors <- get_status_colors(theme = theme)
+  
+  overall_found_pct <- round(100 * sum(fos_analysis$recently_found_sites) / 
+                             sum(fos_analysis$total_sites), 1)
+  
+  p <- plot_ly(fos_analysis) %>%
+    add_trace(
+      x = ~fos_name, y = ~recently_found_percentage,
+      type = 'bar', name = "Red Bugs Found Recently",
+      text = ~paste("Recently Found:", recently_found_percentage, "%<br>",
+                   recently_found_sites, " of ", total_sites, " sites"),
+      hovertemplate = "%{text}<extra></extra>",
+      marker = list(color = status_colors["active"], line = list(color = 'white', width = 1))
+    ) %>%
+    add_trace(
+      x = ~fos_name, y = ~gap_percentage,
+      type = 'bar', name = "No Red Bugs (Gap)",
+      text = ~paste("No Red Bugs:", gap_percentage, "%<br>",
+                   gap_sites, " of ", total_sites, " sites"),
+      hovertemplate = "%{text}<extra></extra>",
+      marker = list(color = status_colors["needs_treatment"])
+    ) %>%
+    layout(
+      title = list(text = "Red Bug Gap Analysis by FOS (Foreman)",
+                  font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),
+      xaxis = list(
+        title = list(text = "FOS (Foreman)", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+        tickangle = -45,
+        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
+      ),
+      yaxis = list(
+        title = list(text = "Percentage of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
+        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
+        range = c(0, 115)
+      ),
+      barmode = 'stack',
+      margin = list(l = 80, r = 30, t = 80, b = 200),
+      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.25,
+                   font = list(size = 18, family = "Arial, sans-serif")),
+      font = list(size = 18, family = "Arial, sans-serif"),
+      annotations = list(
+        text = paste0("Overall: ", overall_found_pct, "% of sites have had red bugs found recently."),
+        showarrow = FALSE, x = 0.5, y = -0.98, xref = "paper", yref = "paper",
+        font = list(size = 16, color = "#666", family = "Arial, sans-serif")
+      )
+    )
+  
+  return(p)
+}

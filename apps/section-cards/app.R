@@ -932,8 +932,12 @@ server <- function(input, output, session) {
       HTML(cards_html)
     })
     
-    # Tell JS to insert blank pages for double-sided printing
-    session$sendCustomMessage('section-cards-rendered', TRUE)
+    # Tell JS to insert blank pages for double-sided printing.
+    # Use onFlushed so the message is sent AFTER renderUI output
+    # reaches the client (avoids race where JS fires before DOM update).
+    session$onFlushed(function() {
+      session$sendCustomMessage('section-cards-rendered', TRUE)
+    }, once = TRUE)
     
     setProgress(value = 1, detail = "Done!")
     

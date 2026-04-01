@@ -155,6 +155,59 @@ create_main_ui <- function() {
             )
           ),
           
+          # Red Bug Gaps Tab
+          tabPanel("Red Bug Gaps", value = "red_bug_gaps",
+            fluidRow(
+              column(4,
+                numericInput("years_red_bug_gap", "Years Since Last Red Bug:",
+                  value = 5, min = 1, max = 20, step = 1)
+              ),
+              column(4,
+                br(),
+                div(style = "position: relative;",
+                  uiOutput("red_bug_button_ui"),
+                  div(
+                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #FF5722; animation: bounce 1s infinite;",
+                    HTML("&#x27A4;")
+                  ),
+                  tags$small("← Click here after loading data!",
+                    style = "position: absolute; left: -60px; top: 50px; color: #FF5722; font-weight: bold; white-space: nowrap;")
+                )
+              ),
+              column(4,
+                div(style = "margin-top: 25px;",
+                  textOutput("red_bug_summary")
+                )
+              )
+            ),
+            hr(),
+            
+            fluidRow(
+              column(6,
+                radioButtons("red_bug_group_by", "Group By:",
+                  choices = c("Facility" = "facility", "FOS (Foreman)" = "fos"),
+                  selected = "facility", inline = TRUE)
+              )
+            ),
+            
+            fluidRow(
+              column(12,
+                h3("Red Bug Gap Analysis"),
+                plotlyOutput("red_bug_gap_chart", height = "800px")
+              )
+            ),
+            
+            fluidRow(
+              column(12,
+                h3("Sites Without Recent Red Bugs"),
+                div(style = "margin-bottom: 10px; text-align: right;",
+                  downloadButton("download_red_bug_data", "Download CSV",
+                    class = "btn-success btn-sm")),
+                DT::dataTableOutput("red_bug_gap_table")
+              )
+            )
+          ),
+          
           # Site Analytics Tab
           tabPanel("Wet Analysis", value = "analytics",
             fluidRow(

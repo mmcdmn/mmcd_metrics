@@ -107,10 +107,21 @@
 
   if (typeof Shiny !== 'undefined') {
     Shiny.addCustomMessageHandler('section-cards-rendered', function (_msg) {
-      // Short delay so Shiny's DOM update is flushed
-      setTimeout(function () {
+      // Poll for .cards-container up to ~3 s (30 × 100 ms).
+      // The container may not be in the DOM yet if the renderUI
+      // flush arrived just before (or just after) the message.
+      var maxAttempts = 30;
+      var attempt = 0;
+
+      function tryProcess() {
         var container = document.querySelector('.cards-container');
-        if (!container) return;
+        if (!container) {
+          attempt++;
+          if (attempt < maxAttempts) {
+            setTimeout(tryProcess, 100);
+          }
+          return;
+        }
 
         var doubleSided = container.getAttribute('data-double-sided') === 'true';
         if (doubleSided) {
@@ -127,7 +138,9 @@
             }
           }
         }
-      }, 100);
+      }
+
+      setTimeout(tryProcess, 100);
     });
   }
 })();

@@ -165,12 +165,6 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   sc_badge_hpad <- max(2, round(4 * squeeze / card_scale))
   
   html <- paste0('
-  <!-- DEBUG: cards_per_page=', cards_per_page, ' num_rows=', num_rows,
-  ' card_scale=', card_scale, ' card_height_px=', round(card_height_px,1),
-  ' squeeze=', round(squeeze,3),
-  ' vis_title=', vis_title_font, ' sc_title=', sc_title_font,
-  ' vis_info=', vis_info_font, ' sc_info=', sc_info_font,
-  ' vis_remarks=', vis_remarks_font, ' sc_remarks=', sc_remarks_font, ' -->
   <style>
     /* @page margin set to 0 so Chrome does not render its default
        headers (date/time) and footers (URL/page numbers).
@@ -179,8 +173,9 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       size: letter;
       margin: 0;
     }
-    /* CSS custom properties set per-render for density scaling */
-    :root {
+  </style>
+  
+  <div class="cards-container" style="
       --sc-page-margin: ', page_margin, ';
       --sc-usable-height: ', usable_height, 'in;
       --sc-grid-rows: ', grid_rows, ';
@@ -195,10 +190,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       --sc-td-pad: ', sc_td_pad, 'px;
       --sc-td-font: ', sc_td_font, 'px;
       --sc-badge-pad: ', sc_badge_vpad, 'px ', sc_badge_hpad, 'px;
-    }
-  </style>
-  
-  <div class="cards-container" data-double-sided="', tolower(as.character(double_sided)), '">
+    " data-double-sided="', tolower(as.character(double_sided)), '">
   ')
   
   # =========================================================================

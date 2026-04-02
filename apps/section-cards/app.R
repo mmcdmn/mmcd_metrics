@@ -51,8 +51,8 @@ ui <- fluidPage(
   
   # Custom CSS for print button and layout
   tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href = "section-cards-print.css"),
-    tags$script(src = "section-cards-print.js"),
+    tags$link(rel = "stylesheet", type = "text/css", href = paste0("section-cards-print.css?v=", as.numeric(Sys.time()))),
+    tags$script(src = paste0("section-cards-print.js?v=", as.numeric(Sys.time()))),
     tags$style(HTML("
       body, p, div, span, td, th, label, .help-block {
         font-size: 16px !important;

@@ -83,19 +83,22 @@ ui <- fluidPage(
         padding: 40px;
         box-sizing: border-box;
       }
-      .modal-dialog {
-        max-width: none !important;
-        margin: 0 !important;
-        height: 100vh !important;
-        width: 100vw !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+      .modal-dialog.modal-lg {
+        width: 98vw !important;
+        max-width: 98vw !important;
+        margin: 1vh auto !important;
       }
-      .modal-content {
-        background: transparent !important;
+      .modal-dialog.modal-lg .modal-content {
+        height: 96vh !important;
+      }
+      .modal-dialog.modal-lg .modal-body {
+        height: calc(96vh - 120px) !important;
+        padding: 6px !important;
+      }
+      .modal-dialog.modal-lg iframe {
+        width: 100% !important;
+        height: 100% !important;
         border: none !important;
-        box-shadow: none !important;
       }
       .loading-spinner {
         border: 8px solid #f3f3f3;
@@ -210,7 +213,7 @@ ui <- fluidPage(
     mainPanel(
       class = "main-panel",
       
-      # Print button at top of cards
+      # Print button and instructions button at top of cards
       div(
         class = "print-button no-print",
         actionButton(
@@ -219,6 +222,13 @@ ui <- fluidPage(
           class = "btn-info btn-lg",
           icon = icon("print"),
           onclick = "window.print();"
+        ),
+        actionButton(
+          "show_instructions",
+          "Instructions",
+          class = "btn-default btn-lg",
+          icon = icon("circle-question"),
+          style = "margin-left: 10px;"
         )
       ),
       
@@ -246,6 +256,19 @@ server <- function(input, output, session) {
   
   # Reactive values
   cards_data <- reactiveVal(NULL)
+  
+  # ==========================================================================
+  # INSTRUCTIONS MODAL
+  # ==========================================================================
+  observeEvent(input$show_instructions, {
+    showModal(modalDialog(
+      tags$iframe(src = "instructions.pdf"),
+      title = "Section Cards Instructions",
+      size = "l",
+      easyClose = TRUE,
+      footer = modalButton("Close")
+    ))
+  })
   
   # ==========================================================================
   # DYNAMIC COLUMN DISCOVERY from JK table

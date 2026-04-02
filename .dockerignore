@@ -1,0 +1,10 @@
+llm/
+.git/
+logs/
+*.log
+*.md
+!README.md
+QGIS_folder/
+create-deployment-package.sh
+mmcd-dashboard-deploy/
+*.tar.gz

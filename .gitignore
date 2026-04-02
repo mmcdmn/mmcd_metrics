@@ -5,6 +5,9 @@
 .Rproj.user/
 *.Rproj
 
+# LLM / orchestrator (runs locally, not in production container)
+llm/
+
 # Shiny token (do not upload to public repositories)
 rsconnect/
 

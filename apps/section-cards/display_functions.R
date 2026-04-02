@@ -108,11 +108,11 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
 
   # Baseline VISIBLE sizes (what the user sees after scale transform)
   base_title_font   <- 14
-  base_remarks_font <- 11
-  base_info_font    <- 9
+  base_remarks_font <- 8
+  base_info_font    <- 7
   base_header_pad   <- 6
   base_header_gap   <- 3
-  base_th_font      <- 9
+  base_th_font      <- 7
   base_td_height    <- 25
   base_td_pad       <- 4
   base_td_font      <- 10

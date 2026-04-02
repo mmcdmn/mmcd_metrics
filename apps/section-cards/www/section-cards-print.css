@@ -193,7 +193,8 @@
 .card-table th {
   background: #e0e0e0;
   border: 1px solid #333;
-  padding: var(--sc-td-pad, 4px); font-size: var(--sc-th-font, 9px); font-weight: bold; text-align: center;
+  padding: 1px 2px; font-size: var(--sc-th-font, 7px); font-weight: bold; text-align: center;
+  white-space: nowrap;
 }
 .card-table th.col-odd  { background: #f0f0f0; }
 .card-table th.col-even { background: #e8e8e8; }

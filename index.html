@@ -1055,7 +1055,14 @@
                 });
 
                 if (!resp.ok) {
-                    throw new Error('HTTP ' + resp.status);
+                    let serverMsg = '';
+                    try {
+                        const errData = await resp.json();
+                        serverMsg = errData.error || '';
+                    } catch { /* not JSON */ }
+                    const e = new Error('HTTP ' + resp.status);
+                    e.serverError = serverMsg;
+                    throw e;
                 }
 
                 const data = await resp.json();
@@ -1068,7 +1075,12 @@
                 chatHistory.push({ role: 'assistant', content: reply });
             } catch (err) {
                 thinkBubble.parentElement.remove();
-                appendMessage('assistant', 'Error: Could not reach the LLM. Make sure the orchestrator is running locally (start_llm.bat). Details: ' + err.message);
+                // Try to extract server error message from JSON response
+                let errMsg = 'The MMCD AI Assistant is currently unavailable. Please try again later.';
+                if (err.serverError) {
+                    errMsg = err.serverError;
+                }
+                appendMessage('assistant', errMsg);
             } finally {
                 sendBtn.disabled = false;
                 input.disabled = false;

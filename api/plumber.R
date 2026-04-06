@@ -711,7 +711,7 @@ LLM_TUNNEL_KEY <- "llm:tunnel_url"
 LLM_TUNNEL_TTL <- 86400L  # 24 hours
 
 #* Get the current LLM tunnel URL (if registered).
-#* @get /public/llm-config
+#* @get /v1/public/llm-config
 #* @serializer json
 function(req, res) {
   url <- tryCatch(redis_get(LLM_TUNNEL_KEY), error = function(e) NULL)
@@ -719,7 +719,7 @@ function(req, res) {
 }
 
 #* Register or update the LLM tunnel URL. Requires API key.
-#* @post /private/llm-register
+#* @post /v1/private/llm-register
 #* @serializer json
 function(req, res) {
   if (!is_authorized(req)) {

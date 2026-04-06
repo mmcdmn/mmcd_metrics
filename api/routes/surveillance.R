@@ -12,13 +12,13 @@ source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/api/api_helpers.R")
 
 trap_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/trap_surveillance/data_functions.R", local = trap_env)
+source("/srv/shiny-server/apps/trap_surveillance/data_functions.R", local = trap_env, chdir = TRUE)
 
 monitoring_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/mosquito-monitoring/data_functions.R", local = monitoring_env)
+source("/srv/shiny-server/apps/mosquito-monitoring/data_functions.R", local = monitoring_env, chdir = TRUE)
 
 suco_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/suco_history/data_functions.R", local = suco_env)
+source("/srv/shiny-server/apps/suco_history/data_functions.R", local = suco_env, chdir = TRUE)
 
 # ── Trap Surveillance (MLE, MIR, Abundance) ──
 

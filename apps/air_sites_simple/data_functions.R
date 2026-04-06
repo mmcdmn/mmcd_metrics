@@ -246,6 +246,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
           b.acres,
           b.priority,
           g.zone,
+          g.fosarea as foreman,
           ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
           ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
         FROM loc_breeding_sites b
@@ -352,6 +353,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
         a.priority,
         a.zone,
         a.acres,
+        a.foreman,
         a.longitude,
         a.latitude,
         t.last_treatment_date,

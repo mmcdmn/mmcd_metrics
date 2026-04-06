@@ -12,13 +12,13 @@ source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/api/api_helpers.R")
 
 insp_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/inspections/data_functions.R", local = insp_env)
+source("/srv/shiny-server/apps/inspections/data_functions.R", local = insp_env, chdir = TRUE)
 
 drone_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/drone/data_functions.R", local = drone_env)
+source("/srv/shiny-server/apps/drone/data_functions.R", local = drone_env, chdir = TRUE)
 
 checklist_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/air_inspection_checklist/data_functions.R", local = checklist_env)
+source("/srv/shiny-server/apps/air_inspection_checklist/data_functions.R", local = checklist_env, chdir = TRUE)
 
 # ── General Inspections ──
 

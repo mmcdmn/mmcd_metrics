@@ -998,12 +998,35 @@
         // MMCD AI Assistant Chat
         // =====================================================================
 
-        // Locally: hit localhost:8000 directly.
-        // Production: hit same-origin /llm/ which nginx proxies to the tunnel.
+        // In production, the tunnel URL is fetched from the Plumber API
+        // (the orchestrator registers it automatically on startup).
+        // Locally, we hit localhost:8000 directly.
         const IS_LOCAL = window.location.hostname === 'localhost'
                       || window.location.hostname === '127.0.0.1';
-        const LLM_BASE = IS_LOCAL ? 'http://localhost:8000' : (window.location.origin + '/llm');
-        const LLM_ENDPOINT = LLM_BASE + '/chat';
+        let LLM_ENDPOINT = IS_LOCAL ? 'http://localhost:8000/chat' : null;
+
+        // Fetch the registered tunnel URL from the API (production only)
+        if (!IS_LOCAL) {
+            fetch(window.location.origin + '/v1/public/llm-config')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.tunnel_url) {
+                        LLM_ENDPOINT = data.tunnel_url + '/chat';
+                        document.getElementById('llm-status').textContent = 'AI Assistant';
+                        document.getElementById('llm-status').style.color = '#7c8a97';
+                        document.getElementById('chat-send-btn').disabled = false;
+                    } else {
+                        document.getElementById('llm-status').textContent = 'Offline';
+                        document.getElementById('llm-status').style.color = '#c62828';
+                        document.getElementById('chat-send-btn').disabled = true;
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('llm-status').textContent = 'Offline';
+                    document.getElementById('llm-status').style.color = '#c62828';
+                    document.getElementById('chat-send-btn').disabled = true;
+                });
+        }
 
         let chatHistory = [];
 
@@ -1035,6 +1058,11 @@
             const input = document.getElementById('chat-input');
             const text = input.value.trim();
             if (!text) return;
+
+            if (!LLM_ENDPOINT) {
+                appendMessage('assistant', 'The MMCD AI Assistant is currently offline.');
+                return;
+            }
 
             input.value = '';
             appendMessage('user', text);
@@ -1088,7 +1116,6 @@
             }
         }
 
-        // No polling — the LLM status is determined on first send.
     </script>
 </body>
 

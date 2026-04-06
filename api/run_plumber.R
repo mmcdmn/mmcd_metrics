@@ -9,12 +9,6 @@
 
 library(plumber)
 
-# Source shared helpers into global env so sub-routers can use them
-source("/srv/shiny-server/shared/db_helpers.R")
-source("/srv/shiny-server/shared/app_libraries.R")
-source("/srv/shiny-server/shared/redis_cache.R")
-source("/srv/api/api_helpers.R")
-
 # Plumb the main API (existing endpoints: health, facilities, foremen, etc.)
 pr <- plumber::plumb("/srv/api/plumber.R")
 
@@ -25,9 +19,13 @@ route_dir <- "/srv/api/routes"
 mount_route <- function(pr, prefix, file) {
   path <- file.path(route_dir, file)
   if (file.exists(path)) {
-    sub <- plumber::plumb(path)
-    pr$mount(prefix, sub)
-    message(sprintf("[api] Mounted %s -> %s", file, prefix))
+    tryCatch({
+      sub <- plumber::plumb(path)
+      pr$mount(prefix, sub)
+      message(sprintf("[api] Mounted %s -> %s", file, prefix))
+    }, error = function(e) {
+      message(sprintf("[api] SKIP %s (load failed: %s)", file, e$message))
+    })
   } else {
     message(sprintf("[api] SKIP %s (not found)", path))
   }

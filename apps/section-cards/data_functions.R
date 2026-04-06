@@ -165,6 +165,72 @@ sanitize_breeding_data <- function(data) {
 }
 
 # =============================================================================
+# PERTURBANS HISTORY LOOKUP (action=9, numdip>0 in previous year)
+# =============================================================================
+
+#' Get sitecodes that had perturbans activity in the previous year
+#'
+#' Queries dblarv_insptrt_current and dblarv_insptrt_archive for records where
+#' action = '9' (cattail inspection) and numdip > 0 in the previous calendar year.
+#' Sites matching this criteria are considered perturbans sites.
+#'
+#' @param con Optional database connection (will create one if NULL)
+#' @return Character vector of sitecodes with perturbans activity
+#' @export
+get_perturbans_sites <- function(con = NULL) {
+  own_con <- is.null(con)
+  if (own_con) {
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
+  }
+
+  prev_year <- as.integer(format(Sys.Date(), "%Y")) - 1L
+
+  query <- sprintf("
+    SELECT DISTINCT sitecode
+    FROM (
+      SELECT sitecode, action, numdip, inspdate
+      FROM public.dblarv_insptrt_current
+      WHERE action = '9'
+        AND numdip > 0
+        AND EXTRACT(YEAR FROM inspdate) = %d
+      UNION
+      SELECT sitecode, action, numdip, inspdate
+      FROM public.dblarv_insptrt_archive
+      WHERE action = '9'
+        AND numdip > 0
+        AND EXTRACT(YEAR FROM inspdate) = %d
+    ) sub
+  ", prev_year, prev_year)
+
+  message(sprintf("[section_cards] Looking up perturbans sites (action=9, numdip>0) for year %d...", prev_year))
+  result <- dbGetQuery(con, query)
+  sites <- result$sitecode
+  message(sprintf("[section_cards] Found %d perturbans sites from %d history", length(sites), prev_year))
+  return(sites)
+}
+
+#' Enrich breeding site data with history-based perturbans flag
+#'
+#' Overrides the perturbans column: sets to "Y" for sitecodes that had
+#' action=9 with numdip>0 in the previous year, NA otherwise.
+#'
+#' @param data Data frame with a sitecode column
+#' @param con Optional database connection
+#' @return Data frame with perturbans column updated
+#' @export
+enrich_perturbans_from_history <- function(data, con = NULL) {
+  if (nrow(data) == 0) return(data)
+
+  pert_sites <- get_perturbans_sites(con)
+
+  # Override perturbans column based on history
+  data$perturbans <- ifelse(data$sitecode %in% pert_sites, "Y", NA_character_)
+
+  return(data)
+}
+
+# =============================================================================
 # BREEDING SITE FUNCTIONS (from JK table — NO gis_sectcode)
 # =============================================================================
 
@@ -387,6 +453,9 @@ get_breeding_sites_with_sections <- function() {
   # Sanitize data: normalize NULLs, whitespace, case
   data <- sanitize_breeding_data(data)
   
+  # Override perturbans based on previous year history (action=9, numdip>0)
+  data <- enrich_perturbans_from_history(data)
+  
   return(data)
 }
 
@@ -435,6 +504,9 @@ get_webster_breeding_sites <- function() {
   
   # Sanitize data
   data <- sanitize_breeding_data(data)
+  
+  # Override perturbans based on previous year history (action=9, numdip>0)
+  data <- enrich_perturbans_from_history(data)
   
   return(data)
 }

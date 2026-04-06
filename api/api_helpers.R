@@ -90,6 +90,25 @@ api_error <- function(res, status, msg) {
   list(error = msg)
 }
 
+# Server-side row limit for API responses.
+# LLM callers pass limit=200 (default); dashboards can request more.
+apply_row_limit <- function(df, limit = NULL, default_limit = 500L, max_limit = 5000L) {
+  n <- suppressWarnings(as.integer(limit %||% default_limit))
+  if (is.na(n) || n < 1L) n <- default_limit
+  if (n > max_limit) n <- max_limit
+  total <- nrow(df)
+  if (total > n) {
+    list(
+      count     = total,
+      returned  = n,
+      truncated = TRUE,
+      data      = df[seq_len(n), , drop = FALSE]
+    )
+  } else {
+    list(count = total, data = df)
+  }
+}
+
 to_choice_list <- function(choices, all_label) {
   out <- lapply(names(choices), function(n) list(label = n, code = unname(choices[[n]])))
   c(list(list(label = all_label, code = "all")), out)

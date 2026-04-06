@@ -12,13 +12,13 @@ source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/api/api_helpers.R")
 
 cattail_insp_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/cattail_inspections/data_functions.R", local = cattail_insp_env)
+source("/srv/shiny-server/apps/cattail_inspections/data_functions.R", local = cattail_insp_env, chdir = TRUE)
 
 cattail_trt_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/cattail_treatments/data_functions.R", local = cattail_trt_env)
+source("/srv/shiny-server/apps/cattail_treatments/data_functions.R", local = cattail_trt_env, chdir = TRUE)
 
 efficacy_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/control_efficacy/data_functions.R", local = efficacy_env)
+source("/srv/shiny-server/apps/control_efficacy/data_functions.R", local = efficacy_env, chdir = TRUE)
 
 # ── Cattail Inspections ──
 

@@ -17,17 +17,18 @@ source("/srv/shiny-server/apps/air_sites_simple/data_functions.R")
 
 # Ground prehatch has its own load_raw_data — load into a namespace to avoid collision
 ground_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/ground_prehatch_progress/data_functions.R", local = ground_env)
+source("/srv/shiny-server/apps/ground_prehatch_progress/data_functions.R", local = ground_env, chdir = TRUE)
 
 # Section cards
 cards_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_env)
+source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_env, chdir = TRUE)
 
 # ── Air Sites ──
 
 #* Get air breeding site status (current treatment/inspection state).
 #* Returns sites with active treatment status, acres, priority, facility, zone.
 #* @param facility Facility code (E, MO, N, Sj, Sr, Wm, Wp). Omit for all.
+#* @param foreman FOS shortname to filter by (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param priority Priority filter: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Default RED.
 #* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
@@ -35,11 +36,13 @@ source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_en
 #* @serializer json
 function(req, res,
          facility = NULL,
+         foreman = NULL,
          zone = "1,2",
          priority = "RED",
          analysis_date = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) { validate_foreman(foreman); clean_text(foreman) } else NULL
     zn    <- validate_zone(zone)
     pri   <- validate_priority(priority)
     adate <- validate_date(analysis_date)
@@ -52,6 +55,11 @@ function(req, res,
     )
 
     sites <- data$sites
+    # Apply foreman filter by matching fosarea shortname
+    if (!is.null(fman) && !is.null(sites) && nrow(sites) > 0 && "foreman" %in% names(sites)) {
+      sites <- sites[tolower(sites$foreman) == tolower(fman), ]
+    }
+
     if (is.null(sites) || nrow(sites) == 0) {
       return(list(count = 0L, data = list()))
     }
@@ -59,6 +67,74 @@ function(req, res,
     list(
       count = nrow(sites),
       data  = sites
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+# ── Air Sites Summary (value-box stats) ──
+
+#* Get air site summary counts by status — same numbers the dashboard value boxes show.
+#* Returns total sites, acres, and count/acres broken down by status
+#* (Active Treatment, Inspected, Needs ID, Needs Treatment, Unknown).
+#* @param facility Facility code. Omit for all.
+#* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param priority Priority: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Default RED.
+#* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
+#* @get /air-sites/summary
+#* @serializer json
+function(req, res,
+         facility = NULL,
+         foreman = NULL,
+         zone = "1,2",
+         priority = "RED",
+         analysis_date = NULL) {
+  tryCatch({
+    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) { validate_foreman(foreman); clean_text(foreman) } else NULL
+    zn    <- validate_zone(zone)
+    pri   <- validate_priority(priority)
+    adate <- validate_date(analysis_date)
+
+    data <- load_raw_data(
+      analysis_date    = adate,
+      facility_filter  = fac,
+      zone_filter      = zn,
+      priority_filter  = pri
+    )
+
+    sites <- data$sites
+    # Apply foreman filter by matching fosarea shortname
+    if (!is.null(fman) && !is.null(sites) && nrow(sites) > 0 && "foreman" %in% names(sites)) {
+      sites <- sites[tolower(sites$foreman) == tolower(fman), ]
+    }
+
+    if (is.null(sites) || nrow(sites) == 0) {
+      return(list(
+        analysis_date = as.character(adate),
+        total_sites = 0L, total_acres = 0,
+        by_status = list()
+      ))
+    }
+
+    # Compute value-box stats grouped by site_status
+    statuses <- c("Active Treatment", "Inspected", "Needs ID", "Needs Treatment", "Unknown")
+    by_status <- lapply(statuses, function(st) {
+      subset <- sites[sites$site_status == st, ]
+      list(
+        status = st,
+        count  = nrow(subset),
+        acres  = round(sum(subset$acres, na.rm = TRUE), 2)
+      )
+    })
+    names(by_status) <- statuses
+
+    list(
+      analysis_date = as.character(adate),
+      filters = list(facility = fac, foreman = foreman, zone = zn, priority = pri),
+      total_sites = nrow(sites),
+      total_acres = round(sum(sites$acres, na.rm = TRUE), 2),
+      by_status = by_status
     )
   }, error = function(e) api_error(res, 400, e$message))
 }
@@ -100,6 +176,74 @@ function(req, res,
     list(
       count = nrow(sites),
       data  = sites
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+# ── Ground Prehatch Summary (value-box stats) ──
+
+#* Get ground prehatch summary counts — total sites, treated, expiring, expired, skipped, percent treated.
+#* Same numbers the dashboard value boxes show.
+#* @param facility Facility code. Omit for all.
+#* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
+#* @get /ground-prehatch/summary
+#* @serializer json
+function(req, res,
+         facility = NULL,
+         foreman = NULL,
+         zone = "1,2",
+         analysis_date = NULL) {
+  tryCatch({
+    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
+    zn    <- validate_zone(zone)
+    adate <- validate_date(analysis_date)
+
+    data <- ground_env$load_raw_data(
+      analysis_date   = adate,
+      include_archive = FALSE
+    )
+
+    # Apply filters
+    data <- ground_env$apply_data_filters(
+      data,
+      facility_filter = fac,
+      foreman_filter  = fman,
+      zone_filter     = zn
+    )
+
+    sites <- data$sites
+    if (is.null(sites) || nrow(sites) == 0) {
+      return(list(
+        analysis_date = as.character(adate),
+        total_prehatch = 0L, total_treated = 0L, total_active = 0L,
+        total_expiring = 0L, total_expired = 0L, total_skipped = 0L,
+        treated_pct = 0, total_acres = 0
+      ))
+    }
+
+    total_prehatch <- nrow(sites)
+    total_treated  <- sum(sites$is_active & !sites$is_expiring, na.rm = TRUE)
+    total_expiring <- sum(sites$is_expiring, na.rm = TRUE)
+    total_active   <- total_treated + total_expiring
+    total_expired  <- sum(!sites$is_active, na.rm = TRUE)
+    total_skipped  <- 0L
+    treated_pct    <- if ((total_active + total_expired) > 0)
+      round(100 * total_active / (total_active + total_expired), 1) else 0
+
+    list(
+      analysis_date  = as.character(adate),
+      filters        = list(facility = fac, foreman = foreman, zone = zn),
+      total_prehatch = total_prehatch,
+      total_treated  = total_treated,
+      total_active   = total_active,
+      total_expiring = total_expiring,
+      total_expired  = total_expired,
+      total_skipped  = total_skipped,
+      treated_pct    = treated_pct,
+      total_acres    = round(sum(sites$acres, na.rm = TRUE), 2)
     )
   }, error = function(e) api_error(res, 400, e$message))
 }

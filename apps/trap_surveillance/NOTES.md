@@ -13,12 +13,15 @@
 | `dbvirus_mir_yrwk` | `mir_id`, `yrwk`, `positive`, `total`, `mosquitoes`, `mir` |
 | `loc_vectorindexareas_sections_a` | `viareaa` (→ `viarea`), `geom`, `area` |
 | `loc_mondaynight` | `loc_code`, `loc_facility`, `zone`, `virus_test`, `geom` |
-| `dbadult_insp_current` | `ainspecnum`, `sampnum_yr`, `loc_code`, `inspdate`, `facility`, `survtype`, `network_type`, `missing` |
+| `dbadult_insp_current` | `ainspecnum`, `sampnum_yr`, `loc_code`, `sitecode`, `inspdate`, `facility`, `survtype`, `network_type`, `missing` |
 | `dbadult_insp_archive` | Same columns as current |
 | `dbvirus_pool` | `poolnum`, `sampnum_yr`, `spp_code`, `count` (→ `pool_size`) |
 | `dbvirus_pool_test` | `poolnum`, `result`, `target`, `date` (→ `test_date`) |
 | `lookup_specieslist` | `sppcode`, `genus`, `species` |
 | `lookup_weeknum` | `wknumyr`, `week_days` |
+| `lookup_survtype_adult` | `survtype` (4=Elevated CO2, 5=Gravid Trap, 6=CO2 Overnight) |
+| `loc_harborage` | `sitecode`, `geom` (polygon), `startdate`, `gid` — geometry fallback tier 2 |
+| `gis_sectcode` | `sectcode`, `the_geom` (polygon), `zone`, `facility` — geometry fallback tier 3 |
 
 ---
 
@@ -145,7 +148,30 @@ GROUP BY (yrwk::integer % 100)
 ORDER BY week
 ```
 
-### 12. Traps for Week (large CTE)
+### 12. Traps for Week (with geometry fallback chain)
+
+Inspections with a blank `loc_code` cannot be placed via `loc_mondaynight`.
+A 3-tier geometry fallback resolves their location from the `sitecode`:
+
+| Priority | Source | Join | Description |
+|----------|--------|------|-------------|
+| 1 | `loc_mondaynight.geom` | `loc_code` | Normal trap point location |
+| 2 | `loc_harborage.geom` | `sitecode` | Centroid of most-recent harborage polygon for that sitecode (`DISTINCT ON (sitecode) ORDER BY startdate DESC`) |
+| 3 | `gis_sectcode.the_geom` | `left(sitecode, 7)` | Centroid of the section boundary polygon |
+
+Traps that fall through to tier 2 or 3 get a synthetic `loc_code` of
+`SITE:<sitecode>` so they group properly during R-side aggregation.
+
+The fallback CTEs (`harb_locations`, `sect_locations`) are scoped to only
+the sitecodes that actually need them (`fallback_sites` CTE) to avoid
+computing centroids for the entire harborage/section tables.
+
+**Additional filters:**
+- `network_type = 'mnt' OR network_type IS NULL` — some inspections
+  (typically non-standard trap types) have NULL `network_type` but are
+  still valid for virus testing. Without this, those traps are invisible.
+- `survtype IN ('4', '5', '6')` — CO2 Overnight (6), Gravid Trap (5),
+  Elevated CO2 (4). From `lookup_survtype_adult`.
 
 ```sql
 WITH week_abundance AS (
@@ -154,20 +180,39 @@ WITH week_abundance AS (
   WHERE yrwk = {yrwk_int} AND spp_name = 'Total_Cx_vectors'
 ),
 week_inspections AS (
-  SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate,
-         i.facility, i.survtype
+  SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.sitecode,
+         i.inspdate, i.facility, i.survtype,
+         COALESCE(NULLIF(i.loc_code::text, ''), 'SITE:' || i.sitecode) as eff_loc_code
   FROM dbadult_insp_current i
-  WHERE i.network_type = 'mnt' AND i.survtype = '6' AND i.missing IS NULL
+  WHERE (i.network_type = 'mnt' OR i.network_type IS NULL)
+    AND i.survtype IN ('4', '5', '6') AND i.missing IS NULL
     AND calc_week_num(i.inspdate) = {yrwk_int}
   UNION ALL
-  SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate,
-         i.facility, i.survtype
-  FROM dbadult_insp_archive i
-  WHERE i.network_type = 'mnt' AND i.survtype = '6' AND i.missing IS NULL
-    AND calc_week_num(i.inspdate) = {yrwk_int}
+  SELECT DISTINCT ... FROM dbadult_insp_archive i  -- same filters
+),
+fallback_sites AS (
+  SELECT DISTINCT sitecode FROM week_inspections
+  WHERE loc_code IS NULL OR loc_code = ''
+),
+harb_locations AS (
+  SELECT DISTINCT ON (h.sitecode) h.sitecode,
+         ST_X(ST_Centroid(ST_Transform(h.geom, 4326))) as harb_lon,
+         ST_Y(ST_Centroid(ST_Transform(h.geom, 4326))) as harb_lat
+  FROM loc_harborage h
+  INNER JOIN fallback_sites fs ON fs.sitecode = h.sitecode
+  WHERE h.geom IS NOT NULL
+  ORDER BY h.sitecode, h.startdate DESC NULLS LAST, h.gid DESC
+),
+sect_locations AS (
+  SELECT sc.sectcode,
+         ST_X(ST_Centroid(ST_Transform(sc.the_geom, 4326))) as sect_lon,
+         ST_Y(ST_Centroid(ST_Transform(sc.the_geom, 4326))) as sect_lat
+  FROM gis_sectcode sc
+  INNER JOIN (SELECT DISTINCT left(sitecode, 7) as sect FROM fallback_sites) fs
+    ON sc.sectcode = fs.sect
 ),
 trap_pools AS (
-  SELECT wi.loc_code, wi.sampnum_yr, p.poolnum, p.spp_code,
+  SELECT wi.eff_loc_code, wi.sampnum_yr, p.poolnum, p.spp_code,
          p.count as pool_size, t.result, t.target, t.date as test_date,
          ls.genus, ls.species
   FROM week_inspections wi
@@ -176,22 +221,30 @@ trap_pools AS (
   LEFT JOIN lookup_specieslist ls ON p.spp_code = CAST(ls.sppcode AS VARCHAR)
   WHERE t.target = '{virus_target}' OR t.target IS NULL
 )
-SELECT wa.loc_code, wi.facility, wa.inspdate,
-       wa.mosqcount as cx_vector_count,
+SELECT wi.eff_loc_code as loc_code, wi.facility, wi.inspdate, wi.survtype,
+       CASE WHEN wi.survtype = '5' THEN 'Gravid'
+            WHEN wi.survtype = '4' THEN 'Elevated CO2'
+            ELSE 'CO2' END as trap_type,
+       COALESCE(wa.mosqcount, 0) as cx_vector_count,
        mn.loc_facility, mn.zone, mn.virus_test,
-       ST_X(ST_Transform(mn.geom, 4326)) as lon,
-       ST_Y(ST_Transform(mn.geom, 4326)) as lat,
-       tp.poolnum, tp.spp_code, tp.pool_size, tp.result,
-       tp.target, tp.test_date, tp.genus, tp.species
-FROM week_abundance wa
-JOIN week_inspections wi ON wi.loc_code = wa.loc_code AND wi.inspdate = wa.inspdate
-LEFT JOIN loc_mondaynight mn ON mn.loc_code = wa.loc_code
-LEFT JOIN trap_pools tp ON tp.loc_code = wa.loc_code
-WHERE mn.geom IS NOT NULL
-ORDER BY wa.loc_code
+       COALESCE(ST_X(ST_Transform(mn.geom, 4326)), h.harb_lon, sc.sect_lon) as lon,
+       COALESCE(ST_Y(ST_Transform(mn.geom, 4326)), h.harb_lat, sc.sect_lat) as lat,
+       tp.poolnum, tp.spp_code, tp.pool_size, tp.result, tp.target,
+       tp.test_date, tp.genus, tp.species
+FROM week_inspections wi
+LEFT JOIN week_abundance wa ON wa.loc_code = wi.loc_code AND wa.inspdate = wi.inspdate
+LEFT JOIN loc_mondaynight mn ON mn.loc_code = wi.loc_code
+LEFT JOIN harb_locations h ON h.sitecode = wi.sitecode
+LEFT JOIN sect_locations sc ON sc.sectcode = left(wi.sitecode, 7)
+LEFT JOIN trap_pools tp ON tp.eff_loc_code = wi.eff_loc_code
+WHERE COALESCE(mn.geom, h.harb_lon::text, sc.sect_lon::text) IS NOT NULL
+ORDER BY wi.eff_loc_code
 ```
 
-> Uses server-side DB function `calc_week_num(inspdate)` to match inspections to yrwk.
+> The `COALESCE` chain in SELECT implements the 3-tier fallback. The WHERE
+> clause ensures traps with no geometry from any tier are excluded.
+> `fallback_sites` CTE scopes the harborage/section lookups to only the
+> sitecodes that need them, avoiding full-table centroid computations.
 
 ### 13. VI Area Geometries (dissolved)
 
@@ -332,11 +385,14 @@ Palette: 7-step yellow-to-red (`colorBin`). Values beyond max break are clamped.
 | `VectorIndexAreasA2025.shp` | `shared/Q_to_R/data/` | Fallback if DB geometry load fails. Dissolved by `VIareaA` column. |
 | `facility_boundaries.shp` | `shared/Q_to_R/data/` | Background facility boundary layer |
 | `zone_boundaries.shp` | `shared/Q_to_R/data/` | Background zone boundary layer |
+| `sections_boundaries.shp` | `shared/Q_to_R/data/` | Section boundary polygons from `gis_sectcode`. Used as last-resort geometry fallback (centroid). |
 | `Counties_4326.shp` | `apps/mosquito_surveillance_map/shp/` | Background county boundaries |
 
 PostGIS geometry is also used:
 - `loc_vectorindexareas_sections_a.geom` — dissolved via `ST_Union` → VI area polygons
 - `loc_mondaynight.geom` — trap point locations extracted as lon/lat via `ST_Transform`
+- `loc_harborage.geom` — harborage polygon; centroid used as fallback for blank `loc_code` traps
+- `gis_sectcode.the_geom` — section boundary polygon; centroid used as last-resort fallback
 - `calc_week_num()` — server-side DB function matching inspections to yrwk
 
 ---

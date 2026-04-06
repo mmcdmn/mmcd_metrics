@@ -89,5 +89,6 @@ jobs:
             environment-variables: |
               [
                 {"name": "ENABLE_NGINX", "value": "true"},
-                {"name": "SHINY_WORKERS", "value": "10"}
+                {"name": "SHINY_WORKERS", "value": "10"},
+                {"name": "API_KEYS", "value": "mmcd-sheets-abc123xyz"}
               ]

@@ -26,6 +26,7 @@ get_checklist_data <- function(facility_filter = NULL,
                                lookback_days = 2,
                                analysis_date = Sys.Date(),
                                zone_filter = "1",
+                               priority_filter = "RED",
                                include_active_treatment = FALSE) {
   con <- get_db_connection()
   if (is.null(con)) return(data.frame())
@@ -51,6 +52,13 @@ get_checklist_data <- function(facility_filter = NULL,
       zone_condition <- sprintf("AND sc.zone IN (%s)", zone_list)
     }
 
+    # Priority filter
+    priority_condition <- "AND b.priority = 'RED'"  # safe default
+    if (!is.null(priority_filter) && length(priority_filter) > 0) {
+      priority_list <- build_sql_in_list(priority_filter)
+      priority_condition <- sprintf("AND b.priority IN (%s)", priority_list)
+    }
+
     # Determine which inspection table to use
     table_info <- get_table_strategy(analysis_date)
     inspection_table <- if (table_info$query_archive) "dblarv_insptrt_archive" else "dblarv_insptrt_current"
@@ -71,7 +79,7 @@ get_checklist_data <- function(facility_filter = NULL,
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
         WHERE (b.enddate IS NULL OR b.enddate > '%s')
           AND b.air_gnd = 'A'
-          AND b.priority = 'RED'
+          %s
           %s
           %s
           %s
@@ -128,6 +136,14 @@ get_checklist_data <- function(facility_filter = NULL,
           ls.missing
         FROM %s ls
         WHERE ls.sampnum_yr IS NOT NULL
+      ),
+
+      -- Deduplicated employee lookup (one row per emp_num, prefer active)
+      EmployeeLookup AS (
+        SELECT DISTINCT ON (emp_num) emp_num, shortname
+        FROM employee_list
+        WHERE active = true
+        ORDER BY emp_num, pkey DESC
       )
 
       SELECT
@@ -156,10 +172,11 @@ get_checklist_data <- function(facility_filter = NULL,
       LEFT JOIN LabResults lr ON i.sampnum_yr = lr.sampnum_yr
       LEFT JOIN ActiveTreatmentSites ats ON s.sitecode = ats.sitecode
       LEFT JOIN \"loc_breeding_site_cards_sjsreast2\" cards ON s.sitecode = cards.sitecode
-      LEFT JOIN employee_list emp ON i.emp1 = emp.emp_num::text
+      LEFT JOIN EmployeeLookup emp ON i.emp1 = emp.emp_num::text
       ORDER BY s.fosarea, cards.airmap_num NULLS LAST, s.sectcode, s.sitecode
     ",
       as.character(analysis_date),
+      priority_condition,
       facility_condition,
       foreman_condition,
       zone_condition,
@@ -265,4 +282,109 @@ summarize_checklist <- function(data) {
     red_bugs = red_bugs,
     blue_bugs = blue_bugs
   )
+}
+
+
+#' Get active field employees grouped by facility and FOS
+#' Used to generate employees.json for the index page employee picker
+#' @return Data frame with emp_num, shortname, facility, fieldsuper, fos_name
+get_field_employees <- function() {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+
+  tryCatch({
+    employees <- dbGetQuery(con, "
+      SELECT e.emp_num, e.shortname, e.emp_type, e.facility, e.fieldsuper,
+             f.shortname AS fos_name
+      FROM employee_list e
+      LEFT JOIN employee_list f ON e.fieldsuper = f.emp_num
+        AND f.active = true AND f.emp_type = 'FieldSuper'
+      WHERE e.active = true
+        AND e.fieldsuper IS NOT NULL
+        AND e.emp_type NOT IN ('Pilot', 'Insp-Recpt', 'Insp-Lab')
+      ORDER BY e.facility, e.shortname
+    ")
+    safe_disconnect(con)
+    return(employees)
+  }, error = function(e) {
+    cat("ERROR in get_field_employees:", e$message, "\n")
+    if (!is.null(con)) safe_disconnect(con)
+    return(data.frame())
+  })
+}
+
+
+# =============================================================================
+# CLAIM FUNCTIONS (Redis-backed, shared across all workers)
+# =============================================================================
+
+CLAIM_HASH_PREFIX <- "claim"
+CLAIM_TTL <- 172800L  # 2 days
+
+#' Build Redis hash key for claims on a given date
+#' @param date Character date "YYYY-MM-DD"
+#' @return Key like "claim:2026-03-13"
+claim_hash_key <- function(date) {
+  paste0(CLAIM_HASH_PREFIX, ":", date)
+}
+
+#' Set a claim for a sitecode on a given date
+#' @param sitecode Character sitecode
+#' @param emp_num Character employee number
+#' @param emp_name Character employee display name
+#' @param date Character date "YYYY-MM-DD" (default today)
+#' @return TRUE/FALSE
+set_claim <- function(sitecode, emp_num, emp_name, date = format(Sys.Date(), "%Y-%m-%d")) {
+  claim_data <- list(
+    emp_num  = emp_num,
+    emp_name = emp_name,
+    time     = format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  )
+  redis_hset(claim_hash_key(date), sitecode, claim_data, ttl = CLAIM_TTL)
+}
+
+#' Remove a claim for a sitecode on a given date
+#' @param sitecode Character sitecode
+#' @param date Character date "YYYY-MM-DD" (default today)
+#' @return Number deleted
+remove_claim <- function(sitecode, date = format(Sys.Date(), "%Y-%m-%d")) {
+  redis_hdel(claim_hash_key(date), sitecode)
+}
+
+#' Get all claims within a lookback window
+#' @param lookback_days Integer number of days to look back
+#' @param analysis_date Date to use as reference (default Sys.Date())
+#' @return Named list: sitecode -> list(emp_num, emp_name, time, claim_date)
+get_claims <- function(lookback_days = 2, analysis_date = Sys.Date()) {
+  all_claims <- list()
+  for (d in 0:lookback_days) {
+    date_str <- format(as.Date(analysis_date) - d, "%Y-%m-%d")
+    day_claims <- redis_hgetall(claim_hash_key(date_str))
+    if (length(day_claims) > 0) {
+      for (sc in names(day_claims)) {
+        # Newer claims (closer to analysis_date) take precedence
+        if (is.null(all_claims[[sc]])) {
+          claim <- day_claims[[sc]]
+          claim$claim_date <- date_str
+          all_claims[[sc]] <- claim
+        }
+      }
+    }
+  }
+  all_claims
+}
+
+#' Get count of active claims (for admin/test-app display)
+#' @return List with total count and per-date breakdown
+get_claim_stats <- function() {
+  today <- Sys.Date()
+  dates <- format(today - 0:6, "%Y-%m-%d")
+  counts <- list()
+  total <- 0L
+  for (d in dates) {
+    n <- length(redis_hkeys(claim_hash_key(d)))
+    if (n > 0) counts[[d]] <- n
+    total <- total + n
+  }
+  list(total = total, by_date = counts)
 }

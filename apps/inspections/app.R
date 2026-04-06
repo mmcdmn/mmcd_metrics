@@ -233,6 +233,148 @@ server <- function(input, output, session) {
     }
   })
   
+  # ============= RED BUG GAPS TAB =============
+  # Button UI with dynamic count
+  output$red_bug_button_ui <- renderUI({
+    if (input$load_data == 0) {
+      actionButton("analyze_red_bugs",
+        " Analyze Red Bug Gaps",
+        class = "btn-refresh",
+        style = "width: 100%; padding: 12px;")
+    } else {
+      actionButton("analyze_red_bugs",
+        " Analyze Red Bug Gaps",
+        class = "btn-refresh",
+        style = "width: 100%; padding: 12px;")
+    }
+  })
+  
+  # Parse shared filters for red bug queries
+  red_bug_filters <- reactive({
+    facility_filter <- if (length(input$facility) == 0 || "all" %in% input$facility) NULL else input$facility
+    fosarea_filter <- if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea
+    zone_value <- input$zone %||% "all"
+    zone_filter <- if (zone_value == "all") {
+      NULL
+    } else if (zone_value == "1,2") {
+      c("1", "2")
+    } else {
+      zone_value
+    }
+    priority_filter <- if (length(input$priority) == 0 || "all" %in% input$priority) NULL else input$priority
+    
+    list(
+      facility_filter = facility_filter,
+      fosarea_filter = fosarea_filter,
+      zone_filter = zone_filter,
+      priority_filter = priority_filter,
+      air_gnd_filter = input$air_gnd %||% "both",
+      drone_filter = input$drone_filter %||% "include_drone",
+      prehatch_only = input$prehatch_only %||% FALSE
+    )
+  })
+  
+  red_bug_data <- eventReactive(input$analyze_red_bugs, {
+    if (input$load_data == 0) {
+      showNotification("Please load data first using the 'Load Data' button above", type = "warning")
+      return(data.frame())
+    }
+    
+    withProgress(message = "Querying red bug data...", value = 0.5, {
+      filters <- red_bug_filters()
+      get_red_bug_gaps(
+        years_gap = input$years_red_bug_gap %||% 5,
+        facility_filter = filters$facility_filter,
+        fosarea_filter = filters$fosarea_filter,
+        zone_filter = filters$zone_filter,
+        priority_filter = filters$priority_filter,
+        air_gnd_filter = filters$air_gnd_filter,
+        drone_filter = filters$drone_filter,
+        prehatch_only = filters$prehatch_only,
+        ref_date = Sys.Date()
+      )
+    })
+  })
+  
+  red_bug_all_sites <- eventReactive(input$analyze_red_bugs, {
+    if (input$load_data == 0) return(data.frame())
+    
+    filters <- red_bug_filters()
+    get_red_bug_all_sites(
+      facility_filter = filters$facility_filter,
+      fosarea_filter = filters$fosarea_filter,
+      zone_filter = filters$zone_filter,
+      priority_filter = filters$priority_filter,
+      air_gnd_filter = filters$air_gnd_filter,
+      drone_filter = filters$drone_filter,
+      prehatch_only = filters$prehatch_only,
+      ref_date = Sys.Date()
+    )
+  })
+  
+  output$red_bug_summary <- renderText({
+    if (input$analyze_red_bugs == 0) {
+      "Configure settings and click 'Analyze'"
+    } else {
+      data <- red_bug_data()
+      if (nrow(data) == 0) {
+        "No sites found with red bug gaps"
+      } else {
+        never_found <- sum(data$red_bug_status == "Never Found", na.rm = TRUE)
+        gap_sites <- sum(data$red_bug_status == "Red Bug Gap", na.rm = TRUE)
+        paste0(format(nrow(data), big.mark = ","), " sites: ",
+               format(never_found, big.mark = ","), " never had red bugs, ",
+               format(gap_sites, big.mark = ","), " with ", input$years_red_bug_gap, "+ year gaps")
+      }
+    }
+  })
+  
+  output$red_bug_gap_chart <- renderPlotly({
+    if (input$analyze_red_bugs == 0 || input$load_data == 0) return(NULL)
+    
+    gap_result <- red_bug_data()
+    all_sites <- red_bug_all_sites()
+    group_by <- input$red_bug_group_by %||% "facility"
+    
+    if (group_by == "fos") {
+      fos_analysis <- get_red_bug_fos_analysis(gap_result, all_sites)
+      create_red_bug_fos_chart(fos_analysis, theme = current_theme())
+    } else {
+      facility_analysis <- get_red_bug_facility_analysis(gap_result, all_sites)
+      create_red_bug_facility_chart(facility_analysis, theme = current_theme())
+    }
+  })
+  
+  output$red_bug_gap_table <- DT::renderDataTable({
+    if (input$analyze_red_bugs == 0 || input$load_data == 0) {
+      DT::datatable(
+        data.frame(Message = "Load data and click 'Analyze Red Bug Gaps' to view results"),
+        rownames = FALSE,
+        options = list(dom = 't', ordering = FALSE)
+      )
+    } else {
+      render_red_bug_gap_table(red_bug_data(), theme = current_theme())
+    }
+  })
+  
+  output$download_red_bug_data <- downloadHandler(
+    filename = function() {
+      paste0("red_bug_gaps_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      if (input$analyze_red_bugs == 0 || input$load_data == 0) {
+        export_csv_safe(data.frame("No data available" = "Load data and analyze red bug gaps first"), file)
+      } else {
+        data <- red_bug_data()
+        if (!is.null(data) && nrow(data) > 0) {
+          export_csv_safe(data, file)
+        } else {
+          export_csv_safe(data.frame("No red bug gap sites found" = character(0)), file)
+        }
+      }
+    }
+  )
+  
   # ============= SITE ANALYTICS TAB =============
   # ============= WET ANALYSIS TAB (USES MAIN DATA) =============
   wet_analysis_data <- eventReactive(input$analyze_wet, {

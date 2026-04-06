@@ -629,5 +629,356 @@ get_inspection_gaps_from_data <- function(comprehensive_data, years_gap, ref_dat
   return(gap_sites)
 }
 
+# =============================================================================
+# RED BUG GAP ANALYSIS
+# =============================================================================
+# Finds sites where red bugs haven't been found in inspections for N+ years.
+# Queries dblarv_sample_current/archive for redblue = 'R' linked via sampnum_yr.
+
+#' Get red bug gap data - sites without red bugs found for N+ years
+#'
+#' @param years_gap Number of years threshold
+#' @param facility_filter Optional facility filter
+#' @param fosarea_filter Optional FOS area filter
+#' @param zone_filter Optional zone filter
+#' @param priority_filter Optional priority filter
+#' @param air_gnd_filter "A", "G", or "both"
+#' @param drone_filter drone filter option
+#' @param prehatch_only Boolean
+#' @param ref_date Reference date for analysis
+#' @return Data frame with site info and last red bug date
+get_red_bug_gaps <- function(years_gap = 5,
+                             facility_filter = NULL,
+                             fosarea_filter = NULL,
+                             zone_filter = NULL,
+                             priority_filter = NULL,
+                             air_gnd_filter = "both",
+                             drone_filter = "all",
+                             prehatch_only = FALSE,
+                             ref_date = Sys.Date()) {
+  
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    ref_date_str <- as.character(ref_date)
+    gap_cutoff <- ref_date - lubridate::years(years_gap)
+    gap_cutoff_str <- as.character(gap_cutoff)
+    
+    # Build site filter conditions
+    site_filters <- c()
+    
+    if (is_valid_filter(facility_filter)) {
+      facilities_str <- build_sql_in_list(facility_filter)
+      site_filters <- c(site_filters, paste0("sc.facility IN (", facilities_str, ")"))
+    }
+    
+    if (is_valid_filter(fosarea_filter)) {
+      foreman_lookup <- get_foremen_lookup()
+      if (nrow(foreman_lookup) > 0) {
+        fosarea_codes <- character(0)
+        for (fos in fosarea_filter) {
+          matching <- foreman_lookup[foreman_lookup$shortname == fos, ]
+          if (nrow(matching) > 0) {
+            fosarea_codes <- c(fosarea_codes, matching$emp_num)
+          }
+        }
+        if (length(fosarea_codes) > 0) {
+          fosarea_codes_formatted <- sprintf("%04d", as.numeric(fosarea_codes))
+          fosareas_str <- build_sql_in_list(fosarea_codes_formatted)
+          site_filters <- c(site_filters, paste0("sc.fosarea IN (", fosareas_str, ")"))
+        }
+      }
+    }
+    
+    if (!is.null(zone_filter) && length(zone_filter) > 0) {
+      zones_str <- build_sql_in_list(zone_filter)
+      site_filters <- c(site_filters, paste0("sc.zone IN (", zones_str, ")"))
+    }
+    
+    if (is_valid_filter(priority_filter)) {
+      priorities_str <- build_sql_in_list(priority_filter)
+      site_filters <- c(site_filters, paste0("b.priority IN (", priorities_str, ")"))
+    }
+    
+    if (!is.null(air_gnd_filter) && air_gnd_filter != "both") {
+      site_filters <- c(site_filters, paste0("b.air_gnd = '", air_gnd_filter, "'"))
+    }
+    
+    if (!is.null(drone_filter) && drone_filter != "all") {
+      if (drone_filter == "drone_only") {
+        site_filters <- c(site_filters, "b.drone = 'Y'")
+      } else if (drone_filter == "no_drone") {
+        site_filters <- c(site_filters, "(b.drone IS NULL OR b.drone != 'Y')")
+      }
+    }
+    
+    if (prehatch_only) {
+      site_filters <- c(site_filters, "b.prehatch IS NOT NULL")
+    }
+    
+    where_clause <- if (length(site_filters) > 0) {
+      paste0(" AND ", paste(site_filters, collapse = " AND "))
+    } else {
+      ""
+    }
+    
+    # Step 1: Get filtered sites
+    sites_qry <- sprintf("
+      SELECT b.sitecode, sc.facility, sc.fosarea, sc.zone, 
+             b.air_gnd, b.priority, b.drone, b.acres, b.prehatch
+      FROM loc_breeding_sites b
+      INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+      WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
+      %s
+    ", ref_date_str, where_clause)
+    
+    sites <- dbGetQuery(con, sites_qry)
+    
+    if (nrow(sites) == 0) {
+      safe_disconnect(con)
+      return(data.frame())
+    }
+    
+    # Step 2: Get latest red bug inspection from current table
+    current_red <- dbGetQuery(con, "
+      SELECT i.sitecode, MAX(i.inspdate) AS last_red_bug
+      FROM dblarv_insptrt_current i
+      INNER JOIN dblarv_sample_current s ON i.sampnum_yr = s.sampnum_yr
+      WHERE i.inspdate IS NOT NULL
+        AND i.sampnum_yr IS NOT NULL
+        AND s.redblue = 'R'
+      GROUP BY i.sitecode
+    ")
+    
+    # Step 3: Merge with sites and find those needing archive check
+    sites_merged <- sites %>%
+      left_join(current_red, by = "sitecode")
+    
+    need_archive <- sites_merged %>%
+      filter(is.na(last_red_bug) | last_red_bug < gap_cutoff) %>%
+      pull(sitecode) %>%
+      unique()
+    
+    # Step 4: Check archive for sites that need it
+    archive_red <- data.frame(sitecode = character(0), archive_red = as.Date(character(0)))
+    if (length(need_archive) > 0) {
+      chunk_size <- 5000
+      archive_parts <- list()
+      for (i in seq(1, length(need_archive), by = chunk_size)) {
+        chunk <- need_archive[i:min(i + chunk_size - 1, length(need_archive))]
+        in_clause <- paste0("'", chunk, "'", collapse = ",")
+        q <- sprintf("
+          SELECT i.sitecode, MAX(i.inspdate) AS archive_red
+          FROM dblarv_insptrt_archive i
+          INNER JOIN dblarv_sample_archive s ON i.sampnum_yr = s.sampnum_yr
+          WHERE i.sitecode IN (%s)
+            AND i.inspdate IS NOT NULL
+            AND i.sampnum_yr IS NOT NULL
+            AND s.redblue = 'R'
+          GROUP BY i.sitecode
+        ", in_clause)
+        archive_parts[[length(archive_parts) + 1]] <- dbGetQuery(con, q)
+      }
+      archive_red <- do.call(rbind, archive_parts)
+    }
+    
+    safe_disconnect(con)
+    
+    # Step 5: Combine current and archive results
+    result <- sites_merged %>%
+      left_join(archive_red, by = "sitecode") %>%
+      mutate(
+        last_red_bug_date = pmax(last_red_bug, archive_red, na.rm = TRUE),
+        days_since_red_bug = as.numeric(ref_date - last_red_bug_date),
+        red_bug_status = case_when(
+          is.na(last_red_bug_date) ~ "Never Found",
+          last_red_bug_date < gap_cutoff ~ "Red Bug Gap",
+          TRUE ~ "Recently Found"
+        )
+      ) %>%
+      select(sitecode, facility, fosarea, zone, air_gnd, priority, drone, acres, prehatch,
+             last_red_bug_date, days_since_red_bug, red_bug_status)
+    
+    # Map fosarea emp_num to foreman shortname for display
+    foremen <- get_foremen_lookup()
+    if (nrow(foremen) > 0) {
+      fosarea_map <- setNames(foremen$shortname, sprintf("%04d", as.numeric(foremen$emp_num)))
+      result$fos_name <- ifelse(
+        result$fosarea %in% names(fosarea_map),
+        fosarea_map[result$fosarea],
+        result$fosarea
+      )
+    } else {
+      result$fos_name <- result$fosarea
+    }
+    
+    # Filter to only gap sites (never found + gap)
+    gap_sites <- result %>%
+      filter(red_bug_status != "Recently Found") %>%
+      arrange(last_red_bug_date, sitecode)
+    
+    return(gap_sites)
+    
+  }, error = function(e) {
+    warning(paste("Error in get_red_bug_gaps:", e$message))
+    if (!is.null(con)) safe_disconnect(con)
+    return(data.frame())
+  })
+}
+
+#' Aggregate red bug gap data by facility (for bar chart)
+get_red_bug_facility_analysis <- function(gap_data, all_sites_data) {
+  if (nrow(all_sites_data) == 0) return(data.frame())
+  
+  total_sites <- all_sites_data %>%
+    distinct(sitecode, facility) %>%
+    count(facility, name = "total_sites")
+  
+  gap_sites <- gap_data %>%
+    count(facility, name = "gap_sites")
+  
+  facility_analysis <- total_sites %>%
+    left_join(gap_sites, by = "facility") %>%
+    mutate(
+      gap_sites = ifelse(is.na(gap_sites), 0, gap_sites),
+      recently_found_sites = total_sites - gap_sites,
+      gap_percentage = round(100 * gap_sites / total_sites, 1),
+      recently_found_percentage = round(100 * recently_found_sites / total_sites, 1)
+    ) %>%
+    filter(total_sites > 0)
+  
+  return(facility_analysis)
+}
+
+#' Aggregate red bug gap data by FOS/foreman (for bar chart)
+get_red_bug_fos_analysis <- function(gap_data, all_sites_data) {
+  if (nrow(all_sites_data) == 0) return(data.frame())
+  
+  # Map fosarea to foreman names for all sites
+  foremen <- get_foremen_lookup()
+  if (nrow(foremen) > 0) {
+    fosarea_map <- setNames(foremen$shortname, sprintf("%04d", as.numeric(foremen$emp_num)))
+    all_sites_data$fos_name <- ifelse(
+      all_sites_data$fosarea %in% names(fosarea_map),
+      fosarea_map[all_sites_data$fosarea],
+      all_sites_data$fosarea
+    )
+  } else {
+    all_sites_data$fos_name <- all_sites_data$fosarea
+  }
+  
+  total_sites <- all_sites_data %>%
+    distinct(sitecode, fos_name) %>%
+    count(fos_name, name = "total_sites")
+  
+  gap_sites <- gap_data %>%
+    count(fos_name, name = "gap_sites")
+  
+  fos_analysis <- total_sites %>%
+    left_join(gap_sites, by = "fos_name") %>%
+    mutate(
+      gap_sites = ifelse(is.na(gap_sites), 0, gap_sites),
+      recently_found_sites = total_sites - gap_sites,
+      gap_percentage = round(100 * gap_sites / total_sites, 1),
+      recently_found_percentage = round(100 * recently_found_sites / total_sites, 1)
+    ) %>%
+    filter(total_sites > 0)
+  
+  return(fos_analysis)
+}
+
+#' Get all sites (not just gaps) for computing totals - same query as get_red_bug_gaps but returns all
+get_red_bug_all_sites <- function(facility_filter = NULL,
+                                  fosarea_filter = NULL,
+                                  zone_filter = NULL,
+                                  priority_filter = NULL,
+                                  air_gnd_filter = "both",
+                                  drone_filter = "all",
+                                  prehatch_only = FALSE,
+                                  ref_date = Sys.Date()) {
+  con <- get_db_connection()
+  if (is.null(con)) return(data.frame())
+  
+  tryCatch({
+    ref_date_str <- as.character(ref_date)
+    
+    site_filters <- c()
+    
+    if (is_valid_filter(facility_filter)) {
+      facilities_str <- build_sql_in_list(facility_filter)
+      site_filters <- c(site_filters, paste0("sc.facility IN (", facilities_str, ")"))
+    }
+    
+    if (is_valid_filter(fosarea_filter)) {
+      foreman_lookup <- get_foremen_lookup()
+      if (nrow(foreman_lookup) > 0) {
+        fosarea_codes <- character(0)
+        for (fos in fosarea_filter) {
+          matching <- foreman_lookup[foreman_lookup$shortname == fos, ]
+          if (nrow(matching) > 0) {
+            fosarea_codes <- c(fosarea_codes, matching$emp_num)
+          }
+        }
+        if (length(fosarea_codes) > 0) {
+          fosarea_codes_formatted <- sprintf("%04d", as.numeric(fosarea_codes))
+          fosareas_str <- build_sql_in_list(fosarea_codes_formatted)
+          site_filters <- c(site_filters, paste0("sc.fosarea IN (", fosareas_str, ")"))
+        }
+      }
+    }
+    
+    if (!is.null(zone_filter) && length(zone_filter) > 0) {
+      zones_str <- build_sql_in_list(zone_filter)
+      site_filters <- c(site_filters, paste0("sc.zone IN (", zones_str, ")"))
+    }
+    
+    if (is_valid_filter(priority_filter)) {
+      priorities_str <- build_sql_in_list(priority_filter)
+      site_filters <- c(site_filters, paste0("b.priority IN (", priorities_str, ")"))
+    }
+    
+    if (!is.null(air_gnd_filter) && air_gnd_filter != "both") {
+      site_filters <- c(site_filters, paste0("b.air_gnd = '", air_gnd_filter, "'"))
+    }
+    
+    if (!is.null(drone_filter) && drone_filter != "all") {
+      if (drone_filter == "drone_only") {
+        site_filters <- c(site_filters, "b.drone = 'Y'")
+      } else if (drone_filter == "no_drone") {
+        site_filters <- c(site_filters, "(b.drone IS NULL OR b.drone != 'Y')")
+      }
+    }
+    
+    if (prehatch_only) {
+      site_filters <- c(site_filters, "b.prehatch IS NOT NULL")
+    }
+    
+    where_clause <- if (length(site_filters) > 0) {
+      paste0(" AND ", paste(site_filters, collapse = " AND "))
+    } else {
+      ""
+    }
+    
+    qry <- sprintf("
+      SELECT b.sitecode, sc.facility, sc.fosarea, sc.zone,
+             b.air_gnd, b.priority, b.drone, b.acres, b.prehatch
+      FROM loc_breeding_sites b
+      INNER JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
+      WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
+      %s
+    ", ref_date_str, where_clause)
+    
+    result <- dbGetQuery(con, qry)
+    safe_disconnect(con)
+    return(result)
+    
+  }, error = function(e) {
+    warning(paste("Error in get_red_bug_all_sites:", e$message))
+    if (!is.null(con)) safe_disconnect(con)
+    return(data.frame())
+  })
+}
+
 message("✓ inspections/data_functions.R loaded")
 

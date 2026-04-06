@@ -257,6 +257,56 @@
             color: #fff;
             border-color: #2c5aa0;
         }
+
+        /* ---- Chat widget styles ---- */
+        .chat-msg {
+            margin-bottom: 12px;
+            display: flex;
+        }
+
+        .chat-msg.chat-user {
+            justify-content: flex-end;
+        }
+
+        .chat-msg.chat-assistant {
+            justify-content: flex-start;
+        }
+
+        .chat-bubble {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.55;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .chat-bubble a {
+            color: inherit;
+            text-decoration: underline;
+        }
+
+        .chat-bubble-user {
+            background-color: #2c5aa0;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+
+        .chat-bubble-assistant {
+            background-color: #fff;
+            color: #333;
+            border: 1px solid #e0e4ea;
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-bubble-thinking {
+            background-color: #fff;
+            color: #999;
+            border: 1px solid #e0e4ea;
+            border-bottom-left-radius: 4px;
+            font-style: italic;
+        }
     </style>
 </head>
 
@@ -490,6 +540,12 @@
                                     <option value="" disabled selected>Loading FOS areas...</option>
                                 </select>
                             </div>
+                            <div style="margin-bottom: 10px;">
+                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">Your Name:</label>
+                                <select id="air_employee" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                                    <option value="" disabled selected>Loading employees...</option>
+                                </select>
+                            </div>
                             <button onclick="openAirChecklist()" style="width: 100%; background-color: #2c5aa0; color: white; padding: 8px; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 12px;">Open Application</button>
                         </div>
                         <div class="app-card">
@@ -509,7 +565,7 @@
             <div class="category-header" onclick="toggleCategory('cat-tests')">
                 <div class="category-header-left">
                     <h2>Tests</h2>
-                    <span class="category-count">2 apps</span>
+                    <span class="category-count">3 apps</span>
                 </div>
                 <button class="category-toggle" aria-label="Toggle Tests">+</button>
             </div>
@@ -527,6 +583,40 @@
                             <h3>Trap Surveillance Test</h3>
                             <p>Prototype app to compute section vector index using k-nearest traps.</p>
                             <a href="trap_survillance_test/" class="app-link">Open Application</a>
+                        </div>
+                        <!-- MMCD AI Assistant card -->
+                        <div class="app-card" style="grid-column: 1 / -1; text-align: left; padding: 0; overflow: hidden;">
+                            <div style="padding: 20px 20px 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #2c5aa0, #1e3d6f); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; font-weight: bold; flex-shrink: 0;">AI</div>
+                                    <div>
+                                        <h3 style="margin: 0; font-size: 16px;">MMCD Assistant</h3>
+                                        <p style="margin: 2px 0 0 0; font-size: 12px; color: #888;">Ask questions about MMCD procedures, protocols, and field operations</p>
+                                    </div>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span id="llm-status" style="font-size: 11px; color: #7c8a97;">AI Assistant</span>
+                                    <button onclick="clearChat()" style="background: none; border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Clear</button>
+                                </div>
+                            </div>
+                            <!-- Chat messages area -->
+                            <div id="chat-messages" style="height: 360px; overflow-y: auto; padding: 12px 20px; background-color: #f8f9fb; border-top: 1px solid #e8ecf0; border-bottom: 1px solid #e8ecf0;">
+                                <div class="chat-msg chat-assistant">
+                                    <div class="chat-bubble chat-bubble-assistant">
+                                        Hi! I'm the MMCD Assistant. I know about MMCD procedures, protocols, mosquito biology, field operations, and more from the <a href="https://mmcd.wiki" target="_blank">MMCD Wiki</a>. Ask me anything!
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Input area -->
+                            <div style="display: flex; padding: 12px 20px; gap: 8px; background: #fff;">
+                                <input type="text" id="chat-input" placeholder="Ask about dipping procedures, treatment protocols, equipment..."
+                                    style="flex: 1; padding: 10px 14px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;"
+                                    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}">
+                                <button id="chat-send-btn" onclick="sendChat()"
+                                    style="background-color: #2c5aa0; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                                    Send
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -591,17 +681,23 @@
         // Data loading
         // =====================================================================
 
-        // Store all foremen for filtering
+        // Store all foremen and employees for filtering
         let allForemen = [];
+        let allEmployees = [];
         
         // Load real facility and FOS options from the air_inspection_checklist app
         document.addEventListener('DOMContentLoaded', async function() {
             console.log('Loading real filter options from database...');
             await loadRealFacilities();
             await loadRealForemen();
+            await loadRealEmployees();
             
-            // Set up facility change handler to filter FOS options
-            document.getElementById('air_facility').addEventListener('change', filterFOSByFacility);
+            // Set up facility change handler to filter FOS and Employee options
+            document.getElementById('air_facility').addEventListener('change', function() {
+                filterFOSByFacility();
+                filterEmployeesByFacilityAndFOS();
+            });
+            document.getElementById('air_fos').addEventListener('change', filterEmployeesByFacilityAndFOS);
             
             // Also populate FOS overview dropdowns (reuse same data)
             populateFOSOverviewDropdowns();
@@ -684,6 +780,35 @@
             }
         }
         
+        // Load employees from the air_inspection_checklist Shiny app
+        async function loadRealEmployees(retries = 3, delay = 2000) {
+            try {
+                const jsonUrl = 'air_inspection_checklist/employees.json';
+                console.log('Fetching employees from:', jsonUrl);
+                const response = await fetch(jsonUrl);
+                
+                if (response.ok) {
+                    allEmployees = await response.json();
+                    console.log('Employees loaded:', allEmployees.length);
+                    filterEmployeesByFacilityAndFOS();
+                } else if (retries > 0) {
+                    console.warn('Employees fetch returned HTTP ' + response.status + ', retrying...');
+                    await new Promise(r => setTimeout(r, delay));
+                    return loadRealEmployees(retries - 1, delay * 1.5);
+                } else {
+                    console.error('Failed to load employees after retries');
+                    document.getElementById('air_employee').innerHTML = '<option value="">Unable to load employees</option>';
+                }
+            } catch (error) {
+                if (retries > 0) {
+                    await new Promise(r => setTimeout(r, delay));
+                    return loadRealEmployees(retries - 1, delay * 1.5);
+                }
+                console.error('Error loading employees:', error);
+                document.getElementById('air_employee').innerHTML = '<option value="">Error loading employees</option>';
+            }
+        }
+
         // Filter FOS options based on selected facility
         function filterFOSByFacility() {
             const facilitySelect = document.getElementById('air_facility');
@@ -713,17 +838,50 @@
             console.log('FOS options filtered:', filteredForemen.length, 'options');
         }
 
+        // Filter employees by selected facility AND FOS
+        function filterEmployeesByFacilityAndFOS() {
+            const facility = document.getElementById('air_facility').value;
+            const fos = document.getElementById('air_fos').value;
+            const empSelect = document.getElementById('air_employee');
+            
+            let filtered = allEmployees;
+            
+            // Filter by facility
+            if (facility && facility !== 'all') {
+                filtered = filtered.filter(e => e.facility === facility);
+            }
+            
+            // Filter by FOS - find the FOS emp_num from foremen list, then match employee fieldsuper
+            if (fos && fos !== 'all') {
+                const fosEntry = allForemen.find(f => f.code === fos);
+                if (fosEntry && fosEntry.emp_num) {
+                    filtered = filtered.filter(e => e.fieldsuper === fosEntry.emp_num);
+                }
+            }
+            
+            empSelect.innerHTML = '<option value="" selected>Select your name (optional)</option>';
+            filtered.forEach(emp => {
+                const option = document.createElement('option');
+                option.value = emp.emp_num;
+                option.textContent = emp.label;
+                empSelect.appendChild(option);
+            });
+            
+            console.log('Employee options filtered:', filtered.length);
+        }
+
         // Open air inspection checklist with filters
         function openAirChecklist() {
             const facility = document.getElementById('air_facility').value;
             const fos = document.getElementById('air_fos').value;
+            const emp = document.getElementById('air_employee').value;
             
             if (!facility || !fos) {
                 alert('Please select both a Facility and FOS Area');
                 return;
             }
             
-            console.log('Opening air checklist with filters:', { facility, fos });
+            console.log('Opening air checklist with filters:', { facility, fos, emp });
             
             // Build query string - only include non-'all' values
             const params = new URLSearchParams();
@@ -736,6 +894,11 @@
             // FOS: only pass if not 'all' (app checks for empty string, so don't pass 'all')
             if (fos && fos !== 'all' && fos !== '') {
                 params.append('fos', fos);
+            }
+            
+            // Employee: pass emp_num if selected
+            if (emp && emp !== '') {
+                params.append('emp', emp);
             }
             
             // Redirect to the air inspection checklist app
@@ -830,6 +993,129 @@
             console.log('Opening FOS Overview:', appUrl);
             window.location.href = appUrl;
         }
+
+        // =====================================================================
+        // MMCD AI Assistant Chat
+        // =====================================================================
+
+        // In production, the tunnel URL is fetched from the Plumber API
+        // (the orchestrator registers it automatically on startup).
+        // Locally, we hit localhost:8000 directly.
+        const IS_LOCAL = window.location.hostname === 'localhost'
+                      || window.location.hostname === '127.0.0.1';
+        let LLM_ENDPOINT = IS_LOCAL ? 'http://localhost:8000/chat' : null;
+
+        // Fetch the registered tunnel URL from the API (production only)
+        if (!IS_LOCAL) {
+            fetch(window.location.origin + '/v1/public/llm-config')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.tunnel_url) {
+                        LLM_ENDPOINT = data.tunnel_url + '/chat';
+                        document.getElementById('llm-status').textContent = 'AI Assistant';
+                        document.getElementById('llm-status').style.color = '#7c8a97';
+                        document.getElementById('chat-send-btn').disabled = false;
+                    } else {
+                        document.getElementById('llm-status').textContent = 'Offline';
+                        document.getElementById('llm-status').style.color = '#c62828';
+                        document.getElementById('chat-send-btn').disabled = true;
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('llm-status').textContent = 'Offline';
+                    document.getElementById('llm-status').style.color = '#c62828';
+                    document.getElementById('chat-send-btn').disabled = true;
+                });
+        }
+
+        let chatHistory = [];
+
+        function clearChat() {
+            chatHistory = [];
+            const container = document.getElementById('chat-messages');
+            container.innerHTML = `
+                <div class="chat-msg chat-assistant">
+                    <div class="chat-bubble chat-bubble-assistant">
+                        Hi! I'm the MMCD Assistant. I know about MMCD procedures, protocols, mosquito biology, field operations, and more from the <a href="https://mmcd.wiki" target="_blank">MMCD Wiki</a>. Ask me anything!
+                    </div>
+                </div>`;
+        }
+
+        function appendMessage(role, text) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'chat-msg chat-' + role;
+            const bubble = document.createElement('div');
+            bubble.className = 'chat-bubble chat-bubble-' + role;
+            bubble.textContent = text;
+            div.appendChild(bubble);
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            return bubble;
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            if (!LLM_ENDPOINT) {
+                appendMessage('assistant', 'The MMCD AI Assistant is currently offline.');
+                return;
+            }
+
+            input.value = '';
+            appendMessage('user', text);
+            chatHistory.push({ role: 'user', content: text });
+
+            // Show thinking indicator
+            const thinkBubble = appendMessage('thinking', 'Thinking...');
+
+            const sendBtn = document.getElementById('chat-send-btn');
+            sendBtn.disabled = true;
+            input.disabled = true;
+
+            try {
+                const resp = await fetch(LLM_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messages: chatHistory }),
+                });
+
+                if (!resp.ok) {
+                    let serverMsg = '';
+                    try {
+                        const errData = await resp.json();
+                        serverMsg = errData.error || '';
+                    } catch { /* not JSON */ }
+                    const e = new Error('HTTP ' + resp.status);
+                    e.serverError = serverMsg;
+                    throw e;
+                }
+
+                const data = await resp.json();
+                const reply = data.content || data.message?.content || 'No response received.';
+
+                // Remove thinking indicator
+                thinkBubble.parentElement.remove();
+
+                appendMessage('assistant', reply);
+                chatHistory.push({ role: 'assistant', content: reply });
+            } catch (err) {
+                thinkBubble.parentElement.remove();
+                // Try to extract server error message from JSON response
+                let errMsg = 'The MMCD AI Assistant is currently unavailable. Please try again later.';
+                if (err.serverError) {
+                    errMsg = err.serverError;
+                }
+                appendMessage('assistant', errMsg);
+            } finally {
+                sendBtn.disabled = false;
+                input.disabled = false;
+                input.focus();
+            }
+        }
+
     </script>
 </body>
 

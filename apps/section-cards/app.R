@@ -51,6 +51,8 @@ ui <- fluidPage(
   
   # Custom CSS for print button and layout
   tags$head(
+    tags$link(rel = "stylesheet", type = "text/css", href = paste0("section-cards-print.css?v=", as.numeric(Sys.time()))),
+    tags$script(src = paste0("section-cards-print.js?v=", as.numeric(Sys.time()))),
     tags$style(HTML("
       body, p, div, span, td, th, label, .help-block {
         font-size: 16px !important;
@@ -81,19 +83,22 @@ ui <- fluidPage(
         padding: 40px;
         box-sizing: border-box;
       }
-      .modal-dialog {
-        max-width: none !important;
-        margin: 0 !important;
-        height: 100vh !important;
-        width: 100vw !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+      .modal-dialog.modal-lg {
+        width: 98vw !important;
+        max-width: 98vw !important;
+        margin: 1vh auto !important;
       }
-      .modal-content {
-        background: transparent !important;
+      .modal-dialog.modal-lg .modal-content {
+        height: 96vh !important;
+      }
+      .modal-dialog.modal-lg .modal-body {
+        height: calc(96vh - 120px) !important;
+        padding: 6px !important;
+      }
+      .modal-dialog.modal-lg iframe {
+        width: 100% !important;
+        height: 100% !important;
         border: none !important;
-        box-shadow: none !important;
       }
       .loading-spinner {
         border: 8px solid #f3f3f3;
@@ -113,13 +118,33 @@ ui <- fluidPage(
         color: #333;
       }
       @media print {
-        .sidebar, .print-button, .no-print {
+        /* Hide sidebar wrapper and non-print elements completely.
+           .col-sm-4 is the Shiny sidebarPanel wrapper div — it must be
+           display:none (not just zero-padded) because even an empty
+           block element in flow can push content to a second page. */
+        .sidebar, .print-button, .no-print, .well,
+        .col-sm-4,
+        .shiny-panel-conditional {
           display: none !important;
         }
-        .main-panel {
+        /* Nuke ALL margin/padding from every wrapper between <body> and .card-page */
+        body, html,
+        .container-fluid, .row, .main-panel,
+        .col-sm-8,
+        .col-sm-9, .col-sm-10, .col-sm-11, .col-sm-12,
+        .col-md-1, .col-md-2, .col-md-3, .col-md-4,
+        .col-md-5, .col-md-6, .col-md-7, .col-md-8,
+        .col-md-9, .col-md-10, .col-md-11, .col-md-12,
+        .shiny-html-output,
+        #section_cards,
+        .cards-container {
           width: 100% !important;
+          max-width: 100% !important;
           margin: 0 !important;
           padding: 0 !important;
+          border: 0 !important;
+          float: none !important;
+          position: static !important;
         }
       }
     ")),
@@ -188,7 +213,7 @@ ui <- fluidPage(
     mainPanel(
       class = "main-panel",
       
-      # Print button at top of cards
+      # Print button and instructions button at top of cards
       div(
         class = "print-button no-print",
         actionButton(
@@ -197,6 +222,13 @@ ui <- fluidPage(
           class = "btn-info btn-lg",
           icon = icon("print"),
           onclick = "window.print();"
+        ),
+        actionButton(
+          "show_instructions",
+          "Instructions",
+          class = "btn-default btn-lg",
+          icon = icon("circle-question"),
+          style = "margin-left: 10px;"
         )
       ),
       
@@ -224,6 +256,19 @@ server <- function(input, output, session) {
   
   # Reactive values
   cards_data <- reactiveVal(NULL)
+  
+  # ==========================================================================
+  # INSTRUCTIONS MODAL
+  # ==========================================================================
+  observeEvent(input$show_instructions, {
+    showModal(modalDialog(
+      tags$iframe(src = "instructions.pdf"),
+      title = "Section Cards Instructions",
+      size = "l",
+      easyClose = TRUE,
+      footer = modalButton("Close")
+    ))
+  })
   
   # ==========================================================================
   # DYNAMIC COLUMN DISCOVERY from JK table
@@ -910,6 +955,13 @@ server <- function(input, output, session) {
       HTML(cards_html)
     })
     
+    # Tell JS to insert blank pages for double-sided printing.
+    # Use onFlushed so the message is sent AFTER renderUI output
+    # reaches the client (avoids race where JS fires before DOM update).
+    session$onFlushed(function() {
+      session$sendCustomMessage('section-cards-rendered', TRUE)
+    }, once = TRUE)
+    
     setProgress(value = 1, detail = "Done!")
     
     }) # end withProgress
@@ -1025,18 +1077,69 @@ server <- function(input, output, session) {
       
       setProgress(value = 0.90, detail = "Writing file...")
       
-      # Create complete HTML document
+      # Create complete HTML document with CSS and JS inlined
+      css_file <- file.path("www", "section-cards-print.css")
+      js_file <- file.path("www", "section-cards-print.js")
+      inline_css <- if (file.exists(css_file)) readLines(css_file, warn = FALSE) else ""
+      inline_js  <- if (file.exists(js_file))  readLines(js_file, warn = FALSE) else ""
+      
       html_content <- paste0(
         '<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Section Cards - ', format(Sys.Date(), "%Y-%m-%d"), '</title>
+  <style>
+    /* Reset body for clean print */
+    body, html { margin: 0; padding: 0; }
+  \n', paste(inline_css, collapse = "\n"), '\n</style>
 </head>
 <body>
   ',
         html_cards,
         '
+<script>\n', paste(inline_js, collapse = "\n"), '
+
+// For standalone HTML (no Shiny), run immediately
+(function() {
+  var container = document.querySelector(".cards-container");
+  if (!container) return;
+  var doubleSided = container.getAttribute("data-double-sided") === "true";
+
+  // Remove old blanks
+  var old = container.querySelectorAll(".blank-separator");
+  for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+
+  var pages = container.querySelectorAll(".card-page");
+  if (pages.length === 0) return;
+
+  if (doubleSided) {
+    var groups = [], cur = null, cnt = 0;
+    for (var i = 0; i < pages.length; i++) {
+      var g = pages[i].getAttribute("data-group") || "__none__";
+      if (g !== cur) {
+        if (cur !== null) groups.push({group: cur, count: cnt, lastEl: pages[i-1]});
+        cur = g; cnt = 1;
+      } else cnt++;
+    }
+    if (cur !== null) groups.push({group: cur, count: cnt, lastEl: pages[pages.length-1]});
+
+    for (var j = 0; j < groups.length - 1; j++) {
+      if (groups[j].count % 2 === 1) {
+        var b = document.createElement("div");
+        b.className = "blank-separator page-break";
+        b.setAttribute("aria-hidden","true");
+        b.innerHTML = "<span class=\\"no-print\\">(blank back page)</span>";
+        groups[j].lastEl.parentNode.insertBefore(b, groups[j].lastEl.nextSibling);
+      }
+    }
+  }
+
+  var all = container.querySelectorAll(".card-page, .blank-separator");
+  for (var k = 0; k < all.length; k++) all[k].classList.add("page-break");
+  if (all.length > 0) all[all.length - 1].classList.remove("page-break");
+})();
+</script>
 </body>
 </html>'
       )

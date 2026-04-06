@@ -84,8 +84,13 @@ trap_surveillance_ui <- function() {
             )
           ),
           fluidRow(
-            box(width = 12, title = "Vector Index by Area Over Time", status = "danger", solidHeader = TRUE,
+            box(width = 12, title = "District-Wide Vector Index Trend", status = "danger", solidHeader = TRUE,
                 plotly::plotlyOutput("vi_trend_plot", height = "400px")
+            )
+          ),
+          fluidRow(
+            box(width = 12, title = "Vector Index by Area Over Time", status = "danger", solidHeader = TRUE,
+                plotly::plotlyOutput("vi_area_trend_plot", height = "400px")
             )
           )
         ),

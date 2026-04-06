@@ -330,6 +330,167 @@ docker run -p 3838:3838 \
 
 Access the dashboard at: `http://localhost:3838`
 
+### Windows (Docker Desktop + WSL2) Quick Start
+
+Use this section when working on Windows and testing the full local stack (OpenResty/nginx + multiple Shiny workers).
+
+```powershell
+# 1) Install Docker Desktop (one time)
+winget install --id Docker.DockerDesktop -e
+
+# 2) Verify WSL2 backend is available
+wsl --status
+wsl -l -v
+
+# 3) Verify Docker engine is ready
+docker version
+```
+
+If Docker is installed but `docker` is not recognized in your current PowerShell session, open a new terminal window and run `docker version` again.
+
+#### Build and Run Using Existing `.env`
+
+From the repository root:
+
+```powershell
+cd C:\Users\yourusername\Documents\mmcd_metrics
+
+# Build image (repo uses lowercase "dockerfile")
+docker build -f dockerfile -t mmcd-dashboard:local .
+
+# Run container with your existing .env values
+docker run -d --name mmcd-local -p 3838:3838 --env-file .env mmcd-dashboard:local
+
+# Confirm startup and mode
+docker ps --filter "name=mmcd-local"
+docker logs --tail 200 mmcd-local
+```
+
+Open: `http://localhost:3838`
+
+#### Rebuild Loop After Code Changes (Windows)
+
+Most changes in this repo are copied into the image at build time. To see updates, rebuild and restart:
+
+```powershell
+cd C:\Users\yourusername\Documents\mmcd_metrics
+
+# Stop/remove old container
+docker rm -f mmcd-local
+
+# Rebuild image from latest source
+docker build -f dockerfile -t mmcd-dashboard:local .
+
+# Start fresh container with same env file
+docker run -d --name mmcd-local -p 3838:3838 --env-file .env mmcd-dashboard:local
+
+# Check logs
+docker logs --tail 120 mmcd-local
+```
+
+Tip: Use a hard browser refresh (Ctrl+F5) after restart to avoid cached JS/CSS.
+
+#### Secure API Layer (Public + Private Endpoints)
+
+This repo includes a Plumber API at [api/filters.R](../api/filters.R) with:
+
+- Public endpoints (no auth):
+  - `GET /v1/public/health`
+  - `GET /v1/public/facilities`
+  - `GET /v1/public/foremen`
+- Private endpoints (API key required):
+  - `GET /v1/private/sectcodes`
+
+Authentication for private routes uses one of these headers:
+
+- `Authorization: Bearer <token>`
+- `X-API-Key: <token>`
+
+Set one or more valid tokens via environment variable (comma-separated):
+
+```bash
+API_KEYS=token1,token2,token3
+```
+
+Example calls:
+
+```bash
+# Public route
+curl http://localhost:3838/v1/public/health
+
+# Private route with API key
+curl -H "Authorization: Bearer token1" \
+  "http://localhost:3838/v1/private/sectcodes?facility=MO&limit=100"
+```
+
+SQL injection protection pattern used by this API:
+
+- Validate all user inputs first (length, allowed characters, numeric bounds)
+- Use parameterized SQL (`DBI::sqlInterpolate`) for values
+- Never concatenate raw request values directly into SQL strings
+- Use allow-lists for any dynamic identifiers (table or column names)
+
+#### Google Sheets Live Data + Editable Columns
+
+Yes, this is possible and is a good workflow.
+
+Recommended pattern:
+
+1. Keep API data in a read-only tab, such as `Raw_Data`.
+2. Keep user edits in a separate tab, such as `User_Notes`.
+3. Use a stable key (for example `sectcode`) to join data with formulas (`XLOOKUP`/`INDEX-MATCH`) or Apps Script.
+4. Refresh `Raw_Data` on a schedule (for example every 5 minutes) using Google Apps Script.
+5. Never write user-edited columns back into `Raw_Data`; keep them in `User_Notes` so refreshes do not overwrite edits.
+
+Minimal Apps Script example (pull private API data into `Raw_Data`):
+
+```javascript
+function refreshSectcodes() {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('MMCD_API_KEY');
+  const url = 'https://your-api-host/v1/private/sectcodes?limit=500';
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: {
+      'Authorization': 'Bearer ' + apiKey
+    },
+    muteHttpExceptions: false
+  });
+
+  const payload = JSON.parse(response.getContentText());
+  const rows = payload.data || [];
+
+  const sheet = SpreadsheetApp.getActive().getSheetByName('Raw_Data');
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, 4).setValues([['sectcode', 'facility', 'fosarea', 'zone']]);
+
+  if (rows.length > 0) {
+    const values = rows.map(r => [r.sectcode, r.facility, r.fosarea, r.zone]);
+    sheet.getRange(2, 1, values.length, 4).setValues(values);
+  }
+}
+```
+
+Security tips for Sheets integration:
+
+- Store API keys in Script Properties, not in sheet cells.
+- Restrict API keys by environment and rotate keys periodically.
+- Keep private API endpoints behind HTTPS only.
+- If possible, put a reverse proxy in front of the API with rate limiting and IP restrictions.
+
+#### Common Windows Docker Troubleshooting
+
+- Error: `exec /startup.sh: no such file or directory`
+  - Cause: line endings in `startup.sh` are CRLF.
+  - Fix: keep the Dockerfile step that normalizes line endings (`sed -i 's/\r$//' /startup.sh`) and rebuild.
+
+- Error: Docker daemon not running
+  - Start Docker Desktop, wait until status is "Engine running", then retry.
+
+- Port already in use on 3838
+  - Stop the previous container: `docker rm -f mmcd-local`
+  - Or map a different host port: `-p 3839:3838`
+
 ### AWS Deployment with Secure Environment Variables
 
 For AWS deployment, **DO NOT** copy .env files to the container. Instead, use AWS Secrets Manager or environment variables:

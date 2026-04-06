@@ -78,10 +78,11 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   grid_rows <- ceiling(cards_per_page / 2)
   
   # ---- Density scaling ----
-  # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller
-  card_scale <- 6 / cards_per_page  # 1.0, 0.75, 0.6, 0.5
+  # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller, fewer = capped at 1.0
+  card_scale <- min(1.0, 6 / cards_per_page)  # 4->1.0, 6->1.0, 8->0.75, 10->0.6, 12->0.5
   # Page margins shrink to reclaim space at higher density
   page_margin <- switch(as.character(cards_per_page),
+    "4"  = "0.5in",
     "6"  = "0.5in",
     "8"  = "0.4in",
     "10" = "0.3in",
@@ -89,423 +90,107 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     "0.5in"
   )
   margin_num <- as.numeric(gsub("in", "", page_margin))
-  # Usable print area on letter paper (8.5 x 11)
-  usable_height <- 11 - 2 * margin_num
+  # Usable print area on letter paper (8.5 x 11).
+  # This is set as the card-page height. Since card-page has padding = page_margin
+  # and box-sizing: border-box, the CONTENT area is (11 - 2*margin) - 2*margin.
+  # But we set usable_height = 11 (the full page) because @page margin is 0.
+  usable_height <- 11
   # Gap between cards scales down
   grid_gap <- max(2, round(15 * card_scale))
   
+  # ---- Dynamic font / row sizing ----
+  # Content area inside card-page after padding is subtracted (border-box)
+  content_height_in <- 11 - 2 * margin_num
+  # Available height per card in px (96 dpi: 1in = 96px)
+  card_height_px <- (content_height_in * 96 / grid_rows) - grid_gap
+  # Account for card border (2px top + 2px bottom)
+  card_height_px <- card_height_px - 4
+
+  # Baseline VISIBLE sizes (what the user sees after scale transform)
+  base_title_font   <- 14
+  base_remarks_font <- 8
+  base_info_font    <- 7
+  base_header_pad   <- 6
+  base_header_gap   <- 3
+  base_th_font      <- 7
+  base_td_height    <- 25
+  base_td_pad       <- 4
+  base_td_font      <- 10
+
+  # ---- Squeeze: computed against VISIBLE card height ----
+  # card_height_px is the grid cell = the visible size on paper.
+  # Base sizes are also visible sizes. Squeeze is purely: does it fit?
+  hdr1 <- base_title_font * 1.15 + base_remarks_font * 1.15 * 3 + base_header_gap * 3 + 2 * base_header_pad + 4
+  th1  <- base_th_font * 1.15 + 2 * base_td_pad + 2
+  rows_space1 <- card_height_px - hdr1 - th1
+  td1 <- rows_space1 / num_rows
+  squeeze1 <- min(1.0, td1 / base_td_height)
+
+  # Pass 2: re-estimate header with squeezed fonts, reclaim space
+  s1_title   <- max(7, floor(base_title_font   * squeeze1))
+  s1_remarks <- max(6, floor(base_remarks_font * squeeze1))
+  s1_hpad    <- max(1, floor(base_header_pad   * squeeze1))
+  s1_hgap    <- max(1, floor(base_header_gap   * squeeze1))
+  s1_th      <- max(5, floor(base_th_font      * squeeze1))
+  s1_tdpad   <- max(1, floor(base_td_pad       * squeeze1))
+  hdr2 <- s1_title * 1.15 + s1_remarks * 1.15 * 3 + s1_hgap * 3 + 2 * s1_hpad + 4
+  th2  <- s1_th * 1.15 + 2 * s1_tdpad + 2
+  rows_space2 <- card_height_px - hdr2 - th2
+  td2 <- rows_space2 / num_rows
+  squeeze <- min(1.0, td2 / base_td_height)
+
+  # Compute VISIBLE sizes (what the user sees on paper)
+  vis_title_font   <- max(7,  floor(base_title_font   * squeeze))
+  vis_remarks_font <- max(6,  floor(base_remarks_font * squeeze))
+  vis_info_font    <- max(6,  floor(base_info_font    * squeeze))
+  vis_header_pad   <- max(1,  floor(base_header_pad   * squeeze))
+  vis_header_gap   <- max(1,  floor(base_header_gap   * squeeze))
+  vis_th_font      <- max(5,  floor(base_th_font      * squeeze))
+  vis_td_pad       <- max(1,  floor(base_td_pad       * squeeze))
+  vis_td_font      <- max(6,  floor(base_td_font      * squeeze))
+
+  # CSS variables must be set in INTERNAL px (before scale transform).
+  # The card is rendered at 1/card_scale size then scaled down by card_scale,
+  # so we divide visible sizes by card_scale to get internal values.
+  sc_title_font   <- round(vis_title_font   / card_scale)
+  sc_remarks_font <- round(vis_remarks_font / card_scale)
+  sc_info_font    <- round(vis_info_font    / card_scale)
+  sc_header_pad   <- round(vis_header_pad   / card_scale)
+  sc_header_gap   <- round(vis_header_gap   / card_scale)
+  sc_th_font      <- round(vis_th_font      / card_scale)
+  sc_td_pad       <- round(vis_td_pad       / card_scale)
+  sc_td_font      <- round(vis_td_font      / card_scale)
+  # Badge padding
+  sc_badge_vpad <- max(1, round(2 * squeeze / card_scale))
+  sc_badge_hpad <- max(2, round(4 * squeeze / card_scale))
+  
   html <- paste0('
   <style>
-    @media print {
-      @page {
-        size: letter;
-        margin: ', page_margin, ';
-      }
-      .page-break {
-        page-break-after: always;
-      }
-      .no-print {
-        display: none !important;
-      }
-      /* Force colors to print */
-      * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-      }
-    }
-    
-    .cards-container {
-      width: 100%;
-    }
-    
-    .card-page {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: repeat(', grid_rows, ', 1fr);
-      gap: ', grid_gap, 'px;
-      margin-bottom: 20px;
-      box-sizing: border-box;
-    }
-    
-    .section-card {
-      border: 2px solid #333;
-      page-break-inside: avoid;
-      background: white;
-      font-family: Arial, sans-serif;
-      font-size: 11px;
-      position: relative;
-      transform: scale(', card_scale, ');
-      transform-origin: top left;
-      width: ', round(100 / card_scale), '%;
-      height: ', round(100 / card_scale), '%;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    
-    .prehatch-overlay {
-      position: absolute;
-      bottom: 10px;
-      right: 10px;
-      text-align: right;
-      color: red !important;
-      font-weight: bold;
-      z-index: 10;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .prehatch-rate {
-      color: red !important;
-      font-size: 12px;
-    }
-    .prehatch-value {
-      color: red !important;
-      font-size: 16px;
-      font-weight: bold;
-    }
-
-    .card-header {
-      background: #f0f0f0;
-      border-bottom: 2px solid #333;
-      padding: 8px;
-    }
-    
-    .card-title {
-      font-size: 16px;
-      font-weight: bold;
-      margin: 0 0 5px 0;
-      color: #000;
-    }
-    
-    .card-info {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-      gap: 5px;
-      margin-top: 5px;
-    }
-    
-    .info-item {
-      font-size: 10px;
-    }
-    
-    .info-item.remarks {
-      font-size: 12px;
-      grid-column: 1 / -1;
-      margin-top: 3px;
-    }
-    
-    .info-item.special-label {
-      font-size: 9px;
-      padding: 2px 4px;
-      background: #d0d0d0;
-      border-radius: 3px;
-      display: inline-block;
-    }
-    
-    .priority-green { 
-      background-color: #90EE90 !important; 
-      background: #90EE90 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .priority-red { 
-      background-color: #FFB6C1 !important; 
-      background: #FFB6C1 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .priority-yellow { 
-      background-color: #FFFFE0 !important; 
-      background: #FFFFE0 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .priority-blue { 
-      background-color: #ADD8E6 !important; 
-      background: #ADD8E6 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .priority-orange { 
-      background-color: #FFD580 !important; 
-      background: #FFD580 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .priority-purple { 
-      background-color: #E6D5FF !important; 
-      background: #E6D5FF !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    
-    .culex-field { 
-      background-color: #32CD32 !important; /* Changed to a different green */
-      background: #32CD32 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      font-weight: bold; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .sample-field { 
-      background-color: #FFB6C1 !important; 
-      background: #FFB6C1 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      font-weight: bold; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .spring-aedes-field { 
-      background-color: #FFD580 !important; 
-      background: #FFD580 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      font-weight: bold; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .perturbans-field { 
-      background-color: #4169E1 !important; 
-      background: #4169E1 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      font-weight: bold; 
-      color: white !important;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .prehatch-field { 
-      background-color: #DDA0DD !important; 
-      background: #DDA0DD !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      font-weight: bold; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .ra-field { 
-      background-color: #FFB6C1 !important; 
-      background: #FFB6C1 !important; 
-      padding: 2px 6px; 
-      border-radius: 3px; 
-      font-weight: bold; 
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-
-    /* Watermark styles - semi-transparent overlays at bottom of card */
-    .watermark-container {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      align-items: center;
-      gap: 8px;
-      padding: 10px;
-      z-index: 5;
-      pointer-events: none;
-    }
-    .watermark-item {
-      font-size: 14px;
-      font-weight: bold;
-      padding: 4px 12px;
-      border-radius: 4px;
-      opacity: 0.54;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .watermark-culex {
-      background-color: rgba(50, 205, 50, 0.35) !important;
-      background: rgba(50, 205, 50, 0.35) !important;
-      color: #000 !important;
-    }
-    .watermark-spring-aedes {
-      background-color: rgba(255, 213, 128, 0.4) !important;
-      background: rgba(255, 213, 128, 0.4) !important;
-      color: #000 !important;
-    }
-    .watermark-perturbans {
-      background-color: rgba(65, 105, 225, 0.35) !important;
-      background: rgba(65, 105, 225, 0.35) !important;
-      color: #000 !important;
-    }
-    .watermark-sample {
-      background-color: rgba(255, 182, 193, 0.4) !important;
-      background: rgba(255, 182, 193, 0.4) !important;
-      color: #000 !important;
-    }
-    .watermark-prehatch-calc {
-      background-color: rgba(255, 200, 200, 0.35) !important;
-      background: rgba(255, 200, 200, 0.35) !important;
-      color: #CC0000 !important;
-      font-size: 16px;
-    }
-
-    .prehatch-overlay {
-      position: absolute;
-      bottom: 10px;
-      right: 10px;
-      text-align: right;
-      color: red !important;
-      font-weight: bold;
-      font-size: 14px;
-      z-index: 10;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .prehatch-rate {
-      color: red !important;
-      font-size: 12px;
-    }
-    .prehatch-value {
-      color: red !important;
-      font-size: 16px;
-      font-weight: bold;
-    }
-    
-    /* Structure status colors */
-    .status-dry {
-      background-color: #F4A460 !important;
-      background: #F4A460 !important;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-weight: bold;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .status-wet {
-      background-color: #4682B4 !important;
-      background: #4682B4 !important;
-      color: white !important;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-weight: bold;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .status-unknown {
-      background-color: #D3D3D3 !important;
-      background: #D3D3D3 !important;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-weight: bold;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    .structure-type {
-      background-color: #9370DB !important;
-      background: #9370DB !important;
-      color: white !important;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-weight: bold;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-    }
-    
-    .info-label {
-      font-weight: bold;
-      color: #555;
-    }
-    
-    .card-table {
-      width: 100%;
-      border-collapse: collapse;
-      flex: 1;
-    }
-    
-    .card-table th {
-      background: #e0e0e0;
-      border: 1px solid #333;
-      padding: 4px;
-      font-size: 9px;
-      font-weight: bold;
-      text-align: center;
-    }
-    
-    .card-table th.col-odd {
-      background: #f0f0f0;
-    }
-    
-    .card-table th.col-even {
-      background: #e8e8e8;
-    }
-    
-    .card-table td {
-      border: 1px solid #333;
-      padding: 4px;
-      height: 25px;
-      font-size: 10px;
-    }
-    
-    .card-table td.col-odd {
-      background: #fafafa;
-    }
-    
-    .card-table td.col-even {
-      background: #f0f0f0;
-    }
-    
-    @media screen {
-      .cards-container {
-        padding: 20px;
-        background: #f5f5f5;
-      }
-      .card-page {
-        background: white;
-        padding: 20px;
-        margin-bottom: 40px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      }
-    }
-    
-    /* Print: constrain card-page to exact page height so cards fit */
-    @media print {
-      .card-page {
-        height: ', usable_height, 'in;
-        overflow: hidden;
-      }
+    /* @page margin set to 0 so Chrome does not render its default
+       headers (date/time) and footers (URL/page numbers).
+       Content spacing is handled via padding on .card-page. */
+    @page {
+      size: letter;
+      margin: 0;
     }
   </style>
   
-  <div class="cards-container">
+  <div class="cards-container" style="
+      --sc-page-margin: ', page_margin, ';
+      --sc-usable-height: ', usable_height, 'in;
+      --sc-grid-rows: ', grid_rows, ';
+      --sc-grid-gap: ', grid_gap, 'px;
+      --sc-card-scale: ', card_scale, ';
+      --sc-title-font: ', sc_title_font, 'px;
+      --sc-remarks-font: ', sc_remarks_font, 'px;
+      --sc-info-font: ', sc_info_font, 'px;
+      --sc-header-pad: ', sc_header_pad, 'px;
+      --sc-header-gap: ', sc_header_gap, 'px;
+      --sc-th-font: ', sc_th_font, 'px;
+      --sc-td-pad: ', sc_td_pad, 'px;
+      --sc-td-font: ', sc_td_font, 'px;
+      --sc-badge-pad: ', sc_badge_vpad, 'px ', sc_badge_hpad, 'px;
+    " data-double-sided="', tolower(as.character(double_sided)), '">
   ')
   
   # =========================================================================
@@ -570,52 +255,57 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
       grouping_cols <- c(grouping_cols, "s_type")
     }
     
-    # Sort by grouping columns
+    # Sort by grouping columns (NAs go last)
     if (length(grouping_cols) > 0) {
       data <- data[do.call(order, data[grouping_cols]), ]
       
-      # Create grouping combinations
-      if (length(grouping_cols) == 1) {
-        groups <- unique(data[[grouping_cols[1]]])
-        group_data_list <- lapply(groups, function(g) {
-          data[data[[grouping_cols[1]]] == g, ]
-        })
-        group_names <- groups
-      } else {
-        # Multiple grouping columns - create combination groups
-        data$temp_group <- do.call(paste, c(data[grouping_cols], sep = "_"))
-        groups <- unique(data$temp_group)
-        group_data_list <- lapply(groups, function(g) {
-          subset_data <- data[data$temp_group == g, ]
-          subset_data$temp_group <- NULL
-          subset_data
-        })
-        group_names <- groups
+      # ---- Drop rows with NA in ANY grouping column ----
+      # These come from LEFT JOIN misses and can't be meaningfully grouped.
+      na_mask <- rep(FALSE, nrow(data))
+      for (gc in grouping_cols) {
+        na_mask <- na_mask | is.na(data[[gc]])
       }
+      if (any(na_mask)) {
+        message(sprintf("[section_cards] Dropping %d rows with NA grouping columns", sum(na_mask)))
+        data <- data[!na_mask, ]
+      }
+      
+      # Create grouping key (single or compound)
+      if (length(grouping_cols) == 1) {
+        data$._grp_key <- as.character(data[[grouping_cols[1]]])
+      } else {
+        data$._grp_key <- do.call(paste, c(data[grouping_cols], sep = "_"))
+      }
+      
+      groups <- unique(data$._grp_key)
+      group_data_list <- lapply(groups, function(g) {
+        data[data$._grp_key == g, ]
+      })
+      group_names <- groups
+      
     } else {
+      data$._grp_key <- "all"
       group_data_list <- list(data)
       group_names <- "all"
     }
     
-    # Process each group separately
+    # ---- Emit content pages with data-group (no page-break, no blanks) ----
+    # JS will add page-break classes and blank separators after render.
     for (grp_idx in seq_along(group_data_list)) {
       grp_data <- group_data_list[[grp_idx]]
+      grp_label <- htmltools::htmlEscape(group_names[grp_idx])
       
       num_pages <- ceiling(nrow(grp_data) / cards_per_page)
       
-      for (page in 1:num_pages) {
+      for (page in seq_len(num_pages)) {
         start_idx <- (page - 1) * cards_per_page + 1
         end_idx <- min(page * cards_per_page, nrow(grp_data))
         
-        is_last_group <- (grp_idx == length(group_data_list))
-        is_last_page <- (page == num_pages)
-        add_page_break <- !(is_last_group && is_last_page)
-        
-        html_parts[[part_idx]] <- paste0('<div class="card-page', 
-                       ifelse(add_page_break, ' page-break', ''), '">\n')
+        html_parts[[part_idx]] <- paste0(
+          '<div class="card-page" data-group="', grp_label, '">\n')
         part_idx <- part_idx + 1
         
-        for (i in start_idx:end_idx) {
+        for (i in seq(start_idx, end_idx)) {
           html_parts[[part_idx]] <- build_card(grp_data[i, ])
           part_idx <- part_idx + 1
           cards_done <- cards_done + 1
@@ -625,28 +315,20 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
         html_parts[[part_idx]] <- '</div>\n'
         part_idx <- part_idx + 1
       }
-      
-      # Double-sided printing: if this group used an odd number of pages,
-      # add a blank page so the next group starts on a front side
-      if (double_sided && !is_last_group && (num_pages %% 2 == 1)) {
-        html_parts[[part_idx]] <- '<div class="card-page page-break" style="visibility:hidden;">&nbsp;</div>\n'
-        part_idx <- part_idx + 1
-      }
     }
     
   } else {
     # Normal mode: group cards into pages without section splits
     num_pages <- ceiling(nrow(data) / cards_per_page)
     
-    for (page in 1:num_pages) {
+    for (page in seq_len(num_pages)) {
       start_idx <- (page - 1) * cards_per_page + 1
       end_idx <- min(page * cards_per_page, nrow(data))
       
-      html_parts[[part_idx]] <- paste0('<div class="card-page', 
-                     ifelse(page < num_pages, ' page-break', ''), '">\n')
+      html_parts[[part_idx]] <- paste0('<div class="card-page" data-group="all">\n')
       part_idx <- part_idx + 1
       
-      for (i in start_idx:end_idx) {
+      for (i in seq(start_idx, end_idx)) {
         html_parts[[part_idx]] <- build_card(data[i, ])
         part_idx <- part_idx + 1
         cards_done <- cards_done + 1

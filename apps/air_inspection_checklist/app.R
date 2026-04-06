@@ -49,7 +49,8 @@ tryCatch({
     list(
       code = row$shortname,
       label = display_name,
-      facility = row$facility
+      facility = row$facility,
+      emp_num = row$emp_num
     )
   })
   
@@ -57,6 +58,22 @@ tryCatch({
   if (!dir.exists("www")) dir.create("www")
   writeLines(jsonlite::toJSON(facilities, auto_unbox = TRUE), "www/facilities.json")
   writeLines(jsonlite::toJSON(foremen, auto_unbox = TRUE), "www/foremen.json")
+
+  # Generate employees JSON for the index page employee picker
+  employees_df <- get_field_employees()
+  if (nrow(employees_df) > 0) {
+    employees <- lapply(seq_len(nrow(employees_df)), function(i) {
+      row <- employees_df[i, ]
+      list(
+        emp_num = row$emp_num,
+        label = row$shortname,
+        facility = row$facility,
+        fieldsuper = row$fieldsuper
+      )
+    })
+    writeLines(jsonlite::toJSON(employees, auto_unbox = TRUE), "www/employees.json")
+    message("[air_inspection_checklist] employees.json generated: ", nrow(employees_df), " employees")
+  }
   
   message("[air_inspection_checklist] Filter JSON files generated successfully")
 }, error = function(e) {
@@ -82,6 +99,7 @@ server <- function(input, output, session) {
 
   url_facility <- if (!is.null(query$facility) && query$facility != "" && query$facility != "all") query$facility else NULL
   url_fos      <- if (!is.null(query$fos) && query$fos != "") query$fos else NULL
+  url_emp      <- if (!is.null(query$emp) && query$emp != "") query$emp else NULL
   url_lookback <- NULL
   if (!is.null(query$lookback) && query$lookback != "") {
     lb <- as.integer(query$lookback)
@@ -92,6 +110,78 @@ server <- function(input, output, session) {
   url_fos_pending <- reactiveVal(!is.null(url_fos))
 
   # ===========================================================================
+  # SEND EMPLOYEE INFO TO CLIENT (for claim feature)
+  # ===========================================================================
+  observe({
+    if (!is.null(url_emp)) {
+      # Look up the employee name from the DB
+      emp_name <- url_emp
+      tryCatch({
+        con <- get_db_connection()
+        if (!is.null(con)) {
+          result <- dbGetQuery(con, sprintf(
+            "SELECT shortname FROM employee_list WHERE emp_num = %s AND active = true LIMIT 1",
+            dbQuoteLiteral(con, url_emp)
+          ))
+          safe_disconnect(con)
+          if (nrow(result) > 0) emp_name <- result$shortname[1]
+        }
+      }, error = function(e) message("[air_inspection_checklist] Employee lookup warning: ", e$message))
+
+      session$sendCustomMessage("set_employee", list(
+        emp_num = url_emp,
+        emp_name = emp_name
+      ))
+    }
+  })
+
+  # ===========================================================================
+  # CLAIM HANDLERS (Redis-backed, shared across all workers)
+  # ===========================================================================
+
+  # Client requests to set a claim
+  observeEvent(input$claim_site, {
+    msg <- input$claim_site
+    if (is.null(msg$sitecode) || is.null(msg$emp_num) || is.null(msg$emp_name)) return()
+    set_claim(msg$sitecode, msg$emp_num, msg$emp_name)
+    # Send updated claims back to client
+    send_claims_to_client()
+  })
+
+  # Client requests to remove a claim
+  observeEvent(input$unclaim_site, {
+    msg <- input$unclaim_site
+    if (is.null(msg$sitecode)) return()
+    remove_claim(msg$sitecode)
+    send_claims_to_client()
+  })
+
+  # Client requests the current state of all claims
+  observeEvent(input$request_claims, {
+    send_claims_to_client()
+  })
+
+  # Helper: send all claims within lookback window to client
+  send_claims_to_client <- function() {
+    lb <- if (!is.null(input$lookback_days)) input$lookback_days else 2
+    analysis <- if (!is.null(input$analysis_date)) input$analysis_date else Sys.Date()
+    claims <- get_claims(lookback_days = lb, analysis_date = analysis)
+    session$sendCustomMessage("claims_update", claims)
+  }
+
+  # ===========================================================================
+  # AUTO-POLL CLAIMS (every 10 seconds via existing Shiny WebSocket)
+  # Redis hash reads are ~1-5 ms, so this adds negligible server load.
+  # When claims change, the UI updates instantly without a full data refresh.
+  # ===========================================================================
+  claims_timer <- reactiveTimer(10000)  # 10 seconds
+
+  observe({
+    claims_timer()
+    send_claims_to_client()
+  })
+
+  # ===========================================================================
   # INITIALIZE FACILITY + LOOKBACK (runs once, FOS is handled below)
   # ===========================================================================
   observe({
@@ -99,6 +189,16 @@ server <- function(input, output, session) {
     selected_facility <- if (!is.null(url_facility)) url_facility else "all"
     updateSelectInput(session, "facility_filter",
                       choices = facility_choices, selected = selected_facility)
+
+    # Priority filter — default to RED
+    priority_choices_raw <- get_priority_choices(include_all = FALSE)
+    url_priority <- NULL
+    if (!is.null(query$priority) && query$priority != "" && query$priority != "all") {
+      url_priority <- toupper(trimws(unlist(strsplit(query$priority, ","))))
+    }
+    updateSelectizeInput(session, "priority_filter",
+                         choices = priority_choices_raw,
+                         selected = if (!is.null(url_priority)) url_priority else "RED")
 
     if (!is.null(url_lookback)) {
       updateSliderInput(session, "lookback_days", value = url_lookback)
@@ -140,9 +240,28 @@ server <- function(input, output, session) {
   })
 
   # ===========================================================================
-  # REFRESH BUTTON - Capture inputs and load data
+  # REFRESH TRIGGER — fires on initial load AND on button click
   # ===========================================================================
-  refresh_inputs <- eventReactive(input$refresh, {
+  refresh_trigger <- reactiveVal(0)
+
+  # Auto-fire once inputs are ready (runs once on session start)
+  observe({
+    # Wait for facility_filter to be populated (signals inputs are ready)
+    req(input$facility_filter)
+    isolate(refresh_trigger(refresh_trigger() + 1))
+  })
+
+  # Manual refresh button
+  observeEvent(input$refresh, {
+    refresh_trigger(refresh_trigger() + 1)
+  })
+
+  # ===========================================================================
+  # CAPTURE INPUTS — recalculated whenever refresh fires
+  # ===========================================================================
+  refresh_inputs <- reactive({
+    refresh_trigger()
+
     # Convert facility filter
     fac <- if (is.null(input$facility_filter) || input$facility_filter == "all") {
       NULL
@@ -167,6 +286,13 @@ server <- function(input, output, session) {
       "1"
     }
 
+    # Parse priority filter
+    priority_vals <- if (!is.null(input$priority_filter) && length(input$priority_filter) > 0) {
+      input$priority_filter
+    } else {
+      "RED"
+    }
+
     list(
       facility = fac,
       foreman = fos,
@@ -174,9 +300,10 @@ server <- function(input, output, session) {
       analysis_date = input$analysis_date,
       show_unfinished = input$show_unfinished_only,
       zone = zone_vals,
+      priority_filter = priority_vals,
       show_active_treatment = isTRUE(input$show_active_treatment)
     )
-  }, ignoreNULL = FALSE)
+  })
 
   # ===========================================================================
   # REACTIVE DATA
@@ -192,6 +319,7 @@ server <- function(input, output, session) {
         lookback_days = params$lookback_days,
         analysis_date = params$analysis_date,
         zone_filter = params$zone,
+        priority_filter = params$priority_filter,
         include_active_treatment = params$show_active_treatment
       )
       incProgress(0.7)

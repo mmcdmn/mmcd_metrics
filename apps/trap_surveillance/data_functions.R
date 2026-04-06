@@ -235,12 +235,19 @@ fetch_abundance_avg_by_epiweek <- function(current_year, n_years, spp_name = "To
   start_year <- as.integer(current_year) - n_years
   end_year   <- as.integer(current_year) - 1
   
+  # Two-step aggregation: avg_per_trap per year+week first, then average across years
   q <- sprintf(
-    "SELECT epiweek AS week,
-            SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
-     FROM dbadult_mon_nt_co2_forvectorabundance
-     WHERE year BETWEEN %d AND %d
-       AND spp_name = '%s'
+    "WITH yearly_weekly AS (
+       SELECT year, epiweek,
+              SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year BETWEEN %d AND %d
+         AND spp_name = '%s'
+       GROUP BY year, epiweek
+     )
+     SELECT epiweek AS week,
+            AVG(avg_per_trap) AS avg_per_trap
+     FROM yearly_weekly
      GROUP BY epiweek
      ORDER BY epiweek",
     start_year, end_year, spp_name
@@ -508,6 +515,173 @@ fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors",
 }
 
 # =============================================================================
+# DISTRICT-WIDE VECTOR INDEX TREND - with CI bounds (like MLE/MIR trends)
+# =============================================================================
+
+# District-wide Vector Index trend with CI bounds.
+# VI = avg_per_trap × infection_rate; CI from MLE bounds.
+fetch_vi_district_trend <- function(year, spp_name = "Total_Cx_vectors",
+                                     infection_metric = "mle") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  spp_code <- spp_name_to_code(spp_name)
+  
+  if (infection_metric == "mle") {
+    if (is.null(spp_code)) {
+      infection_cte <- sprintf(
+        "SELECT yrwk, p::numeric AS infection_rate,
+                lower::numeric AS rate_lower, upper::numeric AS rate_upper
+         FROM dbvirus_mle_yrwk
+         WHERE yrwk::text LIKE '%s%%'",
+        as.character(year))
+    } else {
+      infection_cte <- sprintf(
+        "SELECT yrwk,
+                AVG(p::numeric) AS infection_rate,
+                AVG(lower::numeric) AS rate_lower,
+                AVG(upper::numeric) AS rate_upper
+         FROM dbvirus_mle_yrwk_area_spp
+         WHERE yrwk::text LIKE '%s%%' AND spp_code = '%s'
+         GROUP BY yrwk",
+        as.character(year), spp_code)
+    }
+  } else {
+    # MIR mode — compute SE from positive/mosquitoes for CI
+    if (is.null(spp_code)) {
+      infection_cte <- sprintf(
+        "SELECT yrwk,
+                mir::numeric / 1000.0 AS infection_rate,
+                GREATEST(mir::numeric / 1000.0 -
+                  CASE WHEN mosquitoes > 0
+                       THEN SQRT((positive::numeric / mosquitoes) * (1.0 - positive::numeric / mosquitoes) / mosquitoes)
+                       ELSE 0 END, 0) AS rate_lower,
+                mir::numeric / 1000.0 +
+                  CASE WHEN mosquitoes > 0
+                       THEN SQRT((positive::numeric / mosquitoes) * (1.0 - positive::numeric / mosquitoes) / mosquitoes)
+                       ELSE 0 END AS rate_upper
+         FROM dbvirus_mir_yrwk
+         WHERE yrwk::text LIKE '%s%%'",
+        as.character(year))
+    } else {
+      infection_cte <- sprintf(
+        "SELECT yrwk,
+                AVG(mir::numeric) / 1000.0 AS infection_rate,
+                AVG(mir::numeric) / 1000.0 AS rate_lower,
+                AVG(mir::numeric) / 1000.0 AS rate_upper
+         FROM dbvirus_mir_yrwk_area_spp
+         WHERE yrwk::text LIKE '%s%%' AND spp_code = '%s'
+         GROUP BY yrwk",
+        as.character(year), spp_code)
+    }
+  }
+  
+  q <- sprintf(
+    "WITH abundance AS (
+       SELECT yrwk,
+              SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year = %d AND spp_name = '%s'
+       GROUP BY yrwk
+     ),
+     infection AS (%s)
+     SELECT a.yrwk,
+            a.avg_per_trap,
+            COALESCE(i.infection_rate, 0) AS infection_rate,
+            COALESCE(i.rate_lower, 0) AS rate_lower,
+            COALESCE(i.rate_upper, 0) AS rate_upper,
+            a.avg_per_trap * COALESCE(i.infection_rate, 0) AS vector_index,
+            a.avg_per_trap * COALESCE(i.rate_lower, 0) AS vi_lower,
+            a.avg_per_trap * COALESCE(i.rate_upper, 0) AS vi_upper
+     FROM abundance a
+     LEFT JOIN infection i ON a.yrwk::text = i.yrwk::text
+     ORDER BY a.yrwk",
+    as.integer(year), spp_name, infection_cte
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(substr(as.character(data$yrwk), 5, 6))
+    message(sprintf("VI district trend: %d weeks for year %s", nrow(data), year))
+    data
+  }, error = function(e) {
+    warning(paste("VI district trend query failed:", e$message))
+    NULL
+  })
+}
+
+# Multi-year average Vector Index by epiweek (for 5yr/10yr avg lines)
+fetch_vi_avg_by_epiweek <- function(current_year, n_years,
+                                     spp_name = "Total_Cx_vectors",
+                                     infection_metric = "mle") {
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  start_year <- as.integer(current_year) - n_years
+  end_year   <- as.integer(current_year) - 1
+  spp_code <- spp_name_to_code(spp_name)
+  
+  if (infection_metric == "mle") {
+    if (is.null(spp_code)) {
+      infection_join <- "LEFT JOIN dbvirus_mle_yrwk m ON wa.yrwk::text = m.yrwk::text"
+      infection_col <- "COALESCE(m.p::numeric, 0)"
+    } else {
+      infection_join <- sprintf(
+        "LEFT JOIN (SELECT yrwk, AVG(p::numeric) AS p
+                    FROM dbvirus_mle_yrwk_area_spp WHERE spp_code = '%s' GROUP BY yrwk) m
+         ON wa.yrwk::text = m.yrwk::text", spp_code)
+      infection_col <- "COALESCE(m.p, 0)"
+    }
+  } else {
+    if (is.null(spp_code)) {
+      infection_join <- "LEFT JOIN dbvirus_mir_yrwk m ON wa.yrwk::text = m.yrwk::text"
+      infection_col <- "COALESCE(m.mir::numeric / 1000.0, 0)"
+    } else {
+      infection_join <- sprintf(
+        "LEFT JOIN (SELECT yrwk, AVG(mir::numeric) AS mir
+                    FROM dbvirus_mir_yrwk_area_spp WHERE spp_code = '%s' GROUP BY yrwk) m
+         ON wa.yrwk::text = m.yrwk::text", spp_code)
+      infection_col <- "COALESCE(m.mir / 1000.0, 0)"
+    }
+  }
+  
+  q <- sprintf(
+    "WITH week_abundance AS (
+       SELECT year, epiweek, yrwk,
+              SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT loc_code), 1) AS avg_per_trap
+       FROM dbadult_mon_nt_co2_forvectorabundance
+       WHERE year BETWEEN %d AND %d AND spp_name = '%s'
+       GROUP BY year, epiweek, yrwk
+     ),
+     week_vi AS (
+       SELECT wa.year, wa.epiweek,
+              wa.avg_per_trap * %s AS vector_index
+       FROM week_abundance wa
+       %s
+     )
+     SELECT epiweek AS week,
+            AVG(vector_index) AS avg_vi
+     FROM week_vi
+     GROUP BY epiweek
+     ORDER BY epiweek",
+    start_year, end_year, spp_name,
+    infection_col, infection_join
+  )
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    data$week <- as.numeric(data$week)
+    message(sprintf("VI %d-yr avg: %d weeks from %d-%d", n_years, nrow(data), start_year, end_year))
+    data
+  }, error = function(e) {
+    warning(paste("VI avg query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
 # TRAP DATA BY WEEK - Fetch active traps with pool details for the selected week
 # =============================================================================
 # Replaces the shapefile-based trap locations with live data from the database.
@@ -532,23 +706,47 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
         AND spp_name = 'Total_Cx_vectors'
     ),
     week_inspections AS (
-      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
+      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.sitecode, i.inspdate, i.facility, i.survtype,
+             COALESCE(NULLIF(i.loc_code::text, ''), 'SITE:' || i.sitecode) as eff_loc_code
       FROM dbadult_insp_current i
-      WHERE i.network_type = 'mnt'
-        AND i.survtype = '6'
+      WHERE (i.network_type = 'mnt' OR i.network_type IS NULL)
+        AND i.survtype IN ('4', '5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
       UNION ALL
-      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.inspdate, i.facility, i.survtype
+      SELECT DISTINCT i.ainspecnum, i.sampnum_yr, i.loc_code, i.sitecode, i.inspdate, i.facility, i.survtype,
+             COALESCE(NULLIF(i.loc_code::text, ''), 'SITE:' || i.sitecode) as eff_loc_code
       FROM dbadult_insp_archive i
-      WHERE i.network_type = 'mnt'
-        AND i.survtype = '6'
+      WHERE (i.network_type = 'mnt' OR i.network_type IS NULL)
+        AND i.survtype IN ('4', '5', '6')
         AND i.missing IS NULL
         AND calc_week_num(i.inspdate) = %d
     ),
+    fallback_sites AS (
+      SELECT DISTINCT sitecode
+      FROM week_inspections
+      WHERE loc_code IS NULL OR loc_code = ''
+    ),
+    harb_locations AS (
+      SELECT DISTINCT ON (h.sitecode) h.sitecode,
+             ST_X(ST_Centroid(ST_Transform(h.geom, 4326))) as harb_lon,
+             ST_Y(ST_Centroid(ST_Transform(h.geom, 4326))) as harb_lat
+      FROM loc_harborage h
+      INNER JOIN fallback_sites fs ON fs.sitecode = h.sitecode
+      WHERE h.geom IS NOT NULL
+      ORDER BY h.sitecode, h.startdate DESC NULLS LAST, h.gid DESC
+    ),
+    sect_locations AS (
+      SELECT sc.sectcode,
+             ST_X(ST_Centroid(ST_Transform(sc.the_geom, 4326))) as sect_lon,
+             ST_Y(ST_Centroid(ST_Transform(sc.the_geom, 4326))) as sect_lat
+      FROM gis_sectcode sc
+      INNER JOIN (SELECT DISTINCT left(sitecode, 7) as sect FROM fallback_sites) fs
+        ON sc.sectcode = fs.sect
+    ),
     trap_pools AS (
       SELECT 
-        wi.loc_code,
+        wi.eff_loc_code,
         wi.sampnum_yr,
         p.poolnum,
         p.spp_code,
@@ -565,15 +763,19 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       WHERE t.target = '%s' OR t.target IS NULL
     )
     SELECT 
-      wa.loc_code,
+      wi.eff_loc_code as loc_code,
       wi.facility,
-      wa.inspdate,
-      wa.mosqcount as cx_vector_count,
+      wi.inspdate,
+      wi.survtype,
+      CASE WHEN wi.survtype = '5' THEN 'Gravid'
+           WHEN wi.survtype = '4' THEN 'Elevated CO2'
+           ELSE 'CO2' END as trap_type,
+      COALESCE(wa.mosqcount, 0) as cx_vector_count,
       mn.loc_facility,
       mn.zone,
       mn.virus_test,
-      ST_X(ST_Transform(mn.geom, 4326)) as lon,
-      ST_Y(ST_Transform(mn.geom, 4326)) as lat,
+      COALESCE(ST_X(ST_Transform(mn.geom, 4326)), h.harb_lon, sc.sect_lon) as lon,
+      COALESCE(ST_Y(ST_Transform(mn.geom, 4326)), h.harb_lat, sc.sect_lat) as lat,
       tp.poolnum,
       tp.spp_code,
       tp.pool_size,
@@ -582,12 +784,14 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       tp.test_date,
       tp.genus,
       tp.species
-    FROM week_abundance wa
-    JOIN week_inspections wi ON wi.loc_code = wa.loc_code AND wi.inspdate = wa.inspdate
-    LEFT JOIN loc_mondaynight mn ON mn.loc_code = wa.loc_code
-    LEFT JOIN trap_pools tp ON tp.loc_code = wa.loc_code
-    WHERE mn.geom IS NOT NULL
-    ORDER BY wa.loc_code",
+    FROM week_inspections wi
+    LEFT JOIN week_abundance wa ON wa.loc_code = wi.loc_code AND wa.inspdate = wi.inspdate
+    LEFT JOIN loc_mondaynight mn ON mn.loc_code = wi.loc_code
+    LEFT JOIN harb_locations h ON h.sitecode = wi.sitecode
+    LEFT JOIN sect_locations sc ON sc.sectcode = left(wi.sitecode, 7)
+    LEFT JOIN trap_pools tp ON tp.eff_loc_code = wi.eff_loc_code
+    WHERE (mn.geom IS NOT NULL OR h.harb_lon IS NOT NULL OR sc.sect_lon IS NOT NULL)
+    ORDER BY wi.eff_loc_code",
     yrwk_int, yrwk_int, yrwk_int, virus_target
   )
   
@@ -605,6 +809,7 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
       summarise(
         facility = first(facility),
         inspdate = first(inspdate),
+        trap_type = first(trap_type),
         cx_vector_count = first(cx_vector_count),
         lon = first(lon),
         lat = first(lat),
@@ -643,8 +848,11 @@ fetch_traps_for_week <- function(yrwk, virus_target = "WNV") {
     # Convert to sf for leaflet
     traps_sf <- st_as_sf(trap_summary, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
     
-    message(sprintf("Week %d: %d traps (%d with pools, %d with positive pools)",
+    message(sprintf("Week %d: %d traps (%d CO2, %d Elevated CO2, %d Gravid) — %d with pools, %d positive",
                     yrwk_int, nrow(trap_summary),
+                    sum(trap_summary$trap_type == "CO2"),
+                    sum(trap_summary$trap_type == "Elevated CO2"),
+                    sum(trap_summary$trap_type == "Gravid"),
                     sum(trap_summary$num_pools > 0),
                     sum(trap_summary$num_positive > 0)))
     

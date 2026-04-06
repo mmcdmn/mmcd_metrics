@@ -698,3 +698,43 @@ function(req, res) {
     list(removed = removed, date = format(today, "%Y-%m-%d"))
   }, error = function(e) api_error(res, 500, e$message))
 }
+
+
+# =============================================================================
+# ── LLM TUNNEL REGISTRATION
+# =============================================================================
+# The local LLM orchestrator registers its Cloudflare tunnel URL here so the
+# chat widget in index.html can discover it at runtime. Stored in Redis with
+# a 24-hour TTL (auto-expires if tunnel stops without de-registering).
+
+LLM_TUNNEL_KEY <- "llm:tunnel_url"
+LLM_TUNNEL_TTL <- 86400L  # 24 hours
+
+#* Get the current LLM tunnel URL (if registered).
+#* @get /public/llm-config
+#* @serializer json
+function(req, res) {
+  url <- tryCatch(redis_get(LLM_TUNNEL_KEY), error = function(e) NULL)
+  list(tunnel_url = if (is.null(url)) "" else url)
+}
+
+#* Register or update the LLM tunnel URL. Requires API key.
+#* @post /private/llm-register
+#* @serializer json
+function(req, res) {
+  if (!is_authorized(req)) {
+    return(api_error(res, 401, "unauthorized: valid API key required"))
+  }
+  tryCatch({
+    body <- tryCatch(jsonlite::fromJSON(req$postBody), error = function(e) NULL)
+    if (is.null(body)) return(api_error(res, 400, "invalid JSON body"))
+    url <- trimws(as.character(body$tunnel_url %||% ""))
+    if (!nzchar(url)) return(api_error(res, 400, "tunnel_url is required"))
+    # Only allow HTTPS trycloudflare.com URLs
+    if (!grepl("^https://[a-z0-9-]+\\.trycloudflare\\.com$", url)) {
+      return(api_error(res, 400, "tunnel_url must be a valid trycloudflare.com HTTPS URL"))
+    }
+    redis_set(LLM_TUNNEL_KEY, url, ttl = LLM_TUNNEL_TTL)
+    list(registered = TRUE, tunnel_url = url)
+  }, error = function(e) api_error(res, 500, e$message))
+}

@@ -61,7 +61,8 @@ tryCatch({
 # ── AUTH HELPERS
 # =============================================================================
 
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+# Shared validation/error helpers (also sourced by route sub-routers)
+source("/srv/api/api_helpers.R")
 
 get_api_keys <- function() {
   raw <- Sys.getenv("API_KEYS", unset = "")
@@ -86,112 +87,6 @@ is_authorized <- function(req) {
   if (!nzchar(tok)) return(FALSE)
   # Use identical() to avoid timing side-channels leaking key length
   any(vapply(keys, identical, logical(1), tok))
-}
-
-
-# =============================================================================
-# ── INPUT VALIDATION
-# Each function either returns a safe value or stop()s with a clear message.
-# =============================================================================
-
-# Generic text: max length + allow-list of characters
-clean_text <- function(value, max_chars = 32L) {
-  if (is.null(value) || !nzchar(trimws(value %||% ""))) return(NULL)
-  s <- trimws(as.character(value))
-  if (nchar(s) > max_chars) stop(paste0("value too long (max ", max_chars, " chars)"))
-  if (!grepl("^[A-Za-z0-9 _-]+$", s)) stop("value contains invalid characters")
-  s
-}
-
-# Integer with hard bounds — never allows NA or out-of-range values through
-clean_limit <- function(v, default = 500L, max_val = 5000L) {
-  n <- suppressWarnings(as.integer(v %||% default))
-  if (is.na(n) || n < 1L) n <- default
-  if (n > max_val) n <- max_val
-  n
-}
-
-# Facility: format check THEN allow-list against live DB lookup
-validate_facility <- function(v) {
-  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
-  s <- trimws(as.character(v))
-  if (nchar(s) > 8L || !grepl("^[A-Za-z0-9]+$", s)) stop("invalid facility code")
-  lkp <- tryCatch(get_facility_lookup(), error = function(e) NULL)
-  if (!is.null(lkp) && nrow(lkp) > 0) {
-    # Case-insensitive match, but return the DB-cased value
-    match_row <- lkp[tolower(lkp$short_name) == tolower(s), ]
-    if (nrow(match_row) == 0) stop(paste0("unknown facility: ", s))
-    return(match_row$short_name[1])
-  }
-  s
-}
-
-# Foreman shortname → emp_num (allow-list; prevents guessing column values)
-validate_foreman <- function(v) {
-  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
-  s <- trimws(as.character(v))
-  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 _-]+$", s)) stop("invalid foreman format")
-  lkp <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
-  if (is.null(lkp) || nrow(lkp) == 0) return(NULL)
-  row <- lkp[tolower(lkp$shortname) == tolower(s), ]
-  if (nrow(row) == 0) stop(paste0("unknown foreman shortname: ", s))
-  as.character(row$emp_num[1])
-}
-
-# Zone: only "1", "2", or combination
-validate_zone <- function(v) {
-  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(c("1", "2"))
-  parts <- trimws(unlist(strsplit(as.character(v), ",", fixed = TRUE)))
-  bad <- parts[!parts %in% c("1", "2")]
-  if (length(bad) > 0) stop(paste0("zone must be 1 or 2, got: ", paste(bad, collapse = ",")))
-  parts
-}
-
-# Date: ISO-8601 only, max 2 years in the past, not in the future
-validate_date <- function(v) {
-  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(Sys.Date())
-  d <- tryCatch(as.Date(trimws(v), "%Y-%m-%d"), error = function(e) as.Date(NA))
-  if (is.na(d)) stop("date must be YYYY-MM-DD")
-  if (d > Sys.Date() + 1L || d < Sys.Date() - 730L) stop("date out of allowed range")
-  d
-}
-
-# Lookback: strict 1–14 integer
-validate_lookback <- function(v) {
-  n <- suppressWarnings(as.integer(v %||% 2L))
-  if (is.na(n) || n < 1L || n > 14L) stop("lookback_days must be 1-14")
-  n
-}
-
-# Priority: optional comma-separated list (RED, YELLOW, BLUE, GREEN, PURPLE)
-validate_priority <- function(v) {
-  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
-  valid <- c("RED", "YELLOW", "BLUE", "GREEN", "PURPLE")
-  parts <- trimws(toupper(unlist(strsplit(as.character(v), ",", fixed = TRUE))))
-  bad <- parts[!parts %in% valid]
-  if (length(bad) > 0) stop(paste0("invalid priority: ", paste(bad, collapse = ",")))
-  parts
-}
-
-# Build a SQL IN clause from already-validated values.
-# Uses dbQuoteString as a second safety layer — even if validation is bypassed
-# somehow, the driver will quote values correctly.
-safe_in <- function(con, col, vals, prefix = "AND ") {
-  if (is.null(vals) || length(vals) == 0) return("")
-  quoted <- vapply(vals, function(v) as.character(DBI::dbQuoteString(con, v)), character(1))
-  paste0(prefix, col, " IN (", paste(quoted, collapse = ", "), ")")
-}
-
-# Standard error response
-api_error <- function(res, status, msg) {
-  res$status <- as.integer(status)
-  list(error = msg)
-}
-
-# Convert a named choices vector to the label/code list format
-to_choice_list <- function(choices, all_label) {
-  out <- lapply(names(choices), function(n) list(label = n, code = unname(choices[[n]])))
-  c(list(list(label = all_label, code = "all")), out)
 }
 
 

@@ -661,6 +661,208 @@ server <- function(input, output, session) {
   })
   
   # =========================================================================
+  # TRAP PERFORMANCE TAB — Based on Chakravarti et al. (2026)
+  # =========================================================================
+  
+  # Populate year choices for performance tab (add "All Years" option)
+  observe({
+    years <- fetch_available_years()
+    if (!is.null(years)) {
+      perf_choices <- c("All Years" = "all", setNames(as.character(years), years))
+      updateSelectInput(session, "perf_year", choices = perf_choices, selected = "all")
+    }
+  })
+  
+  # Fetch performance data on button click
+  perf_data <- eventReactive(input$perf_refresh, {
+    year_val <- if (!is.null(input$perf_year) && input$perf_year != "all") {
+      as.integer(input$perf_year)
+    } else NULL
+    
+    withProgress(message = "Scoring trap performance...", value = 0.3, {
+      result <- fetch_trap_performance(year = year_val)
+      setProgress(1, detail = "Complete!")
+      result
+    })
+  })
+  
+  # Performance Map
+  output$perf_map <- leaflet::renderLeaflet({
+    data <- perf_data()
+    geom <- areas_sf()
+    render_trap_performance_map(perf_data = data, areas_sf = geom)
+  })
+  
+  # Score Distribution Histogram
+  output$perf_histogram <- plotly::renderPlotly({
+    data <- perf_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(plotly::plot_ly() %>%
+               plotly::layout(title = "Click 'Load Scores' to begin"))
+    }
+    
+    p <- ggplot(data, aes(x = composite_score, fill = performance_tier)) +
+      geom_histogram(binwidth = 0.05, boundary = 0, color = "white", alpha = 0.85) +
+      scale_fill_manual(values = c("High" = "#27ae60", "Medium" = "#f39c12", "Low" = "#e74c3c")) +
+      labs(x = "Composite Score", y = "Count", fill = "Tier") +
+      theme_minimal() +
+      theme(text = element_text(size = 12), legend.position = "bottom")
+    
+    plotly::ggplotly(p, tooltip = c("x", "y", "fill"))
+  })
+  
+  # Performance by VI Area chart
+  output$perf_area_chart <- plotly::renderPlotly({
+    data <- perf_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(plotly::plot_ly() %>%
+               plotly::layout(title = "No data"))
+    }
+    
+    area_summary <- data %>%
+      dplyr::filter(!is.na(viarea)) %>%
+      dplyr::group_by(viarea) %>%
+      dplyr::summarise(
+        avg_score = mean(composite_score, na.rm = TRUE),
+        n_traps = dplyr::n(),
+        avg_yield = mean(as.numeric(avg_per_week), na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::arrange(desc(avg_score))
+    
+    p <- ggplot(area_summary, aes(x = reorder(viarea, avg_score), y = avg_score, fill = avg_score)) +
+      geom_col(alpha = 0.85) +
+      scale_fill_gradient(low = "#e74c3c", high = "#27ae60") +
+      coord_flip() +
+      labs(x = NULL, y = "Avg Score", fill = "Score") +
+      theme_minimal() +
+      theme(text = element_text(size = 11), legend.position = "none")
+    
+    plotly::ggplotly(p, tooltip = c("y", "x"))
+  })
+  
+  # Summary statistic boxes
+  output$perf_summary_boxes <- renderUI({
+    data <- perf_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(div(style = "padding:20px; text-align:center; color:#888;",
+                 h4("Click 'Load Scores' to begin")))
+    }
+    
+    n_traps <- nrow(data)
+    n_high <- sum(data$performance_tier == "High")
+    n_med  <- sum(data$performance_tier == "Medium")
+    n_low  <- sum(data$performance_tier == "Low")
+    avg_score <- round(mean(data$composite_score, na.rm = TRUE), 3)
+    total_pools <- sum(as.numeric(data$total_pools), na.rm = TRUE)
+    total_positive <- sum(as.numeric(data$total_positive), na.rm = TRUE)
+    
+    year_label <- if (!is.null(input$perf_year) && input$perf_year != "all") {
+      input$perf_year
+    } else "All Years"
+    
+    div(
+      div(style = "text-align:center; margin-bottom:8px;",
+          h5(strong(year_label), style = "color:#666;")),
+      div(style = "display:grid; grid-template-columns:1fr 1fr; gap:8px;",
+        div(style = "background:#ecf0f1; padding:12px; border-radius:5px; text-align:center;",
+            h3(n_traps, style = "margin:0; color:#2c3e50;"),
+            p("Total Traps", style = "margin:0; font-size:11px; color:#888;")),
+        div(style = "background:#d5f5e3; padding:12px; border-radius:5px; text-align:center;",
+            h3(n_high, style = "margin:0; color:#27ae60;"),
+            p("High Perf.", style = "margin:0; font-size:11px; color:#888;")),
+        div(style = "background:#fdebd0; padding:12px; border-radius:5px; text-align:center;",
+            h3(n_med, style = "margin:0; color:#f39c12;"),
+            p("Medium", style = "margin:0; font-size:11px; color:#888;")),
+        div(style = "background:#fadbd8; padding:12px; border-radius:5px; text-align:center;",
+            h3(n_low, style = "margin:0; color:#e74c3c;"),
+            p("Low Perf.", style = "margin:0; font-size:11px; color:#888;"))
+      ),
+      hr(),
+      div(style = "font-size:13px;",
+        p(strong("Avg Score: "), sprintf("%.3f", avg_score)),
+        p(strong("Total Pools: "), format(total_pools, big.mark = ",")),
+        p(strong("Total Positive: "), format(total_positive, big.mark = ",")),
+        p(strong("Positivity: "), sprintf("%.1f%%",
+                                   ifelse(total_pools > 0, total_positive / total_pools * 100, 0)))
+      )
+    )
+  })
+  
+  # Performance Data Table
+  output$perf_table <- DT::renderDT({
+    data <- perf_data()
+    if (is.null(data) || nrow(data) == 0) {
+      return(DT::datatable(data.frame(Message = "Click 'Load Scores' to begin"),
+                           options = list(pageLength = 20)))
+    }
+    
+    display <- data %>%
+      dplyr::select(
+        `Trap` = loc_code,
+        `VI Area` = viarea,
+        `Years Active` = years_active,
+        `Weeks Active` = weeks_active,
+        `Total Mosq.` = total_mosq,
+        `Avg/Week` = avg_per_week,
+        `Pools` = total_pools,
+        `Positives` = total_positive,
+        `Pos. Rate %` = positivity_rate_pct,
+        `Yield` = yield_score,
+        `Testing` = testing_score,
+        `Detection` = detection_score,
+        `Consistency` = consistency_score,
+        `Score` = composite_score,
+        `Tier` = performance_tier
+      ) %>%
+      dplyr::mutate(dplyr::across(dplyr::where(is.numeric), ~ round(.x, 3))) %>%
+      dplyr::arrange(desc(Score))
+    
+    DT::datatable(display,
+                  options = list(pageLength = 20, scrollX = TRUE,
+                                 order = list(list(13, "desc"))),
+                  caption = sprintf("Trap Performance Scores — %s",
+                                    if (!is.null(input$perf_year) && input$perf_year != "all")
+                                      input$perf_year else "All Years")) %>%
+      DT::formatStyle("Tier",
+                       backgroundColor = DT::styleEqual(
+                         c("High", "Medium", "Low"),
+                         c("#d5f5e3", "#fdebd0", "#fadbd8"))) %>%
+      DT::formatStyle("Score",
+                       background = DT::styleColorBar(range(display$Score, na.rm = TRUE), "#3498db"),
+                       backgroundSize = "98% 88%",
+                       backgroundRepeat = "no-repeat",
+                       backgroundPosition = "center")
+  })
+  
+  # Download performance data
+  output$download_perf_data <- downloadHandler(
+    filename = function() {
+      sprintf("trap_performance_scores_%s_%s.csv",
+              input$perf_year %||% "all", Sys.Date())
+    },
+    content = function(file) {
+      tryCatch({
+        data <- perf_data()
+        if (!is.null(data) && nrow(data) > 0) {
+          export_data <- data %>%
+            dplyr::select(loc_code, viarea, years_active, weeks_active,
+                          total_mosq, avg_per_week, total_pools, total_positive,
+                          total_tested, positivity_rate_pct,
+                          yield_score, testing_score, detection_score,
+                          consistency_score, composite_score, performance_tier,
+                          lon, lat)
+          write.csv(export_data, file, row.names = FALSE, na = "")
+        } else {
+          write.csv(data.frame(Message = "No data"), file, row.names = FALSE)
+        }
+      }, error = function(e) {
+        write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+      })
+    }
+  )
+  
+  # =========================================================================
   # DOWNLOAD
   # =========================================================================
   

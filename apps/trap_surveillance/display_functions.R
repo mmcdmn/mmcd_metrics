@@ -625,3 +625,167 @@ build_area_popups <- function(map_sf, metric_type, infection_metric) {
     html
   })
 }
+
+# =============================================================================
+# TRAP PERFORMANCE MAP — Renders scored traps colored by composite score
+# Based on Chakravarti et al. (2026) trap placement optimization approach
+# =============================================================================
+
+render_trap_performance_map <- function(perf_data, areas_sf = NULL) {
+  
+  if (is.null(perf_data) || nrow(perf_data) == 0) {
+    return(leaflet() %>%
+             addTiles() %>%
+             setView(lng = -93.3, lat = 44.95, zoom = 9) %>%
+             addControl(html = "<div style='background:white;padding:10px;font-size:14px;'>No trap performance data available</div>",
+                        position = "topright"))
+  }
+  
+  # Filter to traps with geometry
+  perf_data <- perf_data[!is.na(perf_data$lon) & !is.na(perf_data$lat), ]
+  if (nrow(perf_data) == 0) return(leaflet() %>% addTiles() %>%
+                                     setView(lng = -93.3, lat = 44.95, zoom = 9))
+  
+  traps_sf <- st_as_sf(perf_data, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+  
+  # Color scale: red (low score) → yellow (medium) → green (high)
+  score_pal <- colorNumeric(
+    palette = c("#e74c3c", "#f39c12", "#f1c40f", "#2ecc71", "#27ae60"),
+    domain = c(0, 1),
+    na.color = "#999"
+  )
+  
+  # Size by yield (bigger markers = more mosquitoes captured)
+  radius_scale <- 4 + 8 * (perf_data$yield_score)
+  
+  # Build popup
+  trap_popup <- sprintf(
+    paste0(
+      "<strong style='font-size:14px;'>Trap: %s</strong><br/>",
+      "<span style='color:#666;'>VI Area: %s</span><br/>",
+      "<hr style='margin:4px 0;'/>",
+      "<strong>Composite Score: <span style='font-size:16px;color:%s;'>%.2f</span></strong>",
+      " <span style='padding:2px 6px;border-radius:3px;background:%s;color:white;font-size:11px;'>%s</span><br/>",
+      "<hr style='margin:4px 0;'/>",
+      "<table style='font-size:12px;width:100%%;'>",
+      "<tr><td>Yield Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%.1f avg/wk)</td></tr>",
+      "<tr><td>Testing Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%d pools)</td></tr>",
+      "<tr><td>Detection Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%d positive, %.1f%%)</td></tr>",
+      "<tr><td>Consistency Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%d weeks)</td></tr>",
+      "</table>",
+      "<hr style='margin:4px 0;'/>",
+      "<span style='color:#888;font-size:11px;'>Years active: %d | Total mosq: %s | Tested: %s</span>"
+    ),
+    perf_data$loc_code,
+    ifelse(is.na(perf_data$viarea), "N/A", perf_data$viarea),
+    ifelse(perf_data$composite_score >= 0.6, "#27ae60",
+           ifelse(perf_data$composite_score >= 0.3, "#f39c12", "#e74c3c")),
+    perf_data$composite_score,
+    ifelse(perf_data$performance_tier == "High", "#27ae60",
+           ifelse(perf_data$performance_tier == "Medium", "#f39c12", "#e74c3c")),
+    perf_data$performance_tier,
+    perf_data$yield_score, as.numeric(perf_data$avg_per_week),
+    perf_data$testing_score, as.integer(perf_data$total_pools),
+    perf_data$detection_score, as.integer(perf_data$total_positive), as.numeric(perf_data$positivity_rate_pct),
+    perf_data$consistency_score, as.integer(perf_data$weeks_active),
+    as.integer(perf_data$years_active),
+    format(as.numeric(perf_data$total_mosq), big.mark = ","),
+    format(as.numeric(perf_data$total_tested), big.mark = ",")
+  )
+  
+  bg_layers <- load_background_layers()
+  
+  m <- leaflet(traps_sf) %>%
+    addMapPane("areas", zIndex = 410) %>%
+    addMapPane("traps", zIndex = 450) %>%
+    addTiles(group = "OpenStreetMap") %>%
+    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    addProviderTiles("Esri.WorldImagery", group = "Satellite")
+  
+  # Add VI area polygons as background (if available)
+  overlay_groups <- c()
+  if (!is.null(areas_sf) && nrow(areas_sf) > 0) {
+    m <- m %>%
+      addPolygons(
+        data = areas_sf,
+        fillColor = "#f0f0f0", fillOpacity = 0.15,
+        color = "#666", weight = 1.5, opacity = 0.5,
+        label = ~viarea,
+        options = pathOptions(pane = "areas"),
+        group = "VI Areas"
+      )
+    overlay_groups <- c(overlay_groups, "VI Areas")
+  }
+  
+  # Add facility/county boundaries
+  if (!is.null(bg_layers$facilities)) {
+    m <- m %>% addPolylines(data = bg_layers$facilities, color = "#2c3e50",
+                            weight = 1.5, opacity = 0.6, group = "Facilities")
+    overlay_groups <- c(overlay_groups, "Facilities")
+  }
+  if (!is.null(bg_layers$counties)) {
+    m <- m %>% addPolylines(data = bg_layers$counties, color = "#d62728",
+                            weight = 2.5, opacity = 0.7, group = "Counties")
+    overlay_groups <- c(overlay_groups, "Counties")
+  }
+  
+  # Add scored trap markers
+  m <- m %>%
+    addCircleMarkers(
+      data = traps_sf,
+      radius = radius_scale,
+      color = "#333",
+      fillColor = ~score_pal(composite_score),
+      fillOpacity = 0.85,
+      weight = 1,
+      popup = trap_popup,
+      label = ~paste0(loc_code, " - Score: ", sprintf("%.2f", composite_score),
+                      " (", performance_tier, ")"),
+      options = pathOptions(pane = "traps"),
+      group = "Trap Scores"
+    )
+  overlay_groups <- c(overlay_groups, "Trap Scores")
+  
+  # Legend
+  m <- m %>%
+    addLegend(
+      position = "bottomright",
+      pal = score_pal,
+      values = c(0, 1),
+      title = "Performance Score",
+      opacity = 0.85
+    )
+  
+  # Score tier legend
+  tier_legend_html <- paste0(
+    "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;'>",
+    "<strong>Score Components</strong><br/>",
+    "<span style='color:#27ae60;'>&#9679;</span> High (&ge; 0.6)<br/>",
+    "<span style='color:#f39c12;'>&#9679;</span> Medium (0.3 - 0.6)<br/>",
+    "<span style='color:#e74c3c;'>&#9679;</span> Low (&lt; 0.3)<br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<strong>Marker Size</strong> = Yield<br/>",
+    "<span style='font-size:10px;color:#888;'>Larger = more mosquitoes captured</span>",
+    "</div>"
+  )
+  m <- m %>% addControl(html = tier_legend_html, position = "topright")
+  
+  # Title
+  m <- m %>%
+    addControl(
+      html = "<div style='background:white;padding:8px 12px;border-radius:5px;font-size:13px;border:1px solid #ccc;'>
+                <strong>Trap Performance Scores</strong> | Based on Chakravarti et al. (2026)
+              </div>",
+      position = "topleft"
+    )
+  
+  m <- m %>%
+    addLayersControl(
+      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      overlayGroups = overlay_groups,
+      options = layersControlOptions(collapsed = TRUE)
+    ) %>%
+    addScaleBar(position = "bottomleft")
+  
+  m
+}

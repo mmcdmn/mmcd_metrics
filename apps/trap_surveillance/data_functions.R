@@ -1303,4 +1303,164 @@ load_raw_data <- function(analysis_date = NULL,
   })
 }
 
+# =============================================================================
+# TRAP PERFORMANCE SCORING — Based on Chakravarti et al. (2026)
+# =============================================================================
+# Scores each trap based on historical yield, pool testing, and positivity.
+# Inspired by the three-phase approach in:
+#   "A novel approach to determine mosquito trap placement for WNV surveillance"
+#   Journal of Medical Entomology, 2026, 63(2), tjag006
+#
+# Score components (all normalized 0–1, combined as weighted average):
+#   1. Yield Score    — avg mosquitoes per active week (proxy for abundance)
+#   2. Testing Score  — total pools collected (proxy for testing volume)
+#   3. Detection Score — positive pool rate (proxy for WNV detection ability)
+#   4. Consistency Score — weeks active / max possible weeks (reliability)
+# =============================================================================
+
+# Cache for performance data
+.trap_performance_cache <- list(data = NULL, year = NULL, timestamp = NULL)
+
+#' Fetch trap performance data with composite scores
+#' 
+#' @param year Optional year filter. NULL = all years combined.
+#' @param force_reload Bypass cache
+#' @return data.frame with one row per trap and performance metrics + composite score
+fetch_trap_performance <- function(year = NULL, force_reload = FALSE) {
+  
+  # Check cache (TTL = 5 min)
+  cache_key <- as.character(year %||% "all")
+  if (!force_reload && 
+      identical(.trap_performance_cache$year, cache_key) &&
+      !is.null(.trap_performance_cache$timestamp) &&
+      difftime(Sys.time(), .trap_performance_cache$timestamp, units = "secs") < 300) {
+    return(.trap_performance_cache$data)
+  }
+  
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  year_filter_abundance <- if (!is.null(year)) {
+    sprintf("WHERE spp_name = 'Total_Cx_vectors' AND a.year = %d", as.integer(year))
+  } else {
+    "WHERE spp_name = 'Total_Cx_vectors'"
+  }
+  year_filter_pools <- if (!is.null(year)) {
+    sprintf("WHERE EXTRACT(YEAR FROM i.inspdate)::int = %d", as.integer(year))
+  } else ""
+  
+  q <- sprintf("
+    WITH trap_abundance AS (
+      SELECT loc_code, viarea,
+             COUNT(DISTINCT year) as years_active,
+             COUNT(DISTINCT yrwk) as weeks_active,
+             SUM(mosqcount)::numeric as total_mosq,
+             ROUND(SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT yrwk), 1), 2) as avg_per_week
+      FROM dbadult_mon_nt_co2_forvectorabundance a
+      %s
+      GROUP BY loc_code, viarea
+    ),
+    trap_pools AS (
+      SELECT i.loc_code,
+             COUNT(DISTINCT p.poolnum) as total_pools,
+             SUM(CASE WHEN pt.result = 'Pos' THEN 1 ELSE 0 END) as total_positive,
+             SUM(p.count)::numeric as total_tested
+      FROM dbadult_insp_current i
+      JOIN dbvirus_pool p ON p.sampnum_yr = i.sampnum_yr
+      LEFT JOIN dbvirus_pool_test pt ON p.poolnum = pt.poolnum AND pt.target = 'WNV'
+      %s
+      GROUP BY i.loc_code
+    ),
+    trap_geo AS (
+      SELECT DISTINCT ON (loc_code) loc_code,
+             ST_X(ST_Transform(geom, 4326)) as lon,
+             ST_Y(ST_Transform(geom, 4326)) as lat
+      FROM loc_mondaynight
+      WHERE geom IS NOT NULL
+    )
+    SELECT a.loc_code, a.viarea,
+           a.years_active, a.weeks_active, a.total_mosq, a.avg_per_week,
+           COALESCE(p.total_pools, 0) as total_pools,
+           COALESCE(p.total_positive, 0) as total_positive,
+           COALESCE(p.total_tested, 0) as total_tested,
+           CASE WHEN COALESCE(p.total_pools, 0) > 0 
+                THEN ROUND(p.total_positive::numeric / p.total_pools * 100, 2)
+                ELSE 0 END as positivity_rate_pct,
+           g.lon, g.lat
+    FROM trap_abundance a
+    LEFT JOIN trap_pools p ON p.loc_code = a.loc_code
+    LEFT JOIN trap_geo g ON g.loc_code = a.loc_code
+    WHERE a.loc_code IS NOT NULL AND a.loc_code != ''
+    ORDER BY a.total_mosq DESC
+  ", year_filter_abundance, year_filter_pools)
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    
+    if (is.null(data) || nrow(data) == 0) {
+      message("[trap_performance] No data returned")
+      return(NULL)
+    }
+    
+    # Cast integer64 columns to numeric (RPostgres returns int8 as integer64)
+    int64_cols <- c("years_active", "weeks_active", "total_pools", "total_positive")
+    for (col in int64_cols) {
+      if (col %in% names(data)) data[[col]] <- as.numeric(data[[col]])
+    }
+    
+    # Pre-compute column maxima for normalization (avoids ifelse + integer64 issues)
+    max_yield  <- max(as.numeric(data$avg_per_week), na.rm = TRUE)
+    max_pools  <- max(data$total_pools, na.rm = TRUE)
+    max_detect <- max(as.numeric(data$positivity_rate_pct), na.rm = TRUE)
+    max_weeks  <- max(data$weeks_active, na.rm = TRUE)
+    
+    # Compute normalized component scores (0–1)
+    data <- data %>%
+      mutate(
+        # Yield: avg mosquitoes per week, normalized by max
+        yield_score = if (max_yield > 0) as.numeric(avg_per_week) / max_yield else 0,
+        # Testing volume: total pools, normalized by max
+        testing_score = if (max_pools > 0) total_pools / max_pools else 0,
+        # Detection: positivity rate, normalized by max
+        detection_score = if (max_detect > 0) as.numeric(positivity_rate_pct) / max_detect else 0,
+        # Consistency: weeks active out of max possible
+        consistency_score = if (max_weeks > 0) weeks_active / max_weeks else 0,
+        # Composite score: weighted average
+        # Weights inspired by Chakravarti et al. findings:
+        #   - Testing volume and detection are the strongest causal factors
+        #   - Yield matters for abundant data collection
+        #   - Consistency rewards reliability
+        composite_score = round(
+          0.25 * yield_score +
+          0.30 * testing_score +
+          0.30 * detection_score +
+          0.15 * consistency_score, 4
+        ),
+        # Classify performance tier
+        performance_tier = case_when(
+          composite_score >= 0.6 ~ "High",
+          composite_score >= 0.3 ~ "Medium",
+          TRUE ~ "Low"
+        )
+      )
+    
+    message(sprintf("[trap_performance] %d traps scored — High: %d, Medium: %d, Low: %d",
+                    nrow(data),
+                    sum(data$performance_tier == "High"),
+                    sum(data$performance_tier == "Medium"),
+                    sum(data$performance_tier == "Low")))
+    
+    # Update cache
+    .trap_performance_cache$data <<- data
+    .trap_performance_cache$year <<- cache_key
+    .trap_performance_cache$timestamp <<- Sys.time()
+    
+    data
+  }, error = function(e) {
+    warning(paste("[trap_performance] Query failed:", e$message))
+    NULL
+  })
+}
+
 message(" trap_surveillance/data_functions.R loaded")

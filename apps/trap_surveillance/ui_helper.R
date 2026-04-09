@@ -9,6 +9,7 @@ trap_surveillance_ui <- function() {
         menuItem("Map", tabName = "map_tab", icon = icon("map")),
         menuItem("Trend", tabName = "trend_tab", icon = icon("chart-line")),
         menuItem("Table", tabName = "table_tab", icon = icon("table")),
+        menuItem("Trap Performance", tabName = "performance_tab", icon = icon("crosshairs")),
         menuItem("Methods", tabName = "methods_tab", icon = icon("info-circle"))
       )
     ),
@@ -105,6 +106,58 @@ trap_surveillance_ui <- function() {
                   downloadButton("download_data", "Download CSV", class = "btn-primary btn-sm")
                 ),
                 DT::dataTableOutput("data_table")
+            )
+          )
+        ),
+        
+        # =====================================================================
+        # TRAP PERFORMANCE TAB
+        # =====================================================================
+        tabItem(tabName = "performance_tab",
+          fluidRow(
+            box(width = 3, title = "Performance Controls", status = "primary", solidHeader = TRUE,
+              selectInput("perf_year", "Year (or All Years):",
+                         choices = NULL,
+                         selected = NULL),
+              hr(),
+              div(style = "background-color:#f5f5f5; padding:10px; border-radius:5px; margin-bottom:10px; font-size:12px;",
+                h6(strong("Score Components"), style = "margin-top:0;"),
+                p(style = "margin-bottom:4px;", strong("Yield (25%):"), " Avg mosquitoes/week"),
+                p(style = "margin-bottom:4px;", strong("Testing (30%):"), " Total WNV pools collected"),
+                p(style = "margin-bottom:4px;", strong("Detection (30%):"), " Pool positivity rate"),
+                p(style = "margin-bottom:0;", strong("Consistency (15%):"), " Weeks active")
+              ),
+              hr(),
+              actionButton("perf_refresh", "Load Scores", icon = icon("bolt"),
+                          class = "btn-warning", width = "100%"),
+              hr(),
+              div(style = "font-size:11px; color:#888;",
+                p("Based on Chakravarti et al. (2026):"),
+                p(em("'A novel approach to determine mosquito trap placement for WNV surveillance'")),
+                p("J. Med. Entomol. 63(2), tjag006")
+              )
+            ),
+            box(width = 9, title = "Trap Performance Map", status = "warning", solidHeader = TRUE,
+                leaflet::leafletOutput("perf_map", height = "550px")
+            )
+          ),
+          fluidRow(
+            box(width = 4, title = "Score Distribution", status = "info", solidHeader = TRUE,
+                plotly::plotlyOutput("perf_histogram", height = "300px")
+            ),
+            box(width = 4, title = "Performance by VI Area", status = "info", solidHeader = TRUE,
+                plotly::plotlyOutput("perf_area_chart", height = "300px")
+            ),
+            box(width = 4, title = "Summary Statistics", status = "success", solidHeader = TRUE,
+                uiOutput("perf_summary_boxes")
+            )
+          ),
+          fluidRow(
+            box(width = 12, title = "Trap Scorecard", status = "primary", solidHeader = TRUE,
+                div(style = "margin-bottom: 10px;",
+                  downloadButton("download_perf_data", "Download Scores CSV", class = "btn-primary btn-sm")
+                ),
+                DT::dataTableOutput("perf_table")
             )
           )
         ),

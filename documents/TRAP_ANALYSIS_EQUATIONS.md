@@ -89,11 +89,11 @@ Weights reflect the paper's finding that testing volume (number of pools) and de
 The great-circle distance between two points on a sphere is computed using the Haversine formula. For traps $i$ and $j$ with coordinates $(\phi_i, \lambda_i)$ and $(\phi_j, \lambda_j)$ in radians:
 
 $$
-a = \sin^2\!\left(\frac{\phi_j - \phi_i}{2}\right) + \cos(\phi_i)\,\cos(\phi_j)\,\sin^2\!\left(\frac{\lambda_j - \lambda_i}{2}\right)
+a = \sin^2\left(\frac{\phi_j - \phi_i}{2}\right) + \cos(\phi_i)\,\cos(\phi_j)\,\sin^2\left(\frac{\lambda_j - \lambda_i}{2}\right)
 $$
 
 $$
-d_{ij} = 2\,R_\oplus\,\arcsin\!\left(\sqrt{a}\right)
+d_{ij} = 2\,R_\oplus\,\arcsin\left(\sqrt{a}\right)
 $$
 
 Where $R_\oplus = 6{,}371.0$ km (mean Earth radius).
@@ -103,7 +103,7 @@ Where $R_\oplus = 6{,}371.0$ km (mean Earth radius).
 The paper uses a **Matérn spatial covariance** in its GLMM with shape parameter $\nu = 0.16$:
 
 $$
-C(d) = \sigma^2\,\frac{2^{1-\nu}}{\Gamma(\nu)}\left(\sqrt{2\nu}\,\frac{d}{\rho}\right)^\nu K_\nu\!\left(\sqrt{2\nu}\,\frac{d}{\rho}\right)
+C(d) = \sigma^2\,\frac{2^{1-\nu}}{\Gamma(\nu)}\left(\sqrt{2\nu}\,\frac{d}{\rho}\right)^\nu K_\nu\left(\sqrt{2\nu}\,\frac{d}{\rho}\right)
 $$
 
 Where:
@@ -118,13 +118,13 @@ Where:
 When $\nu = 0.5$, the Matérn simplifies to the **exponential covariance**:
 
 $$
-C(d) = \sigma^2 \exp\!\left(-\frac{d}{\rho}\right)
+C(d) = \sigma^2 \exp\left(-\frac{d}{\rho}\right)
 $$
 
 Since the paper's $\nu = 0.16$ is close to the exponential limit, we use an exponential kernel as a computationally efficient approximation:
 
 $$
-w_j = \exp\!\left(-\frac{d_{ij}}{\beta}\right)
+w_j = \exp\left(-\frac{d_{ij}}{\beta}\right)
 $$
 
 Where $\beta$ = `bandwidth_km` (default 3 km). Only neighbors within `max_radius_km` (default 10 km) are included.

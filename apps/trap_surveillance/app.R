@@ -661,169 +661,302 @@ server <- function(input, output, session) {
   })
   
   # =========================================================================
-  # TRAP PERFORMANCE TAB — Based on Chakravarti et al. (2026)
+  # CAUSAL ANALYSIS TAB
   # =========================================================================
   
-  # Populate year choices for performance tab (add "All Years" option)
+  # Populate year choices for analysis tab
   observe({
     years <- fetch_available_years()
     if (!is.null(years)) {
-      perf_choices <- c("All Years" = "all", setNames(as.character(years), years))
-      updateSelectInput(session, "perf_year", choices = perf_choices, selected = "all")
+      analysis_choices <- c("All Years" = "all", setNames(as.character(years), years))
+      updateSelectInput(session, "analysis_year", choices = analysis_choices, selected = "all")
     }
   })
   
-  # Fetch performance data on button click
-  perf_data <- eventReactive(input$perf_refresh, {
-    year_val <- if (!is.null(input$perf_year) && input$perf_year != "all") {
-      as.integer(input$perf_year)
+  # Master reactive: runs all phases in sequence
+  analysis_data <- eventReactive(input$analysis_refresh, {
+    year_val <- if (!is.null(input$analysis_year) && input$analysis_year != "all") {
+      as.integer(input$analysis_year)
     } else NULL
     
-    withProgress(message = "Scoring trap performance...", value = 0.3, {
-      result <- fetch_trap_performance(year = year_val)
+    bw <- input$analysis_bandwidth %||% 3
+    radius <- input$analysis_radius %||% 10
+    
+    withProgress(message = "Running causal analysis...", value = 0.05, {
+      # Phase 2: Fetch & score traps
+      setProgress(0.15, detail = "Scoring traps (Phase 2)...")
+      perf <- fetch_trap_performance(year = year_val)
+      if (is.null(perf) || nrow(perf) == 0) return(NULL)
+      
+      # Phase 1: Spatial risk kernel
+      setProgress(0.35, detail = "Computing spatial risk (Phase 1)...")
+      risk <- compute_spatial_risk(perf, bandwidth_km = bw, max_radius_km = radius)
+      
+      # Phase 3: Causal factors
+      setProgress(0.55, detail = "Analyzing causal factors (Phase 3)...")
+      causal <- compute_causal_factors(risk)
+      
+      # Area coverage
+      setProgress(0.70, detail = "Computing area coverage...")
+      coverage <- compute_area_coverage(risk)
+      
+      # Risk surface grid
+      setProgress(0.85, detail = "Generating risk surface...")
+      surface <- tryCatch(
+        generate_risk_surface(risk, grid_res = 0.005, bandwidth_km = bw),
+        error = function(e) { message("Risk surface error: ", e$message); NULL }
+      )
+      
       setProgress(1, detail = "Complete!")
-      result
+      list(
+        risk_data = risk,
+        causal = causal,
+        coverage = coverage,
+        surface = surface
+      )
     })
   })
   
-  # Performance Map
-  output$perf_map <- leaflet::renderLeaflet({
-    data <- perf_data()
+  # --- Combined Map ---
+  output$analysis_map <- leaflet::renderLeaflet({
+    result <- analysis_data()
+    if (is.null(result)) {
+      return(leaflet::leaflet() %>% leaflet::addTiles() %>%
+               leaflet::setView(lng = -93.3, lat = 44.95, zoom = 9) %>%
+               leaflet::addControl(
+                 html = "<div style='background:white;padding:10px;'>Click 'Run Analysis' to begin</div>",
+                 position = "topright"))
+    }
     geom <- areas_sf()
-    render_trap_performance_map(perf_data = data, areas_sf = geom)
+    render_trap_analysis_map(
+      risk_data = result$risk_data,
+      risk_surface = result$surface,
+      areas_sf = geom,
+      area_coverage = result$coverage
+    )
   })
   
-  # Score Distribution Histogram
-  output$perf_histogram <- plotly::renderPlotly({
-    data <- perf_data()
-    if (is.null(data) || nrow(data) == 0) {
-      return(plotly::plot_ly() %>%
-               plotly::layout(title = "Click 'Load Scores' to begin"))
+  # --- Area Coverage Table ---
+  output$coverage_table <- DT::renderDT({
+    result <- analysis_data()
+    if (is.null(result) || is.null(result$coverage) || nrow(result$coverage) == 0) {
+      return(DT::datatable(data.frame(Message = "Click 'Run Analysis' to begin")))
     }
     
+    display <- result$coverage %>%
+      dplyr::select(
+        `VI Area` = viarea,
+        `Traps` = n_traps,
+        `Avg Score` = avg_score,
+        `Avg Risk` = avg_risk,
+        `Pools` = total_pools,
+        `Positives` = total_positive,
+        `Pos %` = positivity_pct,
+        `Low %` = pct_low,
+        `Grade` = coverage_grade
+      ) %>%
+      dplyr::arrange(match(Grade, c("Gap", "Thin", "Adequate", "Good")))
+    
+    DT::datatable(display,
+                  options = list(pageLength = 20, scrollX = TRUE, dom = "t"),
+                  rownames = FALSE,
+                  caption = "Coverage by VI Area") %>%
+      DT::formatStyle("Grade",
+                       backgroundColor = DT::styleEqual(
+                         c("Good", "Adequate", "Thin", "Gap"),
+                         c("#d5f5e3", "#fef9e7", "#fdebd0", "#fadbd8")),
+                       fontWeight = "bold")
+  })
+  
+  # --- Factor Importance Plot ---
+  output$importance_plot <- plotly::renderPlotly({
+    result <- analysis_data()
+    if (is.null(result) || is.null(result$causal)) {
+      return(plotly::plot_ly() %>%
+               plotly::layout(title = "Click 'Run Analysis' to begin"))
+    }
+    
+    imp <- result$causal$importance
+    if (nrow(imp) == 0) {
+      return(plotly::plot_ly() %>% plotly::layout(title = "No factor data"))
+    }
+    
+    p <- ggplot(imp, aes(x = reorder(factor, abs(correlation)), y = correlation, fill = correlation)) +
+      geom_col(alpha = 0.85) +
+      geom_text(aes(label = sprintf("r=%.2f %s", correlation, significance)),
+                hjust = ifelse(imp$correlation > 0, -0.1, 1.1), size = 3) +
+      scale_fill_gradient2(low = "#e74c3c", mid = "#f1c40f", high = "#27ae60", midpoint = 0) +
+      coord_flip() +
+      labs(x = NULL, y = "Spearman r", fill = "r") +
+      theme_minimal() +
+      theme(text = element_text(size = 11), legend.position = "none")
+    
+    plotly::ggplotly(p, tooltip = c("y"))
+  })
+  
+  # --- Score Distribution Histogram ---
+  output$score_histogram <- plotly::renderPlotly({
+    result <- analysis_data()
+    if (is.null(result)) {
+      return(plotly::plot_ly() %>% plotly::layout(title = "No data"))
+    }
+    
+    data <- result$risk_data
     p <- ggplot(data, aes(x = composite_score, fill = performance_tier)) +
       geom_histogram(binwidth = 0.05, boundary = 0, color = "white", alpha = 0.85) +
       scale_fill_manual(values = c("High" = "#27ae60", "Medium" = "#f39c12", "Low" = "#e74c3c")) +
       labs(x = "Composite Score", y = "Count", fill = "Tier") +
       theme_minimal() +
-      theme(text = element_text(size = 12), legend.position = "bottom")
+      theme(text = element_text(size = 11), legend.position = "bottom")
     
     plotly::ggplotly(p, tooltip = c("x", "y", "fill"))
   })
   
-  # Performance by VI Area chart
-  output$perf_area_chart <- plotly::renderPlotly({
-    data <- perf_data()
-    if (is.null(data) || nrow(data) == 0) {
-      return(plotly::plot_ly() %>%
-               plotly::layout(title = "No data"))
-    }
-    
-    area_summary <- data %>%
-      dplyr::filter(!is.na(viarea)) %>%
-      dplyr::group_by(viarea) %>%
-      dplyr::summarise(
-        avg_score = mean(composite_score, na.rm = TRUE),
-        n_traps = dplyr::n(),
-        avg_yield = mean(as.numeric(avg_per_week), na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      dplyr::arrange(desc(avg_score))
-    
-    p <- ggplot(area_summary, aes(x = reorder(viarea, avg_score), y = avg_score, fill = avg_score)) +
-      geom_col(alpha = 0.85) +
-      scale_fill_gradient(low = "#e74c3c", high = "#27ae60") +
-      coord_flip() +
-      labs(x = NULL, y = "Avg Score", fill = "Score") +
-      theme_minimal() +
-      theme(text = element_text(size = 11), legend.position = "none")
-    
-    plotly::ggplotly(p, tooltip = c("y", "x"))
-  })
-  
-  # Summary statistic boxes
-  output$perf_summary_boxes <- renderUI({
-    data <- perf_data()
-    if (is.null(data) || nrow(data) == 0) {
+  # --- Summary Boxes ---
+  output$analysis_summary_boxes <- renderUI({
+    result <- analysis_data()
+    if (is.null(result)) {
       return(div(style = "padding:20px; text-align:center; color:#888;",
-                 h4("Click 'Load Scores' to begin")))
+                 h4("Click 'Run Analysis'")))
     }
     
+    data <- result$risk_data
+    cov <- result$coverage
     n_traps <- nrow(data)
     n_high <- sum(data$performance_tier == "High")
-    n_med  <- sum(data$performance_tier == "Medium")
     n_low  <- sum(data$performance_tier == "Low")
     avg_score <- round(mean(data$composite_score, na.rm = TRUE), 3)
     total_pools <- sum(as.numeric(data$total_pools), na.rm = TRUE)
     total_positive <- sum(as.numeric(data$total_positive), na.rm = TRUE)
     
-    year_label <- if (!is.null(input$perf_year) && input$perf_year != "all") {
-      input$perf_year
+    n_gap_areas <- if (!is.null(cov)) sum(cov$coverage_grade %in% c("Gap", "Thin")) else 0
+    n_good_areas <- if (!is.null(cov)) sum(cov$coverage_grade == "Good") else 0
+    
+    year_label <- if (!is.null(input$analysis_year) && input$analysis_year != "all") {
+      input$analysis_year
     } else "All Years"
     
+    surface_gaps <- if (!is.null(result$surface)) {
+      sum(result$surface$is_gap)
+    } else 0
+    surface_total <- if (!is.null(result$surface)) nrow(result$surface) else 1
+    gap_pct <- round(100 * surface_gaps / max(surface_total, 1), 0)
+    
     div(
-      div(style = "text-align:center; margin-bottom:8px;",
-          h5(strong(year_label), style = "color:#666;")),
-      div(style = "display:grid; grid-template-columns:1fr 1fr; gap:8px;",
-        div(style = "background:#ecf0f1; padding:12px; border-radius:5px; text-align:center;",
-            h3(n_traps, style = "margin:0; color:#2c3e50;"),
-            p("Total Traps", style = "margin:0; font-size:11px; color:#888;")),
-        div(style = "background:#d5f5e3; padding:12px; border-radius:5px; text-align:center;",
-            h3(n_high, style = "margin:0; color:#27ae60;"),
-            p("High Perf.", style = "margin:0; font-size:11px; color:#888;")),
-        div(style = "background:#fdebd0; padding:12px; border-radius:5px; text-align:center;",
-            h3(n_med, style = "margin:0; color:#f39c12;"),
-            p("Medium", style = "margin:0; font-size:11px; color:#888;")),
-        div(style = "background:#fadbd8; padding:12px; border-radius:5px; text-align:center;",
-            h3(n_low, style = "margin:0; color:#e74c3c;"),
-            p("Low Perf.", style = "margin:0; font-size:11px; color:#888;"))
+      div(style = "text-align:center; margin-bottom:6px;",
+          h5(strong(year_label), style = "color:#666; margin:0;")),
+      div(style = "display:grid; grid-template-columns:1fr 1fr; gap:6px;",
+        div(style = "background:#ecf0f1; padding:10px; border-radius:5px; text-align:center;",
+            h4(n_traps, style = "margin:0; color:#2c3e50;"),
+            p("Traps", style = "margin:0; font-size:10px; color:#888;")),
+        div(style = "background:#d5f5e3; padding:10px; border-radius:5px; text-align:center;",
+            h4(n_high, style = "margin:0; color:#27ae60;"),
+            p("High", style = "margin:0; font-size:10px; color:#888;")),
+        div(style = "background:#fadbd8; padding:10px; border-radius:5px; text-align:center;",
+            h4(n_low, style = "margin:0; color:#e74c3c;"),
+            p("Low", style = "margin:0; font-size:10px; color:#888;")),
+        div(style = paste0("background:", ifelse(n_gap_areas > 0, "#fadbd8", "#d5f5e3"),
+                           "; padding:10px; border-radius:5px; text-align:center;"),
+            h4(n_gap_areas, style = paste0("margin:0; color:", ifelse(n_gap_areas > 0, "#e74c3c", "#27ae60"), ";")),
+            p("Gap Areas", style = "margin:0; font-size:10px; color:#888;"))
       ),
-      hr(),
-      div(style = "font-size:13px;",
-        p(strong("Avg Score: "), sprintf("%.3f", avg_score)),
-        p(strong("Total Pools: "), format(total_pools, big.mark = ",")),
-        p(strong("Total Positive: "), format(total_positive, big.mark = ",")),
-        p(strong("Positivity: "), sprintf("%.1f%%",
-                                   ifelse(total_pools > 0, total_positive / total_pools * 100, 0)))
+      hr(style = "margin:6px 0;"),
+      div(style = "font-size:12px;",
+        p(strong("Avg Score: "), sprintf("%.3f", avg_score), style = "margin:2px 0;"),
+        p(strong("Pools: "), format(total_pools, big.mark = ","), style = "margin:2px 0;"),
+        p(strong("Positive: "), format(total_positive, big.mark = ","),
+          sprintf(" (%.1f%%)", ifelse(total_pools > 0, total_positive / total_pools * 100, 0)),
+          style = "margin:2px 0;"),
+        p(strong("Coverage Gaps: "), sprintf("%d%% of grid", gap_pct), style = "margin:2px 0;"),
+        p(strong("Good Areas: "), n_good_areas, style = "margin:2px 0;")
       )
     )
   })
   
-  # Performance Data Table
-  output$perf_table <- DT::renderDT({
-    data <- perf_data()
-    if (is.null(data) || nrow(data) == 0) {
-      return(DT::datatable(data.frame(Message = "Click 'Load Scores' to begin"),
-                           options = list(pageLength = 20)))
+  # --- Dose-Response Helper ---
+  make_dr_plot <- function(result, factor_name, x_label) {
+    if (is.null(result) || is.null(result$causal) || is.null(result$causal$dose_response[[factor_name]])) {
+      return(plotly::plot_ly() %>% plotly::layout(title = "No data"))
+    }
+    
+    dr <- result$causal$dose_response[[factor_name]]
+    raw <- result$risk_data
+    
+    factor_col <- switch(factor_name,
+      "Pools Collected"  = as.numeric(raw$total_pools),
+      "Positive Pools"   = as.numeric(raw$total_positive),
+      "Avg Yield/Week"   = as.numeric(raw$avg_per_week),
+      "Weeks Active"     = as.numeric(raw$weeks_active),
+      "Total Mosquitoes" = as.numeric(raw$total_mosq)
+    )
+    
+    p <- ggplot() +
+      geom_point(data = data.frame(x = factor_col, y = raw$composite_score),
+                 aes(x = x, y = y), alpha = 0.3, color = "#7f8c8d", size = 1.5) +
+      geom_point(data = dr, aes(x = bin_midpoint, y = avg_score),
+                 color = "#2c5aa0", size = 3) +
+      geom_line(data = dr, aes(x = bin_midpoint, y = avg_score),
+                color = "#2c5aa0", linewidth = 1) +
+      geom_ribbon(data = dr, aes(x = bin_midpoint,
+                                  ymin = pmax(avg_score - 1.96 * se_score, 0),
+                                  ymax = pmin(avg_score + 1.96 * se_score, 1)),
+                  fill = "#2c5aa0", alpha = 0.15) +
+      labs(x = x_label, y = "Avg Score") +
+      theme_minimal() +
+      theme(text = element_text(size = 11))
+    
+    plotly::ggplotly(p, tooltip = c("x", "y"))
+  }
+  
+  output$dr_pools_plot <- plotly::renderPlotly({
+    make_dr_plot(analysis_data(), "Pools Collected", "Total Pools Collected")
+  })
+  
+  output$dr_positives_plot <- plotly::renderPlotly({
+    make_dr_plot(analysis_data(), "Positive Pools", "Total Positive Pools")
+  })
+  
+  # --- Scorecard + Recommendations Table ---
+  output$analysis_table <- DT::renderDT({
+    result <- analysis_data()
+    if (is.null(result)) {
+      return(DT::datatable(data.frame(Message = "Click 'Run Analysis' to begin")))
+    }
+    
+    data <- result$risk_data
+    recs <- if (!is.null(result$causal$recommendations)) {
+      result$causal$recommendations %>% dplyr::select(loc_code, recommendation)
+    } else {
+      data.frame(loc_code = character(0), recommendation = character(0))
     }
     
     display <- data %>%
+      dplyr::left_join(recs, by = "loc_code") %>%
       dplyr::select(
         `Trap` = loc_code,
         `VI Area` = viarea,
-        `Years Active` = years_active,
-        `Weeks Active` = weeks_active,
-        `Total Mosq.` = total_mosq,
-        `Avg/Week` = avg_per_week,
+        `Weeks` = weeks_active,
+        `Avg/Wk` = avg_per_week,
         `Pools` = total_pools,
-        `Positives` = total_positive,
-        `Pos. Rate %` = positivity_rate_pct,
+        `Pos.` = total_positive,
         `Yield` = yield_score,
         `Testing` = testing_score,
         `Detection` = detection_score,
-        `Consistency` = consistency_score,
+        `Consist.` = consistency_score,
         `Score` = composite_score,
-        `Tier` = performance_tier
+        `Risk` = risk_index,
+        `Tier` = performance_tier,
+        `Recommendation` = recommendation
       ) %>%
       dplyr::mutate(dplyr::across(dplyr::where(is.numeric), ~ round(.x, 3))) %>%
       dplyr::arrange(desc(Score))
     
     DT::datatable(display,
-                  options = list(pageLength = 20, scrollX = TRUE,
-                                 order = list(list(13, "desc"))),
-                  caption = sprintf("Trap Performance Scores — %s",
-                                    if (!is.null(input$perf_year) && input$perf_year != "all")
-                                      input$perf_year else "All Years")) %>%
+                  options = list(pageLength = 25, scrollX = TRUE,
+                                 order = list(list(10, "desc"))),
+                  caption = sprintf("Trap Scorecard — %s",
+                                    if (!is.null(input$analysis_year) && input$analysis_year != "all")
+                                      input$analysis_year else "All Years")) %>%
       DT::formatStyle("Tier",
                        backgroundColor = DT::styleEqual(
                          c("High", "Medium", "Low"),
@@ -832,25 +965,28 @@ server <- function(input, output, session) {
                        background = DT::styleColorBar(range(display$Score, na.rm = TRUE), "#3498db"),
                        backgroundSize = "98% 88%",
                        backgroundRepeat = "no-repeat",
-                       backgroundPosition = "center")
+                       backgroundPosition = "center") %>%
+      DT::formatStyle("Recommendation",
+                       fontStyle = "italic", fontSize = "11px")
   })
   
-  # Download performance data
-  output$download_perf_data <- downloadHandler(
+  # Download analysis data
+  output$download_analysis_data <- downloadHandler(
     filename = function() {
-      sprintf("trap_performance_scores_%s_%s.csv",
-              input$perf_year %||% "all", Sys.Date())
+      sprintf("trap_analysis_%s_%s.csv",
+              input$analysis_year %||% "all", Sys.Date())
     },
     content = function(file) {
       tryCatch({
-        data <- perf_data()
-        if (!is.null(data) && nrow(data) > 0) {
-          export_data <- data %>%
+        result <- analysis_data()
+        if (!is.null(result) && !is.null(result$risk_data)) {
+          export_data <- result$risk_data %>%
             dplyr::select(loc_code, viarea, years_active, weeks_active,
                           total_mosq, avg_per_week, total_pools, total_positive,
                           total_tested, positivity_rate_pct,
                           yield_score, testing_score, detection_score,
                           consistency_score, composite_score, performance_tier,
+                          spatial_risk, risk_index, risk_tier,
                           lon, lat)
           write.csv(export_data, file, row.names = FALSE, na = "")
         } else {

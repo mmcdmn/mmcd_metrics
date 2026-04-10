@@ -1,13 +1,13 @@
-# Trap Analysis — Mathematical Reference
+# Causal Analysis — Mathematical Reference
 
-**Application:** `apps/trap_surveillance` — Trap Analysis tab  
+**Application:** `apps/trap_surveillance` — Causal Analysis tab  
 **Inspired by:** Chakravarti, Li, Bartlett, Irwin, Smith (2026). *"A novel approach to determine mosquito trap placement for West Nile virus surveillance."* J. Med. Entomol. 63(2).
 
 ---
 
 ## Overview
 
-The Trap Analysis pipeline runs four computations in sequence:
+The Causal Analysis pipeline runs four computations in sequence:
 
 1. **Trap Performance Scoring** — composite metric rating each trap's WNV detection value
 2. **Spatial Risk Smoothing** — kernel-weighted interpolation of risk across the trap network
@@ -41,31 +41,31 @@ For each trap location, the query aggregates across all collection weeks for the
 Each scoring component is normalized by the maximum observed value across all traps, ensuring scores range 0–1:
 
 $$
-\text{yield\_score}_i = \frac{\text{avg\_per\_week}_i}{\max_j(\text{avg\_per\_week}_j)}
+S^{\mathrm{yield}}_i = \frac{\mathrm{AvgPerWeek}_i}{\max_j(\mathrm{AvgPerWeek}_j)}
 $$
 
 $$
-\text{testing\_score}_i = \frac{\text{total\_pools}_i}{\max_j(\text{total\_pools}_j)}
+S^{\mathrm{testing}}_i = \frac{\mathrm{TotalPools}_i}{\max_j(\mathrm{TotalPools}_j)}
 $$
 
 $$
-\text{detection\_score}_i = \frac{\text{positivity\_rate}_i}{\max_j(\text{positivity\_rate}_j)}
+S^{\mathrm{detection}}_i = \frac{\mathrm{PositivityRate}_i}{\max_j(\mathrm{PositivityRate}_j)}
 $$
 
 $$
-\text{consistency\_score}_i = \frac{\text{weeks\_active}_i}{\max_j(\text{weeks\_active}_j)}
+S^{\mathrm{consistency}}_i = \frac{\mathrm{WeeksActive}_i}{\max_j(\mathrm{WeeksActive}_j)}
 $$
 
 Where:
 
 $$
-\text{positivity\_rate}_i = \frac{\text{total\_positive}_i}{\text{total\_pools}_i} \times 100
+\mathrm{PositivityRate}_i = \frac{\mathrm{TotalPositive}_i}{\mathrm{TotalPools}_i} \times 100
 $$
 
 ### Composite Score
 
 $$
-\text{composite}_i = 0.25 \times \text{yield}_i + 0.30 \times \text{testing}_i + 0.30 \times \text{detection}_i + 0.15 \times \text{consistency}_i
+C_i = 0.25 \times S^{\mathrm{yield}}_i + 0.30 \times S^{\mathrm{testing}}_i + 0.30 \times S^{\mathrm{detection}}_i + 0.15 \times S^{\mathrm{consistency}}_i
 $$
 
 Weights reflect the paper's finding that testing volume (number of pools) and detection (positivity rate) are the strongest predictors of trap utility for WNV surveillance.
@@ -134,32 +134,32 @@ Where $\beta$ = `bandwidth_km` (default 3 km). Only neighbors within `max_radius
 Each trap's **detection signal** weights detection more heavily than testing volume:
 
 $$
-\text{signal}_j = 0.6 \times \text{detection\_score}_j + 0.4 \times \text{testing\_score}_j
+\mathrm{Signal}_j = 0.6 \times S^{\mathrm{detection}}_j + 0.4 \times S^{\mathrm{testing}}_j
 $$
 
 The **spatial risk** at trap $i$ is the kernel-weighted average of all neighbor signals:
 
 $$
-\text{spatial\_risk}_i = \frac{\displaystyle\sum_{j \neq i,\; d_{ij} \leq R} w_j \times \text{signal}_j}{\displaystyle\sum_{j \neq i,\; d_{ij} \leq R} w_j}
+\mathrm{SpatialRisk}_i = \frac{\displaystyle\sum_{j \neq i,\; d_{ij} \leq R} w_j \times \mathrm{Signal}_j}{\displaystyle\sum_{j \neq i,\; d_{ij} \leq R} w_j}
 $$
 
-Where $R$ = `max_radius_km`. If no neighbors are within range, $\text{spatial\_risk}_i = 0$.
+Where $R$ = `max_radius_km`. If no neighbors are within range, $\mathrm{SpatialRisk}_i = 0$.
 
 ### Risk Index
 
 The **Risk Index** combines local trap performance with spatial context:
 
 $$
-\text{risk\_index}_i = 0.35 \times \text{yield\_score}_i + 0.30 \times \text{spatial\_risk}_i + 0.35 \times \text{detection\_score}_i
+\mathrm{RiskIndex}_i = 0.35 \times S^{\mathrm{yield}}_i + 0.30 \times \mathrm{SpatialRisk}_i + 0.35 \times S^{\mathrm{detection}}_i
 $$
 
 ### Risk Tiers
 
 | Tier | Threshold |
 |------|-----------|
-| High Risk | risk_index ≥ 0.5 |
-| Moderate Risk | 0.2 ≤ risk_index < 0.5 |
-| Low Risk | risk_index < 0.2 |
+| High Risk | RiskIndex ≥ 0.5 |
+| Moderate Risk | 0.2 ≤ RiskIndex < 0.5 |
+| Low Risk | RiskIndex < 0.2 |
 
 ---
 
@@ -172,17 +172,17 @@ $$
 A regular latitude/longitude grid is created spanning the trap extent with ~2 km padding:
 
 $$
-\text{lon}_\text{grid} \in [\min(\text{lon}) - 0.02,\; \max(\text{lon}) + 0.02], \quad \Delta = 0.005° \approx 500\text{m}
+\lambda_{\mathrm{grid}} \in [\min(\lambda) - 0.02,\; \max(\lambda) + 0.02], \quad \Delta = 0.005° \approx 500 \textrm{ m}
 $$
 
 $$
-\text{lat}_\text{grid} \in [\min(\text{lat}) - 0.02,\; \max(\text{lat}) + 0.02], \quad \Delta = 0.005° \approx 500\text{m}
+\phi_{\mathrm{grid}} \in [\min(\phi) - 0.02,\; \max(\phi) + 0.02], \quad \Delta = 0.005° \approx 500 \textrm{ m}
 $$
 
 For each grid cell at coordinates $(x, y)$, the interpolated risk value uses the same exponential kernel as the trap-level smoothing, but only considers traps within $3\beta$:
 
 $$
-\text{risk}(x, y) = \frac{\displaystyle\sum_{j:\, d_j \leq 3\beta} w_j \times \text{risk\_index}_j}{\displaystyle\sum_{j:\, d_j \leq 3\beta} w_j}
+R(x, y) = \frac{\displaystyle\sum_{j:\, d_j \leq 3\beta} w_j \times \mathrm{RiskIndex}_j}{\displaystyle\sum_{j:\, d_j \leq 3\beta} w_j}
 $$
 
 Where:
@@ -195,7 +195,7 @@ Where:
 A grid cell is classified as a **coverage gap** if the nearest trap is farther than $2\beta$:
 
 $$
-\text{is\_gap}(x, y) = \begin{cases} \text{true} & \text{if } \min_j(d_j) > 2\beta \\ \text{false} & \text{otherwise} \end{cases}
+\mathrm{Gap}(x, y) = \begin{cases} 1 & \text{if } \min_j(d_j) > 2\beta \\ 0 & \text{otherwise} \end{cases}
 $$
 
 ### Area Coverage Grading
@@ -206,16 +206,16 @@ Per-VI-area metrics are aggregated and graded:
 
 | Grade | Criteria |
 |-------|----------|
-| **Good** | $n_\text{traps} \geq 10$ AND $\overline{\text{composite}} \geq 0.3$ |
-| **Adequate** | $n_\text{traps} \geq 5$ AND $\overline{\text{composite}} \geq 0.2$ |
-| **Thin** | $n_\text{traps} \geq 3$ |
-| **Gap** | $n_\text{traps} < 3$ |
+| **Good** | $n \geq 10$ AND $\bar{C} \geq 0.3$ |
+| **Adequate** | $n \geq 5$ AND $\bar{C} \geq 0.2$ |
+| **Thin** | $n \geq 3$ |
+| **Gap** | $n < 3$ |
 
-Where $\overline{\text{composite}}$ is the mean composite score of all traps in the area.
+Where $n$ = number of traps in the area, $\bar{C}$ = mean composite score of all traps in the area.
 
 Additional per-area metrics:
-- `avg_risk` = mean risk_index
-- `positivity_pct` = (total_positive / total_pools) × 100
+- `avg_risk` = mean RiskIndex
+- `positivity_pct` = (total positive / total pools) × 100
 - `pct_low` = percentage of traps with Low tier
 
 ---
@@ -232,7 +232,7 @@ $$
 r_s = 1 - \frac{6 \sum_{i=1}^{n} d_i^2}{n(n^2 - 1)}
 $$
 
-Where $d_i = \text{rank}(X_{k,i}) - \text{rank}(Y_i)$. In practice, computed via `cor.test(method = "spearman")` with exact p-values disabled for large $n$.
+Where $d_i = \mathrm{rank}(X_{k,i}) - \mathrm{rank}(Y_i)$. In practice, computed via `cor.test(method = "spearman")` with exact p-values disabled for large $n$.
 
 **Factors analyzed:**
 
@@ -253,13 +253,13 @@ The paper uses **Average Dose-Response Functions (ADRFs)** estimated via general
 1. For each factor, create $q$ bins using quantile breaks (up to 10 deciles):
 
 $$
-b_k = \text{quantile}(X, k/q), \quad k = 0, 1, \ldots, q
+b_k = Q(X,\; k/q), \quad k = 0, 1, \ldots, q
 $$
 
 2. Within each bin $B_k = [b_{k-1}, b_k)$, compute the average score and standard error:
 
 $$
-\hat{Y}_k = \frac{1}{n_k} \sum_{i \in B_k} Y_i, \quad \text{SE}_k = \frac{s_k}{\sqrt{n_k}}
+\hat{Y}_k = \frac{1}{n_k} \sum_{i \in B_k} Y_i, \quad \mathrm{SE}_k = \frac{s_k}{\sqrt{n_k}}
 $$
 
 Where $s_k$ is the standard deviation of $Y$ within bin $k$ and $n_k$ is the bin count.
@@ -267,7 +267,7 @@ Where $s_k$ is the standard deviation of $Y$ within bin $k$ and $n_k$ is the bin
 3. The plot displays raw scatter + binned averages with 95% confidence ribbons:
 
 $$
-\text{CI}_k = \hat{Y}_k \pm 1.96 \times \text{SE}_k
+\mathrm{CI}_k = \hat{Y}_k \pm 1.96 \times \mathrm{SE}_k
 $$
 
 ### Per-Trap Recommendations

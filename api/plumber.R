@@ -552,6 +552,7 @@ function(res) {
     rows <- DBI::dbGetQuery(con, "
       SELECT DISTINCT ON (emp_num) emp_num::text, shortname
       FROM employee_list
+	    WHERE active = 'true'
       ORDER BY emp_num, pkey DESC")
 
     list(

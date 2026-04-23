@@ -42,7 +42,7 @@ source("/srv/shiny-server/shared/redis_cache.R")
 
 # Claim constants (same as air_inspection_checklist/data_functions.R)
 CLAIM_HASH_PREFIX <- "claim"
-CLAIM_TTL <- 172800L  # 2 days
+CLAIM_TTL <- 1036800L  # 12 days
 claim_hash_key <- function(date) paste0(CLAIM_HASH_PREFIX, ":", date)
 
 load_env_vars()
@@ -567,20 +567,26 @@ function(res) {
 
 #* Get active claims from the Redis cache.
 #* Returns all claims within the lookback window so sheets/apps can stay in sync.
-#* @param lookback_days How many days back to retrieve claims (default 2, max 14)
+#* @param lookback_days How many days back to retrieve claims (default 12, max 12)
 #* @get /v1/private/claims
 #* @json
-function(lookback_days = 2, res) {
+function(lookback_days = 12, res) {
   tryCatch({
-    lb <- suppressWarnings(as.integer(lookback_days %||% 2L))
-    if (is.na(lb) || lb < 1L) lb <- 2L
-    if (lb > 14L) lb <- 14L
+    lb <- suppressWarnings(as.integer(lookback_days %||% 12L))
+    if (is.na(lb) || lb < 1L) lb <- 12L
+    if (lb > 12L) lb <- 12L
 
     all_claims <- list()
     today <- Sys.Date()
     for (d in 0:lb) {
       date_str <- format(today - d, "%Y-%m-%d")
-      day_claims <- redis_hgetall(claim_hash_key(date_str))
+      day_claims <- tryCatch(
+        redis_hgetall(claim_hash_key(date_str)),
+        error = function(e) {
+          message("[claims] Redis error for ", date_str, ": ", e$message)
+          list()
+        }
+      )
       if (length(day_claims) > 0) {
         for (sc in names(day_claims)) {
           if (is.null(all_claims[[sc]])) {

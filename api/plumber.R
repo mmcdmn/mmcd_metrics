@@ -735,6 +735,24 @@ function(req, res) {
 
 
 # =============================================================================
+# ── RESTART API (watchdog in startup.sh restarts the process)
+# =============================================================================
+
+#* Restart the Plumber API process.
+#* The watchdog loop in startup.sh will automatically restart it within ~3 seconds.
+#* @post /v1/private/restart-api
+#* @json
+function(req, res) {
+  message("[api] Restart requested — shutting down Plumber process.")
+  # Respond first, then quit
+  later::later(function() {
+    quit(save = "no", status = 0)
+  }, delay = 0.5)
+  list(status = "restarting", message = "API will restart in ~3 seconds.")
+}
+
+
+# =============================================================================
 # ── LLM TUNNEL REGISTRATION
 # =============================================================================
 # The local LLM orchestrator registers its Cloudflare tunnel URL here so the

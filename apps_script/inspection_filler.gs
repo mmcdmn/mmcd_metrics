@@ -28,7 +28,7 @@
 const CONFIG = {
 
   // ── API Settings ──────────────────────────────────────────────────────
-  LOOKBACK_DAYS:   2,    // Days back to check for inspections (1–14)
+  LOOKBACK_DAYS:   12,   // Days back to check for inspections (1–14)
   LOOKBACK_ABOVE_THRESH: 7, // Days to keep hot-site data (dip ≥ threshold); 0 = same as LOOKBACK_DAYS
   REFRESH_MINUTES: 1,    // Auto-refresh interval: 1, 5, 10, 15, or 30
 

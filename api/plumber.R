@@ -40,6 +40,16 @@ source("/srv/shiny-server/shared/db_helpers.R")
 source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/shiny-server/shared/redis_cache.R")
 
+# Give Plumber its own distinct PostgreSQL application_name in pg_stat_activity.
+tryCatch({
+  if (exists("set_app_name", mode = "function")) {
+    set_app_name("Alex's Metrics Api", add_prefix = FALSE)
+  }
+  Sys.setenv(PGAPPNAME = "Alex's Metrics Api")
+}, error = function(e) {
+  message("[api] Could not set DB application_name: ", e$message)
+})
+
 # Claim constants (same as air_inspection_checklist/data_functions.R)
 CLAIM_HASH_PREFIX <- "claim"
 CLAIM_TTL <- 1036800L  # 12 days

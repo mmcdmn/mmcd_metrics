@@ -36,7 +36,7 @@ get_checklist_data <- function(facility_filter = NULL,
     facility_condition <- ""
     if (is_valid_filter(facility_filter)) {
       facility_list <- build_sql_in_list(facility_filter)
-      facility_condition <- sprintf("AND sc.facility IN (%s)", facility_list)
+      facility_condition <- sprintf("AND sc.fac_for_air IN (%s)", facility_list)
     }
 
     foreman_condition <- ""
@@ -71,7 +71,7 @@ get_checklist_data <- function(facility_filter = NULL,
         SELECT DISTINCT ON (b.sitecode)
           b.sitecode,
           b.acres,
-          sc.facility,
+          sc.fac_for_air AS facility,
           sc.zone,
           sc.fosarea,
           sc.sectcode

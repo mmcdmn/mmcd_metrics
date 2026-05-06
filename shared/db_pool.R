@@ -86,9 +86,15 @@ load_db_env_vars <- function() {
 #' # In your app.R, call this before any database queries:
 #' set_app_name("struct_trt")
 #' conn <- get_pool()
-set_app_name <- function(name) {
-  .app_name <<- paste0("mmcd_", name)
+set_app_name <- function(name, add_prefix = TRUE) {
+  nm <- as.character(name)
+  if (!nzchar(trimws(nm))) {
+    warning("set_app_name called with empty name; keeping existing app name")
+    return(invisible(.app_name))
+  }
+  .app_name <<- if (isTRUE(add_prefix)) paste0("mmcd_", nm) else nm
   message(sprintf(" Application name set to: %s", .app_name))
+  invisible(.app_name)
 }
 
 #' Get the current application name

@@ -27,11 +27,11 @@ Employee number behavior:
 
 1. Open your Google Sheet
 2. Click **Extensions → Apps Script**
-3. If there's existing code in `Code.gs`, select all and delete it
+3. If there's existing code in `Code.gs`, select all and delete it or make a new script to run by pressing the '+'
 
 ## 2. Paste the Script
 
-1. Open `inspection_filler.gs` (ask your administrator or find it in the repo under `apps_script/`)
+1. Open `inspection_filler.gs` (ask Alex or find it in the repo under `apps_script/`) or [click here](https://github.com/mmcdmn/mmcd_metrics/blob/main/apps_script/inspection_filler.gs)
 2. Copy the **entire** script
 3. Paste it into the Apps Script editor (replacing everything)
 4. Press **Ctrl+S** to save
@@ -78,6 +78,20 @@ Tab "Edina": 12 inspected, 45 sitecodes. Claims: +0 -0 ↓3
 Tab "Minnetonka": 8 inspected, 29 sitecodes. Claims: +2 -0 ↓1
 All tabs done: 20 inspected (150 from API). Claims: 2 pushed, 4 pulled, 0 removed.
 ```
+
+### clear all claims
+
+If you need to wipe all claim assignments from the sheet tabs (for example, end-of-day reset), run:
+
+1. Select **`clearAllClaimsFromSheets`** from the function dropdown
+2. Click **▶ Run**
+
+What it does:
+- Clears the Emp/claim values for uninspected rows across all processed tabs
+- Removes those claims from Redis so they do not immediately reappear
+- Leaves inspected rows intact (inspector data from actual inspections is not erased)
+
+After running, execute **`refreshInspectionData`** once to confirm all tabs are in sync.
 
 ---
 

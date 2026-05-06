@@ -42,7 +42,7 @@ load_treatment_data <- function(start_date, end_date, facility_filter = "all", m
     base_select <- "
       SELECT 
         insp.inspdate,
-        gis.facility,
+        gis.fac_for_air AS facility,
         gis.zone,
         insp.sitecode,
         insp.action,

@@ -112,7 +112,7 @@ load_air_treatments <- function(start_year, end_year, zone_filter = c("1", "2"),
     
     query_template <- "
       SELECT 
-        t.inspdate, b.facility, g.zone, g.fosarea, b.sitecode, b.acres,
+        t.inspdate, g.fac_for_air AS facility, g.zone, g.fosarea, b.sitecode, b.acres,
         COALESCE(mt.effect_days, 14) as effect_days
       FROM %s t
       JOIN loc_breeding_sites b ON t.sitecode = b.sitecode
@@ -184,7 +184,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
     facility_condition <- ""
     if (is_valid_filter(facility_filter)) {
       facility_list <- build_sql_in_list(facility_filter)
-      facility_condition <- sprintf("AND b.facility IN (%s)", facility_list)
+      facility_condition <- sprintf("AND g.fac_for_air IN (%s)", facility_list)
     }
     
     priority_condition <- ""
@@ -241,7 +241,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
     query <- sprintf("
       WITH ActiveAirSites AS (
         SELECT 
-          b.facility,
+          g.fac_for_air AS facility,
           b.sitecode,
           b.acres,
           b.priority,

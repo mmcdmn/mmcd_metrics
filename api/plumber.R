@@ -390,7 +390,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
     on.exit(safe_disconnect(con), add = TRUE)
 
     # WHERE clauses: validated values → dbQuoteString → IN clause
-    fac_clause <- safe_in(con, "sc.facility", fac_v)
+    fac_clause <- safe_in(con, "sc.fac_for_air", fac_v)
     fos_clause <- safe_in(con, "sc.fosarea",  fos_emp_v)
     zon_clause <- safe_in(con, "sc.zone",     zone_v)
     pri_clause <- safe_in(con, "b.priority",  pri_v)
@@ -404,7 +404,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         SELECT DISTINCT ON (b.sitecode)
           b.sitecode, b.acres, b.priority,
           b.drone AS site_drone, b.remarks AS site_remarks, b.sample AS site_sample,
-          sc.facility, sc.zone, sc.fosarea, sc.sectcode
+          sc.fac_for_air AS facility, sc.zone, sc.fosarea, sc.sectcode
         FROM loc_breeding_sites b
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
         WHERE (b.enddate IS NULL OR b.enddate > '", d_sql, "')
@@ -600,11 +600,11 @@ function(facility = NULL, lookback_days = 14, checkback_type = "percent",
     need_current <- TRUE
 
     # ── Load treatments ──
-    fac_clause <- safe_in(con, "gis.facility", fac_v)
+    fac_clause <- safe_in(con, "gis.fac_for_air", fac_v)
     mat_clause <- if (!is.null(mat_v)) safe_in(con, "insp.matcode", mat_v) else ""
 
     trt_base <- "
-      SELECT insp.inspdate, gis.facility, insp.sitecode, insp.acres,
+      SELECT insp.inspdate, gis.fac_for_air AS facility, insp.sitecode, insp.acres,
              insp.matcode, mat.mattype, mat.effect_days, insp.numdip
       FROM %s insp
       LEFT JOIN gis_sectcode gis ON gis.sectcode = LEFT(insp.sitecode, 7)

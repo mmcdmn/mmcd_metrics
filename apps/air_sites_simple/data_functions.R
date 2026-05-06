@@ -462,15 +462,15 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
     
     # Check inspection status if we have inspection data
     if (!is.null(last_inspection_date)) {
-      # Check if there was a treatment after the last inspection
-      treatment_after_inspection <- FALSE
+      # Check if there was a treatment on the same day or after the last inspection
+      treatment_same_or_after_inspection <- FALSE
       last_treatment_date <- NULL
       if (!is.null(site$last_treatment_date) && length(site$last_treatment_date) > 0) {
         if (!is.na(site$last_treatment_date[1])) {
           tryCatch({
             last_treatment_date <- as.Date(site$last_treatment_date[1])
             if (!is.null(last_treatment_date) && !is.null(last_inspection_date)) {
-              treatment_after_inspection <- last_treatment_date > last_inspection_date
+              treatment_same_or_after_inspection <- last_treatment_date >= last_inspection_date
             }
           }, error = function(e) {
             last_treatment_date <<- NULL
@@ -478,9 +478,15 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
         }
       }
       
+      # If treatment occurred on same day or after inspection with active expiry, treat as Active Treatment
+      if (treatment_same_or_after_inspection && treatment_active) {
+        data$site_status[i] <- "Active Treatment"
+        next
+      }
+      
       # If treatment occurred after inspection and has now expired, 
       # ignore the old inspection data and default to Unknown
-      if (treatment_after_inspection && !treatment_active) {
+      if (treatment_same_or_after_inspection && !treatment_active) {
         data$site_status[i] <- "Unknown"
         next
       }

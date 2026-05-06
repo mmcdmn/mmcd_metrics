@@ -81,7 +81,7 @@ const CONFIG = {
   // Default skips rows starting with "Book " or section codes like "273908-"
   // (6-7 digit string ending with a dash and no trailing characters).
   // Blank/empty rows are always skipped automatically.
-  SKIP_ROW_PATTERN: /^book\s|^\d{6,7}-?\s*$/i,
+  SKIP_ROW_PATTERN: /^book\s|^\d{6,7}-?\s*$|^(sites?|total|totals|drone|air|remaining|checked|threshold|treatment|done)\b|^[#%]|^\d{1,4}$/i,
 
   // ── Tabs to Skip ─────────────────────────────────────────────────────
   // Names of tabs that should NOT be processed (case-sensitive).
@@ -110,7 +110,7 @@ const CONFIG = {
 };
 
 
-// ── % Wet label lookup (only used when USE_WET_LABELS is true) ──────────
+// ── % Wet label lookup (fallback when sheet has no validation rules) ─────
 const WET_LABELS = {
   '0': '0 = DRY',     '1': '1 = 1-19%',   '2': '2 = 20-29%',
   '3': '3 = 30-39%',  '4': '4 = 40-49%',  '5': '5 = 50-59%',
@@ -135,6 +135,16 @@ function colNum_(letter) {
   return n;
 }
 
+/** Normalize truthy/falsey config values (supports boolean and string forms). */
+function toBool_(value, defaultValue) {
+  if (value === undefined || value === null) return defaultValue;
+  if (typeof value === 'boolean') return value;
+  const s = String(value).trim().toLowerCase();
+  if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true;
+  if (s === 'false' || s === '0' || s === 'no' || s === 'off' || s === '') return false;
+  return defaultValue;
+}
+
 /**
  * Build resolved config for a specific tab.
  * Merges TAB_OVERRIDES[tabName] on top of global CONFIG defaults.
@@ -148,7 +158,7 @@ function getTabConfig_(tabName) {
   return {
     dataStart: ds,
     statsRow:  sr,
-    showStats: ss,
+    showStats: toBool_(ss, false),
     col: {
       SITECODE: colNum_(ov.SITECODE_COL != null ? ov.SITECODE_COL : CONFIG.SITECODE_COL),
       ACRES:    colNum_(ov.ACRES_COL    != null ? ov.ACRES_COL    : CONFIG.ACRES_COL),
@@ -174,12 +184,75 @@ function readCol_(sheet, dataStart, col, numRows) {
 
 function writeCol_(sheet, dataStart, col, numRows, data) {
   if (!col || !data) return;
-  sheet.getRange(dataStart, col, numRows, 1).setValues(data);
+  try {
+    sheet.getRange(dataStart, col, numRows, 1).setValues(data);
+    SpreadsheetApp.flush();  // Force write NOW so one bad column can't block the rest
+  } catch (e) {
+    // Validation rules blocking the write — strip them and retry
+    try {
+      const range = sheet.getRange(dataStart, col, numRows, 1);
+      range.clearDataValidations();
+      range.setValues(data);
+      SpreadsheetApp.flush();
+      Logger.log('writeCol_ retry OK after clearing validation on tab "' + sheet.getName() + '" col ' + col);
+    } catch (e2) {
+      Logger.log('writeCol_ FAILED on tab "' + sheet.getName() + '" col ' + col + ': ' + e2.message);
+    }
+  }
 }
 
 function isSkipRow_(val) {
   if (!val) return true;
   return CONFIG.SKIP_ROW_PATTERN.test(val);
+}
+
+/**
+ * Auto-detect wet label format from the sheet's data validation rules.
+ * Reads the validation on the first data cell of the wet column and builds
+ * a map from raw code → exact dropdown label.
+ * Falls back to WET_LABELS constant if no validation is found.
+ */
+function getWetFormat_(sheet, ds, wetCol) {
+  if (!wetCol || !CONFIG.USE_WET_LABELS) return {};
+  try {
+    // Scan up to 10 rows to find a cell with validation (some rows may lack it)
+    const lastRow = Math.min(ds + 10, sheet.getLastRow());
+    for (let row = ds; row <= lastRow; row++) {
+      const cell = sheet.getRange(row, wetCol);
+      const rule = cell.getDataValidation();
+      if (!rule) continue;
+      const ct = rule.getCriteriaType();
+      const cv = rule.getCriteriaValues();
+      if (!cv || cv.length === 0) continue;
+
+      let list;
+      if (ct === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
+        list = Array.isArray(cv[0]) ? cv[0] : cv;
+      } else if (ct === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) {
+        // Validation is "List from a range" — read the range values
+        try { list = cv[0].getValues().flat().map(String); } catch (_) { continue; }
+      } else {
+        continue;  // unsupported validation type
+      }
+      if (!list || list.length < 3) continue;
+      const map = {};
+      for (const v of list) {
+        const s = String(v).trim();
+        if (s.length > 0) {
+          const code = s.charAt(0).toUpperCase();
+          if (/^[0-9AS]$/.test(code)) map[code] = s;
+        }
+      }
+      if (Object.keys(map).length >= 3) {
+        Logger.log('Wet format detected on "' + sheet.getName() + '" row ' + row + ': ' + map['0'] + ' / ' + map['3']);
+        return map;
+      }
+    }
+  } catch (e) {
+    Logger.log('getWetFormat_ error: ' + e.message);
+  }
+  Logger.log('Wet format: using fallback WET_LABELS for "' + sheet.getName() + '"');
+  return WET_LABELS;
 }
 
 
@@ -240,17 +313,27 @@ function refreshInspectionData() {
     const numRows = lastRow - ds + 1;
     const scValues = sheet.getRange(ds, col.SITECODE, numRows, 1).getValues();
     const siteRows = {};
+    let lastDataIdx = -1;
     for (let i = 0; i < numRows; i++) {
       const sc = String(scValues[i][0]).trim();
-      if (!isSkipRow_(sc)) siteRows[sc] = i;
+      if (!sc || isSkipRow_(sc)) continue;
+      if (!lookup[sc]) continue;  // Not a known sitecode — skip summary/totals rows
+      siteRows[sc] = i;
+      if (i > lastDataIdx) lastDataIdx = i;
     }
     if (Object.keys(siteRows).length === 0) continue;
 
-    const empCol = readCol_(sheet, ds, col.EMP_NUM, numRows);
-    const datCol = readCol_(sheet, ds, col.DATE,    numRows);
-    const wetCol = readCol_(sheet, ds, col.PCT_WET, numRows);
-    const dipCol = readCol_(sheet, ds, col.NUM_DIP, numRows);
-    const smpCol = readCol_(sheet, ds, col.SAMPLE,  numRows);
+    // Only read/write up to the last actual sitecode row (excludes summary/totals below data)
+    const dataRows = lastDataIdx + 1;
+
+    const empCol = readCol_(sheet, ds, col.EMP_NUM, dataRows);
+    const datCol = readCol_(sheet, ds, col.DATE,    dataRows);
+    const wetCol = readCol_(sheet, ds, col.PCT_WET, dataRows);
+    const dipCol = readCol_(sheet, ds, col.NUM_DIP, dataRows);
+    const smpCol = readCol_(sheet, ds, col.SAMPLE,  dataRows);
+
+    // Auto-detect wet dropdown format from this tab's validation rules
+    const wetFormat = getWetFormat_(sheet, ds, col.PCT_WET);
 
     let updated = 0;
     for (const [sc, idx] of Object.entries(siteRows)) {
@@ -271,7 +354,7 @@ function refreshInspectionData() {
         if (datCol) datCol[idx][0] = info.last_insp_date || '';
         if (wetCol) {
           const wetCode = info.pct_wet != null ? String(info.pct_wet).trim() : '';
-          wetCol[idx][0] = CONFIG.USE_WET_LABELS ? (WET_LABELS[wetCode] || wetCode) : wetCode;
+          wetCol[idx][0] = CONFIG.USE_WET_LABELS ? (wetFormat[wetCode] || wetCode) : wetCode;
         }
         if (dipCol) dipCol[idx][0] = info.dip_count  != null ? info.dip_count : '';
         if (smpCol) smpCol[idx][0] = info.sampnum_yr != null ? String(info.sampnum_yr) : '';
@@ -288,22 +371,44 @@ function refreshInspectionData() {
       }
     }
 
-    writeCol_(sheet, ds, col.DATE,    numRows, datCol);
-    writeCol_(sheet, ds, col.PCT_WET, numRows, wetCol);
-    writeCol_(sheet, ds, col.NUM_DIP, numRows, dipCol);
-    writeCol_(sheet, ds, col.SAMPLE,  numRows, smpCol);
+    writeCol_(sheet, ds, col.DATE,    dataRows, datCol);
+    writeCol_(sheet, ds, col.PCT_WET, dataRows, wetCol);
+    writeCol_(sheet, ds, col.NUM_DIP, dataRows, dipCol);
+    writeCol_(sheet, ds, col.SAMPLE,  dataRows, smpCol);
 
     let claimResult = { pushed: 0, pulled: 0, removed: 0 };
     if (CONFIG.ENABLE_CLAIMS && empCol) {
       claimResult = syncClaims_(siteRows, lookup, empCol);
     }
-    writeCol_(sheet, ds, col.EMP_NUM, numRows, empCol);
+    writeCol_(sheet, ds, col.EMP_NUM, dataRows, empCol);
 
     // Compute per-tab stats (also writes stats row if showStats is true)
-    const stats = updateRemainingCount(sheet, tc, siteRows, dipCol);
+    let stats = { remaining: 0, checked: 0, atThreshold: 0, hotAcres: 0, threshold: 2 };
+    try {
+      stats = updateRemainingCount(sheet, tc, siteRows, dipCol);
+    } catch (e) {
+      Logger.log('Stats row skipped for tab "' + name + '": ' + e.message);
+    }
+
+    // Accumulate bug/lab acres from the lookup data (only sites in this sheet)
+    let redBugAcres = 0, blueBugAcres = 0, inLabAcres = 0;
+    let redBugSites = 0, blueBugSites = 0, inLabSites = 0;
+    for (const sc of Object.keys(siteRows)) {
+      const info = lookup[sc];
+      if (!info || !info.was_inspected) continue;
+      const acres = parseFloat(info.acres) || 0;
+      const bs = info.bug_status || '';
+      if (bs === 'Red Bugs')    { redBugSites++;  redBugAcres  += acres; }
+      if (bs === 'Blue Bugs')   { blueBugSites++; blueBugAcres += acres; }
+      if (bs === 'Pending Lab') { inLabSites++;   inLabAcres   += acres; }
+    }
+
     tabStats.push({ name, remaining: stats.remaining, checked: stats.checked,
                     atThreshold: stats.atThreshold, hotAcres: stats.hotAcres,
-                    threshold: stats.threshold });
+                    threshold: stats.threshold,
+                    redBugSites, redBugAcres: Math.round(redBugAcres * 100) / 100,
+                    blueBugSites, blueBugAcres: Math.round(blueBugAcres * 100) / 100,
+                    inLabSites, inLabAcres: Math.round(inLabAcres * 100) / 100 });
 
     // Add hyperlinks to sitecode cells
     setSitecodeLinks_(sheet, ds, col, siteRows);
@@ -511,6 +616,95 @@ function loadClaimState_() {
   } catch (e) { return {}; }
 }
 
+/**
+ * Clear all uninspected claim values from sheet tabs.
+ * Also removes those claims from Redis (when claims sync is enabled) so they
+ * don't reappear on next refresh.
+ */
+function clearAllClaimsFromSheets() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    Logger.log('Skipping clearAllClaimsFromSheets — another execution is still running.');
+    return;
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  const skipSet = new Set(CONFIG.SKIP_TABS || []);
+  skipSet.add('Summary');
+
+  const apiData = fetchChecklist_();
+  const lookup = {};
+  for (const row of apiData || []) {
+    if (row.sitecode) lookup[row.sitecode] = row;
+  }
+
+  const toRemoveMap = {};
+  let totalCleared = 0;
+
+  for (const sheet of sheets) {
+    const name = sheet.getName();
+    if (skipSet.has(name)) continue;
+
+    const tc = getTabConfig_(name);
+    const ds = tc.dataStart;
+    const col = tc.col;
+    if (!col.SITECODE || !col.EMP_NUM) continue;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < ds) continue;
+    const numRows = lastRow - ds + 1;
+
+    const scValues = sheet.getRange(ds, col.SITECODE, numRows, 1).getValues();
+
+    // Find actual data range (exclude summary/totals rows below data)
+    let lastDataIdx = -1;
+    for (let i = 0; i < numRows; i++) {
+      const sc = String(scValues[i][0] || '').trim();
+      if (sc && !isSkipRow_(sc) && lookup[sc]) lastDataIdx = i;
+    }
+    if (lastDataIdx < 0) continue;
+    const dataRows = lastDataIdx + 1;
+
+    const empCol = readCol_(sheet, ds, col.EMP_NUM, dataRows);
+    if (!empCol) continue;
+
+    let clearedThisTab = 0;
+    for (let i = 0; i < dataRows; i++) {
+      const sc = String(scValues[i][0] || '').trim();
+      if (!sc || isSkipRow_(sc) || !lookup[sc]) continue;
+
+      const info = lookup[sc];
+      const isInspected = !!(info && info.was_inspected);
+      if (isInspected) continue;
+
+      const current = String(empCol[i][0] || '').trim();
+      if (!current) continue;
+
+      empCol[i][0] = '';
+      toRemoveMap[sc] = true;
+      clearedThisTab++;
+    }
+
+    if (clearedThisTab > 0) {
+      writeCol_(sheet, ds, col.EMP_NUM, dataRows, empCol);
+      totalCleared += clearedThisTab;
+      Logger.log('Tab "' + name + '": cleared ' + clearedThisTab + ' claim(s).');
+    }
+  }
+
+  const toRemove = Object.keys(toRemoveMap);
+  if (CONFIG.ENABLE_CLAIMS && toRemove.length > 0) {
+    removeClaimsFromRedis_(toRemove);
+  }
+
+  // Reset local claim state so removed claims are not tracked as pending.
+  saveClaimState_({});
+
+  Logger.log('clearAllClaimsFromSheets done: ' + totalCleared + ' cleared from sheets, '
+    + toRemove.length + ' removed from Redis.');
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // REMAINING COUNT  (Stats Row)
@@ -519,6 +713,7 @@ function loadClaimState_() {
 function updateRemainingCount(sheet, tabCfg, siteRows, dipCol) {
   if (!sheet) sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   if (!tabCfg) tabCfg = getTabConfig_(sheet.getName());
+  tabCfg.showStats = toBool_(tabCfg.showStats, false);
   const ds = tabCfg.dataStart;
   const col = tabCfg.col;
   const lastRow = sheet.getLastRow();
@@ -564,14 +759,19 @@ function updateRemainingCount(sheet, tabCfg, siteRows, dipCol) {
   }
   hotAcres = Math.round(hotAcres * 100) / 100;
 
-  if (tabCfg.showStats) {
+  if (tabCfg.showStats === true) {
     const sr = tabCfg.statsRow;
-    sheet.getRange(sr, 1).setValue('Remaining');
-    sheet.getRange(sr, 2).setValue(remaining);
-    sheet.getRange(sr, 3).setValue('Hot Acres');
-    sheet.getRange(sr, 4).setValue(hotAcres);
-    sheet.getRange(sr, 5).setValue('Threshold =');
-    sheet.getRange(sr, 6).setValue(threshold);
+    try {
+      sheet.getRange(sr, 1).setValue('Remaining');
+      sheet.getRange(sr, 2).setValue(remaining);
+      sheet.getRange(sr, 3).setValue('Hot Acres');
+      sheet.getRange(sr, 4).setValue(hotAcres);
+      sheet.getRange(sr, 5).setValue('Threshold =');
+      sheet.getRange(sr, 6).setValue(threshold);
+    } catch (e) {
+      Logger.log('Skipping stats row write on tab "' + sheet.getName() + '" row ' + sr
+        + ' due to validation/protection rules: ' + e.message);
+    }
   }
 
   return { remaining, checked, atThreshold, hotAcres, threshold };
@@ -588,56 +788,85 @@ function updateSummaryTab_(ss, tabStats) {
   let summary = ss.getSheetByName('Summary');
   if (!summary) {
     summary = ss.insertSheet('Summary');
-    // Move to first position
     ss.setActiveSheet(summary);
     ss.moveActiveSheet(1);
   }
 
-  // Clear previous content
   summary.clear();
 
-  // Header row
-  const headers = ['Tab', 'Remaining', 'Checked', '# At Threshold', 'Hot Acres'];
+  // ── Per-tab breakdown ──
+  const headers = ['Tab', 'Remaining', 'Checked', '# At Threshold', 'Hot Acres',
+                   'Red Bug Acres', 'Blue Bug Acres', 'In Lab Acres'];
   summary.getRange(1, 1, 1, headers.length).setValues([headers]);
   summary.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
-  // Per-tab rows
-  const rows = tabStats.map(t => [t.name, t.remaining, t.checked, t.atThreshold, t.hotAcres]);
+  const rows = tabStats.map(t => [t.name, t.remaining, t.checked, t.atThreshold,
+    t.hotAcres, t.redBugAcres || 0, t.blueBugAcres || 0, t.inLabAcres || 0]);
   if (rows.length > 0) {
     summary.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
 
-  // Totals row
   const totalsRow = rows.length + 2;
   const totals = tabStats.reduce((acc, t) => {
     acc.remaining    += t.remaining;
     acc.checked      += t.checked;
     acc.atThreshold  += t.atThreshold;
     acc.hotAcres     += t.hotAcres;
+    acc.redBugAcres  += (t.redBugAcres  || 0);
+    acc.blueBugAcres += (t.blueBugAcres || 0);
+    acc.inLabAcres   += (t.inLabAcres   || 0);
+    acc.redBugSites  += (t.redBugSites  || 0);
+    acc.blueBugSites += (t.blueBugSites || 0);
+    acc.inLabSites   += (t.inLabSites   || 0);
     return acc;
-  }, { remaining: 0, checked: 0, atThreshold: 0, hotAcres: 0 });
-  totals.hotAcres = Math.round(totals.hotAcres * 100) / 100;
+  }, { remaining: 0, checked: 0, atThreshold: 0, hotAcres: 0,
+       redBugAcres: 0, blueBugAcres: 0, inLabAcres: 0,
+       redBugSites: 0, blueBugSites: 0, inLabSites: 0 });
+  totals.hotAcres     = Math.round(totals.hotAcres * 100) / 100;
+  totals.redBugAcres  = Math.round(totals.redBugAcres * 100) / 100;
+  totals.blueBugAcres = Math.round(totals.blueBugAcres * 100) / 100;
+  totals.inLabAcres   = Math.round(totals.inLabAcres * 100) / 100;
 
   summary.getRange(totalsRow, 1, 1, headers.length).setValues([
-    ['TOTAL', totals.remaining, totals.checked, totals.atThreshold, totals.hotAcres]
+    ['TOTAL', totals.remaining, totals.checked, totals.atThreshold,
+     totals.hotAcres, totals.redBugAcres, totals.blueBugAcres, totals.inLabAcres]
   ]);
   summary.getRange(totalsRow, 1, 1, headers.length).setFontWeight('bold');
 
-  // Threshold & timestamp
-  const threshold = tabStats.length > 0 ? tabStats[0].threshold : 2;
-  summary.getRange(totalsRow + 2, 1).setValue('Threshold');
-  summary.getRange(totalsRow + 2, 2).setValue(threshold);
-  summary.getRange(totalsRow + 3, 1).setValue('Last Updated');
-  summary.getRange(totalsRow + 3, 2).setValue(new Date().toLocaleString());
+  // ── Bug / Lab detail section ──
+  const bugRow = totalsRow + 2;
+  const bugHeaders = ['Metric', 'Sites', 'Acres'];
+  summary.getRange(bugRow, 1, 1, bugHeaders.length).setValues([bugHeaders]);
+  summary.getRange(bugRow, 1, 1, bugHeaders.length).setFontWeight('bold');
 
-  // Auto-fit columns
+  const bugData = [
+    ['Remaining',         totals.remaining,    ''],
+    ['Checked',           totals.checked,      ''],
+    ['Hot (≥ threshold)',  totals.atThreshold,  totals.hotAcres],
+    ['Red Bugs',          totals.redBugSites,  totals.redBugAcres],
+    ['Blue Bugs',         totals.blueBugSites, totals.blueBugAcres],
+    ['In Lab',            totals.inLabSites,   totals.inLabAcres],
+  ];
+  summary.getRange(bugRow + 1, 1, bugData.length, bugHeaders.length).setValues(bugData);
+
+  // Threshold & timestamp
+  const metaRow = bugRow + bugData.length + 2;
+  const threshold = tabStats.length > 0 ? tabStats[0].threshold : 2;
+  summary.getRange(metaRow, 1).setValue('Threshold');
+  summary.getRange(metaRow, 2).setValue(threshold);
+  summary.getRange(metaRow + 1, 1).setValue('Last Updated');
+  summary.getRange(metaRow + 1, 2).setValue(new Date().toLocaleString());
+
   for (let c = 1; c <= headers.length; c++) {
     summary.autoResizeColumn(c);
   }
 
   Logger.log('Summary tab updated: ' + totals.remaining + ' remaining, '
     + totals.checked + ' checked, ' + totals.atThreshold + ' at threshold, '
-    + totals.hotAcres + ' hot acres.');
+    + totals.hotAcres + ' hot acres. '
+    + 'Red: ' + totals.redBugAcres + ' ac (' + totals.redBugSites + '), '
+    + 'Blue: ' + totals.blueBugAcres + ' ac (' + totals.blueBugSites + '), '
+    + 'In Lab: ' + totals.inLabAcres + ' ac (' + totals.inLabSites + ').');
 }
 
 
@@ -649,22 +878,23 @@ function updateSummaryTab_(ss, tabStats) {
 // SITECODE HYPERLINKS
 // ════════════════════════════════════════════════════════════════════════════
 
-const SITECODE_URL_BASE = 'https://data.mmcd.org/m1/map?search=';
+const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
 
 /**
  * Set hyperlinks on sitecode cells so they open the MMCD map.
- * Only sets a link if the cell doesn't already have one.
+ * Updates existing links if the URL has changed.
  */
 function setSitecodeLinks_(sheet, ds, col, siteRows) {
   if (!col.SITECODE) return;
   for (const [sc, idx] of Object.entries(siteRows)) {
     const cell = sheet.getRange(ds + idx, col.SITECODE);
+    const targetUrl = SITECODE_URL_BASE + encodeURIComponent(sc);
     const existing = cell.getRichTextValue();
-    // Skip if already linked
-    if (existing && existing.getLinkUrl()) continue;
+    // Skip only if already linked to the correct URL
+    if (existing && existing.getLinkUrl() === targetUrl) continue;
     const richText = SpreadsheetApp.newRichTextValue()
       .setText(sc)
-      .setLinkUrl(SITECODE_URL_BASE + encodeURIComponent(sc))
+      .setLinkUrl(targetUrl)
       .build();
     cell.setRichTextValue(richText);
   }

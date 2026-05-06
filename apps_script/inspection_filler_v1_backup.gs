@@ -174,9 +174,26 @@ function refreshInspectionData() {
 
     // Update row 1 stats for THIS tab
     const stats = updateRemainingCount(sheet, siteRows, dipCol);
+
+    // Accumulate bug/lab acres from API lookup (only sites in this sheet)
+    let redBugAcres = 0, blueBugAcres = 0, inLabAcres = 0;
+    let redBugSites = 0, blueBugSites = 0, inLabSites = 0;
+    for (const sc of Object.keys(siteRows)) {
+      const info = lookup[sc];
+      if (!info || !info.was_inspected) continue;
+      const acres = parseFloat(info.acres) || 0;
+      const bs = info.bug_status || '';
+      if (bs === 'Red Bugs')    { redBugSites++;  redBugAcres  += acres; }
+      if (bs === 'Blue Bugs')   { blueBugSites++; blueBugAcres += acres; }
+      if (bs === 'Pending Lab') { inLabSites++;   inLabAcres   += acres; }
+    }
+
     tabStats.push({ name, remaining: stats.remaining, checked: stats.checked,
                     atThreshold: stats.atThreshold, hotAcres: stats.hotAcres,
-                    threshold: stats.threshold });
+                    threshold: stats.threshold,
+                    redBugSites, redBugAcres: Math.round(redBugAcres * 100) / 100,
+                    blueBugSites, blueBugAcres: Math.round(blueBugAcres * 100) / 100,
+                    inLabSites, inLabAcres: Math.round(inLabAcres * 100) / 100 });
 
     // Add hyperlinks to sitecode cells
     setSitecodeLinks_(sheet, siteRows);
@@ -456,6 +473,76 @@ function loadClaimState_() {
   } catch (e) { return {}; }
 }
 
+/**
+ * Clear all uninspected claim values from sheet tabs.
+ * Also removes those claims from Redis so they don't reappear.
+ */
+function clearAllClaimsFromSheets() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    Logger.log('Skipping clearAllClaimsFromSheets — another execution is still running.');
+    return;
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+
+  const apiData = fetchChecklist_();
+  const lookup = {};
+  for (const row of apiData || []) {
+    if (row.sitecode) lookup[row.sitecode] = row;
+  }
+
+  const toRemoveMap = {};
+  let totalCleared = 0;
+
+  for (const sheet of sheets) {
+    const name = sheet.getName();
+    if (name === 'Summary') continue;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < DATA_START) continue;
+    const numRows = lastRow - DATA_START + 1;
+
+    const scValues = sheet.getRange(DATA_START, COL.SITECODE, numRows, 1).getValues();
+    const empCol = sheet.getRange(DATA_START, COL.EMP_NUM, numRows, 1).getValues();
+
+    let clearedThisTab = 0;
+    for (let i = 0; i < numRows; i++) {
+      const sc = String(scValues[i][0] || '').trim();
+      if (!sc || /^book\s/i.test(sc)) continue;
+
+      const info = lookup[sc];
+      const isInspected = !!(info && info.was_inspected);
+      if (isInspected) continue;
+
+      const current = String(empCol[i][0] || '').trim();
+      if (!current) continue;
+
+      empCol[i][0] = '';
+      toRemoveMap[sc] = true;
+      clearedThisTab++;
+    }
+
+    if (clearedThisTab > 0) {
+      sheet.getRange(DATA_START, COL.EMP_NUM, numRows, 1).setValues(empCol);
+      totalCleared += clearedThisTab;
+      Logger.log('Tab "' + name + '": cleared ' + clearedThisTab + ' claim(s).');
+    }
+  }
+
+  const toRemove = Object.keys(toRemoveMap);
+  if (toRemove.length > 0) {
+    removeClaimsFromRedis_(toRemove);
+  }
+
+  // Reset local claim state so removed claims are not tracked as pending.
+  saveClaimState_({});
+
+  Logger.log('clearAllClaimsFromSheets done: ' + totalCleared + ' cleared from sheets, '
+    + toRemove.length + ' removed from Redis.');
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // REMAINING COUNT  (Row 1 stats)
@@ -558,11 +645,13 @@ function updateSummaryTab_(ss, tabStats) {
 
   summary.clear();
 
-  const headers = ['Tab', 'Remaining', 'Checked', '# At Threshold', 'Hot Acres'];
+  const headers = ['Tab', 'Remaining', 'Checked', '# At Threshold', 'Hot Acres',
+                   'Red Bug Acres', 'Blue Bug Acres', 'In Lab Acres'];
   summary.getRange(1, 1, 1, headers.length).setValues([headers]);
   summary.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
-  const rows = tabStats.map(t => [t.name, t.remaining, t.checked, t.atThreshold, t.hotAcres]);
+  const rows = tabStats.map(t => [t.name, t.remaining, t.checked, t.atThreshold,
+    t.hotAcres, t.redBugAcres || 0, t.blueBugAcres || 0, t.inLabAcres || 0]);
   if (rows.length > 0) {
     summary.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
@@ -573,20 +662,50 @@ function updateSummaryTab_(ss, tabStats) {
     acc.checked      += t.checked;
     acc.atThreshold  += t.atThreshold;
     acc.hotAcres     += t.hotAcres;
+    acc.redBugAcres  += (t.redBugAcres  || 0);
+    acc.blueBugAcres += (t.blueBugAcres || 0);
+    acc.inLabAcres   += (t.inLabAcres   || 0);
+    acc.redBugSites  += (t.redBugSites  || 0);
+    acc.blueBugSites += (t.blueBugSites || 0);
+    acc.inLabSites   += (t.inLabSites   || 0);
     return acc;
-  }, { remaining: 0, checked: 0, atThreshold: 0, hotAcres: 0 });
-  totals.hotAcres = Math.round(totals.hotAcres * 100) / 100;
+  }, { remaining: 0, checked: 0, atThreshold: 0, hotAcres: 0,
+       redBugAcres: 0, blueBugAcres: 0, inLabAcres: 0,
+       redBugSites: 0, blueBugSites: 0, inLabSites: 0 });
+  totals.hotAcres     = Math.round(totals.hotAcres * 100) / 100;
+  totals.redBugAcres  = Math.round(totals.redBugAcres * 100) / 100;
+  totals.blueBugAcres = Math.round(totals.blueBugAcres * 100) / 100;
+  totals.inLabAcres   = Math.round(totals.inLabAcres * 100) / 100;
 
   summary.getRange(totalsRow, 1, 1, headers.length).setValues([
-    ['TOTAL', totals.remaining, totals.checked, totals.atThreshold, totals.hotAcres]
+    ['TOTAL', totals.remaining, totals.checked, totals.atThreshold,
+     totals.hotAcres, totals.redBugAcres, totals.blueBugAcres, totals.inLabAcres]
   ]);
   summary.getRange(totalsRow, 1, 1, headers.length).setFontWeight('bold');
 
+  // Bug / Lab detail section
+  const bugRow = totalsRow + 2;
+  const bugHeaders = ['Metric', 'Sites', 'Acres'];
+  summary.getRange(bugRow, 1, 1, bugHeaders.length).setValues([bugHeaders]);
+  summary.getRange(bugRow, 1, 1, bugHeaders.length).setFontWeight('bold');
+
+  const bugData = [
+    ['Remaining',         totals.remaining,    ''],
+    ['Checked',           totals.checked,      ''],
+    ['Hot (≥ threshold)',  totals.atThreshold,  totals.hotAcres],
+    ['Red Bugs',          totals.redBugSites,  totals.redBugAcres],
+    ['Blue Bugs',         totals.blueBugSites, totals.blueBugAcres],
+    ['In Lab',            totals.inLabSites,   totals.inLabAcres],
+  ];
+  summary.getRange(bugRow + 1, 1, bugData.length, bugHeaders.length).setValues(bugData);
+
+  // Threshold & timestamp
+  const metaRow = bugRow + bugData.length + 2;
   const threshold = tabStats.length > 0 ? tabStats[0].threshold : 2;
-  summary.getRange(totalsRow + 2, 1).setValue('Threshold');
-  summary.getRange(totalsRow + 2, 2).setValue(threshold);
-  summary.getRange(totalsRow + 3, 1).setValue('Last Updated');
-  summary.getRange(totalsRow + 3, 2).setValue(new Date().toLocaleString());
+  summary.getRange(metaRow, 1).setValue('Threshold');
+  summary.getRange(metaRow, 2).setValue(threshold);
+  summary.getRange(metaRow + 1, 1).setValue('Last Updated');
+  summary.getRange(metaRow + 1, 2).setValue(new Date().toLocaleString());
 
   for (let c = 1; c <= headers.length; c++) {
     summary.autoResizeColumn(c);
@@ -594,7 +713,10 @@ function updateSummaryTab_(ss, tabStats) {
 
   Logger.log('Summary tab updated: ' + totals.remaining + ' remaining, '
     + totals.checked + ' checked, ' + totals.atThreshold + ' at threshold, '
-    + totals.hotAcres + ' hot acres.');
+    + totals.hotAcres + ' hot acres. '
+    + 'Red: ' + totals.redBugAcres + ' ac (' + totals.redBugSites + '), '
+    + 'Blue: ' + totals.blueBugAcres + ' ac (' + totals.blueBugSites + '), '
+    + 'In Lab: ' + totals.inLabAcres + ' ac (' + totals.inLabSites + ').');
 }
 
 
@@ -602,20 +724,21 @@ function updateSummaryTab_(ss, tabStats) {
 // SITECODE HYPERLINKS
 // ════════════════════════════════════════════════════════════════════════════
 
-const SITECODE_URL_BASE = 'https://data.mmcd.org/m1/map?search=';
+const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
 
 /**
  * Set hyperlinks on sitecode cells so they open the MMCD map.
- * Only sets a link if the cell doesn't already have one.
+ * Updates existing links if the URL has changed.
  */
 function setSitecodeLinks_(sheet, siteRows) {
   for (const [sc, idx] of Object.entries(siteRows)) {
     const cell = sheet.getRange(DATA_START + idx, COL.SITECODE);
+    const targetUrl = SITECODE_URL_BASE + encodeURIComponent(sc);
     const existing = cell.getRichTextValue();
-    if (existing && existing.getLinkUrl()) continue;
+    if (existing && existing.getLinkUrl() === targetUrl) continue;
     const richText = SpreadsheetApp.newRichTextValue()
       .setText(sc)
-      .setLinkUrl(SITECODE_URL_BASE + encodeURIComponent(sc))
+      .setLinkUrl(targetUrl)
       .build();
     cell.setRichTextValue(richText);
   }

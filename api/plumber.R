@@ -699,8 +699,9 @@ function(facility = NULL, lookback_days = 14, checkback_type = "percent",
 
       brood_sites <- unique(brood_treatments$sitecode)
 
-      # Find sites with valid checkbacks
+      # Find sites with valid checkbacks, tracking the best checkback per site
       completed_sites <- c()
+      completed_info <- list()  # sitecode -> list(checkback_date, post_dip)
       for (site in brood_sites) {
         last_trt_date <- max(brood_treatments$inspdate[brood_treatments$sitecode == site])
         site_cbs <- checkbacks[checkbacks$sitecode == site & checkbacks$inspdate > last_trt_date, ]
@@ -714,6 +715,12 @@ function(facility = NULL, lookback_days = 14, checkback_type = "percent",
 
         if (nrow(site_cbs) > 0) {
           completed_sites <- c(completed_sites, site)
+          # Pick the earliest valid checkback (first one after treatment)
+          best_cb <- site_cbs[which.min(site_cbs$inspdate), ]
+          completed_info[[site]] <- list(
+            checkback_date = as.character(best_cb$inspdate[1]),
+            post_dip = best_cb$numdip[1]
+          )
         }
       }
 
@@ -732,10 +739,13 @@ function(facility = NULL, lookback_days = 14, checkback_type = "percent",
         remaining = max(0L, round$checkbacks_needed - completed_count)
       )
 
-      # Add per-site rows for remaining sites
-      for (site in remaining_sites) {
+      # Add per-site rows for ALL brood sites (remaining + completed)
+      # Remaining sites are listed first, completed after
+      for (site in c(remaining_sites, completed_sites)) {
         site_trts <- brood_treatments[brood_treatments$sitecode == site, ]
         last_trt <- site_trts[which.max(site_trts$inspdate), ]
+        is_remaining <- site %in% remaining_sites
+        cb_info <- if (!is_remaining) completed_info[[site]] else NULL
         result_rows[[length(result_rows) + 1]] <- list(
           sitecode = site,
           brood = round$round_name,
@@ -746,7 +756,9 @@ function(facility = NULL, lookback_days = 14, checkback_type = "percent",
           mattype = last_trt$mattype[1],
           effect_days = as.integer(last_trt$effect_days[1]),
           pre_treatment_dips = last_trt$numdip[1],
-          needs_checkback = TRUE
+          needs_checkback = is_remaining,
+          checkback_date = if (!is_remaining) cb_info$checkback_date else NULL,
+          post_dip = if (!is_remaining) cb_info$post_dip else NULL
         )
       }
     }

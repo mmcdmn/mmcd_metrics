@@ -120,10 +120,11 @@ function refreshCheckbackData() {
     return;
   }
 
-  // Group sites by brood name
+  // Group sites by brood name (sanitized for sheet tab names)
   const sitesByBrood = {};
   for (const site of sites) {
-    const brood = site.brood || 'Unknown';
+    let brood = String(site.brood || 'Unknown');
+    brood = brood.replace(/[\/\\?*\[\]]/g, '-');
     if (!sitesByBrood[brood]) sitesByBrood[brood] = [];
     sitesByBrood[brood].push(site);
   }
@@ -133,7 +134,10 @@ function refreshCheckbackData() {
   let totalClaims = { pushed: 0, pulled: 0, removed: 0 };
 
   for (const brood of broods) {
-    const broodName = brood.brood;
+    // Sanitize brood name for use as sheet tab name
+    let broodName = String(brood.brood || 'Unknown').substring(0, 100);
+    broodName = broodName.replace(/[\/\\?*\[\]]/g, '-');  // Remove illegal tab chars
+    if (!broodName || broodName === 'Unknown') continue;
     const broodSites = sitesByBrood[broodName] || [];
 
     // Create or get the tab for this brood
@@ -222,7 +226,7 @@ function fillBroodTab_(sheet, broodSites) {
   }
 
   // Sort sites by sitecode for consistent ordering
-  broodSites.sort((a, b) => (a.sitecode || '').localeCompare(b.sitecode || ''));
+  broodSites.sort((a, b) => String(a.sitecode || '').localeCompare(String(b.sitecode || '')));
 
   // Build output arrays
   const numSites = broodSites.length;
@@ -253,9 +257,9 @@ function fillBroodTab_(sheet, broodSites) {
     effOut.push([site.effect_days != null ? site.effect_days : '']);
     // Preserve existing claim if site was already in the sheet
     empOut.push([existingClaims[site.sitecode] || '']);
-    cbDateOut.push(['']);  // Checkback date comes from API if completed — but these are REMAINING sites
-    dipOut.push(['']);     // Same — only filled for completed checkbacks
-    siteRows[site.sitecode] = i;
+    cbDateOut.push([site.checkback_date || '']);
+    dipOut.push([site.post_dip != null ? site.post_dip : '']);
+    if (site.needs_checkback !== false) siteRows[site.sitecode] = i;  // Only sync claims for remaining sites
   }
 
   // Clear any extra rows from previous refresh
@@ -272,14 +276,12 @@ function fillBroodTab_(sheet, broodSites) {
   sheet.getRange(ds, COL.CHECKBACK_DATE, numSites, 1).setValues(cbDateOut);
   sheet.getRange(ds, COL.POST_DIP, numSites, 1).setValues(dipOut);
 
-  // Claims sync
+  // Claims sync — only for sites still needing a checkback (siteRows excludes completed ones)
   let claimResult = { pushed: 0, pulled: 0, removed: 0 };
-  if (CONFIG.ENABLE_CLAIMS) {
+  if (CONFIG.ENABLE_CLAIMS && Object.keys(siteRows).length > 0) {
     claimResult = syncClaims_(siteRows, empOut);
-    sheet.getRange(ds, COL.EMP, numSites, 1).setValues(empOut);
-  } else {
-    sheet.getRange(ds, COL.EMP, numSites, 1).setValues(empOut);
   }
+  sheet.getRange(ds, COL.EMP, numSites, 1).setValues(empOut);
 
   // Add sitecode hyperlinks
   setSitecodeLinks_(sheet, ds, COL.SITECODE, numSites, scOut);
@@ -307,18 +309,24 @@ function fetchCheckbackChecklist_() {
     url += '&matcode=' + encodeURIComponent(CONFIG.MATCODE);
   }
 
-  const r = UrlFetchApp.fetch(url, {
+  Logger.log('Fetching: ' + url);
+
+  const options = {
     method: 'get',
     headers: { 'Authorization': 'Bearer ' + key },
-    muteHttpExceptions: true,
-  });
+    muteHttpExceptions: true
+  };
+
+  const r = UrlFetchApp.fetch(url, options);
 
   if (r.getResponseCode() !== 200) {
     Logger.log('API error ' + r.getResponseCode() + ': ' + r.getContentText());
     return null;
   }
 
-  return JSON.parse(r.getContentText());
+  const payload = JSON.parse(r.getContentText());
+  Logger.log('API returned: ' + (payload.count || 0) + ' sites, ' + (payload.broods ? payload.broods.length : 0) + ' broods');
+  return payload;
 }
 
 function fetchClaims_() {

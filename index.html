@@ -1047,7 +1047,35 @@
             div.className = 'chat-msg chat-' + role;
             const bubble = document.createElement('div');
             bubble.className = 'chat-bubble chat-bubble-' + role;
-            bubble.textContent = text;
+
+            // Render markdown images as <img> tags, rest as text
+            const imgPattern = /!\[([^\]]*)\]\((data:image\/[^)]+)\)/g;
+            if (role === 'assistant' && imgPattern.test(text)) {
+                const parts = text.split(imgPattern);
+                // parts: [text, alt, src, text, alt, src, ...]
+                for (let i = 0; i < parts.length; i++) {
+                    if (i % 3 === 0) {
+                        // Plain text segment
+                        if (parts[i].trim()) {
+                            const span = document.createElement('span');
+                            span.textContent = parts[i];
+                            bubble.appendChild(span);
+                        }
+                    } else if (i % 3 === 2) {
+                        // Image src (follows alt text at i-1)
+                        const img = document.createElement('img');
+                        img.src = parts[i];
+                        img.alt = parts[i - 1] || 'Chart';
+                        img.style.maxWidth = '100%';
+                        img.style.borderRadius = '8px';
+                        img.style.marginTop = '8px';
+                        bubble.appendChild(img);
+                    }
+                }
+            } else {
+                bubble.textContent = text;
+            }
+
             div.appendChild(bubble);
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;

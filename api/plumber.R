@@ -1020,9 +1020,10 @@ function(req, res) {
     if (is.null(body)) return(api_error(res, 400, "invalid JSON body"))
     url <- trimws(as.character(body$tunnel_url %||% ""))
     if (!nzchar(url)) return(api_error(res, 400, "tunnel_url is required"))
-    # Only allow HTTPS trycloudflare.com URLs
-    if (!grepl("^https://[a-z0-9-]+\\.trycloudflare\\.com$", url)) {
-      return(api_error(res, 400, "tunnel_url must be a valid trycloudflare.com HTTPS URL"))
+    # Allow HTTPS trycloudflare.com URLs or the persistent named tunnel domain
+    valid_pattern <- "^https://([a-z0-9-]+\\.trycloudflare\\.com|llm\\.mmcd\\.alex-dyakin\\.com)$"
+    if (!grepl(valid_pattern, url)) {
+      return(api_error(res, 400, "tunnel_url must be a valid HTTPS tunnel URL"))
     }
     redis_set(LLM_TUNNEL_KEY, url, ttl = LLM_TUNNEL_TTL)
     list(registered = TRUE, tunnel_url = url)

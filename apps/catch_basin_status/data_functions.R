@@ -411,6 +411,9 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
     # Get data from CURRENT table for recent years
     current_year_range <- start_year:end_year
     if (length(current_year_range) > 0) {
+      # Use date range instead of EXTRACT(YEAR) for index utilization
+      date_start <- sprintf("%d-01-01", min(current_year_range) - 1)
+      date_end <- sprintf("%d-12-31", max(current_year_range))
       query_current <- sprintf("
         SELECT 
           trt.inspdate,
@@ -424,11 +427,11 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
         JOIN loc_catchbasin loc ON tcb.catchbasin_id = loc.gid
         JOIN mattype_list_targetdose mat USING (matcode)
         LEFT JOIN gis_sectcode sc ON left(loc.sitecode, 7) = sc.sectcode
-        WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
+        WHERE trt.inspdate BETWEEN '%s'::date AND '%s'::date
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", min(current_year_range) - 1, max(current_year_range), zone_condition)
+      ", date_start, date_end, zone_condition)
       
       cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
       current_data <- dbGetQuery(con, query_current)
@@ -439,6 +442,9 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
     # Get data from ARCHIVE table for historical years
     # Query full requested range - database will return what exists
     if (start_year < min(current_years, na.rm = TRUE)) {
+      # Use date range instead of EXTRACT(YEAR) for index utilization
+      arch_date_start <- sprintf("%d-01-01", start_year - 1)
+      arch_date_end <- sprintf("%d-12-31", end_year)
       query_archive <- sprintf("
         SELECT 
           trt.inspdate,
@@ -451,12 +457,12 @@ load_historical_treatments <- function(start_year, end_year, zone_filter = c("1"
         JOIN loc_catchbasin loc ON trt.sitecode = loc.sitecode
         JOIN mattype_list_targetdose mat USING (matcode)
         LEFT JOIN gis_sectcode sc ON left(loc.sitecode, 7) = sc.sectcode
-        WHERE EXTRACT(YEAR FROM trt.inspdate) BETWEEN %d AND %d
+        WHERE trt.inspdate BETWEEN '%s'::date AND '%s'::date
           AND trt.action = '6'
           AND loc.status_udw = 'W'
           AND loc.lettergrp <> 'Z'
           %s
-      ", start_year - 1, end_year, zone_condition)
+      ", arch_date_start, arch_date_end, zone_condition)
       
       cat("DEBUG: Getting archive table data for years", start_year - 1, "-", end_year, "\n")
       archive_data <- dbGetQuery(con, query_archive)

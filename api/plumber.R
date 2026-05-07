@@ -805,14 +805,14 @@ function(res) {
 
 #* Get active claims from the Redis cache.
 #* Returns all claims within the lookback window so sheets/apps can stay in sync.
-#* @param lookback_days How many days back to retrieve claims (default 12, max 12)
+#* @param lookback_days How many days back to retrieve claims (default 12, max 14)
 #* @get /v1/private/claims
 #* @json
 function(lookback_days = 12, res) {
   tryCatch({
     lb <- suppressWarnings(as.integer(lookback_days %||% 12L))
     if (is.na(lb) || lb < 1L) lb <- 12L
-    if (lb > 12L) lb <- 12L
+    if (lb > 14L) lb <- 14L
 
     all_claims <- list()
     today <- Sys.Date()
@@ -1021,7 +1021,7 @@ function(req, res) {
     url <- trimws(as.character(body$tunnel_url %||% ""))
     if (!nzchar(url)) return(api_error(res, 400, "tunnel_url is required"))
     # Allow HTTPS trycloudflare.com URLs or the persistent named tunnel domain
-    valid_pattern <- "^https://([a-z0-9-]+\\.trycloudflare\\.com|llm\\.mmcd\\.alex-dyakin\\.com)$"
+    valid_pattern <- "^https://([a-z0-9-]+\\.trycloudflare\\.com|mmcd-llm\\.alex-dyakin\\.com)$"
     if (!grepl(valid_pattern, url)) {
       return(api_error(res, 400, "tunnel_url must be a valid HTTPS tunnel URL"))
     }

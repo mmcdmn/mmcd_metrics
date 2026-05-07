@@ -65,6 +65,8 @@ load_historical_cb_data <- function(start_year, end_year,
     # Get data from CURRENT table for recent years (2025+)
     current_year_range <- start_year:end_year
     if (length(current_year_range) > 0) {
+      cur_date_start <- sprintf("%d-01-01", min(current_year_range))
+      cur_date_end <- sprintf("%d-12-31", max(current_year_range))
       current_query <- sprintf("
         SELECT 
           loc_catchbasin.facility,
@@ -84,7 +86,7 @@ load_historical_cb_data <- function(start_year, end_year,
         JOIN loc_catchbasin ON dblarv_treatment_catchbasin.catchbasin_id = loc_catchbasin.gid
         JOIN mattype_list_targetdose USING (matcode)
         LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode, 7) = sc.sectcode
-        WHERE EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate) BETWEEN %d AND %d
+        WHERE dblarv_insptrt_current.inspdate BETWEEN '%s'::date AND '%s'::date
           AND loc_catchbasin.status_udw = 'W'
           AND loc_catchbasin.lettergrp <> 'Z'
           %s
@@ -92,7 +94,7 @@ load_historical_cb_data <- function(start_year, end_year,
           %s
         GROUP BY loc_catchbasin.facility, sc.zone, sc.fosarea, left(loc_catchbasin.sitecode, 7), 
                  EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate)
-      ", min(current_year_range), max(current_year_range), facility_where, zone_where, foreman_where)
+      ", cur_date_start, cur_date_end, facility_where, zone_where, foreman_where)
       
       cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
       current_data <- dbGetQuery(con, current_query)
@@ -103,6 +105,8 @@ load_historical_cb_data <- function(start_year, end_year,
     # Get data from ARCHIVE table for historical years (2006-2024)  
     archive_year_range <- start_year:end_year
     if (length(archive_year_range) > 0) {
+      arch_date_start <- sprintf("%d-01-01", min(archive_year_range))
+      arch_date_end <- sprintf("%d-12-31", max(archive_year_range))
       archive_query <- sprintf("
         SELECT 
           loc_catchbasin.facility,
@@ -122,7 +126,7 @@ load_historical_cb_data <- function(start_year, end_year,
         JOIN loc_catchbasin ON dblarv_treatment_cb_archive.catchbasin_id = loc_catchbasin.gid
         JOIN mattype_list_targetdose USING (matcode)
         LEFT JOIN gis_sectcode sc ON left(loc_catchbasin.sitecode, 7) = sc.sectcode
-        WHERE EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate) BETWEEN %d AND %d
+        WHERE dblarv_insptrt_archive.inspdate BETWEEN '%s'::date AND '%s'::date
           AND loc_catchbasin.status_udw = 'W'
           AND loc_catchbasin.lettergrp <> 'Z'
           %s
@@ -130,7 +134,7 @@ load_historical_cb_data <- function(start_year, end_year,
           %s
         GROUP BY loc_catchbasin.facility, sc.zone, sc.fosarea, left(loc_catchbasin.sitecode, 7), 
                  EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate)
-      ", min(archive_year_range), max(archive_year_range), facility_where, zone_where, foreman_where)
+      ", arch_date_start, arch_date_end, facility_where, zone_where, foreman_where)
       
       cat("DEBUG: Getting archive table data for years", min(archive_year_range), "-", max(archive_year_range), "\n")
       archive_data <- dbGetQuery(con, archive_query)

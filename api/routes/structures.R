@@ -230,3 +230,111 @@ function(req, res,
     )
   }, error = function(e) api_error(res, 400, e$message))
 }
+
+# ── Catch Basin Summary BY FACILITY ──
+
+#* Get catch basin summary broken down by facility — one row per facility with totals.
+#* Use for facility comparisons, charts, and LLM multi-facility queries.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param analysis_date Date YYYY-MM-DD. Default today.
+#* @get /catch-basins/summary-by-facility
+#* @serializer json
+function(req, res,
+         zone = "1,2",
+         analysis_date = NULL) {
+  tryCatch({
+    zn    <- validate_zone(zone)
+    adate <- validate_date(analysis_date)
+
+    data <- cb_env$load_raw_data(
+      analysis_date   = adate,
+      facility_filter = "all",
+      foreman_filter  = "all",
+      zone_filter     = zn
+    )
+
+    grouped <- cb_env$process_catch_basin_data(
+      data,
+      group_by     = "facility",
+      combine_zones = TRUE
+    )
+
+    if (is.null(grouped) || nrow(grouped) == 0) {
+      return(list(analysis_date = as.character(adate), facility_summaries = list()))
+    }
+
+    rows <- lapply(seq_len(nrow(grouped)), function(i) {
+      r <- grouped[i, ]
+      list(
+        facility        = r$display_name,
+        total_count     = as.integer(r$total_count),
+        active_count    = as.integer(r$active_count),
+        expiring_count  = as.integer(r$expiring_count %||% 0),
+        expired_count   = as.integer(r$expired_count %||% 0),
+        pct_treated     = round(as.numeric(r$pct_treated %||% 0), 1)
+      )
+    })
+
+    list(
+      analysis_date      = as.character(adate),
+      facility_summaries = rows
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+# ── Structure Treatment Summary BY FACILITY ──
+
+#* Get structure treatment summary broken down by facility.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param structure_type Type: D, W, U (comma-separated). Omit for all.
+#* @param analysis_date Date YYYY-MM-DD. Default today.
+#* @get /struct-treatments/summary-by-facility
+#* @serializer json
+function(req, res,
+         zone = "1,2",
+         structure_type = NULL,
+         analysis_date = NULL) {
+  tryCatch({
+    zn     <- validate_zone(zone)
+    stype  <- if (!is.null(structure_type) && nzchar(structure_type)) {
+      trimws(unlist(strsplit(toupper(structure_type), ",", fixed = TRUE)))
+    } else "all"
+    adate  <- validate_date(analysis_date)
+
+    data <- struct_env$load_raw_data(
+      analysis_date         = adate,
+      facility_filter       = "all",
+      foreman_filter        = "all",
+      zone_filter           = zn,
+      structure_type_filter = stype
+    )
+
+    sites <- data$sites
+    if (is.null(sites) || nrow(sites) == 0) {
+      return(list(analysis_date = as.character(adate), facility_summaries = list()))
+    }
+
+    # Group by facility
+    facs <- unique(sites$facility)
+    facs <- facs[!is.na(facs) & nzchar(facs)]
+    rows <- lapply(sort(facs), function(f) {
+      subset <- sites[sites$facility == f, ]
+      total    <- nrow(subset)
+      active   <- sum(subset$is_active == TRUE, na.rm = TRUE)
+      expiring <- sum(subset$is_expiring == TRUE, na.rm = TRUE)
+      pct      <- if (total > 0) round(100 * active / total, 1) else 0
+      list(
+        facility       = f,
+        total_count    = total,
+        active_count   = active,
+        expiring_count = expiring,
+        active_pct     = pct
+      )
+    })
+
+    list(
+      analysis_date      = as.character(adate),
+      facility_summaries = rows
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}

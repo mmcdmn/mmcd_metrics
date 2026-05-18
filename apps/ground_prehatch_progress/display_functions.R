@@ -143,7 +143,9 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
         group_by == "mmcd_all" ~ "MMCD",
         group_by == "facility" ~ "Facility",
         group_by == "foreman" ~ "FOS",
-        group_by == "sectcode" ~ "Section"
+        group_by == "sectcode" ~ "Section",
+        group_by == "township" ~ "Township",
+        TRUE ~ "Group"
       ),
       y = if (display_metric == "acres") "Number of Acres" else "Number of Sites"
     ) +

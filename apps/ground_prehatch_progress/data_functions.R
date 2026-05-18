@@ -441,6 +441,58 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
           group_name = "MMCD"
         )
     }
+  } else if (group_by == "township") {
+    # Group by township (first 4 chars of sectcode = county + township)
+    data <- data %>%
+      mutate(towncode = substr(sectcode, 1, 4))
+    
+    if (show_zones_separately) {
+      result <- data %>%
+        group_by(towncode, zone) %>%
+        summarise(
+          tot_ground = sum(tot_ground, na.rm = TRUE),
+          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
+          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
+          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
+          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = paste0(towncode, " P", zone),
+          group_name = towncode
+        )
+    } else {
+      result <- data %>%
+        group_by(towncode) %>%
+        summarise(
+          tot_ground = sum(tot_ground, na.rm = TRUE),
+          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
+          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
+          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
+          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = towncode,
+          group_name = towncode
+        )
+    }
   } else if (group_by == "sectcode") {
     # Group by section only - sections cannot be shown separately by zone
     # since each section inherently belongs to exactly one zone

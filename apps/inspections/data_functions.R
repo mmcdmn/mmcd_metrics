@@ -273,13 +273,9 @@ load_raw_data <- function(analysis_date = NULL,
         sitecode,
         array_to_string(array_agg(DISTINCT EXTRACT(year FROM inspdate)::text ORDER BY EXTRACT(year FROM inspdate)::text), ', ') as years_with_data
       FROM (
-        SELECT sitecode, inspdate FROM dblarv_insptrt_current
-        WHERE inspdate IS NOT NULL
-          AND sitecode IN (SELECT sitecode FROM filtered_sites)
+        SELECT sitecode, inspdate FROM dblarv_insptrt_current WHERE inspdate IS NOT NULL
         UNION ALL
-        SELECT sitecode, inspdate FROM dblarv_insptrt_archive
-        WHERE inspdate IS NOT NULL
-          AND sitecode IN (SELECT sitecode FROM filtered_sites)
+        SELECT sitecode, inspdate FROM dblarv_insptrt_archive WHERE inspdate IS NOT NULL
       ) all_inspections
       GROUP BY sitecode
     )
@@ -303,11 +299,9 @@ load_raw_data <- function(analysis_date = NULL,
     LEFT JOIN (
       SELECT sitecode, inspdate, action, numdip, wet
       FROM dblarv_insptrt_current
-      WHERE sitecode IN (SELECT sitecode FROM filtered_sites)
       UNION ALL
       SELECT sitecode, inspdate, action, numdip, wet
       FROM dblarv_insptrt_archive
-      WHERE sitecode IN (SELECT sitecode FROM filtered_sites)
     ) i ON fs.sitecode = i.sitecode
     ORDER BY fs.sitecode, i.inspdate DESC
     ", analysis_date, where_clause)

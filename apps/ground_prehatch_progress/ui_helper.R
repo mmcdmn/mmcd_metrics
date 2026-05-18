@@ -103,6 +103,7 @@ ground_prehatch_ui <- function() {
           selectInput("group_by", "Group By:",
                       choices = c("Facility" = "facility",
                                   "FOS" = "foreman",
+                                  "Township" = "township",
                                   "Section" = "sectcode",
                                   "All MMCD" = "mmcd_all"),
                       selected = "mmcd_all")
@@ -113,6 +114,7 @@ ground_prehatch_ui <- function() {
           selectInput("group_by", "Group By:",
                       choices = c("Facility" = "facility",
                                   "FOS" = "foreman",
+                                  "Township" = "township",
                                   "All MMCD" = "mmcd_all"),
                       selected = "mmcd_all")
         ),

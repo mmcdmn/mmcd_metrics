@@ -141,7 +141,7 @@ validate_facility <- function(v) {
 validate_foreman <- function(v) {
   if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
   s <- trimws(as.character(v))
-  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 _-]+$", s)) stop("invalid foreman format")
+  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 ._-]+$", s)) stop("invalid foreman format")
   lkp <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
   if (is.null(lkp) || nrow(lkp) == 0) return(NULL)
   row <- lkp[tolower(lkp$shortname) == tolower(s), ]

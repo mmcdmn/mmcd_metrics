@@ -208,8 +208,9 @@ server <- function(input, output, session) {
       pct_val <- if (!is.null(values$aggregated_data$total_summary)) {
         need_acres <- values$aggregated_data$total_summary$need_treatment_acres
         treated_acres <- values$aggregated_data$total_summary$treated_acres
-        if (need_acres > 0) {
-          round(100 * treated_acres / need_acres, 1)
+        workload_acres <- need_acres + treated_acres
+        if (workload_acres > 0) {
+          round(100 * treated_acres / workload_acres, 1)
         } else {
           0
         }

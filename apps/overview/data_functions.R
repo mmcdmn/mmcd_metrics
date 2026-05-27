@@ -132,11 +132,13 @@ load_metric_data <- function(metric,
     if ("load_raw_data" %in% names(env)) {
       # Try with common parameters - apps will ignore unknown params
       # Pass empty status_types list to get FULL universe (not filtered by status)
+      # include_archive = TRUE needed for cattail (fall inspections roll to archive by spring)
       env$load_raw_data(
         analysis_date = analysis_date,
         expiring_days = expiring_days,
         zone_filter = zone_filter,
-        status_types = character(0)
+        status_types = character(0),
+        include_archive = TRUE
       )
     } else {
       warning(paste("load_raw_data not found for metric:", metric))
@@ -145,7 +147,7 @@ load_metric_data <- function(metric,
   }, error = function(e) {
     # If the call fails, try with just analysis_date
     tryCatch({
-      env$load_raw_data(analysis_date = analysis_date)
+      env$load_raw_data(analysis_date = analysis_date, include_archive = TRUE)
     }, error = function(e2) {
       warning(paste("Error loading", metric, ":", e2$message))
       list(sites = data.frame(), treatments = data.frame())
@@ -164,6 +166,19 @@ load_metric_data <- function(metric,
       cat("Note: apply_data_filters failed for", metric, "\n")
     })
   }
+
+  # Cattail progress must use the app's cycle-aware aggregation so overview
+  # matches the cattail_treatments dashboard current progress logic.
+  if (metric == "cattail_treatments" && "aggregate_cattail_data" %in% names(env)) {
+    tryCatch({
+      aggregated <- env$aggregate_cattail_data(raw_data, analysis_date = analysis_date)
+      if (!is.null(aggregated$sites_data) && nrow(aggregated$sites_data) > 0) {
+        raw_data$sites <- aggregated$sites_data
+      }
+    }, error = function(e) {
+      cat("Note: aggregate_cattail_data failed for", metric, "- using raw sites\n")
+    })
+  }
   
   sites <- raw_data$sites
   if (is.null(sites) || nrow(sites) == 0) {
@@ -174,6 +189,15 @@ load_metric_data <- function(metric,
       active_count = integer(),
       expiring_count = integer()
     ))
+  }
+
+  # For cattail, enforce state columns from final_status when available.
+  if (metric == "cattail_treatments" && "final_status" %in% names(sites)) {
+    sites <- sites %>%
+      mutate(
+        is_active = final_status %in% c("treated", "need_treatment"),
+        is_expiring = final_status == "need_treatment"
+      )
   }
   
   # Special handling for SUCO - capacity-based instead of active/expiring
@@ -607,14 +631,15 @@ load_data_by_fos <- function(metric,
         analysis_date = analysis_date,
         expiring_days = expiring_days,
         zone_filter = zone_filter,
-        status_types = character(0)
+        status_types = character(0),
+        include_archive = TRUE
       )
     } else {
       list(sites = data.frame(), treatments = data.frame())
     }
   }, error = function(e) {
     tryCatch({
-      env$load_raw_data(analysis_date = analysis_date)
+      env$load_raw_data(analysis_date = analysis_date, include_archive = TRUE)
     }, error = function(e2) {
       warning(paste("Error loading", metric, "for FOS:", e2$message))
       list(sites = data.frame(), treatments = data.frame())
@@ -629,11 +654,32 @@ load_data_by_fos <- function(metric,
       cat("Note: apply_data_filters failed for", metric, "FOS view\n")
     })
   }
+
+  # Cattail progress must use the app's cycle-aware aggregation (same as metric load path)
+  if (metric == "cattail_treatments" && "aggregate_cattail_data" %in% names(env)) {
+    tryCatch({
+      aggregated <- env$aggregate_cattail_data(raw_data, analysis_date = analysis_date)
+      if (!is.null(aggregated$sites_data) && nrow(aggregated$sites_data) > 0) {
+        raw_data$sites <- aggregated$sites_data
+      }
+    }, error = function(e) {
+      cat("Note: aggregate_cattail_data failed for", metric, "FOS - using raw sites\n")
+    })
+  }
   
   sites <- raw_data$sites
   if (is.null(sites) || nrow(sites) == 0) {
     return(data.frame(fos = character(), display_name = character(),
                       total = integer(), active = integer(), expiring = integer()))
+  }
+
+  # For cattail, enforce state columns from final_status when available.
+  if (metric == "cattail_treatments" && "final_status" %in% names(sites)) {
+    sites <- sites %>%
+      mutate(
+        is_active = final_status %in% c("treated", "need_treatment"),
+        is_expiring = final_status == "need_treatment"
+      )
   }
   
   # Filter by zone

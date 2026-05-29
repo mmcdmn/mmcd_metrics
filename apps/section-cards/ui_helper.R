@@ -114,6 +114,11 @@ create_field_selector <- function() {
           "split_by_type",
           "Split by Type (each type on separate page)",
           value = FALSE
+        ),
+        checkboxInput(
+          "autofill_history",
+          "Auto-fill with current year history",
+          value = FALSE
         )
       ),
       

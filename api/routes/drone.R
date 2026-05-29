@@ -81,7 +81,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.amts,
           t.acres,
           t.emp1,
-          t.pkey
+          t.pkey_pg
         FROM dblarv_insptrt_current t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
         WHERE t.action = 'D'
@@ -99,7 +99,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.amts,
           t.acres,
           t.emp1,
-          t.pkey
+          t.pkey_pg
         FROM dblarv_insptrt_archive t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
         WHERE t.action = 'D'
@@ -116,7 +116,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           amts,
           acres,
           emp1,
-          ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate, pkey) AS round_num
+          ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate, pkey_pg) AS round_num
         FROM drone_treatments
       )
       SELECT

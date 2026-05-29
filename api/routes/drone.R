@@ -5,8 +5,8 @@
 # per year). Used by the Google Sheets drone_filler script.
 #
 # Mounted under /v1/private/drone/...
-# Auth is enforced inline (is_authorized check) since sub-routers don't inherit
-# the parent's @filter auth_gate automatically.
+# Auth is enforced by the parent plumber's auth_gate filter (blocks all
+# /v1/private/* requests without a valid API key).
 # =============================================================================
 
 source("/srv/shiny-server/shared/db_helpers.R")
@@ -28,12 +28,6 @@ source("/srv/api/api_helpers.R")
 #* @get /checklist
 #* @serializer json
 function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
-  # ── Auth check ──
-  if (!is_authorized(req)) {
-    res$status <- 401
-    return(list(error = "Unauthorized"))
-  }
-
   tryCatch({
     # ── Validate parameters ──
     yr <- if (is.null(year) || !nzchar(trimws(year %||% ""))) {
@@ -63,7 +57,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
     # ── Query database ──
     con <- get_db_connection()
     if (is.null(con)) stop("database connection failed")
-    on.exit(DBI::dbDisconnect(con), add = TRUE)
+    on.exit(safe_disconnect(con), add = TRUE)
 
     # Build site filter clause
     site_clause <- ""
@@ -87,7 +81,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.amts,
           t.acres,
           t.emp1,
-          ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate, t.pkey) AS round_num
+          t.pkey
         FROM dblarv_insptrt_current t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
         WHERE t.action = 'D'
@@ -105,7 +99,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.amts,
           t.acres,
           t.emp1,
-          ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate, t.pkey) AS round_num
+          t.pkey
         FROM dblarv_insptrt_archive t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
         WHERE t.action = 'D'
@@ -122,7 +116,7 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           amts,
           acres,
           emp1,
-          ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate) AS round_num
+          ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate, pkey) AS round_num
         FROM drone_treatments
       )
       SELECT

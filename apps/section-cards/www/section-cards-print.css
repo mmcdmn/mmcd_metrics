@@ -202,6 +202,7 @@
 .card-table td {
   border: 1px solid #333;
   padding: var(--sc-td-pad, 4px); font-size: var(--sc-td-font, 10px);
+  height: 1em; line-height: 1; overflow: hidden;
 }
 .card-table td.col-odd  { background: #fafafa; }
 .card-table td.col-even { background: #f0f0f0; }

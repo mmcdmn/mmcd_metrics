@@ -37,6 +37,7 @@ pr <- mount_route(pr, "/v1/public/data/structures",    "structures.R")
 pr <- mount_route(pr, "/v1/public/data/treatments",    "treatments.R")
 pr <- mount_route(pr, "/v1/public/data/surveillance",  "surveillance.R")
 pr <- mount_route(pr, "/v1/public/data/inspections",   "inspections.R")
+pr <- mount_route(pr, "/v1/private/drone",             "drone.R")
 
 message("[api] All data routes mounted")
 

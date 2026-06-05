@@ -263,7 +263,7 @@ create_filter_panel <- function() {
             icon("info-circle", style = "color: #856404; margin-right: 5px;"),
             tags$strong("Note:", style = "color: #856404;"),
             tags$span(style = "color: #856404;",
-              "This dashboard only shows treatments entered with cattail-specific material codes (e.g., G3). ",
+              "This dashboard only shows treatments entered with cattail-specific material codes (e.g., G3, T7, or briquets (14,15,16)). ",
               "If a site was treated for cattails but entered with a general larvicide code (e.g., G2, matcode 16), ",
               "the treatment will not appear here and the site may incorrectly show as 'Need Treatment'."
             )

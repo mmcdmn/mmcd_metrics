@@ -2212,6 +2212,16 @@ apply_historical_group_labels <- function(data, group_by, show_zones_separately 
           foreman_name
         }
       )
+  } else if (group_by == "township" && "sitecode" %in% names(data)) {
+    data <- data %>%
+      mutate(
+        towncode = substr(sitecode, 1, 4),
+        group_label = if (show_zones_separately && "zone" %in% names(data)) {
+          paste0(towncode, " P", zone)
+        } else {
+          towncode
+        }
+      )
   } else if (group_by == "mmcd_all") {
     data <- data %>%
       mutate(

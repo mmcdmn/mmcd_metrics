@@ -130,12 +130,12 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
       FROM public.dblarv_insptrt_current t
       LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode,7) = sc.sectcode
       WHERE t.inspdate BETWEEN $1 AND $2
-        AND t.action IN ('3', 'A', 'D')  -- Cattail treatments
-        AND t.matcode IN (
+        AND t.action IN ('1', '3', 'A', 'D')  -- Cattail treatments
+        AND ( t.matcode IN (
           SELECT matcode 
           FROM public.mattype_list_targetdose
           WHERE prgassign_default = 'Cat' OR prg_alt1 = 'Cat'
-        )
+        ) OR t.matcode IN ('14','15','16') )
         AND (
           EXTRACT(DOY FROM t.inspdate) BETWEEN 244 AND 365  -- Fall/Winter
           OR EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 213  -- Spring/Summer
@@ -165,12 +165,12 @@ get_historical_cattail_data <- function(time_period = "monthly", display_metric 
       FROM public.dblarv_insptrt_archive t
       LEFT JOIN public.gis_sectcode sc ON LEFT(t.sitecode,7) = sc.sectcode
       WHERE t.inspdate BETWEEN $1 AND $2
-        AND t.action IN ('3', 'A', 'D')  -- Cattail treatments
-        AND t.matcode IN (
+        AND t.action IN ('1', '3', 'A', 'D')  -- Cattail treatments
+        AND ( t.matcode IN (
           SELECT matcode 
           FROM public.mattype_list_targetdose
           WHERE prgassign_default = 'Cat' OR prg_alt1 = 'Cat'
-        )
+        ) OR t.matcode IN ('14','15','16') )
         AND (
           EXTRACT(DOY FROM t.inspdate) BETWEEN 244 AND 365  -- Fall/Winter
           OR EXTRACT(DOY FROM t.inspdate) BETWEEN 135 AND 213  -- Spring/Summer

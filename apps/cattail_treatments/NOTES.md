@@ -116,7 +116,7 @@ Same structure as #3 but filters `action IN ('3', 'A', 'D')` with the cattail ma
 - **Historical chart**: `create_historical_analysis_chart()` supports three display metrics (`need_treatment`, `treated`, `pct_treated`), toggleable sites/acres, group-by facility/foreman/zone, with chart types (line, grouped bar, stacked bar, area). Maps facility short codes to full names for display. Uses `create_trend_chart()`.
 - **Leaflet map**: `create_cattail_map()` reads PostGIS `geom` from `loc_breeding_sites`, transforms to WGS84, colors markers by treatment status. Validates coordinates and filters invalid rows.
 - **Cached data loading**: `app.R` calls `cached_load_raw_data("cattail_treatments", ...)` for caching support.
-- **Material code caveat**: A UI warning notes that only treatments with cattail-specific matcodes (e.g., G3) appear; general larvicide matcodes (e.g., G2/matcode 16) used for cattail work will not show.
+-- **Material code caveat**: A UI warning notes that only treatments with cattail-specific matcodes (e.g., G3, T7, or briquets 14/15/16) appear; general larvicide matcodes (e.g., G2/matcode 16) used for cattail work will not show.
 
 ---
 

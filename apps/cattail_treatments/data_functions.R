@@ -290,8 +290,8 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
           -- Fall/winter treatments using DOY (day 244-365: Sept 1 - Dec 31)
           EXTRACT(DOY FROM i.inspdate) BETWEEN 244 AND 365
           OR
-          -- Spring/summer treatments using DOY (day 135-213: May 15 - Aug 1) 
-          EXTRACT(DOY FROM i.inspdate) BETWEEN 135 AND 213
+          -- Spring/summer treatments using DOY (day 121-213: May 1 - Aug 1) 
+          EXTRACT(DOY FROM i.inspdate) BETWEEN 121 AND 213
         )
       
       UNION ALL
@@ -323,8 +323,8 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
           -- Fall/winter treatments using DOY (day 244-365: Sept 1 - Dec 31)
           EXTRACT(DOY FROM a.inspdate) BETWEEN 244 AND 365
           OR
-          -- Spring/summer treatments using DOY (day 135-213: May 15 - Aug 1) 
-          EXTRACT(DOY FROM a.inspdate) BETWEEN 135 AND 213
+          -- Spring/summer treatments using DOY (day 121-213: May 1 - Aug 1) 
+          EXTRACT(DOY FROM a.inspdate) BETWEEN 121 AND 213
         )
       
       ORDER BY trtdate

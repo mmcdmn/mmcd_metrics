@@ -309,7 +309,7 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
 }
 
 # Function to filter data based on user selections
-filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL, foreman_filter = NULL) {
+filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL, foreman_filter = NULL, include_drone = TRUE) {
   if (nrow(data) == 0) return(data)
   
   # Return empty data if "none" is selected for facility or foreman
@@ -318,6 +318,11 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
   }
   if (!is.null(foreman_filter) && ("none" %in% foreman_filter) && length(foreman_filter) == 1) {
     return(data.frame())
+  }
+  
+  # Exclude drone sites if requested
+  if (!isTRUE(include_drone) && "drone" %in% names(data)) {
+    data <- data %>% filter(is.na(drone) | drone != "Y")
   }
   
   # Filter by zone if selected

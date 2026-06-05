@@ -13,7 +13,8 @@ source("display_functions.R")
 # Handles both yearly (sites/acres treated) and weekly (active sites/acres)
 create_historical_data <- function(start_year, end_year, hist_time_period, hist_display_metric, 
                                   hist_group_by, hist_zone_display, 
-                                  facility_filter = NULL, zone_filter = NULL, foreman_filter = NULL) {
+                                  facility_filter = NULL, zone_filter = NULL, foreman_filter = NULL,
+                                  include_drone = TRUE) {
   
   # Add NULL/default checks for all parameters
   if (is.null(hist_time_period)) hist_time_period <- "yearly"
@@ -55,6 +56,13 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
     # Treatments already have facility, zone, fosarea from gis_sectcode join in the query
     rename(acres = treated_acres) %>%  # Rename for consistency
     filter(!is.na(facility))  # Remove any treatments without facility info
+  
+  # Exclude drone sites if requested
+  if (!isTRUE(include_drone) && "drone" %in% names(ground_sites)) {
+    drone_sitecodes <- ground_sites %>% filter(drone == "Y") %>% pull(sitecode)
+    ground_sites <- ground_sites %>% filter(is.na(drone) | drone != "Y")
+    ground_treatments <- ground_treatments %>% filter(!sitecode %in% drone_sitecodes)
+  }
   
   # Apply filters using shared function from data_functions.R
   filtered_data <- apply_data_filters(

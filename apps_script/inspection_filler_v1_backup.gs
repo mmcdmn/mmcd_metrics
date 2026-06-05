@@ -19,6 +19,7 @@ const CONFIG = {
   LOOKBACK_DAYS:   12,  // Days back to check for inspections (1–14)
   LOOKBACK_ABOVE_THRESH: 7, // Days to keep hot-site data (dip ≥ threshold); 0 = same as LOOKBACK_DAYS
   REFRESH_MINUTES: 1,   // Auto-refresh interval in minutes (1, 5, 10, 15, 30)
+  PREHATCH_HIGHLIGHT_COLOR: '#2e7d32', // Dark green for active prehatch rows
 };
 
 // ── Column positions (1-based) matching your sheet layout ────────────────────
@@ -197,6 +198,9 @@ function refreshInspectionData() {
 
     // Add hyperlinks to sitecode cells
     setSitecodeLinks_(sheet, siteRows);
+
+    // Highlight prehatch-treated rows in green
+    highlightPrehatch_(sheet, siteRows, lookup);
 
     totalUpdated += updated;
     totalClaims.pushed  += claimResult.pushed;
@@ -725,6 +729,27 @@ function updateSummaryTab_(ss, tabStats) {
 // ════════════════════════════════════════════════════════════════════════════
 
 const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
+
+/**
+ * Highlight rows green when site has an active prehatch treatment.
+ * Clears highlight when prehatch expires.
+ */
+function highlightPrehatch_(sheet, siteRows, lookup) {
+  const prehatchColor = String(CONFIG.PREHATCH_HIGHLIGHT_COLOR || '#2e7d32').toLowerCase();
+  const lastCol = Math.max(COL.SITECODE, COL.EMP_NUM, COL.DATE, COL.PCT_WET, COL.NUM_DIP, COL.SAMPLE);
+  if (!lastCol) return;
+  for (const [sc, idx] of Object.entries(siteRows)) {
+    const info = lookup[sc];
+    const isPrehatch = info && info.has_active_treatment && info.is_prehatch;
+    const row = sheet.getRange(DATA_START + idx, 1, 1, lastCol);
+    const currentBg = String(row.getCell(1, 1).getBackground() || '').toLowerCase();
+    if (isPrehatch && currentBg !== prehatchColor) {
+      row.setBackground(prehatchColor);
+    } else if (!isPrehatch && currentBg === prehatchColor) {
+      row.setBackground(null);  // Reset to default
+    }
+  }
+}
 
 /**
  * Set hyperlinks on sitecode cells so they open the MMCD map.

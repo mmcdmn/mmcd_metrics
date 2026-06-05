@@ -272,7 +272,8 @@ function(req, res,
       details,
       zone_filter = zn,
       facility_filter = fac,
-      foreman_filter = fman
+      foreman_filter = fman,
+      include_drone = FALSE
     )
 
     if (is.null(details) || nrow(details) == 0) {

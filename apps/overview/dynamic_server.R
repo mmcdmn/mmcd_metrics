@@ -39,6 +39,84 @@ get_cached_current_week_value <- function(metric_id, analysis_date, zone_filter 
   value
 }
 
+# In-memory cache for per-facility current week values
+.fac_week_cache <- new.env(parent = emptyenv())
+
+#' Compute current week's treatment-based value PER FACILITY
+#' Uses the same active-on-Friday logic as historical averages so the
+#' comparison is apples-to-apples (treated_acres from treatments, not site acres).
+#' @param metric_id Metric ID
+#' @param analysis_date Current analysis date
+#' @param zone_filter Zones to include
+#' @return Named list: list(Wm = 1167, Wp = 1484, ...) or NULL on error
+get_current_week_values_by_facility <- function(metric_id, analysis_date, zone_filter = c("1", "2")) {
+  cache_key <- paste0(metric_id, "|fac|", as.character(analysis_date), "|", paste(zone_filter, collapse = "_"))
+  if (exists(cache_key, envir = .fac_week_cache)) {
+    cached <- get(cache_key, envir = .fac_week_cache)
+    if (difftime(Sys.time(), cached$ts, units = "secs") < 120) return(cached$data)
+  }
+  
+  tryCatch({
+    registry <- get_metric_registry()
+    config <- registry[[metric_id]]
+    if (is.null(config)) return(NULL)
+    
+    current_year <- lubridate::year(analysis_date)
+    week_num <- lubridate::week(analysis_date)
+    
+    # Load current year treatments (uses same cache as historical)
+    raw_data <- load_app_historical_data(metric_id, current_year, current_year, zone_filter)
+    if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) return(NULL)
+    
+    treatments <- raw_data$treatments
+    treatments$inspdate <- as.Date(treatments$inspdate)
+    treatments <- assign_value_column(treatments, config)
+    
+    if (!"effect_days" %in% names(treatments)) {
+      treatments$effect_days <- if (metric_id == "catch_basin") 28 else 14
+    }
+    treatments$treatment_end <- treatments$inspdate + treatments$effect_days
+    
+    # Find Friday of the target week
+    year_start <- as.Date(paste0(current_year, "-01-01"))
+    week_starts <- seq.Date(year_start, analysis_date + 7, by = "week")
+    friday <- NULL
+    for (ws in week_starts) {
+      ws <- as.Date(ws, origin = "1970-01-01")
+      wf <- ws + 4
+      if (lubridate::week(wf) == week_num && lubridate::year(wf) == current_year) {
+        friday <- wf
+        break
+      }
+    }
+    if (is.null(friday)) friday <- analysis_date
+    
+    # Get treatments active on Friday
+    active <- treatments[treatments$inspdate <= friday & treatments$treatment_end >= friday, ]
+    if (nrow(active) == 0) return(NULL)
+    
+    # Dedup by sitecode (keep longest-lasting treatment per site)
+    if ("sitecode" %in% names(active)) {
+      active <- active[order(-as.numeric(active$treatment_end)), ]
+      active <- active[!duplicated(active$sitecode), ]
+    } else if ("catchbasin_id" %in% names(active)) {
+      active <- active[order(-as.numeric(active$treatment_end)), ]
+      active <- active[!duplicated(active$catchbasin_id), ]
+    }
+    
+    # Aggregate by facility
+    if (!"facility" %in% names(active)) return(NULL)
+    result <- tapply(active$value, active$facility, sum, na.rm = TRUE)
+    result_list <- as.list(result)
+    
+    assign(cache_key, list(data = result_list, ts = Sys.time()), envir = .fac_week_cache)
+    result_list
+  }, error = function(e) {
+    cat("[WARN] get_current_week_values_by_facility failed for", metric_id, ":", e$message, "\n")
+    NULL
+  })
+}
+
 # =============================================================================
 # DYNAMIC DATA LOADERS - Iterate through registry
 # =============================================================================
@@ -876,6 +954,20 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     
     week_num <- lubridate::week(analysis_date)
     
+    # Pre-compute per-facility current week values for active-calculation metrics.
+    # This ensures the historical comparison uses the SAME unit (treated_acres from
+    # treatments table) for both current and historical, instead of site acres.
+    fac_weekly_values <- list()
+    for (metric_id in metrics) {
+      m_config <- registry[[metric_id]]
+      if (isTRUE(m_config$use_active_calculation)) {
+        fac_weekly_values[[metric_id]] <- tryCatch(
+          get_current_week_values_by_facility(metric_id, analysis_date, zone_filter),
+          error = function(e) NULL
+        )
+      }
+    }
+    
     stat_boxes <- lapply(all_facilities, function(fac) {
       # For this facility, aggregate across all metrics
       total_all <- 0
@@ -940,9 +1032,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       
       # Use FACILITY-SPECIFIC historical data for dynamic coloring
       # Each facility is compared against ITS OWN historical average
-      # IMPORTANT: Pass active_all as weekly_value — this is the facility's current
-      # active acres/count, NOT district-wide. extract_weekly_values_by_group can't
-      # provide per-facility values because load_current_year_for_cache is district-wide.
+      # For use_active_calculation metrics, use treatment-based weekly value
+      # (same units as historical avg) instead of site-based active_all.
       box_color <- config$bg_color
       box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
       
@@ -952,13 +1043,18 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
         fac_config <- registry[[metric_id]]
         fac_cm <- if (!is.null(fac_config$color_mode)) fac_config$color_mode else ""
         color_value <- if (fac_cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
-        # Use active_all as the weekly value — this is THIS facility's current active
-        # value from load_data_by_facility, not district-wide
+        # Use treatment-based weekly value for active-calculation metrics;
+        # fall back to active_all for simple count/coverage metrics
+        fac_weekly_val <- NULL
+        if (!is.null(fac_weekly_values[[metric_id]])) {
+          fac_weekly_val <- fac_weekly_values[[metric_id]][[fac]]
+        }
+        weekly_val <- if (!is.null(fac_weekly_val)) fac_weekly_val else active_all
         info <- tryCatch(
           get_dynamic_value_box_info(metric_id, color_value, analysis_date, 
                                      fac_config, 
                                      zone_filter = fac_zone_filter, 
-                                     weekly_value = active_all,
+                                     weekly_value = weekly_val,
                                      facility_filter = fac),
           error = function(e) {
             cat("[COLOR] Error for", fac, metric_id, ":", e$message, "\n")

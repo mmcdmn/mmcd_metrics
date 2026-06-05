@@ -191,6 +191,11 @@ load_metric_data <- function(metric,
     ))
   }
 
+  # Ground prehatch: exclude drone sites (drone='Y') from overview
+  if (metric == "ground_prehatch" && "drone" %in% names(sites)) {
+    sites <- sites %>% filter(is.na(drone) | drone != "Y")
+  }
+
   # For cattail, enforce state columns from final_status when available.
   if (metric == "cattail_treatments" && "final_status" %in% names(sites)) {
     sites <- sites %>%
@@ -671,6 +676,11 @@ load_data_by_fos <- function(metric,
   if (is.null(sites) || nrow(sites) == 0) {
     return(data.frame(fos = character(), display_name = character(),
                       total = integer(), active = integer(), expiring = integer()))
+  }
+
+  # Ground prehatch: exclude drone sites (drone='Y') from overview
+  if (metric == "ground_prehatch" && "drone" %in% names(sites)) {
+    sites <- sites %>% filter(is.na(drone) | drone != "Y")
   }
 
   # For cattail, enforce state columns from final_status when available.

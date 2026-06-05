@@ -137,7 +137,7 @@ cattail_treatments_ui <- function() {
                    fluidRow(
                      column(12, 
                        h4("Cattail Treatment Progress"),
-                       plotlyOutput("progress_chart", height = "500px")
+                       plotlyOutput("progress_chart", height = "1200px")
                      )
                    ),
                    br(),

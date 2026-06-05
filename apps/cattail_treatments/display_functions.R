@@ -149,7 +149,11 @@ create_treatment_progress_chart <- function(data, group_by = "facility", chart_t
   }
   
   return(ggplotly(p, tooltip = c("x", "y", "fill")) %>%
-         layout(height = dynamic_height))
+         layout(
+           height = dynamic_height,
+           margin = list(b = 90, t = 140, l = 50, r = 20),
+           legend = list(orientation = "h", x = 0.5, xanchor = "center", y = 1.15)
+         ))
 }
 
 # Function to create treatment timeline chart
@@ -201,7 +205,11 @@ create_treatment_timeline <- function(treatments_data, group_by = "facility") {
     ) +
     scale_x_date(date_breaks = "1 month", date_labels = "%b %Y")
   
-  return(ggplotly(p, tooltip = c("x", "y", "colour")))
+  return(ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+           layout(
+             margin = list(b = 90, t = 140, l = 50, r = 20),
+             legend = list(orientation = "h", x = 0.5, xanchor = "center", y = 1.15)
+           ))
 }
 
 # Function to create efficacy analysis chart
@@ -236,7 +244,11 @@ create_efficacy_chart <- function(efficacy_data, treatments_data) {
       legend.position = "bottom"
     )
   
-  return(ggplotly(p, tooltip = c("x", "y", "fill")))
+  return(ggplotly(p, tooltip = c("x", "y", "fill")) %>%
+           layout(
+             margin = list(b = 90, t = 140, l = 50, r = 20),
+             legend = list(orientation = "h", x = 0.5, xanchor = "center", y = 1.15)
+           ))
 }
 
 # Function to create treatment planning calendar
@@ -295,7 +307,11 @@ create_planning_calendar <- function(plans_data, theme = "MMCD") {
     ) +
     scale_x_date(date_breaks = "1 week", date_labels = "%m/%d")
   
-  return(ggplotly(p, tooltip = c("x", "y", "fill")))
+  return(ggplotly(p, tooltip = c("x", "y", "fill")) %>%
+           layout(
+             margin = list(b = 90, t = 140, l = 50, r = 20),
+             legend = list(orientation = "h", x = 0.5, xanchor = "center", y = 1.15)
+           ))
 }
 
 # Function to create value boxes
@@ -805,6 +821,9 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
                      labels = c("Inspected (Under Threshold)", "Need Treatment", "Treated"))
     )
   
+  n_groups <- n_distinct(progress_data$group_name)
+  dynamic_height <- max(900, n_groups * 20 + 240)
+  
   # Create chart based on chart_type
   if (chart_type == "line") {
     p <- ggplot(progress_data, aes(x = status, y = count, color = group_name, group = group_name)) +
@@ -878,5 +897,10 @@ create_current_progress_chart <- function(sites_data, group_by = "facility", cha
       )
   }
   
-  ggplotly(p, tooltip = c("x", "y", "fill"))
+  ggplotly(p, tooltip = c("x", "y", "fill")) %>%
+    layout(
+      height = dynamic_height,
+      margin = list(b = 80, t = 80, l = 50, r = 20),
+      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = 1.02)
+    )
 }

@@ -388,10 +388,10 @@ get_metric_registry <- function() {
                          • Current week (Monday through today)<br>
                          • All facilities except MO (zone filter not applied)<br>
                          • Goal: 12 SUCOs per facility per week"),
-      load_params = list(
+        load_params = list(
         goal_per_facility = 12,  # Each facility goal: 12 SUCOs per week
-        num_facilities = 5,      # Number of facilities (excludes MO)
-        district_goal = 60,      # 5 * 12 = 60 total district goal
+        num_facilities = 6,      # Number of facilities (excludes MO)
+        district_goal = 72,      # 6 * 12 = 72 total district goal
         time_period = "current_week"
       )
     ),

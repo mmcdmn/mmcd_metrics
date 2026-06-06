@@ -80,7 +80,7 @@ jobs:
             container-port: 3838
             execution-role-arn: ${{ secrets.AWS_ROLE }}
             infrastructure-role-arn: ${{ secrets.AWS_ROLE }}
-            cpu: "3072" #  "1024"
+            cpu: "2048" #  "1024"
             memory: "8192" # "2048"
             min-task-count: 1  # 2
             max-task-count: 1  # 25

@@ -387,13 +387,17 @@ get_metric_registry <- function() {
                          • SUCO inspections only (survtype = 7)<br>
                          • Current week (Monday through today)<br>
                          • All facilities except MO (zone filter not applied)<br>
-                         • Goal: 12 SUCOs per facility per week"),
-        load_params = list(
-        goal_per_facility = 12,  # Each facility goal: 12 SUCOs per week
-        num_facilities = 6,      # Number of facilities (excludes MO)
-        district_goal = 72,      # 6 * 12 = 72 total district goal
-        time_period = "current_week"
-      )
+                         • Goal: " + suco_config$goal_per_facility + " SUCOs per facility per week"),
+        load_params = {
+        # Load SUCO parameters from app_config.yaml thresholds.goal.suco
+        suco_config <- get_config_threshold("goal", "suco")
+        list(
+          goal_per_facility = suco_config$goal_per_facility %||% 12,
+          num_facilities = suco_config$num_facilities %||% 6,
+          district_goal = suco_config$district_goal %||% 72,
+          time_period = "current_week"
+        )
+      }
     ),
     
     cattail_inspections = list(

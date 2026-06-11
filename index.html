@@ -307,6 +307,54 @@
             border-bottom-left-radius: 4px;
             font-style: italic;
         }
+
+        .chat-bubble-chart {
+            max-width: 96%;
+        }
+
+        .chat-bubble-chart img {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        #mmcd-chat-card.popout {
+            position: fixed;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(1200px, calc(100vw - 32px));
+            height: calc(100vh - 32px);
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+            border: 1px solid #cfd8e3;
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        #mmcd-chat-card.popout #chat-messages {
+            height: auto !important;
+            flex: 1 1 auto;
+        }
+
+        #mmcd-chat-card.popout .chat-input-row {
+            flex: 0 0 auto;
+        }
+
+        body.chat-popout-open {
+            overflow: hidden;
+        }
+
+        @media (max-width: 768px) {
+            #mmcd-chat-card.popout {
+                top: 8px;
+                width: calc(100vw - 16px);
+                height: calc(100vh - 16px);
+            }
+        }
     </style>
 </head>
 
@@ -585,7 +633,7 @@
                             <a href="trap_survillance_test/" class="app-link">Open Application</a>
                         </div>
                         <!-- MMCD AI Assistant card -->
-                        <div class="app-card" style="grid-column: 1 / -1; text-align: left; padding: 0; overflow: hidden;">
+                        <div id="mmcd-chat-card" class="app-card" style="grid-column: 1 / -1; text-align: left; padding: 0; overflow: hidden;">
                             <div style="padding: 20px 20px 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #2c5aa0, #1e3d6f); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; font-weight: bold; flex-shrink: 0;">AI</div>
@@ -596,6 +644,7 @@
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <span id="llm-status" style="font-size: 11px; color: #7c8a97;">AI Assistant</span>
+                                    <button id="chat-popout-btn" onclick="toggleChatPopout()" style="background: none; border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Pop Out</button>
                                     <button onclick="clearChat()" style="background: none; border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Clear</button>
                                 </div>
                             </div>
@@ -608,8 +657,8 @@
                                 </div>
                             </div>
                             <!-- Input area -->
-                            <div style="display: flex; padding: 12px 20px; gap: 8px; background: #fff;">
-                                <input type="text" id="chat-input" placeholder="Ask about dipping procedures, treatment protocols, equipment..."
+                            <div class="chat-input-row" style="display: flex; padding: 12px 20px; gap: 8px; background: #fff;">
+                                <input type="text" id="chat-input" placeholder="Ask about MMCD, Metrics, or anything else..." autocomplete="off"
                                     style="flex: 1; padding: 10px 14px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;"
                                     onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}">
                                 <button id="chat-send-btn" onclick="sendChat()"
@@ -1041,6 +1090,28 @@
                 </div>`;
         }
 
+        function toggleChatPopout(forceClose = false) {
+            const card = document.getElementById('mmcd-chat-card');
+            const button = document.getElementById('chat-popout-btn');
+            const isOpen = card.classList.contains('popout');
+
+            if (forceClose || isOpen) {
+                card.classList.remove('popout');
+                document.body.classList.remove('chat-popout-open');
+                button.textContent = 'Pop Out';
+            } else {
+                card.classList.add('popout');
+                document.body.classList.add('chat-popout-open');
+                button.textContent = 'Dock';
+            }
+        }
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                toggleChatPopout(true);
+            }
+        });
+
         function appendMessage(role, text) {
             const container = document.getElementById('chat-messages');
             const div = document.createElement('div');
@@ -1051,6 +1122,7 @@
             // Render markdown images as <img> tags, rest as text
             const imgPattern = /!\[([^\]]*)\]\((data:image\/[^)]+)\)/g;
             if (role === 'assistant' && imgPattern.test(text)) {
+                bubble.classList.add('chat-bubble-chart');
                 const parts = text.split(imgPattern);
                 // parts: [text, alt, src, text, alt, src, ...]
                 for (let i = 0; i < parts.length; i++) {

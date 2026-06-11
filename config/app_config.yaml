@@ -66,12 +66,36 @@ thresholds:
   fixed_pct:
     air_sites:
       direction: higher_is_better
-      good: 85             # Green if >= 85% treated
-      warning: 60          # Yellow if >= 60%, Red if below
+      good: 80             # Green if >= 80% treated
+      warning: 70          # Yellow if >= 70%, Red if below
+    drone:
+      direction: higher_is_better
+      good: 80             # Green if >= 80% treated
+      warning: 70          # Yellow if >= 70%, Red if below
+    ground_prehatch:
+      direction: higher_is_better
+      good: 80             # Green if >= 80% treated
+      warning: 70          # Yellow if >= 70%, Red if below
+    catch_basin:
+      direction: higher_is_better
+      good: 80             # Green if >= 80% treated
+      warning: 70          # Yellow if >= 70%, Red if below
+    structure:
+      direction: higher_is_better
+      good: 10             # Green if >= 10% treated
+      warning: 6           # Yellow if >= 6%, Red if below
+    cattail_treatments:
+      direction: lower_is_better # some how this is backwards
+      good: 90             # Green if >= 90% treated
+      warning: 80          # Yellow if >= 80%, Red if below
+    cattail_inspections:
+      direction: higher_is_better
+      good: 90             # Green if >= 90% inspected
+      warning: 70          # Yellow if >= 70%, Red if below
     prehatch_coverage:
       direction: higher_is_better
-      good: 80             # Green if >= 80% recently sampled sites with target species
-      warning: 70          # Yellow if >= 70%, Red if below
+      good: 85             # Green if >= 85% recently sampled sites with target species
+      warning: 60          # Yellow if >= 60%, Red if below
     vector_index:
       direction: lower_is_better
       good: 30             # Green if VI <= 30

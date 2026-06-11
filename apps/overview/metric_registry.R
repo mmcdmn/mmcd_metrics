@@ -101,6 +101,8 @@ get_metric_registry <- function() {
                          • Wet catch basins only (status_udw = 'W')<br>
                          • All facilities<br>
                          • Zone filter from dropdown"),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 80, warning = 70),
       load_params = list(expiring_days = 7)
     ),
     
@@ -135,6 +137,8 @@ get_metric_registry <- function() {
                          • All facilities, all foremen<br>
                          • Prehatch only: YES<br>
                          • Zone filter from dropdown"),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 80, warning = 70),
       load_params = list(expiring_days = 7)
     ),
     
@@ -165,6 +169,8 @@ get_metric_registry <- function() {
                          • Prehatch sites only<br>
                          • All facilities<br>
                          • Zone filter from dropdown"),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 80, warning = 70),
       load_params = list(expiring_days = 7)
     ),
     
@@ -195,7 +201,7 @@ get_metric_registry <- function() {
         expiring = "Needs Treatment"
       ),
       color_mode = "fixed_pct",
-      color_thresholds = list(good = 85, warning = 60),
+      color_thresholds = list(good = 80, warning = 70),
       filter_info = HTML("<b>Filters Applied:</b><br>
                          • Air breeding sites (air_gnd = 'A')<br>
                          • Priority: RED only<br>
@@ -232,6 +238,8 @@ get_metric_registry <- function() {
                          • Status: W, U (Wet, Unknown)<br>
                          • Priority: All<br>
                          • Zone filter from dropdown"),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 10, warning = 6),
       load_params = list(expiring_days = 7)
     ),
     
@@ -311,6 +319,8 @@ get_metric_registry <- function() {
                          • Needs Treatment: Sites requiring treatment<br>
                          • All facilities<br>
                          • Zone filter from dropdown"),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 90, warning = 80),
       load_params = list(expiring_days = 30)  # Cattail treatments are seasonal
     ),
 
@@ -383,12 +393,16 @@ get_metric_registry <- function() {
         active = "Completed",
         expiring = "Over Goal"
       ),
-      filter_info = HTML("<b>Filters Applied:</b><br>
-                         • SUCO inspections only (survtype = 7)<br>
-                         • Current week (Monday through today)<br>
-                         • All facilities except MO (zone filter not applied)<br>
-                         • Goal: " + suco_config$goal_per_facility + " SUCOs per facility per week"),
-        load_params = {
+      filter_info = HTML(paste0(
+        "<b>Filters Applied:</b><br>",
+        "• SUCO inspections only (survtype = 7)<br>",
+        "• Current week (Monday through today)<br>",
+        "• All facilities except MO (zone filter not applied)<br>",
+        "• Goal: ",
+        (get_config_threshold("goal", "suco")$goal_per_facility %||% 12),
+        " SUCOs per facility per week"
+      )),
+      load_params = {
         # Load SUCO parameters from app_config.yaml thresholds.goal.suco
         suco_config <- get_config_threshold("goal", "suco")
         list(
@@ -432,6 +446,8 @@ get_metric_registry <- function() {
                          • Season: Aug-Dec<br>
                          • Zone filter (P1, P2, Total)<br>
                          • Year from dropdown"),
+      color_mode = "fixed_pct",
+      color_thresholds = list(good = 90, warning = 70),
       load_params = list(
         zone_filter = c("1", "2"),  # Default to both zones (total)
         time_period = "yearly"  # Yearly progress tracking

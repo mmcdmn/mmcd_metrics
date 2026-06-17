@@ -13,7 +13,7 @@
 #' @param split_by_section Logical, if TRUE split cards by section (no mixing on pages)
 #' @param split_by_priority Logical, if TRUE split cards by priority (no mixing on pages)
 #' @return HTML string with printable section cards
-generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE, watermark_fields = NULL, cards_per_page = 6) {
+generate_section_cards_html <- function(data, title_fields, table_fields, num_rows = 5, split_by_section = FALSE, split_by_priority = FALSE, split_by_type = FALSE, progress_fn = NULL, double_sided = FALSE, watermark_fields = NULL, cards_per_page = 6, history_data = NULL) {
   
   # Map facility codes to full names using db_helpers
   facility_lookup <- get_facility_lookup()
@@ -235,10 +235,16 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   
   # Helper: generate one card using pre-built table template
   build_card <- function(row) {
+    # Get site-specific history rows if history_data is provided
+    site_history <- NULL
+    if (!is.null(history_data) && nrow(history_data) > 0) {
+      site_history <- history_data[history_data$sitecode == row$sitecode, , drop = FALSE]
+      if (nrow(site_history) == 0) site_history <- NULL
+    }
     generate_card_html(row, title_fields, table_fields, num_rows,
                        field_labels, facility_map, fos_map,
                        prebuilt_table_header, prebuilt_table_footer,
-                       watermark_fields)
+                       watermark_fields, site_history = site_history)
   }
   
   # Handle splitting by section, priority, and/or type
@@ -361,7 +367,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
 generate_card_html <- function(row, title_fields, table_fields, num_rows, 
                                field_labels, facility_map, fos_map,
                                prebuilt_table_header = NULL, prebuilt_table_footer = NULL,
-                               watermark_fields = NULL) {
+                               watermark_fields = NULL, site_history = NULL) {
   html <- ''
   
   # Track if we need prehatch overlay (computed at end)
@@ -516,7 +522,65 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
   html <- paste0(html, '    </div>\n')
   
   # Data table: use pre-built parts if available (optimization)
-  if (!is.null(prebuilt_table_header) && !is.null(prebuilt_table_footer)) {
+  # If site_history is provided, render filled rows + remaining empty rows
+  if (!is.null(site_history) && nrow(site_history) > 0) {
+    # Build table with history data rows
+    html <- paste0(html, prebuilt_table_header)
+    
+    # Map of table_field names to history data columns
+    history_col_map <- list(
+      date = "inspdate",
+      wet_pct = "wet",
+      emp_num = "emp1",
+      num_dip = "numdip",
+      sample_num = "sample_num",
+      amt = "amts",
+      mat = "matcode"
+    )
+    
+    # Render filled rows (up to num_rows)
+    n_history <- min(nrow(site_history), num_rows)
+    for (j in seq_len(n_history)) {
+      html <- paste0(html, '        <tr>\n')
+      for (i in seq_along(table_fields)) {
+        col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+        field <- table_fields[i]
+        # Look up the corresponding history column
+        hist_col <- history_col_map[[field]]
+        cell_value <- ""
+        if (!is.null(hist_col) && hist_col %in% names(site_history)) {
+          val <- site_history[[hist_col]][j]
+          if (!is.na(val)) {
+            if (field == "date") {
+              # Format date as M/D
+              cell_value <- format(as.Date(val), "%m/%d")
+            } else {
+              cell_value <- as.character(val)
+              if (cell_value == "") cell_value <- ""
+            }
+          }
+        }
+        html <- paste0(html, '          <td class="', col_class, '">', 
+                       htmltools::htmlEscape(cell_value), '</td>\n')
+      }
+      html <- paste0(html, '        </tr>\n')
+    }
+    
+    # Render remaining empty rows
+    n_empty <- num_rows - n_history
+    if (n_empty > 0) {
+      for (j in seq_len(n_empty)) {
+        html <- paste0(html, '        <tr>\n')
+        for (i in seq_along(table_fields)) {
+          col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+          html <- paste0(html, '          <td class="', col_class, '"></td>\n')
+        }
+        html <- paste0(html, '        </tr>\n')
+      }
+    }
+    
+    html <- paste0(html, '      </tbody>\n    </table>\n')
+  } else if (!is.null(prebuilt_table_header) && !is.null(prebuilt_table_footer)) {
     html <- paste0(html, prebuilt_table_header, prebuilt_table_footer)
   } else {
     # Fallback: build table dynamically

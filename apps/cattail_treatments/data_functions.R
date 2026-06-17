@@ -279,19 +279,19 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
         EXTRACT(month FROM i.inspdate) as trt_month
       FROM public.dblarv_insptrt_current i
       LEFT JOIN public.gis_sectcode sc ON LEFT(i.sitecode,7) = sc.sectcode
-      WHERE i.action IN ('3', 'A', 'D')  -- Actions 3, A, D = treatments
+      WHERE i.action IN ('1', '3', 'A', 'D')  -- Actions 1, 3, A, D = treatments
         AND i.inspdate <= $1  -- Only treatments up to analysis_date
-        AND i.matcode IN (
+        AND ( i.matcode IN (
           SELECT matcode 
           FROM public.mattype_list_targetdose
           WHERE prgassign_default = 'Cat' OR prg_alt1 = 'Cat'
-        )
+        ) OR i.matcode IN ('14','15','16') )
         AND (
           -- Fall/winter treatments using DOY (day 244-365: Sept 1 - Dec 31)
           EXTRACT(DOY FROM i.inspdate) BETWEEN 244 AND 365
           OR
-          -- Spring/summer treatments using DOY (day 135-213: May 15 - Aug 1) 
-          EXTRACT(DOY FROM i.inspdate) BETWEEN 135 AND 213
+          -- Spring/summer treatments using DOY (day 121-213: May 1 - Aug 1) 
+          EXTRACT(DOY FROM i.inspdate) BETWEEN 121 AND 213
         )
       
       UNION ALL
@@ -312,19 +312,19 @@ load_cattail_treatments <- function(analysis_date = NULL, current_year = NULL) {
         EXTRACT(month FROM a.inspdate) as trt_month
       FROM public.dblarv_insptrt_archive a
       LEFT JOIN public.gis_sectcode sc ON LEFT(a.sitecode,7) = sc.sectcode
-      WHERE a.action IN ('3', 'A', 'D')  -- Actions 3, A, D = treatments
+      WHERE a.action IN ('1', '3', 'A', 'D')  -- Actions 1, 3, A, D = treatments
         AND a.inspdate <= $1  -- Only treatments up to analysis_date
-        AND a.matcode IN (
+        AND ( a.matcode IN (
           SELECT matcode 
           FROM public.mattype_list_targetdose
           WHERE prgassign_default = 'Cat' OR prg_alt1 = 'Cat'
-        )
+        ) OR a.matcode IN ('14','15','16') )
         AND (
           -- Fall/winter treatments using DOY (day 244-365: Sept 1 - Dec 31)
           EXTRACT(DOY FROM a.inspdate) BETWEEN 244 AND 365
           OR
-          -- Spring/summer treatments using DOY (day 135-213: May 15 - Aug 1) 
-          EXTRACT(DOY FROM a.inspdate) BETWEEN 135 AND 213
+          -- Spring/summer treatments using DOY (day 121-213: May 1 - Aug 1) 
+          EXTRACT(DOY FROM a.inspdate) BETWEEN 121 AND 213
         )
       
       ORDER BY trtdate

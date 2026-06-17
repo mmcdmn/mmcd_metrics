@@ -40,9 +40,19 @@ source("/srv/shiny-server/shared/db_helpers.R")
 source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/shiny-server/shared/redis_cache.R")
 
+# Give Plumber its own distinct PostgreSQL application_name in pg_stat_activity.
+tryCatch({
+  if (exists("set_app_name", mode = "function")) {
+    set_app_name("Alex's Metrics Api", add_prefix = FALSE)
+  }
+  Sys.setenv(PGAPPNAME = "Alex's Metrics Api")
+}, error = function(e) {
+  message("[api] Could not set DB application_name: ", e$message)
+})
+
 # Claim constants (same as air_inspection_checklist/data_functions.R)
 CLAIM_HASH_PREFIX <- "claim"
-CLAIM_TTL <- 172800L  # 2 days
+CLAIM_TTL <- 1036800L  # 12 days
 claim_hash_key <- function(date) paste0(CLAIM_HASH_PREFIX, ":", date)
 
 load_env_vars()
@@ -61,7 +71,8 @@ tryCatch({
 # ── AUTH HELPERS
 # =============================================================================
 
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+# Shared validation/error helpers (also sourced by route sub-routers)
+source("/srv/api/api_helpers.R")
 
 get_api_keys <- function() {
   raw <- Sys.getenv("API_KEYS", unset = "")
@@ -130,7 +141,7 @@ validate_facility <- function(v) {
 validate_foreman <- function(v) {
   if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
   s <- trimws(as.character(v))
-  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 _-]+$", s)) stop("invalid foreman format")
+  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 ._-]+$", s)) stop("invalid foreman format")
   lkp <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
   if (is.null(lkp) || nrow(lkp) == 0) return(NULL)
   row <- lkp[tolower(lkp$shortname) == tolower(s), ]
@@ -379,7 +390,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
     on.exit(safe_disconnect(con), add = TRUE)
 
     # WHERE clauses: validated values → dbQuoteString → IN clause
-    fac_clause <- safe_in(con, "sc.facility", fac_v)
+    fac_clause <- safe_in(con, "sc.fac_for_air", fac_v)
     fos_clause <- safe_in(con, "sc.fosarea",  fos_emp_v)
     zon_clause <- safe_in(con, "sc.zone",     zone_v)
     pri_clause <- safe_in(con, "b.priority",  pri_v)
@@ -393,7 +404,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
         SELECT DISTINCT ON (b.sitecode)
           b.sitecode, b.acres, b.priority,
           b.drone AS site_drone, b.remarks AS site_remarks, b.sample AS site_sample,
-          sc.facility, sc.zone, sc.fosarea, sc.sectcode
+          sc.fac_for_air AS facility, sc.zone, sc.fosarea, sc.sectcode
         FROM loc_breeding_sites b
         LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
         WHERE (b.enddate IS NULL OR b.enddate > '", d_sql, "')
@@ -538,22 +549,282 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 }
 
 
+#* Checkback checklist — sites needing post-treatment re-inspection.
+#* Returns per-site rows for treated sites that still need a checkback,
+#* grouped by brood (consecutive treatment days at same facility).
+#* Used to drive the Google Sheets checkback tracker.
+#*
+#* @param facility     Optional facility code (MO, E, W, N, Sr, Sj …)
+#* @param lookback_days Days back for treatment window (1–60, default 14)
+#* @param checkback_type "percent" or "number" (default "percent")
+#* @param checkback_target Target value: percent (1–100) or fixed count (1–500). Default 10
+#* @param matcode      Optional material code filter
+#* @get /v1/private/checkback-checklist
+#* @json
+function(facility = NULL, lookback_days = 14, checkback_type = "percent",
+         checkback_target = 10, matcode = NULL, res) {
+  tryCatch({
+
+    # ── Validate parameters ──
+    fac_v <- validate_facility(facility)
+    date_v <- Sys.Date()
+
+    lb <- suppressWarnings(as.integer(lookback_days %||% 14L))
+    if (is.na(lb) || lb < 1L || lb > 60L) stop("lookback_days must be 1-60")
+
+    cb_type <- tolower(trimws(as.character(checkback_type %||% "percent")))
+    if (!cb_type %in% c("percent", "number")) stop("checkback_type must be 'percent' or 'number'")
+
+    cb_target <- suppressWarnings(as.integer(checkback_target %||% 10L))
+    if (is.na(cb_target) || cb_target < 1L || cb_target > 500L) stop("checkback_target must be 1-500")
+
+    mat_v <- NULL
+    if (!is.null(matcode) && nzchar(trimws(matcode %||% ""))) {
+      mat_v <- trimws(as.character(matcode))
+      if (nchar(mat_v) > 16L || !grepl("^[A-Za-z0-9_-]+$", mat_v)) stop("invalid matcode")
+    }
+
+    start_date <- date_v - lb
+    # Search for checkbacks up to 30 days after treatment end
+    checkback_end <- date_v + 30L
+
+    # ── DB connection ──
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
+
+    # ── Table strategy ──
+    current_year <- as.integer(format(Sys.Date(), "%Y"))
+    start_year <- as.integer(format(start_date, "%Y"))
+
+    need_archive <- start_year < current_year
+    need_current <- TRUE
+
+    # ── Load treatments ──
+    fac_clause <- safe_in(con, "gis.fac_for_air", fac_v)
+    mat_clause <- if (!is.null(mat_v)) safe_in(con, "insp.matcode", mat_v) else ""
+
+    trt_base <- "
+      SELECT insp.inspdate, gis.fac_for_air AS facility, insp.sitecode, insp.acres,
+             insp.matcode, mat.mattype, mat.effect_days, insp.numdip
+      FROM %s insp
+      LEFT JOIN gis_sectcode gis ON gis.sectcode = LEFT(insp.sitecode, 7)
+      LEFT JOIN mattype_list_targetdose mat ON insp.matcode = mat.matcode
+      WHERE insp.action = 'A'
+        AND insp.inspdate >= '%s' AND insp.inspdate <= '%s'
+        %s %s
+    "
+
+    trt_queries <- c()
+    if (need_current) {
+      trt_queries <- c(trt_queries, sprintf(trt_base, "dblarv_insptrt_current",
+        as.character(start_date), as.character(date_v), fac_clause, mat_clause))
+    }
+    if (need_archive) {
+      trt_queries <- c(trt_queries, sprintf(trt_base, "dblarv_insptrt_archive",
+        as.character(start_date), as.character(date_v), fac_clause, mat_clause))
+    }
+
+    treatments <- DBI::dbGetQuery(con, paste(trt_queries, collapse = " UNION ALL "))
+    if (is.null(treatments) || nrow(treatments) == 0) {
+      return(list(count = 0L, data = list(), broods = list(), refreshed_at = as.character(Sys.time())))
+    }
+    treatments$inspdate <- as.Date(treatments$inspdate)
+
+    # ── Calculate broods (consecutive treatment days per facility) ──
+    rounds <- treatments %>%
+      dplyr::arrange(facility, inspdate) %>%
+      dplyr::group_by(facility) %>%
+      dplyr::mutate(
+        date_diff = as.numeric(inspdate - dplyr::lag(inspdate, default = inspdate[1] - 2)),
+        round_start = ifelse(date_diff > 1, TRUE, FALSE),
+        round_id = cumsum(round_start)
+      ) %>%
+      dplyr::group_by(facility, round_id) %>%
+      dplyr::summarise(
+        start_date = min(inspdate),
+        end_date = max(inspdate),
+        sites_treated = dplyr::n_distinct(sitecode),
+        total_acres = sum(acres, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        round_name = paste(facility, format(start_date, "%m/%d"), sep = "-"),
+        checkbacks_needed = dplyr::case_when(
+          cb_type == "percent" ~ ceiling(sites_treated * cb_target / 100),
+          TRUE ~ pmin(as.integer(cb_target), sites_treated)
+        )
+      )
+
+    # ── Load checkback inspections (action='4') for treated sites ──
+    treated_sites <- unique(treatments$sitecode)
+    site_list_sql <- paste0("'", paste(treated_sites, collapse = "','"), "'")
+
+    cb_base <- "
+      SELECT insp.inspdate, insp.sitecode, insp.numdip, insp.posttrt_p
+      FROM %s insp
+      WHERE insp.sitecode IN (%s)
+        AND insp.action = '4'
+        AND insp.posttrt_p IS NOT NULL
+        AND insp.inspdate >= '%s' AND insp.inspdate <= '%s'
+    "
+    cb_queries <- c()
+    if (need_current) {
+      cb_queries <- c(cb_queries, sprintf(cb_base, "dblarv_insptrt_current",
+        site_list_sql, as.character(start_date), as.character(checkback_end)))
+    }
+    if (need_archive) {
+      cb_queries <- c(cb_queries, sprintf(cb_base, "dblarv_insptrt_archive",
+        site_list_sql, as.character(start_date), as.character(checkback_end)))
+    }
+    checkbacks <- DBI::dbGetQuery(con, paste(cb_queries, collapse = " UNION ALL "))
+    if (!is.null(checkbacks) && nrow(checkbacks) > 0) {
+      checkbacks$inspdate <- as.Date(checkbacks$inspdate)
+    } else {
+      checkbacks <- data.frame(inspdate = as.Date(character(0)), sitecode = character(0),
+                               numdip = numeric(0), posttrt_p = character(0))
+    }
+
+    # ── For each brood, find sites that still need a checkback ──
+    result_rows <- list()
+    brood_summaries <- list()
+
+    for (i in seq_len(nrow(rounds))) {
+      round <- rounds[i, ]
+
+      # Sites in this brood
+      brood_treatments <- treatments %>%
+        dplyr::filter(facility == round$facility,
+                      inspdate >= round$start_date,
+                      inspdate <= round$end_date)
+
+      brood_sites <- unique(brood_treatments$sitecode)
+
+      # Find sites with valid checkbacks, tracking the best checkback per site
+      completed_sites <- c()
+      completed_info <- list()  # sitecode -> list(checkback_date, post_dip)
+      for (site in brood_sites) {
+        last_trt_date <- max(brood_treatments$inspdate[brood_treatments$sitecode == site])
+        site_cbs <- checkbacks[checkbacks$sitecode == site & checkbacks$inspdate > last_trt_date, ]
+
+        # Invalidate if a later treatment happened before the checkback
+        future_trts <- treatments$inspdate[treatments$sitecode == site & treatments$inspdate > last_trt_date]
+        if (length(future_trts) > 0 && nrow(site_cbs) > 0) {
+          next_trt <- min(future_trts)
+          site_cbs <- site_cbs[site_cbs$inspdate < next_trt, ]
+        }
+
+        if (nrow(site_cbs) > 0) {
+          completed_sites <- c(completed_sites, site)
+          # Pick the earliest valid checkback (first one after treatment)
+          best_cb <- site_cbs[which.min(site_cbs$inspdate), ]
+          completed_info[[site]] <- list(
+            checkback_date = as.character(best_cb$inspdate[1]),
+            post_dip = best_cb$numdip[1]
+          )
+        }
+      }
+
+      # Sites that still need a checkback
+      remaining_sites <- setdiff(brood_sites, completed_sites)
+      completed_count <- length(completed_sites)
+
+      brood_summaries[[i]] <- list(
+        brood = round$round_name,
+        facility = round$facility,
+        start_date = as.character(round$start_date),
+        end_date = as.character(round$end_date),
+        sites_treated = round$sites_treated,
+        checkbacks_needed = round$checkbacks_needed,
+        checkbacks_completed = completed_count,
+        remaining = max(0L, round$checkbacks_needed - completed_count)
+      )
+
+      # Add per-site rows for ALL brood sites (remaining + completed)
+      # Remaining sites are listed first, completed after
+      for (site in c(remaining_sites, completed_sites)) {
+        site_trts <- brood_treatments[brood_treatments$sitecode == site, ]
+        last_trt <- site_trts[which.max(site_trts$inspdate), ]
+        is_remaining <- site %in% remaining_sites
+        cb_info <- if (!is_remaining) completed_info[[site]] else NULL
+        result_rows[[length(result_rows) + 1]] <- list(
+          sitecode = site,
+          brood = round$round_name,
+          facility = round$facility,
+          acres = round(as.numeric(last_trt$acres[1]), 2),
+          treatment_date = as.character(last_trt$inspdate[1]),
+          matcode = last_trt$matcode[1],
+          mattype = last_trt$mattype[1],
+          effect_days = as.integer(last_trt$effect_days[1]),
+          pre_treatment_dips = last_trt$numdip[1],
+          needs_checkback = is_remaining,
+          checkback_date = if (!is_remaining) cb_info$checkback_date else NULL,
+          post_dip = if (!is_remaining) cb_info$post_dip else NULL
+        )
+      }
+    }
+
+    list(
+      count = length(result_rows),
+      checkback_type = cb_type,
+      checkback_target = cb_target,
+      lookback_days = lb,
+      facility_filter = facility %||% "all",
+      broods = brood_summaries,
+      data = result_rows,
+      refreshed_at = as.character(Sys.time())
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+
+#* Get active employee number → shortname lookup.
+#* Returns a simple array of {emp_num, shortname} for all active employees.
+#* Used by Google Sheets scripts to resolve typed employee numbers to names.
+#* @get /v1/private/employees
+#* @json
+function(res) {
+  tryCatch({
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
+
+    rows <- DBI::dbGetQuery(con, "
+      SELECT DISTINCT ON (emp_num) emp_num::text, shortname
+      FROM employee_list
+	    WHERE active = 'true'
+      ORDER BY emp_num, pkey DESC")
+
+    list(
+      count = nrow(rows),
+      data  = lapply(seq_len(nrow(rows)), function(i) {
+        list(emp_num = rows$emp_num[i], shortname = rows$shortname[i])
+      })
+    )
+  }, error = function(e) api_error(res, 500, e$message))
+}
+
+
 #* Get active claims from the Redis cache.
 #* Returns all claims within the lookback window so sheets/apps can stay in sync.
-#* @param lookback_days How many days back to retrieve claims (default 2, max 14)
+#* @param lookback_days How many days back to retrieve claims (default 12, max 14)
 #* @get /v1/private/claims
 #* @json
-function(lookback_days = 2, res) {
+function(lookback_days = 12, res) {
   tryCatch({
-    lb <- suppressWarnings(as.integer(lookback_days %||% 2L))
-    if (is.na(lb) || lb < 1L) lb <- 2L
+    lb <- suppressWarnings(as.integer(lookback_days %||% 12L))
+    if (is.na(lb) || lb < 1L) lb <- 12L
     if (lb > 14L) lb <- 14L
 
     all_claims <- list()
     today <- Sys.Date()
     for (d in 0:lb) {
       date_str <- format(today - d, "%Y-%m-%d")
-      day_claims <- redis_hgetall(claim_hash_key(date_str))
+      day_claims <- tryCatch(
+        redis_hgetall(claim_hash_key(date_str)),
+        error = function(e) {
+          message("[claims] Redis error for ", date_str, ": ", e$message)
+          list()
+        }
+      )
       if (length(day_claims) > 0) {
         for (sc in names(day_claims)) {
           if (is.null(all_claims[[sc]])) {
@@ -609,11 +880,12 @@ function(req, res) {
     # Build emp_num → shortname lookup so sheet claims (which only have IDs) get real names
     emp_name_lookup <- tryCatch({
       con <- get_db_connection()
+      on.exit(safe_disconnect(con), add = TRUE)
       if (!is.null(con)) {
         rows <- dbGetQuery(con, "
           SELECT DISTINCT ON (emp_num) emp_num::text, shortname
           FROM employee_list
-          ORDER BY emp_num, enddate NULLS LAST")
+          ORDER BY emp_num, pkey DESC")
         setNames(rows$shortname, rows$emp_num)
       } else character(0)
     }, error = function(e) character(0))
@@ -701,6 +973,24 @@ function(req, res) {
 
 
 # =============================================================================
+# ── RESTART API (watchdog in startup.sh restarts the process)
+# =============================================================================
+
+#* Restart the Plumber API process.
+#* The watchdog loop in startup.sh will automatically restart it within ~3 seconds.
+#* @post /v1/private/restart-api
+#* @json
+function(req, res) {
+  message("[api] Restart requested — shutting down Plumber process.")
+  # Respond first, then quit
+  later::later(function() {
+    quit(save = "no", status = 0)
+  }, delay = 0.5)
+  list(status = "restarting", message = "API will restart in ~3 seconds.")
+}
+
+
+# =============================================================================
 # ── LLM TUNNEL REGISTRATION
 # =============================================================================
 # The local LLM orchestrator registers its Cloudflare tunnel URL here so the
@@ -730,9 +1020,10 @@ function(req, res) {
     if (is.null(body)) return(api_error(res, 400, "invalid JSON body"))
     url <- trimws(as.character(body$tunnel_url %||% ""))
     if (!nzchar(url)) return(api_error(res, 400, "tunnel_url is required"))
-    # Only allow HTTPS trycloudflare.com URLs
-    if (!grepl("^https://[a-z0-9-]+\\.trycloudflare\\.com$", url)) {
-      return(api_error(res, 400, "tunnel_url must be a valid trycloudflare.com HTTPS URL"))
+    # Allow HTTPS trycloudflare.com URLs or the persistent named tunnel domain
+    valid_pattern <- "^https://([a-z0-9-]+\\.trycloudflare\\.com|mmcd-llm\\.alex-dyakin\\.com)$"
+    if (!grepl(valid_pattern, url)) {
+      return(api_error(res, 400, "tunnel_url must be a valid HTTPS tunnel URL"))
     }
     redis_set(LLM_TUNNEL_KEY, url, ttl = LLM_TUNNEL_TTL)
     list(registered = TRUE, tunnel_url = url)

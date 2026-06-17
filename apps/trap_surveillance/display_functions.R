@@ -625,3 +625,442 @@ build_area_popups <- function(map_sf, metric_type, infection_metric) {
     html
   })
 }
+
+# =============================================================================
+# TRAP PERFORMANCE MAP — Renders scored traps colored by composite score
+# Based on Chakravarti et al. (2026) trap placement optimization approach
+# =============================================================================
+
+render_trap_performance_map <- function(perf_data, areas_sf = NULL) {
+  
+  if (is.null(perf_data) || nrow(perf_data) == 0) {
+    return(leaflet() %>%
+             addTiles() %>%
+             setView(lng = -93.3, lat = 44.95, zoom = 9) %>%
+             addControl(html = "<div style='background:white;padding:10px;font-size:14px;'>No trap performance data available</div>",
+                        position = "topright"))
+  }
+  
+  # Filter to traps with geometry
+  perf_data <- perf_data[!is.na(perf_data$lon) & !is.na(perf_data$lat), ]
+  if (nrow(perf_data) == 0) return(leaflet() %>% addTiles() %>%
+                                     setView(lng = -93.3, lat = 44.95, zoom = 9))
+  
+  traps_sf <- st_as_sf(perf_data, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+  
+  # Color scale: red (low score) → yellow (medium) → green (high)
+  score_pal <- colorNumeric(
+    palette = c("#e74c3c", "#f39c12", "#f1c40f", "#2ecc71", "#27ae60"),
+    domain = c(0, 1),
+    na.color = "#999"
+  )
+  
+  # Size by yield (bigger markers = more mosquitoes captured)
+  radius_scale <- 4 + 8 * (perf_data$yield_score)
+  
+  # Build popup
+  trap_popup <- sprintf(
+    paste0(
+      "<strong style='font-size:14px;'>Trap: %s</strong><br/>",
+      "<span style='color:#666;'>VI Area: %s</span><br/>",
+      "<hr style='margin:4px 0;'/>",
+      "<strong>Composite Score: <span style='font-size:16px;color:%s;'>%.2f</span></strong>",
+      " <span style='padding:2px 6px;border-radius:3px;background:%s;color:white;font-size:11px;'>%s</span><br/>",
+      "<hr style='margin:4px 0;'/>",
+      "<table style='font-size:12px;width:100%%;'>",
+      "<tr><td>Yield Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%.1f avg/wk)</td></tr>",
+      "<tr><td>Testing Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%d pools)</td></tr>",
+      "<tr><td>Detection Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%d positive, %.1f%%)</td></tr>",
+      "<tr><td>Consistency Score:</td><td><strong>%.2f</strong></td><td style='color:#888;'>(%d weeks)</td></tr>",
+      "</table>",
+      "<hr style='margin:4px 0;'/>",
+      "<span style='color:#888;font-size:11px;'>Years active: %d | Total mosq: %s | Tested: %s</span>"
+    ),
+    perf_data$loc_code,
+    ifelse(is.na(perf_data$viarea), "N/A", perf_data$viarea),
+    ifelse(perf_data$composite_score >= 0.6, "#27ae60",
+           ifelse(perf_data$composite_score >= 0.3, "#f39c12", "#e74c3c")),
+    perf_data$composite_score,
+    ifelse(perf_data$performance_tier == "High", "#27ae60",
+           ifelse(perf_data$performance_tier == "Medium", "#f39c12", "#e74c3c")),
+    perf_data$performance_tier,
+    perf_data$yield_score, as.numeric(perf_data$avg_per_week),
+    perf_data$testing_score, as.integer(perf_data$total_pools),
+    perf_data$detection_score, as.integer(perf_data$total_positive), as.numeric(perf_data$positivity_rate_pct),
+    perf_data$consistency_score, as.integer(perf_data$weeks_active),
+    as.integer(perf_data$years_active),
+    format(as.numeric(perf_data$total_mosq), big.mark = ","),
+    format(as.numeric(perf_data$total_tested), big.mark = ",")
+  )
+  
+  bg_layers <- load_background_layers()
+  
+  m <- leaflet(traps_sf) %>%
+    addMapPane("areas", zIndex = 410) %>%
+    addMapPane("traps", zIndex = 450) %>%
+    addTiles(group = "OpenStreetMap") %>%
+    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    addProviderTiles("Esri.WorldImagery", group = "Satellite")
+  
+  # Add VI area polygons as background (if available)
+  overlay_groups <- c()
+  if (!is.null(areas_sf) && nrow(areas_sf) > 0) {
+    m <- m %>%
+      addPolygons(
+        data = areas_sf,
+        fillColor = "#f0f0f0", fillOpacity = 0.15,
+        color = "#666", weight = 1.5, opacity = 0.5,
+        label = ~viarea,
+        options = pathOptions(pane = "areas"),
+        group = "VI Areas"
+      )
+    overlay_groups <- c(overlay_groups, "VI Areas")
+  }
+  
+  # Add facility/county boundaries
+  if (!is.null(bg_layers$facilities)) {
+    m <- m %>% addPolylines(data = bg_layers$facilities, color = "#2c3e50",
+                            weight = 1.5, opacity = 0.6, group = "Facilities")
+    overlay_groups <- c(overlay_groups, "Facilities")
+  }
+  if (!is.null(bg_layers$counties)) {
+    m <- m %>% addPolylines(data = bg_layers$counties, color = "#d62728",
+                            weight = 2.5, opacity = 0.7, group = "Counties")
+    overlay_groups <- c(overlay_groups, "Counties")
+  }
+  
+  # Add scored trap markers
+  m <- m %>%
+    addCircleMarkers(
+      data = traps_sf,
+      radius = radius_scale,
+      color = "#333",
+      fillColor = ~score_pal(composite_score),
+      fillOpacity = 0.85,
+      weight = 1,
+      popup = trap_popup,
+      label = ~paste0(loc_code, " - Score: ", sprintf("%.2f", composite_score),
+                      " (", performance_tier, ")"),
+      options = pathOptions(pane = "traps"),
+      group = "Trap Scores"
+    )
+  overlay_groups <- c(overlay_groups, "Trap Scores")
+  
+  # Legend
+  m <- m %>%
+    addLegend(
+      position = "bottomright",
+      pal = score_pal,
+      values = c(0, 1),
+      title = "Performance Score",
+      opacity = 0.85
+    )
+  
+  # Score tier legend
+  tier_legend_html <- paste0(
+    "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;'>",
+    "<strong>Score Components</strong><br/>",
+    "<span style='color:#27ae60;'>&#9679;</span> High (&ge; 0.6)<br/>",
+    "<span style='color:#f39c12;'>&#9679;</span> Medium (0.3 - 0.6)<br/>",
+    "<span style='color:#e74c3c;'>&#9679;</span> Low (&lt; 0.3)<br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<strong>Marker Size</strong> = Yield<br/>",
+    "<span style='font-size:10px;color:#888;'>Larger = more mosquitoes captured</span>",
+    "</div>"
+  )
+  m <- m %>% addControl(html = tier_legend_html, position = "topright")
+  
+  # Title
+  m <- m %>%
+    addControl(
+      html = "<div style='background:white;padding:8px 12px;border-radius:5px;font-size:13px;border:1px solid #ccc;'>
+                <strong>Trap Performance Scores</strong> | Based on Chakravarti et al. (2026)
+              </div>",
+      position = "topleft"
+    )
+  
+  m <- m %>%
+    addLayersControl(
+      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      overlayGroups = overlay_groups,
+      options = layersControlOptions(collapsed = TRUE)
+    ) %>%
+    addScaleBar(position = "bottomleft")
+  
+  m
+}
+
+# =============================================================================
+# PHASE 1 — Spatial Risk Map
+# =============================================================================
+# Renders a leaflet map showing spatial risk index per trap.
+# Uses blue-to-red color scale representing low-to-high WNV risk.
+# =============================================================================
+
+render_spatial_risk_map <- function(risk_data, areas_sf = NULL) {
+  # Deprecated — redirects to combined map
+  render_trap_analysis_map(risk_data = risk_data, areas_sf = areas_sf)
+}
+
+# =============================================================================
+# COMBINED CAUSAL ANALYSIS MAP
+# =============================================================================
+# Renders a leaflet map with:
+#   1. Risk surface heatmap (interpolated grid) — shows area-wide WNV risk
+#   2. Trap markers colored by composite score — shows individual performance
+#   3. VI area polygons colored by coverage grade — shows coverage gaps
+#   4. Coverage gap shading — areas far from any trap
+# =============================================================================
+
+render_trap_analysis_map <- function(risk_data, risk_surface = NULL,
+                                      areas_sf = NULL, area_coverage = NULL) {
+  
+  if (is.null(risk_data) || nrow(risk_data) == 0) {
+    return(leaflet() %>%
+             addTiles() %>%
+             setView(lng = -93.3, lat = 44.95, zoom = 9) %>%
+             addControl(html = "<div style='background:white;padding:10px;font-size:14px;'>Click 'Run Analysis' to load data.</div>",
+                        position = "topright"))
+  }
+  
+  # Filter to traps with geometry
+  geo_data <- risk_data[!is.na(risk_data$lon) & !is.na(risk_data$lat), ]
+  if (nrow(geo_data) == 0) return(leaflet() %>% addTiles() %>%
+                                    setView(lng = -93.3, lat = 44.95, zoom = 9))
+  
+  traps_sf <- st_as_sf(geo_data, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+  
+  # Color palettes
+  score_pal <- colorNumeric(
+    palette = c("#e74c3c", "#f39c12", "#f1c40f", "#2ecc71", "#27ae60"),
+    domain = c(0, 1), na.color = "#999"
+  )
+  
+  # Marker size by yield
+  radius_scale <- 4 + 8 * geo_data$yield_score
+  
+  # Build trap popup
+  trap_popup <- sprintf(
+    paste0(
+      "<strong style='font-size:14px;'>%s</strong> ",
+      "<span style='padding:2px 6px;border-radius:3px;background:%s;color:white;font-size:11px;'>%s</span><br/>",
+      "<span style='color:#666;'>%s</span>",
+      "<hr style='margin:4px 0;'/>",
+      "<table style='font-size:12px;width:100%%;'>",
+      "<tr><td>Score:</td><td><strong>%.3f</strong></td><td>Risk Index:</td><td><strong>%.3f</strong></td></tr>",
+      "<tr><td>Yield:</td><td>%.2f</td><td>Spatial Risk:</td><td>%.3f</td></tr>",
+      "<tr><td>Testing:</td><td>%.2f</td><td>Detection:</td><td>%.2f</td></tr>",
+      "</table>",
+      "<hr style='margin:4px 0;'/>",
+      "<span style='font-size:11px;color:#666;'>%.1f avg/wk | %d pools | %d pos | %d wks active</span>"
+    ),
+    geo_data$loc_code,
+    ifelse(geo_data$performance_tier == "High", "#27ae60",
+           ifelse(geo_data$performance_tier == "Medium", "#f39c12", "#e74c3c")),
+    geo_data$performance_tier,
+    ifelse(is.na(geo_data$viarea), "", geo_data$viarea),
+    geo_data$composite_score,
+    geo_data$risk_index,
+    geo_data$yield_score, geo_data$spatial_risk,
+    geo_data$testing_score, geo_data$detection_score,
+    as.numeric(geo_data$avg_per_week),
+    as.integer(geo_data$total_pools),
+    as.integer(geo_data$total_positive),
+    as.integer(geo_data$weeks_active)
+  )
+  
+  bg_layers <- load_background_layers()
+  
+  m <- leaflet(traps_sf) %>%
+    addMapPane("heatmap", zIndex = 400) %>%
+    addMapPane("areas", zIndex = 410) %>%
+    addMapPane("traps", zIndex = 450) %>%
+    addTiles(group = "OpenStreetMap") %>%
+    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    addProviderTiles("Esri.WorldImagery", group = "Satellite")
+  
+  overlay_groups <- c()
+  
+  # --- Layer 1: Risk Surface Heatmap ---
+  if (!is.null(risk_surface) && nrow(risk_surface) > 0) {
+    # Filter out zero-risk cells and gap cells for cleaner rendering
+    surf <- risk_surface[risk_surface$risk_value > 0.01 & !risk_surface$is_gap, ]
+    if (nrow(surf) > 0) {
+      heat_pal <- colorNumeric(
+        palette = c("#3498db22", "#2ecc7144", "#f1c40f88", "#e67e22aa", "#e74c3ccc"),
+        domain = c(0, max(surf$risk_value, na.rm = TRUE)),
+        na.color = "transparent"
+      )
+      m <- m %>%
+        addCircleMarkers(
+          data = surf,
+          lng = ~lon, lat = ~lat,
+          radius = 4,
+          stroke = FALSE,
+          fillColor = ~heat_pal(risk_value),
+          fillOpacity = 0.6,
+          options = pathOptions(pane = "heatmap"),
+          group = "Risk Surface"
+        )
+      overlay_groups <- c(overlay_groups, "Risk Surface")
+    }
+    
+    # Show coverage gaps
+    gaps <- risk_surface[risk_surface$is_gap & risk_surface$nearest_trap_km > 3, ]
+    if (nrow(gaps) > 0) {
+      m <- m %>%
+        addCircleMarkers(
+          data = gaps,
+          lng = ~lon, lat = ~lat,
+          radius = 3,
+          stroke = FALSE,
+          fillColor = "#95a5a6",
+          fillOpacity = 0.3,
+          options = pathOptions(pane = "heatmap"),
+          group = "Coverage Gaps"
+        )
+      overlay_groups <- c(overlay_groups, "Coverage Gaps")
+    }
+  }
+  
+  # --- Layer 2: VI Area polygons with coverage grade ---
+  if (!is.null(areas_sf) && nrow(areas_sf) > 0) {
+    if (!is.null(area_coverage) && nrow(area_coverage) > 0) {
+      areas_merged <- merge(areas_sf, area_coverage, by = "viarea", all.x = TRUE)
+      
+      grade_colors <- c("Good" = "#27ae60", "Adequate" = "#f39c12",
+                         "Thin" = "#e67e22", "Gap" = "#e74c3c")
+      areas_merged$fill_color <- ifelse(
+        is.na(areas_merged$coverage_grade), "#cccccc",
+        grade_colors[areas_merged$coverage_grade]
+      )
+      
+      area_popup <- sprintf(
+        paste0(
+          "<strong>%s</strong><br/>",
+          "<span style='padding:2px 6px;border-radius:3px;background:%s;color:white;'>%s coverage</span><br/>",
+          "<hr style='margin:4px 0;'/>",
+          "<table style='font-size:12px;'>",
+          "<tr><td>Traps:</td><td><strong>%s</strong></td></tr>",
+          "<tr><td>Avg Score:</td><td>%s</td></tr>",
+          "<tr><td>Avg Risk:</td><td>%s</td></tr>",
+          "<tr><td>Pools:</td><td>%s</td></tr>",
+          "<tr><td>Positives:</td><td>%s (%s%%)</td></tr>",
+          "<tr><td>Low Performers:</td><td>%s%%</td></tr>",
+          "</table>"
+        ),
+        areas_merged$viarea,
+        ifelse(is.na(areas_merged$coverage_grade), "#999",
+               grade_colors[areas_merged$coverage_grade]),
+        ifelse(is.na(areas_merged$coverage_grade), "No data", areas_merged$coverage_grade),
+        ifelse(is.na(areas_merged$n_traps), "0", areas_merged$n_traps),
+        ifelse(is.na(areas_merged$avg_score), "N/A", areas_merged$avg_score),
+        ifelse(is.na(areas_merged$avg_risk), "N/A", areas_merged$avg_risk),
+        ifelse(is.na(areas_merged$total_pools), "0", format(areas_merged$total_pools, big.mark = ",")),
+        ifelse(is.na(areas_merged$total_positive), "0", areas_merged$total_positive),
+        ifelse(is.na(areas_merged$positivity_pct), "0", areas_merged$positivity_pct),
+        ifelse(is.na(areas_merged$pct_low), "0", areas_merged$pct_low)
+      )
+      
+      m <- m %>%
+        addPolygons(
+          data = areas_merged,
+          fillColor = ~fill_color, fillOpacity = 0.2,
+          color = "#333", weight = 2, opacity = 0.7,
+          popup = area_popup,
+          label = ~paste0(viarea, " — ", ifelse(is.na(coverage_grade), "?", coverage_grade),
+                          " (", ifelse(is.na(n_traps), 0, n_traps), " traps)"),
+          options = pathOptions(pane = "areas"),
+          group = "VI Areas (Coverage)"
+        )
+      overlay_groups <- c(overlay_groups, "VI Areas (Coverage)")
+    } else {
+      m <- m %>%
+        addPolygons(
+          data = areas_sf,
+          fillColor = "#f0f0f0", fillOpacity = 0.15,
+          color = "#666", weight = 1.5, opacity = 0.5,
+          label = ~viarea,
+          options = pathOptions(pane = "areas"),
+          group = "VI Areas"
+        )
+      overlay_groups <- c(overlay_groups, "VI Areas")
+    }
+  }
+  
+  # --- Background layers ---
+  if (!is.null(bg_layers$facilities)) {
+    m <- m %>% addPolylines(data = bg_layers$facilities, color = "#2c3e50",
+                            weight = 1.5, opacity = 0.6, group = "Facilities")
+    overlay_groups <- c(overlay_groups, "Facilities")
+  }
+  if (!is.null(bg_layers$counties)) {
+    m <- m %>% addPolylines(data = bg_layers$counties, color = "#d62728",
+                            weight = 2.5, opacity = 0.7, group = "Counties")
+    overlay_groups <- c(overlay_groups, "Counties")
+  }
+  
+  # --- Layer 3: Trap markers ---
+  m <- m %>%
+    addCircleMarkers(
+      data = traps_sf,
+      radius = radius_scale,
+      color = "#333", weight = 1,
+      fillColor = ~score_pal(composite_score),
+      fillOpacity = 0.9,
+      popup = trap_popup,
+      label = ~paste0(loc_code, " — Score: ", sprintf("%.2f", composite_score),
+                      " | Risk: ", sprintf("%.2f", risk_index)),
+      options = pathOptions(pane = "traps"),
+      group = "Trap Scores"
+    )
+  overlay_groups <- c(overlay_groups, "Trap Scores")
+  
+  # --- Legends ---
+  m <- m %>%
+    addLegend(position = "bottomright", pal = score_pal,
+              values = c(0, 1), title = "Trap Score (markers)", opacity = 0.85)
+  
+  legend_html <- paste0(
+    "<div style='background:white;padding:8px 10px;border-radius:5px;border:1px solid #ccc;font-size:12px;'>",
+    "<strong>Map Layers</strong><br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<strong>&#9679; Markers</strong> = Individual Traps<br/>",
+    "<span style='margin-left:12px;color:#27ae60;'>&#9679;</span> High score (&ge; 0.6)<br/>",
+    "<span style='margin-left:12px;color:#f39c12;'>&#9679;</span> Medium (0.3&ndash;0.6)<br/>",
+    "<span style='margin-left:12px;color:#e74c3c;'>&#9679;</span> Low (&lt; 0.3)<br/>",
+    "<span style='margin-left:12px;font-size:10px;color:#888;'>Size = mosquito yield</span><br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<strong style='color:#e67e22;'>&#11044;</strong> <strong>Heatmap</strong> = Interpolated WNV Risk<br/>",
+    "<span style='margin-left:12px;font-size:10px;color:#888;'>Blue&rarr;Green&rarr;Yellow&rarr;Red = Low&rarr;High risk</span><br/>",
+    "<span style='margin-left:12px;font-size:10px;color:#888;'>Estimated between traps via kernel smoothing</span><br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<strong>&#9632; Area Outlines</strong> = VI Area Coverage<br/>",
+    "<span style='margin-left:12px;color:#27ae60;'>&#9632;</span> Good<br/>",
+    "<span style='margin-left:12px;color:#f39c12;'>&#9632;</span> Adequate<br/>",
+    "<span style='margin-left:12px;color:#e67e22;'>&#9632;</span> Thin<br/>",
+    "<span style='margin-left:12px;color:#e74c3c;'>&#9632;</span> Gap<br/>",
+    "<hr style='margin:4px 0;'/>",
+    "<span style='color:#95a5a6;'>&#9679;</span> <strong>Grey dots</strong> = No nearby traps (coverage gap)<br/>",
+    "</div>"
+  )
+  m <- m %>% addControl(html = legend_html, position = "topright")
+  
+  m <- m %>%
+    addControl(
+      html = "<div style='background:white;padding:8px 12px;border-radius:5px;font-size:13px;border:1px solid #ccc;'>
+                <strong>Causal Analysis</strong> | Risk Surface + Trap Scores + Coverage
+              </div>",
+      position = "topleft"
+    )
+  
+  m <- m %>%
+    addLayersControl(
+      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      overlayGroups = overlay_groups,
+      options = layersControlOptions(collapsed = FALSE)
+    ) %>%
+    addScaleBar(position = "bottomleft")
+  
+  m
+}

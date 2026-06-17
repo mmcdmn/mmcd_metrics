@@ -400,10 +400,10 @@ get_sections_by_towncode <- function(towncode_filter = NULL, facility_filter = N
   return(data$sectcode)
 }
 
-#' Get breeding sites data from JK table (NO gis_sectcode join)
+#' Get breeding sites data from table (NO gis_sectcode join)
 #'
-#' Retrieves all breeding site data directly from the JK table.
-#' facility, zone, and foreman (FOS Area) all come from the JK table itself.
+#' Retrieves all breeding site data directly from the  table.
+#' facility, zone, and foreman (FOS Area) all come from the  table itself.
 #' The foreman field is NOT NULL, providing the definitive FOS Area for each site.
 #' Dynamic columns (ra, airmap_num, etc.) are included automatically.
 #'
@@ -764,4 +764,44 @@ get_structure_filter_options <- function(facility_filter = NULL, fosarea_filter 
     fosarea_list = sort(unique(data$fosarea)),
     structure_types = sort(unique(toupper(data$s_type)))
   ))
+}
+
+# =============================================================================
+# STRUCTURE HISTORY AUTO-FILL (current year treatments for section cards)
+# =============================================================================
+
+#' Get structure treatment/inspection history for the current year
+#'
+#' Queries dblarv_insptrt_current for all records where list_type = 'STR'
+#' in the current year. Returns data keyed by sitecode for auto-filling
+#' section card table rows with: date, sample, #/dip, mat, amt, emp #.
+#'
+#' @return A data frame with columns: sitecode, inspdate, sample_num, numdip, matcode, amts, emp1, wet
+#' @export
+get_structure_history <- function() {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+
+  current_year <- as.integer(format(Sys.Date(), "%Y"))
+
+  query <- sprintf("
+    SELECT
+      sitecode,
+      inspdate,
+      sample_num,
+      numdip,
+      matcode,
+      amts,
+      emp1,
+      wet
+    FROM public.dblarv_insptrt_current
+    WHERE list_type = 'STR'
+      AND EXTRACT(YEAR FROM inspdate) = %d
+    ORDER BY sitecode, inspdate
+  ", current_year)
+
+  message(sprintf("[section_cards] Loading structure history for %d...", current_year))
+  data <- dbGetQuery(con, query)
+  message(sprintf("[section_cards] Loaded %d structure treatment records for %d", nrow(data), current_year))
+  return(data)
 }

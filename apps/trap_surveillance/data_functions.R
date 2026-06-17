@@ -1303,4 +1303,511 @@ load_raw_data <- function(analysis_date = NULL,
   })
 }
 
+# =============================================================================
+# TRAP PERFORMANCE SCORING — Based on Chakravarti et al. (2026)
+# =============================================================================
+# Scores each trap based on historical yield, pool testing, and positivity.
+# Inspired by the three-phase approach in:
+#   "A novel approach to determine mosquito trap placement for WNV surveillance"
+#   Journal of Medical Entomology, 2026, 63(2)
+#
+# Score components (all normalized 0–1, combined as weighted average):
+#   1. Yield Score    — avg mosquitoes per active week (proxy for abundance)
+#   2. Testing Score  — total pools collected (proxy for testing volume)
+#   3. Detection Score — positive pool rate (proxy for WNV detection ability)
+#   4. Consistency Score — weeks active / max possible weeks (reliability)
+# =============================================================================
+
+# Cache for performance data
+.trap_performance_cache <- list(data = NULL, year = NULL, timestamp = NULL)
+
+#' Fetch trap performance data with composite scores
+#' 
+#' @param year Optional year filter. NULL = all years combined.
+#' @param force_reload Bypass cache
+#' @return data.frame with one row per trap and performance metrics + composite score
+fetch_trap_performance <- function(year = NULL, force_reload = FALSE) {
+  
+  # Check cache (TTL = 5 min)
+  cache_key <- as.character(year %||% "all")
+  if (!force_reload && 
+      identical(.trap_performance_cache$year, cache_key) &&
+      !is.null(.trap_performance_cache$timestamp) &&
+      difftime(Sys.time(), .trap_performance_cache$timestamp, units = "secs") < 300) {
+    return(.trap_performance_cache$data)
+  }
+  
+  con <- get_db_connection()
+  if (is.null(con)) return(NULL)
+  on.exit(safe_disconnect(con))
+  
+  year_filter_abundance <- if (!is.null(year)) {
+    sprintf("WHERE spp_name = 'Total_Cx_vectors' AND a.year = %d", as.integer(year))
+  } else {
+    "WHERE spp_name = 'Total_Cx_vectors'"
+  }
+  year_filter_pools <- if (!is.null(year)) {
+    sprintf("WHERE EXTRACT(YEAR FROM i.inspdate)::int = %d", as.integer(year))
+  } else ""
+  
+  q <- sprintf("
+    WITH trap_abundance AS (
+      SELECT loc_code, viarea,
+             COUNT(DISTINCT year) as years_active,
+             COUNT(DISTINCT yrwk) as weeks_active,
+             SUM(mosqcount)::numeric as total_mosq,
+             ROUND(SUM(mosqcount)::numeric / GREATEST(COUNT(DISTINCT yrwk), 1), 2) as avg_per_week
+      FROM dbadult_mon_nt_co2_forvectorabundance a
+      %s
+      GROUP BY loc_code, viarea
+    ),
+    trap_pools AS (
+      SELECT i.loc_code,
+             COUNT(DISTINCT p.poolnum) as total_pools,
+             SUM(CASE WHEN pt.result = 'Pos' THEN 1 ELSE 0 END) as total_positive,
+             SUM(p.count)::numeric as total_tested
+      FROM dbadult_insp_current i
+      JOIN dbvirus_pool p ON p.sampnum_yr = i.sampnum_yr
+      LEFT JOIN dbvirus_pool_test pt ON p.poolnum = pt.poolnum AND pt.target = 'WNV'
+      %s
+      GROUP BY i.loc_code
+    ),
+    trap_geo AS (
+      SELECT DISTINCT ON (loc_code) loc_code,
+             ST_X(ST_Transform(geom, 4326)) as lon,
+             ST_Y(ST_Transform(geom, 4326)) as lat
+      FROM loc_mondaynight
+      WHERE geom IS NOT NULL
+    )
+    SELECT a.loc_code, a.viarea,
+           a.years_active, a.weeks_active, a.total_mosq, a.avg_per_week,
+           COALESCE(p.total_pools, 0) as total_pools,
+           COALESCE(p.total_positive, 0) as total_positive,
+           COALESCE(p.total_tested, 0) as total_tested,
+           CASE WHEN COALESCE(p.total_pools, 0) > 0 
+                THEN ROUND(p.total_positive::numeric / p.total_pools * 100, 2)
+                ELSE 0 END as positivity_rate_pct,
+           g.lon, g.lat
+    FROM trap_abundance a
+    LEFT JOIN trap_pools p ON p.loc_code = a.loc_code
+    LEFT JOIN trap_geo g ON g.loc_code = a.loc_code
+    WHERE a.loc_code IS NOT NULL AND a.loc_code != ''
+    ORDER BY a.total_mosq DESC
+  ", year_filter_abundance, year_filter_pools)
+  
+  tryCatch({
+    data <- dbGetQuery(con, q)
+    
+    if (is.null(data) || nrow(data) == 0) {
+      message("[trap_performance] No data returned")
+      return(NULL)
+    }
+    
+    # Cast integer64 columns to numeric (RPostgres returns int8 as integer64)
+    int64_cols <- c("years_active", "weeks_active", "total_pools", "total_positive")
+    for (col in int64_cols) {
+      if (col %in% names(data)) data[[col]] <- as.numeric(data[[col]])
+    }
+    
+    # Pre-compute column maxima for normalization (avoids ifelse + integer64 issues)
+    max_yield  <- max(as.numeric(data$avg_per_week), na.rm = TRUE)
+    max_pools  <- max(data$total_pools, na.rm = TRUE)
+    max_detect <- max(as.numeric(data$positivity_rate_pct), na.rm = TRUE)
+    max_weeks  <- max(data$weeks_active, na.rm = TRUE)
+    
+    # Compute normalized component scores (0–1)
+    data <- data %>%
+      mutate(
+        # Yield: avg mosquitoes per week, normalized by max
+        yield_score = if (max_yield > 0) as.numeric(avg_per_week) / max_yield else 0,
+        # Testing volume: total pools, normalized by max
+        testing_score = if (max_pools > 0) total_pools / max_pools else 0,
+        # Detection: positivity rate, normalized by max
+        detection_score = if (max_detect > 0) as.numeric(positivity_rate_pct) / max_detect else 0,
+        # Consistency: weeks active out of max possible
+        consistency_score = if (max_weeks > 0) weeks_active / max_weeks else 0,
+        # Composite score: weighted average
+        # Weights inspired by Chakravarti et al. findings:
+        #   - Testing volume and detection are the strongest causal factors
+        #   - Yield matters for abundant data collection
+        #   - Consistency rewards reliability
+        composite_score = round(
+          0.25 * yield_score +
+          0.30 * testing_score +
+          0.30 * detection_score +
+          0.15 * consistency_score, 4
+        ),
+        # Classify performance tier
+        performance_tier = case_when(
+          composite_score >= 0.6 ~ "High",
+          composite_score >= 0.3 ~ "Medium",
+          TRUE ~ "Low"
+        )
+      )
+    
+    message(sprintf("[trap_performance] %d traps scored — High: %d, Medium: %d, Low: %d",
+                    nrow(data),
+                    sum(data$performance_tier == "High"),
+                    sum(data$performance_tier == "Medium"),
+                    sum(data$performance_tier == "Low")))
+    
+    # Update cache
+    .trap_performance_cache$data <<- data
+    .trap_performance_cache$year <<- cache_key
+    .trap_performance_cache$timestamp <<- Sys.time()
+    
+    data
+  }, error = function(e) {
+    warning(paste("[trap_performance] Query failed:", e$message))
+    NULL
+  })
+}
+
+# =============================================================================
+# PHASE 1 — Spatial Risk Assessment (GLMM-inspired)
+# =============================================================================
+# Approximates the Spatial GLMM from Chakravarti et al. Phase 1 using
+# distance-weighted kernel smoothing of trap-level risk indicators.
+# Uses an exponential kernel (approximating the Matérn covariance)
+# to propagate risk signals from nearby traps.
+# =============================================================================
+
+#' Compute spatial risk scores for traps
+#'
+#' Adds spatial_risk and risk_index columns to trap performance data.
+#' Uses exponential kernel to weight nearby traps' detection signals.
+#'
+#' @param perf_data Output from fetch_trap_performance()
+#' @param bandwidth_km Kernel bandwidth in km (default 3, paper used ~1.5km radius)
+#' @param max_radius_km Maximum neighbor distance in km (default 10)
+#' @return perf_data with spatial_risk and risk_index columns added
+compute_spatial_risk <- function(perf_data, bandwidth_km = 3, max_radius_km = 10) {
+  if (is.null(perf_data) || nrow(perf_data) == 0) return(perf_data)
+  
+  # Keep only rows with valid coordinates
+  has_geo <- !is.na(perf_data$lon) & !is.na(perf_data$lat)
+  if (sum(has_geo) < 2) {
+    perf_data$spatial_risk <- 0
+    perf_data$risk_index <- perf_data$composite_score
+    return(perf_data)
+  }
+  
+  lons <- perf_data$lon
+  lats <- perf_data$lat
+  n <- nrow(perf_data)
+  
+  # Each trap's "signal" for spatial propagation: detection + testing intensity
+  # This captures the paper's key variables: pool positive indicator and pool count
+  signal <- perf_data$detection_score * 0.6 + perf_data$testing_score * 0.4
+  
+  # Haversine distance matrix (vectorized for efficiency)
+  R_earth <- 6371.0
+  lat_rad <- lats * pi / 180
+  lon_rad <- lons * pi / 180
+  
+  spatial_risk <- numeric(n)
+  
+  for (i in seq_len(n)) {
+    if (!has_geo[i]) next
+    
+    dlat <- lat_rad - lat_rad[i]
+    dlon <- lon_rad - lon_rad[i]
+    a <- sin(dlat / 2)^2 + cos(lat_rad[i]) * cos(lat_rad) * sin(dlon / 2)^2
+    dist_km <- 2 * R_earth * asin(pmin(sqrt(a), 1))
+    
+    # Exclude self and traps beyond max radius
+    neighbors <- which(dist_km > 0 & dist_km <= max_radius_km & has_geo)
+    
+    if (length(neighbors) > 0) {
+      # Exponential kernel (approximates Matérn with nu → 0.5)
+      weights <- exp(-dist_km[neighbors] / bandwidth_km)
+      spatial_risk[i] <- sum(weights * signal[neighbors]) / sum(weights)
+    }
+  }
+  
+  # Normalize spatial risk to [0, 1]
+  sr_max <- max(spatial_risk, na.rm = TRUE)
+  if (sr_max > 0) {
+    spatial_risk <- spatial_risk / sr_max
+  }
+  
+  perf_data$spatial_risk <- round(spatial_risk, 4)
+  
+  # Combined risk index (Phase 1 output)
+  # Mirrors GLMM variables: abundance proxy, spatial effect, detection indicator
+  perf_data$risk_index <- round(
+    0.35 * perf_data$yield_score +         # Abundance component
+    0.30 * perf_data$spatial_risk +         # Spatial correlation component
+    0.35 * perf_data$detection_score,       # Detection/test indicator component
+    4
+  )
+  
+  # Risk tier classification
+  perf_data$risk_tier <- dplyr::case_when(
+    perf_data$risk_index >= 0.5 ~ "High Risk",
+    perf_data$risk_index >= 0.2 ~ "Moderate Risk",
+    TRUE ~ "Low Risk"
+  )
+  
+  message(sprintf("[spatial_risk] Computed for %d traps — High: %d, Moderate: %d, Low: %d",
+                  n,
+                  sum(perf_data$risk_tier == "High Risk"),
+                  sum(perf_data$risk_tier == "Moderate Risk"),
+                  sum(perf_data$risk_tier == "Low Risk")))
+  
+  perf_data
+}
+
+# =============================================================================
+# PHASE 3 — Causal Factor Analysis
+# =============================================================================
+# Approximates the Average Dose-Response Function (ADRF) from Chakravarti et al.
+# using LOESS smoothing and correlation analysis to identify which trap-level
+# factors have the strongest association with performance scores.
+# =============================================================================
+
+#' Compute factor importance metrics
+#'
+#' Returns Spearman rank correlations between each factor and composite score,
+#' plus LOESS-smoothed dose-response relationships.
+#'
+#' @param perf_data Output from fetch_trap_performance() (with or without spatial risk)
+#' @return List with $importance (data.frame of correlations) and $dose_response (list of LOESS fits)
+compute_causal_factors <- function(perf_data) {
+  if (is.null(perf_data) || nrow(perf_data) < 5) return(NULL)
+  
+  factors <- list(
+    "Pools Collected"  = as.numeric(perf_data$total_pools),
+    "Positive Pools"   = as.numeric(perf_data$total_positive),
+    "Avg Yield/Week"   = as.numeric(perf_data$avg_per_week),
+    "Weeks Active"     = as.numeric(perf_data$weeks_active),
+    "Total Mosquitoes" = as.numeric(perf_data$total_mosq)
+  )
+  
+  score <- perf_data$composite_score
+  
+  # Spearman correlations (rank-based, robust to outliers)
+  importance <- data.frame(
+    factor = character(),
+    correlation = numeric(),
+    p_value = numeric(),
+    direction = character(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (fname in names(factors)) {
+    vals <- factors[[fname]]
+    if (all(is.na(vals)) || sd(vals, na.rm = TRUE) == 0) next
+    
+    ct <- tryCatch(
+      cor.test(vals, score, method = "spearman", exact = FALSE),
+      error = function(e) NULL
+    )
+    
+    if (!is.null(ct)) {
+      importance <- rbind(importance, data.frame(
+        factor = fname,
+        correlation = round(ct$estimate, 4),
+        p_value = ct$p.value,
+        direction = if (ct$estimate > 0) "Positive" else "Negative",
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+  
+  # Sort by absolute correlation
+  importance <- importance[order(-abs(importance$correlation)), ]
+  importance$significance <- ifelse(importance$p_value < 0.001, "***",
+                             ifelse(importance$p_value < 0.01,  "**",
+                             ifelse(importance$p_value < 0.05,  "*", "ns")))
+  
+  # Dose-response data: binned averages for cleaner visualization
+  dose_response <- list()
+  for (fname in names(factors)) {
+    vals <- factors[[fname]]
+    if (all(is.na(vals)) || sd(vals, na.rm = TRUE) == 0) next
+    
+    # Create decile bins
+    n_bins <- min(10, length(unique(vals)))
+    if (n_bins < 3) next
+    
+    breaks <- quantile(vals, probs = seq(0, 1, length.out = n_bins + 1), na.rm = TRUE)
+    breaks <- unique(breaks)
+    if (length(breaks) < 3) next
+    
+    bin_labels <- head(breaks, -1) + diff(breaks) / 2
+    bins <- cut(vals, breaks = breaks, labels = bin_labels, include.lowest = TRUE)
+    
+    dr <- data.frame(
+      factor_name = fname,
+      bin_midpoint = as.numeric(as.character(bins)),
+      score = score,
+      stringsAsFactors = FALSE
+    ) %>%
+      dplyr::filter(!is.na(bin_midpoint)) %>%
+      dplyr::group_by(factor_name, bin_midpoint) %>%
+      dplyr::summarise(
+        avg_score = mean(score, na.rm = TRUE),
+        se_score = sd(score, na.rm = TRUE) / sqrt(dplyr::n()),
+        n = dplyr::n(),
+        .groups = "drop"
+      )
+    
+    dose_response[[fname]] <- dr
+  }
+  
+  # Trap-level recommendations
+  recommendations <- perf_data %>%
+    dplyr::filter(!is.na(viarea)) %>%
+    dplyr::mutate(
+      recommendation = dplyr::case_when(
+        composite_score < 0.15 & as.numeric(total_pools) == 0 ~
+          "Consider relocating — no testing data and low yield",
+        composite_score < 0.15 ~
+          "Review trap placement — consistently underperforming",
+        composite_score < 0.3 & as.numeric(total_pools) < 3 ~
+          "Increase pool collection frequency",
+        composite_score >= 0.3 & composite_score < 0.6 ~
+          "Adequate — maintain current operations",
+        composite_score >= 0.6 ~
+          "High performer — prioritize for continued surveillance",
+        TRUE ~ "Review individually"
+      )
+    ) %>%
+    dplyr::select(loc_code, viarea, composite_score, performance_tier,
+                  total_pools, total_positive, avg_per_week, recommendation) %>%
+    dplyr::arrange(composite_score)
+  
+  list(
+    importance = importance,
+    dose_response = dose_response,
+    recommendations = recommendations
+  )
+}
+
+# =============================================================================
+# AREA COVERAGE ANALYSIS
+# =============================================================================
+# Computes per-VI-area coverage metrics and generates a risk surface grid.
+# The paper's Phase 1 predicts risk ACROSS THE AREA, not just at trap points.
+# This function interpolates trap signals onto a grid to show:
+#   1. Where surveillance covers well
+#   2. Where there are coverage gaps
+#   3. Per-area summary statistics
+# =============================================================================
+
+#' Compute area coverage metrics per VI area
+#'
+#' Aggregates trap-level scores into per-area surveillance quality metrics.
+#'
+#' @param risk_data Output from compute_spatial_risk()
+#' @return data.frame with one row per viarea
+compute_area_coverage <- function(risk_data) {
+  if (is.null(risk_data) || nrow(risk_data) == 0) return(NULL)
+  
+  risk_data %>%
+    dplyr::filter(!is.na(viarea)) %>%
+    dplyr::group_by(viarea) %>%
+    dplyr::summarise(
+      n_traps = dplyr::n(),
+      avg_score = round(mean(composite_score, na.rm = TRUE), 3),
+      max_score = round(max(composite_score, na.rm = TRUE), 3),
+      min_score = round(min(composite_score, na.rm = TRUE), 3),
+      avg_risk = round(mean(risk_index, na.rm = TRUE), 3),
+      total_pools = sum(as.numeric(total_pools), na.rm = TRUE),
+      total_positive = sum(as.numeric(total_positive), na.rm = TRUE),
+      positivity_pct = round(
+        ifelse(total_pools > 0, total_positive / total_pools * 100, 0), 1
+      ),
+      avg_yield = round(mean(as.numeric(avg_per_week), na.rm = TRUE), 1),
+      total_mosq = sum(as.numeric(total_mosq), na.rm = TRUE),
+      n_high = sum(performance_tier == "High"),
+      n_medium = sum(performance_tier == "Medium"),
+      n_low = sum(performance_tier == "Low"),
+      pct_low = round(sum(performance_tier == "Low") / dplyr::n() * 100, 0),
+      # Coverage gap indicator: areas with few traps or mostly low performers
+      coverage_grade = dplyr::case_when(
+        dplyr::n() >= 10 & mean(composite_score, na.rm = TRUE) >= 0.3 ~ "Good",
+        dplyr::n() >= 5 & mean(composite_score, na.rm = TRUE) >= 0.2 ~ "Adequate",
+        dplyr::n() >= 3 ~ "Thin",
+        TRUE ~ "Gap"
+      ),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(desc(avg_score))
+}
+
+#' Generate interpolated risk surface grid
+#'
+#' Creates a regular lat/lon grid and interpolates risk values from trap points
+#' using the same exponential kernel. This produces the area-wide risk surface
+#' that the paper's Phase 1 GLMM would produce.
+#'
+#' @param risk_data Output from compute_spatial_risk()
+#' @param grid_res Grid resolution in degrees (~0.005 ≈ 500m)
+#' @param bandwidth_km Kernel bandwidth for interpolation
+#' @return data.frame with columns: lon, lat, risk_value
+generate_risk_surface <- function(risk_data, grid_res = 0.005, bandwidth_km = 3) {
+  if (is.null(risk_data) || nrow(risk_data) == 0) return(NULL)
+  
+  geo <- risk_data[!is.na(risk_data$lon) & !is.na(risk_data$lat), ]
+  if (nrow(geo) < 3) return(NULL)
+  
+  # Build grid covering the trap extent with padding
+  pad <- 0.02  # ~2 km padding
+  lon_range <- range(geo$lon) + c(-pad, pad)
+  lat_range <- range(geo$lat) + c(-pad, pad)
+  
+  grid_lons <- seq(lon_range[1], lon_range[2], by = grid_res)
+  grid_lats <- seq(lat_range[1], lat_range[2], by = grid_res)
+  
+  grid <- expand.grid(lon = grid_lons, lat = grid_lats)
+  
+  # Trap signals for interpolation
+  trap_signal <- geo$risk_index
+  trap_lons <- geo$lon
+  trap_lats <- geo$lat
+  
+  R_earth <- 6371.0
+  trap_lat_rad <- trap_lats * pi / 180
+  trap_lon_rad <- trap_lons * pi / 180
+  
+  # Interpolate each grid cell (vectorized per cell)
+  risk_values <- numeric(nrow(grid))
+  nearest_dist <- numeric(nrow(grid))
+  
+  for (g in seq_len(nrow(grid))) {
+    g_lat_rad <- grid$lat[g] * pi / 180
+    g_lon_rad <- grid$lon[g] * pi / 180
+    
+    dlat <- trap_lat_rad - g_lat_rad
+    dlon <- trap_lon_rad - g_lon_rad
+    a <- sin(dlat / 2)^2 + cos(g_lat_rad) * cos(trap_lat_rad) * sin(dlon / 2)^2
+    dist_km <- 2 * R_earth * asin(pmin(sqrt(a), 1))
+    
+    nearest_dist[g] <- min(dist_km)
+    
+    # Only interpolate within reasonable range
+    in_range <- dist_km <= bandwidth_km * 3
+    if (sum(in_range) == 0) {
+      risk_values[g] <- 0
+      next
+    }
+    
+    weights <- exp(-dist_km[in_range] / bandwidth_km)
+    risk_values[g] <- sum(weights * trap_signal[in_range]) / sum(weights)
+  }
+  
+  grid$risk_value <- risk_values
+  grid$nearest_trap_km <- round(nearest_dist, 2)
+  # Flag cells that are far from any trap as coverage gaps
+  grid$is_gap <- nearest_dist > bandwidth_km * 2
+  
+  message(sprintf("[risk_surface] Generated %d grid cells (%.0f%% coverage gaps)",
+                  nrow(grid),
+                  mean(grid$is_gap) * 100))
+  
+  grid
+}
+
 message(" trap_surveillance/data_functions.R loaded")

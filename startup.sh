@@ -22,7 +22,7 @@ echo "DB_PORT=${DB_PORT}" >> /srv/shiny-server/.env
 echo "DB_USER=${DB_USER}" >> /srv/shiny-server/.env
 echo "DB_PASSWORD=${DB_PASSWORD}" >> /srv/shiny-server/.env
 echo "DB_NAME=${DB_NAME}" >> /srv/shiny-server/.env
-echo "Alex is reall cool"
+echo "Alex is really cool"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # API KEY — used by the Plumber REST API to protect private endpoints.
@@ -160,8 +160,7 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     # nginx routes all /v1/* traffic here; never exposed directly to clients
         echo "Starting Plumber REST API on port ${PLUMBER_PORT}..."
     Rscript -e '
-      library(plumber)
-      pr <- plumber::plumb("/srv/api/plumber.R")
+      pr <- source("/srv/api/run_plumber.R")$value
             pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
     ' > /var/log/plumber-api.log 2>&1 &
     PIDS+=($!)
@@ -238,8 +237,7 @@ fi
 # upstream proxy (e.g. AWS ALB) that forwards /v1/* to this container.
 echo "Starting Plumber REST API on port ${PLUMBER_PORT}..."
 Rscript -e '
-  library(plumber)
-  pr <- plumber::plumb("/srv/api/plumber.R")
+  pr <- source("/srv/api/run_plumber.R")$value
     pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
 ' > /var/log/plumber-api.log 2>&1 &
 API_PID=$!

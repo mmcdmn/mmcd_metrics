@@ -23,7 +23,7 @@ ground_prehatch_ui <- function() {
           radioButtons("display_metric", "Display Metric:",
                       choices = c("Sites" = "sites",
                                   "Acres" = "acres"),
-                      selected = "sites"),
+                      selected = "acres"),
           
           dateInput("custom_today", "Pretend Today is:",
                    value = Sys.Date(), 
@@ -31,7 +31,7 @@ ground_prehatch_ui <- function() {
                    format = "yyyy-mm-dd"),
           
           sliderInput("expiring_days", "Days Until Expiring:",
-                     min = 1, max = 60, value = 14, step = 1),
+                     min = 1, max = 60, value = 7, step = 1),
           
           radioButtons("expiring_filter", "Site Filter:",
                       choices = c("All Sites" = "all",
@@ -80,6 +80,8 @@ ground_prehatch_ui <- function() {
         ),
         
         # Shared controls
+        checkboxInput("include_drone", "Include Drone Sites", value = FALSE),
+        
         selectInput("color_theme", "Color Theme:",
                     choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
                     selected = "MMCD"),
@@ -103,9 +105,10 @@ ground_prehatch_ui <- function() {
           selectInput("group_by", "Group By:",
                       choices = c("Facility" = "facility",
                                   "FOS" = "foreman",
+                                  "Township" = "township",
                                   "Section" = "sectcode",
                                   "All MMCD" = "mmcd_all"),
-                      selected = "mmcd_all")
+                      selected = "facility")
         ),
         
         conditionalPanel(
@@ -113,6 +116,7 @@ ground_prehatch_ui <- function() {
           selectInput("group_by", "Group By:",
                       choices = c("Facility" = "facility",
                                   "FOS" = "foreman",
+                                  "Township" = "township",
                                   "All MMCD" = "mmcd_all"),
                       selected = "mmcd_all")
         ),

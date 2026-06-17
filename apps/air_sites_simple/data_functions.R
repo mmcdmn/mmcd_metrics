@@ -112,7 +112,7 @@ load_air_treatments <- function(start_year, end_year, zone_filter = c("1", "2"),
     
     query_template <- "
       SELECT 
-        t.inspdate, b.facility, g.zone, g.fosarea, b.sitecode, b.acres,
+        t.inspdate, g.fac_for_air AS facility, g.zone, g.fosarea, b.sitecode, b.acres,
         COALESCE(mt.effect_days, 14) as effect_days
       FROM %s t
       JOIN loc_breeding_sites b ON t.sitecode = b.sitecode
@@ -184,7 +184,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
     facility_condition <- ""
     if (is_valid_filter(facility_filter)) {
       facility_list <- build_sql_in_list(facility_filter)
-      facility_condition <- sprintf("AND b.facility IN (%s)", facility_list)
+      facility_condition <- sprintf("AND g.fac_for_air IN (%s)", facility_list)
     }
     
     priority_condition <- ""
@@ -241,11 +241,12 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
     query <- sprintf("
       WITH ActiveAirSites AS (
         SELECT 
-          b.facility,
+          g.fac_for_air AS facility,
           b.sitecode,
           b.acres,
           b.priority,
           g.zone,
+          g.fosarea as foreman,
           ST_X(ST_Centroid(ST_Transform(b.geom, 4326))) as longitude,
           ST_Y(ST_Centroid(ST_Transform(b.geom, 4326))) as latitude
         FROM loc_breeding_sites b
@@ -352,6 +353,7 @@ get_air_sites_data <- function(analysis_date = Sys.Date(), facility_filter = NUL
         a.priority,
         a.zone,
         a.acres,
+        a.foreman,
         a.longitude,
         a.latitude,
         t.last_treatment_date,
@@ -460,15 +462,15 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
     
     # Check inspection status if we have inspection data
     if (!is.null(last_inspection_date)) {
-      # Check if there was a treatment after the last inspection
-      treatment_after_inspection <- FALSE
+      # Check if there was a treatment on the same day or after the last inspection
+      treatment_same_or_after_inspection <- FALSE
       last_treatment_date <- NULL
       if (!is.null(site$last_treatment_date) && length(site$last_treatment_date) > 0) {
         if (!is.na(site$last_treatment_date[1])) {
           tryCatch({
             last_treatment_date <- as.Date(site$last_treatment_date[1])
             if (!is.null(last_treatment_date) && !is.null(last_inspection_date)) {
-              treatment_after_inspection <- last_treatment_date > last_inspection_date
+              treatment_same_or_after_inspection <- last_treatment_date >= last_inspection_date
             }
           }, error = function(e) {
             last_treatment_date <<- NULL
@@ -476,9 +478,15 @@ apply_site_status_logic <- function(data, analysis_date, larvae_threshold = 2) {
         }
       }
       
+      # If treatment occurred on same day or after inspection with active expiry, treat as Active Treatment
+      if (treatment_same_or_after_inspection && treatment_active) {
+        data$site_status[i] <- "Active Treatment"
+        next
+      }
+      
       # If treatment occurred after inspection and has now expired, 
       # ignore the old inspection data and default to Unknown
-      if (treatment_after_inspection && !treatment_active) {
+      if (treatment_same_or_after_inspection && !treatment_active) {
         data$site_status[i] <- "Unknown"
         next
       }

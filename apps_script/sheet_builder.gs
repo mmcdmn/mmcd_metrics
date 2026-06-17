@@ -213,9 +213,22 @@ function fetchChecklistData_() {
   }
 
   const payload = JSON.parse(r.getContentText());
-  return Array.isArray(payload) ? payload
-       : Array.isArray(payload.data) ? payload.data
-       : [];
+  const rows = Array.isArray(payload) ? payload
+             : Array.isArray(payload.data) ? payload.data
+             : [];
+
+  // Diagnostic: log first inspected row to verify API fields
+  const sample = rows.find(r => r.was_inspected);
+  if (sample) {
+    Logger.log('API SAMPLE (inspected): ' + sample.sitecode
+      + ' | dip_count=' + sample.dip_count
+      + ' | pct_wet=' + sample.pct_wet
+      + ' | sampnum_yr=' + sample.sampnum_yr
+      + ' | keys=' + Object.keys(sample).join(','));
+  } else {
+    Logger.log('API SAMPLE: no inspected sites in response (' + rows.length + ' total)');
+  }
+  return rows;
 }
 
 /** Fetch active claims from Redis via the API */

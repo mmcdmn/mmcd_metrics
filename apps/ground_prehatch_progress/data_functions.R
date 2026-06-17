@@ -309,7 +309,7 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
 }
 
 # Function to filter data based on user selections
-filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL, foreman_filter = NULL) {
+filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL, foreman_filter = NULL, include_drone = TRUE) {
   if (nrow(data) == 0) return(data)
   
   # Return empty data if "none" is selected for facility or foreman
@@ -318,6 +318,11 @@ filter_ground_data <- function(data, zone_filter = NULL, facility_filter = NULL,
   }
   if (!is.null(foreman_filter) && ("none" %in% foreman_filter) && length(foreman_filter) == 1) {
     return(data.frame())
+  }
+  
+  # Exclude drone sites if requested
+  if (!isTRUE(include_drone) && "drone" %in% names(data)) {
+    data <- data %>% filter(is.na(drone) | drone != "Y")
   }
   
   # Filter by zone if selected
@@ -439,6 +444,58 @@ aggregate_data_by_group <- function(data, group_by, zone_filter = NULL, expiring
         mutate(
           display_name = "MMCD",
           group_name = "MMCD"
+        )
+    }
+  } else if (group_by == "township") {
+    # Group by township (first 4 chars of sectcode = county + township)
+    data <- data %>%
+      mutate(towncode = substr(sectcode, 1, 4))
+    
+    if (show_zones_separately) {
+      result <- data %>%
+        group_by(towncode, zone) %>%
+        summarise(
+          tot_ground = sum(tot_ground, na.rm = TRUE),
+          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
+          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
+          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
+          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = paste0(towncode, " P", zone),
+          group_name = towncode
+        )
+    } else {
+      result <- data %>%
+        group_by(towncode) %>%
+        summarise(
+          tot_ground = sum(tot_ground, na.rm = TRUE),
+          not_prehatch_sites = sum(not_prehatch_sites, na.rm = TRUE),
+          prehatch_sites_cnt = sum(prehatch_sites_cnt, na.rm = TRUE),
+          prehatch_acres = sum(prehatch_acres, na.rm = TRUE),
+          drone_sites_cnt = sum(drone_sites_cnt, na.rm = TRUE),
+          ph_treated_cnt = sum(ph_treated_cnt, na.rm = TRUE),
+          ph_treated_acres = sum(ph_treated_acres, na.rm = TRUE),
+          ph_expiring_cnt = sum(ph_expiring_cnt, na.rm = TRUE),
+          ph_expiring_acres = sum(ph_expiring_acres, na.rm = TRUE),
+          ph_expired_cnt = sum(ph_expired_cnt, na.rm = TRUE),
+          ph_expired_acres = sum(ph_expired_acres, na.rm = TRUE),
+          ph_skipped_cnt = sum(ph_skipped_cnt, na.rm = TRUE),
+          ph_skipped_acres = sum(ph_skipped_acres, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(
+          display_name = towncode,
+          group_name = towncode
         )
     }
   } else if (group_by == "sectcode") {

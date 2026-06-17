@@ -388,12 +388,18 @@ get_metric_registry <- function() {
                          • Current week (Monday through today)<br>
                          • All facilities except MO (zone filter not applied)<br>
                          • Goal: 12 SUCOs per facility per week"),
-      load_params = list(
-        goal_per_facility = 12,  # Each facility goal: 12 SUCOs per week
-        num_facilities = 5,      # Number of facilities (excludes MO)
-        district_goal = 60,      # 5 * 12 = 60 total district goal
-        time_period = "current_week"
-      )
+        load_params = {
+        suco_config <- tryCatch(
+          get_config_threshold("goal", "suco"),
+          error = function(e) list(goal_per_facility = 12, num_facilities = 6, district_goal = 72)
+        )
+        list(
+          goal_per_facility = suco_config$goal_per_facility %||% 12,
+          num_facilities = suco_config$num_facilities %||% 6,
+          district_goal = suco_config$district_goal %||% 72,
+          time_period = "current_week"
+        )
+      }
     ),
     
     cattail_inspections = list(
@@ -453,9 +459,9 @@ get_metric_registry <- function() {
       chart_types = c("bar"),
       default_chart_type = "bar",
       chart_stacked_mode = TRUE,  # Bars stack: active + expiring = total (not overlay)
-      # Detail boxes: sampled with red bugs + gaps
+      # Detail boxes: covered (red bug found, or pending lab ID) + gaps
       detail_boxes = list(
-        list(id = "inspected", title = "Red Bugs Sampled", column = "active", icon = "check-circle", status = "active"),
+        list(id = "inspected", title = "Covered (Red Bug or Pending ID)", column = "active", icon = "check-circle", status = "active"),
         list(id = "gaps", title = "No Red Bugs (5yr)", column = "expiring", icon = "calendar-times", status = "needs_treatment")
       ),
       # Color: fewer gaps = better. Higher % sampled = green.
@@ -463,12 +469,13 @@ get_metric_registry <- function() {
       color_thresholds = list(good = 85, warning = 60),
       chart_labels = list(
         total = "Total Prehatch Sites",
-        active = "Red Bugs Sampled",
+        active = "Covered (Red Bug or Pending ID)",
         expiring = "No Red Bugs (\u22655 yrs)"
       ),
       filter_info = HTML("<b>Prehatch Red Bug Coverage:</b><br>
                          • Ground sites only (prehatch)<br>
-                         • Checks for samples with red bugs<br>
+                         • Covered if: red bug sample within last 5 years,<br>
+                         &nbsp;&nbsp;OR sampled this year with lab ID still pending<br>
                          • Gap threshold: 5 years<br>
                          • Includes never-sampled sites<br>
                          • Zone filter from dropdown<br>

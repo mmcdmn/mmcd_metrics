@@ -77,7 +77,8 @@ server <- function(input, output, session) {
       group_by = isolate(input$group_by),
       custom_today = isolate(input$custom_today),
       expiring_days = isolate(input$expiring_days),
-      expiring_filter = isolate(input$expiring_filter)
+      expiring_filter = isolate(input$expiring_filter),
+      include_drone = isolate(input$include_drone)
     )
   })
   
@@ -119,7 +120,8 @@ server <- function(input, output, session) {
       hist_time_period = isolate(input$hist_time_period),
       hist_display_metric = isolate(input$hist_display_metric),
       hist_year_range = isolate(input$hist_year_range),
-      hist_chart_type = isolate(input$hist_chart_type)
+      hist_chart_type = isolate(input$hist_chart_type),
+      include_drone = isolate(input$include_drone)
     )
   })
   
@@ -206,7 +208,7 @@ server <- function(input, output, session) {
     
     data <- ground_data()
     
-    filter_ground_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    filter_ground_data(data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter, inputs$include_drone)
   })
   
   # Aggregate data based on grouping level  
@@ -235,7 +237,7 @@ server <- function(input, output, session) {
     site_data <- site_details()
     
     # Apply geographic filters
-    filtered_data <- filter_ground_data(site_data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter)
+    filtered_data <- filter_ground_data(site_data, inputs$zone_filter, inputs$facility_filter, inputs$foreman_filter, inputs$include_drone)
     
     # Apply expiring filter to site details
     if (inputs$expiring_filter == "expiring") {
@@ -435,7 +437,8 @@ server <- function(input, output, session) {
         hist_zone_display = hist_zone_display,
         facility_filter = inputs$facility_filter,
         zone_filter = inputs$zone_filter,
-        foreman_filter = inputs$foreman_filter
+        foreman_filter = inputs$foreman_filter,
+        include_drone = inputs$include_drone
       )
       
       incProgress(0.1, detail = "Finalizing...")

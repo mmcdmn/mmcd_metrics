@@ -101,7 +101,7 @@ get_app_config <- function(force_reload = FALSE) {
     ),
     descriptions = list(
       drone = "Percent of Prehatch Drone acres with active treatment",
-      ground_prehatch = "Percent of Ground Prehatch acres with active treatment",
+      ground_prehatch = "Percent of Ground Prehatch acres with active treatment (excludes drone)",
       air_sites = "Percent of red air sites that have received treatment for last brood",
       prehatch_coverage = "Percent of Prehatch sites with target species in sample last 5 years",
       catch_basin = "Percent of wet Catch Basins with active treatment",

@@ -108,6 +108,22 @@ ui <- dashboardPage(
           box(title = "Config Source", status = "success", solidHeader = TRUE, width = 12,
             verbatimTextOutput("ovConfigSource")
           )
+        ),
+        fluidRow(
+          box(title = "API Management", status = "danger", solidHeader = TRUE, width = 6,
+            p("If the API is returning 502 errors, click below to restart the Plumber process.",
+              "The watchdog will bring it back up within ~3 seconds."),
+            actionButton("restartApi", "Restart API", icon = icon("power-off"),
+                         class = "btn-danger"),
+            br(), br(),
+            verbatimTextOutput("apiRestartStatus")
+          ),
+          box(title = "API Health", status = "info", solidHeader = TRUE, width = 6,
+            actionButton("checkApiHealth", "Check API", icon = icon("heartbeat"),
+                         class = "btn-info btn-sm"),
+            br(), br(),
+            verbatimTextOutput("apiHealthStatus")
+          )
         )
       ),
       
@@ -567,6 +583,54 @@ server <- function(input, output, session) {
   output$ovConfigSource <- renderPrint({
     tryCatch(print_config_summary(), error = function(e) cat("Config unavailable:", e$message))
   })
+
+  # --- API Management ---
+  api_status <- reactiveVal("")
+  api_health <- reactiveVal("")
+
+  observeEvent(input$restartApi, {
+    api_status("Sending restart request...")
+    tryCatch({
+      key <- Sys.getenv("API_KEYS", "mmcd-sheets-abc123xyz")
+      # Use system curl for reliability (httr not guaranteed)
+      result <- system2("curl", args = c(
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "-X", "POST",
+        "-H", paste0("Authorization: Bearer ", key),
+        "http://127.0.0.1:9000/v1/private/restart-api"
+      ), stdout = TRUE, stderr = TRUE)
+      code <- trimws(paste(result, collapse = ""))
+      if (code == "200") {
+        api_status(paste0("[OK] Restart triggered at ", format(Sys.time(), "%H:%M:%S"),
+                          ". API should be back in ~3 seconds."))
+      } else {
+        api_status(paste0("[WARN] Got HTTP ", code, ". API may already be down \u2014 watchdog will restart it."))
+      }
+    }, error = function(e) {
+      api_status(paste0("[INFO] Could not reach API (already down?). Watchdog will restart it. Error: ", e$message))
+    })
+  })
+
+  output$apiRestartStatus <- renderText({ api_status() })
+
+  observeEvent(input$checkApiHealth, {
+    tryCatch({
+      result <- system2("curl", args = c(
+        "-s", "-m", "5",
+        "http://127.0.0.1:9000/v1/public/health"
+      ), stdout = TRUE, stderr = TRUE)
+      body <- paste(result, collapse = "\n")
+      if (nchar(body) > 0 && !grepl("Could not resolve|Connection refused", body)) {
+        api_health(paste0("[OK] API is UP at ", format(Sys.time(), "%H:%M:%S"), "\n", body))
+      } else {
+        api_health(paste0("[DOWN] API unreachable at ", format(Sys.time(), "%H:%M:%S"), "\n", body))
+      }
+    }, error = function(e) {
+      api_health(paste0("[DOWN] API unreachable at ", format(Sys.time(), "%H:%M:%S"), "\n", e$message))
+    })
+  })
+
+  output$apiHealthStatus <- renderText({ api_health() })
   
   # ===========================================================================
   # CACHE MANAGER

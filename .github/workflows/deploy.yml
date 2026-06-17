@@ -71,24 +71,42 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE }}
           aws-region: us-east-2
-      - name: Deploy to ECS Express Mode
-        id: deploy-ecs
-        uses: aws-actions/amazon-ecs-deploy-express-service@v1
+
+      # Express Mode (Requires Fargate)
+      # - name: Deploy to ECS Express Mode
+      #   id: deploy-ecs
+      #   uses: aws-actions/amazon-ecs-deploy-express-service@v1
+      #   with:
+      #       service-name: metrics-prod
+      #       image: ${{ needs.build.outputs.image }}
+      #       container-port: 3838
+      #       execution-role-arn: ${{ secrets.AWS_ROLE }}
+      #       infrastructure-role-arn: ${{ secrets.AWS_ROLE }}
+      #       cpu: "2048" #  "1024"
+      #       memory: "8192" # "2048"
+      #       min-task-count: 1  # 2
+      #       max-task-count: 1  # 25
+      #       auto-scaling-metric: AVERAGE_CPU
+      #       auto-scaling-target-value: 10
+      #       environment-variables: |
+      #         [
+      #           {"name": "ENABLE_NGINX", "value": "true"},
+      #           {"name": "SHINY_WORKERS", "value": "10"},
+      #           {"name": "API_KEYS", "value": "mmcd-sheets-abc123xyz"}
+      #         ]
+
+      # Use custom service to levarage EC2 instead of Fargate
+      - name: Render ECS Worker Task Definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        id: render-task-def
         with:
-            service-name: metrics-prod
+            task-definition-family: worker-metrics-prod
+            container-name: Main
             image: ${{ needs.build.outputs.image }}
-            container-port: 3838
-            execution-role-arn: ${{ secrets.AWS_ROLE }}
-            infrastructure-role-arn: ${{ secrets.AWS_ROLE }}
-            cpu: "4096" #  "1024"
-            memory: "8192" # "2048"
-            min-task-count: 1  # 2
-            max-task-count: 1  # 25
-            auto-scaling-metric: AVERAGE_CPU
-            auto-scaling-target-value: 10
-            environment-variables: |
-              [
-                {"name": "ENABLE_NGINX", "value": "true"},
-                {"name": "SHINY_WORKERS", "value": "10"},
-                {"name": "API_KEYS", "value": "mmcd-sheets-abc123xyz"}
-              ]
+
+      - name: Deploy ECS Worker Service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+            service: worker-metrics-prod
+            task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+            desired-count: 1

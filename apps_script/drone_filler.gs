@@ -57,8 +57,8 @@ const CONFIG = {
   // ── Sitecode Pattern ────────────────────────────────────────────────────
   // Regex that matches valid sitecodes. Only rows matching this get processed.
   // Everything else (section headers, totals, blanks, etc.) is automatically skipped.
-  // Formats: "191101-001" (digits-dash-digits), "191101W027" (digits-letter-digits), etc.
-  SITECODE_PATTERN: /^\d{6,7}[-A-Z]?\d{2,3}$/,
+  // Format: 6-7 digits, dash, 2-3 digits (e.g., "191105-004", "0214150-08")
+  SITECODE_PATTERN: /^\d{6,7}-\d{2,3}$/,
 
   // ── Per-Tab Overrides ─────────────────────────────────────────────────
   // Override column mapping or DATA_START for specific tabs.

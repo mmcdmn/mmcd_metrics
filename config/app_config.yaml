@@ -132,7 +132,7 @@ wiki_links:
   mosquito_monitoring: ""
   suco: ""
   cattail_inspections: ""
-  prehatch_coverage: ""
+  prehatch_coverage: "/inspections/"
 
 
 # =============================================================================

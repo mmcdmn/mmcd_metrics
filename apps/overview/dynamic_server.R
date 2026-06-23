@@ -1299,14 +1299,27 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       # Dynamic color: compare THIS FOS against its own historical average
       box_color <- config$bg_color
       box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
-      week_num_fos <- lubridate::week(analysis_date)
       for (metric_id in metrics) {
         fos_config <- registry[[metric_id]]
+
+        # Get per-metric FOS active count so current_week and historical_avg are both FOS-scoped
+        fos_m_data <- data[[metric_id]]
+        fos_m_active <- 0L
+        if (!is.null(fos_m_data) && nrow(fos_m_data) > 0) {
+          fos_m_rows <- if ("fos" %in% names(fos_m_data)) {
+            fos_m_data[fos_m_data$fos == fos_id, ]
+          } else {
+            fos_m_data[as.character(fos_m_data$display_name) == fos_id, ]
+          }
+          if (nrow(fos_m_rows) > 0) fos_m_active <- sum(fos_m_rows$active, na.rm = TRUE)
+        }
+
         cm <- if (!is.null(fos_config$color_mode)) fos_config$color_mode else ""
-        color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active_all
+        color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else fos_m_active
         info <- tryCatch(
           get_dynamic_value_box_info(metric_id, color_value, analysis_date,
                                      fos_config, zone_filter = zone_filter,
+                                     weekly_value = fos_m_active,
                                      fos_filter = as.character(fos_id)),
           error = function(e) NULL
         )

@@ -148,29 +148,46 @@ load_raw_data <- function(analysis_date = NULL,
         }
         archive_max <- do.call(rbind, archive_parts)
       }
+      # Step 4: Sites sampled THIS YEAR with no redblue value yet (pending lab ID).
+      # Covers both "no matching sample row at all" and "sample row exists but
+      # redblue is NULL/empty" - either way the lab hasn't reported red/blue yet.
+      pending_this_year <- dbGetQuery(con_overview, sprintf("
+        SELECT DISTINCT i.sitecode
+        FROM dblarv_insptrt_current i
+        LEFT JOIN dblarv_sample_current s ON i.sampnum_yr = s.sampnum_yr
+        WHERE i.sampnum_yr IS NOT NULL
+          AND EXTRACT(YEAR FROM i.inspdate) = EXTRACT(YEAR FROM '%s'::date)
+          AND (s.redblue IS NULL OR s.redblue = '')
+      ", analysis_date_str))
+
       safe_disconnect(con_overview)
-      
-      # Combine: use the most recent red bug sample from either table
+
+      # Combine: a site counts as covered if it has a recent (5yr) red bug
+      # sample, OR it was sampled this year and the result is still pending.
       sites_combined <- sites_with_current %>%
         left_join(archive_max, by = "sitecode") %>%
         mutate(
           final_insp = pmax(last_insp, archive_insp, na.rm = TRUE),
-          is_gap = is.na(final_insp) | final_insp < gap_cutoff
+          has_recent_red_bug = !is.na(final_insp) & final_insp >= gap_cutoff,
+          has_pending_id_this_year = sitecode %in% pending_this_year$sitecode,
+          is_covered = has_recent_red_bug | has_pending_id_this_year,
+          is_gap = !is_covered
         )
-      
+
       # Aggregate to facility + fosarea + zone (fosarea needed for FOS drill-down)
       sites <- sites_combined %>%
         group_by(facility, fosarea, zone) %>%
         summarise(
           total_count = n(),
-          active_count = sum(!is_gap),
+          active_count = sum(is_covered),
           expiring_count = sum(is_gap),
           .groups = "drop"
         )
-      
-      message(sprintf("[prehatch_red_bugs] Overview (fast): %s facilities, %s total sites, %s no red bugs (%.1f%%)",
-                      nrow(sites), sum(sites$total_count), sum(sites$expiring_count),
-                      100 * sum(sites$expiring_count) / max(1, sum(sites$total_count))))
+
+      message(sprintf("[prehatch_red_bugs] Overview (fast): %s facilities, %s total sites, %s covered (%.1f%%), %s pending-ID this year",
+                      nrow(sites), sum(sites$total_count), sum(sites$active_count),
+                      100 * sum(sites$active_count) / max(1, sum(sites$total_count)),
+                      sum(sites_combined$has_pending_id_this_year & !sites_combined$has_recent_red_bug)))
       
       return(list(
         sites = sites,

@@ -1094,140 +1094,42 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
     div(class = "facility-stat-boxes", row_elements)
     
   } else if (overview_type == "fos" && length(metrics) > 0 && !is.null(fos_filter) && fos_filter != "all") {
-    # FOS overview with specific FOS selected (from index.html):
-    # Show per-METRIC value boxes with hidden charts, same pattern as district view
-    week_num <- lubridate::week(analysis_date)
-    # NOTE: Do NOT use extract_weekly_values() here — that function extracts from
-    # facility/zone-level historical data, which is NOT FOS-filtered.
-    # Instead, we use the FOS-filtered 'active' value from 'data' as the weekly value
-    # for each metric, so Current and 10yr Avg are both FOS-scoped.
-    
-    # Resolve fos_filter to emp_num for historical comparison
-    # fos_filter may be a shortname (e.g., "Smith") or emp_num (e.g., "1234")
-    fos_emp_num <- fos_filter
+    # FOS Detail Dashboard: purpose-built view for a single FOS supervisor.
+    # Replaces generic metric boxes with 5 FOS-specific sections.
+
+    # Resolve fos_filter (shortname or emp_num) to emp_num + display name
+    fos_emp_num    <- fos_filter
+    fos_display    <- fos_filter
     tryCatch({
       foremen <- get_foremen_lookup()
-      # If fos_filter is a shortname, resolve to emp_num
       shortname_match <- foremen[foremen$shortname == fos_filter, ]
       if (nrow(shortname_match) > 0) {
         fos_emp_num <- as.character(shortname_match$emp_num[1])
+        fos_display <- shortname_match$shortname[1]
+      } else {
+        # fos_filter is already an emp_num — resolve display name
+        emp_match <- foremen[as.character(foremen$emp_num) == fos_filter, ]
+        if (nrow(emp_match) > 0) fos_display <- emp_match$shortname[1]
       }
-      # If it's already an emp_num, keep it as-is
     }, error = function(e) {
-      cat("[FOS] Warning: Could not resolve fos_filter to emp_num:", e$message, "\n")
+      cat("[FOS] Warning: Could not resolve fos_filter:", e$message, "\n")
     })
-    cat("[FOS] Using fos_emp_num =", fos_emp_num, "for historical comparison\n")
-    
-    n_metrics <- length(metrics)
-    max_per_row <- 3
-    col_width <- max(4, floor(12 / min(n_metrics, max_per_row)))
-    
-    stat_boxes <- lapply(metrics, function(metric_id) {
-      config <- registry[[metric_id]]
-      if (is.null(config)) return(NULL)
-      
-      metric_data <- data[[metric_id]]
-      
-      if (!is.null(metric_data) && nrow(metric_data) > 0) {
-        total <- sum(metric_data$total, na.rm = TRUE)
-        active <- sum(metric_data$active, na.rm = TRUE)
-        expiring <- sum(metric_data$expiring, na.rm = TRUE)
-        
-        # SUCO at FOS level: just show the count
-        if (isTRUE(config$display_as_goal)) {
-          pct <- 0
-          display_value <- as.character(active)
-        } else {
-          pct_info <- calculate_display_pct(metric_id, config, total, active, expiring, metric_data)
-          pct <- pct_info$pct
-          display_value <- pct_info$display_value
-        }
-      } else {
-        pct <- 0
-        active <- 0
-        display_value <- if (isTRUE(config$display_as_goal)) "0" else "0%"
-      }
-      
-      # Get dynamic color — compare against THIS FOS's historical average
-      # Use FOS-filtered 'active' as the weekly value (not the facility-wide extract)
-      # This ensures Current and 10yr Avg are both scoped to this FOS
-      weekly_val <- if (!is.null(metric_data) && nrow(metric_data) > 0) active else NULL
-      cm <- if (!is.null(config$color_mode)) config$color_mode else ""
-      color_value <- if (cm %in% c("fixed_pct", "pct_of_average")) pct else active
-      box_info <- tryCatch(
-        get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, 
-                                   zone_filter = zone_filter, weekly_value = weekly_val,
-                                   fos_filter = fos_emp_num),
-        error = function(e) list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
-      )
-      
-      column(col_width,
-        div(
-          class = "stat-box-clickable",
-          `data-metric-id` = metric_id,
-          `data-current-week` = if (!is.null(box_info$current_week)) box_info$current_week else "",
-          `data-historical-avg` = if (!is.null(box_info$historical_avg)) box_info$historical_avg else "",
-          `data-pct-diff` = if (!is.null(box_info$pct_diff)) box_info$pct_diff else "",
-          `data-week-num` = week_num,
-          create_stat_box(
-            value = display_value,
-            title = config$display_name,
-            bg_color = box_info$color,
-            icon = if (!is.null(config$image_path)) config$image_path else config$icon,
-            icon_type = if (!is.null(config$image_path)) "image" else "fontawesome",
-            metric_id = metric_id
-          )
-        )
-      )
-    })
-    
-    stat_boxes <- Filter(Negate(is.null), stat_boxes)
-    if (length(stat_boxes) == 0) return(fluidRow())
-    
-    # Split into rows
-    box_rows <- split(stat_boxes, ceiling(seq_along(stat_boxes) / max_per_row))
-    row_elements <- lapply(box_rows, function(row_boxes) fluidRow(row_boxes))
-    
-    # Build hidden chart panels for each metric (current progress + historical side by side)
-    # Skip chart panels for goal-based metrics (SUCO) at FOS level
-    chart_panels <- lapply(metrics, function(metric_id) {
-      config <- registry[[metric_id]]
-      
-      # No charts for SUCO at FOS level
-      if (isTRUE(config$display_as_goal)) return(NULL)
-      
-      # Current progress chart
-      current_panel <- create_chart_panel(metric_id, config, chart_height = "250px", is_historical = FALSE)
-      
-      # Historical chart (if available)
-      all_historical <- get_historical_metrics()
-      has_hist <- metric_id %in% all_historical
-      
-      if (has_hist) {
-        hist_panel <- create_chart_panel(metric_id, config, chart_height = "250px", is_historical = TRUE)
-        chart_content <- fluidRow(
-          column(6, div(style = "padding-right: 5px;", current_panel)),
-          column(6, div(style = "padding-left: 5px;", hist_panel))
-        )
-      } else {
-        chart_content <- current_panel
-      }
-      
-      div(
-        id = paste0("chart_wrapper_", metric_id),
-        class = "chart-panel-wrapper category-chart",
-        chart_content
-      )
-    })
-    
-    chart_panels <- Filter(Negate(is.null), chart_panels)
-    charts_row <- div(class = "charts-grid-row", do.call(tagList, chart_panels))
-    
-    div(class = "fos-metric-boxes",
-      do.call(tagList, row_elements),
-      charts_row
+    # Derive facility from foremen lookup (not available as a function parameter)
+    fos_facility <- tryCatch({
+      fos_row <- foremen[as.character(foremen$emp_num) == fos_emp_num, ]
+      if (nrow(fos_row) > 0) fos_row$facility[1] else NULL
+    }, error = function(e) NULL)
+    cat("[FOS] Detail dashboard for", fos_display,
+        "(emp:", fos_emp_num, "facility:", fos_facility, ")\n")
+
+    render_fos_detail_dashboard(
+      fos_emp_num      = fos_emp_num,
+      fos_display_name = fos_display,
+      facility         = fos_facility,
+      analysis_date    = analysis_date,
+      zone_filter      = zone_filter
     )
-    
+
   } else if (overview_type == "fos" && length(metrics) > 0) {
     # FOS view: one value box per FOS person
     # Get unique FOS from the data

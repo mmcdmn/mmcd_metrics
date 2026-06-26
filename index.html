@@ -332,8 +332,8 @@
                 </div>
                 <div class="app-card">
                     <img src="shared/assets/layer-group.jpg" alt="FOS Overview" class="app-icon">
-                    <h3>FOS Overview Dashboard</h3>
-                    <p>FOS-level dashboard showing treatment progress for a specific Field Operations Supervisor. Select a facility and FOS area, then view metrics for that individual.</p>
+                    <h3>FOS Overview Dashboard (NEW)</h3>
+                    <p>5 key metrics for FOS: Ground prehatch by township, Suco goal progress for facility, catch basin metric, air work progress, and bioassay.</p>
                     <div style="margin-bottom: 10px;">
                         <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">Facility:</label>
                         <select id="fos_facility" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
@@ -973,21 +973,18 @@
                 return;
             }
             
-            // Build URL to overview app with FOS view params
-            // Default metrics for FOS view - easily expandable by adding to this list
-            const fosMetrics = [
-                'catch_basin',
-                'drone',
-                'ground_prehatch',
-                'structure',
-                'prehatch_coverage'
-            ];
-            
+            // Build URL to overview app with FOS view params.
+            // Only load the two pre-built metrics the detail dashboard reads from data[[]].
+            // The other 3 sections (prehatch township, air work, bioassays) load their
+            // own data fresh inside render_fos_detail_dashboard().
+            const fosMetrics = ['suco', 'catch_basin'];
+
             const params = new URLSearchParams();
             params.append('view', 'fos');
             params.append('facility', facility);
             params.append('fos', fos);
             params.append('metric', fosMetrics.join(','));
+            params.append('zone', '1');
             
             const appUrl = 'overview/?' + params.toString();
             console.log('Opening FOS Overview:', appUrl);

@@ -31,6 +31,7 @@ suppressPackageStartupMessages({
 source("../../../shared/db_helpers.R")
 source("../../../shared/config.R")
 source("../../../shared/stat_box_helpers.R")
+source("../../../shared/server_utilities.R")
 
 # Source overview framework - THE REGISTRY IS THE SINGLE SOURCE OF TRUTH
 source("../metric_registry.R")
@@ -39,6 +40,8 @@ source("../display_functions.R")
 source("../historical_functions.R")
 source("../dynamic_ui.R")
 source("../dynamic_server.R")
+source("../fos_detail_data.R")
+source("../fos_detail_ui.R")
 
 # Set application name for AWS RDS monitoring
 set_app_name("overview")
@@ -176,7 +179,7 @@ ui <- function(request) {
   # Only show historical charts when drilling down to specific metrics
   build_overview_ui(
     overview_type = params$view_type,
-    include_historical = !is.null(params$metrics_filter),  # Historical for drill-down views
+    include_historical = !is.null(params$metrics_filter) && is.null(params$fos_filter),
     metrics_filter = params$metrics_filter,
     initial_zone = params$zone_filter,
     initial_date = params$analysis_date,
@@ -201,7 +204,7 @@ server <- function(input, output, session) {
     output = output,
     session = session,
     overview_type = params$view_type,
-    include_historical = !is.null(params$metrics_filter),  # Historical for drill-down views
+    include_historical = !is.null(params$metrics_filter) && is.null(params$fos_filter),
     metrics_filter = params$metrics_filter,
     facility_filter = params$facility_filter,
     fos_filter = params$fos_filter

@@ -973,21 +973,18 @@
                 return;
             }
             
-            // Build URL to overview app with FOS view params
-            // Default metrics for FOS view - easily expandable by adding to this list
-            const fosMetrics = [
-                'catch_basin',
-                'drone',
-                'ground_prehatch',
-                'structure',
-                'prehatch_coverage'
-            ];
-            
+            // Build URL to overview app with FOS view params.
+            // Only load the two pre-built metrics the detail dashboard reads from data[[]].
+            // The other 3 sections (prehatch township, air work, bioassays) load their
+            // own data fresh inside render_fos_detail_dashboard().
+            const fosMetrics = ['suco', 'catch_basin'];
+
             const params = new URLSearchParams();
             params.append('view', 'fos');
             params.append('facility', facility);
             params.append('fos', fos);
             params.append('metric', fosMetrics.join(','));
+            params.append('zone', '1');
             
             const appUrl = 'overview/?' + params.toString();
             console.log('Opening FOS Overview:', appUrl);

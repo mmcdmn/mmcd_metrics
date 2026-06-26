@@ -31,7 +31,6 @@ suppressPackageStartupMessages({
 source("../../../shared/db_helpers.R")
 source("../../../shared/config.R")
 source("../../../shared/stat_box_helpers.R")
-source("../../../shared/server_utilities.R")
 
 # Source overview framework - THE REGISTRY IS THE SINGLE SOURCE OF TRUTH
 source("../metric_registry.R")

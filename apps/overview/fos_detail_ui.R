@@ -8,6 +8,22 @@
 PREHATCH_GREEN_THRESH  <- 85
 PREHATCH_YELLOW_THRESH <- 60
 
+# Local copy — shared/server_utilities.R cannot be sourced by the overview app
+# (regression test guards against basename "server_utilities.R"). Keep in sync.
+if (!exists("make_sitecode_link", mode = "function")) {
+  make_sitecode_link <- function(sitecode) {
+    ifelse(
+      is.na(sitecode) | nchar(trimws(as.character(sitecode))) == 0,
+      as.character(sitecode),
+      paste0(
+        '<a href="https://webster.mmcd.org/map?search=', sitecode,
+        '" target="_blank" style="color:#60a5fa;text-decoration:none;font-weight:500;">',
+        sitecode, '</a>'
+      )
+    )
+  }
+}
+
 .prehatch_color <- function(pct) {
   if (is.na(pct) || pct >= PREHATCH_GREEN_THRESH)  return("#22c55e")
   if (pct >= PREHATCH_YELLOW_THRESH)                return("#eab308")

@@ -77,7 +77,12 @@ create_field_selector <- function() {
         "Double-sided printing (pad sections to even pages)",
         value = TRUE
       ),
-      
+      checkboxInput(
+        "autofill_history",
+        "Auto-fill with current year history",
+        value = FALSE
+      ),
+
       # Air/Ground specific filters (shown when site_type == "breeding")
       conditionalPanel(
         condition = "input.site_type == 'breeding'",
@@ -113,11 +118,6 @@ create_field_selector <- function() {
         checkboxInput(
           "split_by_type",
           "Split by Type (each type on separate page)",
-          value = FALSE
-        ),
-        checkboxInput(
-          "autofill_history",
-          "Auto-fill with current year history",
           value = FALSE
         )
       ),

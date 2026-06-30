@@ -210,7 +210,10 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
                   tags$span(style = "color:#ef4444;", icon("times"), " No")
                 }
                 exp_txt <- if (isTRUE(s$is_expiring)) {
-                  tags$span(style = "color:#eab308;", icon("clock"), " Soon")
+                  exp_label <- if (!is.null(s$expiry_date) && !is.na(s$expiry_date)) {
+                    format(as.Date(s$expiry_date), "%b %d")
+                  } else "Soon"
+                  tags$span(style = "color:#eab308;", icon("clock"), " ", exp_label)
                 } else ""
                 tags$tr(
                   tags$td(HTML(make_sitecode_link(s$sitecode))),

@@ -932,16 +932,20 @@ server <- function(input, output, session) {
       FALSE
     }
     
-    # Load structure history if auto-fill is enabled
-    struct_history <- NULL
-    if (!is.null(input$site_type) && input$site_type == "structures" && isTRUE(input$autofill_history)) {
-      setProgress(value = 0.20, detail = "Loading treatment history...")
-      struct_history <- tryCatch(get_structure_history(), error = function(e) {
-        showNotification(paste("Warning: Could not load history:", e$message), type = "warning")
-        NULL
-      })
+    # Load current-year history if auto-fill is enabled.
+    # Structures use STR records; breeding (air/ground) sites use WTL-G records.
+    autofill_history <- NULL
+    if (isTRUE(input$autofill_history)) {
+      setProgress(value = 0.20, detail = "Loading current year history...")
+      is_structures <- !is.null(input$site_type) && input$site_type == "structures"
+      autofill_history <- tryCatch(
+        if (is_structures) get_structure_history() else get_breeding_history(),
+        error = function(e) {
+          showNotification(paste("Warning: Could not load history:", e$message), type = "warning")
+          NULL
+        })
     }
-    
+
     cards_html <- generate_section_cards_html(
       filtered,
       title_fields,
@@ -956,7 +960,7 @@ server <- function(input, output, session) {
       double_sided = isTRUE(input$double_sided),
       watermark_fields = input$watermark_fields,
       cards_per_page = as.integer(input$cards_per_page),
-      history_data = struct_history
+      history_data = autofill_history
     )
     
     setProgress(value = 0.95, detail = "Rendering cards...")
@@ -1070,12 +1074,16 @@ server <- function(input, output, session) {
         FALSE
       }
       
-      # Load structure history if auto-fill is enabled
-      struct_history <- NULL
-      if (!is.null(input$site_type) && input$site_type == "structures" && isTRUE(input$autofill_history)) {
-        struct_history <- tryCatch(get_structure_history(), error = function(e) NULL)
+      # Load current-year history if auto-fill is enabled.
+      # Structures use STR records; breeding (air/ground) sites use WTL-G records.
+      autofill_history <- NULL
+      if (isTRUE(input$autofill_history)) {
+        is_structures <- !is.null(input$site_type) && input$site_type == "structures"
+        autofill_history <- tryCatch(
+          if (is_structures) get_structure_history() else get_breeding_history(),
+          error = function(e) NULL)
       }
-      
+
       html_cards <- generate_section_cards_html(
         filtered,
         title_fields,
@@ -1090,7 +1098,7 @@ server <- function(input, output, session) {
         double_sided = isTRUE(input$double_sided),
         watermark_fields = input$watermark_fields,
         cards_per_page = as.integer(input$cards_per_page),
-        history_data = struct_history
+        history_data = autofill_history
       )
       
       setProgress(value = 0.90, detail = "Writing file...")

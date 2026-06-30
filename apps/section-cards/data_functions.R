@@ -805,3 +805,41 @@ get_structure_history <- function() {
   message(sprintf("[section_cards] Loaded %d structure treatment records for %d", nrow(data), current_year))
   return(data)
 }
+
+#' Get breeding (air/ground) inspection/treatment history for the current year
+#'
+#' Queries dblarv_insptrt_current for all records where list_type = 'WTL-G'
+#' (covers both air and ground breeding sites) in the current year. Returns
+#' data keyed by sitecode for auto-filling section card table rows with:
+#' date, sample, #/dip, mat, amt, emp #, wet. Same shape as
+#' get_structure_history() so the display layer treats them identically.
+#'
+#' @return A data frame with columns: sitecode, inspdate, sample_num, numdip, matcode, amts, emp1, wet
+#' @export
+get_breeding_history <- function() {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+
+  current_year <- as.integer(format(Sys.Date(), "%Y"))
+
+  query <- sprintf("
+    SELECT
+      sitecode,
+      inspdate,
+      sample_num,
+      numdip,
+      matcode,
+      amts,
+      emp1,
+      wet
+    FROM public.dblarv_insptrt_current
+    WHERE list_type = 'WTL-G'
+      AND EXTRACT(YEAR FROM inspdate) = %d
+    ORDER BY sitecode, inspdate
+  ", current_year)
+
+  message(sprintf("[section_cards] Loading breeding history for %d...", current_year))
+  data <- dbGetQuery(con, query)
+  message(sprintf("[section_cards] Loaded %d breeding inspection records for %d", nrow(data), current_year))
+  return(data)
+}

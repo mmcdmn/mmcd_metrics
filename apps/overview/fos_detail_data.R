@@ -54,6 +54,25 @@ load_fos_prehatch_township <- function(fos_emp_num, analysis_date,
     lkp
   }, error = function(e) data.frame(towncode = character(), city = character()))
 
+  # Compute actual expiry date from raw treatments so the UI can show it
+  treatments <- raw$treatments
+  if (!is.null(treatments) && nrow(treatments) > 0 &&
+      all(c("sitecode","inspdate","effect_days") %in% names(treatments))) {
+    exp_dates <- treatments %>%
+      dplyr::mutate(
+        expiry_date = as.Date(inspdate) +
+          ifelse(is.na(effect_days), 0L, as.integer(effect_days))
+      ) %>%
+      dplyr::group_by(sitecode) %>%
+      dplyr::arrange(dplyr::desc(as.Date(inspdate))) %>%
+      dplyr::slice(1) %>%
+      dplyr::ungroup() %>%
+      dplyr::select(sitecode, expiry_date)
+    sites <- merge(sites, exp_dates, by = "sitecode", all.x = TRUE)
+  } else {
+    sites$expiry_date <- as.Date(NA)
+  }
+
   sites$towncode <- substr(sites$sitecode, 1, 4)
   sites <- merge(sites, town_lkp, by = "towncode", all.x = TRUE)
   sites$city <- ifelse(is.na(sites$city), sites$towncode, sites$city)

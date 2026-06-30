@@ -189,7 +189,11 @@
 .watermark-prehatch-calc { background: rgba(255,200,200,0.35) !important; color: #CC0000 !important; font-size: 16px; }
 
 /* ---------- Card data table ---------- */
-.card-table { width: 100%; border-collapse: collapse; flex: 1; }
+/* table-layout: fixed makes column widths depend ONLY on the table, never on
+   cell content — so a card with auto-filled history is sized identically to an
+   empty one. Combined with nowrap + clip on td, filled text can never change
+   row height or column width. */
+.card-table { width: 100%; border-collapse: collapse; flex: 1; table-layout: fixed; }
 .card-table th {
   background: #e0e0e0;
   border: 1px solid #333;
@@ -203,6 +207,9 @@
   border: 1px solid #333;
   padding: var(--sc-td-pad, 4px); font-size: var(--sc-td-font, 10px);
   height: 1em; line-height: 1; overflow: hidden;
+  /* Keep filled cells on a single line and clip overflow so an auto-filled
+     value never wraps and grows the row beyond an empty one. */
+  white-space: nowrap; text-overflow: ellipsis; text-align: center;
 }
 .card-table td.col-odd  { background: #fafafa; }
 .card-table td.col-even { background: #f0f0f0; }

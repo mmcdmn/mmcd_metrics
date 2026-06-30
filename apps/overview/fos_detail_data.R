@@ -80,12 +80,14 @@ load_fos_prehatch_township <- function(fos_emp_num, analysis_date,
 #' @param zone_filter  Zone filter vector or NULL
 #' @return Data frame: fos, display_name, active (one row per FOS with activity)
 load_fos_suco <- function(facility, analysis_date, zone_filter = NULL) {
+  # SUCO is a facility-wide goal — always count both zones regardless of
+  # the display zone filter (which might be P1-only from the URL).
   tryCatch(
     load_data_by_fos("suco",
                      analysis_date    = analysis_date,
                      facility_filter  = facility,
                      fos_filter       = NULL,
-                     zone_filter      = if (!is.null(zone_filter)) zone_filter else c("1","2")),
+                     zone_filter      = c("1","2")),
     error = function(e) {
       warning(paste("[load_fos_suco]", e$message))
       data.frame(fos = character(), display_name = character(), active = integer())

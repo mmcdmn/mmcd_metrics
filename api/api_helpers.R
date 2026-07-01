@@ -199,3 +199,49 @@ build_expiration_schedule <- function(count_fn, thresholds = c(14L, 30L, 60L, 90
     buckets       = buckets
   )
 }
+
+# ── Township / town-code support ──
+# A "town" is identified by the first 4 digits of a sitecode/sectcode (e.g. 1904=Eagan,
+# 1905=Empire), shared across ALL site types (ground/air/drone/struct/cb). The name<->code
+# map lives in lookup_towncode_name. This lets users filter by a place name that isn't a
+# facility, without any new per-app SQL — we just prefix-match the sectcode.
+.town_lookup <- NULL
+get_town_lookup <- function() {
+  if (!is.null(.town_lookup)) return(.town_lookup)
+  df <- tryCatch({
+    con <- get_db_connection()
+    if (is.null(con)) return(data.frame(towncode4 = character(0), city = character(0)))
+    on.exit(safe_disconnect(con), add = TRUE)
+    DBI::dbGetQuery(con,
+      "SELECT DISTINCT LPAD(CAST(towncode AS text), 4, '0') AS towncode4, city
+         FROM lookup_towncode_name
+        WHERE city IS NOT NULL AND towncode IS NOT NULL
+        ORDER BY city")
+  }, error = function(e) data.frame(towncode4 = character(0), city = character(0)))
+  .town_lookup <<- df
+  df
+}
+
+# Resolve a town filter (name or 4-digit code) to a 4-digit town code, or NULL if omitted.
+validate_town <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
+  s <- trimws(as.character(v))
+  if (nchar(s) > 40L || !grepl("^[A-Za-z0-9 .'-]+$", s)) stop("invalid town")
+  if (grepl("^[0-9]{1,4}$", s)) return(sprintf("%04d", as.integer(s)))
+  lkp <- get_town_lookup()
+  if (is.null(lkp) || nrow(lkp) == 0) stop("town lookup unavailable")
+  hit <- lkp[tolower(lkp$city) == tolower(s), ]
+  if (nrow(hit) == 0) hit <- lkp[grepl(tolower(s), tolower(lkp$city), fixed = TRUE), ]
+  if (nrow(hit) == 0) stop(paste0("unknown town: ", s))
+  as.character(hit$towncode4[1])
+}
+
+# Filter a sites data.frame to a single town code by prefix-matching sectcode/sitecode.
+# No-op when towncode is NULL or the frame lacks a sectcode/sitecode column.
+filter_sites_by_town <- function(sites, towncode) {
+  if (is.null(towncode) || is.null(sites) || nrow(sites) == 0) return(sites)
+  col <- if ("sectcode" %in% names(sites)) "sectcode"
+         else if ("sitecode" %in% names(sites)) "sitecode" else NULL
+  if (is.null(col)) return(sites)
+  sites[substr(as.character(sites[[col]]), 1, 4) == towncode, , drop = FALSE]
+}

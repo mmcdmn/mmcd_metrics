@@ -32,6 +32,7 @@ mount_route <- function(pr, prefix, file) {
   pr
 }
 
+pr <- mount_route(pr, "/v1/public/reference",          "reference.R")
 pr <- mount_route(pr, "/v1/public/data/breeding",     "breeding_sites.R")
 pr <- mount_route(pr, "/v1/public/data/structures",    "structures.R")
 pr <- mount_route(pr, "/v1/public/data/catch-basins",  "catch_basins.R")

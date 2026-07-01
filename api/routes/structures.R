@@ -1,9 +1,12 @@
 # =============================================================================
-# API Routes — Structures & Catch Basins
+# API Routes — Structure Treatments
 # =============================================================================
-# Endpoints for structure treatments and catch basin data.
-# Sources existing data_functions.R from each app — NO new SQL.
+# Structure treatments (loc_cxstruct): window wells, dry wells, underground
+# chambers, and other man-made harborages. This is DISTINCT from catch basins
+# (loc_catchbasin) — those are storm-drain sumps and live in catch_basins.R
+# under /v1/public/data/catch-basins/...
 #
+# Sources existing data_functions.R from the struct_trt app — NO new SQL.
 # All endpoints are mounted under /v1/public/data/structures/...
 # =============================================================================
 
@@ -13,9 +16,6 @@ source("/srv/api/api_helpers.R")
 
 struct_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/struct_trt/data_functions.R", local = struct_env, chdir = TRUE)
-
-cb_env <- new.env(parent = globalenv())
-source("/srv/shiny-server/apps/catch_basin_status/data_functions.R", local = cb_env, chdir = TRUE)
 
 # ── Structure Treatments ──
 
@@ -133,152 +133,6 @@ function(req, res, facility = NULL) {
     cards_env <- new.env(parent = globalenv())
     source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_env, chdir = TRUE)
     cards_env$get_structure_filter_options(facility_filter = fac)
-  }, error = function(e) api_error(res, 400, e$message))
-}
-
-# ── Catch Basins ──
-
-#* Get catch basin treatment status.
-#* Returns aggregated treatment counts per section/facility with active/expiring/expired.
-#* @param facility Facility code. Omit for all.
-#* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
-#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
-#* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
-#* @get /catch-basins
-#* @serializer json
-function(req, res,
-         facility = NULL,
-         foreman = NULL,
-         zone = "1,2",
-         analysis_date = NULL) {
-  tryCatch({
-    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
-    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
-    zn    <- validate_zone(zone)
-    adate <- validate_date(analysis_date)
-
-    data <- cb_env$load_raw_data(
-      analysis_date   = adate,
-      facility_filter = fac,
-      foreman_filter  = fman,
-      zone_filter     = zn
-    )
-
-    sites <- data$sites
-    if (is.null(sites) || nrow(sites) == 0) {
-      return(list(count = 0L, total = data$total_count %||% 0L, data = list()))
-    }
-
-    list(
-      count = nrow(sites),
-      total = data$total_count %||% nrow(sites),
-      data  = sites
-    )
-  }, error = function(e) api_error(res, 400, e$message))
-}
-
-# ── Catch Basin Summary (value-box stats) ──
-
-#* Get catch basin summary — total wet CBs, active(treated), expiring, expired, percent treated.
-#* @param facility Facility code. Omit for all.
-#* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
-#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
-#* @param analysis_date Date YYYY-MM-DD. Default today.
-#* @get /catch-basins/summary
-#* @serializer json
-function(req, res,
-         facility = NULL,
-         foreman = NULL,
-         zone = "1,2",
-         analysis_date = NULL) {
-  tryCatch({
-    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
-    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
-    zn    <- validate_zone(zone)
-    adate <- validate_date(analysis_date)
-
-    data <- cb_env$load_raw_data(
-      analysis_date   = adate,
-      facility_filter = fac,
-      foreman_filter  = fman,
-      zone_filter     = zn
-    )
-
-    sites <- data$sites
-    if (is.null(sites) || nrow(sites) == 0) {
-      return(list(
-        analysis_date = as.character(adate),
-        total_wet = 0L, total_treated = 0L, total_expiring = 0L,
-        total_expired = 0L, percent_treated = 0
-      ))
-    }
-
-    total_wet      <- sum(sites$total_count, na.rm = TRUE)
-    total_treated  <- sum(sites$active_count, na.rm = TRUE)
-    total_expiring <- sum(sites$expiring_count, na.rm = TRUE)
-    total_expired  <- sum(sites$expired_count, na.rm = TRUE)
-    pct            <- if (total_wet > 0) round(100 * total_treated / total_wet, 1) else 0
-
-    list(
-      analysis_date   = as.character(adate),
-      filters         = list(facility = fac, foreman = foreman, zone = zn),
-      total_wet       = total_wet,
-      total_treated   = total_treated,
-      total_expiring  = total_expiring,
-      total_expired   = total_expired,
-      percent_treated = pct
-    )
-  }, error = function(e) api_error(res, 400, e$message))
-}
-
-# ── Catch Basin Summary BY FACILITY ──
-
-#* Get catch basin summary broken down by facility — one row per facility with totals.
-#* Use for facility comparisons, charts, and LLM multi-facility queries.
-#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
-#* @param analysis_date Date YYYY-MM-DD. Default today.
-#* @get /catch-basins/summary-by-facility
-#* @serializer json
-function(req, res,
-         zone = "1,2",
-         analysis_date = NULL) {
-  tryCatch({
-    zn    <- validate_zone(zone)
-    adate <- validate_date(analysis_date)
-
-    data <- cb_env$load_raw_data(
-      analysis_date   = adate,
-      facility_filter = "all",
-      foreman_filter  = "all",
-      zone_filter     = zn
-    )
-
-    grouped <- cb_env$process_catch_basin_data(
-      data,
-      group_by     = "facility",
-      combine_zones = TRUE
-    )
-
-    if (is.null(grouped) || nrow(grouped) == 0) {
-      return(list(analysis_date = as.character(adate), facility_summaries = list()))
-    }
-
-    rows <- lapply(seq_len(nrow(grouped)), function(i) {
-      r <- grouped[i, ]
-      list(
-        facility        = r$display_name,
-        total_count     = as.integer(r$total_count),
-        active_count    = as.integer(r$active_count),
-        expiring_count  = as.integer(r$expiring_count %||% 0),
-        expired_count   = as.integer(r$expired_count %||% 0),
-        pct_treated     = round(as.numeric(r$pct_treated %||% 0), 1)
-      )
-    })
-
-    list(
-      analysis_date      = as.character(adate),
-      facility_summaries = rows
-    )
   }, error = function(e) api_error(res, 400, e$message))
 }
 

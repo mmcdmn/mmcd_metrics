@@ -67,6 +67,7 @@ function(req, res,
 #* @param facility Facility code. Omit for all.
 #* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
 #* @param analysis_date Date YYYY-MM-DD. Default today.
 #* @get /summary
 #* @serializer json
@@ -74,11 +75,13 @@ function(req, res,
          facility = NULL,
          foreman = NULL,
          zone = "1,2",
+         town = NULL,
          analysis_date = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
     zn    <- validate_zone(zone)
+    tc    <- validate_town(town)
     adate <- validate_date(analysis_date)
 
     data <- cb_env$load_raw_data(
@@ -88,7 +91,7 @@ function(req, res,
       zone_filter     = zn
     )
 
-    sites <- data$sites
+    sites <- filter_sites_by_town(data$sites, tc)
     if (is.null(sites) || nrow(sites) == 0) {
       return(list(
         analysis_date = as.character(adate),
@@ -105,7 +108,7 @@ function(req, res,
 
     list(
       analysis_date   = as.character(adate),
-      filters         = list(facility = fac, foreman = foreman, zone = zn),
+      filters         = list(facility = fac, foreman = foreman, zone = zn, town = tc %||% "all"),
       total_wet       = total_wet,
       total_treated   = total_treated,
       total_expiring  = total_expiring,
@@ -177,6 +180,7 @@ function(req, res,
 #* @param facility Facility code. Omit for all.
 #* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
 #* @param analysis_date Date YYYY-MM-DD. Default today.
 #* @get /expiration-schedule
 #* @serializer json
@@ -184,24 +188,19 @@ function(req, res,
          facility = NULL,
          foreman = NULL,
          zone = "1,2",
+         town = NULL,
          analysis_date = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
     zn    <- validate_zone(zone)
+    tc    <- validate_town(town)
     adate <- validate_date(analysis_date)
 
-    # load_raw_data() flags a basin as "expiring" when it lapses within
-    # `expiring_days`. Cumulative counts at increasing thresholds let us bucket
-    # the upcoming expirations. total_active / total_expired are independent of
-    # the threshold, so we read them from any populated call.
-    thresholds <- c(14L, 30L, 60L, 90L)
-    cumulative <- setNames(integer(length(thresholds)), as.character(thresholds))
-    total_active  <- 0L
-    total_expired <- 0L
-    have_totals   <- FALSE
-
-    for (n in thresholds) {
+    # load_raw_data() flags a basin as "expiring" when it lapses within `expiring_days`.
+    # Calling it at increasing thresholds and differencing the cumulative expiring
+    # counts builds the day-window timeline (shared build_expiration_schedule helper).
+    sched <- build_expiration_schedule(function(n) {
       d <- cb_env$load_raw_data(
         analysis_date   = adate,
         facility_filter = fac,
@@ -209,45 +208,19 @@ function(req, res,
         zone_filter     = zn,
         expiring_days   = n
       )
-      s <- d$sites
-      if (is.null(s) || nrow(s) == 0) next
-      cumulative[as.character(n)] <- sum(s$expiring_count, na.rm = TRUE)
-      if (!have_totals) {
-        total_active  <- sum(s$active_count, na.rm = TRUE)
-        total_expired <- sum(s$expired_count, na.rm = TRUE)
-        have_totals   <- TRUE
-      }
-    }
+      s <- filter_sites_by_town(d$sites, tc)
+      if (is.null(s) || nrow(s) == 0) return(NULL)
+      list(
+        expiring = sum(s$expiring_count, na.rm = TRUE),
+        active   = sum(s$active_count,   na.rm = TRUE),
+        expired  = sum(s$expired_count,  na.rm = TRUE)
+      )
+    })
 
-    nz <- function(x) max(0L, as.integer(x))
-    c14 <- cumulative["14"]; c30 <- cumulative["30"]
-    c60 <- cumulative["60"]; c90 <- cumulative["90"]
-
-    buckets <- list(
-      list(label = "next 14 days",  max_days = 14L, count = nz(c14)),
-      list(label = "15-30 days",    max_days = 30L, count = nz(c30 - c14)),
-      list(label = "31-60 days",    max_days = 60L, count = nz(c60 - c30)),
-      list(label = "61-90 days",    max_days = 90L, count = nz(c90 - c60)),
-      list(label = "beyond 90 days", max_days = NA, count = nz(total_active - c90))
-    )
-
-    # Soonest = first non-empty bucket; peak = bucket with the most basins
-    nonzero <- Filter(function(b) b$count > 0, buckets)
-    soonest <- if (length(nonzero) > 0) nonzero[[1]] else NULL
-    peak <- NULL
-    for (b in buckets) {
-      if (is.null(peak) || b$count > peak$count) peak <- b
-    }
-    if (!is.null(peak) && peak$count == 0) peak <- NULL
-
-    list(
+    c(list(
       analysis_date = as.character(adate),
-      filters       = list(facility = fac, foreman = foreman %||% "all", zone = zn),
-      total_active  = as.integer(total_active),
-      total_expired = as.integer(total_expired),
-      soonest       = soonest,
-      peak          = peak,
-      buckets       = buckets
-    )
+      filters       = list(facility = fac, foreman = foreman %||% "all",
+                          zone = zn, town = tc %||% "all")
+    ), sched)
   }, error = function(e) api_error(res, 400, e$message))
 }

@@ -50,7 +50,15 @@ server <- function(input, output, session) {
                sprintf(" %s (Wk %s)", weeks_data$week_days, weeks_data$epiweek),
                sprintf(" (Wk %s)",  weeks_data$epiweek))
       )
-      updateSelectInput(session, "yrwk", choices = week_choices, selected = week_choices[1])
+      # Default to current calendar week for current year; most recent otherwise
+      sel <- week_choices[1]
+      if (as.integer(input$year) == as.integer(format(Sys.Date(), "%Y"))) {
+        current_yrwk <- as.integer(format(Sys.Date(), "%Y")) * 100L +
+                        as.integer(format(Sys.Date(), "%U"))
+        available    <- as.integer(week_choices)
+        sel          <- week_choices[which.min(abs(available - current_yrwk))]
+      }
+      updateSelectInput(session, "yrwk", choices = week_choices, selected = sel)
     }
   })
   
@@ -101,8 +109,13 @@ server <- function(input, output, session) {
                sprintf(" %s (Wk %s)", weeks_data$week_days, weeks_data$epiweek),
                sprintf(" (Wk %s)", weeks_data$epiweek))
       )
-      # Default compare-to: second week if available
-      sel <- if (length(week_choices) >= 2) week_choices[2] else week_choices[1]
+      # Default compare-to: one week prior to the primary selection
+      primary_yrwk <- as.integer(format(Sys.Date(), "%Y")) * 100L +
+                      as.integer(format(Sys.Date(), "%U"))
+      available    <- as.integer(week_choices)
+      primary_idx  <- which.min(abs(available - primary_yrwk))
+      sel_idx      <- min(primary_idx + 1L, length(week_choices))
+      sel          <- week_choices[sel_idx]
       updateSelectInput(session, "yrwk_b", choices = week_choices, selected = sel)
     }
   })

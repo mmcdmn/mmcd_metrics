@@ -23,6 +23,71 @@ source("/srv/shiny-server/apps/ground_prehatch_progress/data_functions.R", local
 cards_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_env, chdir = TRUE)
 
+# ── Ground prehatch shared helpers ──
+# Ground prehatch defaults its expiring window to 14 (registry fallback). Group-by
+# dimensions come straight from the site-level details (facility/foreman/sectcode,
+# plus township = first 4 of sectcode, plus mmcd_all).
+GROUND_EXPIRING_DEFAULT <- as.integer(registry_default("ground_prehatch", "expiring_days", 14L))
+GROUND_GROUP_BYS <- c("mmcd_all", "township", "sectcode", "facility", "foreman")
+
+# Load ground prehatch site-level details with the full filter surface applied.
+# Reuses the app's get_site_details_data + filter_ground_data (no new SQL); town is a
+# sectcode-prefix filter.
+.load_ground <- function(adate, exdays, fac, fman, zn, tc, include_drone = FALSE) {
+  details <- ground_env$get_site_details_data(expiring_days = exdays, analysis_date = adate)
+  if (is.null(details) || nrow(details) == 0) return(details)
+  details <- ground_env$filter_ground_data(
+    details, zone_filter = zn, facility_filter = fac,
+    foreman_filter = fman, include_drone = include_drone
+  )
+  filter_sites_by_town(details, tc)
+}
+
+# Roll ground prehatch details up by a chosen dimension -> clean rows list.
+.ground_group_rows <- function(details, group_by) {
+  if (is.null(details) || nrow(details) == 0) return(list())
+  details$.grp <- switch(group_by,
+    mmcd_all = rep("All MMCD", nrow(details)),
+    township = substr(as.character(details$sectcode), 1, 4),
+    sectcode = as.character(details$sectcode),
+    facility = as.character(details$facility),
+    foreman  = as.character(details$foreman),
+    as.character(details$facility)
+  )
+  fac_lkp  <- tryCatch(get_facility_lookup(), error = function(e) NULL)
+  fos_lkp  <- tryCatch(get_foremen_lookup(),  error = function(e) NULL)
+  town_lkp <- if (group_by == "township") tryCatch(get_town_lookup(), error = function(e) NULL) else NULL
+  disp <- function(k) {
+    if (group_by == "facility" && !is.null(fac_lkp)) {
+      m <- fac_lkp$full_name[match(k, fac_lkp$short_name)]; if (length(m) && !is.na(m)) return(m)
+    } else if (group_by == "foreman" && !is.null(fos_lkp)) {
+      m <- fos_lkp$shortname[match(k, as.character(fos_lkp$emp_num))]; if (length(m) && !is.na(m)) return(m)
+    } else if (group_by == "township" && !is.null(town_lkp)) {
+      m <- town_lkp$city[match(k, town_lkp$towncode4)]; if (length(m) && !is.na(m)) return(m)
+    }
+    k
+  }
+  lapply(sort(unique(details$.grp)), function(k) {
+    sub      <- details[details$.grp == k, ]
+    treated  <- sum(sub$prehatch_status == "treated",  na.rm = TRUE)
+    expiring <- sum(sub$prehatch_status == "expiring", na.rm = TRUE)
+    expired  <- sum(sub$prehatch_status == "expired",  na.rm = TRUE)
+    active   <- treated + expiring
+    list(
+      group          = k,
+      display_name   = disp(k),
+      total_count    = nrow(sub),
+      active_count   = active,
+      treated_count  = treated,
+      expiring_count = expiring,
+      expired_count  = expired,
+      total_acres    = round(sum(sub$acres, na.rm = TRUE), 2),
+      active_acres   = round(sum(ifelse(sub$prehatch_status %in% c("treated", "expiring"), sub$acres, 0), na.rm = TRUE), 2),
+      pct_treated    = if ((active + expired) > 0) round(100 * active / (active + expired), 1) else 0
+    )
+  })
+}
+
 # ── Air Sites ──
 
 #* Get air breeding site status (current treatment/inspection state).
@@ -243,6 +308,7 @@ function(req, res,
 #* @param facility Facility code. Omit for all.
 #* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
 #* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
 #* @param expiring_days Days until expiration threshold (1-60). Default 14.
 #* @get /ground-prehatch/summary
@@ -251,35 +317,26 @@ function(req, res,
          facility = NULL,
          foreman = NULL,
          zone = "1,2",
+         town = NULL,
          analysis_date = NULL,
          expiring_days = 14) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
     zn    <- validate_zone(zone)
+    tc    <- validate_town(town)
     adate <- validate_date(analysis_date)
-    exdays <- suppressWarnings(as.integer(expiring_days %||% 14L))
+    exdays <- suppressWarnings(as.integer(expiring_days %||% GROUND_EXPIRING_DEFAULT))
     if (is.na(exdays) || exdays < 1L || exdays > 60L) {
       stop("expiring_days must be between 1 and 60")
     }
 
-    details <- ground_env$get_site_details_data(
-      expiring_days = exdays,
-      analysis_date = adate
-    )
-
-    details <- ground_env$filter_ground_data(
-      details,
-      zone_filter = zn,
-      facility_filter = fac,
-      foreman_filter = fman,
-      include_drone = FALSE
-    )
+    details <- .load_ground(adate, exdays, fac, fman, zn, tc, include_drone = FALSE)
 
     if (is.null(details) || nrow(details) == 0) {
       return(list(
         analysis_date = as.character(adate),
-        filters = list(facility = fac, foreman = foreman, zone = zn, expiring_days = exdays),
+        filters = list(facility = fac, foreman = foreman, zone = zn, town = tc %||% "all", expiring_days = exdays),
         total_prehatch = 0L, total_treated = 0L, total_active = 0L,
         total_expiring = 0L, total_expired = 0L, total_skipped = 0L,
         treated_pct = 0,
@@ -310,7 +367,7 @@ function(req, res,
 
     list(
       analysis_date  = as.character(adate),
-      filters        = list(facility = fac, foreman = foreman, zone = zn, expiring_days = exdays),
+      filters        = list(facility = fac, foreman = foreman, zone = zn, town = tc %||% "all", expiring_days = exdays),
       total_prehatch = total_prehatch,
       total_treated  = total_treated,
       total_active   = total_active,
@@ -325,6 +382,80 @@ function(req, res,
       expired_acres  = expired_acres,
       skipped_acres  = skipped_acres
     )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+# ── Ground Prehatch Summary BY GROUP (mmcd_all / township / sectcode / facility / foreman) ──
+
+#* Get ground prehatch summary rolled up by a chosen dimension.
+#* @param group_by One of: mmcd_all, township, sectcode, facility, foreman. Default facility.
+#* @param facility Facility code to narrow to. Omit for all.
+#* @param foreman FOS shortname to narrow to. Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param town Township/city name or 4-digit code to narrow to. Omit for all.
+#* @param analysis_date Date YYYY-MM-DD. Default today.
+#* @param expiring_days Expiring window (1-60). Default 14.
+#* @get /ground-prehatch/summary-by-group
+#* @serializer json
+function(req, res,
+         group_by = "facility", facility = NULL, foreman = NULL, zone = "1,2",
+         town = NULL, analysis_date = NULL, expiring_days = 14) {
+  tryCatch({
+    grp   <- validate_group_by(group_by, GROUND_GROUP_BYS, "facility")
+    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
+    zn    <- validate_zone(zone)
+    tc    <- validate_town(town)
+    adate <- validate_date(analysis_date)
+    exdays <- suppressWarnings(as.integer(expiring_days %||% GROUND_EXPIRING_DEFAULT))
+    if (is.na(exdays) || exdays < 1L || exdays > 60L) stop("expiring_days must be between 1 and 60")
+
+    details <- .load_ground(adate, exdays, fac, fman, zn, tc, include_drone = FALSE)
+    list(
+      analysis_date = as.character(adate),
+      group_by      = grp,
+      expiring_days = exdays,
+      groups        = .ground_group_rows(details, grp)
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+# ── Ground Prehatch Expiration Schedule ──
+
+#* Get WHEN ground prehatch treatments expire, as day-window buckets (next 14 / 15-30 /
+#* 31-60 / 61-90 / beyond 90) plus soonest and peak windows. Reuses get_site_details_data
+#* at several expiring_days thresholds — NO new SQL.
+#* @param facility Facility code. Omit for all.
+#* @param foreman FOS shortname. Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param town Township/city name or 4-digit code. Omit for all.
+#* @param analysis_date Date YYYY-MM-DD. Default today.
+#* @get /ground-prehatch/expiration-schedule
+#* @serializer json
+function(req, res,
+         facility = NULL, foreman = NULL, zone = "1,2", town = NULL, analysis_date = NULL) {
+  tryCatch({
+    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
+    zn    <- validate_zone(zone)
+    tc    <- validate_town(town)
+    adate <- validate_date(analysis_date)
+
+    sched <- build_expiration_schedule(function(n) {
+      d <- .load_ground(adate, n, fac, fman, zn, tc, include_drone = FALSE)
+      if (is.null(d) || nrow(d) == 0) return(NULL)
+      list(
+        expiring = sum(d$prehatch_status == "expiring", na.rm = TRUE),
+        active   = sum(d$prehatch_status %in% c("treated", "expiring"), na.rm = TRUE),
+        expired  = sum(d$prehatch_status == "expired", na.rm = TRUE)
+      )
+    })
+
+    c(list(
+      analysis_date = as.character(adate),
+      filters       = list(facility = fac %||% "all", foreman = foreman %||% "all",
+                          zone = zn, town = tc %||% "all")
+    ), sched)
   }, error = function(e) api_error(res, 400, e$message))
 }
 

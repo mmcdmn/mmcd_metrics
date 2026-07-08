@@ -23,7 +23,7 @@ const CONFIG = {
 };
 
 // ── Column positions (1-based) matching your sheet layout ────────────────────
-// A=Sitecode  B=Priority  C=Acres  D=Emp#  E=Date  F=%Wet  G=#/Dip  H=Sample
+// A=Sitecode  B=Priority  C=Acres  D=Emp#  E=Date  F=%Wet  G=#/Dip  H=Sample  I=Remarks  J=Bugs
 // D (Emp#) doubles as the Claim Emp ID — user types their emp# to claim a site;
 // filled automatically by the API once the site has been inspected.
 const COL = {
@@ -33,6 +33,8 @@ const COL = {
   PCT_WET:   6,   // F
   NUM_DIP:   7,   // G
   SAMPLE:    8,   // H
+  REMARKS:   9,   // I  — site remarks (restored from API, do not overwrite)
+  BUGS:      11,  // K  — R for Red Bugs, B for Blue Bugs, blank otherwise
 };
 
 const HEADER_ROW = 2;   // Row with column headers
@@ -66,6 +68,9 @@ function getProp_(key) {
 // ════════════════════════════════════════════════════════════════════════════
 
 function refreshInspectionData() {
+  Logger.log('▶ refreshInspectionData start ' + new Date().toLocaleTimeString());
+  try {
+
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     Logger.log('Skipping refresh — another execution is still running.');
@@ -97,7 +102,7 @@ function refreshInspectionData() {
     const base = getProp_('API_BASE');
     const r = UrlFetchApp.fetch(base + '/public/threshold', { muteHttpExceptions: true });
     if (r.getResponseCode() === 200) { threshold = JSON.parse(r.getContentText()).threshold || 2; }
-  } catch (e) { /* keep default */ }
+  } catch (e) { Logger.log('threshold fetch failed (using default 2): ' + e.message); }
 
   // Cutoff date for normal lookback — older inspections kept only if dip ≥ threshold
   const normalCutoff = new Date();
@@ -127,6 +132,7 @@ function refreshInspectionData() {
     const wetCol = sheet.getRange(DATA_START, COL.PCT_WET, numRows, 1).getValues();
     const dipCol = sheet.getRange(DATA_START, COL.NUM_DIP, numRows, 1).getValues();
     const smpCol = sheet.getRange(DATA_START, COL.SAMPLE,  numRows, 1).getValues();
+    const bugCol = sheet.getRange(DATA_START, COL.BUGS,    numRows, 1).getValues();
 
     // Fill in inspected data — clear stale data for sites outside lookback
     let updated = 0;
@@ -148,6 +154,8 @@ function refreshInspectionData() {
         wetCol[idx][0] = WET_LABELS[wetCode] || wetCode;
         dipCol[idx][0] = info.dip_count  != null ? info.dip_count : '';
         smpCol[idx][0] = info.sampnum_yr != null ? String(info.sampnum_yr) : '';
+        const bs = info.bug_status || '';
+        bugCol[idx][0] = bs === 'Red Bugs' ? 'R' : bs === 'Blue Bugs' ? 'B' : '';
         updated++;
       } else {
         // Not kept — clear stale data.
@@ -157,6 +165,7 @@ function refreshInspectionData() {
         wetCol[idx][0] = '';
         dipCol[idx][0] = '';
         smpCol[idx][0] = '';
+        bugCol[idx][0] = '';
         if (hadData) Logger.log('  Cleared stale data for ' + sc + ' (outside lookback / below threshold)');
       }
     }
@@ -166,6 +175,7 @@ function refreshInspectionData() {
     sheet.getRange(DATA_START, COL.PCT_WET, numRows, 1).setValues(wetCol);
     sheet.getRange(DATA_START, COL.NUM_DIP, numRows, 1).setValues(dipCol);
     sheet.getRange(DATA_START, COL.SAMPLE,  numRows, 1).setValues(smpCol);
+    sheet.getRange(DATA_START, COL.BUGS,    numRows, 1).setValues(bugCol);
 
     // Sync claims for uninspected sites
     const claimResult = syncClaims_(siteRows, lookup, empCol);
@@ -221,6 +231,10 @@ function refreshInspectionData() {
 
   // Write the Summary tab
   updateSummaryTab_(ss, tabStats);
+
+  } catch (e) {
+    Logger.log('❌ refreshInspectionData CRASHED: ' + e.message + '\n' + e.stack);
+  }
 }
 
 
@@ -229,29 +243,28 @@ function refreshInspectionData() {
 // ════════════════════════════════════════════════════════════════════════════
 
 function fetchChecklist_() {
-  const base = getProp_('API_BASE');
-  const key  = getProp_('API_KEY');
-
-  // No facility or priority filter — returns all air sites so we can match
-  // any sitecode regardless of facility/zone.
-  const lookback = Math.max(CONFIG.LOOKBACK_DAYS, CONFIG.LOOKBACK_ABOVE_THRESH || 0);
-  const url = base + '/private/air-checklist?lookback_days=' + lookback;
-
-  const r = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: { 'Authorization': 'Bearer ' + key },
-    muteHttpExceptions: true,
-  });
-
-  if (r.getResponseCode() !== 200) {
-    Logger.log('API error ' + r.getResponseCode() + ': ' + r.getContentText());
+  try {
+    const base = getProp_('API_BASE');
+    const key  = getProp_('API_KEY');
+    const lookback = Math.max(CONFIG.LOOKBACK_DAYS, CONFIG.LOOKBACK_ABOVE_THRESH || 0);
+    const url = base + '/private/air-checklist?lookback_days=' + lookback;
+    const r = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { 'Authorization': 'Bearer ' + key },
+      muteHttpExceptions: true,
+    });
+    if (r.getResponseCode() !== 200) {
+      Logger.log('fetchChecklist_ HTTP ' + r.getResponseCode() + ': ' + r.getContentText());
+      return [];
+    }
+    const payload = JSON.parse(r.getContentText());
+    return Array.isArray(payload) ? payload
+         : Array.isArray(payload.data) ? payload.data
+         : [];
+  } catch (e) {
+    Logger.log('fetchChecklist_ ERROR (network/config): ' + e.message);
     return [];
   }
-
-  const payload = JSON.parse(r.getContentText());
-  return Array.isArray(payload) ? payload
-       : Array.isArray(payload.data) ? payload.data
-       : [];
 }
 
 /** Fetch active claims from Redis via the API */
@@ -736,7 +749,7 @@ const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
  */
 function highlightPrehatch_(sheet, siteRows, lookup) {
   const prehatchColor = String(CONFIG.PREHATCH_HIGHLIGHT_COLOR || '#2e7d32').toLowerCase();
-  const lastCol = Math.max(COL.SITECODE, COL.EMP_NUM, COL.DATE, COL.PCT_WET, COL.NUM_DIP, COL.SAMPLE);
+  const lastCol = Math.max(COL.SITECODE, COL.EMP_NUM, COL.DATE, COL.PCT_WET, COL.NUM_DIP, COL.SAMPLE, COL.BUGS);
   if (!lastCol) return;
   for (const [sc, idx] of Object.entries(siteRows)) {
     const info = lookup[sc];
@@ -767,6 +780,68 @@ function setSitecodeLinks_(sheet, siteRows) {
       .build();
     cell.setRichTextValue(richText);
   }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// REMARKS RESTORE  (run once after accidental overwrite)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One-time restore: pulls `remarks` from the API and writes them back to col I.
+ * Run this manually once from the Apps Script editor to recover overwritten remarks.
+ * Safe to run again — only writes non-blank API remarks (won't blank out cells
+ * the API has no remark for, so manually-entered remarks are preserved).
+ */
+function restoreRemarks() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const apiData = fetchChecklist_();
+  if (!apiData || apiData.length === 0) {
+    Logger.log('restoreRemarks: no data from API.');
+    return;
+  }
+
+  const lookup = {};
+  for (const row of apiData) {
+    if (row.sitecode) lookup[row.sitecode] = row;
+  }
+
+  const sheets = ss.getSheets();
+  let totalRestored = 0;
+
+  for (const sheet of sheets) {
+    const name = sheet.getName();
+    if (name === 'Summary') continue;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < DATA_START) continue;
+    const numRows = lastRow - DATA_START + 1;
+
+    const scValues = sheet.getRange(DATA_START, COL.SITECODE, numRows, 1).getValues();
+    const remCol   = sheet.getRange(DATA_START, COL.REMARKS,  numRows, 1).getValues();
+
+    let restoredThisTab = 0;
+    for (let i = 0; i < numRows; i++) {
+      const sc = String(scValues[i][0] || '').trim();
+      if (!sc || /^book\s/i.test(sc)) continue;
+      const info = lookup[sc];
+      if (!info) continue;
+      const remark = String(info.remarks || '').trim();
+      if (remark) {
+        remCol[i][0] = remark;
+        restoredThisTab++;
+      }
+    }
+
+    if (restoredThisTab > 0) {
+      sheet.getRange(DATA_START, COL.REMARKS, numRows, 1).setValues(remCol);
+      Logger.log('Tab "' + name + '": restored ' + restoredThisTab + ' remark(s).');
+    }
+    totalRestored += restoredThisTab;
+  }
+
+  Logger.log('restoreRemarks done: ' + totalRestored + ' remarks restored across all tabs.');
+  SpreadsheetApp.getUi().alert('Done! Restored ' + totalRestored + ' remarks from the API.');
 }
 
 

@@ -55,6 +55,8 @@ const CONFIG = {
   WET_COL:      'F',     // Column for % Wet
   DIP_COL:      'G',     // Column for #/Dip
   SAMPLE_COL:   'H',     // Column for Sample#
+  REMARKS_COL:  'I',     // Column for site remarks (restored from API, not overwritten on refresh)
+  BUGS_COL:     'J',     // Column for Red/Blue bug result (R, B, or blank)
 
   // ── % Wet Dropdown Labels ─────────────────────────────────────────────
   // If your sheet has DATA VALIDATION dropdowns on the % Wet column,
@@ -96,7 +98,7 @@ const CONFIG = {
   //
   // Supported overrides:
   //   DATA_START, STATS_ROW, SHOW_STATS_ROW,
-  //   SITECODE_COL, ACRES_COL, EMP_COL, DATE_COL, WET_COL, DIP_COL, SAMPLE_COL
+  //   SITECODE_COL, ACRES_COL, EMP_COL, DATE_COL, WET_COL, DIP_COL, SAMPLE_COL, BUGS_COL
   //
   // Example:
   //   'Edina':       { DATA_START: 4 },                  // data starts on row 4
@@ -168,6 +170,7 @@ function getTabConfig_(tabName) {
       PCT_WET:  colNum_(ov.WET_COL      != null ? ov.WET_COL      : CONFIG.WET_COL),
       NUM_DIP:  colNum_(ov.DIP_COL      != null ? ov.DIP_COL      : CONFIG.DIP_COL),
       SAMPLE:   colNum_(ov.SAMPLE_COL   != null ? ov.SAMPLE_COL   : CONFIG.SAMPLE_COL),
+      BUGS:     colNum_(ov.BUGS_COL     != null ? ov.BUGS_COL     : CONFIG.BUGS_COL),
     },
   };
 }
@@ -332,6 +335,7 @@ function refreshInspectionData() {
     const wetCol = readCol_(sheet, ds, col.PCT_WET, dataRows);
     const dipCol = readCol_(sheet, ds, col.NUM_DIP, dataRows);
     const smpCol = readCol_(sheet, ds, col.SAMPLE,  dataRows);
+    const bugCol = readCol_(sheet, ds, col.BUGS,    dataRows);
 
     // Auto-detect wet dropdown format from this tab's validation rules
     const wetFormat = getWetFormat_(sheet, ds, col.PCT_WET);
@@ -359,6 +363,10 @@ function refreshInspectionData() {
         }
         if (dipCol) dipCol[idx][0] = info.dip_count  != null ? info.dip_count : '';
         if (smpCol) smpCol[idx][0] = info.sampnum_yr != null ? String(info.sampnum_yr) : '';
+        if (bugCol) {
+          const bs = info.bug_status || '';
+          bugCol[idx][0] = bs === 'Red Bugs' ? 'R' : bs === 'Blue Bugs' ? 'B' : '';
+        }
         updated++;
       } else {
         // Not kept — clear stale inspection data.
@@ -368,6 +376,7 @@ function refreshInspectionData() {
         if (wetCol) wetCol[idx][0] = '';
         if (dipCol) dipCol[idx][0] = '';
         if (smpCol) smpCol[idx][0] = '';
+        if (bugCol) bugCol[idx][0] = '';
         if (hadData) Logger.log('  Cleared stale data for ' + sc + ' (outside lookback / below threshold)');
       }
     }
@@ -376,6 +385,7 @@ function refreshInspectionData() {
     writeCol_(sheet, ds, col.PCT_WET, dataRows, wetCol);
     writeCol_(sheet, ds, col.NUM_DIP, dataRows, dipCol);
     writeCol_(sheet, ds, col.SAMPLE,  dataRows, smpCol);
+    writeCol_(sheet, ds, col.BUGS,    dataRows, bugCol);
 
     let claimResult = { pushed: 0, pulled: 0, removed: 0 };
     if (CONFIG.ENABLE_CLAIMS && empCol) {
@@ -890,7 +900,7 @@ const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
  */
 function highlightPrehatch_(sheet, ds, col, siteRows, lookup) {
   const prehatchColor = String(CONFIG.PREHATCH_HIGHLIGHT_COLOR || '#2e7d32').toLowerCase();
-  const lastCol = Math.max(col.SITECODE, col.ACRES, col.EMP_NUM, col.DATE, col.PCT_WET, col.NUM_DIP, col.SAMPLE);
+  const lastCol = Math.max(col.SITECODE, col.ACRES, col.EMP_NUM, col.DATE, col.PCT_WET, col.NUM_DIP, col.SAMPLE, col.BUGS || 0);
   if (!lastCol) return;
   for (const [sc, idx] of Object.entries(siteRows)) {
     const info = lookup[sc];

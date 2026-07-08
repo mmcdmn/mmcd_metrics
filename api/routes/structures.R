@@ -26,8 +26,9 @@ source("/srv/api/api_helpers.R")
 struct_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/struct_trt/data_functions.R", local = struct_env, chdir = TRUE)
 
-# Structure treatments default expiring window (registry is the source of defaults).
-STRUCT_EXPIRING_DEFAULT <- as.integer(registry_default("structure", "expiring_days", 7L))
+# Structure treatments default expiring window — matches the struct_trt app's own
+# load_raw_data() default (expiring_days = 7). Source of truth is the app, NOT the overview.
+STRUCT_EXPIRING_DEFAULT <- 7L
 STRUCT_GROUP_BYS <- c("facility", "foreman", "mmcd_all")
 
 # ── Local filter validators (loc_cxstruct-specific codes) ──

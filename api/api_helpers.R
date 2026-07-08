@@ -134,28 +134,6 @@ to_choice_list <- function(choices, all_label) {
   c(list(list(label = all_label, code = "all")), out)
 }
 
-# ── Registry defaults ──
-# The overview app's metric_registry.R is the SINGLE SOURCE OF DEFAULTS. When an API
-# caller omits a value (e.g. expiring_days, priority, species, goal), fall back to that
-# metric's registry `load_params`. Route files supply their own filters; the registry
-# only fills the blanks. Sourced + cached once per router.
-# .registry_env: NULL = not tried yet, FALSE = tried and failed, environment = loaded.
-.registry_env <- NULL
-registry_default <- function(metric, param, fallback = NULL) {
-  if (is.null(.registry_env)) {
-    e <- new.env(parent = globalenv())
-    ok <- tryCatch({
-      source("/srv/shiny-server/apps/overview/metric_registry.R", local = e, chdir = TRUE)
-      TRUE
-    }, error = function(err) FALSE)
-    .registry_env <<- if (ok) e else FALSE
-  }
-  if (isFALSE(.registry_env)) return(fallback)
-  cfg <- tryCatch(.registry_env$get_metric_config(metric), error = function(e) NULL)
-  val <- tryCatch(cfg$load_params[[param]], error = function(e) NULL)
-  val %||% fallback
-}
-
 # ── Generic expiration schedule ──
 # Generalizes the catch-basin bucketed-timeline pattern to ANY app whose loader flags
 # more sites as "expiring" as the expiring_days window grows (structures, ground

@@ -18,6 +18,45 @@ source("/srv/api/api_helpers.R")
 cb_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/catch_basin_status/data_functions.R", local = cb_env, chdir = TRUE)
 
+CB_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "sectcode", "township")
+
+# Roll the pre-aggregated catch-basin section rows up by a chosen dimension.
+# load_raw_data() returns one row per (facility, zone, fosarea, sectcode) with
+# total/active/expiring/expired counts plus facility_full/foreman_name display names.
+.cb_group_rows <- function(sites, group_by) {
+  if (is.null(sites) || nrow(sites) == 0) return(list())
+  town_lkp <- if (group_by == "township") tryCatch(get_town_lookup(), error = function(e) NULL) else NULL
+  sites$.k <- switch(group_by,
+    mmcd_all = rep("All MMCD", nrow(sites)),
+    facility = as.character(sites$facility),
+    foreman  = as.character(sites$fosarea),
+    sectcode = as.character(sites$sectcode),
+    township = substr(as.character(sites$sectcode), 1, 4),
+    as.character(sites$facility)
+  )
+  lapply(sort(unique(sites$.k)), function(k) {
+    sub    <- sites[sites$.k == k, ]
+    total  <- sum(sub$total_count,  na.rm = TRUE)
+    active <- sum(sub$active_count, na.rm = TRUE)
+    disp <- switch(group_by,
+      facility = as.character(sub$facility_full[1]),
+      foreman  = as.character(sub$foreman_name[1]),
+      township = { m <- if (!is.null(town_lkp)) town_lkp$city[match(k, town_lkp$towncode4)] else NA
+                   if (length(m) && !is.na(m)) m else k },
+      k
+    )
+    list(
+      group          = k,
+      display_name   = disp,
+      total_count    = as.integer(total),
+      active_count   = as.integer(active),
+      expiring_count = as.integer(sum(sub$expiring_count, na.rm = TRUE)),
+      expired_count  = as.integer(sum(sub$expired_count,  na.rm = TRUE)),
+      pct_treated    = if (total > 0) round(100 * active / total, 1) else 0
+    )
+  })
+}
+
 # ── Catch Basin Status ──
 
 
@@ -68,6 +107,7 @@ function(req, res,
 #* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
+#* @param expiring_days Days-ahead window that counts as "expiring" (1-60). Default 3.
 #* @param analysis_date Date YYYY-MM-DD. Default today.
 #* @get /summary
 #* @serializer json
@@ -76,19 +116,23 @@ function(req, res,
          foreman = NULL,
          zone = "1,2",
          town = NULL,
+         expiring_days = 3,
          analysis_date = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
     zn    <- validate_zone(zone)
     tc    <- validate_town(town)
+    exdays <- suppressWarnings(as.integer(expiring_days %||% 3L))
+    if (is.na(exdays) || exdays < 1L || exdays > 60L) stop("expiring_days must be between 1 and 60")
     adate <- validate_date(analysis_date)
 
     data <- cb_env$load_raw_data(
       analysis_date   = adate,
       facility_filter = fac,
       foreman_filter  = fman,
-      zone_filter     = zn
+      zone_filter     = zn,
+      expiring_days   = exdays
     )
 
     sites <- filter_sites_by_town(data$sites, tc)
@@ -108,6 +152,7 @@ function(req, res,
 
     list(
       analysis_date   = as.character(adate),
+      expiring_days   = exdays,
       filters         = list(facility = fac, foreman = foreman, zone = zn, town = tc %||% "all"),
       total_wet       = total_wet,
       total_treated   = total_treated,
@@ -165,6 +210,48 @@ function(req, res,
     list(
       analysis_date      = as.character(adate),
       facility_summaries = rows
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+# ── Catch Basin Summary BY GROUP (mmcd_all / facility / foreman / sectcode / township) ──
+
+#* Get catch basin summary rolled up by a chosen dimension.
+#* @param group_by One of: mmcd_all, facility, foreman, sectcode, township. Default facility.
+#* @param facility Facility code to narrow to. Omit for all.
+#* @param foreman FOS shortname to narrow to. Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param town Township/city name or 4-digit town code to narrow to. Omit for all.
+#* @param expiring_days Days-ahead window that counts as "expiring" (1-60). Default 3.
+#* @param analysis_date Date YYYY-MM-DD. Default today.
+#* @get /summary-by-group
+#* @serializer json
+function(req, res,
+         group_by = "facility", facility = NULL, foreman = NULL,
+         zone = "1,2", town = NULL, expiring_days = 3, analysis_date = NULL) {
+  tryCatch({
+    grp   <- validate_group_by(group_by, CB_GROUP_BYS, "facility")
+    fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
+    zn    <- validate_zone(zone)
+    tc    <- validate_town(town)
+    exdays <- suppressWarnings(as.integer(expiring_days %||% 3L))
+    if (is.na(exdays) || exdays < 1L || exdays > 60L) stop("expiring_days must be between 1 and 60")
+    adate <- validate_date(analysis_date)
+
+    data  <- cb_env$load_raw_data(
+      analysis_date   = adate,
+      facility_filter = fac,
+      foreman_filter  = fman,
+      zone_filter     = zn,
+      expiring_days   = exdays
+    )
+    sites <- filter_sites_by_town(data$sites, tc)
+    list(
+      analysis_date = as.character(adate),
+      group_by      = grp,
+      expiring_days = exdays,
+      groups        = .cb_group_rows(sites, grp)
     )
   }, error = function(e) api_error(res, 400, e$message))
 }

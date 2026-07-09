@@ -24,11 +24,10 @@ cards_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_env, chdir = TRUE)
 
 # ── Ground prehatch shared helpers ──
-# Ground prehatch default expiring window = 14 — matches the ground_prehatch app's own
-# get_site_details_data() default (expiring_days = 14). Source of truth is the app, NOT
-# the overview. Group-by dimensions come straight from the site-level details
-# (facility/foreman/sectcode, plus township = first 4 of sectcode, plus mmcd_all).
-GROUND_EXPIRING_DEFAULT <- 14L
+# Ground prehatch default expiring window: registry-first (7, matching the app's UI slider
+# default), NOT the loader's raw default of 14. Group-by dimensions come straight from the
+# site-level details (facility/foreman/sectcode, plus township = first 4 of sectcode, plus mmcd_all).
+GROUND_EXPIRING_DEFAULT <- as.integer(registry_default("ground_prehatch", "expiring_days", 7L))
 GROUND_GROUP_BYS <- c("mmcd_all", "township", "sectcode", "facility", "foreman")
 
 .validate_expiring_filter <- function(v) {
@@ -110,49 +109,103 @@ GROUND_GROUP_BYS <- c("mmcd_all", "township", "sectcode", "facility", "foreman")
 
 # ── Air Sites ──
 
+# ── Red air shared helpers ──
+# Red air statuses (the dashboard "Status Filter" values).
+AIR_STATUSES <- c("Active Treatment", "Inspected", "Needs ID", "Needs Treatment", "Unknown")
+
+.air_zone <- function(zn) {
+  if (length(zn) >= 2) "P1 + P2 Combined" else if ("1" %in% zn) "P1" else if ("2" %in% zn) "P2" else NULL
+}
+.validate_air_status <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return("all")
+  s <- trimws(as.character(v))
+  if (tolower(s) == "all") return("all")
+  if (!s %in% AIR_STATUSES) stop(paste0("status must be one of: all, ", paste(AIR_STATUSES, collapse = ", ")))
+  s
+}
+.validate_air_material <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return("all")
+  parts <- trimws(unlist(strsplit(as.character(v), ",", fixed = TRUE)))
+  bad <- parts[!grepl("^[A-Za-z0-9 _+./-]+$", parts)]
+  if (length(bad) > 0) stop("invalid material filter")
+  parts
+}
+.validate_larvae <- function(v) {
+  n <- suppressWarnings(as.integer(v %||% 2L))
+  if (is.na(n) || n < 0L || n > 100L) stop("larvae_threshold must be 0-100")
+  n
+}
+.validate_bti <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
+  n <- suppressWarnings(as.integer(v))
+  if (is.na(n) || n < 1L || n > 60L) stop("bti_effect_days must be 1-60")
+  n
+}
+
+# Load red-air sites with the full filter surface. Uses get_air_sites_data (which applies
+# site-status logic + larvae_threshold + bti override internally); foreman/status/material/
+# town are post-load filters. Returns a data.frame with site_status, acres, sitecode, etc.
+.load_air <- function(adate, fac, fman, zn, pri, larvae, bti, status_filter, material, tc) {
+  air_fac <- if (!is.null(fac) && length(fac) > 0 && !all(fac %in% c("all", ""))) fac else NULL
+  data <- get_air_sites_data(
+    analysis_date            = adate,
+    facility_filter          = air_fac,
+    priority_filter          = pri,
+    zone_filter              = .air_zone(zn),
+    larvae_threshold         = larvae,
+    bti_effect_days_override = bti
+  )
+  if (is.null(data) || nrow(data) == 0) return(data.frame())
+  data$acres <- ifelse(is.na(data$acres), 0, as.numeric(data$acres))
+  if (!is.null(fman) && !identical(fman, "all") && "foreman" %in% names(data)) {
+    data <- data[as.character(data$foreman) == as.character(fman), , drop = FALSE]
+  }
+  if (!identical(status_filter, "all") && "site_status" %in% names(data)) {
+    data <- data[data$site_status == status_filter, , drop = FALSE]
+  }
+  if (!identical(material, "all") && "last_treatment_material" %in% names(data)) {
+    pat <- paste(material, collapse = "|")
+    keep <- grepl(pat, data$last_treatment_material, ignore.case = TRUE) & !is.na(data$last_treatment_material)
+    data <- data[which(keep), , drop = FALSE]
+  }
+  filter_sites_by_town(data, tc)
+}
+
 #* Get air breeding site status (current treatment/inspection state).
-#* Returns sites with active treatment status, acres, priority, facility, zone.
+#* Returns sites with active treatment status, acres, priority, facility, zone, material.
 #* @param facility Facility code (E, MO, N, Sj, Sr, Wm, Wp). Omit for all.
 #* @param foreman FOS shortname to filter by (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param priority Priority filter: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Default RED.
+#* @param status Status filter: Active Treatment, Inspected, Needs ID, Needs Treatment, Unknown, or all. Default all.
+#* @param larvae_threshold Min dip count that triggers lab sampling. Default 2.
+#* @param material Treatment material name(s), comma-separated substring match. Omit for all.
+#* @param bti_effect_days Override BTI effect days (1-60). Omit for DB default.
+#* @param town Township/city name or 4-digit town code. Omit for all towns.
 #* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
 #* @get /air-sites
 #* @serializer json
 function(req, res,
-         facility = NULL,
-         foreman = NULL,
-         zone = "1,2",
-         priority = "RED",
-         analysis_date = NULL) {
+         facility = NULL, foreman = NULL, zone = "1,2", priority = "RED",
+         status = "all", larvae_threshold = NULL, material = NULL,
+         bti_effect_days = NULL, town = NULL, analysis_date = NULL, limit = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
-    fman  <- if (!is.null(foreman) && nzchar(foreman)) { validate_foreman(foreman); clean_text(foreman) } else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
     zn    <- validate_zone(zone)
     pri   <- validate_priority(priority)
+    st    <- .validate_air_status(status)
+    lar   <- .validate_larvae(larvae_threshold)
+    mat   <- .validate_air_material(material)
+    bti   <- .validate_bti(bti_effect_days)
+    tc    <- validate_town(town)
     adate <- validate_date(analysis_date)
 
-    data <- load_raw_data(
-      analysis_date    = adate,
-      facility_filter  = fac,
-      zone_filter      = zn,
-      priority_filter  = pri
-    )
-
-    sites <- data$sites
-    # Apply foreman filter by matching fosarea shortname
-    if (!is.null(fman) && !is.null(sites) && nrow(sites) > 0 && "foreman" %in% names(sites)) {
-      sites <- sites[tolower(sites$foreman) == tolower(fman), ]
-    }
-
+    sites <- .load_air(adate, fac, fman, zn, pri, lar, bti, st, mat, tc)
     if (is.null(sites) || nrow(sites) == 0) {
       return(list(count = 0L, data = list()))
     }
-
-    list(
-      count = nrow(sites),
-      data  = sites
-    )
+    apply_row_limit(sites, limit)
   }, error = function(e) api_error(res, 400, e$message))
 }
 
@@ -165,38 +218,31 @@ function(req, res,
 #* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param priority Priority: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Default RED.
+#* @param status Status filter: Active Treatment, Inspected, Needs ID, Needs Treatment, Unknown, or all. Default all.
+#* @param larvae_threshold Min dip count that triggers lab sampling. Default 2.
+#* @param material Treatment material name(s), comma-separated substring match. Omit for all.
+#* @param bti_effect_days Override BTI effect days (1-60). Omit for DB default.
 #* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
 #* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
 #* @get /air-sites/summary
 #* @serializer json
 function(req, res,
-         facility = NULL,
-         foreman = NULL,
-         zone = "1,2",
-         priority = "RED",
-         town = NULL,
-         analysis_date = NULL) {
+         facility = NULL, foreman = NULL, zone = "1,2", priority = "RED",
+         status = "all", larvae_threshold = NULL, material = NULL,
+         bti_effect_days = NULL, town = NULL, analysis_date = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
-    fman  <- if (!is.null(foreman) && nzchar(foreman)) { validate_foreman(foreman); clean_text(foreman) } else NULL
+    fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
     zn    <- validate_zone(zone)
     pri   <- validate_priority(priority)
+    st    <- .validate_air_status(status)
+    lar   <- .validate_larvae(larvae_threshold)
+    mat   <- .validate_air_material(material)
+    bti   <- .validate_bti(bti_effect_days)
     tc    <- validate_town(town)
     adate <- validate_date(analysis_date)
 
-    data <- load_raw_data(
-      analysis_date    = adate,
-      facility_filter  = fac,
-      zone_filter      = zn,
-      priority_filter  = pri
-    )
-
-    sites <- filter_sites_by_town(data$sites, tc)
-    # Apply foreman filter by matching fosarea shortname
-    if (!is.null(fman) && !is.null(sites) && nrow(sites) > 0 && "foreman" %in% names(sites)) {
-      sites <- sites[tolower(sites$foreman) == tolower(fman), ]
-    }
-
+    sites <- .load_air(adate, fac, fman, zn, pri, lar, bti, st, mat, tc)
     if (is.null(sites) || nrow(sites) == 0) {
       return(list(
         analysis_date = as.character(adate),
@@ -205,21 +251,17 @@ function(req, res,
       ))
     }
 
-    # Compute value-box stats grouped by site_status
-    statuses <- c("Active Treatment", "Inspected", "Needs ID", "Needs Treatment", "Unknown")
-    by_status <- lapply(statuses, function(st) {
-      subset <- sites[sites$site_status == st, ]
-      list(
-        status = st,
-        count  = nrow(subset),
-        acres  = round(sum(subset$acres, na.rm = TRUE), 2)
-      )
+    # Value-box stats by site_status: both sites (count) and acres are returned.
+    by_status <- lapply(AIR_STATUSES, function(s) {
+      subset <- sites[sites$site_status == s, ]
+      list(status = s, count = nrow(subset), acres = round(sum(subset$acres, na.rm = TRUE), 2))
     })
-    names(by_status) <- statuses
+    names(by_status) <- AIR_STATUSES
 
     list(
       analysis_date = as.character(adate),
-      filters = list(facility = fac, foreman = foreman, zone = zn, priority = pri, town = tc %||% "all"),
+      filters = list(facility = fac, foreman = foreman %||% "all", zone = zn, priority = pri,
+                     status = st, larvae_threshold = lar, town = tc %||% "all"),
       total_sites = nrow(sites),
       total_acres = round(sum(sites$acres, na.rm = TRUE), 2),
       by_status = by_status
@@ -233,44 +275,40 @@ function(req, res,
 #* Use for facility comparisons, charts, and LLM multi-facility queries.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param priority Priority: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Default RED.
+#* @param status Status filter: Active Treatment, Inspected, Needs ID, Needs Treatment, Unknown, or all. Default all.
+#* @param larvae_threshold Min dip count that triggers lab sampling. Default 2.
+#* @param material Treatment material name(s), comma-separated substring match. Omit for all.
 #* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
 #* @param analysis_date Date for analysis (YYYY-MM-DD). Default today.
 #* @get /air-sites/summary-by-facility
 #* @serializer json
 function(req, res,
-         zone = "1,2",
-         priority = "RED",
-         town = NULL,
-         analysis_date = NULL) {
+         zone = "1,2", priority = "RED", status = "all",
+         larvae_threshold = NULL, material = NULL, town = NULL, analysis_date = NULL) {
   tryCatch({
     zn    <- validate_zone(zone)
     pri   <- validate_priority(priority)
+    st    <- .validate_air_status(status)
+    lar   <- .validate_larvae(larvae_threshold)
+    mat   <- .validate_air_material(material)
     tc    <- validate_town(town)
     adate <- validate_date(analysis_date)
 
-    data <- load_raw_data(
-      analysis_date    = adate,
-      facility_filter  = NULL,
-      zone_filter      = zn,
-      priority_filter  = pri
-    )
-
-    sites <- filter_sites_by_town(data$sites, tc)
+    sites <- .load_air(adate, NULL, "all", zn, pri, lar, NULL, st, mat, tc)
     if (is.null(sites) || nrow(sites) == 0) {
       return(list(analysis_date = as.character(adate), facility_summaries = list()))
     }
 
     facs <- unique(sites$facility)
     facs <- facs[!is.na(facs) & nzchar(facs)]
-    statuses <- c("Active Treatment", "Inspected", "Needs ID", "Needs Treatment", "Unknown")
 
     rows <- lapply(sort(facs), function(f) {
       subset <- sites[sites$facility == f, ]
-      by_st <- lapply(statuses, function(st) {
-        s <- subset[subset$site_status == st, ]
-        list(status = st, count = nrow(s), acres = round(sum(s$acres, na.rm = TRUE), 2))
+      by_st <- lapply(AIR_STATUSES, function(s) {
+        ss <- subset[subset$site_status == s, ]
+        list(status = s, count = nrow(ss), acres = round(sum(ss$acres, na.rm = TRUE), 2))
       })
-      names(by_st) <- statuses
+      names(by_st) <- AIR_STATUSES
       list(
         facility    = f,
         total_sites = nrow(subset),
@@ -279,10 +317,7 @@ function(req, res,
       )
     })
 
-    list(
-      analysis_date      = as.character(adate),
-      facility_summaries = rows
-    )
+    list(analysis_date = as.character(adate), facility_summaries = rows)
   }, error = function(e) api_error(res, 400, e$message))
 }
 

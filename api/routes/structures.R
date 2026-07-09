@@ -12,7 +12,8 @@
 # This is the TEMPLATE route: it exposes the app's FULL filter + group-by
 # surface (facility, foreman, zone, structure_type, priority, status) and a
 # generalized expiration-schedule, using only existing app loaders. Defaults for
-# omitted values come from the overview metric_registry (registry_default()).
+# omitted values come from the APP's own loader defaults (e.g. expiring_days = 7),
+# NOT from the overview/metric_registry.
 #
 # NOTE on the two letter-code filters (they are DIFFERENT columns):
 #   • structure_type  -> loc.s_type      (e.g. CV, PR, CV/PR — physical type)
@@ -26,18 +27,21 @@ source("/srv/api/api_helpers.R")
 struct_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/struct_trt/data_functions.R", local = struct_env, chdir = TRUE)
 
-# Structure treatments default expiring window — matches the struct_trt app's own
-# load_raw_data() default (expiring_days = 7). Source of truth is the app, NOT the overview.
-STRUCT_EXPIRING_DEFAULT <- 7L
+# Structure treatments default expiring window. Defaults are registry-first with the
+# app's own value as fallback (both are 7 here).
+STRUCT_EXPIRING_DEFAULT <- as.integer(registry_default("structure", "expiring_days", 7L))
 STRUCT_GROUP_BYS <- c("facility", "foreman", "mmcd_all")
 
 # ── Local filter validators (loc_cxstruct-specific codes) ──
-# structure_type is a free-form s_type code (CV, PR, CV/PR). Single code or "all".
+# structure_type is a free-form s_type code (CV, PR, CV/PR). The app UI allows MULTIPLE
+# selections, so accept a comma-separated list; returns "all" or an uppercase vector.
 .validate_structure_type <- function(v) {
   if (is.null(v) || !nzchar(trimws(v %||% ""))) return("all")
-  s <- toupper(trimws(as.character(v)))
-  if (nchar(s) > 12L || !grepl("^[A-Z/]+$", s)) stop("invalid structure_type code")
-  s
+  parts <- trimws(toupper(unlist(strsplit(as.character(v), ",", fixed = TRUE))))
+  if (any(parts == "ALL")) return("all")
+  bad <- parts[!grepl("^[A-Z/]+$", parts) | nchar(parts) > 12L]
+  if (length(bad) > 0) stop("invalid structure_type code")
+  parts
 }
 # priority for structures is loc.priority (not the air color enum). Alphanumeric codes.
 .validate_struct_priority <- function(v) {
@@ -52,16 +56,30 @@ STRUCT_GROUP_BYS <- c("facility", "foreman", "mmcd_all")
 # SQL-level filters (facility, structure_type, priority, status, zone) go to
 # load_raw_data; foreman is applied post-load via the app's apply_data_filters
 # (load_raw_data's universe query doesn't filter on fosarea).
+# structure_type may be MULTIPLE codes: the app's get_structure_type_condition only
+# handles one code (with special CV/PR matching), so we call load_raw_data once per
+# code and merge the universes — exact reuse of the app's per-type logic, no new SQL.
 .load_structs <- function(adate, fac, fman, zn, stype, prio, status, expiring_days) {
-  data <- struct_env$load_raw_data(
+  load_one <- function(ty) struct_env$load_raw_data(
     analysis_date         = adate,
     facility_filter       = fac,
-    structure_type_filter = stype,
+    structure_type_filter = ty,
     priority_filter       = prio,
     status_types          = status,
     zone_filter           = zn,
     expiring_days         = expiring_days
   )
+  if (identical(stype, "all") || length(stype) == 1L) {
+    data <- load_one(if (identical(stype, "all")) "all" else stype[[1]])
+  } else {
+    parts <- lapply(stype, load_one)
+    sites <- do.call(rbind, lapply(parts, function(d) d$sites))
+    if (!is.null(sites) && nrow(sites) > 0) sites <- sites[!duplicated(sites$sitecode), , drop = FALSE]
+    trts  <- do.call(rbind, lapply(parts, function(d) d$treatments))
+    if (!is.null(trts) && nrow(trts) > 0) trts <- trts[!duplicated(trts[, c("sitecode", "inspdate")]), , drop = FALSE]
+    data <- list(sites = sites, treatments = trts,
+                 total_count = if (!is.null(sites)) nrow(sites) else 0L)
+  }
   if (!is.null(fman) && !identical(fman, "all")) {
     data <- struct_env$apply_data_filters(
       data, foreman_filter = fman, zone_filter = zn

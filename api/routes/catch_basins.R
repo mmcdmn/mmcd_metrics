@@ -19,6 +19,22 @@ cb_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/catch_basin_status/data_functions.R", local = cb_env, chdir = TRUE)
 
 CB_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "sectcode", "township")
+# Default expiring window: registry-first, app fallback (7).
+CB_EXPIRING_DEFAULT <- as.integer(registry_default("catch_basin", "expiring_days", 7L))
+CB_EXPIRING_FILTERS <- c("all", "expiring", "expiring_expired")
+
+# Filter the pre-aggregated section rows by expiring status (matches the app's
+# "Site Filter" control): "expiring" keeps sections with any expiring treatments,
+# "expiring_expired" keeps sections with expiring OR already-expired treatments.
+.cb_expiring_filter <- function(sites, expiring_filter) {
+  if (is.null(sites) || nrow(sites) == 0) return(sites)
+  ef <- expiring_filter %||% "all"
+  if (ef == "all") return(sites)
+  ec <- if ("expiring_count" %in% names(sites)) sites$expiring_count else rep(0L, nrow(sites))
+  xc <- if ("expired_count"  %in% names(sites)) sites$expired_count  else rep(0L, nrow(sites))
+  keep <- if (ef == "expiring_expired") (ec > 0) | (xc > 0) else (ec > 0)
+  sites[which(keep), , drop = FALSE]
+}
 
 # Roll the pre-aggregated catch-basin section rows up by a chosen dimension.
 # load_raw_data() returns one row per (facility, zone, fosarea, sectcode) with
@@ -107,7 +123,8 @@ function(req, res,
 #* @param foreman FOS shortname (e.g. "Alex D"). Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param town Township/city name (e.g. Eagan) or 4-digit town code. Omit for all towns.
-#* @param expiring_days Days-ahead window that counts as "expiring" (1-60). Default 3.
+#* @param expiring_days Days-ahead window that counts as "expiring" (1-60). Default from registry (7).
+#* @param expiring_filter Site filter: all, expiring, or expiring_expired. Default all.
 #* @param analysis_date Date YYYY-MM-DD. Default today.
 #* @get /summary
 #* @serializer json
@@ -116,14 +133,16 @@ function(req, res,
          foreman = NULL,
          zone = "1,2",
          town = NULL,
-         expiring_days = 3,
+         expiring_days = NULL,
+         expiring_filter = "all",
          analysis_date = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
     zn    <- validate_zone(zone)
     tc    <- validate_town(town)
-    exdays <- suppressWarnings(as.integer(expiring_days %||% 3L))
+    ef    <- validate_group_by(expiring_filter, CB_EXPIRING_FILTERS, "all")
+    exdays <- suppressWarnings(as.integer(expiring_days %||% CB_EXPIRING_DEFAULT))
     if (is.na(exdays) || exdays < 1L || exdays > 60L) stop("expiring_days must be between 1 and 60")
     adate <- validate_date(analysis_date)
 
@@ -135,7 +154,7 @@ function(req, res,
       expiring_days   = exdays
     )
 
-    sites <- filter_sites_by_town(data$sites, tc)
+    sites <- .cb_expiring_filter(filter_sites_by_town(data$sites, tc), ef)
     if (is.null(sites) || nrow(sites) == 0) {
       return(list(
         analysis_date = as.character(adate),
@@ -153,7 +172,8 @@ function(req, res,
     list(
       analysis_date   = as.character(adate),
       expiring_days   = exdays,
-      filters         = list(facility = fac, foreman = foreman, zone = zn, town = tc %||% "all"),
+      filters         = list(facility = fac, foreman = foreman, zone = zn,
+                            town = tc %||% "all", expiring_filter = ef),
       total_wet       = total_wet,
       total_treated   = total_treated,
       total_expiring  = total_expiring,
@@ -222,20 +242,23 @@ function(req, res,
 #* @param foreman FOS shortname to narrow to. Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param town Township/city name or 4-digit town code to narrow to. Omit for all.
-#* @param expiring_days Days-ahead window that counts as "expiring" (1-60). Default 3.
+#* @param expiring_days Days-ahead window that counts as "expiring" (1-60). Default from registry (7).
+#* @param expiring_filter Site filter: all, expiring, or expiring_expired. Default all.
 #* @param analysis_date Date YYYY-MM-DD. Default today.
 #* @get /summary-by-group
 #* @serializer json
 function(req, res,
          group_by = "facility", facility = NULL, foreman = NULL,
-         zone = "1,2", town = NULL, expiring_days = 3, analysis_date = NULL) {
+         zone = "1,2", town = NULL, expiring_days = NULL,
+         expiring_filter = "all", analysis_date = NULL) {
   tryCatch({
     grp   <- validate_group_by(group_by, CB_GROUP_BYS, "facility")
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else "all"
     zn    <- validate_zone(zone)
     tc    <- validate_town(town)
-    exdays <- suppressWarnings(as.integer(expiring_days %||% 3L))
+    ef    <- validate_group_by(expiring_filter, CB_EXPIRING_FILTERS, "all")
+    exdays <- suppressWarnings(as.integer(expiring_days %||% CB_EXPIRING_DEFAULT))
     if (is.na(exdays) || exdays < 1L || exdays > 60L) stop("expiring_days must be between 1 and 60")
     adate <- validate_date(analysis_date)
 
@@ -246,12 +269,13 @@ function(req, res,
       zone_filter     = zn,
       expiring_days   = exdays
     )
-    sites <- filter_sites_by_town(data$sites, tc)
+    sites <- .cb_expiring_filter(filter_sites_by_town(data$sites, tc), ef)
     list(
-      analysis_date = as.character(adate),
-      group_by      = grp,
-      expiring_days = exdays,
-      groups        = .cb_group_rows(sites, grp)
+      analysis_date   = as.character(adate),
+      group_by        = grp,
+      expiring_days   = exdays,
+      expiring_filter = ef,
+      groups          = .cb_group_rows(sites, grp)
     )
   }, error = function(e) api_error(res, 400, e$message))
 }

@@ -27,9 +27,10 @@ source("/srv/api/api_helpers.R")
 struct_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/struct_trt/data_functions.R", local = struct_env, chdir = TRUE)
 
-# Structure treatments default expiring window. Defaults are registry-first with the
-# app's own value as fallback (both are 7 here).
-STRUCT_EXPIRING_DEFAULT <- as.integer(registry_default("structure", "expiring_days", 7L))
+# Structure treatments default expiring window — from the shared config
+# (config/app_config.yaml metric_defaults.structure.expiring_days), the same source the
+# overview reads. Fallback 7 if config is unavailable.
+STRUCT_EXPIRING_DEFAULT <- as.integer(get_metric_default("structure", "expiring_days", 7L))
 STRUCT_GROUP_BYS <- c("facility", "foreman", "mmcd_all")
 
 # ── Local filter validators (loc_cxstruct-specific codes) ──

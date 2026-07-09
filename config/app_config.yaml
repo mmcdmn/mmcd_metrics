@@ -99,6 +99,36 @@ thresholds:
 
 
 # =============================================================================
+# METRIC OPERATIONAL DEFAULTS
+# =============================================================================
+# Single source of truth for the "current active progress" defaults used by BOTH
+# the overview dashboard (metric_registry.R load_params) AND the data API routes.
+# These are the operational defaults — NOT the raw loader-function signature defaults.
+# When an API caller / dashboard omits a value, fall back to the value here.
+metric_defaults:
+  structure:
+    expiring_days: 7
+  catch_basin:
+    expiring_days: 7
+  ground_prehatch:
+    expiring_days: 7
+  drone:
+    expiring_days: 7
+  air_sites:
+    expiring_days: 7
+    priority: RED
+    larvae_threshold: 2
+  cattail_treatments:
+    expiring_days: 30
+  mosquito_monitoring:
+    expiring_days: 30
+    species: "Total_Ae_+_Cq"
+  vector_index:
+    species: "Total_Cx_vectors"
+    infection_metric: mle
+
+
+# =============================================================================
 # METRIC DESCRIPTIONS
 # =============================================================================
 # Brief plain-language descriptions shown when users click the info button

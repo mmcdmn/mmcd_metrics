@@ -5,6 +5,19 @@
 # Contains input validation, auth, and error helpers.
 # =============================================================================
 
+# Shared config loader — provides get_metric_default() so routes read their
+# operational defaults (expiring_days, priority, species, ...) from the SAME
+# config/app_config.yaml the overview uses. Wrapped so a missing file never
+# breaks plumbing (config.R itself falls back to hardcoded defaults).
+tryCatch(
+  source("/srv/shiny-server/shared/config.R"),
+  error = function(e) message("[api] config.R not sourced: ", e$message)
+)
+if (!exists("get_metric_default", mode = "function")) {
+  # Fallback shim if config.R is unavailable (keeps routes plumbing).
+  get_metric_default <- function(metric_id, param, fallback = NULL) fallback
+}
+
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
 # ── Input Validation ──

@@ -24,10 +24,11 @@ cards_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/section-cards/data_functions.R", local = cards_env, chdir = TRUE)
 
 # ── Ground prehatch shared helpers ──
-# Ground prehatch default expiring window: registry-first (7, matching the app's UI slider
-# default), NOT the loader's raw default of 14. Group-by dimensions come straight from the
-# site-level details (facility/foreman/sectcode, plus township = first 4 of sectcode, plus mmcd_all).
-GROUND_EXPIRING_DEFAULT <- as.integer(registry_default("ground_prehatch", "expiring_days", 7L))
+# Ground prehatch default expiring window — from the shared config (config/app_config.yaml
+# metric_defaults.ground_prehatch.expiring_days), same source the overview reads. Fallback 7
+# (the app's UI slider default, NOT the loader's raw default of 14). Group-by dimensions come
+# from the site-level details (facility/foreman/sectcode, township = first 4 of sectcode, mmcd_all).
+GROUND_EXPIRING_DEFAULT <- as.integer(get_metric_default("ground_prehatch", "expiring_days", 7L))
 GROUND_GROUP_BYS <- c("mmcd_all", "township", "sectcode", "facility", "foreman")
 
 .validate_expiring_filter <- function(v) {

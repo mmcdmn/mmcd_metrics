@@ -19,8 +19,9 @@ cb_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/catch_basin_status/data_functions.R", local = cb_env, chdir = TRUE)
 
 CB_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "sectcode", "township")
-# Default expiring window: registry-first, app fallback (7).
-CB_EXPIRING_DEFAULT <- as.integer(registry_default("catch_basin", "expiring_days", 7L))
+# Default expiring window — from the shared config (config/app_config.yaml
+# metric_defaults.catch_basin.expiring_days), same source the overview reads. Fallback 7.
+CB_EXPIRING_DEFAULT <- as.integer(get_metric_default("catch_basin", "expiring_days", 7L))
 CB_EXPIRING_FILTERS <- c("all", "expiring", "expiring_expired")
 
 # Filter the pre-aggregated section rows by expiring status (matches the app's

@@ -385,7 +385,7 @@ function(req, res,
          include_drone = "false",
          expiring_filter = "all",
          analysis_date = NULL,
-         expiring_days = 14) {
+         expiring_days = NULL) {
   tryCatch({
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
     fman  <- if (!is.null(foreman) && nzchar(foreman)) validate_foreman(foreman) else NULL
@@ -470,7 +470,7 @@ function(req, res,
 function(req, res,
          group_by = "facility", facility = NULL, foreman = NULL, zone = "1,2",
          town = NULL, include_drone = "false", expiring_filter = "all",
-         analysis_date = NULL, expiring_days = 14) {
+         analysis_date = NULL, expiring_days = NULL) {
   tryCatch({
     grp   <- validate_group_by(group_by, GROUND_GROUP_BYS, "facility")
     fac   <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL

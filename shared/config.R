@@ -123,6 +123,16 @@ get_app_config <- function(force_reload = FALSE) {
       expiring_days_default = 3,
       historical_year_range = 5
     ),
+    metric_defaults = list(
+      structure = list(expiring_days = 7L),
+      catch_basin = list(expiring_days = 7L),
+      ground_prehatch = list(expiring_days = 7L),
+      drone = list(expiring_days = 7L),
+      air_sites = list(expiring_days = 7L, priority = "RED", larvae_threshold = 2L),
+      cattail_treatments = list(expiring_days = 30L),
+      mosquito_monitoring = list(expiring_days = 30L, species = "Total_Ae_+_Cq"),
+      vector_index = list(species = "Total_Cx_vectors", infection_metric = "mle")
+    ),
     runtime = list(
       route_ttl_seconds = 600,
       max_workers = 3
@@ -217,6 +227,21 @@ get_metric_description <- function(metric_id) {
 get_display_setting <- function(name) {
   cfg <- get_app_config()
   cfg$display[[name]]
+}
+
+#' Get a per-metric operational default (single source for overview + API).
+#' Reads config$metric_defaults[[metric_id]][[param]] (e.g. expiring_days, priority,
+#' species). Falls back to `fallback` when the metric/param isn't configured.
+#'
+#' @param metric_id Metric ID (e.g. "structure", "catch_basin", "air_sites")
+#' @param param     Parameter name (e.g. "expiring_days", "priority", "species")
+#' @param fallback  Value to return when not configured (default NULL)
+#' @return The configured default, or `fallback`
+#' @export
+get_metric_default <- function(metric_id, param, fallback = NULL) {
+  cfg <- get_app_config()
+  val <- tryCatch(cfg$metric_defaults[[metric_id]][[param]], error = function(e) NULL)
+  if (is.null(val)) fallback else val
 }
 
 #' Pretty-print the current config for diagnostics

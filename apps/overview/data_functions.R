@@ -611,7 +611,17 @@ load_data_by_fos <- function(metric,
     stop(paste("Invalid metric:", metric, "- not found in registry"))
   }
   config <- registry[[metric]]
-  
+
+  # SUCO is a facility/FOS-wide weekly goal counted across ALL zones — the main
+  # overview never zone-filters it (see generate_facility_data). The FOS path
+  # otherwise applies the URL zone filter (default P1), which drops SUCOs done in
+  # the other zone. Force all zones here so every downstream filter (the app's
+  # load_raw_data, apply_data_filters, and the zone filter below) sees both.
+  if (metric == "suco") {
+    zone_filter <- c("1", "2")
+    separate_zones <- FALSE
+  }
+
   if (is.null(expiring_days)) {
     expiring_days <- if (!is.null(config$load_params$expiring_days)) {
       config$load_params$expiring_days
@@ -619,7 +629,7 @@ load_data_by_fos <- function(metric,
       7
     }
   }
-  
+
   app_envs <- get_app_envs()
   env <- app_envs[[metric]]
   

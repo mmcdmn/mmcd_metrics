@@ -4,45 +4,18 @@
 # SUCO and catch_basin are loaded fresh here (not from pre-filtered data[[]]).
 # =============================================================================
 
-#' Ground prehatch TREATMENT status by township for one FOS area.
+#' Roll already-filtered sites up to one row per township, with a site-level
+#' expiry date derived from the treatments frame.
 #'
-#' Uses ground_prehatch_progress app's load_raw_data() — same source as the
-#' main ground_prehatch overview metric — so numbers match exactly.
+#' Shared by the ground-prehatch and drone township loaders — both apps return
+#' the standardized sites/treatments shape (sites have is_active/is_expiring;
+#' treatments have sitecode/inspdate/effect_days).
 #'
-#' @param fos_emp_num  Character emp_num (e.g., "1905")
-#' @param analysis_date Date
-#' @param zone_filter  Character vector of zones, or NULL for all
-#' @return List with $summary (one row per township) and $sites (site-level detail)
-load_fos_prehatch_township <- function(fos_emp_num, analysis_date,
-                                       zone_filter = NULL) {
-  analysis_date <- as.Date(analysis_date)
-
-  app_envs <- tryCatch(get_app_envs(), error = function(e) NULL)
-  gp_env <- if (!is.null(app_envs)) app_envs[["ground_prehatch"]] else NULL
-  if (is.null(gp_env)) {
-    warning("[load_fos_prehatch_township] ground_prehatch env not loaded")
-    return(list(summary = data.frame(), sites = data.frame()))
-  }
-
-  raw <- tryCatch(
-    gp_env$load_raw_data(analysis_date = analysis_date, include_archive = FALSE),
-    error = function(e) {
-      warning(paste("[load_fos_prehatch_township] load_raw_data:", e$message))
-      list(sites = data.frame(), treatments = data.frame())
-    }
-  )
-
-  sites <- raw$sites
+#' @param sites       Site-level data frame (already FOS/zone/drone filtered)
+#' @param treatments  Treatments data frame (for expiry_date), may be empty
+#' @return List with $summary (one row per township) and $sites (detail)
+.summarize_township <- function(sites, treatments) {
   if (is.null(sites) || nrow(sites) == 0) {
-    return(list(summary = data.frame(), sites = data.frame()))
-  }
-
-  # Filter to this FOS
-  sites <- sites[as.character(sites$fosarea) == fos_emp_num, ]
-  if (!is.null(zone_filter) && length(zone_filter) > 0) {
-    sites <- sites[sites$zone %in% zone_filter, ]
-  }
-  if (nrow(sites) == 0) {
     return(list(summary = data.frame(), sites = data.frame()))
   }
 
@@ -54,8 +27,7 @@ load_fos_prehatch_township <- function(fos_emp_num, analysis_date,
     lkp
   }, error = function(e) data.frame(towncode = character(), city = character()))
 
-  # Compute actual expiry date from raw treatments so the UI can show it
-  treatments <- raw$treatments
+  # Compute actual expiry date from treatments so the UI can show it
   if (!is.null(treatments) && nrow(treatments) > 0 &&
       all(c("sitecode","inspdate","effect_days") %in% names(treatments))) {
     exp_dates <- treatments %>%
@@ -88,6 +60,103 @@ load_fos_prehatch_township <- function(fos_emp_num, analysis_date,
     dplyr::arrange(city)
 
   list(summary = summary_df, sites = sites)
+}
+
+#' Ground prehatch TREATMENT status by township for one FOS area.
+#'
+#' Uses ground_prehatch_progress app's load_raw_data() — same source as the
+#' main ground_prehatch overview metric — so numbers match exactly. Drone sites
+#' (drone == "Y") are EXCLUDED here; they get their own section via
+#' load_fos_drone_township().
+#'
+#' @param fos_emp_num  Character emp_num (e.g., "1905")
+#' @param analysis_date Date
+#' @param zone_filter  Character vector of zones, or NULL for all
+#' @return List with $summary (one row per township) and $sites (site-level detail)
+load_fos_prehatch_township <- function(fos_emp_num, analysis_date,
+                                       zone_filter = NULL) {
+  analysis_date <- as.Date(analysis_date)
+
+  app_envs <- tryCatch(get_app_envs(), error = function(e) NULL)
+  gp_env <- if (!is.null(app_envs)) app_envs[["ground_prehatch"]] else NULL
+  if (is.null(gp_env)) {
+    warning("[load_fos_prehatch_township] ground_prehatch env not loaded")
+    return(list(summary = data.frame(), sites = data.frame()))
+  }
+
+  raw <- tryCatch(
+    gp_env$load_raw_data(analysis_date = analysis_date, include_archive = FALSE),
+    error = function(e) {
+      warning(paste("[load_fos_prehatch_township] load_raw_data:", e$message))
+      list(sites = data.frame(), treatments = data.frame())
+    }
+  )
+
+  sites <- raw$sites
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(summary = data.frame(), sites = data.frame()))
+  }
+
+  # Filter to this FOS + zone
+  sites <- sites[as.character(sites$fosarea) == fos_emp_num, ]
+  if (!is.null(zone_filter) && length(zone_filter) > 0) {
+    sites <- sites[sites$zone %in% zone_filter, ]
+  }
+
+  # Exclude drone sites — they are reported separately (matches the
+  # ground_prehatch app's filter_ground_data(include_drone = FALSE)).
+  if ("drone" %in% names(sites)) {
+    sites <- sites[is.na(sites$drone) | sites$drone != "Y", ]
+  }
+
+  .summarize_township(sites, raw$treatments)
+}
+
+# -----------------------------------------------------------------------------
+
+#' Drone TREATMENT status by township for one FOS area.
+#'
+#' Uses the drone app's load_raw_data() — same source as the main drone overview
+#' metric — so it includes ALL drone sites (drone IN ('Y','M','C') OR
+#' air_gnd = 'D'), every priority, regardless of prehatch status.
+#'
+#' @param fos_emp_num  Character emp_num (e.g., "1905")
+#' @param analysis_date Date
+#' @param zone_filter  Character vector of zones, or NULL for all
+#' @return List with $summary (one row per township) and $sites (site-level detail)
+load_fos_drone_township <- function(fos_emp_num, analysis_date,
+                                     zone_filter = NULL) {
+  analysis_date <- as.Date(analysis_date)
+
+  app_envs <- tryCatch(get_app_envs(), error = function(e) NULL)
+  dr_env <- if (!is.null(app_envs)) app_envs[["drone"]] else NULL
+  if (is.null(dr_env)) {
+    warning("[load_fos_drone_township] drone env not loaded")
+    return(list(summary = data.frame(), sites = data.frame()))
+  }
+
+  raw <- tryCatch(
+    dr_env$load_raw_data(drone_types = c("Y", "M", "C"),
+                         analysis_date = analysis_date, include_archive = FALSE),
+    error = function(e) {
+      warning(paste("[load_fos_drone_township] load_raw_data:", e$message))
+      list(sites = data.frame(), treatments = data.frame())
+    }
+  )
+
+  sites <- raw$sites
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(summary = data.frame(), sites = data.frame()))
+  }
+
+  # Drone app's FOS column is `foreman` (aliased from gis_sectcode.fosarea).
+  fos_col <- if ("fosarea" %in% names(sites)) "fosarea" else "foreman"
+  sites <- sites[as.character(sites[[fos_col]]) == fos_emp_num & !is.na(sites[[fos_col]]), ]
+  if (!is.null(zone_filter) && length(zone_filter) > 0 && "zone" %in% names(sites)) {
+    sites <- sites[sites$zone %in% zone_filter, ]
+  }
+
+  .summarize_township(sites, raw$treatments)
 }
 
 # -----------------------------------------------------------------------------

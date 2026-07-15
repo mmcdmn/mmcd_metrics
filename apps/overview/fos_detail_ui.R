@@ -39,7 +39,10 @@ if (!exists("make_sitecode_link", mode = "function")) {
   )
 }
 
-.section <- function(title, icon_name, ..., open = TRUE) {
+.section <- function(title, section_icon, ..., open = TRUE) {
+  # section_icon may be a FontAwesome name (character) or a prebuilt tag such as
+  # an <img> (see .img_icon) — matching how index.html uses image-based icons.
+  icon_tag <- if (is.character(section_icon)) icon(section_icon) else section_icon
   tags$details(
     if (open) list(open = NA) else NULL,
     style = "margin-bottom:14px;",
@@ -49,10 +52,20 @@ if (!exists("make_sitecode_link", mode = "function")) {
         "border-radius:6px;font-weight:600;font-size:1.05em;color:#f1f5f9;",
         "list-style:none;display:flex;align-items:center;gap:8px;"
       ),
-      icon(icon_name),
+      icon_tag,
       title
     ),
     div(style = "padding:10px 2px;", ...)
+  )
+}
+
+#' Image-based section icon, served from the overview app's www/assets folder
+#' (same mechanism as the metric icons in dynamic_ui.R and index.html).
+#' @param src Path under www, e.g. "assets/drone.jpg"
+.img_icon <- function(src, alt = "") {
+  tags$img(
+    src = src, alt = alt,
+    style = "width:1.15em;height:1.15em;object-fit:contain;vertical-align:middle;"
   )
 }
 
@@ -281,7 +294,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   prehatch_section <- .township_section(
     prehatch_data,
     "Ground Prehatch (FOS)",
-    "seedling",
+    .img_icon("assets/ground.png", "Ground prehatch"),
     "No ground prehatch sites found for this FOS area."
   )
 
@@ -289,7 +302,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   drone_section <- .township_section(
     drone_data,
     "Drone (FOS)",
-    "helicopter",
+    .img_icon("assets/drone.jpg", "Drone"),
     "No drone sites found for this FOS area."
   )
 
@@ -343,7 +356,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
 
   suco_section <- .section(
     sprintf("SUCO Goal — %s: %d / %d", facility, fac_total, suco_goal),
-    "bullseye",
+    .img_icon("assets/tree-solid-full.svg", "SUCO"),
     div(
       style = "max-width:380px;margin-bottom:12px;",
       div(
@@ -381,7 +394,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
 
   catch_section <- .section(
     sprintf("Catch Basin (FOS) — %d total sites", cb_total),
-    "water",
+    .img_icon("assets/catchbasin.png", "Catch basin"),
     div(
       style = "display:flex;gap:10px;flex-wrap:wrap;",
       .pct_tile("Treated", cb_active, cb_total, cb_pct_color),
@@ -407,7 +420,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
       tags$span(style = "color:#f1f5f9;", "Air Work Acres"),
       brood_badge
     ),
-    "plane",
+    .img_icon("assets/helicopter-solid-full.svg", "Air work"),
     div(
       style = "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;",
       .frac_tile("Red / total checked",
@@ -499,7 +512,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   bio_section <- .section(
     sprintf("Bioassays (facility, this week) — %d total (%d with pupae)",
             bio_total, bio_with_pupae),
-    "flask",
+    .img_icon("assets/adult.png", "Bioassays"),
     .dark_table(
       style = "max-width:320px;",
       tags$thead(tags$tr(

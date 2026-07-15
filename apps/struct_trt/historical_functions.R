@@ -186,7 +186,15 @@ create_historical_struct_data <- function(start_year, end_year,
   
   # Normalize metric names (remove weekly_ prefix if present)
   hist_display_metric <- gsub("weekly_", "", hist_display_metric)
-  
+
+  # Township grouping is only offered on the current-status view — a historical
+  # trend broken out across 150+ townships is unreadable, and the historical
+  # queries don't carry town codes. Fall back to a facility-level trend so the
+  # chart still renders sensibly when "Township" is selected.
+  if (identical(hist_group_by, "township")) {
+    hist_group_by <- "facility"
+  }
+
   # Load historical treatment data
   treatments <- load_historical_struct_data(
     start_year = start_year,

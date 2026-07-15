@@ -442,21 +442,37 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
   if (nrow(structures) == 0) {
     return(data.frame())
   }
-  
+
   # Determine grouping column
   group_col <- case_when(
     group_by == "facility" ~ "facility",
-    group_by == "foreman" ~ "foreman", 
+    group_by == "foreman" ~ "foreman",
+    group_by == "township" ~ "township",
     group_by == "mmcd_all" ~ "mmcd_all",
     TRUE ~ "facility"
   )
-  
+
   # Add group column for mmcd_all case
   if (group_col == "mmcd_all") {
     structures$mmcd_all <- "All MMCD"
     if (nrow(treatments) > 0) {
       treatments$mmcd_all <- "All MMCD"
     }
+  }
+
+  # Township grouping: towncode = first 4 chars of sitecode; display as city name.
+  town_map <- NULL
+  if (group_col == "township") {
+    structures$township <- substr(structures$sitecode, 1, 4)
+    if (nrow(treatments) > 0) {
+      treatments$township <- substr(treatments$sitecode, 1, 4)
+    }
+    town_map <- tryCatch({
+      con <- get_db_connection()
+      lkp <- dbGetQuery(con, "SELECT towncode, city FROM lookup_towncode_name")
+      safe_disconnect(con)
+      setNames(lkp$city, lkp$towncode)
+    }, error = function(e) character(0))
   }
   
   # Create combined group for zone display
@@ -582,6 +598,17 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
           return(cg)  # fallback to original if no mapping found
         }
       })
+    } else if (group_col == "township") {
+      # For township, map towncode to city name with zones
+      combined_data$display_name <- sapply(combined_data$combined_group, function(cg) {
+        base_name <- sub(" P[12]$", "", cg)
+        zone_match <- regmatches(cg, regexpr(" P[12]$", cg))
+        zone_part <- if (length(zone_match) > 0) zone_match else ""
+        city <- if (!is.null(town_map) && base_name %in% names(town_map)) {
+          town_map[[base_name]]
+        } else base_name
+        paste0(city, zone_part)
+      })
     } else {
       combined_data$display_name <- combined_data$combined_group
     }
@@ -604,6 +631,12 @@ aggregate_structure_data <- function(structures, treatments, group_by = "facilit
         matches <- which(trimws(as.character(foremen_lookup$emp_num)) == trimws(as.character(f)))
         if(length(matches) > 0) foremen_lookup$shortname[matches[1]] else paste0("FOS #", f)
       })
+    } else if (group_col == "township") {
+      combined_data$display_name <- ifelse(
+        !is.null(town_map) & combined_data$township %in% names(town_map),
+        town_map[combined_data$township],
+        combined_data$township
+      )
     } else {
       combined_data$display_name <- combined_data[[group_col]]
     }

@@ -161,6 +161,52 @@ load_fos_drone_township <- function(fos_emp_num, analysis_date,
 
 # -----------------------------------------------------------------------------
 
+#' Structure TREATMENT status by township for one FOS area.
+#'
+#' Uses the struct_trt app's load_raw_data() — same source as the main structure
+#' overview metric — so numbers match exactly. Includes all structures (the
+#' universe from loc_cxstruct); "treated" = has an active STR treatment.
+#'
+#' @param fos_emp_num  Character emp_num (e.g., "1905")
+#' @param analysis_date Date
+#' @param zone_filter  Character vector of zones, or NULL for all
+#' @return List with $summary (one row per township) and $sites (site-level detail)
+load_fos_structures_township <- function(fos_emp_num, analysis_date,
+                                         zone_filter = NULL) {
+  analysis_date <- as.Date(analysis_date)
+
+  app_envs <- tryCatch(get_app_envs(), error = function(e) NULL)
+  st_env <- if (!is.null(app_envs)) app_envs[["structure"]] else NULL
+  if (is.null(st_env)) {
+    warning("[load_fos_structures_township] structure env not loaded")
+    return(list(summary = data.frame(), sites = data.frame()))
+  }
+
+  raw <- tryCatch(
+    st_env$load_raw_data(analysis_date = analysis_date, include_archive = FALSE),
+    error = function(e) {
+      warning(paste("[load_fos_structures_township] load_raw_data:", e$message))
+      list(sites = data.frame(), treatments = data.frame())
+    }
+  )
+
+  sites <- raw$sites
+  if (is.null(sites) || nrow(sites) == 0) {
+    return(list(summary = data.frame(), sites = data.frame()))
+  }
+
+  # struct_trt's FOS column is `foreman` (aliased from gis_sectcode.fosarea).
+  fos_col <- if ("fosarea" %in% names(sites)) "fosarea" else "foreman"
+  sites <- sites[as.character(sites[[fos_col]]) == fos_emp_num & !is.na(sites[[fos_col]]), ]
+  if (!is.null(zone_filter) && length(zone_filter) > 0 && "zone" %in% names(sites)) {
+    sites <- sites[sites$zone %in% zone_filter, ]
+  }
+
+  .summarize_township(sites, raw$treatments)
+}
+
+# -----------------------------------------------------------------------------
+
 #' SUCO counts for the whole facility this week (no FOS restriction).
 #'
 #' @param facility     Facility code (e.g., "Sr")

@@ -239,6 +239,14 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     }
   )
 
+  structures_data <- tryCatch(
+    load_fos_structures_township(fos_emp_num, analysis_date, zone_filter),
+    error = function(e) {
+      warning(paste("[FOS UI] structures:", e$message))
+      list(summary = data.frame(), sites = data.frame())
+    }
+  )
+
   suco_data <- tryCatch(
     load_fos_suco(facility, analysis_date, zone_filter),
     error = function(e) {
@@ -304,6 +312,14 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     "Drone (FOS)",
     .img_icon("assets/drone.jpg", "Drone"),
     "No drone sites found for this FOS area."
+  )
+
+  # --- Section 1c: Structures by Township ------------------------------------
+  structures_section <- .township_section(
+    structures_data,
+    "Structures (FOS)",
+    .img_icon("assets/catchbasin.png", "Structures"),
+    "No structures found for this FOS area."
   )
 
   # --- Section 2: SUCO Goal --------------------------------------------------
@@ -544,6 +560,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     header,
     prehatch_section,
     drone_section,
+    structures_section,
     suco_section,
     catch_section,
     air_section,

@@ -221,9 +221,18 @@ WHERE trt.list_type = 'STR'
       all_structures <- map_facility_names(all_structures)
       
       if (nrow(current_treatments) > 0) {
+        # Collapse to ONE row per site (the latest treatment) before joining, so a
+        # site with multiple treatment records — especially with include_archive =
+        # TRUE (many years) — does not duplicate the structure and inflate counts.
+        # Mirrors the drone / ground_prehatch loaders. "Latest is active" == "any is
+        # active", since a later treatment always has more remaining effect.
         treatment_status <- current_treatments %>%
+          group_by(sitecode) %>%
+          arrange(desc(inspdate)) %>%
+          slice(1) %>%
+          ungroup() %>%
           select(sitecode, is_active, is_expiring)
-        
+
         all_structures <- all_structures %>%
           left_join(treatment_status, by = "sitecode") %>%
           mutate(

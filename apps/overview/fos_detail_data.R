@@ -182,8 +182,10 @@ load_fos_structures_township <- function(fos_emp_num, analysis_date,
     return(list(summary = data.frame(), sites = data.frame()))
   }
 
+  # include_archive = TRUE to match the main overview's load_metric_data call
+  # exactly (post-dedup this is safe — no structure duplication).
   raw <- tryCatch(
-    st_env$load_raw_data(analysis_date = analysis_date, include_archive = FALSE),
+    st_env$load_raw_data(analysis_date = analysis_date, include_archive = TRUE),
     error = function(e) {
       warning(paste("[load_fos_structures_township] load_raw_data:", e$message))
       list(sites = data.frame(), treatments = data.frame())

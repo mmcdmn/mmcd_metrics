@@ -64,6 +64,7 @@ create_current_progress_chart <- function(data, group_by, facility_filter, statu
       x = case_when(
         group_by == "facility" ~ "Facility",
         group_by == "foreman" ~ "FOS",
+        group_by == "township" ~ "Township",
         group_by == "mmcd_all" ~ "MMCD",
         TRUE ~ "Group"
       ),

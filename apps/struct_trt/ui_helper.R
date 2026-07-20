@@ -139,7 +139,8 @@ struct_trt_ui <- function() {
         
         selectInput("group_by", "Group by:",
                     choices = c("Facility" = "facility",
-                                "FOS" = "foreman", 
+                                "FOS" = "foreman",
+                                "Township" = "township",
                                 "All MMCD" = "mmcd_all"),
                     selected = "facility"),
         

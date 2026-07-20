@@ -22,7 +22,7 @@ source("/srv/api/api_helpers.R")
 drone_env <- new.env(parent = globalenv())
 source("/srv/shiny-server/apps/drone/data_functions.R", local = drone_env, chdir = TRUE)
 
-DRONE_GROUP_BYS <- c("mmcd_all", "facility", "foreman")
+DRONE_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "sectcode", "township")
 
 # drone_types: subset of Y (autonomous), M (manual), C. Default all three.
 .validate_drone_types <- function(v) {
@@ -46,17 +46,24 @@ DRONE_GROUP_BYS <- c("mmcd_all", "facility", "foreman")
   data
 }
 
-# Roll drone sites up by facility / foreman / mmcd_all -> clean rows list.
+# Roll drone sites up by facility / foreman / sectcode / township / mmcd_all -> rows list.
 .drone_group_rows <- function(sites, group_by) {
   if (is.null(sites) || nrow(sites) == 0) return(list())
+  # sectcode = left(sitecode,7); township = first 4 digits (shared across site types).
+  sc <- if ("sectcode" %in% names(sites)) as.character(sites$sectcode)
+        else if ("sitecode" %in% names(sites)) substr(as.character(sites$sitecode), 1, 7)
+        else rep(NA_character_, nrow(sites))
   sites$.k <- switch(group_by,
     mmcd_all = rep("All MMCD", nrow(sites)),
     facility = as.character(sites$facility),
     foreman  = as.character(sites$foreman),
+    sectcode = sc,
+    township = substr(sc, 1, 4),
     as.character(sites$facility)
   )
-  fac_lkp <- tryCatch(get_facility_lookup(), error = function(e) NULL)
-  fos_lkp <- tryCatch(get_foremen_lookup(),  error = function(e) NULL)
+  fac_lkp  <- tryCatch(get_facility_lookup(), error = function(e) NULL)
+  fos_lkp  <- tryCatch(get_foremen_lookup(),  error = function(e) NULL)
+  town_lkp <- if (group_by == "township") tryCatch(get_town_lookup(), error = function(e) NULL) else NULL
   lapply(sort(unique(as.character(sites$.k))), function(k) {
     sub    <- sites[sites$.k == k, ]
     total  <- nrow(sub)
@@ -66,6 +73,8 @@ DRONE_GROUP_BYS <- c("mmcd_all", "facility", "foreman")
                    if (length(m) && !is.na(m)) m else k },
       foreman  = { m <- if (!is.null(fos_lkp)) fos_lkp$shortname[match(k, as.character(fos_lkp$emp_num))] else NA
                    if (length(m) && !is.na(m)) m else paste("FOS", k) },
+      township = { m <- if (!is.null(town_lkp)) town_lkp$city[match(k, town_lkp$towncode4)] else NA
+                   if (length(m) && !is.na(m)) m else k },
       k
     )
     list(
@@ -133,7 +142,7 @@ function(req, res,
 # ── Drone Status Summary BY GROUP (facility / foreman / mmcd_all) ──
 
 #* Get drone treatment summary rolled up by a chosen dimension.
-#* @param group_by One of: facility, foreman, mmcd_all. Default facility.
+#* @param group_by One of: facility, foreman, sectcode, township, mmcd_all. Default facility.
 #* @param drone_types Drone designation: Y, M, C (comma-separated). Default Y,M,C.
 #* @param prehatch_only If true, only prehatch drone sites. Default false.
 #* @param facility Facility code to narrow to. Omit for all.

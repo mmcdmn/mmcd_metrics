@@ -39,7 +39,10 @@ if (!exists("make_sitecode_link", mode = "function")) {
   )
 }
 
-.section <- function(title, icon_name, ..., open = TRUE) {
+.section <- function(title, section_icon, ..., open = TRUE) {
+  # section_icon may be a FontAwesome name (character) or a prebuilt tag such as
+  # an <img> (see .img_icon) — matching how index.html uses image-based icons.
+  icon_tag <- if (is.character(section_icon)) icon(section_icon) else section_icon
   tags$details(
     if (open) list(open = NA) else NULL,
     style = "margin-bottom:14px;",
@@ -49,10 +52,20 @@ if (!exists("make_sitecode_link", mode = "function")) {
         "border-radius:6px;font-weight:600;font-size:1.05em;color:#f1f5f9;",
         "list-style:none;display:flex;align-items:center;gap:8px;"
       ),
-      icon(icon_name),
+      icon_tag,
       title
     ),
     div(style = "padding:10px 2px;", ...)
+  )
+}
+
+#' Image-based section icon, served from the overview app's www/assets folder
+#' (same mechanism as the metric icons in dynamic_ui.R and index.html).
+#' @param src Path under www, e.g. "assets/drone.jpg"
+.img_icon <- function(src, alt = "") {
+  tags$img(
+    src = src, alt = alt,
+    style = "width:1.15em;height:1.15em;object-fit:contain;vertical-align:middle;"
   )
 }
 
@@ -102,6 +115,104 @@ if (!exists("make_sitecode_link", mode = "function")) {
   )
 }
 
+#' Build a per-township treatment section (used for both ground prehatch and
+#' drone — identical layout, different data + heading).
+#'
+#' @param township_data  List(summary, sites) from load_fos_prehatch_township()
+#' @param title_prefix   Heading text before the "— overall X% treated" suffix
+#' @param icon_name      Font Awesome icon name for the section header
+#' @param empty_msg      Message shown when there are no sites
+.township_section <- function(township_data, title_prefix, icon_name, empty_msg) {
+  summary_df <- township_data$summary
+  sites_df   <- township_data$sites
+
+  if (is.null(summary_df) || nrow(summary_df) == 0) {
+    return(.section(title_prefix, icon_name,
+      div(style = "color:#e2e8f0;", empty_msg)))
+  }
+
+  overall_pct <- round(100 * sum(summary_df$treated) /
+                         max(sum(summary_df$total), 1), 1)
+
+  town_rows <- lapply(seq_len(nrow(summary_df)), function(i) {
+    r <- summary_df[i, ]
+
+    town_sites <- if (!is.null(sites_df) && nrow(sites_df) > 0) {
+      sites_df[sites_df$towncode == r$towncode, ]
+    } else data.frame()
+
+    site_detail <- if (nrow(town_sites) > 0) {
+      town_sites <- town_sites[order(town_sites$sitecode), ]
+      tags$details(
+        tags$summary(
+          style = "cursor:pointer;color:#60a5fa;font-size:0.85em;padding:4px 0;",
+          sprintf("Show %d sites", nrow(town_sites))
+        ),
+        div(
+          style = "margin-top:6px;max-height:250px;overflow-y:auto;",
+          .dark_table(
+            tags$thead(tags$tr(
+              tags$th(style = "color:#cbd5e1;", "Site"),
+              tags$th(style = "color:#cbd5e1;", "Treated?"),
+              tags$th(style = "color:#cbd5e1;", "Expiring?")
+            )),
+            tags$tbody(lapply(seq_len(nrow(town_sites)), function(j) {
+              s <- town_sites[j, ]
+              treated_txt <- if (isTRUE(s$is_active)) {
+                tags$span(style = "color:#22c55e;", icon("check"), " Yes")
+              } else {
+                tags$span(style = "color:#ef4444;", icon("times"), " No")
+              }
+              exp_txt <- if (isTRUE(s$is_expiring)) {
+                exp_label <- if (!is.null(s$expiry_date) && !is.na(s$expiry_date)) {
+                  format(as.Date(s$expiry_date), "%b %d")
+                } else "Soon"
+                tags$span(style = "color:#eab308;", icon("clock"), " ", exp_label)
+              } else ""
+              tags$tr(
+                tags$td(HTML(make_sitecode_link(s$sitecode))),
+                tags$td(treated_txt),
+                tags$td(exp_txt)
+              )
+            }))
+          )
+        )
+      )
+    } else NULL
+
+    tags$tr(
+      tags$td(
+        div(style = "font-weight:500;color:#e2e8f0;", r$city),
+        site_detail
+      ),
+      tags$td(style = "text-align:right;color:#e2e8f0;vertical-align:top;",
+              r$total),
+      tags$td(style = "text-align:right;color:#e2e8f0;vertical-align:top;",
+              r$treated),
+      tags$td(style = "text-align:right;vertical-align:top;white-space:nowrap;",
+        .status_dot(r$pct),
+        tags$span(style = sprintf("color:%s;font-weight:600;", .prehatch_color(r$pct)),
+                  sprintf("%.1f%%", r$pct))
+      )
+    )
+  })
+
+  .section(
+    sprintf("%s — overall %.1f%% treated", title_prefix, overall_pct),
+    icon_name,
+    .dark_table(
+      style = "max-width:500px;",
+      tags$thead(tags$tr(
+        tags$th(style = "color:#cbd5e1;", "Township"),
+        tags$th(style = "text-align:right;color:#cbd5e1;", "Sites"),
+        tags$th(style = "text-align:right;color:#cbd5e1;", "Treated"),
+        tags$th(style = "text-align:right;color:#cbd5e1;", "% Treated")
+      )),
+      tags$tbody(town_rows)
+    )
+  )
+}
+
 # Main renderer ---------------------------------------------------------------
 
 render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
@@ -109,10 +220,29 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   week_num <- as.integer(lubridate::week(analysis_date))
 
   # --- Load all data ---------------------------------------------------------
+  # Ground prehatch EXCLUDES drone sites; drone sites get their own section,
+  # sourced from the drone app so ALL drone sites are included (every priority,
+  # regardless of prehatch status).
   prehatch_data <- tryCatch(
     load_fos_prehatch_township(fos_emp_num, analysis_date, zone_filter),
     error = function(e) {
       warning(paste("[FOS UI] prehatch:", e$message))
+      list(summary = data.frame(), sites = data.frame())
+    }
+  )
+
+  drone_data <- tryCatch(
+    load_fos_drone_township(fos_emp_num, analysis_date, zone_filter),
+    error = function(e) {
+      warning(paste("[FOS UI] drone:", e$message))
+      list(summary = data.frame(), sites = data.frame())
+    }
+  )
+
+  structures_data <- tryCatch(
+    load_fos_structures_township(fos_emp_num, analysis_date, zone_filter),
+    error = function(e) {
+      warning(paste("[FOS UI] structures:", e$message))
       list(summary = data.frame(), sites = data.frame())
     }
   )
@@ -168,96 +298,29 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     )
   )
 
-  # --- Section 1: Ground Prehatch by Township --------------------------------
-  prehatch_sum   <- prehatch_data$summary
-  prehatch_sites <- prehatch_data$sites
+  # --- Section 1: Ground Prehatch by Township (drone sites excluded) ----------
+  prehatch_section <- .township_section(
+    prehatch_data,
+    "Ground Prehatch (FOS)",
+    .img_icon("assets/ground.png", "Ground prehatch"),
+    "No ground prehatch sites found for this FOS area."
+  )
 
-  prehatch_section <- if (is.null(prehatch_sum) || nrow(prehatch_sum) == 0) {
-    .section("Ground Prehatch", "seedling",
-      div(style = "color:#e2e8f0;", "No prehatch sites found for this FOS area.")
-    )
-  } else {
-    overall_pct <- round(100 * sum(prehatch_sum$treated) /
-                           max(sum(prehatch_sum$total), 1), 1)
+  # --- Section 1b: Drone by Township (drone sites only) ----------------------
+  drone_section <- .township_section(
+    drone_data,
+    "Drone (FOS)",
+    .img_icon("assets/drone.jpg", "Drone"),
+    "No drone sites found for this FOS area."
+  )
 
-    town_rows <- lapply(seq_len(nrow(prehatch_sum)), function(i) {
-      r <- prehatch_sum[i, ]
-
-      town_sites <- if (!is.null(prehatch_sites) && nrow(prehatch_sites) > 0) {
-        prehatch_sites[prehatch_sites$towncode == r$towncode, ]
-      } else data.frame()
-
-      site_detail <- if (nrow(town_sites) > 0) {
-        town_sites <- town_sites[order(town_sites$sitecode), ]
-        tags$details(
-          tags$summary(
-            style = "cursor:pointer;color:#60a5fa;font-size:0.85em;padding:4px 0;",
-            sprintf("Show %d sites", nrow(town_sites))
-          ),
-          div(
-            style = "margin-top:6px;max-height:250px;overflow-y:auto;",
-            .dark_table(
-              tags$thead(tags$tr(
-                tags$th(style = "color:#cbd5e1;", "Site"),
-                tags$th(style = "color:#cbd5e1;", "Treated?"),
-                tags$th(style = "color:#cbd5e1;", "Expiring?")
-              )),
-              tags$tbody(lapply(seq_len(nrow(town_sites)), function(j) {
-                s <- town_sites[j, ]
-                treated_txt <- if (isTRUE(s$is_active)) {
-                  tags$span(style = "color:#22c55e;", icon("check"), " Yes")
-                } else {
-                  tags$span(style = "color:#ef4444;", icon("times"), " No")
-                }
-                exp_txt <- if (isTRUE(s$is_expiring)) {
-                  exp_label <- if (!is.null(s$expiry_date) && !is.na(s$expiry_date)) {
-                    format(as.Date(s$expiry_date), "%b %d")
-                  } else "Soon"
-                  tags$span(style = "color:#eab308;", icon("clock"), " ", exp_label)
-                } else ""
-                tags$tr(
-                  tags$td(HTML(make_sitecode_link(s$sitecode))),
-                  tags$td(treated_txt),
-                  tags$td(exp_txt)
-                )
-              }))
-            )
-          )
-        )
-      } else NULL
-
-      tags$tr(
-        tags$td(
-          div(style = "font-weight:500;color:#e2e8f0;", r$city),
-          site_detail
-        ),
-        tags$td(style = "text-align:right;color:#e2e8f0;vertical-align:top;",
-                r$total),
-        tags$td(style = "text-align:right;color:#e2e8f0;vertical-align:top;",
-                r$treated),
-        tags$td(style = "text-align:right;vertical-align:top;white-space:nowrap;",
-          .status_dot(r$pct),
-          tags$span(style = sprintf("color:%s;font-weight:600;", .prehatch_color(r$pct)),
-                    sprintf("%.1f%%", r$pct))
-        )
-      )
-    })
-
-    .section(
-      sprintf("Ground Prehatch (FOS) — overall %.1f%% treated", overall_pct),
-      "seedling",
-      .dark_table(
-        style = "max-width:500px;",
-        tags$thead(tags$tr(
-          tags$th(style = "color:#cbd5e1;", "Township"),
-          tags$th(style = "text-align:right;color:#cbd5e1;", "Sites"),
-          tags$th(style = "text-align:right;color:#cbd5e1;", "Treated"),
-          tags$th(style = "text-align:right;color:#cbd5e1;", "% Treated")
-        )),
-        tags$tbody(town_rows)
-      )
-    )
-  }
+  # --- Section 1c: Structures by Township ------------------------------------
+  structures_section <- .township_section(
+    structures_data,
+    "Structures (FOS)",
+    .img_icon("assets/catchbasin.png", "Structures"),
+    "No structures found for this FOS area."
+  )
 
   # --- Section 2: SUCO Goal --------------------------------------------------
   # get_config_threshold("goal","suco") returns the whole sub-list
@@ -309,7 +372,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
 
   suco_section <- .section(
     sprintf("SUCO Goal — %s: %d / %d", facility, fac_total, suco_goal),
-    "bullseye",
+    .img_icon("assets/tree-solid-full.svg", "SUCO"),
     div(
       style = "max-width:380px;margin-bottom:12px;",
       div(
@@ -347,7 +410,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
 
   catch_section <- .section(
     sprintf("Catch Basin (FOS) — %d total sites", cb_total),
-    "water",
+    .img_icon("assets/catchbasin.png", "Catch basin"),
     div(
       style = "display:flex;gap:10px;flex-wrap:wrap;",
       .pct_tile("Treated", cb_active, cb_total, cb_pct_color),
@@ -373,7 +436,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
       tags$span(style = "color:#f1f5f9;", "Air Work Acres"),
       brood_badge
     ),
-    "plane",
+    .img_icon("assets/helicopter-solid-full.svg", "Air work"),
     div(
       style = "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;",
       .frac_tile("Red / total checked",
@@ -465,7 +528,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   bio_section <- .section(
     sprintf("Bioassays (facility, this week) — %d total (%d with pupae)",
             bio_total, bio_with_pupae),
-    "flask",
+    .img_icon("assets/adult.png", "Bioassays"),
     .dark_table(
       style = "max-width:320px;",
       tags$thead(tags$tr(
@@ -496,6 +559,8 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     dashboard_css,
     header,
     prehatch_section,
+    drone_section,
+    structures_section,
     suco_section,
     catch_section,
     air_section,

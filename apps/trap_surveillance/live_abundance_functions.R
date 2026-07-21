@@ -157,3 +157,37 @@ compute_abundance_data_live <- function(weeks, spp_name = "Total_Cx_vectors") {
     })
   })
 }
+
+# =============================================================================
+# WEEKS WITH REAL ABUNDANCE (live source) — drives current-season trend rebuilds
+# =============================================================================
+# Distinct yrwk values for `year` that have ACTUAL abundance counts in the live
+# source view (cxvectotal set, or a confirmed zero-count sample), optionally
+# on/before up_to_date. Used so trend rebuilds iterate only weeks that have data
+# — not the genuinely-empty future weeks the materialized view also carries.
+weeks_with_abundance_live <- function(year, up_to_date = NULL) {
+  con <- get_db_connection()
+  if (is.null(con)) return(integer(0))
+  on.exit(safe_disconnect(con))
+
+  date_clause <- if (!is.null(up_to_date)) {
+    sprintf("AND s.inspdate <= '%s'::date", as.character(up_to_date))
+  } else ""
+
+  q <- sprintf(
+    "SELECT DISTINCT calc_week_num(s.inspdate) AS yrwk
+     FROM dbadult_insp_w_id_ff3s_allyears s
+     WHERE s.network_type = 'mnt' AND s.survtype = '6' AND s.missing IS NULL
+       AND (s.cxvectotal IS NOT NULL OR s.zero_count = 't')
+       AND EXTRACT(year FROM s.inspdate) = %d %s
+     ORDER BY yrwk",
+    as.integer(year), date_clause
+  )
+
+  tryCatch({
+    d <- dbGetQuery(con, q)
+    if (is.null(d) || nrow(d) == 0) integer(0) else as.integer(d$yrwk)
+  }, error = function(e) {
+    warning(paste("[live] weeks_with_abundance failed:", e$message)); integer(0)
+  })
+}

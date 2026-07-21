@@ -17,6 +17,18 @@ library(DBI)
 library(dplyr)
 library(sf)
 
+# Live fallbacks (compute on-read for current-season weeks missing/stale in the
+# pre-calculated sources, cache in Redis). local=TRUE so the definitions land in
+# the same environment in every load context (app, overview env, API route env).
+#   - infection: MLE/MIR when the static dbvirus_*_yrwk_area tables lack the week
+#   - abundance: counts when the materialized abundance view is stale (unrefreshed)
+if (file.exists("live_infection_functions.R")) {
+  source("live_infection_functions.R", local = TRUE, chdir = TRUE)
+}
+if (file.exists("live_abundance_functions.R")) {
+  source("live_abundance_functions.R", local = TRUE, chdir = TRUE)
+}
+
 # Species mapping: spp_code (MLE/MIR tables) <-> spp_name (abundance table)
 SPECIES_MAP <- list(
   "Total_Cx_vectors"        = list(code = NULL,  label = "Total Culex Vectors"),
@@ -75,6 +87,29 @@ fetch_abundance_data <- function(year = NULL, yrwk = NULL, spp_name = "Total_Cx_
   
   tryCatch({
     data <- dbGetQuery(con, q)
+    # Stale materialized view: some weeks have rows but all-NULL mosqcount (lab
+    # data landed after the last refresh). Recompute those weeks from the live
+    # source view and splice them in, so trends/charts don't show false gaps.
+    if (!is.null(data) && nrow(data) > 0 &&
+        !is.null(spp_name) && spp_name %in% names(.ABUNDANCE_SPP_COL)) {
+      stale <- data %>%
+        dplyr::group_by(yrwk) %>%
+        dplyr::summarise(all_na = all(is.na(mosqcount)), .groups = "drop") %>%
+        dplyr::filter(all_na) %>%
+        dplyr::pull(yrwk)
+      if (length(stale) > 0) {
+        live <- compute_abundance_data_live(stale, spp_name)
+        if (!is.null(live) && nrow(live) > 0) {
+          keep <- data %>% dplyr::filter(!yrwk %in% stale)
+          # matview returns mosqcount as integer64 (bigint); live is double.
+          # Coerce both so bind_rows can combine them.
+          keep$mosqcount <- as.numeric(keep$mosqcount)
+          live$mosqcount <- as.numeric(live$mosqcount)
+          data <- dplyr::bind_rows(keep, live)
+          data <- data[order(-data$yrwk, data$viarea, data$loc_code), ]
+        }
+      }
+    }
     message(sprintf("Abundance query returned %d rows", nrow(data)))
     data
   }, error = function(e) {
@@ -105,6 +140,12 @@ fetch_abundance_by_area <- function(yrwk, spp_name = "Total_Cx_vectors") {
   
   tryCatch({
     data <- dbGetQuery(con, q)
+    # Stale materialized view: rows exist but counts are all NULL (lab data
+    # landed after the last refresh). Recompute from the live source view.
+    if (is.null(data) || nrow(data) == 0 || all(is.na(data$total_count))) {
+      live <- compute_abundance_by_area_live(yrwk, spp_name)
+      if (!is.null(live) && nrow(live) > 0) return(live)
+    }
     message(sprintf("Abundance by area: %d areas for yrwk %s", nrow(data), yrwk))
     data
   }, error = function(e) {
@@ -134,7 +175,12 @@ fetch_mle_by_area <- function(yrwk) {
   
   tryCatch({
     data <- dbGetQuery(con, q)
-    message(sprintf("MLE by area: %d rows for yrwk %s", nrow(data), yrwk))
+    if (is.null(data) || nrow(data) == 0) {
+      # Static table has no rows for this week — compute live from raw pools.
+      data <- compute_mle_by_area_live(yrwk)
+    } else {
+      message(sprintf("MLE by area: %d rows for yrwk %s", nrow(data), yrwk))
+    }
     data
   }, error = function(e) {
     warning(paste("MLE by area query failed:", e$message))
@@ -159,7 +205,11 @@ fetch_mle_by_area_spp <- function(yrwk, spp_code) {
   
   tryCatch({
     data <- dbGetQuery(con, q)
-    message(sprintf("MLE by area+spp: %d rows for yrwk %s, spp %s", nrow(data), yrwk, spp_code))
+    if (is.null(data) || nrow(data) == 0) {
+      data <- compute_mle_by_area_live(yrwk, spp_code)
+    } else {
+      message(sprintf("MLE by area+spp: %d rows for yrwk %s, spp %s", nrow(data), yrwk, spp_code))
+    }
     data
   }, error = function(e) {
     warning(paste("MLE by area+spp query failed:", e$message))
@@ -186,7 +236,11 @@ fetch_mle_trend <- function(year = NULL) {
   )
   
   tryCatch({
-    dbGetQuery(con, q)
+    data <- dbGetQuery(con, q)
+    if ((is.null(data) || nrow(data) == 0) && !is.null(year)) {
+      data <- compute_mle_trend_live(year)
+    }
+    data
   }, error = function(e) {
     warning(paste("MLE trend query failed:", e$message))
     NULL
@@ -286,7 +340,11 @@ fetch_mir_by_area <- function(yrwk) {
   
   tryCatch({
     data <- dbGetQuery(con, q)
-    message(sprintf("MIR by area: %d rows for yrwk %s", nrow(data), yrwk))
+    if (is.null(data) || nrow(data) == 0) {
+      data <- compute_mir_by_area_live(yrwk)
+    } else {
+      message(sprintf("MIR by area: %d rows for yrwk %s", nrow(data), yrwk))
+    }
     data
   }, error = function(e) {
     warning(paste("MIR by area query failed:", e$message))
@@ -312,7 +370,11 @@ fetch_mir_by_area_spp <- function(yrwk, spp_code) {
   
   tryCatch({
     data <- dbGetQuery(con, q)
-    message(sprintf("MIR by area+spp: %d rows for yrwk %s, spp %s", nrow(data), yrwk, spp_code))
+    if (is.null(data) || nrow(data) == 0) {
+      data <- compute_mir_by_area_live(yrwk, spp_code)
+    } else {
+      message(sprintf("MIR by area+spp: %d rows for yrwk %s, spp %s", nrow(data), yrwk, spp_code))
+    }
     data
   }, error = function(e) {
     warning(paste("MIR by area+spp query failed:", e$message))
@@ -350,6 +412,10 @@ fetch_mir_trend <- function(year = NULL) {
   
   tryCatch({
     data <- dbGetQuery(con, q)
+    if ((is.null(data) || nrow(data) == 0) && !is.null(year)) {
+      # Static table empty for this year — compute live (already includes mir_se).
+      return(compute_mir_trend_live(year))
+    }
     if (!is.null(data) && nrow(data) > 0) {
       # Compute SE in R: binomial SE = sqrt(p*(1-p)/n) * 1000
       data$p_hat <- ifelse(data$total_mosquitoes > 0,
@@ -1138,9 +1204,12 @@ fetch_combined_area_data <- function(yrwk, spp_name = "Total_Cx_vectors",
 #' Overview-compatible data loader for Vector Index
 #' 
 #' Returns pre-aggregated data compatible with the overview metric registry.
-#' Scans ALL weeks for the current year to find the PEAK vector index value,
-#' not just the latest week (which may be end-of-season with VI=0).
-#' 
+#' Shows the latest COMPLETE week (most recent week with real abundance counts
+#' on/before analysis_date) and its max Vector Index across all VI areas.
+#' Infection rate for current-season weeks is computed live (see
+#' live_infection_functions.R) when the static MLE/MIR tables lack the week.
+#' A complete week with no WNV positives yields a legitimate VI of 0.
+#'
 #' @param analysis_date Date for analysis (used to determine year/week)
 #' @param expiring_days Not used for VI (kept for interface compatibility)
 #' @param zone_filter Not used for VI (areas don't map to zones)
@@ -1177,9 +1246,11 @@ load_raw_data <- function(analysis_date = NULL,
   }
   
   # ===========================================================================
-  # Single-query approach: compute VI for ALL weeks of the year in SQL,
-  # then find the peak. This avoids calling fetch_combined_area_data per-week.
-  # VI = avg_per_trap * infection_rate (MLE)
+  # Show the latest COMPLETE week (most recent week that has real abundance
+  # counts on/before analysis_date). Delegate to fetch_combined_area_data for
+  # that week — it merges abundance + infection and self-heals current-season
+  # weeks via the live MLE/MIR fallback. VI = avg_per_trap * infection_rate.
+  # A week with abundance but no WNV positives yields a legitimate VI of 0.
   # ===========================================================================
   con <- get_db_connection()
   if (is.null(con)) {
@@ -1207,23 +1278,29 @@ load_raw_data <- function(analysis_date = NULL,
     # Find the most recent yrwk with data on or before analysis_date
     query_year <- current_year
     
-    # Step 1: find the relevant yrwk (latest week with trapping data <= analysis_date)
-    yrwk_row <- dbGetQuery(con, sprintf("
-      SELECT MAX(yrwk) as yrwk
-      FROM dbadult_mon_nt_co2_forvectorabundance
-      WHERE year = %d AND inspdate <= '%s'::date
-    ", query_year, as.character(analysis_date)))
-    
+    # Step 1: latest week with ACTUAL abundance counts on/before analysis_date.
+    # We query the LIVE source view (dbadult_insp_w_id_ff3s_allyears), NOT the
+    # materialized view — the matview is a snapshot and its most recent weeks
+    # often lag (trap records present but counts NULL until refreshed). A week
+    # "has counts" when cxvectotal is set OR it is a confirmed zero-count sample
+    # (matches the matview's mosqcount-not-null rule). This picks the true latest
+    # complete week so the current week's real VI shows.
+    complete_week_sql <- "
+      SELECT MAX(calc_week_num(s.inspdate)) AS yrwk
+      FROM dbadult_insp_w_id_ff3s_allyears s
+      WHERE s.network_type = 'mnt' AND s.survtype = '6' AND s.missing IS NULL
+        AND (s.cxvectotal IS NOT NULL OR s.zero_count = 't')
+        AND EXTRACT(year FROM s.inspdate) = %d %s"
+
+    yrwk_row <- dbGetQuery(con, sprintf(complete_week_sql, query_year,
+                    sprintf("AND s.inspdate <= '%s'::date", as.character(analysis_date))))
+
     target_yrwk <- if (!is.null(yrwk_row) && nrow(yrwk_row) > 0 && !is.na(yrwk_row$yrwk[1])) {
       yrwk_row$yrwk[1]
     } else {
       # No data for current year up to analysis_date — try previous year latest
       query_year <- current_year - 1
-      prev <- dbGetQuery(con, sprintf("
-        SELECT MAX(yrwk) as yrwk
-        FROM dbadult_mon_nt_co2_forvectorabundance
-        WHERE year = %d
-      ", query_year))
+      prev <- dbGetQuery(con, sprintf(complete_week_sql, query_year, ""))
       if (!is.null(prev) && nrow(prev) > 0 && !is.na(prev$yrwk[1])) prev$yrwk[1] else NULL
     }
     
@@ -1233,35 +1310,16 @@ load_raw_data <- function(analysis_date = NULL,
       return(empty_result)
     }
     
-    # Step 2: compute VI for that ONE week — same calc as fetch_combined_area_data()
-    vi_data <- dbGetQuery(con, sprintf("
-      WITH abundance AS (
-        SELECT viarea,
-               SUM(mosqcount) AS total_count,
-               COUNT(DISTINCT loc_code) AS num_traps,
-               CASE WHEN COUNT(DISTINCT loc_code) > 0
-                    THEN SUM(mosqcount)::numeric / COUNT(DISTINCT loc_code)
-                    ELSE 0 END AS avg_per_trap
-        FROM dbadult_mon_nt_co2_forvectorabundance
-        WHERE yrwk = %s AND spp_name = '%s'
-        GROUP BY viarea
-      ),
-      infection AS (
-        SELECT viarea,
-               CASE WHEN p IS NOT NULL AND p::text <> 'NULL' AND p::text <> ''
-                    THEN p::numeric ELSE 0 END AS mle
-        FROM dbvirus_mle_yrwk_area
-        WHERE yrwk = '%s'
-      )
-      SELECT a.viarea, a.avg_per_trap,
-             COALESCE(i.mle, 0) AS mle,
-             a.avg_per_trap * COALESCE(i.mle, 0) AS vector_index
-      FROM abundance a
-      LEFT JOIN infection i ON a.viarea = i.viarea
-      ORDER BY vector_index DESC NULLS LAST
-    ", as.integer(target_yrwk), spp_name, as.character(as.integer(target_yrwk))))
-    
+    # Step 2: merge abundance + infection for that week via fetch_combined_area_data.
+    # That function self-heals for current-season weeks through the live MLE/MIR
+    # fallback (compute_*_live), so no inline infection SQL is needed here. It
+    # returns a `vector_index` column used below.
     safe_disconnect(con)
+    vi_data <- fetch_combined_area_data(
+      as.integer(target_yrwk),
+      spp_name         = spp_name,
+      infection_metric = infection_metric
+    )
     
     if (is.null(vi_data) || nrow(vi_data) == 0) {
       message("[vector_index] No VI data for yrwk ", target_yrwk)

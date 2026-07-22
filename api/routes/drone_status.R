@@ -67,7 +67,7 @@ DRONE_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "sectcode", "township")
   lapply(sort(unique(as.character(sites$.k))), function(k) {
     sub    <- sites[sites$.k == k, ]
     total  <- nrow(sub)
-    active <- sum(sub$is_active == TRUE, na.rm = TRUE)
+    active <- sum(sub$is_active == TRUE, na.rm = TRUE) 
     disp <- switch(group_by,
       facility = { m <- if (!is.null(fac_lkp)) fac_lkp$full_name[match(k, fac_lkp$short_name)] else NA
                    if (length(m) && !is.na(m)) m else k },

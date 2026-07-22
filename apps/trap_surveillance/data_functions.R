@@ -518,11 +518,115 @@ load_trap_locations <- function(force_reload = FALSE) {
 # VECTOR INDEX TREND - Per VI Area (like abundance trend but for VI = N × P)
 # =============================================================================
 
+# --- Current-season rebuilds --------------------------------------------------
+# The pre-aggregated VI trend SQL joins the abundance MATERIALIZED VIEW and the
+# static infection tables directly, so for the current year (stale matview +
+# unpopulated infection tables) every VI is 0. These helpers rebuild the current
+# year week-by-week through fetch_combined_area_data(), which self-heals both
+# abundance (live source view) and infection (live pooled MLE/MIR). Past years
+# keep the fast SQL path — their tables are complete.
+
+# Per-area VI trend for the current season. Columns match fetch_vi_area_trend:
+# viarea, yrwk, avg_per_trap, infection_rate, vector_index, week.
+.vi_area_trend_current <- function(year, spp_name, infection_metric) {
+  weeks <- weeks_with_abundance_live(as.integer(year))
+  if (length(weeks) == 0) return(NULL)
+  rows <- lapply(weeks, function(wk) {
+    d <- fetch_combined_area_data(wk, spp_name, infection_metric)
+    if (is.null(d) || nrow(d) == 0) return(NULL)
+    data.frame(
+      viarea         = d$viarea,
+      yrwk           = as.integer(wk),
+      avg_per_trap   = d$avg_per_trap,
+      infection_rate = d$infection_rate,
+      vector_index   = ifelse(is.na(d$vector_index), 0, d$vector_index),
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
+  if (is.null(out) || nrow(out) == 0) return(NULL)
+  out$week <- as.numeric(substr(as.character(out$yrwk), 5, 6))
+  message(sprintf("VI area trend (live rebuild): %d rows for year %s", nrow(out), year))
+  out
+}
+
+# District-wide VI trend for the current season. Columns match
+# fetch_vi_district_trend: yrwk, avg_per_trap, infection_rate, rate_lower,
+# rate_upper, vector_index, vi_lower, vi_upper, week.
+# District infection uses the TRUE district-wide rate (pooled over all district
+# pools) for the default all-species case — same methodology as the historical
+# SQL path (dbvirus_mle_yrwk) — via the self-healing fetch_mle_trend/
+# fetch_mir_trend. Species-specific queries fall back to the trap-weighted mean
+# of area rates.
+.vi_district_trend_current <- function(year, spp_name, infection_metric) {
+  weeks <- weeks_with_abundance_live(as.integer(year))
+  if (length(weeks) == 0) return(NULL)
+
+  # True district-wide infection per yrwk (all-species only): ir + CI bounds.
+  spp_code <- spp_name_to_code(spp_name)
+  dist_inf <- NULL
+  if (is.null(spp_code)) {
+    if (infection_metric == "mle") {
+      t <- fetch_mle_trend(year)
+      if (!is.null(t) && nrow(t) > 0) {
+        dist_inf <- data.frame(yrwk = as.integer(t$yrwk),
+                               ir = t$mle, lo = t$mle_lower, hi = t$mle_upper)
+      }
+    } else {
+      t <- fetch_mir_trend(year)
+      if (!is.null(t) && nrow(t) > 0) {
+        ir <- t$mir / 1000; se <- (t$mir_se %||% 0) / 1000
+        dist_inf <- data.frame(yrwk = as.integer(t$yrwk),
+                               ir = ir, lo = pmax(ir - se, 0), hi = ir + se)
+      }
+    }
+  }
+
+  rows <- lapply(weeks, function(wk) {
+    d <- fetch_combined_area_data(wk, spp_name, infection_metric)
+    if (is.null(d) || nrow(d) == 0) return(NULL)
+    # Coerce to plain double: DB COUNT()/SUM() come back as integer64 (bit64),
+    # and integer64 * double truncates fractional weights to 0.
+    w         <- as.numeric(d$num_traps)
+    tot_traps <- sum(w, na.rm = TRUE)
+    avg_per_trap <- if (tot_traps > 0) sum(as.numeric(d$total_count), na.rm = TRUE) / tot_traps else 0
+
+    row_inf <- if (!is.null(dist_inf)) dist_inf[dist_inf$yrwk == as.integer(wk), ] else NULL
+    if (!is.null(row_inf) && nrow(row_inf) == 1) {
+      ir <- row_inf$ir; lo <- row_inf$lo; hi <- row_inf$hi
+    } else {
+      # Fallback (species-specific): trap-weighted mean of area rates.
+      ir <- if (tot_traps > 0) stats::weighted.mean(as.numeric(d$infection_rate), w, na.rm = TRUE) else 0
+      has_ci <- all(c("rate_lower", "rate_upper") %in% names(d))
+      lo <- if (has_ci && tot_traps > 0) stats::weighted.mean(as.numeric(d$rate_lower), w, na.rm = TRUE) else ir
+      hi <- if (has_ci && tot_traps > 0) stats::weighted.mean(as.numeric(d$rate_upper), w, na.rm = TRUE) else ir
+    }
+    data.frame(
+      yrwk = as.integer(wk), avg_per_trap = avg_per_trap,
+      infection_rate = ir, rate_lower = lo, rate_upper = hi,
+      vector_index = avg_per_trap * ir,
+      vi_lower = avg_per_trap * lo, vi_upper = avg_per_trap * hi,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
+  if (is.null(out) || nrow(out) == 0) return(NULL)
+  out <- out[order(out$yrwk), ]
+  out$week <- as.numeric(substr(as.character(out$yrwk), 5, 6))
+  message(sprintf("VI district trend (live rebuild): %d weeks for year %s", nrow(out), year))
+  out
+}
+
 # Fetch Vector Index by area over time for the selected year.
 # VI = avg_per_trap × infection_rate (MLE or MIR/1000).
 # This is PER-AREA, not district-wide — allows colored lines per area like abundance.
-fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors", 
+fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors",
                                 infection_metric = "mle") {
+  # Current year: sources are stale/empty -> rebuild via self-healing per-week.
+  if (as.integer(year) >= as.integer(format(Sys.Date(), "%Y"))) {
+    return(.vi_area_trend_current(year, spp_name, infection_metric))
+  }
+
   con <- get_db_connection()
   if (is.null(con)) return(NULL)
   on.exit(safe_disconnect(con))
@@ -588,10 +692,15 @@ fetch_vi_area_trend <- function(year, spp_name = "Total_Cx_vectors",
 # VI = avg_per_trap × infection_rate; CI from MLE bounds.
 fetch_vi_district_trend <- function(year, spp_name = "Total_Cx_vectors",
                                      infection_metric = "mle") {
+  # Current year: sources are stale/empty -> rebuild via self-healing per-week.
+  if (as.integer(year) >= as.integer(format(Sys.Date(), "%Y"))) {
+    return(.vi_district_trend_current(year, spp_name, infection_metric))
+  }
+
   con <- get_db_connection()
   if (is.null(con)) return(NULL)
   on.exit(safe_disconnect(con))
-  
+
   spp_code <- spp_name_to_code(spp_name)
   
   if (infection_metric == "mle") {

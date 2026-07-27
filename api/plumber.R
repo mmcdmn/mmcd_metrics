@@ -972,6 +972,121 @@ function(req, res) {
 }
 
 
+#* Cattail inspection checklist — per-site action='9' records for the season.
+#* Returns two arrays: original inspections (most recent per site) and
+#* reinspect records (sites with a reinspect='t' entry this year).
+#* Used to drive the Cattail Inspections Google Sheet.
+#*
+#* @param year     Season year (2020–2030). Default current year.
+#* @param facility Optional facility code (MO, E, W, N, Sr, Sj …)
+#* @get /v1/private/cattail-checklist
+#* @json
+function(year = NULL, facility = NULL, res) {
+  tryCatch({
+    yr  <- suppressWarnings(as.integer(year %||% format(Sys.Date(), "%Y")))
+    if (is.na(yr) || yr < 2020L || yr > 2030L) stop("year must be 2020–2030")
+    fac_v <- validate_facility(facility)
+
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
+
+    fac_clause <- safe_in(con, "facility", fac_v)
+
+    # ── Query A: most recent original inspection per site (reinspect IS NULL or 'f')
+    insp_sql <- sprintf("
+      WITH AllInsp AS (
+        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan
+        FROM public.dblarv_insptrt_current
+        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
+          AND EXTRACT(YEAR FROM inspdate) = %d
+          %s
+        UNION ALL
+        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan
+        FROM public.dblarv_insptrt_archive
+        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
+          AND EXTRACT(YEAR FROM inspdate) = %d
+          %s
+      ),
+      ValidSites AS (
+        SELECT sitecode FROM public.loc_breeding_sites
+        WHERE enddate IS NULL OR enddate > CURRENT_DATE
+      ),
+      Ranked AS (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate DESC) AS rn
+        FROM AllInsp
+        WHERE sitecode IN (SELECT sitecode FROM ValidSites)
+      )
+      SELECT sitecode,
+             inspdate::text AS last_insp_date,
+             wet,
+             numdip,
+             airgrnd_plan
+      FROM Ranked WHERE rn = 1
+      ORDER BY sitecode
+    ", yr, fac_clause, yr, fac_clause)
+
+    # ── Query B: reinspect records (reinspect = 't'), joined to original dates
+    reinsp_sql <- sprintf("
+      WITH AllOrig AS (
+        SELECT sitecode, inspdate
+        FROM public.dblarv_insptrt_current
+        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
+          AND EXTRACT(YEAR FROM inspdate) = %d
+        UNION ALL
+        SELECT sitecode, inspdate
+        FROM public.dblarv_insptrt_archive
+        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
+          AND EXTRACT(YEAR FROM inspdate) = %d
+      ),
+      AllReinsp AS (
+        SELECT sitecode, inspdate AS reinspect_date
+        FROM public.dblarv_insptrt_current
+        WHERE action = '9' AND reinspect = 't'
+          AND EXTRACT(YEAR FROM inspdate) = %d
+          %s
+        UNION ALL
+        SELECT sitecode, inspdate AS reinspect_date
+        FROM public.dblarv_insptrt_archive
+        WHERE action = '9' AND reinspect = 't'
+          AND EXTRACT(YEAR FROM inspdate) = %d
+          %s
+      ),
+      LatestReinsp AS (
+        SELECT sitecode, MAX(reinspect_date) AS reinspect_date
+        FROM AllReinsp GROUP BY sitecode
+      ),
+      LatestOrig AS (
+        SELECT sitecode, MAX(inspdate) AS orig_date
+        FROM AllOrig GROUP BY sitecode
+      )
+      SELECT r.sitecode,
+             r.reinspect_date::text AS reinspect_date,
+             (o.sitecode IS NOT NULL) AS orig_done,
+             o.orig_date::text       AS orig_date
+      FROM LatestReinsp r
+      LEFT JOIN LatestOrig o ON r.sitecode = o.sitecode
+      ORDER BY r.sitecode
+    ", yr, yr, yr, fac_clause, yr, fac_clause)
+
+    insp_rows   <- DBI::dbGetQuery(con, insp_sql)
+    reinsp_rows <- DBI::dbGetQuery(con, reinsp_sql)
+
+    if ("orig_done" %in% names(reinsp_rows))
+      reinsp_rows$orig_done <- as.logical(reinsp_rows$orig_done)
+
+    list(
+      year            = yr,
+      insp_count      = nrow(insp_rows),
+      reinspect_count = nrow(reinsp_rows),
+      facility_filter = facility %||% "all",
+      inspections     = insp_rows,
+      reinspects      = reinsp_rows,
+      refreshed_at    = as.character(Sys.time())
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+
 # =============================================================================
 # ── RESTART API (watchdog in startup.sh restarts the process)
 # =============================================================================

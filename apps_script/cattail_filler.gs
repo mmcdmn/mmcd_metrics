@@ -38,7 +38,8 @@ const CONFIG = {
   }
 };
 
-const PLAN_NAMES = { A: 'Air', D: 'Drone', G: 'Ground', N: 'None', U: 'Unknown' };
+const PLAN_NAMES     = { A: 'Air', D: 'Drone', G: 'Ground', N: 'None', U: 'Unknown' };
+const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
 
 // ============================================================================
 // MAIN ENTRY POINT
@@ -145,6 +146,7 @@ function updateSitesTab_(ss, inspMap, reinspSet) {
   });
 
   sheet.getRange(CONFIG.DATA_START, CONFIG.COL.LAST_INSP, dataRows, 5).setValues(writeData);
+  setSitecodeLinks_(sheet, CONFIG.DATA_START, dataRows);
   Logger.log('Sites tab: ' + dataRows + ' rows written');
 }
 
@@ -218,19 +220,22 @@ function updateSummaryTab_(ss) {
 }
 
 // ============================================================================
-// REINSPECTS TAB — sites with a reinspect='t' record this year
+// REINSPECTS TAB
+// Sites where reinspect='t' was flagged during an inspection this year.
+//   orig_insp_date = date the reinspect flag was set ("come back to this site")
+//   reinspect_date = date of any subsequent inspection after that flag (blank if pending)
 // ============================================================================
 
 function updateReinspectsTab_(ss, reinspects) {
   const sheet = ss.getSheetByName(CONFIG.REINSPECT_TAB);
-  if (!sheet) { Logger.log(' No "Reinspects" tab'); return; }
+  if (!sheet) { Logger.log('No "Reinspects" tab'); return; }
 
   // Build acres map from Sites tab
   const acresMap = {};
   const sitesSheet = ss.getSheetByName(CONFIG.SITES_TAB);
   if (sitesSheet && sitesSheet.getLastRow() >= CONFIG.DATA_START) {
-    const rows = sitesSheet.getLastRow() - CONFIG.DATA_START + 1;
-    sitesSheet.getRange(CONFIG.DATA_START, 1, rows, 2).getValues()
+    const n = sitesSheet.getLastRow() - CONFIG.DATA_START + 1;
+    sitesSheet.getRange(CONFIG.DATA_START, 1, n, 2).getValues()
       .forEach(r => { if (r[0]) acresMap[String(r[0]).trim()] = r[1]; });
   }
 
@@ -244,20 +249,52 @@ function updateReinspectsTab_(ss, reinspects) {
     return;
   }
 
-  const rows = reinspects.map(r => {
-    const sc       = String(r.sitecode).trim();
-    const origDone = r.orig_done === true || r.orig_done === 'true';
+  const dataRows = reinspects.map(r => {
+    const sc   = String(r.sitecode).trim();
+    const done = r.reinspect_done === true || r.reinspect_done === 'true';
     return [
       sc,
       acresMap[sc] !== undefined ? acresMap[sc] : '',
-      r.orig_date       || '—',
-      r.reinspect_date  || '—',
-      origDone ? 'Both Done' : 'Reinspect Only',
+      r.orig_insp_date || '',            // when reinspect flag was set
+      r.reinspect_date || '',            // blank until they go back
+      done ? 'Reinspected' : 'Pending Reinspect',
     ];
   });
 
-  sheet.getRange(2, 1, rows.length, 5).setValues(rows);
-  Logger.log('Reinspects tab: ' + rows.length + ' sites');
+  sheet.getRange(2, 1, dataRows.length, 5).setValues(dataRows);
+
+  // Add hyperlinks to sitecode col (col A, starting row 2)
+  setSitecodeLinks_(sheet, 2, dataRows.length);
+  Logger.log('Reinspects tab: ' + dataRows.length + ' sites');
+}
+
+// ============================================================================
+// SITECODE HYPERLINKS
+// ============================================================================
+
+/**
+ * Batch-set hyperlinks on sitecode cells (col A) so they open the MMCD map.
+ * Reads all RichText values at once to avoid per-cell API overhead.
+ */
+function setSitecodeLinks_(sheet, startRow, numRows) {
+  if (!numRows) return;
+  const col   = CONFIG.COL.SITECODE;
+  const range = sheet.getRange(startRow, col, numRows, 1);
+  const values    = range.getValues();
+  const richTexts = range.getRichTextValues();
+
+  let changed = false;
+  const updated = richTexts.map((row, i) => {
+    const sc = String(values[i][0]).trim();
+    if (!sc) return row;
+    const url      = SITECODE_URL_BASE + encodeURIComponent(sc);
+    const existing = row[0];
+    if (existing && existing.getLinkUrl() === url) return row;
+    changed = true;
+    return [SpreadsheetApp.newRichTextValue().setText(sc).setLinkUrl(url).build()];
+  });
+
+  if (changed) range.setRichTextValues(updated);
 }
 
 // ============================================================================

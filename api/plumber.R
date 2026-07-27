@@ -992,18 +992,18 @@ function(year = NULL, facility = NULL, res) {
 
     fac_clause <- safe_in(con, "facility", fac_v)
 
-    # ── Query A: most recent original inspection per site (reinspect IS NULL or 'f')
+    # ── Query A: most recent inspection per site (all action='9', any reinspect value)
     insp_sql <- sprintf("
       WITH AllInsp AS (
         SELECT sitecode, inspdate, wet, numdip, airgrnd_plan
         FROM public.dblarv_insptrt_current
-        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
+        WHERE action = '9'
           AND EXTRACT(YEAR FROM inspdate) = %d
           %s
         UNION ALL
         SELECT sitecode, inspdate, wet, numdip, airgrnd_plan
         FROM public.dblarv_insptrt_archive
-        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
+        WHERE action = '9'
           AND EXTRACT(YEAR FROM inspdate) = %d
           %s
       ),
@@ -1025,54 +1025,46 @@ function(year = NULL, facility = NULL, res) {
       ORDER BY sitecode
     ", yr, fac_clause, yr, fac_clause)
 
-    # ── Query B: reinspect records (reinspect = 't'), joined to original dates
+    # ── Query B: sites with reinspect='t' flag.
+    # orig_insp_date = when reinspect was flagged (the reinspect='t' record).
+    # reinspect_date = any subsequent inspection for that site after the flag date.
     reinsp_sql <- sprintf("
-      WITH AllOrig AS (
-        SELECT sitecode, inspdate
+      WITH AllInsp AS (
+        SELECT sitecode, inspdate, reinspect
         FROM public.dblarv_insptrt_current
-        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
-          AND EXTRACT(YEAR FROM inspdate) = %d
-        UNION ALL
-        SELECT sitecode, inspdate
-        FROM public.dblarv_insptrt_archive
-        WHERE action = '9' AND (reinspect IS NULL OR reinspect = 'f')
-          AND EXTRACT(YEAR FROM inspdate) = %d
-      ),
-      AllReinsp AS (
-        SELECT sitecode, inspdate AS reinspect_date
-        FROM public.dblarv_insptrt_current
-        WHERE action = '9' AND reinspect = 't'
-          AND EXTRACT(YEAR FROM inspdate) = %d
+        WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = %d
           %s
         UNION ALL
-        SELECT sitecode, inspdate AS reinspect_date
+        SELECT sitecode, inspdate, reinspect
         FROM public.dblarv_insptrt_archive
-        WHERE action = '9' AND reinspect = 't'
-          AND EXTRACT(YEAR FROM inspdate) = %d
+        WHERE action = '9' AND EXTRACT(YEAR FROM inspdate) = %d
           %s
       ),
-      LatestReinsp AS (
-        SELECT sitecode, MAX(reinspect_date) AS reinspect_date
-        FROM AllReinsp GROUP BY sitecode
+      ReinspectFlags AS (
+        SELECT sitecode, MAX(inspdate) AS flag_date
+        FROM AllInsp WHERE reinspect = 't'
+        GROUP BY sitecode
       ),
-      LatestOrig AS (
-        SELECT sitecode, MAX(inspdate) AS orig_date
-        FROM AllOrig GROUP BY sitecode
+      SubsequentInsp AS (
+        SELECT r.sitecode, MAX(i.inspdate) AS reinspect_date
+        FROM ReinspectFlags r
+        JOIN AllInsp i ON i.sitecode = r.sitecode AND i.inspdate > r.flag_date
+        GROUP BY r.sitecode
       )
       SELECT r.sitecode,
-             r.reinspect_date::text AS reinspect_date,
-             (o.sitecode IS NOT NULL) AS orig_done,
-             o.orig_date::text       AS orig_date
-      FROM LatestReinsp r
-      LEFT JOIN LatestOrig o ON r.sitecode = o.sitecode
+             r.flag_date::text         AS orig_insp_date,
+             s.reinspect_date::text    AS reinspect_date,
+             (s.sitecode IS NOT NULL)  AS reinspect_done
+      FROM ReinspectFlags r
+      LEFT JOIN SubsequentInsp s ON r.sitecode = s.sitecode
       ORDER BY r.sitecode
-    ", yr, yr, yr, fac_clause, yr, fac_clause)
+    ", yr, fac_clause, yr, fac_clause)
 
     insp_rows   <- DBI::dbGetQuery(con, insp_sql)
     reinsp_rows <- DBI::dbGetQuery(con, reinsp_sql)
 
-    if ("orig_done" %in% names(reinsp_rows))
-      reinsp_rows$orig_done <- as.logical(reinsp_rows$orig_done)
+    if ("reinspect_done" %in% names(reinsp_rows))
+      reinsp_rows$reinspect_done <- as.logical(reinsp_rows$reinspect_done)
 
     list(
       year            = yr,

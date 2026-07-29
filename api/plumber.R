@@ -995,13 +995,13 @@ function(year = NULL, facility = NULL, res) {
     # ── Query A: most recent inspection per site (all action='9', any reinspect value)
     insp_sql <- sprintf("
       WITH AllInsp AS (
-        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan
+        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan, emp1
         FROM public.dblarv_insptrt_current
         WHERE action = '9'
           AND EXTRACT(YEAR FROM inspdate) = %d
           %s
         UNION ALL
-        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan
+        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan, emp1
         FROM public.dblarv_insptrt_archive
         WHERE action = '9'
           AND EXTRACT(YEAR FROM inspdate) = %d
@@ -1020,7 +1020,8 @@ function(year = NULL, facility = NULL, res) {
              inspdate::text AS last_insp_date,
              wet,
              numdip,
-             airgrnd_plan
+             airgrnd_plan,
+             emp1
       FROM Ranked WHERE rn = 1
       ORDER BY sitecode
     ", yr, fac_clause, yr, fac_clause)

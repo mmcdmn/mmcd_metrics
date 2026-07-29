@@ -4,6 +4,13 @@
 # Returns drone treatment data organized by round (sequential treatment per site
 # per year). Used by the Google Sheets drone_filler script.
 #
+# Treatment inclusion:
+#   action='D'      — drone treatment, any matcode
+#   action='1','3'  — ground treatment, but ONLY if:
+#                      (a) mattype_list_targetdose.prehatch = true  AND
+#                      (b) site is a drone-designated site in loc_breeding_sites
+#                          (drone IN Y/M/C or air_gnd='D', not ended)
+#
 # Mounted under /v1/private/drone/...
 # Auth is enforced by the parent plumber's auth_gate filter (blocks all
 # /v1/private/* requests without a valid API key).
@@ -84,7 +91,16 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.pkey_pg
         FROM dblarv_insptrt_current t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
-        WHERE t.action = 'D'
+        LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
+        WHERE (
+          t.action = 'D'
+          OR (t.action IN ('1','3') AND m.prehatch = true AND EXISTS (
+            SELECT 1 FROM public.loc_breeding_sites bs
+            WHERE bs.sitecode = t.sitecode
+              AND (bs.drone IN ('Y','M','C') OR bs.air_gnd = 'D')
+              AND (bs.enddate IS NULL OR bs.enddate > CURRENT_DATE)
+          ))
+        )
           AND EXTRACT(YEAR FROM t.inspdate) = ", yr, "
           AND t.matcode IS NOT NULL
           ", site_clause, "
@@ -102,7 +118,16 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.pkey_pg
         FROM dblarv_insptrt_archive t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
-        WHERE t.action = 'D'
+        LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
+        WHERE (
+          t.action = 'D'
+          OR (t.action IN ('1','3') AND m.prehatch = true AND EXISTS (
+            SELECT 1 FROM public.loc_breeding_sites bs
+            WHERE bs.sitecode = t.sitecode
+              AND (bs.drone IN ('Y','M','C') OR bs.air_gnd = 'D')
+              AND (bs.enddate IS NULL OR bs.enddate > CURRENT_DATE)
+          ))
+        )
           AND EXTRACT(YEAR FROM t.inspdate) = ", yr, "
           AND t.matcode IS NOT NULL
           ", site_clause, "

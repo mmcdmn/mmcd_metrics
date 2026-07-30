@@ -48,6 +48,18 @@ const CONFIG = {
   MATERIAL_COL: 'F',     // Column for Material code — from DB
   FLIGHT_COL:   '',      // Column for Flight# — NOT from DB (manual entry, leave empty)
 
+  // ── Ground Treatment Materials ────────────────────────────────────────────
+  // Matcodes that count as valid treatments when applied by ground crew (actions
+  // 1 & 3) on a drone site. Drone treatments (action D) are always included
+  // regardless of matcode. Set to [] to count drone action only.
+  //
+  // Common prehatch options: 'T7','N1','G2','G3','G4','T2','T5','T6','M5','M6',
+  //   'M7','M8','C1','C2','C4','C5','C6','C7','N5','N6','D3','D8','14','15','16'
+  // Add 'S2' if your facility uses it as a ground sub on drone sites.
+  GROUND_MATERIALS: ['T7', 'N1', 'G2', 'G3', 'G4', 'T2', 'T5', 'T6',
+                     'M5', 'M6', 'M7', 'M8', 'C1', 'C2', 'C4', 'C5',
+                     'C6', 'C7', 'N5', 'N6', 'D3', 'D8', '14', '15', '16'],
+
   // ── Tab Handling ────────────────────────────────────────────────────────
   // ALL tabs are processed as round tabs EXCEPT those matching the skip list/pattern.
   // Round number is determined by tab order: first non-skip tab = Round 1, second = Round 2, etc.
@@ -328,7 +340,9 @@ function fetchDroneChecklist_() {
   const key  = getProp_('API_KEY');
   const year = CONFIG.YEAR || new Date().getFullYear();
 
-  const url = base + '/private/drone/checklist?year=' + year;
+  const mats = (CONFIG.GROUND_MATERIALS || []).join(',');
+  const url = base + '/private/drone/checklist?year=' + year
+            + (mats ? '&ground_materials=' + encodeURIComponent(mats) : '');
   const response = UrlFetchApp.fetch(url, {
     method: 'get',
     headers: { 'Authorization': 'Bearer ' + key },

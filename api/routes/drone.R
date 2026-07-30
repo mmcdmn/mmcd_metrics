@@ -29,12 +29,17 @@ source("/srv/api/api_helpers.R")
 #* Returns one row per sitecode per round, ordered by date.
 #* Round 1 = first drone treatment of the year, Round 2 = second, etc.
 #*
-#* @param year       Year to query (default current year)
-#* @param sitecodes  Optional comma-separated sitecodes to filter
-#* @param facility   Optional facility code filter
+#* @param year             Year to query (default current year)
+#* @param sitecodes        Optional comma-separated sitecodes to filter
+#* @param facility         Optional facility code filter
+#* @param ground_materials Comma-separated matcodes to count for ground actions
+#*                         (1 & 3) on drone-designated sites. If omitted, falls
+#*                         back to mattype_list_targetdose.prehatch = true.
+#*                         Pass empty string to disable ground treatment counting.
 #* @get /checklist
 #* @serializer json
-function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
+function(req, res, year = NULL, sitecodes = NULL, facility = NULL,
+         ground_materials = NULL) {
   tryCatch({
     # ── Validate parameters ──
     yr <- if (is.null(year) || !nzchar(trimws(year %||% ""))) {
@@ -53,6 +58,17 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
       bad <- sites_raw[!grepl("^[A-Za-z0-9 _-]+$", sites_raw) | nchar(sites_raw) > 20]
       if (length(bad) > 0) stop("invalid sitecode format")
       site_filter <- sites_raw[nzchar(sites_raw)]
+    }
+
+    # Parse ground_materials: NULL → prehatch fallback; "" → disabled; "T7,N1,…" → list
+    gm_provided  <- !is.null(ground_materials)
+    gm_disabled  <- gm_provided && !nzchar(trimws(ground_materials))
+    gm_list      <- NULL
+    if (gm_provided && !gm_disabled) {
+      gm_raw  <- trimws(unlist(strsplit(as.character(ground_materials), ",", fixed = TRUE)))
+      bad_mat <- gm_raw[!grepl("^[A-Za-z0-9]+$", gm_raw) | nchar(gm_raw) > 10]
+      if (length(bad_mat) > 0) stop("invalid matcode in ground_materials")
+      gm_list <- gm_raw[nzchar(gm_raw)]
     }
 
     # Validate facility
@@ -79,6 +95,43 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
       fac_clause <- paste0("AND sc.fac_for_air = ", DBI::dbQuoteString(con, fac_filter))
     }
 
+    # Build ground-action filter clause:
+    #   gm_disabled → no ground actions counted (action D only)
+    #   gm_list     → explicit matcode list from caller
+    #   fallback    → prehatch = true from mattype_list_targetdose
+    ground_clause <- if (gm_disabled) {
+      "t.action = 'D'"
+    } else if (!is.null(gm_list)) {
+      quoted_mats <- paste(DBI::dbQuoteString(con, gm_list), collapse = ",")
+      paste0(
+        "t.action = 'D'\n",
+        "          OR (t.action IN ('1','3') AND t.matcode IN (", quoted_mats, ")",
+        " AND EXISTS (\n",
+        "            SELECT 1 FROM public.loc_breeding_sites bs\n",
+        "            WHERE bs.sitecode = t.sitecode\n",
+        "              AND (bs.drone IN ('Y','M','C') OR bs.air_gnd = 'D')\n",
+        "              AND (bs.enddate IS NULL OR bs.enddate > CURRENT_DATE)\n",
+        "          ))"
+      )
+    } else {
+      paste0(
+        "t.action = 'D'\n",
+        "          OR (t.action IN ('1','3') AND m.prehatch = true AND EXISTS (\n",
+        "            SELECT 1 FROM public.loc_breeding_sites bs\n",
+        "            WHERE bs.sitecode = t.sitecode\n",
+        "              AND (bs.drone IN ('Y','M','C') OR bs.air_gnd = 'D')\n",
+        "              AND (bs.enddate IS NULL OR bs.enddate > CURRENT_DATE)\n",
+        "          ))"
+      )
+    }
+
+    # Only need the mattype join for the prehatch fallback path
+    mat_join <- if (!gm_disabled && is.null(gm_list)) {
+      "LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode"
+    } else {
+      ""
+    }
+
     query <- paste0("
       WITH drone_treatments AS (
         SELECT
@@ -91,15 +144,9 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.pkey_pg
         FROM dblarv_insptrt_current t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
-        LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
+        ", mat_join, "
         WHERE (
-          t.action = 'D'
-          OR (t.action IN ('1','3') AND m.prehatch = true AND EXISTS (
-            SELECT 1 FROM public.loc_breeding_sites bs
-            WHERE bs.sitecode = t.sitecode
-              AND (bs.drone IN ('Y','M','C') OR bs.air_gnd = 'D')
-              AND (bs.enddate IS NULL OR bs.enddate > CURRENT_DATE)
-          ))
+          ", ground_clause, "
         )
           AND EXTRACT(YEAR FROM t.inspdate) = ", yr, "
           AND t.matcode IS NOT NULL
@@ -118,15 +165,9 @@ function(req, res, year = NULL, sitecodes = NULL, facility = NULL) {
           t.pkey_pg
         FROM dblarv_insptrt_archive t
         LEFT JOIN gis_sectcode sc ON LEFT(t.sitecode, 7) = sc.sectcode
-        LEFT JOIN mattype_list_targetdose m ON t.matcode = m.matcode
+        ", mat_join, "
         WHERE (
-          t.action = 'D'
-          OR (t.action IN ('1','3') AND m.prehatch = true AND EXISTS (
-            SELECT 1 FROM public.loc_breeding_sites bs
-            WHERE bs.sitecode = t.sitecode
-              AND (bs.drone IN ('Y','M','C') OR bs.air_gnd = 'D')
-              AND (bs.enddate IS NULL OR bs.enddate > CURRENT_DATE)
-          ))
+          ", ground_clause, "
         )
           AND EXTRACT(YEAR FROM t.inspdate) = ", yr, "
           AND t.matcode IS NOT NULL

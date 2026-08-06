@@ -85,19 +85,30 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
     # Generate all weeks in the range
     all_weeks <- seq.Date(start_date, end_date, by = "week")
     week_data <- data.frame()
-    
+
+    # PRE1ONLY sites need only ONE prehatch treatment per year — a treatment
+    # counts as active from its date through the rest of that YEAR, not just
+    # within effect_days.
+    pre1only_codes <- if ("prehatch" %in% names(ground_sites)) {
+      ground_sites %>%
+        filter(!is.na(prehatch) & prehatch == "PRE1ONLY") %>%
+        pull(sitecode)
+    } else character(0)
+
     for (week_start in all_weeks) {
       week_friday <- as.Date(week_start) + 4  # Friday of that week
       week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
-      
+
       # Find sites/acres with active treatment on that Friday
       active_treatments <- ground_treatments %>%
         mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days)
+          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days),
+          .is_pre1 = sitecode %in% pre1only_codes
         ) %>%
         filter(
           as.Date(inspdate) <= week_friday,
-          treatment_end >= week_friday
+          ( .is_pre1 & year(as.Date(inspdate)) == year(week_friday)) |
+          (!.is_pre1 & treatment_end >= week_friday)
         )
       
       if (nrow(active_treatments) > 0) {

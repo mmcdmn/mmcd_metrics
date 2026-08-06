@@ -6,6 +6,43 @@ if (!exists("get_db_connection", mode = "function")) {
   source("../../shared/db_helpers.R")
 }
 
+#' Classify a prehatch site's treatment status (SINGLE SOURCE OF TRUTH).
+#'
+#' Regular prehatch sites (PREHATCH/BRIQUET/PELLET) are treated → expiring → expired
+#' based on the latest treatment's age vs its material effect_days. PRE1ONLY
+#' ("first only") sites need just ONE prehatch treatment per year: any prehatch
+#' treatment in the current year makes them "treated" (done) for the rest of the
+#' year — they never lapse to "expired" and are never "expiring". A PRE1ONLY site
+#' with no treatment this year is a gap ("expired").
+#'
+#' Vectorised. Call AFTER joining the latest treatment onto the site rows, so the
+#' site's `prehatch` type is available.
+#'
+#' @param prehatch     Character vector of the site's prehatch type
+#' @param inspdate     Latest treatment date per site (Date/character, NA if none)
+#' @param age          Days since latest treatment (numeric, NA if none)
+#' @param effect_days  Material effect duration for the latest treatment (numeric)
+#' @param analysis_date The "as of" date
+#' @param expiring_days Days-out window that counts as "expiring"
+#' @return Character vector of "treated" / "expiring" / "expired" / "unknown"
+classify_prehatch_status <- function(prehatch, inspdate, age, effect_days,
+                                     analysis_date, expiring_days) {
+  yr <- as.integer(format(as.Date(analysis_date), "%Y"))
+  effect_days <- ifelse(is.na(effect_days), 0, effect_days)
+  first_only <- !is.na(prehatch) & prehatch == "PRE1ONLY"
+  treated_this_year <- !is.na(inspdate) &
+    as.integer(format(as.Date(inspdate), "%Y")) == yr
+  dplyr::case_when(
+    first_only &  treated_this_year     ~ "treated",   # done for the year
+    first_only & !treated_this_year     ~ "expired",   # still a gap
+    is.na(age)                          ~ "expired",
+    age >  effect_days                  ~ "expired",
+    age > (effect_days - expiring_days) ~ "expiring",
+    age <= effect_days                  ~ "treated",
+    TRUE                                ~ "unknown"
+  )
+}
+
 # Unified function to load raw ground prehatch data 
 load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE, 
                          start_year = NULL, end_year = NULL, include_geometry = FALSE) {
@@ -36,7 +73,7 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     LEFT JOIN gis_sectcode sc ON left(b.sitecode,7)=sc.sectcode
     WHERE (b.enddate IS NULL OR b.enddate > '%s'::date)
       AND b.air_gnd='G'
-      AND b.prehatch IN ('PREHATCH','BRIQUET','PELLET')
+      AND b.prehatch IN ('PREHATCH','BRIQUET','PELLET','PRE1ONLY')
     ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
     ", geom_select, as.character(analysis_date))
     
@@ -103,25 +140,28 @@ load_raw_data <- function(analysis_date = Sys.Date(), include_archive = FALSE,
     if (nrow(ground_treatments) > 0) {
       current_date <- as.Date(analysis_date)
       expiring_days <- 7  # Default expiring window
-      
+
+      # Latest treatment per site — carry inspdate + effect_days so the
+      # PRE1ONLY-aware classifier runs AFTER joining to sites (which hold the
+      # prehatch type). Single source of truth: classify_prehatch_status().
       site_status <- ground_treatments %>%
-        mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 0, effect_days),
-          is_active = treatment_end >= current_date,
-          is_expiring = is_active & treatment_end <= (current_date + expiring_days)
-        ) %>%
         group_by(sitecode) %>%
         arrange(desc(inspdate)) %>%
         slice(1) %>%
         ungroup() %>%
-        select(sitecode, is_active, is_expiring)
-      
+        select(sitecode, last_inspdate = inspdate, last_effect_days = effect_days)
+
       ground_sites <- ground_sites %>%
         left_join(site_status, by = "sitecode") %>%
         mutate(
-          is_active = ifelse(is.na(is_active), FALSE, is_active),
-          is_expiring = ifelse(is.na(is_expiring), FALSE, is_expiring)
-        )
+          age_tmp = as.numeric(current_date - as.Date(last_inspdate)),
+          status_tmp = classify_prehatch_status(
+            prehatch, last_inspdate, age_tmp, last_effect_days,
+            current_date, expiring_days),
+          is_active = status_tmp %in% c("treated", "expiring"),
+          is_expiring = status_tmp == "expiring"
+        ) %>%
+        select(-age_tmp, -status_tmp, -last_inspdate, -last_effect_days)
     } else {
       ground_sites$is_active <- FALSE
       ground_sites$is_expiring <- FALSE
@@ -181,33 +221,21 @@ get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = 
   }
   
   if (!is.null(raw_data$treatments) && nrow(raw_data$treatments) > 0) {
-    # Get latest treatment for each site
+    # Get latest treatment for each site (status computed AFTER join so the
+    # site's prehatch type is available to the PRE1ONLY-aware classifier).
     latest_treatments <- raw_data$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate), desc(insptime)) %>%
       slice(1) %>%
       ungroup() %>%
-      mutate(
-        age = as.numeric(analysis_date - inspdate),
-        # Calculate end of year date for skipped sites
-        end_of_year = as.Date(paste0(format(analysis_date, "%Y"), "-12-30")),
-        days_until_eoy = as.numeric(end_of_year - analysis_date),
-        prehatch_status = case_when(
-          age > effect_days ~ "expired",
-          age > (effect_days - expiring_days) ~ "expiring", 
-          age <= effect_days ~ "treated",
-          TRUE ~ "unknown"
-        )
-      ) %>%
-      select(sitecode, prehatch_status, inspdate, matcode, age, effect_days)
-    
-    # Join sites with treatment status
+      mutate(age = as.numeric(analysis_date - inspdate)) %>%
+      select(sitecode, inspdate, matcode, age, effect_days)
+
+    # Join sites with latest treatment, then classify (single source of truth)
     site_details <- site_details %>%
-      left_join(latest_treatments, by = "sitecode")
-    
-    # Sites without treatments in the join are expired
-    site_details <- site_details %>%
-      mutate(prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status))
+      left_join(latest_treatments, by = "sitecode") %>%
+      mutate(prehatch_status = classify_prehatch_status(
+        prehatch, inspdate, age, effect_days, analysis_date, expiring_days))
   } else {
     # No treatments at all (e.g., January before prehatch season)
     # All sites are counted as "expired" (untreated)
@@ -260,30 +288,21 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
   result <- raw_data$sites
   
   if (!is.null(raw_data$treatments) && nrow(raw_data$treatments) > 0) {
-    # Get latest treatment for each site
+    # Get latest treatment for each site (status computed AFTER join so the
+    # site's prehatch type is available to the PRE1ONLY-aware classifier).
     latest_treatments <- raw_data$treatments %>%
       group_by(sitecode) %>%
       arrange(desc(inspdate), desc(insptime)) %>%
       slice(1) %>%
       ungroup() %>%
-      mutate(
-        age = as.numeric(analysis_date - inspdate),
-        # Calculate end of year date for skipped sites
-        end_of_year = as.Date(paste0(format(analysis_date, "%Y"), "-12-30")),
-        days_until_eoy = as.numeric(end_of_year - analysis_date),
-        prehatch_status = case_when(
-          # Regular status calculation (skipped logic removed for now - needs inspection data)
-          age > effect_days ~ "expired",
-          age > (effect_days - expiring_days) ~ "expiring",
-          age <= effect_days ~ "treated", 
-          TRUE ~ "unknown"
-        )
-      ) %>%
-      select(sitecode, prehatch_status, inspdate, matcode, age, effect_days)
-    
-    # Join sites with treatment status
+      mutate(age = as.numeric(analysis_date - inspdate)) %>%
+      select(sitecode, inspdate, matcode, age, effect_days)
+
+    # Join sites with latest treatment, then classify (single source of truth)
     result <- result %>%
-      left_join(latest_treatments, by = "sitecode")
+      left_join(latest_treatments, by = "sitecode") %>%
+      mutate(prehatch_status = classify_prehatch_status(
+        prehatch, inspdate, age, effect_days, analysis_date, expiring_days))
   } else {
     # No treatments data - add empty columns
     result <- result %>%
@@ -302,7 +321,7 @@ get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()
       prehatch_status = ifelse(is.na(prehatch_status), "expired", prehatch_status)
     ) %>%
     # Filter to only prehatch sites
-    filter(prehatch %in% c("PREHATCH", "BRIQUET", "PELLET")) %>%
+    filter(prehatch %in% c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")) %>%
     arrange(facility, sectcode, sitecode)
   
   return(result)
@@ -770,14 +789,27 @@ load_spatial_data <- function(analysis_date = Sys.Date(), zone_filter = c("1", "
     return(NULL)
   }
   
-  # Join sites with treatment status
+  # Join sites with treatment status. PRE1ONLY sites need one prehatch treatment
+  # per year — once treated this year they are "Active" (done) regardless of
+  # effect_days; untreated-this-year = "No Treatment". Regular sites keep the
+  # existing Active/Expiring/Expired logic (map uses a post-expiry grace window,
+  # intentionally different from the count views).
+  cur_year <- as.integer(format(current_date, "%Y"))
   spatial_data <- sites_sf %>%
     left_join(latest_treatments, by = "sitecode") %>%
     mutate(
-      treatment_status = ifelse(is.na(treatment_status), "No Treatment", treatment_status),
+      .treated_this_year = !is.na(inspdate) &
+        as.integer(format(as.Date(inspdate), "%Y")) == cur_year,
+      treatment_status = dplyr::case_when(
+        !is.na(prehatch) & prehatch == "PRE1ONLY" &  .treated_this_year ~ "Active",
+        !is.na(prehatch) & prehatch == "PRE1ONLY" & !.treated_this_year ~ "No Treatment",
+        is.na(treatment_status) ~ "No Treatment",
+        TRUE ~ treatment_status
+      ),
       last_treatment_date = inspdate,
       last_material = matcode
     ) %>%
+    select(-.treated_this_year) %>%
     arrange(facility, zone, sitecode)
   
   return(spatial_data)

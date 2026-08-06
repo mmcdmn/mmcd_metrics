@@ -579,7 +579,17 @@ load_data_by_fos <- function(metric,
                              separate_zones = FALSE,
                              facility_filter = NULL,
                              fos_filter = NULL) {
-  
+
+  # SUCO is a live weekly goal that climbs throughout the day. The 7-day FOS cache
+  # would freeze it at the first value loaded that day, diverging from the main
+  # overview (load_metric_data, 5-min TTL). Always compute SUCO fresh so both views
+  # show the same number. (Cheap single query — no perf concern.)
+  if (identical(metric, "suco")) {
+    return(.load_data_by_fos_uncached(metric, analysis_date, expiring_days,
+                                      zone_filter, separate_zones,
+                                      facility_filter, fos_filter))
+  }
+
   # Try Redis cache for FOS drill-down data (7-day TTL)
   if (exists("get_cached_fos_data", mode = "function")) {
     cached <- tryCatch({

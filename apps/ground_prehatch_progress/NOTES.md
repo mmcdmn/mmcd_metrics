@@ -25,7 +25,7 @@ FROM loc_breeding_sites b
 LEFT JOIN gis_sectcode sc ON left(b.sitecode,7) = sc.sectcode
 WHERE (b.enddate IS NULL OR b.enddate > '<analysis_date>'::date)
   AND b.air_gnd = 'G'
-  AND b.prehatch IN ('PREHATCH','BRIQUET','PELLET')
+  AND b.prehatch IN ('PREHATCH','BRIQUET','PELLET','PRE1ONLY')
 ORDER BY sc.facility, sc.sectcode, b.sitecode, b.prehatch
 ```
 
@@ -86,6 +86,14 @@ prehatch_status = case_when(
 - `effect_days` comes from `mattype_list_targetdose` per material
 - `expiring_days` is user-configurable (slider, default 14)
 - Sites with **no treatment records** are classified as `"expired"`
+
+**PRE1ONLY ("first only") sites** need just one prehatch treatment per year. Any
+prehatch treatment in the current year makes them `"treated"` (done) for the rest of
+the year — they never lapse to `"expired"` and are never `"expiring"`. Untreated this
+year = `"expired"` (a gap). This rule lives in one place, `classify_prehatch_status()`
+in `data_functions.R`, used by `load_raw_data` (overview + FOS), the app's
+`get_ground_prehatch_data` / `get_site_details_data`, and (targeted override) the map
+`load_spatial_data` and the historical weekly loop.
 
 ### Active Treatment Stamps (raw data level)
 

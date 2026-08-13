@@ -64,6 +64,123 @@ function(req, res,
   }, error = function(e) api_error(res, 400, e$message))
 }
 
+# ── Inspections shared filter validators (reused by the red-bug endpoints) ──
+.insp_air_gnd <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return("both")
+  s <- tolower(trimws(as.character(v)))
+  s <- switch(s, a = "A", air = "A", g = "G", ground = "G", both = "both", all = "both", s)
+  if (!s %in% c("A", "G", "both")) stop("air_gnd must be A, G, or both")
+  s
+}
+.insp_drone_filter <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return("all")
+  s <- tolower(trimws(as.character(v)))
+  if (s %in% c("include_drone", "all", "include")) return("all")
+  if (!s %in% c("drone_only", "no_drone")) {
+    stop("drone_filter must be drone_only, no_drone, or include_drone")
+  }
+  s
+}
+# fosarea filter = FOS shortname(s); get_red_bug_* convert shortnames -> emp_num internally.
+.insp_fosarea <- function(v) {
+  if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
+  parts <- trimws(unlist(strsplit(as.character(v), ",", fixed = TRUE)))
+  bad <- parts[!grepl("^[A-Za-z0-9 ._-]+$", parts)]
+  if (length(bad) > 0) stop("invalid fosarea")
+  parts
+}
+
+# ── Red Bug Gaps (sites without a red-bug find in N years) ──
+
+#* Get sites WITHOUT a recent red-bug find (a prehatch coverage gap), ranked oldest-first.
+#* Reuses get_red_bug_gaps() — self-contained, fast. Supports sort_by (oldest|newest) + limit
+#* so callers can ask for the "first X" longest-standing gaps.
+#* @param years_gap Years since last red bug to count as a gap (1-20). Default 5.
+#* @param facility Facility code. Omit for all.
+#* @param fosarea FOS shortname(s), comma-separated. Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param priority Priority: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Omit for all.
+#* @param air_gnd Site type: A, G, or both. Default both.
+#* @param drone_filter drone_only, no_drone, or include_drone. Default include_drone.
+#* @param prehatch_only If true, prehatch sites only. Default false.
+#* @param sort_by oldest (longest-standing gap first) or newest. Default oldest.
+#* @param limit Max rows to return. Default 500.
+#* @get /red-bug-gaps
+#* @serializer json
+function(req, res, years_gap = 5, facility = NULL, fosarea = NULL, zone = "1,2",
+         priority = NULL, air_gnd = "both", drone_filter = "include_drone",
+         prehatch_only = "false", sort_by = "oldest", limit = NULL) {
+  tryCatch({
+    yg  <- suppressWarnings(as.integer(years_gap %||% 5L))
+    if (is.na(yg) || yg < 1L || yg > 20L) stop("years_gap must be 1-20")
+    fac <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fos <- .insp_fosarea(fosarea)
+    zn  <- validate_zone(zone)
+    pri <- if (!is.null(priority) && nzchar(priority)) validate_priority(priority) else NULL
+    ag  <- .insp_air_gnd(air_gnd)
+    dfl <- .insp_drone_filter(drone_filter)
+    ph  <- isTRUE(as.logical(prehatch_only))
+
+    gaps <- insp_env$get_red_bug_gaps(
+      years_gap = yg, facility_filter = fac, fosarea_filter = fos, zone_filter = zn,
+      priority_filter = pri, air_gnd_filter = ag, drone_filter = dfl, prehatch_only = ph
+    )
+    if (is.null(gaps) || nrow(gaps) == 0) {
+      return(list(years_gap = yg, count = 0L, data = list()))
+    }
+    # get_red_bug_gaps returns oldest-gap-first; reverse for sort_by=newest.
+    if (identical(tolower(sort_by %||% "oldest"), "newest")) {
+      gaps <- gaps[rev(seq_len(nrow(gaps))), , drop = FALSE]
+    }
+    out <- apply_row_limit(gaps, limit)
+    c(list(years_gap = yg,
+           filters = list(facility = fac %||% "all", zone = zn, air_gnd = ag,
+                          drone_filter = dfl, prehatch_only = ph),
+           sort_by = tolower(sort_by %||% "oldest")), out)
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+#* Get red-bug gap coverage rolled up by facility or FOS — total sites, gap sites, gap %.
+#* Reuses get_red_bug_gaps + get_red_bug_all_sites + the facility/FOS analysis.
+#* @param group_by facility or fos. Default facility.
+#* @param years_gap Years since last red bug (1-20). Default 5.
+#* @param facility Facility code. Omit for all.
+#* @param fosarea FOS shortname(s), comma-separated. Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param priority Priority (comma-separated). Omit for all.
+#* @param air_gnd Site type: A, G, or both. Default both.
+#* @param drone_filter drone_only, no_drone, or include_drone. Default include_drone.
+#* @param prehatch_only If true, prehatch sites only. Default false.
+#* @get /red-bug-gaps/by-group
+#* @serializer json
+function(req, res, group_by = "facility", years_gap = 5, facility = NULL, fosarea = NULL,
+         zone = "1,2", priority = NULL, air_gnd = "both",
+         drone_filter = "include_drone", prehatch_only = "false") {
+  tryCatch({
+    grp <- validate_group_by(group_by, c("facility", "fos"), "facility")
+    yg  <- suppressWarnings(as.integer(years_gap %||% 5L))
+    if (is.na(yg) || yg < 1L || yg > 20L) stop("years_gap must be 1-20")
+    fac <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
+    fos <- .insp_fosarea(fosarea)
+    zn  <- validate_zone(zone)
+    pri <- if (!is.null(priority) && nzchar(priority)) validate_priority(priority) else NULL
+    ag  <- .insp_air_gnd(air_gnd)
+    dfl <- .insp_drone_filter(drone_filter)
+    ph  <- isTRUE(as.logical(prehatch_only))
+
+    common <- list(facility_filter = fac, fosarea_filter = fos, zone_filter = zn,
+                   priority_filter = pri, air_gnd_filter = ag, drone_filter = dfl,
+                   prehatch_only = ph)
+    gaps <- do.call(insp_env$get_red_bug_gaps, c(list(years_gap = yg), common))
+    alls <- do.call(insp_env$get_red_bug_all_sites, common)
+    df <- if (grp == "fos") insp_env$get_red_bug_fos_analysis(gaps, alls)
+          else insp_env$get_red_bug_facility_analysis(gaps, alls)
+    rows <- if (is.null(df) || nrow(df) == 0) list() else
+      lapply(seq_len(nrow(df)), function(i) as.list(df[i, , drop = FALSE]))
+    list(group_by = grp, years_gap = yg, groups = rows)
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
 # ── Drone Sites ──
 
 #* Get drone-designated breeding site data.

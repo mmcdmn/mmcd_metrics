@@ -738,6 +738,138 @@ function updateSummaryTab_(ss, tabStats) {
 
 
 // ════════════════════════════════════════════════════════════════════════════
+// RESTORE ACRES
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Repopulates col C (Acres) on every data tab from the API.
+ * Run this when the acres column gets accidentally cleared or corrupted.
+ * Only overwrites cells that differ from the API value; skips "Book" divider
+ * rows and the Summary tab.
+ */
+function restoreAcres() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    SpreadsheetApp.getUi().alert('Another refresh is running — try again in a moment.');
+    return;
+  }
+  try {
+    const apiData = fetchChecklist_();
+    if (!apiData || apiData.length === 0) {
+      SpreadsheetApp.getUi().alert('No data returned from API — cannot restore acres.');
+      return;
+    }
+
+    const acresMap = {};
+    for (const row of apiData) {
+      if (row.sitecode && row.acres != null && row.acres !== '') {
+        acresMap[String(row.sitecode).trim()] = row.acres;
+      }
+    }
+
+    const ss     = SpreadsheetApp.getActiveSpreadsheet();
+    const sheets = ss.getSheets().filter(s => s.getName() !== 'Summary');
+    const ACRES_COL = 3;  // col C — matches the hardcoded layout of this script
+    let totalRestored = 0;
+
+    for (const sheet of sheets) {
+      const lastRow = sheet.getLastRow();
+      if (lastRow < DATA_START) continue;
+      const numRows = lastRow - DATA_START + 1;
+
+      const sitecodes  = sheet.getRange(DATA_START, COL.SITECODE, numRows, 1).getValues();
+      const acresRange = sheet.getRange(DATA_START, ACRES_COL,    numRows, 1);
+      const acresVals  = acresRange.getValues();
+
+      let changed = false;
+      for (let i = 0; i < numRows; i++) {
+        const sc = String(sitecodes[i][0]).trim();
+        if (!sc || /^book\s/i.test(sc)) continue;
+        const apiAcres = acresMap[sc];
+        if (apiAcres == null) continue;
+        if (String(acresVals[i][0]) !== String(apiAcres)) {
+          acresVals[i][0] = apiAcres;
+          changed = true;
+          totalRestored++;
+        }
+      }
+
+      if (changed) acresRange.setValues(acresVals);
+    }
+
+    const msg = 'Restored acres for ' + totalRestored + ' site(s) across ' + sheets.length + ' tab(s).';
+    Logger.log(msg);
+    SpreadsheetApp.getUi().alert(msg);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// SHEET PROTECTIONS
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Protect every data tab so that only col D (Emp#) is freely editable.
+ * All other columns show a warning dialog to human editors but remain
+ * writable by the auto-refresh script (warning-only mode bypasses script writes).
+ *
+ * Run once as the sheet owner. Re-run after adding new tabs or rows.
+ */
+function setupProtections() {
+  const ss     = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  let count = 0;
+
+  for (const sheet of sheets) {
+    if (sheet.getName() === 'Summary') continue;
+
+    // Remove any existing sheet-level protections first.
+    sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET)
+         .forEach(p => p.remove());
+
+    // Protect the entire sheet (warning-only so scripts can still write).
+    const protection = sheet.protect()
+      .setDescription('API-managed — edit col D (Emp#) only');
+    protection.setWarningOnly(true);
+
+    // Mark col D as the one unprotected range (no warning shown there).
+    const empRange = sheet.getRange(
+      DATA_START, COL.EMP_NUM,
+      sheet.getMaxRows() - DATA_START + 1, 1
+    );
+    protection.setUnprotectedRanges([empRange]);
+
+    count++;
+  }
+
+  const msg = 'Protected ' + count + ' tab(s). Col D is freely editable; all other columns show a warning.';
+  Logger.log(msg);
+  SpreadsheetApp.getUi().alert(msg);
+}
+
+/**
+ * Remove all sheet protections — run this to allow a full manual edit session.
+ */
+function clearProtections() {
+  const ss     = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  let count = 0;
+
+  for (const sheet of sheets) {
+    const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+    protections.forEach(p => p.remove());
+    count += protections.length;
+  }
+
+  const msg = 'Removed ' + count + ' protection(s).';
+  Logger.log(msg);
+  SpreadsheetApp.getUi().alert(msg);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // SITECODE HYPERLINKS
 // ════════════════════════════════════════════════════════════════════════════
 

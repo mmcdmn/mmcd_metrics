@@ -554,23 +554,23 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* grouped by brood (consecutive treatment days at same facility).
 #* Used to drive the Google Sheets checkback tracker.
 #*
-#* @param facility     Optional facility code (MO, E, W, N, Sr, Sj …)
-#* @param lookback_days Days back for treatment window (1–60, default 14)
+#* @param facility       Optional facility code (MO, E, W, N, Sr, Sj …)
+#* @param lookback_days  Days back for treatment window (1–60, default 14).
+#*                       Ignored when start_date / end_date are provided.
+#* @param start_date     Explicit window start YYYY-MM-DD (overrides lookback_days)
+#* @param end_date       Explicit window end   YYYY-MM-DD (overrides today default)
 #* @param checkback_type "percent" or "number" (default "percent")
 #* @param checkback_target Target value: percent (1–100) or fixed count (1–500). Default 10
-#* @param matcode      Optional material code filter
+#* @param matcode        Optional material code filter
 #* @get /v1/private/checkback-checklist
 #* @json
-function(facility = NULL, lookback_days = 14, checkback_type = "percent",
-         checkback_target = 10, matcode = NULL, res) {
+function(facility = NULL, lookback_days = 14, start_date = NULL, end_date = NULL,
+         checkback_type = "percent", checkback_target = 10, matcode = NULL, res) {
   tryCatch({
 
     # ── Validate parameters ──
-    fac_v <- validate_facility(facility)
+    fac_v  <- validate_facility(facility)
     date_v <- Sys.Date()
-
-    lb <- suppressWarnings(as.integer(lookback_days %||% 14L))
-    if (is.na(lb) || lb < 1L || lb > 60L) stop("lookback_days must be 1-60")
 
     cb_type <- tolower(trimws(as.character(checkback_type %||% "percent")))
     if (!cb_type %in% c("percent", "number")) stop("checkback_type must be 'percent' or 'number'")
@@ -584,7 +584,20 @@ function(facility = NULL, lookback_days = 14, checkback_type = "percent",
       if (nchar(mat_v) > 16L || !grepl("^[A-Za-z0-9_-]+$", mat_v)) stop("invalid matcode")
     }
 
-    start_date <- date_v - lb
+    # Explicit dates override lookback_days
+    if (!is.null(start_date) && nzchar(trimws(start_date %||% ""))) {
+      start_date <- tryCatch(as.Date(trimws(as.character(start_date))),
+                             error = function(e) stop("invalid start_date — use YYYY-MM-DD"))
+    } else {
+      lb <- suppressWarnings(as.integer(lookback_days %||% 14L))
+      if (is.na(lb) || lb < 1L || lb > 60L) stop("lookback_days must be 1-60")
+      start_date <- date_v - lb
+    }
+    if (!is.null(end_date) && nzchar(trimws(end_date %||% ""))) {
+      date_v <- tryCatch(as.Date(trimws(as.character(end_date))),
+                         error = function(e) stop("invalid end_date — use YYYY-MM-DD"))
+    }
+    if (start_date > date_v) stop("start_date must be on or before end_date")
     # Search for checkbacks up to 30 days after treatment end
     checkback_end <- date_v + 30L
 

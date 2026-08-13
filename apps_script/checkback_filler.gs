@@ -25,10 +25,22 @@ const CONFIG = {
 
   // ── Checkback Parameters ──────────────────────────────────────────────
   FACILITY:       '',         // Facility filter (e.g. 'MO', 'E', 'W', 'N'). '' = all
-  LOOKBACK_DAYS:  14,         // Days back to look for treatments (1–60)
   CHECKBACK_TYPE: 'percent',  // 'percent' or 'number'
   CHECKBACK_TARGET: 10,       // If percent: 1–100. If number: fixed count per brood
   MATCODE:        '',         // Material code filter. '' = all
+
+  // ── Treatment Date Range ──────────────────────────────────────────────
+  // Set START_DATE and END_DATE (YYYY-MM-DD) to restrict which treatments
+  // are searched. Narrowing the window speeds up the refresh significantly
+  // on large datasets. Leave both blank to use LOOKBACK_DAYS instead.
+  //
+  //   Example — only treatments placed between Aug 1 and Aug 10:
+  //     START_DATE: '2026-08-01',
+  //     END_DATE:   '2026-08-10',
+  //
+  START_DATE:     '',         // YYYY-MM-DD, or '' to use LOOKBACK_DAYS
+  END_DATE:       '',         // YYYY-MM-DD, or '' to default to today
+  LOOKBACK_DAYS:  14,         // Days back when START_DATE is not set (1–60)
 
   // ── Auto-Refresh ─────────────────────────────────────────────────────
   REFRESH_MINUTES: 1,         // Auto-refresh interval: 1, 5, 10, 15, or 30
@@ -298,10 +310,18 @@ function fetchCheckbackChecklist_() {
   const base = getProp_('API_BASE');
   const key  = getProp_('API_KEY');
 
-  let url = base + '/private/checkback-checklist?lookback_days=' + CONFIG.LOOKBACK_DAYS
-    + '&checkback_type=' + encodeURIComponent(CONFIG.CHECKBACK_TYPE)
+  let url = base + '/private/checkback-checklist'
+    + '?checkback_type='   + encodeURIComponent(CONFIG.CHECKBACK_TYPE)
     + '&checkback_target=' + CONFIG.CHECKBACK_TARGET;
 
+  if (CONFIG.START_DATE) {
+    url += '&start_date=' + encodeURIComponent(CONFIG.START_DATE);
+  } else {
+    url += '&lookback_days=' + CONFIG.LOOKBACK_DAYS;
+  }
+  if (CONFIG.END_DATE) {
+    url += '&end_date=' + encodeURIComponent(CONFIG.END_DATE);
+  }
   if (CONFIG.FACILITY) {
     url += '&facility=' + encodeURIComponent(CONFIG.FACILITY);
   }
@@ -530,8 +550,12 @@ function updateSummaryTab_(ss, broodStats, apiResult) {
   summary.getRange(1, 1).setValue('Checkback Tracker').setFontWeight('bold').setFontSize(12);
   summary.getRange(2, 1).setValue('Facility:');
   summary.getRange(2, 2).setValue(CONFIG.FACILITY || 'All');
-  summary.getRange(3, 1).setValue('Lookback Days:');
-  summary.getRange(3, 2).setValue(CONFIG.LOOKBACK_DAYS);
+  summary.getRange(3, 1).setValue('Treatment Window:');
+  summary.getRange(3, 2).setValue(
+    CONFIG.START_DATE
+      ? (CONFIG.START_DATE + ' → ' + (CONFIG.END_DATE || 'today'))
+      : ('Last ' + CONFIG.LOOKBACK_DAYS + ' days')
+  );
   summary.getRange(4, 1).setValue('Target:');
   summary.getRange(4, 2).setValue(CONFIG.CHECKBACK_TARGET + (CONFIG.CHECKBACK_TYPE === 'percent' ? '%' : ' sites'));
   summary.getRange(5, 1).setValue('Material:');

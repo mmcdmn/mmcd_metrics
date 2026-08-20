@@ -285,7 +285,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   # --- Header ----------------------------------------------------------------
   back_url <- sprintf("?view=fos&facility=%s&zone=1", facility)
   header <- div(
-    style = "display:flex;align-items:center;gap:16px;margin-bottom:16px;",
+    style = "display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap;",
     tags$a(
       href = back_url,
       style = "color:#60a5fa;text-decoration:none;font-size:0.9em;",
@@ -295,6 +295,16 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     div(
       style = "font-size:1.1em;font-weight:600;color:#e2e8f0;",
       sprintf("%s • %s • Week %d", fos_display_name, facility, week_num)
+    ),
+    # Opens the crew-note builder (wired in dynamic_server.R). Only present in
+    # this FOS-detail view, so it never shows on the generic overviews.
+    actionButton(
+      "open_crew_note",
+      label = tagList(icon("clipboard-list"), " Make Crew Instructions"),
+      style = paste0(
+        "margin-left:auto;background:#1f5a49;color:#fff;border:none;",
+        "border-radius:6px;padding:8px 16px;font-weight:600;font-size:0.9em;"
+      )
     )
   )
 

@@ -1489,7 +1489,250 @@ build_overview_server <- function(input, output, session,
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
-  
+
+  # =========================================================================
+  # CREW INSTRUCTIONS BUILDER (FOS detail view only)
+  # =========================================================================
+  # The "Make Crew Instructions" button on the FOS detail dashboard opens a
+  # builder: the supervisor's crew is auto-loaded, tasks are typed per person
+  # per day, plus a crew-wide notes box, and the FOS's live status data is
+  # embedded. Output is the printable crew-note HTML (preview + download).
+  # Session-only: nothing is persisted.
+  if (overview_type == "fos" && !is.null(fos_filter) && fos_filter != "all") {
+
+    # Resolve fos_filter (shortname or emp_num) -> emp_num + display + facility.
+    # FOS is fixed for the page (URL-driven), so resolve once here.
+    .cn_ctx <- local({
+      emp_num <- fos_filter
+      display <- fos_filter
+      facility <- facility_filter
+      tryCatch({
+        foremen <- get_foremen_lookup()
+        m <- foremen[foremen$shortname == fos_filter, ]
+        if (nrow(m) > 0) {
+          emp_num <- as.character(m$emp_num[1]); display <- m$shortname[1]
+        } else {
+          m2 <- foremen[as.character(foremen$emp_num) == fos_filter, ]
+          if (nrow(m2) > 0) display <- m2$shortname[1]
+        }
+        frow <- foremen[as.character(foremen$emp_num) == emp_num, ]
+        if (nrow(frow) > 0 && (is.null(facility) || facility %in% c("", "all"))) {
+          facility <- frow$facility[1]
+        }
+      }, error = function(e) {})
+      list(emp_num = as.character(emp_num), display = display, facility = facility)
+    })
+
+    # Crew roster — depends only on the (constant) FOS, so loads once & caches.
+    crew_data <- reactive({ load_fos_crew(.cn_ctx$emp_num) })
+
+    # Ordered day labels from the selected date range (capped at 7 days).
+    crew_days <- reactive({
+      rng <- input$crew_date_range
+      if (is.null(rng) || length(rng) < 2 || any(is.na(rng))) return(character(0))
+      start <- as.Date(rng[1]); end <- as.Date(rng[2])
+      if (end < start) { tmp <- start; start <- end; end <- tmp }
+      seq_dates <- seq(start, end, by = "day")
+      # Skip weekends: %u gives 1=Mon .. 7=Sun, so keep 1..5.
+      seq_dates <- seq_dates[as.integer(format(seq_dates, "%u")) <= 5]
+      if (length(seq_dates) > 6) seq_dates <- seq_dates[1:6]
+      stats::setNames(format(seq_dates, "%A %b %d"), as.character(seq_dates))
+    })
+
+    holds_note <- reactiveVal(NULL)   # generated HTML string
+
+    # Open the builder modal
+    observeEvent(input$open_crew_note, {
+      holds_note(NULL)
+      # Default the range to the next two weekdays (skip Sat/Sun).
+      d0 <- Sys.Date()
+      while (as.integer(format(d0, "%u")) > 5) d0 <- d0 + 1
+      d1 <- d0 + 1
+      while (as.integer(format(d1, "%u")) > 5) d1 <- d1 + 1
+      showModal(modalDialog(
+        title = sprintf("Crew Instructions — %s (%s)", .cn_ctx$display,
+                        .cn_ctx$facility),
+        size = "l", easyClose = FALSE,
+        # dateRangeInput has no daysofweekdisabled arg (that's dateInput only);
+        # weekends are dropped downstream in crew_days(), so any range is safe.
+        dateRangeInput("crew_date_range", "Work days (Sat/Sun auto-skipped)",
+                       start = d0, end = d1, weekstart = 1),
+        tags$p(style = "color:#666;font-size:0.9em;margin-top:-6px;",
+               "One task box per person per day. Check “Day off” to mark ",
+               "someone out. Status data for this FOS is added automatically."),
+        uiOutput("crew_task_inputs"),
+        tags$hr(),
+        textAreaInput("crew_notes", "Crew notes (applies to everyone)",
+                      rows = 4, width = "100%",
+                      placeholder = "Detailed notes for the whole crew…"),
+        tags$details(open = NA,
+          tags$summary(style = "cursor:pointer;font-weight:600;",
+                       "Priority order — rank up to 5 (optional; type to add your own)"),
+          div(style = paste0("display:grid;grid-template-columns:",
+                             "repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:8px;"),
+            lapply(1:5, function(i) {
+              selectizeInput(
+                paste0("crew_pri_", i), paste("Priority", i),
+                choices = c("—" = "", "Structures", "Ground Prehatch",
+                            "Inspections", "Air Work", "Catch Basins"),
+                selected = switch(as.character(i),
+                                  "1" = "Ground Prehatch", "2" = "Structures", ""),
+                options = list(create = TRUE, placeholder = "—")
+              )
+            })
+          )
+        ),
+        tags$div(style = "margin-top:10px;",
+          actionButton("generate_crew_note", "Generate Report",
+                       icon = icon("file-lines"),
+                       style = "background:#1f5a49;color:#fff;border:none;font-weight:600;"),
+          downloadButton("download_crew_note", "Download HTML",
+                         style = "margin-left:8px;")
+        ),
+        uiOutput("crew_note_preview"),
+        footer = modalButton("Close")
+      ))
+    })
+
+    # Per-employee, per-day task inputs (react to crew + chosen day range)
+    output$crew_task_inputs <- renderUI({
+      crew <- crew_data()
+      days <- crew_days()
+      if (is.null(crew) || nrow(crew) == 0) {
+        return(div(style = "color:#a63a2c;padding:8px 0;",
+          "No crew found under this supervisor. You can still write crew notes ",
+          "and generate a report with the status sections."))
+      }
+      if (length(days) == 0) {
+        return(div(style = "color:#a63a2c;", "Pick a valid work-day range above."))
+      }
+      day_th <- lapply(unname(days), function(d) tags$th(style = "text-align:left;", d))
+      rows <- lapply(seq_len(nrow(crew)), function(i) {
+        emp <- as.character(crew$emp_num[i])
+        cells <- lapply(seq_along(days), function(d) {
+          tags$td(style = "padding:2px 6px;vertical-align:top;",
+            textAreaInput(paste0("task_", emp, "_", d), label = NULL,
+                          rows = 2, width = "220px", resize = "vertical"))
+        })
+        tags$tr(
+          tags$td(style = "padding:2px 6px;vertical-align:top;white-space:nowrap;",
+            tags$strong(crew$shortname[i]),
+            checkboxInput(paste0("off_", emp), "Day off", value = FALSE)),
+          cells
+        )
+      })
+      div(style = "overflow-x:auto;",
+        tags$table(style = "border-collapse:collapse;",
+          tags$thead(tags$tr(tags$th(style = "text-align:left;", "Crew"), day_th)),
+          tags$tbody(rows)))
+    })
+
+    # Gather form + live status data, build the crew-note HTML
+    observeEvent(input$generate_crew_note, {
+      crew <- crew_data()
+      days <- crew_days()
+      if (length(days) == 0) {
+        showNotification("Pick a valid work-day range first.", type = "warning")
+        return()
+      }
+
+      # Collect typed tasks + day-off flags
+      tasks <- list()
+      if (!is.null(crew) && nrow(crew) > 0) {
+        for (i in seq_len(nrow(crew))) {
+          emp <- as.character(crew$emp_num[i])
+          for (d in seq_along(days)) {
+            tasks[[paste0(emp, "_", d)]] <- input[[paste0("task_", emp, "_", d)]]
+          }
+          tasks[[paste0(emp, "_off")]] <- isTRUE(input[[paste0("off_", emp)]])
+        }
+      }
+
+      analysis_date <- tryCatch({
+        ad <- input$custom_today
+        if (is.null(ad) || is.na(as.Date(ad))) Sys.Date() else as.Date(ad)
+      }, error = function(e) Sys.Date())
+
+      zv <- input$zone_filter
+      zone_filter <- if (is.null(zv) || zv %in% c("1,2", "separate")) c("1","2") else zv
+
+      suco_goal <- tryCatch({
+        cfg <- get_config_threshold("goal", "suco")
+        g <- if (is.list(cfg)) cfg$goal_per_facility else cfg
+        as.integer(g)[1]
+      }, error = function(e) 12L)
+      if (length(suco_goal) == 0 || is.na(suco_goal)) suco_goal <- 12L
+
+      withProgress(message = "Building crew report…", value = 0.2, {
+        status <- list(fos_emp_num = .cn_ctx$emp_num)
+        status$prehatch <- tryCatch(
+          load_fos_prehatch_township(.cn_ctx$emp_num, analysis_date, zone_filter),
+          error = function(e) list(summary = data.frame()))
+        setProgress(0.45)
+        status$structures <- tryCatch(
+          load_fos_structures_township(.cn_ctx$emp_num, analysis_date, zone_filter),
+          error = function(e) list(summary = data.frame()))
+        setProgress(0.65)
+        status$catch_basin <- tryCatch(
+          load_fos_catch_basin(.cn_ctx$emp_num, .cn_ctx$facility, analysis_date, zone_filter),
+          error = function(e) data.frame())
+        setProgress(0.8)
+        status$suco <- tryCatch(
+          load_fos_suco(.cn_ctx$facility, analysis_date, zone_filter),
+          error = function(e) data.frame())
+        setProgress(0.9)
+
+        priority <- c(input$crew_pri_1, input$crew_pri_2, input$crew_pri_3,
+                      input$crew_pri_4, input$crew_pri_5)
+        priority <- priority[!is.na(priority) & nzchar(trimws(priority))]
+
+        days_labels <- unname(crew_days())
+        week_label <- {
+          dl <- as.Date(names(crew_days()))
+          if (length(dl) >= 1) {
+            if (length(dl) == 1) format(dl[1], "%b %d, %Y")
+            else paste(format(min(dl), "%b %d"), "to", format(max(dl), "%b %d, %Y"))
+          } else ""
+        }
+
+        html <- build_crew_note_html(
+          fos_display = .cn_ctx$display, facility = .cn_ctx$facility,
+          days = days_labels, crew = crew, tasks = tasks,
+          crew_notes = input$crew_notes, priority_ladder = priority,
+          status = status, week_label = week_label, suco_goal = suco_goal)
+        holds_note(html)
+      })
+      showNotification("Report generated. Preview below; use Download HTML to save.",
+                       type = "message", duration = 4)
+    })
+
+    # Live preview in an isolated iframe (so the report's own CSS is exact)
+    output$crew_note_preview <- renderUI({
+      html <- holds_note()
+      if (is.null(html)) return(NULL)
+      tagList(
+        tags$h4(style = "margin-top:16px;", "Preview"),
+        tags$iframe(srcdoc = html,
+          style = "width:100%;height:60vh;border:1px solid #ccc;border-radius:6px;")
+      )
+    })
+
+    output$download_crew_note <- downloadHandler(
+      filename = function() {
+        sprintf("crew-note-%s-%s.html",
+                gsub("[^A-Za-z0-9]+", "-", .cn_ctx$display),
+                format(Sys.Date(), "%Y%m%d"))
+      },
+      content = function(file) {
+        html <- holds_note()
+        if (is.null(html)) {
+          html <- "<!DOCTYPE html><html><body><p>Generate the report first.</p></body></html>"
+        }
+        writeLines(html, file, useBytes = TRUE)
+      }
+    )
+  }
+
   # =========================================================================
   # REFRESH INPUTS - Capture all inputs when refresh clicked
   # =========================================================================

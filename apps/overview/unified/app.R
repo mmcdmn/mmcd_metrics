@@ -41,6 +41,7 @@ source("../dynamic_ui.R")
 source("../dynamic_server.R")
 source("../fos_detail_data.R")
 source("../fos_detail_ui.R")
+source("../crew_note_functions.R")
 
 # Set application name for AWS RDS monitoring
 set_app_name("overview")

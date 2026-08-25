@@ -1567,17 +1567,18 @@ build_overview_server <- function(input, output, session,
                       placeholder = "Detailed notes for the whole crew…"),
         tags$details(open = NA,
           tags$summary(style = "cursor:pointer;font-weight:600;",
-                       "Priority order — rank up to 5 (optional; type to add your own)"),
+                       "Priority order — rank up to 5 (type a new one + Enter to add your own)"),
           div(style = paste0("display:grid;grid-template-columns:",
                              "repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:8px;"),
             lapply(1:5, function(i) {
               selectizeInput(
                 paste0("crew_pri_", i), paste("Priority", i),
-                choices = c("—" = "", "Structures", "Ground Prehatch",
-                            "Inspections", "Air Work", "Catch Basins"),
+                choices = c("—" = "", "Structures", "SUCO", "Adulticide",
+                            "Ground Prehatch", "Inspections", "Air Work",
+                            "Catch Basins"),
                 selected = switch(as.character(i),
                                   "1" = "Ground Prehatch", "2" = "Structures", ""),
-                options = list(create = TRUE, placeholder = "—")
+                options = list(create = TRUE, placeholder = "type or pick…")
               )
             })
           )

@@ -423,3 +423,43 @@ load_fos_bioassays <- function(facility, analysis_date) {
     data.frame(fosarea = character(), shortname = character(), n = integer())
   })
 }
+
+# -----------------------------------------------------------------------------
+
+#' Active field crew reporting to one FOS (supervisor).
+#'
+#' A supervisor's crew is every employee whose `fieldsuper` equals the FOS's
+#' emp_num. Mirrors get_field_employees() in the air_inspection_checklist app,
+#' but scoped to a single supervisor and used to pre-populate the crew-note
+#' builder. Non-field roles (Pilot / receptionist / lab) are excluded, matching
+#' that app's filter.
+#'
+#' @param fos_emp_num Character emp_num of the supervising FOS (e.g. "1905")
+#' @return Data frame: emp_num, shortname, emp_type (ordered by shortname).
+#'   Empty data frame on error or when no crew is found.
+load_fos_crew <- function(fos_emp_num) {
+  con <- get_db_connection()
+  if (is.null(con)) {
+    return(data.frame(emp_num = character(), shortname = character(),
+                      emp_type = character()))
+  }
+
+  tryCatch({
+    crew <- dbGetQuery(con, "
+      SELECT emp_num, shortname, emp_type
+      FROM employee_list
+      WHERE active = true
+        AND fieldsuper = $1
+        AND emp_num <> $1
+        AND emp_type NOT IN ('Pilot', 'Insp-Recpt', 'Insp-Lab')
+      ORDER BY shortname
+    ", params = list(as.character(fos_emp_num)))
+    safe_disconnect(con)
+    crew
+  }, error = function(e) {
+    safe_disconnect(con)
+    warning(paste("[load_fos_crew] Error:", e$message))
+    data.frame(emp_num = character(), shortname = character(),
+               emp_type = character())
+  })
+}

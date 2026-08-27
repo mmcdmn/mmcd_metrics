@@ -155,16 +155,36 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     redis-cli -h 127.0.0.1 DEL "mmcd:route_log" > /dev/null 2>&1
     echo "  Workers registered, load counters initialized"
 
-        # Start Plumber REST API on dedicated internal port 9000.
-        # Do not use the Shiny worker range (3839+), or /v1 will hit Shiny instead.
-    # nginx routes all /v1/* traffic here; never exposed directly to clients
-        echo "Starting Plumber REST API on port ${PLUMBER_PORT}..."
-    Rscript -e '
-      pr <- source("/srv/api/run_plumber.R")$value
-            pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
-    ' > /var/log/plumber-api.log 2>&1 &
+        # Start Plumber REST API with watchdog — auto-restarts on exit/crash.
+        # PID written to /var/run/plumber-main.pid so the companion can signal it.
+        echo "Starting Plumber REST API on port ${PLUMBER_PORT} (with watchdog)..."
+    (
+      while true; do
+        Rscript -e '
+          pr <- source("/srv/api/run_plumber.R")$value
+          pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
+        ' >> /var/log/plumber-api.log 2>&1 &
+        PLUMBER_PID=$!
+        echo "$PLUMBER_PID" > /var/run/plumber-main.pid
+        echo "[watchdog] Plumber started (PID $PLUMBER_PID)" >> /var/log/plumber-api.log
+        wait "$PLUMBER_PID"
+        echo "[watchdog] Plumber (PID $PLUMBER_PID) exited — restarting in 2s" \
+          >> /var/log/plumber-api.log
+        sleep 2
+      done
+    ) &
     PIDS+=($!)
-        echo "   Plumber API on 127.0.0.1:${PLUMBER_PORT}  (PID ${PIDS[-1]})"
+        echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID ${PIDS[-1]})"
+
+    # Companion restart listener — stays alive independently on port 9001.
+    # nginx routes /v1/private/restart-companion here so the UI can trigger
+    # a restart even when the main Plumber process is completely dead.
+    Rscript -e '
+      pr <- plumber::plumb("/srv/api/companion.R")
+      pr$run(host="127.0.0.1", port=9001, swagger=FALSE)
+    ' > /var/log/plumber-companion.log 2>&1 &
+    PIDS+=($!)
+    echo "  ✓ Companion restart listener on port 9001  (PID ${PIDS[-1]})"
 
     # Wait for Plumber to be ready before starting nginx
     RETRIES=0
@@ -231,17 +251,31 @@ if [ "$LISTEN_PORT" != "3838" ]; then
     sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/shiny-server/shiny-server.conf
 fi
 
-# Start Plumber REST API on dedicated internal port 9000 (single-worker mode)
-# nginx is not running in this mode, so requests reach Shiny directly
-# on $LISTEN_PORT; but the API still needs to run for any configured
-# upstream proxy (e.g. AWS ALB) that forwards /v1/* to this container.
-echo "Starting Plumber REST API on port ${PLUMBER_PORT}..."
+# Start Plumber REST API with watchdog — auto-restarts on exit/crash (single-worker mode).
+echo "Starting Plumber REST API on port ${PLUMBER_PORT} (with watchdog)..."
+(
+  while true; do
+    Rscript -e '
+      pr <- source("/srv/api/run_plumber.R")$value
+      pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
+    ' >> /var/log/plumber-api.log 2>&1 &
+    PLUMBER_PID=$!
+    echo "$PLUMBER_PID" > /var/run/plumber-main.pid
+    echo "[watchdog] Plumber started (PID $PLUMBER_PID)" >> /var/log/plumber-api.log
+    wait "$PLUMBER_PID"
+    echo "[watchdog] Plumber (PID $PLUMBER_PID) exited — restarting in 2s" \
+      >> /var/log/plumber-api.log
+    sleep 2
+  done
+) &
+echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID $!)"
+
+# Companion restart listener on port 9001 (stays alive even when main Plumber is dead).
 Rscript -e '
-  pr <- source("/srv/api/run_plumber.R")$value
-    pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
-' > /var/log/plumber-api.log 2>&1 &
-API_PID=$!
-echo "  ✓ Plumber API on 127.0.0.1:${PLUMBER_PORT}  (PID $API_PID)"
+  pr <- plumber::plumb("/srv/api/companion.R")
+  pr$run(host="127.0.0.1", port=9001, swagger=FALSE)
+' > /var/log/plumber-companion.log 2>&1 &
+echo "  ✓ Companion restart listener on port 9001  (PID $!)"
 
 SHINY_INSTANCE_ID="1" SHINY_INSTANCE_PORT="$LISTEN_PORT" exec /usr/bin/shiny-server
 cleanup

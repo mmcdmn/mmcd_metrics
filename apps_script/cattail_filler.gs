@@ -8,7 +8,7 @@
 // SHEET SETUP (do ONCE before running):
 //   1. Create a Google Sheet with three tabs: Sites, Summary, Reinspects
 //   2. In "Sites" row 1 add headers:
-//        A=Sitecode  B=Acres  C=Last Insp Date  D=Wet  E=Dip  F=Plan  G=Reinspect
+//        A=Sitecode  B=Acres  C=Emp#  D=Last Insp Date  E=Wet  F=Dip  G=Plan  H=Reinspect
 //   3. Paste sitecodes into col A and acres into col B from
 //        extra/cattail_sites_2026-07-27.csv  (skip the header row — data in row 2+)
 //
@@ -19,6 +19,11 @@
 //        API_KEY   =  <your bearer token>
 //   3. Run refreshData() once manually to authorize, then run setupTrigger()
 //      for hourly auto-refresh.
+//
+// CLAIMING:
+//   Type your emp# in col C (Emp#) for any unclaimed site to claim it.
+//   Claims are synced to Redis so other sheets/users see them immediately.
+//   Once the site is inspected the API emp1 takes over automatically.
 // ============================================================================
 
 const CONFIG = {
@@ -30,15 +35,16 @@ const CONFIG = {
   COL: {
     SITECODE:  1,        // A — pre-populated from CSV
     ACRES:     2,        // B — pre-populated from CSV
-    LAST_INSP: 3,        // C — last original inspection date  (API)
-    WET:       4,        // D — wetness code                   (API)
-    DIP:       5,        // E — numdip                         (API)
-    PLAN:      6,        // F — Air/Drone/Ground/None/Unknown   (API)
-    REINSPECT: 7,        // G — "Y" if reinspect record exists  (API)
+    EMP:       3,        // C — inspector emp# / claim  (API + Redis)
+    LAST_INSP: 4,        // D — last inspection date    (API)
+    WET:       5,        // E — wetness code            (API)
+    DIP:       6,        // F — numdip                  (API)
+    PLAN:      7,        // G — Air/Drone/Ground/None/Unknown (API)
+    REINSPECT: 8,        // H — "Y" if reinspect record exists (API)
   }
 };
 
-const PLAN_NAMES     = { A: 'Air', D: 'Drone', G: 'Ground', N: 'None', U: 'Unknown' };
+const PLAN_NAMES        = { A: 'Air', D: 'Drone', G: 'Ground', N: 'None', U: 'Unknown' };
 const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
 
 // ============================================================================
@@ -52,7 +58,7 @@ function refreshData() {
     return;
   }
   try {
-    Logger.log(' refreshData start ' + new Date().toLocaleTimeString());
+    Logger.log('refreshData start ' + new Date().toLocaleTimeString());
 
     const apiData = fetchCattailChecklist_();
     if (!apiData) return;
@@ -67,13 +73,33 @@ function refreshData() {
     });
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Build the set of sitecodes this sheet actually tracks (all data tabs).
+    // Reinspects are then filtered to only those sites, so we don't show
+    // reinspect flags from other facilities or areas.
+    const sheetSitecodes = new Set();
+    ss.getSheets().forEach(sheet => {
+      const name = sheet.getName();
+      if (name === CONFIG.SUMMARY_TAB || name === CONFIG.REINSPECT_TAB) return;
+      const lastRow = sheet.getLastRow();
+      if (lastRow < CONFIG.DATA_START) return;
+      sheet.getRange(CONFIG.DATA_START, CONFIG.COL.SITECODE,
+                     lastRow - CONFIG.DATA_START + 1, 1)
+           .getValues()
+           .forEach(([sc]) => { if (sc) sheetSitecodes.add(String(sc).trim()); });
+    });
+    const filteredReinspects = (apiData.reinspects || [])
+      .filter(r => sheetSitecodes.has(String(r.sitecode).trim()));
+    Logger.log('Reinspects: ' + (apiData.reinspects || []).length + ' from API → '
+               + filteredReinspects.length + ' in this sheet');
+
     updateSitesTab_(ss, inspMap, reinspSet);
     updateSummaryTab_(ss);
-    updateReinspectsTab_(ss, apiData.reinspects || []);
+    updateReinspectsTab_(ss, filteredReinspects);
 
-    Logger.log('✓ refreshData done ' + new Date().toLocaleTimeString());
+    Logger.log('refreshData done ' + new Date().toLocaleTimeString());
   } catch (e) {
-    Logger.log(' refreshData crashed: ' + e.message + '\n' + e.stack);
+    Logger.log('refreshData crashed: ' + e.message + '\n' + e.stack);
   } finally {
     lock.releaseLock();
   }
@@ -83,11 +109,15 @@ function refreshData() {
 // API FETCH
 // ============================================================================
 
+function getProp_(key) {
+  return PropertiesService.getScriptProperties().getProperty(key);
+}
+
 function fetchCattailChecklist_() {
-  const base = PropertiesService.getScriptProperties().getProperty('API_BASE');
-  const key  = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  const base = getProp_('API_BASE');
+  const key  = getProp_('API_KEY');
   if (!base || !key) {
-    Logger.log(' Missing Script Properties: API_BASE and/or API_KEY');
+    Logger.log('Missing Script Properties: API_BASE and/or API_KEY');
     return null;
   }
 
@@ -99,12 +129,12 @@ function fetchCattailChecklist_() {
       muteHttpExceptions: true,
     });
   } catch (e) {
-    Logger.log(' Network error: ' + e.message);
+    Logger.log('Network error: ' + e.message);
     return null;
   }
 
   if (resp.getResponseCode() !== 200) {
-    Logger.log(' API error ' + resp.getResponseCode() + ': ' + resp.getContentText().substring(0, 300));
+    Logger.log('API error ' + resp.getResponseCode() + ': ' + resp.getContentText().substring(0, 300));
     return null;
   }
 
@@ -114,12 +144,73 @@ function fetchCattailChecklist_() {
 }
 
 // ============================================================================
-// SITES TAB — fill cols C–G from API data
+// CLAIMS — Redis-backed site claiming (same pattern as inspection_filler.gs)
+// ============================================================================
+
+function fetchClaims_() {
+  try {
+    const base = getProp_('API_BASE');
+    const key  = getProp_('API_KEY');
+    const r = UrlFetchApp.fetch(
+      base + '/private/claims',
+      { headers: { 'Authorization': 'Bearer ' + key }, muteHttpExceptions: true }
+    );
+    if (r.getResponseCode() === 200) {
+      const j    = JSON.parse(r.getContentText());
+      const list = Array.isArray(j) ? j : (j.data || []);
+      const map  = {};
+      for (const c of list) {
+        if (c.sitecode && c.emp_num) {
+          map[String(c.sitecode).trim()] = String(c.emp_num).trim();
+        }
+      }
+      return map;
+    }
+  } catch (e) { Logger.log('fetchClaims_: ' + e.message); }
+  return {};
+}
+
+function pushClaimsToRedis_(claims) {
+  if (!claims || claims.length === 0) return;
+  try {
+    const base = getProp_('API_BASE');
+    const key  = getProp_('API_KEY');
+    UrlFetchApp.fetch(base + '/private/claims', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + key },
+      payload: JSON.stringify({
+        claims: claims.map(c => ({ sitecode: c.sitecode, emp_num: c.emp_num, emp_name: c.emp_num }))
+      }),
+      muteHttpExceptions: true,
+    });
+    Logger.log('Pushed ' + claims.length + ' claim(s) to Redis');
+  } catch (e) { Logger.log('pushClaimsToRedis_: ' + e.message); }
+}
+
+function removeClaimsFromRedis_(sitecodes) {
+  if (!sitecodes || sitecodes.length === 0) return;
+  try {
+    const base = getProp_('API_BASE');
+    const key  = getProp_('API_KEY');
+    UrlFetchApp.fetch(base + '/private/claims/remove', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + key },
+      payload: JSON.stringify({ sitecodes: sitecodes }),
+      muteHttpExceptions: true,
+    });
+    Logger.log('Removed ' + sitecodes.length + ' claim(s) from Redis');
+  } catch (e) { Logger.log('removeClaimsFromRedis_: ' + e.message); }
+}
+
+// ============================================================================
+// SITES TAB — fill cols C–H from API data + Redis claims
 // ============================================================================
 
 function updateSitesTab_(ss, inspMap, reinspSet) {
   const sheet = ss.getSheetByName(CONFIG.SITES_TAB);
-  if (!sheet) { Logger.log(' No "Sites" tab'); return; }
+  if (!sheet) { Logger.log('No "Sites" tab'); return; }
 
   const lastRow = sheet.getLastRow();
   if (lastRow < CONFIG.DATA_START) return;
@@ -127,27 +218,51 @@ function updateSitesTab_(ss, inspMap, reinspSet) {
 
   const sitecodes = sheet.getRange(CONFIG.DATA_START, CONFIG.COL.SITECODE, dataRows, 1).getValues();
 
-  const writeData = sitecodes.map(r => {
-    const sc   = String(r[0]).trim();
-    const insp = sc ? inspMap[sc] : null;
+  // Read current EMP col to detect user-typed claims before overwriting
+  const empVals = sheet.getRange(CONFIG.DATA_START, CONFIG.COL.EMP, dataRows, 1).getValues();
+
+  // Fetch active claims from Redis
+  const claimMap = fetchClaims_();
+
+  const newClaims = [];
+  const toRemove  = [];
+
+  // Build 6 cols: EMP, LAST_INSP, WET, DIP, PLAN, REINSPECT
+  const writeData = sitecodes.map((r, i) => {
+    const sc    = String(r[0]).trim();
+    const insp  = sc ? inspMap[sc] : null;
+    const typed = String(empVals[i][0]).trim();
+
     if (insp) {
+      // Site is inspected — use API emp1; clear any pending claim
+      const apiEmp = String(insp.emp1 || '').trim();
+      if (typed && typed !== apiEmp) toRemove.push(sc);
       const dip  = (insp.numdip !== null && insp.numdip !== undefined && insp.numdip !== '')
                    ? Number(insp.numdip) : '';
       const plan = PLAN_NAMES[insp.airgrnd_plan] || (insp.airgrnd_plan || '');
-      return [
-        insp.last_insp_date || '',
-        insp.wet            || '',
-        dip,
-        plan,
-        reinspSet[sc] ? 'Y' : '',
-      ];
+      return [apiEmp, insp.last_insp_date || '', insp.wet || '', dip, plan, reinspSet[sc] ? 'Y' : ''];
     }
-    return ['', '', '', '', ''];
+
+    // Not yet inspected — handle claiming
+    const redisClaim = claimMap[sc] || '';
+    let empToShow = redisClaim;
+
+    if (typed && typed !== redisClaim) {
+      // User typed a new emp# — push as claim
+      newClaims.push({ sitecode: sc, emp_num: typed });
+      empToShow = typed;
+    }
+
+    return [empToShow, '', '', '', '', reinspSet[sc] ? 'Y' : ''];
   });
 
-  sheet.getRange(CONFIG.DATA_START, CONFIG.COL.LAST_INSP, dataRows, 5).setValues(writeData);
+  if (newClaims.length > 0) pushClaimsToRedis_(newClaims);
+  if (toRemove.length  > 0) removeClaimsFromRedis_(toRemove);
+
+  // Write cols C–H (6 cols starting at EMP=3)
+  sheet.getRange(CONFIG.DATA_START, CONFIG.COL.EMP, dataRows, 6).setValues(writeData);
   setSitecodeLinks_(sheet, CONFIG.DATA_START, dataRows);
-  Logger.log('Sites tab: ' + dataRows + ' rows written');
+  Logger.log('Sites tab: ' + dataRows + ' rows written, ' + newClaims.length + ' new claim(s)');
 }
 
 // ============================================================================
@@ -163,8 +278,8 @@ function updateSummaryTab_(ss) {
   if (lastRow < CONFIG.DATA_START) return;
   const dataRows = lastRow - CONFIG.DATA_START + 1;
 
-  // Read cols A–G (sitecode, acres, last_insp, wet, dip, plan, reinspect)
-  const data = sitesSheet.getRange(CONFIG.DATA_START, 1, dataRows, 7).getValues();
+  // Read cols A–H (sitecode, acres, emp, last_insp, wet, dip, plan, reinspect)
+  const data = sitesSheet.getRange(CONFIG.DATA_START, 1, dataRows, 8).getValues();
 
   let totalSites = 0, totalAcres = 0, inspSites = 0, inspAcres = 0;
   const planCounts = { Air: 0, Drone: 0, Ground: 0, None: 0, Unknown: 0 };
@@ -174,8 +289,8 @@ function updateSummaryTab_(ss) {
     const sc       = String(row[0]).trim();
     if (!sc) return;
     const acres    = parseFloat(row[1]) || 0;
-    const lastInsp = String(row[2]).trim();
-    const plan     = String(row[5]).trim();
+    const lastInsp = String(row[3]).trim();   // col D (index 3)
+    const plan     = String(row[6]).trim();   // col G (index 6)
 
     totalSites++;
     totalAcres += acres;
@@ -286,7 +401,7 @@ function setSitecodeLinks_(sheet, startRow, numRows) {
   let changed = false;
   const updated = richTexts.map((row, i) => {
     const sc = String(values[i][0]).trim();
-    if (!sc) return row;
+    if (!sc || !/^\d{4}/.test(sc)) return row;
     const url      = SITECODE_URL_BASE + encodeURIComponent(sc);
     const existing = row[0];
     if (existing && existing.getLinkUrl() === url) return row;

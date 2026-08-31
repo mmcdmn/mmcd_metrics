@@ -17,7 +17,7 @@ Public endpoints require no authentication.
 
 ---
 
-## Public Endpoints
+## Public Endpoints 
 
 ### GET `/v1/public/health`
 

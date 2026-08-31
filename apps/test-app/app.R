@@ -597,7 +597,7 @@ server <- function(input, output, session) {
         "-s", "-o", "/dev/null", "-w", "%{http_code}",
         "-X", "POST",
         "-H", paste0("Authorization: Bearer ", key),
-        "http://127.0.0.1:9000/v1/private/restart-api"
+        "http://127.0.0.1:9001/restart"
       ), stdout = TRUE, stderr = TRUE)
       code <- trimws(paste(result, collapse = ""))
       if (code == "200") {

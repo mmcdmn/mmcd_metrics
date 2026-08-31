@@ -1028,15 +1028,24 @@ function(year = NULL, facility = NULL, res) {
         SELECT *, ROW_NUMBER() OVER (PARTITION BY sitecode ORDER BY inspdate DESC) AS rn
         FROM AllInsp
         WHERE sitecode IN (SELECT sitecode FROM ValidSites)
+      ),
+      Employees AS (
+        SELECT DISTINCT ON (emp_num) emp_num, shortname
+        FROM employee_list
+        WHERE active = true
+        ORDER BY emp_num, pkey DESC
       )
-      SELECT sitecode,
-             inspdate::text AS last_insp_date,
-             wet,
-             numdip,
-             airgrnd_plan,
-             emp1
-      FROM Ranked WHERE rn = 1
-      ORDER BY sitecode
+      SELECT r.sitecode,
+             r.inspdate::text AS last_insp_date,
+             r.wet,
+             r.numdip,
+             r.airgrnd_plan,
+             r.emp1,
+             COALESCE(e.shortname, r.emp1) AS emp_name
+      FROM Ranked r
+      LEFT JOIN Employees e ON r.emp1 = e.emp_num::text
+      WHERE r.rn = 1
+      ORDER BY r.sitecode
     ", yr, fac_clause, yr, fac_clause)
 
     # ── Query B: sites with reinspect='t' flag.

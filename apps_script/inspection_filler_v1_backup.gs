@@ -777,7 +777,9 @@ function setupProtections() {
     count++;
   }
 
-  const msg = 'Protected ' + count + ' tab(s). Col D is freely editable; all other columns show a warning.';
+  setupColumnGuard();
+
+  const msg = 'Protected ' + count + ' tab(s). Col D is freely editable; all other columns show a warning. Column insertion guard is active.';
   Logger.log(msg);
   SpreadsheetApp.getUi().alert(msg);
 }
@@ -799,6 +801,46 @@ function clearProtections() {
   const msg = 'Removed ' + count + ' protection(s).';
   Logger.log(msg);
   SpreadsheetApp.getUi().alert(msg);
+}
+
+/**
+ * onChange handler — fires on structural sheet changes.
+ * Deletes any columns beyond the expected max and shows a toast.
+ * Registered as an installable trigger by setupColumnGuard().
+ */
+function onColumnInserted(e) {
+  if (!e || e.changeType !== 'INSERT_COLUMN') return;
+  const ss     = SpreadsheetApp.getActiveSpreadsheet();
+  const maxCol = COL.BUGS;   // col K = 11
+
+  ss.getSheets().forEach(sheet => {
+    if (sheet.getName() === 'Summary') return;
+    const current = sheet.getLastColumn();
+    if (current > maxCol) {
+      sheet.deleteColumns(maxCol + 1, current - maxCol);
+    }
+  });
+
+  ss.toast(
+    'Column insertion is not allowed. Any extra column has been removed.',
+    '⚠ Column blocked', 8
+  );
+}
+
+/**
+ * Register the onChange column guard trigger.
+ * Called automatically by setupProtections() — no need to run separately.
+ */
+function setupColumnGuard() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'onColumnInserted')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('onColumnInserted')
+    .forSpreadsheet(ss)
+    .onChange()
+    .create();
+  Logger.log('Column guard trigger registered');
 }
 
 

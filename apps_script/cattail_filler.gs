@@ -234,8 +234,8 @@ function updateSitesTab_(ss, inspMap, reinspSet) {
     const typed = String(empVals[i][0]).trim();
 
     if (insp) {
-      // Site is inspected — use API emp1; clear any pending claim
-      const apiEmp = String(insp.emp1 || '').trim();
+      // Site is inspected — use resolved name (falls back to emp# if no name found)
+      const apiEmp = String(insp.emp_name || insp.emp1 || '').trim();
       if (typed && typed !== apiEmp) toRemove.push(sc);
       const dip  = (insp.numdip !== null && insp.numdip !== undefined && insp.numdip !== '')
                    ? Number(insp.numdip) : '';
@@ -420,4 +420,110 @@ function setupTrigger() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('refreshData').timeBased().everyHours(1).create();
   Logger.log('Hourly trigger set for refreshData');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SHEET PROTECTIONS
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Protect every data tab so that only col C (Emp#) is freely editable.
+ * All other columns show a warning dialog to human editors but remain
+ * writable by the auto-refresh script (warning-only mode bypasses script writes).
+ *
+ * Run once as the sheet owner. Re-run after adding new tabs or rows.
+ */
+function setupProtections() {
+  const ss     = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  let count = 0;
+
+  for (const sheet of sheets) {
+    const name = sheet.getName();
+    if (name === CONFIG.SUMMARY_TAB || name === CONFIG.REINSPECT_TAB) continue;
+
+    // Remove any existing sheet-level protections first.
+    sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET)
+         .forEach(p => p.remove());
+
+    // Protect the entire sheet (warning-only so scripts can still write).
+    const protection = sheet.protect()
+      .setDescription('API-managed — edit col C (Emp#) only');
+    protection.setWarningOnly(true);
+
+    // Mark col C as the one unprotected range (no warning shown there).
+    const empRange = sheet.getRange(
+      CONFIG.DATA_START, CONFIG.COL.EMP,
+      sheet.getMaxRows() - CONFIG.DATA_START + 1, 1
+    );
+    protection.setUnprotectedRanges([empRange]);
+
+    count++;
+  }
+
+  setupColumnGuard();
+
+  const msg = 'Protected ' + count + ' tab(s). Col C (Emp#) is freely editable; all other columns show a warning. Column insertion guard is active.';
+  Logger.log(msg);
+  SpreadsheetApp.getUi().alert(msg);
+}
+
+/**
+ * Remove all sheet protections — run this to allow a full manual edit session.
+ */
+function clearProtections() {
+  const ss     = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  let count = 0;
+
+  for (const sheet of sheets) {
+    const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+    protections.forEach(p => p.remove());
+    count += protections.length;
+  }
+
+  const msg = 'Removed ' + count + ' protection(s).';
+  Logger.log(msg);
+  SpreadsheetApp.getUi().alert(msg);
+}
+
+/**
+ * onChange handler — fires when any structural change occurs on the sheet.
+ * Deletes any columns beyond the expected max and shows a toast.
+ * Registered as an installable trigger by setupColumnGuard().
+ */
+function onColumnInserted(e) {
+  if (!e || e.changeType !== 'INSERT_COLUMN') return;
+  const ss     = SpreadsheetApp.getActiveSpreadsheet();
+  const maxCol = CONFIG.COL.REINSPECT;   // col H = 8
+
+  ss.getSheets().forEach(sheet => {
+    const name = sheet.getName();
+    if (name === CONFIG.SUMMARY_TAB || name === CONFIG.REINSPECT_TAB) return;
+    const current = sheet.getLastColumn();
+    if (current > maxCol) {
+      sheet.deleteColumns(maxCol + 1, current - maxCol);
+    }
+  });
+
+  ss.toast(
+    'Column insertion is not allowed. Any extra column has been removed.',
+    '⚠ Column blocked', 8
+  );
+}
+
+/**
+ * Register the onChange column guard trigger.
+ * Called automatically by setupProtections() — no need to run separately.
+ */
+function setupColumnGuard() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'onColumnInserted')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('onColumnInserted')
+    .forSpreadsheet(ss)
+    .onChange()
+    .create();
+  Logger.log('Column guard trigger registered');
 }

@@ -82,21 +82,24 @@ get_app_config <- function(force_reload = FALSE) {
       )
     ),
     thresholds = list(
-      colors = list(good = "#16a34a", warning = "#eab308", alert = "#dc2626"),
+      # colors: intentionally absent. Status colors come from the theme
+      # (color_themes.R `indicators`) via get_indicator_colors(). Populating
+      # thresholds.colors in app_config.yaml overrides every theme.
       historical = list(
         default = list(direction = "higher_is_better", good = 0.9, warning = 0.8),
         mosquito_monitoring = list(direction = "lower_is_better", good = 1.1, warning = 1.2)
       ),
       fixed_pct = list(
         air_sites = list(direction = "higher_is_better", good = 85, warning = 60),
-        prehatch_coverage = list(direction = "higher_is_better", good = 85, warning = 60),
+        prehatch_coverage = list(direction = "higher_is_better", good = 80, warning = 70),
         vector_index = list(direction = "lower_is_better", good = 30, warning = 60)
       ),
       pct_of_average = list(
         mosquito_monitoring = list(direction = "lower_is_better", good = 110, warning = 130)
       ),
-      capacity = list(
-        suco = list(direction = "lower_is_better", at_capacity = 72, near_capacity = 60)
+      goal = list(
+        suco = list(goal_per_facility = 12, num_facilities = 6,
+                    district_goal = 72, good = 6, warning = 4)
       )
     ),
     descriptions = list(

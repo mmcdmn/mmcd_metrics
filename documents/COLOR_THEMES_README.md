@@ -132,18 +132,48 @@ Each theme provides:
 Specific colors for each MMCD facility (Sr, N, E, etc)
 
 ### Status Colors
-Colors for status indicators:
-- Complete (green tones)
-- Incomplete (yellow/amber tones)
-- Not Started (red tones)
-- In Progress (blue tones)
-- Pending (gray tones)
+Workflow-state colors. The keys are exactly:
+
+`active`, `completed`, `planned`, `needs_action`, `in_lab`, `needs_treatment`, `unknown`
+
+Read them with `get_status_colors(theme = ...)`.
+
+### Indicator Colors
+Health colors for value boxes: `good`, `warning`, `alert`.
+
+These are separate from Status Colors: status describes *what stage* something
+is in, indicators describe *how it is doing*. Read them with
+`get_indicator_colors(theme = ...)` - never straight from the palette, because
+that function also applies the config override described below.
+
+Wong, Tol and Viridis deliberately avoid a red/green pair here; that is the
+entire reason those palettes exist, and a red/green traffic light defeats them.
+
+### Surface Colors
+Panel chrome for dark-surfaced components (currently the FOS detail dashboard):
+
+`bg`, `panel`, `border`, `text`, `text_muted`, `text_strong`, `link`, `neutral`, `faint`
 
 ### Sequential Colors
-9 colors for sequential/ordered data (light to dark)
+9-10 colors for sequential/ordered data (light to dark)
+
+### Sequential Heat
+9 colors, light to dark, for heat/abundance ramps (surveillance maps, trap
+density). Sample with `colorRampPalette()` when you need a different number of
+bins.
 
 ### Diverging Colors
 9 colors for diverging data (two contrasting colors meeting at neutral)
+
+## Overriding Indicator Colors Globally
+
+`config/app_config.yaml` has a `thresholds.colors` block, commented out by
+default. Uncommenting any of `good` / `warning` / `alert` pins that color across
+**every** theme and disables theme-driven status coloring for it.
+
+Leave it commented unless you specifically want one fixed set of status colors
+everywhere. `tests/shared/test-indicator-colors.R` has a test that fails if the
+override is silently left on.
 
 ## Adding New Themes
 
@@ -152,10 +182,19 @@ To add a new theme, edit `shared/color_themes.R`:
 1. Add theme to `get_theme_palette()` function:
 ```r
 NewTheme = list(
+  indicators = c(good = "#color1", warning = "#color2", alert = "#color3"),
+  surface = c(bg = "#color1", panel = "#color2", border = "#color3",
+              text = "#color4", text_muted = "#color5",
+              link = "#color6", neutral = "#color7",
+              faint = "#color8", text_strong = "#color9"),
   primary = c("#color1", "#color2", ...),
-  facilities = c(AP = "#color1", BD = "#color2", ...),
-  status = c(Complete = "#color1", Incomplete = "#color2", ...),
+  facilities = c(E = "#color1", MO = "#color2", N = ..., Sj = ...,
+                 Sr = ..., Wm = ..., Wp = ...),
+  status = c(active = "#color1", completed = "#color2", planned = ...,
+             needs_action = ..., in_lab = ..., needs_treatment = ...,
+             unknown = ...),
   sequential = c("#light", ..., "#dark"),
+  sequential_heat = c("#light", ..., "#dark"),
   diverging = c("#color1", ..., "#neutral", ..., "#color2")
 )
 ```
@@ -166,6 +205,13 @@ NewTheme = "Description of your theme and when to use it"
 ```
 
 3. Update `get_available_themes()` return value to include "NewTheme"
+
+Every dropdown builds its choices from `get_theme_choices()`, so a new theme
+appears in all apps automatically - do not hardcode theme lists in app UI code.
+
+`tests/shared/test-indicator-colors.R` checks that every theme defines
+`indicators`, `surface` and `sequential_heat`, so a partially-added theme fails
+the suite rather than breaking an app at runtime.
 
 ## Backwards Compatibility
 

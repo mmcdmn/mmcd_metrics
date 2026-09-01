@@ -42,11 +42,20 @@ cache:
 
 thresholds:
 
-  # Status indicator colors (hex)
-  colors:
-    good: "#16a34a"       # Green  — on track or better than average
-    warning: "#eab308"    # Yellow — slightly behind or approaching concern
-    alert: "#dc2626"      # Red    — significantly behind or at alert level
+  # Status indicator colors GLOBAL OVERRIDE.
+  #
+  # Status colors now come from the active color theme's `indicators` block in
+  # shared/color_themes.R, so switching theme re-colors the value boxes. The
+  # colorblind-safe themes (Wong, Tol, Viridis) deliberately avoid a red/green
+  # pair, which is the whole reason they exist.
+  #
+  # Uncommenting the keys below pins these three colors across EVERY theme and
+  # disables that behavior. Set only the keys you want to force; the rest still
+  # come from the theme.
+  # colors:
+  #   good: "#16a34a"       # Green  — on track or better than average
+  #   warning: "#eab308"    # Yellow — slightly behind or approaching concern
+  #   alert: "#dc2626"      # Red    — significantly behind
 
   # --- Historical comparison metrics ---
   # Multipliers applied to 10-year weekly average

@@ -47,7 +47,7 @@ get_valid_param_values <- function() {
   list(
     view = c("district", "facility", "fos", "site_detail", "metric_detail"),
     zone = c("1", "2", "1,2", "separate"),
-    theme = c("MMCD", "IBM", "Wong", "Tol", "Viridis")
+    theme = get_available_themes()
   )
 }
 

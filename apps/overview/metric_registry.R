@@ -11,7 +11,10 @@
 #   - display_name: Title shown in UI
 #   - icon: FontAwesome icon name  
 #   - y_label: Label for chart Y-axis
-#   - bg_color: Color for stat box
+#   - bg_color: Identity color for the stat box under the default (MMCD) theme
+#   - palette_slot: Index into the active theme's `primary` palette, used when a
+#     non-default theme is selected. bg_color is kept for MMCD so the default
+#     dashboard looks exactly as before. See get_metric_bg_color().
 #   - app_folder: Folder containing data_functions.R
 #   - has_acres: Whether this metric uses acres (for historical)
 #   - historical_enabled: Whether to show historical charts
@@ -67,6 +70,32 @@ get_metric_registry <- function() {
   .registry_cache
 }
 
+#' Resolve a metric's stat box background color for a theme
+#'
+#' Metric colors are identity colors (catch basin purple, drone pink, ...) and
+#' MMCD's are the established look, so MMCD keeps its literal `bg_color`.
+#' Every other theme maps the metric's `palette_slot` onto that theme's
+#' `primary` palette so value boxes re-skin along with the charts.
+#'
+#' Note this is the *fallback* color: when a metric has enough data to compute a
+#' status, get_dynamic_value_box_info() overrides it with good/warning/alert.
+#'
+#' @param config A metric config from the registry
+#' @param theme Color theme name
+#' @return Hex color string
+get_metric_bg_color <- function(config, theme = getOption("mmcd.color.theme", "MMCD")) {
+  fallback <- config$bg_color %||% "#3c8dbc"
+  if (is.null(theme) || length(theme) != 1 || is.na(theme) || theme == "MMCD") {
+    return(fallback)
+  }
+  slot <- config$palette_slot
+  if (is.null(slot) || is.na(slot)) return(fallback)
+  pal <- tryCatch(get_theme_palette(theme)$primary, error = function(e) NULL)
+  if (is.null(pal) || length(pal) == 0) return(fallback)
+  # Wrap so a theme with fewer primaries than metrics still resolves.
+  pal[[((as.integer(slot) - 1) %% length(pal)) + 1]]
+}
+
 #' Build the metric registry list (internal)
 #' @return List of metric configurations
 .build_metric_registry <- function() {
@@ -83,6 +112,7 @@ get_metric_registry <- function() {
       category = "Vector",
       y_label = "Active Catch Basins",
       bg_color = "#667eea",
+      palette_slot = 1,
       app_folder = "catch_basin_status",
       has_acres = FALSE,
       historical_enabled = TRUE,
@@ -116,6 +146,7 @@ get_metric_registry <- function() {
       category = "Floodwater",
       y_label = "Active Drone Acres",
       bg_color = "#f5576c",
+      palette_slot = 2,
       app_folder = "drone",
       has_acres = TRUE,
       historical_enabled = TRUE,
@@ -147,6 +178,7 @@ get_metric_registry <- function() {
       category = "Floodwater",
       y_label = "Active Prehatch Acres",
       bg_color = "#207010",
+      palette_slot = 3,
       app_folder = "ground_prehatch_progress",
       has_acres = TRUE,
       historical_enabled = TRUE,
@@ -176,6 +208,7 @@ get_metric_registry <- function() {
       category = "Floodwater",
       y_label = "Air Site Acres",
       bg_color = "#0ea5e9",
+      palette_slot = 4,
       app_folder = "air_sites_simple",
       has_acres = TRUE,
       historical_enabled = FALSE,
@@ -214,6 +247,7 @@ get_metric_registry <- function() {
       category = "Vector",
       y_label = "Active Structures",
       bg_color = "#3851db",
+      palette_slot = 5,
       app_folder = "struct_trt",
       has_acres = FALSE,
       historical_enabled = TRUE,
@@ -243,6 +277,7 @@ get_metric_registry <- function() {
       category = "Vector",
       y_label = "Max Vector Index",
       bg_color = "#dc2626",
+      palette_slot = 6,
       app_folder = "trap_surveillance",
       has_acres = FALSE,
       historical_enabled = FALSE,  # VI uses its own trend charts in the trap_surveillance app
@@ -292,6 +327,7 @@ get_metric_registry <- function() {
       image_path = "assets/cattail_background.png",
       y_label = "Cattail Acres",
       bg_color = "#ff9500",
+      palette_slot = 7,
       app_folder = "cattail_treatments",
       has_acres = TRUE,
       historical_enabled = TRUE,
@@ -326,6 +362,7 @@ get_metric_registry <- function() {
       category = "Adult Samples",
       y_label = "Avg Mosquitoes per Trap",
       bg_color = "#10b981",
+      palette_slot = 8,
       app_folder = "mosquito-monitoring",
       has_acres = FALSE,
       historical_enabled = TRUE,  # Enable historical trending
@@ -364,6 +401,7 @@ get_metric_registry <- function() {
       category = "Adult Samples",
       y_label = "SUCOs Completed",
       bg_color = "#6366f1",  # Indigo color
+      palette_slot = 9,
       app_folder = "suco_history",
       has_acres = FALSE,
       historical_enabled = FALSE,
@@ -404,6 +442,7 @@ get_metric_registry <- function() {
       category = "Cattail",
       y_label = "Sites Inspected vs Goal",
       bg_color = "#8b5cf6",  # Purple color
+      palette_slot = 10,
       app_folder = "cattail_inspections",
       has_acres = FALSE,
       historical_enabled = FALSE,  # Progress vs goal is yearly, not weekly trending
@@ -445,6 +484,7 @@ get_metric_registry <- function() {
       category = "Floodwater",
       y_label = "Sites",
       bg_color = "#b91c1c",
+      palette_slot = 11,
       app_folder = "inspections",
       has_acres = FALSE,
       historical_enabled = FALSE,  # Coverage is point-in-time, not trended

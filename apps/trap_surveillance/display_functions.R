@@ -115,8 +115,18 @@ render_surveillance_map <- function(combined_data, areas_sf,
     legend_max
   )
   
-  # Yellow-to-red heat palette with colorBin for distinct steps
-  heat_colors <- c("#ffffcc", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#800026")
+  # Heat ramp from the active theme. Every theme defines `sequential_heat`;
+  # the literal below is the fallback (and is what MMCD's ramp resolves to).
+  # Sampled down to one color per bin so the legend swatches below and the
+  # colorBin scale stay in agreement regardless of ramp length.
+  n_heat_bins <- length(fixed_breaks) - 1
+  theme_heat <- tryCatch(get_theme_palette(color_theme)$sequential_heat,
+                         error = function(e) NULL)
+  if (is.null(theme_heat) || length(theme_heat) < 2) {
+    theme_heat <- c("#ffffcc", "#fed976", "#feb24c", "#fd8d3c",
+                    "#fc4e2a", "#e31a1c", "#800026")
+  }
+  heat_colors <- grDevices::colorRampPalette(theme_heat)(n_heat_bins)
   pal <- colorBin(palette = heat_colors, bins = fixed_breaks, na.color = "#C0C0C0")
   
   # Build popup text (uses real unclamped values)
@@ -197,7 +207,8 @@ render_surveillance_map <- function(combined_data, areas_sf,
   if (has_data) {
     # Each bin needs a color swatch and label like "0 – 1", "1 – 3", etc.
     n_bins <- length(fixed_breaks) - 1
-    legend_colors <- heat_colors[seq_len(n_bins)]
+    # heat_colors is already exactly one color per bin
+    legend_colors <- heat_colors
     
     # Format break labels based on metric precision
     fmt <- if (metric_type == "infection" && infection_metric != "mir") {

@@ -5,8 +5,14 @@
 # All data is loaded fresh here — does NOT rely on pre-filtered data[[]].
 # =============================================================================
 
-PREHATCH_GREEN_THRESH  <- 85
-PREHATCH_YELLOW_THRESH <- 60
+# Thresholds come from config/app_config.yaml (thresholds.fixed_pct.air_sites)
+# so this panel cannot drift from the overview value boxes that use the same
+# rule. Literals are the fallback if the config is unavailable.
+.fos_thresh <- function() {
+  cfg <- tryCatch(get_config_threshold("fixed_pct", "air_sites"), error = function(e) NULL)
+  list(green  = if (!is.null(cfg$good))    cfg$good    else 85,
+       yellow = if (!is.null(cfg$warning)) cfg$warning else 60)
+}
 
 # Local copy — shared/server_utilities.R cannot be sourced by the overview app
 # (regression test guards against basename "server_utilities.R"). Keep in sync.
@@ -17,17 +23,61 @@ if (!exists("make_sitecode_link", mode = "function")) {
       as.character(sitecode),
       paste0(
         '<a href="https://webster.mmcd.org/map?search=', sitecode,
-        '" target="_blank" style="color:#60a5fa;text-decoration:none;font-weight:500;">',
+        '" target="_blank" style="color:var(--fos-link);text-decoration:none;font-weight:500;">',
         sitecode, '</a>'
       )
     )
   }
 }
 
+#' Build the CSS custom properties this panel is styled with
+#'
+#' Every color in this file is written as var(--fos-*); this is the single
+#' place those variables get values. Swapping theme swaps the whole panel.
+#' @param theme Color theme name
+#' @return CSS declaration string for the wrapper element
+.fos_css_vars <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
+  pal <- tryCatch(get_theme_palette(theme), error = function(e) NULL)
+  sf  <- pal$surface
+  ind <- tryCatch(get_indicator_colors(theme = theme), error = function(e) NULL)
+
+  g <- function(v, fallback) {
+    if (is.null(v) || length(v) != 1 || is.na(v) || !nzchar(v)) fallback else unname(v)
+  }
+  vars <- c(
+    "--fos-bg"          = g(sf["bg"],          "#0f172a"),
+    "--fos-panel"       = g(sf["panel"],       "#1e293b"),
+    "--fos-border"      = g(sf["border"],      "#334155"),
+    "--fos-text"        = g(sf["text"],        "#e2e8f0"),
+    "--fos-text-muted"  = g(sf["text_muted"],  "#cbd5e1"),
+    "--fos-text-strong" = g(sf["text_strong"], "#f1f5f9"),
+    "--fos-link"        = g(sf["link"],        "#60a5fa"),
+    "--fos-neutral"     = g(sf["neutral"],     "#64748b"),
+    "--fos-faint"       = g(sf["faint"],       "#94a3b8"),
+    "--fos-good"        = g(ind["good"],       "#22c55e"),
+    "--fos-warn"        = g(ind["warning"],    "#eab308"),
+    "--fos-bad"         = g(ind["alert"],      "#ef4444"),
+    "--fos-info"        = g(pal$primary[1],    "#3b82f6")
+  )
+  # Red/Blue air site classification is domain data, not status: a "Blue" site
+  # must stay blue under every theme, so these two are deliberately fixed.
+  vars["--fos-cat-red"]  <- "#ef4444"
+  vars["--fos-cat-blue"] <- "#3b82f6"
+
+  # The accent button and badges sit on --fos-good; pick readable text for them.
+  vars["--fos-accent"]    <- vars[["--fos-good"]]
+  vars["--fos-on-accent"] <- if (exists("contrast_text_color", mode = "function", inherits = TRUE)) {
+    contrast_text_color(vars[["--fos-good"]])
+  } else "#ffffff"
+
+  paste0(paste0(names(vars), ":", unname(vars), ";", collapse = ""))
+}
+
 .prehatch_color <- function(pct) {
-  if (is.na(pct) || pct >= PREHATCH_GREEN_THRESH)  return("#22c55e")
-  if (pct >= PREHATCH_YELLOW_THRESH)                return("#eab308")
-  "#ef4444"
+  th <- .fos_thresh()
+  if (is.na(pct) || pct >= th$green)  return("var(--fos-good)")
+  if (pct >= th$yellow)               return("var(--fos-warn)")
+  "var(--fos-bad)"
 }
 
 .status_dot <- function(pct) {
@@ -48,8 +98,8 @@ if (!exists("make_sitecode_link", mode = "function")) {
     style = "margin-bottom:14px;",
     tags$summary(
       style = paste0(
-        "cursor:pointer;padding:10px 14px;background:#1e293b;",
-        "border-radius:6px;font-weight:600;font-size:1.05em;color:#f1f5f9;",
+        "cursor:pointer;padding:10px 14px;background:var(--fos-panel);",
+        "border-radius:6px;font-weight:600;font-size:1.05em;color:var(--fos-text-strong);",
         "list-style:none;display:flex;align-items:center;gap:8px;"
       ),
       icon_tag,
@@ -69,40 +119,40 @@ if (!exists("make_sitecode_link", mode = "function")) {
   )
 }
 
-.frac_tile <- function(label, numer, denom, tile_color = "#3b82f6",
+.frac_tile <- function(label, numer, denom, tile_color = "var(--fos-info)",
                        sub_text = NULL) {
   div(
     style = paste0(
       "display:inline-block;text-align:center;min-width:170px;",
-      "background:#1e293b;border:1px solid #334155;",
+      "background:var(--fos-panel);border:1px solid var(--fos-border);",
       "border-radius:8px;padding:14px 18px;margin:4px;"
     ),
     div(
       style = sprintf("font-size:1.5em;font-weight:700;color:%s;", tile_color),
       sprintf("%s / %s ac", numer, denom)
     ),
-    div(style = "font-size:0.85em;color:#cbd5e1;margin-top:4px;", label),
+    div(style = "font-size:0.85em;color:var(--fos-text-muted);margin-top:4px;", label),
     if (!is.null(sub_text)) {
-      div(style = "font-size:0.85em;color:#e2e8f0;margin-top:2px;font-weight:600;",
+      div(style = "font-size:0.85em;color:var(--fos-text);margin-top:2px;font-weight:600;",
           sub_text)
     }
   )
 }
 
-.pct_tile <- function(label, numer, denom, tile_color = "#3b82f6") {
+.pct_tile <- function(label, numer, denom, tile_color = "var(--fos-info)") {
   pct <- if (denom > 0) round(100 * numer / denom, 1) else 0
   div(
     style = paste0(
       "display:inline-block;text-align:center;min-width:160px;",
-      "background:#1e293b;border:1px solid #334155;",
+      "background:var(--fos-panel);border:1px solid var(--fos-border);",
       "border-radius:8px;padding:14px 18px;margin:4px;"
     ),
     div(
       style = sprintf("font-size:2em;font-weight:700;color:%s;", tile_color),
       sprintf("%.1f%%", pct)
     ),
-    div(style = "font-size:0.85em;color:#cbd5e1;margin-top:4px;", label),
-    div(style = "font-size:0.8em;color:#e2e8f0;margin-top:2px;",
+    div(style = "font-size:0.85em;color:var(--fos-text-muted);margin-top:4px;", label),
+    div(style = "font-size:0.8em;color:var(--fos-text);margin-top:2px;",
         sprintf("%d / %d", numer, denom))
   )
 }
@@ -110,7 +160,7 @@ if (!exists("make_sitecode_link", mode = "function")) {
 .dark_table <- function(...) {
   tags$table(
     class = "table table-sm table-dark",
-    style = "color:#e2e8f0;",
+    style = "color:var(--fos-text);",
     ...
   )
 }
@@ -128,7 +178,7 @@ if (!exists("make_sitecode_link", mode = "function")) {
 
   if (is.null(summary_df) || nrow(summary_df) == 0) {
     return(.section(title_prefix, icon_name,
-      div(style = "color:#e2e8f0;", empty_msg)))
+      div(style = "color:var(--fos-text);", empty_msg)))
   }
 
   overall_pct <- round(100 * sum(summary_df$treated) /
@@ -145,29 +195,29 @@ if (!exists("make_sitecode_link", mode = "function")) {
       town_sites <- town_sites[order(town_sites$sitecode), ]
       tags$details(
         tags$summary(
-          style = "cursor:pointer;color:#60a5fa;font-size:0.85em;padding:4px 0;",
+          style = "cursor:pointer;color:var(--fos-link);font-size:0.85em;padding:4px 0;",
           sprintf("Show %d sites", nrow(town_sites))
         ),
         div(
           style = "margin-top:6px;max-height:250px;overflow-y:auto;",
           .dark_table(
             tags$thead(tags$tr(
-              tags$th(style = "color:#cbd5e1;", "Site"),
-              tags$th(style = "color:#cbd5e1;", "Treated?"),
-              tags$th(style = "color:#cbd5e1;", "Expiring?")
+              tags$th(style = "color:var(--fos-text-muted);", "Site"),
+              tags$th(style = "color:var(--fos-text-muted);", "Treated?"),
+              tags$th(style = "color:var(--fos-text-muted);", "Expiring?")
             )),
             tags$tbody(lapply(seq_len(nrow(town_sites)), function(j) {
               s <- town_sites[j, ]
               treated_txt <- if (isTRUE(s$is_active)) {
-                tags$span(style = "color:#22c55e;", icon("check"), " Yes")
+                tags$span(style = "color:var(--fos-good);", icon("check"), " Yes")
               } else {
-                tags$span(style = "color:#ef4444;", icon("times"), " No")
+                tags$span(style = "color:var(--fos-bad);", icon("times"), " No")
               }
               exp_txt <- if (isTRUE(s$is_expiring)) {
                 exp_label <- if (!is.null(s$expiry_date) && !is.na(s$expiry_date)) {
                   format(as.Date(s$expiry_date), "%b %d")
                 } else "Soon"
-                tags$span(style = "color:#eab308;", icon("clock"), " ", exp_label)
+                tags$span(style = "color:var(--fos-warn);", icon("clock"), " ", exp_label)
               } else ""
               tags$tr(
                 tags$td(HTML(make_sitecode_link(s$sitecode))),
@@ -182,12 +232,12 @@ if (!exists("make_sitecode_link", mode = "function")) {
 
     tags$tr(
       tags$td(
-        div(style = "font-weight:500;color:#e2e8f0;", r$city),
+        div(style = "font-weight:500;color:var(--fos-text);", r$city),
         site_detail
       ),
-      tags$td(style = "text-align:right;color:#e2e8f0;vertical-align:top;",
+      tags$td(style = "text-align:right;color:var(--fos-text);vertical-align:top;",
               r$total),
-      tags$td(style = "text-align:right;color:#e2e8f0;vertical-align:top;",
+      tags$td(style = "text-align:right;color:var(--fos-text);vertical-align:top;",
               r$treated),
       tags$td(style = "text-align:right;vertical-align:top;white-space:nowrap;",
         .status_dot(r$pct),
@@ -203,10 +253,10 @@ if (!exists("make_sitecode_link", mode = "function")) {
     .dark_table(
       style = "max-width:500px;",
       tags$thead(tags$tr(
-        tags$th(style = "color:#cbd5e1;", "Township"),
-        tags$th(style = "text-align:right;color:#cbd5e1;", "Sites"),
-        tags$th(style = "text-align:right;color:#cbd5e1;", "Treated"),
-        tags$th(style = "text-align:right;color:#cbd5e1;", "% Treated")
+        tags$th(style = "color:var(--fos-text-muted);", "Township"),
+        tags$th(style = "text-align:right;color:var(--fos-text-muted);", "Sites"),
+        tags$th(style = "text-align:right;color:var(--fos-text-muted);", "Treated"),
+        tags$th(style = "text-align:right;color:var(--fos-text-muted);", "% Treated")
       )),
       tags$tbody(town_rows)
     )
@@ -216,7 +266,8 @@ if (!exists("make_sitecode_link", mode = "function")) {
 # Main renderer ---------------------------------------------------------------
 
 render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
-                                         analysis_date, zone_filter = NULL) {
+                                         analysis_date, zone_filter = NULL,
+                                         theme = getOption("mmcd.color.theme", "MMCD")) {
   week_num <- as.integer(lubridate::week(analysis_date))
 
   # --- Load all data ---------------------------------------------------------
@@ -288,12 +339,12 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     style = "display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap;",
     tags$a(
       href = back_url,
-      style = "color:#60a5fa;text-decoration:none;font-size:0.9em;",
+      style = "color:var(--fos-link);text-decoration:none;font-size:0.9em;",
       icon("arrow-left"),
       sprintf(" Back to %s FOS Overview", facility)
     ),
     div(
-      style = "font-size:1.1em;font-weight:600;color:#e2e8f0;",
+      style = "font-size:1.1em;font-weight:600;color:var(--fos-text);",
       sprintf("%s • %s • Week %d", fos_display_name, facility, week_num)
     ),
     # Opens the crew-note builder (wired in dynamic_server.R). Only present in
@@ -302,7 +353,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
       "open_crew_note",
       label = tagList(icon("clipboard-list"), " Make Crew Instructions"),
       style = paste0(
-        "margin-left:auto;background:#1f5a49;color:#fff;border:none;",
+        "margin-left:auto;background:var(--fos-accent);color:var(--fos-on-accent);border:none;",
         "border-radius:6px;padding:8px 16px;font-weight:600;font-size:0.9em;"
       )
     )
@@ -345,7 +396,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     sum(suco_data$active, na.rm = TRUE)
   } else 0L)
   suco_pct  <- as.integer(min(100, round(100 * fac_total / max(suco_goal, 1))))
-  bar_color <- if (suco_pct >= 100) "#22c55e" else if (suco_pct >= 50) "#eab308" else "#3b82f6"
+  bar_color <- if (suco_pct >= 100) "var(--fos-good)" else if (suco_pct >= 50) "var(--fos-warn)" else "var(--fos-info)"
 
   all_fos <- tryCatch({
     lkp <- get_foremen_lookup()
@@ -371,7 +422,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     lapply(seq_len(nrow(suco_merged)), function(i) {
       r <- suco_merged[i, ]
       is_me <- as.character(r$emp_num) == fos_emp_num
-      row_style <- if (isTRUE(is_me)) "font-weight:700;color:#60a5fa;" else "color:#e2e8f0;"
+      row_style <- if (isTRUE(is_me)) "font-weight:700;color:var(--fos-link);" else "color:var(--fos-text);"
       tags$tr(
         style = row_style,
         tags$td(r$shortname),
@@ -386,21 +437,21 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     div(
       style = "max-width:380px;margin-bottom:12px;",
       div(
-        style = "background:#334155;border-radius:4px;height:20px;overflow:hidden;",
+        style = "background:var(--fos-border);border-radius:4px;height:20px;overflow:hidden;",
         div(style = sprintf(
           "background:%s;width:%d%%;height:100%%;border-radius:4px;",
           bar_color, suco_pct
         ))
       ),
-      div(style = "font-size:0.85em;color:#cbd5e1;margin-top:4px;",
+      div(style = "font-size:0.85em;color:var(--fos-text-muted);margin-top:4px;",
           sprintf("%d%% of weekly goal", suco_pct))
     ),
     if (length(suco_rows) > 0) {
       .dark_table(
         style = "max-width:280px;",
         tags$thead(tags$tr(
-          tags$th(style = "color:#cbd5e1;", "FOS"),
-          tags$th(style = "text-align:right;color:#cbd5e1;", "SUCOs")
+          tags$th(style = "color:var(--fos-text-muted);", "FOS"),
+          tags$th(style = "text-align:right;color:var(--fos-text-muted);", "SUCOs")
         )),
         tags$tbody(suco_rows)
       )
@@ -425,7 +476,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
       style = "display:flex;gap:10px;flex-wrap:wrap;",
       .pct_tile("Treated", cb_active, cb_total, cb_pct_color),
       .pct_tile("Expiring", cb_expiring, cb_total,
-                if (cb_expiring > 0) "#ef4444" else "#64748b")
+                if (cb_expiring > 0) "var(--fos-bad)" else "var(--fos-neutral)")
     )
   )
 
@@ -434,7 +485,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   brood_badge <- if (isTRUE(s$is_complete)) {
     tags$span(
       style = paste0(
-        "background:#22c55e;color:#fff;padding:2px 8px;",
+        "background:var(--fos-good);color:var(--fos-on-accent);padding:2px 8px;",
         "border-radius:4px;font-size:0.85em;margin-left:8px;"
       ),
       icon("check"), " Brood complete"
@@ -443,55 +494,57 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
 
   air_section <- .section(
     tags$span(
-      tags$span(style = "color:#f1f5f9;", "Air Work Acres"),
+      tags$span(style = "color:var(--fos-text-strong);", "Air Work Acres"),
       brood_badge
     ),
     .img_icon("assets/helicopter-solid-full.svg", "Air work"),
     div(
       style = "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;",
       .frac_tile("Red / total checked",
-                 s$red_ac, s$total_checked_ac, "#ef4444"),
+                 s$red_ac, s$total_checked_ac, "var(--fos-cat-red)"),
       .frac_tile("Blue / total checked",
-                 s$blue_ac, s$total_checked_ac, "#3b82f6"),
+                 s$blue_ac, s$total_checked_ac, "var(--fos-cat-blue)"),
       .frac_tile("Red treated / total red",
-                 s$red_treated_ac, s$red_total_ac, "#22c55e",
+                 s$red_treated_ac, s$red_total_ac, "var(--fos-good)",
                  sprintf("%.1f%%", s$pct_red_done))
     ),
     if (!is.null(air$sites) && nrow(air$sites) > 0) {
       tags$details(
         tags$summary(
-          style = "cursor:pointer;color:#60a5fa;font-size:0.9em;",
+          style = "cursor:pointer;color:var(--fos-link);font-size:0.9em;",
           "Show site detail"
         ),
         div(
           style = "margin-top:8px;max-height:300px;overflow-y:auto;",
           .dark_table(
             tags$thead(tags$tr(
-              tags$th(style = "color:#cbd5e1;", "Site"),
-              tags$th(style = "color:#cbd5e1;", "Acres"),
-              tags$th(style = "color:#cbd5e1;", "R/B"),
-              tags$th(style = "color:#cbd5e1;", "Dips"),
-              tags$th(style = "color:#cbd5e1;", "Last Insp."),
-              tags$th(style = "color:#cbd5e1;", "Treated?")
+              tags$th(style = "color:var(--fos-text-muted);", "Site"),
+              tags$th(style = "color:var(--fos-text-muted);", "Acres"),
+              tags$th(style = "color:var(--fos-text-muted);", "R/B"),
+              tags$th(style = "color:var(--fos-text-muted);", "Dips"),
+              tags$th(style = "color:var(--fos-text-muted);", "Last Insp."),
+              tags$th(style = "color:var(--fos-text-muted);", "Treated?")
             )),
             tags$tbody(lapply(seq_len(nrow(air$sites)), function(i) {
               r <- air$sites[i, ]
-              rb_color <- if (!is.na(r$redblue) && r$redblue == "R") "#ef4444" else
-                          if (!is.na(r$redblue) && r$redblue == "B") "#3b82f6" else
-                          "#94a3b8"
+              # R/B is the site's own red/blue classification — a domain
+              # category, not a status, so it does not follow the theme.
+              rb_color <- if (!is.na(r$redblue) && r$redblue == "R") "var(--fos-cat-red)" else
+                          if (!is.na(r$redblue) && r$redblue == "B") "var(--fos-cat-blue)" else
+                          "var(--fos-faint)"
               tags$tr(
                 tags$td(HTML(make_sitecode_link(r$sitecode))),
-                tags$td(style = "color:#e2e8f0;",
+                tags$td(style = "color:var(--fos-text);",
                         sprintf("%.1f", as.numeric(r$acres))),
                 tags$td(style = sprintf("color:%s;font-weight:600;", rb_color),
                         if (is.na(r$redblue)) "?" else r$redblue),
-                tags$td(style = "color:#e2e8f0;",
+                tags$td(style = "color:var(--fos-text);",
                         if (is.na(r$numdip)) "" else sprintf("%.1f", r$numdip)),
-                tags$td(style = "color:#e2e8f0;",
+                tags$td(style = "color:var(--fos-text);",
                         as.character(r$last_insp_date)),
                 tags$td(
                   if (isTRUE(r$is_treated))
-                    tags$span(style = "color:#22c55e;", icon("check"))
+                    tags$span(style = "color:var(--fos-good);", icon("check"))
                   else ""
                 )
               )
@@ -512,7 +565,7 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     lapply(seq_len(nrow(bioassays)), function(i) {
       r <- bioassays[i, ]
       is_me <- as.character(r$fosarea) == fos_emp_num
-      row_style <- if (isTRUE(is_me)) "font-weight:700;color:#60a5fa;" else "color:#e2e8f0;"
+      row_style <- if (isTRUE(is_me)) "font-weight:700;color:var(--fos-link);" else "color:var(--fos-text);"
       pupae_cell <- if (has_pupae_col) {
         tags$td(style = "text-align:right;",
                 if (is.na(r$n_with_pupae)) "0" else as.character(r$n_with_pupae))
@@ -527,12 +580,12 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   } else {
     list(tags$tr(
       tags$td(colspan = if (has_pupae_col) "3" else "2",
-              style = "color:#e2e8f0;", "No bioassays this week")
+              style = "color:var(--fos-text);", "No bioassays this week")
     ))
   }
 
   pupae_header <- if (has_pupae_col) {
-    tags$th(style = "text-align:right;color:#cbd5e1;", ">0 Pupae")
+    tags$th(style = "text-align:right;color:var(--fos-text-muted);", ">0 Pupae")
   } else NULL
 
   bio_section <- .section(
@@ -542,8 +595,8 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
     .dark_table(
       style = "max-width:320px;",
       tags$thead(tags$tr(
-        tags$th(style = "color:#cbd5e1;", "FOS"),
-        tags$th(style = "text-align:right;color:#cbd5e1;", "Count"),
+        tags$th(style = "color:var(--fos-text-muted);", "FOS"),
+        tags$th(style = "text-align:right;color:var(--fos-text-muted);", "Count"),
         pupae_header
       )),
       tags$tbody(bio_rows)
@@ -551,20 +604,23 @@ render_fos_detail_dashboard <- function(fos_emp_num, fos_display_name, facility,
   )
 
   # --- Assemble --------------------------------------------------------------
-  # The whole panel is dark-themed: every text color in this file is light
-  # (#e2e8f0 / #cbd5e1) or a semantic accent, so the container MUST have a dark
-  # background or the text is invisible. We also force table cells dark here
-  # because Bootstrap's `table-dark` class does not take effect in this app.
+  # Every color in this panel is a var(--fos-*) reference; .fos_css_vars()
+  # resolves them from the active theme's `surface` + `indicators` blocks. The
+  # container must define them (and carry the background) or the light text
+  # would be invisible. Table cells are forced here because Bootstrap's
+  # `table-dark` class does not take effect in this app.
+  css_vars <- .fos_css_vars(theme)
   dashboard_css <- tags$style(HTML(paste0(
-    ".fos-detail-dashboard{background-color:#0f172a;}",
-    ".fos-detail-dashboard table{background-color:#1e293b !important;}",
+    ".fos-detail-dashboard{background-color:var(--fos-bg);}",
+    ".fos-detail-dashboard table{background-color:var(--fos-panel) !important;}",
     ".fos-detail-dashboard th,.fos-detail-dashboard td{",
-    "background-color:#1e293b !important;border-color:#334155 !important;}"
+    "background-color:var(--fos-panel) !important;border-color:var(--fos-border) !important;}"
   )))
 
   div(
     class = "fos-detail-dashboard",
-    style = paste0("max-width:900px;background-color:#0f172a;color:#e2e8f0;",
+    style = paste0(css_vars,
+                   "max-width:900px;background-color:var(--fos-bg);color:var(--fos-text);",
                    "padding:16px;border-radius:8px;"),
     dashboard_css,
     header,

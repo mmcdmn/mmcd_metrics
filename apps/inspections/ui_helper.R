@@ -101,7 +101,7 @@ create_main_ui <- function() {
         hr(),
         
         selectInput("color_theme", "Color Theme:",
-          choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+          choices = get_available_themes(),
           selected = "MMCD")
       ),
       

@@ -270,7 +270,7 @@ server <- function(input, output, session) {
       create_stat_box(
         value = format(round(acres_val, 1), big.mark = ",", nsmall = 1),
         title = "Acres Under Threshold",
-        bg_color = status_colors["unknonwn"],
+        bg_color = status_colors["unknown"],
         icon = "check-circle"
       )
     } else {
@@ -587,7 +587,8 @@ server <- function(input, output, session) {
     create_stat_box(
       value = stats$sites_inspected,
       title = "Sites Inspected",
-      bg_color = "#3c8dbc",
+      bg_color = "completed",
+      theme = current_theme(),
       icon = "clipboard-check"
     )
   })
@@ -597,7 +598,8 @@ server <- function(input, output, session) {
     create_stat_box(
       value = paste(stats$total_acres, "ac"),
       title = "Total Acres",
-      bg_color = "#00c0ef",
+      bg_color = "in_lab",
+      theme = current_theme(),
       icon = "ruler-combined"
     )
   })
@@ -607,7 +609,8 @@ server <- function(input, output, session) {
     create_stat_box(
       value = stats$sites_under_threshold,
       title = "Under Threshold",
-      bg_color = "#00a65a",
+      bg_color = "good",
+      theme = current_theme(),
       icon = "check-circle"
     )
   })
@@ -617,7 +620,8 @@ server <- function(input, output, session) {
     create_stat_box(
       value = stats$sites_need_treatment,
       title = "Need Treatment",
-      bg_color = "#dd4b39",
+      bg_color = "needs_treatment",
+      theme = current_theme(),
       icon = "exclamation-triangle"
     )
   })
@@ -631,7 +635,8 @@ server <- function(input, output, session) {
     create_stat_box(
       value = paste0(pct_need_treatment, "%"),
       title = "% Need Treatment (of inspected)",
-      bg_color = "#f39c12",
+      bg_color = "warning",
+      theme = current_theme(),
       icon = "percentage"
     )
   })
@@ -646,7 +651,8 @@ server <- function(input, output, session) {
     create_stat_box(
       value = paste0(pct_treated_of_requiring, "%"),
       title = "% Treated (of need treatment)",
-      bg_color = "#00c0ef",
+      bg_color = "active",
+      theme = current_theme(),
       icon = "chart-pie"
     )
   })

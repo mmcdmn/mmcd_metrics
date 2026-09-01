@@ -92,6 +92,13 @@ ui <- air_inspection_checklist_ui()
 
 server <- function(input, output, session) {
 
+  # Theme handling - status colors resolve through getOption("mmcd.color.theme")
+  current_theme <- reactive({ input$color_theme })
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  }, ignoreInit = TRUE)
+
+
   # ===========================================================================
   # URL PARAMETER PARSING (synchronous, runs once via isolate)
   # ===========================================================================
@@ -337,7 +344,10 @@ server <- function(input, output, session) {
     } else {
       FALSE
     }
-    build_checklist_html(data, show_unfinished_only = show_unfinished)
+    # current_theme() is read here so the panel re-renders on theme change;
+    # setting the global option alone does not invalidate this output.
+    build_checklist_html(data, show_unfinished_only = show_unfinished,
+                         theme = current_theme())
   })
 }
 

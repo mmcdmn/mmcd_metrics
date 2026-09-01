@@ -156,12 +156,7 @@ struct_trt_ui <- function() {
                     selected = "all", multiple = TRUE),
         
         selectInput("color_theme", "Color Theme:",
-                    choices = c("MMCD" = "MMCD",
-                                "IBM Design" = "IBM",
-                                "Wong (Color Blind Safe)" = "Wong",
-                                "Tol (Color Blind Safe)" = "Tol",
-                                "Viridis" = "Viridis",
-                                "ColorBrewer Set2" = "ColorBrewer"),
+                    choices = get_theme_choices(),
                     selected = "MMCD"),
         
         helpText(tags$b("Structure Status:"),

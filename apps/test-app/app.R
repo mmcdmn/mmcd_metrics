@@ -57,7 +57,7 @@ ui <- dashboardPage(
       div(style = "padding: 10px 15px;",
         selectInput("color_theme", 
                     label = tags$span(style = "color: #aaa; font-size: 11px;", "Color Theme"),
-                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    choices = get_available_themes(),
                     selected = "MMCD",
                     width = "100%")
       )

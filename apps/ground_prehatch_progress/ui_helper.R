@@ -83,7 +83,7 @@ ground_prehatch_ui <- function() {
         checkboxInput("include_drone", "Include Drone Sites", value = FALSE),
         
         selectInput("color_theme", "Color Theme:",
-                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    choices = get_available_themes(),
                     selected = "MMCD"),
         
         selectInput("zone_filter", "Zone Display:",

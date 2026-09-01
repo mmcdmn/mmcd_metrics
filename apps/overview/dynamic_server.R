@@ -230,7 +230,7 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
       bg_color <- if (!is.null(box_def$status) && box_def$status %in% names(status_colors)) {
         unname(status_colors[box_def$status])
       } else {
-        config$bg_color
+        get_metric_bg_color(config, theme)
       }
       
       column(col_width,
@@ -239,7 +239,8 @@ generate_facility_detail_boxes <- function(metric_id, facility, zone_filter,
           title = box_def$title,
           bg_color = bg_color,
           icon = icon(box_def$icon),
-          icon_type = "fontawesome"
+          icon_type = "fontawesome",
+          theme = theme
         )
       )
     })
@@ -713,10 +714,11 @@ get_current_week_value <- function(metric_id, analysis_date, zone_filter = c("1"
 #' @param weekly_value Optional: pre-loaded weekly value from historical data (avoids DB call)
 #' @param facility_filter Optional: specific facility to compare against (uses facility historical avg)
 #' @param fos_filter Optional: specific FOS emp_num to compare against (uses FOS-specific historical avg)
+#' @param theme Color theme name; selects the good/warning/alert palette
 #' @return List with color, historical_avg, current_week, pct_diff, and status
 #' @export
-get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL, facility_filter = NULL, fos_filter = NULL) {
-  default_color <- config$bg_color
+get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, config, zone_filter = c("1", "2"), weekly_value = NULL, facility_filter = NULL, fos_filter = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
+  default_color <- get_metric_bg_color(config, theme)
   result <- list(
     color = default_color,
     historical_avg = NULL,
@@ -725,11 +727,17 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
     status = "default"
   )
   
-  # Load threshold colors from config (with hardcoded fallbacks)
-  status_colors <- tryCatch(get_status_indicator_colors(), error = function(e) NULL)
-  COLOR_GOOD    <- status_colors$good    %||% "#16a34a"
-  COLOR_WARNING <- status_colors$warning %||% "#eab308"
-  COLOR_ALERT   <- status_colors$alert   %||% "#dc2626"
+  # Indicator colors follow the active theme, with app_config.yaml
+  # thresholds.colors as an optional global override (see get_indicator_colors).
+  ind <- tryCatch(get_indicator_colors(theme = theme), error = function(e) NULL)
+  .pick <- function(key, fallback) {
+    if (is.null(ind) || !key %in% names(ind)) return(fallback)
+    v <- unname(ind[[key]])
+    if (is.null(v) || length(v) != 1 || is.na(v) || !nzchar(v)) fallback else v
+  }
+  COLOR_GOOD    <- .pick("good",    "#16a34a")
+  COLOR_WARNING <- .pick("warning", "#eab308")
+  COLOR_ALERT   <- .pick("alert",   "#dc2626")
   
   # Only apply dynamic colors to specific metrics
   dynamic_metrics <- c("drone", "ground_prehatch", "catch_basin", "structure", 
@@ -927,7 +935,7 @@ get_dynamic_value_box_info <- function(metric_id, current_value, analysis_date, 
 #' @param historical_data Optional: pre-loaded historical data to extract weekly values (avoids duplicate DB loads)
 #' @return fluidRow with clickable stat boxes that toggle chart visibility
 #' @export
-generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL, separate_zones = FALSE) {
+generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = "district", analysis_date = Sys.Date(), historical_data = NULL, zone_filter = c("1", "2"), fos_filter = NULL, separate_zones = FALSE, theme = getOption("mmcd.color.theme", "MMCD")) {
   
   # Use filtered metrics if provided, otherwise get all active metrics
   metrics <- if (!is.null(metrics_filter)) metrics_filter else get_active_metrics()
@@ -1034,7 +1042,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       # Each facility is compared against ITS OWN historical average
       # For use_active_calculation metrics, use treatment-based weekly value
       # (same units as historical avg) instead of site-based active_all.
-      box_color <- config$bg_color
+      box_color <- get_metric_bg_color(config, theme)
       box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
       
       # Use facility's zone for comparison; fall back to parent zone_filter
@@ -1055,7 +1063,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
                                      fac_config, 
                                      zone_filter = fac_zone_filter, 
                                      weekly_value = weekly_val,
-                                     facility_filter = fac),
+                                     facility_filter = fac,
+                                     theme = theme),
           error = function(e) {
             cat("[COLOR] Error for", fac, metric_id, ":", e$message, "\n")
             NULL
@@ -1081,6 +1090,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             value = display_value,
             title = get_facility_display_names(fac),  # Show full facility name
             bg_color = box_color,
+            theme = theme,
             icon = NULL,  # No icon for facility view
             icon_type = "fontawesome"
           )
@@ -1127,7 +1137,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       fos_display_name = fos_display,
       facility         = fos_facility,
       analysis_date    = analysis_date,
-      zone_filter      = zone_filter
+      zone_filter      = zone_filter,
+      theme            = theme
     )
 
   } else if (overview_type == "fos" && length(metrics) > 0) {
@@ -1199,7 +1210,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
       }
       
       # Dynamic color: compare THIS FOS against its own historical average
-      box_color <- config$bg_color
+      box_color <- get_metric_bg_color(config, theme)
       box_info <- list(current_week = NULL, historical_avg = NULL, pct_diff = NULL)
       for (metric_id in metrics) {
         fos_config <- registry[[metric_id]]
@@ -1222,7 +1233,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           get_dynamic_value_box_info(metric_id, color_value, analysis_date,
                                      fos_config, zone_filter = zone_filter,
                                      weekly_value = fos_m_active,
-                                     fos_filter = as.character(fos_id)),
+                                     fos_filter = as.character(fos_id),
+                                     theme = theme),
           error = function(e) NULL
         )
         if (!is.null(info) && info$status != "default") {
@@ -1243,6 +1255,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             value = paste0(pct, "%"),
             title = fos_display,
             bg_color = box_color,
+            theme = theme,
             icon = icon("user-tie"),
             icon_type = "fontawesome"
           )
@@ -1333,10 +1346,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
           active
         }
         box_info <- tryCatch(
-          get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val),
+          get_dynamic_value_box_info(metric_id, color_value, analysis_date, config, zone_filter = zone_filter, weekly_value = weekly_val, theme = theme),
           error = function(e) {
             cat("WARNING: get_dynamic_value_box_info failed for", metric_id, ":", e$message, "\n")
-            list(color = config$bg_color, current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
+            list(color = get_metric_bg_color(config, theme), current_week = NULL, historical_avg = NULL, pct_diff = NULL, status = "default")
           }
         )
         week_num <- tryCatch(lubridate::week(analysis_date), error = function(e) NA)
@@ -1357,6 +1370,7 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
                 value = display_value,
                 title = config$display_name,
                 bg_color = box_info$color,
+                theme = theme,
                 icon = if (!is.null(config$image_path)) config$image_path else config$icon,
                 icon_type = if (!is.null(config$image_path)) "image" else "fontawesome",
                 metric_id = metric_id
@@ -1924,6 +1938,12 @@ build_overview_server <- function(input, output, session,
     create_overview_chart
   }
   
+  # Dashboard-level status color key (one per screen, not per chart)
+  output$status_legend <- renderUI({
+    create_status_legend(theme = current_theme())
+  })
+  outputOptions(output, "status_legend", suspendWhenHidden = FALSE)
+
   # Setup legend outputs for all current metrics
   lapply(metrics, function(metric_id) {
     local({
@@ -2056,7 +2076,7 @@ build_overview_server <- function(input, output, session,
             current_data = hist_data$current,
             title = paste(local_config$display_name, "- Historical"),
             y_label = y_label,
-            bar_color = local_config$bg_color,
+            bar_color = get_metric_bg_color(local_config, current_theme()),
             theme = current_theme(),
             ten_year_avg_data = hist_data$ten_year_average
           )
@@ -2351,7 +2371,7 @@ build_overview_server <- function(input, output, session,
     # Generate value boxes
     render_start <- proc.time()
     result <- tryCatch({
-      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, NULL, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones))
+      stats <- generate_summary_stats(data_result, metrics_filter, overview_type, analysis_date, NULL, zone_filter = inputs$zone_filter, fos_filter = fos_filter, separate_zones = isTRUE(inputs$separate_zones), theme = current_theme())
       render_elapsed <- (proc.time() - render_start)[["elapsed"]]
       message(sprintf("[RENDER-UI] generate_summary_stats SUCCESS (%.2fs)", render_elapsed))
       stats

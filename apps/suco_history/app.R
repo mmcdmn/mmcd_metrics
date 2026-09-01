@@ -87,7 +87,7 @@ ui <- fluidPage(
       h4("Display Options"),
       
       selectInput("color_theme", "Color Theme:",
-                  choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                  choices = get_available_themes(),
                   selected = "MMCD"),
       
       selectInput("graph_type", "Graph Type:",

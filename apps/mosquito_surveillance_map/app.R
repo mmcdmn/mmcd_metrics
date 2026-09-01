@@ -84,6 +84,48 @@ dfmapMISS4326 = dfmapMISS %>%
 dfmapMISS2163UTM <- st_transform(dfmapMISS4326, crs=2163)
 
 
+# Abundance ramp for the surveillance maps.
+#
+# The band labels ("1-2", "3-10", ...) are the encoding, so the ramp must stay
+# monotonic light -> dark. Levels are sampled from the active theme's
+# sequential_heat so the map matches the rest of the dashboard; the literal
+# ramp below is the fallback and is what MMCD resolves to.
+.mosq_band_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
+  ramp <- tryCatch(get_theme_palette(theme)$sequential_heat, error = function(e) NULL)
+  if (is.null(ramp) || length(ramp) < 2) {
+    ramp <- c("#ffffb2", "#fed976", "#fecc5c", "#feb24c", "#fd8d3c",
+              "#fc4e2a", "#f03b20", "#e31a1c", "#b10026")
+  }
+  heat <- grDevices::colorRampPalette(ramp)(9)
+  c(
+    "0" = "brown",
+    "1-2" = heat[1],
+    "3-10" = heat[3],
+    "11-20" = heat[5],
+    "21-50" = heat[7],
+    "51+" = heat[9],
+    "1-4" = heat[1],
+    "5-9" = heat[3],
+    "10-29" = heat[5],
+    "30-49" = heat[7],
+    "50+" = heat[9],
+    "1-49" = heat[1],
+    "50-129" = heat[3],
+    "130-299" = heat[5],
+    "300-999" = heat[7],
+    "1000+" = heat[9],
+    "10-49" = heat[5],
+    "50+ " = heat[7],
+    "3-4" = heat[2],
+    "5-49" = heat[4],
+    "50-129" = heat[5],
+    "130-299" = heat[6],
+    "300-999" = heat[8],
+    "1000+" = heat[9],
+    "Missing" = "black"
+  )
+}
+
 ui <- fluidPage(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
@@ -115,7 +157,10 @@ ui <- fluidPage(
                                       selected = "All",
                                       multiple = FALSE),
                 input_switch("button", "Avg/Sum"),
-                checkboxInput("labels", "Labels")
+                checkboxInput("labels", "Labels"),
+                selectInput("color_theme", "Color Theme:",
+                            choices = get_theme_choices(),
+                            selected = "MMCD")
                 # downloadButton("report", "Generate report")
               
             
@@ -125,6 +170,12 @@ ui <- fluidPage(
 
 
 server <- function(input, output) {
+
+  # Theme handling - .mosq_band_colors() reads getOption("mmcd.color.theme")
+  observeEvent(input$color_theme, {
+    options(mmcd.color.theme = input$color_theme)
+  }, ignoreInit = TRUE)
+
 
   # Display when data was last updated
   output$lastUpdated <- renderText({
@@ -420,32 +471,7 @@ BASEmap <- ggplot() +
                                 loc_code, Sum
                               )), data = MAPdata()) +
         ggtitle(req(TitleString())) +
-          scale_color_manual(name = "Mosq Sum",
-                             values = c("0" = "brown", 
-                                        "1-2" = "#ffffb2", 
-                                        "3-10" = "#fecc5c", 
-                                        "11-20" = "#fd8d3c", 
-                                        "21-50" = "#f03b20", 
-                                        "51+" = "#b10026",
-                                        "1-4" = "#ffffb2", 
-                                        "5-9" = "#fecc5c", 
-                                        "10-29" = "#fd8d3c", 
-                                        "30-49" = "#f03b20", 
-                                        "50+" = "#b10026",
-                                        "1-49" = "#ffffb2", 
-                                        "50-129" = "#fecc5c", 
-                                        "130-299" = "#fd8d3c", 
-                                        "300-999" = "#f03b20", 
-                                        "1000+" = "#b10026",
-                                        "10-49" = "#fd8d3c",
-                                        "50+ " = "#f03b20",
-                                        "3-4" = "#fed976",
-                                        "5-49" = "#feb24c",
-                                        "50-129" = "#fd8d3c",
-                                        "130-299" = "#fc4e2a",
-                                        "300-999" = "#e31a1c",
-                                        "1000+" = "#b10026",
-                                        "Missing" = "black")) +
+          scale_color_manual(name = "Mosq Sum", values = .mosq_band_colors(input$color_theme)) +
           scale_shape_manual(name = "Mosq Sum",
                              values = c("0" = 1, 
                                         "1-2" = 17, 
@@ -511,32 +537,7 @@ BASEmap <- ggplot() +
                                     loc_code, Avg
                                   )), data = MAPdataAVG()) +
             ggtitle(req(TitleStringAVG())) +
-            scale_color_manual(name = "Mosq Avg",
-                               values = c("0" = "brown", 
-                                          "1-2" = "#ffffb2", 
-                                          "3-10" = "#fecc5c", 
-                                          "11-20" = "#fd8d3c", 
-                                          "21-50" = "#f03b20", 
-                                          "51+" = "#b10026",
-                                          "1-4" = "#ffffb2", 
-                                          "5-9" = "#fecc5c", 
-                                          "10-29" = "#fd8d3c", 
-                                          "30-49" = "#f03b20", 
-                                          "50+" = "#b10026",
-                                          "1-49" = "#ffffb2", 
-                                          "50-129" = "#fecc5c", 
-                                          "130-299" = "#fd8d3c", 
-                                          "300-999" = "#f03b20", 
-                                          "1000+" = "#b10026",
-                                          "10-49" = "#fd8d3c",
-                                          "50+ " = "#f03b20",
-                                          "3-4" = "#fed976",
-                                          "5-49" = "#feb24c",
-                                          "50-129" = "#fd8d3c",
-                                          "130-299" = "#fc4e2a",
-                                          "300-999" = "#e31a1c",
-                                          "1000+" = "#b10026",
-                                          "Missing" = "black")) +
+            scale_color_manual(name = "Mosq Avg", values = .mosq_band_colors(input$color_theme)) +
             scale_shape_manual(name = "Mosq Avg",
                                values = c("0" = 1, 
                                           "1-2" = 17, 

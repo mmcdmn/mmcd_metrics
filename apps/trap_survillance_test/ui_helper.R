@@ -61,7 +61,7 @@ trap_ui <- function() {
               numericInput("k_neighbors_sf", "k (nearest neighbors):", value = 4, min = 1, max = 10, step = 1),
               hr(),
               selectInput("color_theme", "Color Theme:",
-                         choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                         choices = get_available_themes(),
                          selected = "MMCD"),
               hr(),
               actionButton("refresh_sf", "Refresh Data", icon = icon("refresh"), class = "btn-success", width = "100%")

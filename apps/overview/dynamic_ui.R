@@ -428,6 +428,9 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       ),
       # Actual stats - hidden until data is ready
       div(id = "summary_stats_wrapper", style = "display: none;",
+        # Status color key — rendered once per screen, above the value boxes.
+        # Inherits this wrapper's hidden-until-loaded behavior.
+        uiOutput("status_legend"),
         uiOutput("summary_stats")
       )
     ),
@@ -466,7 +469,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     div(style = "text-align: right; padding: 10px 20px; margin-top: 10px;",
       div(style = "display: inline-block; width: 180px;",
         selectInput("color_theme", "Color Theme:",
-                   choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis"),
+                   choices = get_available_themes(),
                    selected = initial_theme)
       )
     )

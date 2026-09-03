@@ -60,23 +60,71 @@ rm(.ttl_cfg)
 
 
 # =============================================================================
+# CLAIM KEYS
+# =============================================================================
+# Site claims are written by BOTH the air-checklist Shiny app and the Plumber
+# API into the same `claim:<date>` hash. redis_hset() applies EXPIRE to the
+# whole hash, not per field, so the last writer each day sets the lifetime of
+# every claim that day. These constants therefore have to agree - they used to
+# be defined separately in api/plumber.R (12 days) and in
+# apps/air_inspection_checklist/data_functions.R (2 days), which meant a claim
+# made in the app silently shortened the retention of claims written by the API.
+# Unified on the app's 2 days.
+
+CLAIM_HASH_PREFIX <- "claim"
+CLAIM_TTL <- 172800L  # 2 days
+
+#' Build Redis hash key for claims on a given date
+#' @param date Character date "YYYY-MM-DD"
+#' @return Key like "claim:2026-03-13"
+claim_hash_key <- function(date) {
+  paste0(CLAIM_HASH_PREFIX, ":", date)
+}
+
+# =============================================================================
 # CONNECTION MANAGEMENT
 # =============================================================================
 
 # Lazy-initialised connection (one per R process)
 .redis_conn <- new.env(parent = emptyenv())
 
+# How long a successful health check is trusted before we PING again.
+# get_redis() is called by EVERY cache operation, so PINGing each time doubled
+# the round trips on every get/set (and tripled them for the common
+# `if (redis_is_active()) redis_get(k)` pattern). Within this window we hand
+# back the connection unchecked; redis_get()/redis_set() below recover from a
+# connection that died in the meantime by reconnecting and retrying once.
+REDIS_HEALTHCHECK_TTL <- 5  # seconds
+
+#' Drop the cached connection so the next get_redis() reconnects
+.redis_invalidate <- function() {
+  if (exists("conn", envir = .redis_conn)) rm("conn", envir = .redis_conn)
+  if (exists("last_ok", envir = .redis_conn)) rm("last_ok", envir = .redis_conn)
+}
+
 #' Get (or create) the Redis connection
+#' @param force_check Skip the health-check cache and PING now
 #' @return A redux redis connection object, or NULL if unavailable
-get_redis <- function() {
+get_redis <- function(force_check = FALSE) {
   # Already connected?
   if (exists("conn", envir = .redis_conn)) {
     conn <- get("conn", envir = .redis_conn)
-    # Quick health check
+
+    # Trust a recent successful check instead of PINGing again
+    if (!force_check) {
+      last_ok <- if (exists("last_ok", envir = .redis_conn)) {
+        get("last_ok", envir = .redis_conn)
+      } else 0
+      if (as.numeric(Sys.time()) - last_ok < REDIS_HEALTHCHECK_TTL) return(conn)
+    }
+
     ok <- tryCatch({ conn$PING(); TRUE }, error = function(e) FALSE)
-    if (ok) return(conn)
+    if (ok) {
+      assign("last_ok", as.numeric(Sys.time()), envir = .redis_conn)
+      return(conn)
+    }
     # Dead connection – clear and reconnect
-    rm("conn", envir = .redis_conn)
+    .redis_invalidate()
   }
 
   # Not using Redis?
@@ -97,6 +145,7 @@ get_redis <- function() {
       db       = REDIS_CONFIG$db
     )
     assign("conn", conn, envir = .redis_conn)
+    assign("last_ok", as.numeric(Sys.time()), envir = .redis_conn)
     message(sprintf("[redis_cache] Connected to Redis at %s:%d (db %d)",
                     REDIS_CONFIG$host, REDIS_CONFIG$port, REDIS_CONFIG$db))
     conn
@@ -126,6 +175,19 @@ redis_key <- function(key) {
 # CORE GET / SET / DELETE
 # =============================================================================
 
+# Does this redux build's SET accept an EX (expire-seconds) argument?
+# Cached per process - the answer cannot change at runtime.
+.redis_set_ex_ok <- NULL
+.redis_set_supports_ex <- function(conn) {
+  if (!is.null(.redis_set_ex_ok)) return(.redis_set_ex_ok)
+  ok <- tryCatch("EX" %in% names(formals(conn$SET)), error = function(e) FALSE)
+  .redis_set_ex_ok <<- isTRUE(ok)
+  if (!.redis_set_ex_ok) {
+    message("[redis_cache] SET without EX support - using SET + EXPIRE")
+  }
+  .redis_set_ex_ok
+}
+
 #' Store an R object in Redis
 #'
 #' @param key   Cache key (will be prefixed automatically)
@@ -138,16 +200,34 @@ redis_set <- function(key, value, ttl = TTL_14_DAYS) {
 
   fkey <- redis_key(key)
   raw  <- serialize(value, connection = NULL)   # returns a raw vector
+  has_ttl <- !is.null(ttl) && is.numeric(ttl) && ttl > 0
 
-  tryCatch({
-    conn$SET(fkey, raw)
-    if (!is.null(ttl) && is.numeric(ttl) && ttl > 0) {
-      conn$EXPIRE(fkey, as.integer(ttl))
+  # Prefer a single round trip (SET ... EX) over SET followed by EXPIRE.
+  # redux generates its command functions from the Redis command spec, so
+  # rather than assume the EX argument is there, probe the signature once and
+  # fall back to the two-call form if it isn't.
+  attempt <- function(cn) {
+    if (!has_ttl) {
+      cn$SET(fkey, raw)
+    } else if (.redis_set_supports_ex(cn)) {
+      cn$SET(fkey, raw, EX = as.integer(ttl))
+    } else {
+      cn$SET(fkey, raw)
+      cn$EXPIRE(fkey, as.integer(ttl))
     }
     TRUE
-  }, error = function(e) {
-    warning(sprintf("[redis_cache] SET failed for '%s': %s", key, e$message))
-    FALSE
+  }
+
+  tryCatch(attempt(conn), error = function(e) {
+    # The connection may have died inside the health-check window - reconnect
+    # once before giving up (see REDIS_HEALTHCHECK_TTL).
+    .redis_invalidate()
+    conn2 <- get_redis(force_check = TRUE)
+    if (is.null(conn2)) return(FALSE)
+    tryCatch(attempt(conn2), error = function(e2) {
+      warning(sprintf("[redis_cache] SET failed for '%s': %s", key, e2$message))
+      FALSE
+    })
   })
 }
 
@@ -161,13 +241,22 @@ redis_get <- function(key) {
 
   fkey <- redis_key(key)
 
-  tryCatch({
-    raw <- conn$GET(fkey)
+  attempt <- function(cn) {
+    raw <- cn$GET(fkey)
     if (is.null(raw)) return(NULL)
     unserialize(raw)
-  }, error = function(e) {
-    warning(sprintf("[redis_cache] GET failed for '%s': %s", key, e$message))
-    NULL
+  }
+
+  tryCatch(attempt(conn), error = function(e) {
+    # The connection may have died inside the health-check window - reconnect
+    # once before giving up (see REDIS_HEALTHCHECK_TTL).
+    .redis_invalidate()
+    conn2 <- get_redis(force_check = TRUE)
+    if (is.null(conn2)) return(NULL)
+    tryCatch(attempt(conn2), error = function(e2) {
+      warning(sprintf("[redis_cache] GET failed for '%s': %s", key, e2$message))
+      NULL
+    })
   })
 }
 

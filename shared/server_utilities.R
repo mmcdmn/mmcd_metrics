@@ -12,18 +12,41 @@
 #' @param ... All arguments to pass through to load_raw_data()
 #' @return The result of load_raw_data(), cached if possible
 cached_load_raw_data <- function(app_name, ...) {
+  # Note: load_raw_data is resolved in THIS function's enclosing environment
+  # (the global env), not the caller's. That is fine from an app.R, but it is
+  # why this must never be called from inside a data_functions.R - the overview
+  # and the API routes source those files into private environments, and the
+  # lookup would land on whichever app's loader happens to be global.
+  # Use cached_call() and pass the function explicitly if you need that.
+  cached_call(paste0("raw:", app_name), load_raw_data, ...)
+}
+
+#' Cache any loader function's result in Redis (2-min TTL)
+#'
+#' Generalises cached_load_raw_data() to loaders that are not named
+#' load_raw_data. The function is passed explicitly, so it resolves in the
+#' caller's scope and is safe to use from a privately-sourced environment.
+#'
+#' The cache key covers cache_id plus every argument, so two calls differing in
+#' any argument cannot collide. Falls through to an uncached call when the
+#' Redis layer is unavailable.
+#'
+#' @param cache_id Stable identifier for this loader (e.g. "air_sites:raw")
+#' @param fn       The loader function itself
+#' @param ...      Arguments forwarded to fn
+cached_call <- function(cache_id, fn, ...) {
   if (exists("get_cached_db_query", mode = "function")) {
     args <- list(...)
     cached <- tryCatch({
       get_cached_db_query(
-        paste0("raw:", app_name),
-        load_func = function() load_raw_data(...),
-        app_name, args
+        cache_id,
+        load_func = function() fn(...),
+        cache_id, args
       )
     }, error = function(e) NULL)
     if (!is.null(cached)) return(cached)
   }
-  load_raw_data(...)
+  fn(...)
 }
 
 # =============================================================================
@@ -113,7 +136,8 @@ map_foreman_emp_to_colors <- function(theme = "MMCD") {
   foremen_lookup <- get_foremen_lookup()
   emp_colors <- character(0)
   
-  for (i in 1:nrow(foremen_lookup)) {
+  # seq_len, not 1:nrow - an empty lookup would otherwise iterate c(1, 0)
+  for (i in seq_len(nrow(foremen_lookup))) {
     shortname <- trimws(foremen_lookup$shortname[i])
     emp_num <- trimws(as.character(foremen_lookup$emp_num[i]))
     

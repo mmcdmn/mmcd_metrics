@@ -253,7 +253,9 @@ server <- function(input, output, session) {
     withProgress(message = "Loading SUCO data...", value = 0.5, {
       # Request species details if grouping by species
       return_species_details <- inputs$group_by == "species_name"
-      get_suco_data("all", inputs$date_range, return_species_details)
+      # Shared 2-min Redis cache (see cached_call in server_utilities.R).
+      cached_call("suco_history:data", get_suco_data,
+                  "all", inputs$date_range, return_species_details)
     })
   })
   

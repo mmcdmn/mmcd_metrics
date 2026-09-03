@@ -5,6 +5,7 @@ source("../../shared/app_libraries.R")
 source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
+source("../../shared/historical_helpers.R")
 
 # Source external function files
 source("data_functions.R")
@@ -177,15 +178,36 @@ server <- function(input, output, session) {
     }
   })
 
+  # The analysis date both loaders work from
+  analysis_date_r <- reactive({
+    inputs <- refresh_inputs()
+    if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
+  })
+
+  # Load the raw site/treatment data ONCE per refresh and share it below.
+  # get_ground_prehatch_data() and get_site_details_data() both need exactly
+  # this query; they used to run it independently, so each refresh queried the
+  # database twice. cached_load_raw_data() adds the shared Redis layer the
+  # other apps already use.
+  # NOTE: this must stay in app.R (global env). cached_load_raw_data() resolves
+  # load_raw_data from the global environment, so calling it from inside
+  # data_functions.R would pick up the wrong app's loader wherever that file is
+  # sourced into a private env (the overview and the API routes both do this).
+  ground_raw <- eventReactive(input$refresh, {
+    withProgress(message = "Loading ground prehatch data...", value = 0.3, {
+      cached_load_raw_data("ground_prehatch_progress",
+                           analysis_date = analysis_date_r(),
+                           include_archive = FALSE)
+    })
+  })
+
   # Fetch ground prehatch data, ONLY when refresh button clicked
   ground_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    # Use custom date if provided, otherwise use current date
-    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
-    
     withProgress(message = "Loading ground prehatch data...", value = 0.5, {
-      get_ground_prehatch_data(inputs$zone_filter, analysis_date, inputs$expiring_days)
+      get_ground_prehatch_data(inputs$zone_filter, analysis_date_r(),
+                               inputs$expiring_days, raw_data = ground_raw())
     })
   })
   
@@ -193,11 +215,9 @@ server <- function(input, output, session) {
   site_details <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     
-    # Use custom date if provided, otherwise use current date
-    analysis_date <- if (!is.null(inputs$custom_today)) inputs$custom_today else Sys.Date()
-    
     withProgress(message = "Loading site details...", value = 0.5, {
-      get_site_details_data(inputs$expiring_days, analysis_date)
+      get_site_details_data(inputs$expiring_days, analysis_date_r(),
+                            raw_data = ground_raw())
     })
   })
   

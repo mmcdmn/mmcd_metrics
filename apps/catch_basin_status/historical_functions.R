@@ -37,7 +37,7 @@ load_historical_cb_data <- function(start_year, end_year,
         })
         
         facility_where <- build_sql_in_clause("loc_catchbasin.facility", converted_filters)
-        cat("DEBUG: Facility filter converted:", paste(facility_filter, "->", converted_filters, collapse = ", "), "\n")
+        mmcd_debug("DEBUG: Facility filter converted:", paste(facility_filter, "->", converted_filters, collapse = ", "), "\n")
       } else {
         # Fallback: assume they're already codes
         facility_where <- build_sql_in_clause("loc_catchbasin.facility", facility_filter)
@@ -96,9 +96,9 @@ load_historical_cb_data <- function(start_year, end_year,
                  EXTRACT(YEAR FROM dblarv_insptrt_current.inspdate)
       ", cur_date_start, cur_date_end, facility_where, zone_where, foreman_where)
       
-      cat("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
+      mmcd_debug("DEBUG: Getting current table data for years", min(current_year_range), "-", max(current_year_range), "\n")
       current_data <- dbGetQuery(con, current_query)
-      cat("DEBUG: Current table returned", nrow(current_data), "rows\n")
+      mmcd_debug("DEBUG: Current table returned", nrow(current_data), "rows\n")
       data <- bind_rows(data, current_data)
     }
     
@@ -136,13 +136,13 @@ load_historical_cb_data <- function(start_year, end_year,
                  EXTRACT(YEAR FROM dblarv_insptrt_archive.inspdate)
       ", arch_date_start, arch_date_end, facility_where, zone_where, foreman_where)
       
-      cat("DEBUG: Getting archive table data for years", min(archive_year_range), "-", max(archive_year_range), "\n")
+      mmcd_debug("DEBUG: Getting archive table data for years", min(archive_year_range), "-", max(archive_year_range), "\n")
       archive_data <- dbGetQuery(con, archive_query)
-      cat("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
+      mmcd_debug("DEBUG: Archive table returned", nrow(archive_data), "rows\n")
       data <- bind_rows(data, archive_data)
     }
     
-    cat("DEBUG: Combined data total:", nrow(data), "rows\n")
+    mmcd_debug("DEBUG: Combined data total:", nrow(data), "rows\n")
   
     safe_disconnect(con)
     
@@ -192,7 +192,7 @@ create_historical_cb_data <- function(start_year, end_year,
                                       zone_filter = NULL, 
                                       foreman_filter = NULL) {
   
-  cat("DEBUG CB create_historical_cb_data called!\n")
+  mmcd_debug("DEBUG CB create_historical_cb_data called!\n")
   cat("  - hist_time_period:", hist_time_period, "\n")
   cat("  - hist_display_metric:", hist_display_metric, "\n")
   cat("  - start_year:", start_year, "end_year:", end_year, "\n")
@@ -232,11 +232,11 @@ create_historical_cb_data <- function(start_year, end_year,
       zone_filter = zone_filter
     )
     
-    cat("DEBUG CB: raw_data$treatments rows =", 
+    mmcd_debug("DEBUG CB: raw_data$treatments rows =", 
         if (!is.null(raw_data$treatments)) nrow(raw_data$treatments) else "NULL", "\n")
     
     if (is.null(raw_data$treatments) || nrow(raw_data$treatments) == 0) {
-      cat("DEBUG CB ERROR: No raw_data returned from load_historical_treatments\n")
+      mmcd_debug("DEBUG CB ERROR: No raw_data returned from load_historical_treatments\n")
       return(data.frame())
     }
     
@@ -247,13 +247,13 @@ create_historical_cb_data <- function(start_year, end_year,
         treatment_end = inspdate + effect_days
       )
     
-    cat("DEBUG CB: After mutate, treatments rows =", nrow(treatments), "\n")
+    mmcd_debug("DEBUG CB: After mutate, treatments rows =", nrow(treatments), "\n")
     
     # Apply facility filter if provided (and not "all")
     if (!is.null(facility_filter) && length(facility_filter) > 0 && !("all" %in% facility_filter)) {
-      cat("DEBUG CB: Applying facility filter:", paste(facility_filter, collapse = ","), "\n")
+      mmcd_debug("DEBUG CB: Applying facility filter:", paste(facility_filter, collapse = ","), "\n")
       treatments <- treatments %>% filter(facility %in% facility_filter)
-      cat("DEBUG CB: After facility filter, treatments rows =", nrow(treatments), "\n")
+      mmcd_debug("DEBUG CB: After facility filter, treatments rows =", nrow(treatments), "\n")
     }
     
     # Build facility_full using lookup
@@ -269,42 +269,19 @@ create_historical_cb_data <- function(start_year, end_year,
       treatments$facility_full <- treatments$facility
     }
     
-    # Generate all weeks in the date range
-    start_date <- as.Date(paste0(start_year, "-01-01"))
-    end_date <- as.Date(paste0(end_year, "-12-31"))
-    all_weeks <- seq.Date(start_date, end_date, by = "week")
-    
-    cat("DEBUG CB: Loaded", nrow(treatments), "raw treatments\n")
-    cat("DEBUG CB: Processing", length(all_weeks), "weeks\n")
-    
-    # For each week, count ACTIVE catch basins (treatments that are still active on that Friday)
-    week_data <- data.frame()
-    
-    for (week_start in all_weeks) {
-      week_friday <- as.Date(week_start) + 4  # Friday of that week
-      week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
-      
-      # Find catch basins with active treatment on that Friday
-      # Active = treatment started on or before Friday AND treatment hasn't expired yet
-      active_on_friday <- treatments %>%
-        filter(
-          inspdate <= week_friday,
-          treatment_end >= week_friday
-        )
-      
-      if (nrow(active_on_friday) > 0) {
-        # Count UNIQUE catch basins with active treatment (not total treatments)
-        active_data <- active_on_friday %>%
-          mutate(time_period = week_label) %>%
-          select(catchbasin_id, facility, facility_full, zone, time_period) %>%
-          distinct(catchbasin_id, .keep_all = TRUE)  # One count per catch basin
-        
-        week_data <- bind_rows(week_data, active_data)
-      }
-    }
-    
+    # Expand each treatment to one row per week it was still active on.
+    # Active = treatment started on or before that week's Friday AND had not
+    # yet expired. Vectorised in shared/historical_helpers.R - this used to be
+    # a per-week filter loop over the whole treatments table.
+    fridays <- weekly_fridays(paste0(start_year, "-01-01"),
+                              paste0(end_year, "-12-31"))
+
+    week_data <- expand_active_by_week(treatments, fridays) %>%
+      select(catchbasin_id, facility, facility_full, zone, time_period) %>%
+      # One count per catch basin per week, not per treatment
+      distinct(time_period, catchbasin_id, .keep_all = TRUE)
+
     if (nrow(week_data) == 0) {
-      cat("DEBUG CB ERROR: week_data is empty after loop\n")
       return(data.frame())
     }
     

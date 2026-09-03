@@ -244,36 +244,20 @@ create_historical_struct_data <- function(start_year, end_year,
     # Weekly aggregation
     start_date <- as.Date(paste0(start_year, "-01-01"))
     end_date <- as.Date(paste0(end_year, "-12-31"))
-    all_weeks <- seq.Date(start_date, end_date, by = "week")
-    
-    week_data <- data.frame()
-    
-    for (week_start in all_weeks) {
-      week_friday <- as.Date(week_start) + 4
-      week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
-      
-      # Find active treatments on that Friday
-      active_treatments <- treatments %>%
-        mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 30, effect_days)
-        ) %>%
-        filter(
-          as.Date(inspdate) <= week_friday,
-          treatment_end >= week_friday
-        )
-      
-      if (nrow(active_treatments) > 0) {
-        # Count active treatments
-        week_result <- active_treatments %>%
-          mutate(time_period = week_label) %>%
-          group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
-          summarise(count = n(), .groups = "drop")
-        
-        week_data <- bind_rows(week_data, week_result)
-      }
-    }
-    
-    result <- week_data
+    # Expand each treatment to one row per week it was still active on, then
+    # count per group. treatment_end is computed ONCE here - it used to be
+    # recomputed over the whole table inside the per-week loop.
+    # See shared/historical_helpers.R.
+    fridays <- weekly_fridays(start_date, end_date)
+
+    result <- treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 30, effect_days)
+      ) %>%
+      expand_active_by_week(fridays) %>%
+      group_by(time_period, facility, facility_full, zone, fosarea, foreman_name) %>%
+      summarise(count = n(), .groups = "drop")
   }
   
   # Apply grouping

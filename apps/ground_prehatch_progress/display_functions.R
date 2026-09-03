@@ -174,18 +174,19 @@ create_progress_chart <- function(data, group_by, expiring_filter = "all", expir
       hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12))
     )
   
-  # Add custom hover text for each bar - use invisible bars instead of scatter points
-  for (i in 1:nrow(data)) {
-    row_data <- data[i, ]
-    # Add invisible overlay bar for hover tooltip
+  # Add custom hover text for each bar - one invisible overlay bar per group.
+  # This is a single vectorised trace: it used to be one add_trace() call per
+  # row, which put N near-identical traces into the payload the browser has to
+  # parse. Same visual result, same per-bar hover text.
+  if (nrow(data) > 0) {
     plotly_chart <- plotly_chart %>%
       add_trace(
-        x = row_data$display_name,
-        y = 0.1,  # Small height to trigger hover
+        x = data$display_name,
+        y = rep(0.1, nrow(data)),  # Small height to trigger hover
         type = "bar",
         marker = list(color = "rgba(0,0,0,0)"),  # Completely transparent
         hoverinfo = "text",
-        text = row_data$tooltip_total,
+        text = data$tooltip_total,
         showlegend = FALSE,
         inherit = FALSE
       )
@@ -448,18 +449,14 @@ create_details_table <- function(data, foremen_lookup) {
     ))
   }
   
-  # Map fosarea (empnum) to foreman names
-  data$foreman_name <- NA
-  for (i in 1:nrow(data)) {
-    if (!is.na(data$fosarea[i])) {
-      foreman_row <- foremen_lookup[foremen_lookup$emp_num == data$fosarea[i], ]
-      if (nrow(foreman_row) > 0) {
-        data$foreman_name[i] <- foreman_row$shortname[1]
-      } else {
-        data$foreman_name[i] <- data$fosarea[i]  # Fallback to empnum
-      }
-    }
-  }
+  # Map fosarea (empnum) to foreman names. Single vectorised match() rather
+  # than a per-row scan of the lookup table - this runs on every table render.
+  # Unmatched codes fall back to the empnum itself; NA fosarea stays NA.
+  matched <- match(data$fosarea, foremen_lookup$emp_num)
+  data$foreman_name <- ifelse(is.na(data$fosarea), NA_character_,
+                              ifelse(is.na(matched),
+                                     as.character(data$fosarea),
+                                     as.character(foremen_lookup$shortname)[matched]))
   
   # Format data for display
   display_data <- data %>%
@@ -511,18 +508,13 @@ prepare_download_data <- function(data, foremen_lookup) {
     return(data.frame(Message = "No data available with current filters"))
   }
   
-  # Map fosarea (empnum) to foreman names
-  data$foreman_name <- NA
-  for (i in 1:nrow(data)) {
-    if (!is.na(data$fosarea[i])) {
-      foreman_row <- foremen_lookup[foremen_lookup$emp_num == data$fosarea[i], ]
-      if (nrow(foreman_row) > 0) {
-        data$foreman_name[i] <- foreman_row$shortname[1]
-      } else {
-        data$foreman_name[i] <- data$fosarea[i]  # Fallback to empnum
-      }
-    }
-  }
+  # Map fosarea (empnum) to foreman names (same vectorised mapping as
+  # create_details_table - see the note there).
+  matched <- match(data$fosarea, foremen_lookup$emp_num)
+  data$foreman_name <- ifelse(is.na(data$fosarea), NA_character_,
+                              ifelse(is.na(matched),
+                                     as.character(data$fosarea),
+                                     as.character(foremen_lookup$shortname)[matched]))
   
   # Format for download (same as displayed data)
   download_data <- data %>%

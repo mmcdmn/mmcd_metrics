@@ -318,15 +318,9 @@ get_field_employees <- function() {
 # CLAIM FUNCTIONS (Redis-backed, shared across all workers)
 # =============================================================================
 
-CLAIM_HASH_PREFIX <- "claim"
-CLAIM_TTL <- 172800L  # 2 days
-
-#' Build Redis hash key for claims on a given date
-#' @param date Character date "YYYY-MM-DD"
-#' @return Key like "claim:2026-03-13"
-claim_hash_key <- function(date) {
-  paste0(CLAIM_HASH_PREFIX, ":", date)
-}
+# CLAIM_HASH_PREFIX, CLAIM_TTL and claim_hash_key() are defined once in
+# shared/redis_cache.R (sourced via db_helpers.R) so the API and this app
+# cannot drift apart - see the note there.
 
 #' Set a claim for a sitecode on a given date
 #' @param sitecode Character sitecode

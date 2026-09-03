@@ -45,45 +45,31 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   
   # Special logic for weekly active treatments (active sites and active acres)
   if (hist_time_period == "weekly" && hist_display_metric %in% c("active_count", "active_acres")) {
-    # Generate all weeks in the range
-    all_weeks <- seq.Date(start_date, end_date, by = "week")
-    week_data <- data.frame()
-    
-    for (week_start in all_weeks) {
-      week_friday <- as.Date(week_start) + 4  # Friday of that week
-      week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
-      
-      # Find sites/acres with active treatment on that Friday
-      active_treatments <- drone_treatments %>%
-        mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days)
-        ) %>%
-        filter(
-          as.Date(inspdate) <= week_friday,
-          treatment_end >= week_friday
-        )
-      
-      if (nrow(active_treatments) > 0) {
-        # Join with sites for acres data if needed, but keep all necessary columns
-        if (hist_display_metric == "active_acres") {
-          active_data <- active_treatments %>%
-            inner_join(drone_sites %>% select(sitecode, facility, zone, foreman, acres), 
-                      by = "sitecode", relationship = "many-to-many") %>%
-            mutate(time_period = week_label) %>%
-            # Use site acres instead of treated acres for weekly active view
-            select(sitecode, facility = facility.y, zone = zone.y, foreman = foreman.y, 
-                  acres = acres.y, time_period)
-        } else {
-          # For sites metric, use the treatment data but ensure we have facility/zone
-          active_data <- active_treatments %>%
-            mutate(time_period = week_label) %>%
-            select(sitecode, facility, zone, foreman, time_period)
-        }
-        
-        week_data <- bind_rows(week_data, active_data)
-      }
+    # Expand each treatment to one row per week it was still active on.
+    # treatment_end is computed ONCE here - it used to be recomputed over the
+    # whole table inside the per-week loop. See shared/historical_helpers.R.
+    fridays <- weekly_fridays(start_date, end_date)
+
+    active_by_week <- drone_treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days)
+      ) %>%
+      expand_active_by_week(fridays)
+
+    if (hist_display_metric == "active_acres") {
+      # Use site acres instead of treated acres for weekly active view
+      week_data <- active_by_week %>%
+        inner_join(drone_sites %>% select(sitecode, facility, zone, foreman, acres),
+                   by = "sitecode", relationship = "many-to-many") %>%
+        select(sitecode, facility = facility.y, zone = zone.y, foreman = foreman.y,
+               acres = acres.y, time_period)
+    } else {
+      # For sites metric, use the treatment data but ensure we have facility/zone
+      week_data <- active_by_week %>%
+        select(sitecode, facility, zone, foreman, time_period)
     }
-    
+
     data_source <- week_data
   } else {
     # Original logic for yearly or treatments

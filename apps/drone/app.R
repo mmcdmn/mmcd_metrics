@@ -5,6 +5,7 @@ source("../../shared/app_libraries.R")
 source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/stat_box_helpers.R")
+source("../../shared/historical_helpers.R")
 
 # Source external function files
 source("ui_helper.R")

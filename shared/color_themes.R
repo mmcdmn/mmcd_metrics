@@ -30,6 +30,11 @@ get_theme_palette <- function(theme = "MMCD") {
     
     # MMCD Default Theme (Current Implementation)
     MMCD = list(
+      indicators = c(good = "#16a34a", warning = "#eab308", alert = "#dc2626"),
+      surface = c(bg = "#0f172a", panel = "#1e293b", border = "#334155",
+                  text = "#e2e8f0", text_muted = "#cbd5e1",
+                  link = "#60a5fa", neutral = "#64748b",
+                  faint = "#94a3b8", text_strong = "#f1f5f9"),
       primary = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
                   "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"),
       facilities = c(
@@ -60,6 +65,13 @@ get_theme_palette <- function(theme = "MMCD") {
     
     # IBM Design Language Colors
     IBM = list(
+      indicators = c(good = "#198038", warning = "#f1c21b", alert = "#fa4d56"),
+      surface = c(bg = "#161616", panel = "#262626", border = "#393939",
+                  text = "#f4f4f4", text_muted = "#c6c6c6",
+                  link = "#78a9ff", neutral = "#6f6f6f",
+                  faint = "#a8a8a8", text_strong = "#ffffff"),
+      sequential_heat = c("#fcf4d6", "#fddc69", "#f1c21b", "#ff832b", "#fa4d56",
+                          "#da1e28", "#a2191f", "#750e13", "#520408"),
       primary = c("#0f62fe", "#ff7eb6", "#42be65", "#fa4d56", "#8a3ffc",
                   "#33b1ff", "#d12771", "#198038", "#ba4e00", "#8a3800"),
       facilities = c(
@@ -90,6 +102,13 @@ get_theme_palette <- function(theme = "MMCD") {
     # Reference: Bang Wong (2011) Nature Methods
     # Note: Original palette includes black, but we avoid it for facilities where possible
     Wong = list(
+      indicators = c(good = "#009E73", warning = "#E69F00", alert = "#D55E00"),
+      surface = c(bg = "#11212B", panel = "#1B3140", border = "#2A4A5E",
+                  text = "#EAF4F8", text_muted = "#B8D4E0",
+                  link = "#56B4E9", neutral = "#5A7A8A",
+                  faint = "#8FB0C0", text_strong = "#FFFFFF"),
+      sequential_heat = c("#FFF7D6", "#F7E08A", "#F0E442", "#F5C242", "#E69F00",
+                          "#E07B26", "#D55E00", "#A84700", "#7A3300"),
       primary = c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
                   "#0072B2", "#D55E00", "#CC79A7", "#000000"),
       facilities = c(
@@ -118,6 +137,13 @@ get_theme_palette <- function(theme = "MMCD") {
     
     # Tol's Color Schemes
     Tol = list(
+      indicators = c(good = "#117733", warning = "#DDCC77", alert = "#CC6677"),
+      surface = c(bg = "#1A1526", panel = "#2A2338", border = "#3E3450",
+                  text = "#EDE8F5", text_muted = "#C9BFDC",
+                  link = "#88CCEE", neutral = "#6E6288",
+                  faint = "#A99CC4", text_strong = "#FFFFFF"),
+      sequential_heat = c("#FFFFE5", "#F7F0B9", "#DDCC77", "#E0B769", "#CC9944",
+                          "#CC6677", "#AA4455", "#882255", "#661133"),
       primary = c("#332288", "#88CCEE", "#44AA99", "#117733", "#999933",
                   "#DDCC77", "#CC6677", "#882255", "#AA4499"),
       facilities = c(
@@ -146,6 +172,13 @@ get_theme_palette <- function(theme = "MMCD") {
     
     # Viridis - Perceptually Uniform Sequential
     Viridis = list(
+      indicators = c(good = "#35B779", warning = "#FDE724", alert = "#440154"),
+      surface = c(bg = "#12122B", panel = "#1E2140", border = "#31385A",
+                  text = "#E8EAF6", text_muted = "#C2C8E0",
+                  link = "#6DCD59", neutral = "#4A5578",
+                  faint = "#8892B8", text_strong = "#FFFFFF"),
+      sequential_heat = c("#FDE724", "#B4DE2C", "#6DCD59", "#35B779", "#1F9E89",
+                          "#26828E", "#31688E", "#482878", "#440154"),
       primary = c("#440154", "#482878", "#3E4A89", "#31688E", "#26828E",
                   "#1F9E89", "#35B779", "#6DCD59", "#B4DE2C", "#FDE724"),
       facilities = c(
@@ -174,6 +207,13 @@ get_theme_palette <- function(theme = "MMCD") {
     
     # ColorBrewer - Set1 (Qualitative) with Extensions
     ColorBrewer = list(
+      indicators = c(good = "#4DAF4A", warning = "#FF7F00", alert = "#E41A1C"),
+      surface = c(bg = "#1A1A1A", panel = "#2B2B2B", border = "#404040",
+                  text = "#F0F0F0", text_muted = "#C8C8C8",
+                  link = "#4B94D6", neutral = "#6B6B6B",
+                  faint = "#A0A0A0", text_strong = "#FFFFFF"),
+      sequential_heat = c("#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c",
+                          "#fc4e2a", "#e31a1c", "#bd0026", "#800026"),
       primary = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",
                   "#FFFF33", "#A65628", "#F781BF", "#999999"),
       facilities = c(
@@ -238,6 +278,29 @@ get_theme_description <- function(theme) {
   return(descriptions[[theme]] %||% "No description available")
 }
 
+#' Labeled theme choices for a selectInput
+#'
+#' Returns a named character vector suitable for `selectInput(choices = ...)`,
+#' built from get_available_themes() so a newly added theme shows up in every
+#' app's picker automatically. Previously all 14 pickers hardcoded their own
+#' list, which is how the overview ended up silently missing ColorBrewer.
+#'
+#' @return Named character vector (label -> theme name)
+get_theme_choices <- function() {
+  themes <- get_available_themes()
+  labels <- c(
+    MMCD        = "MMCD (Default)",
+    IBM         = "IBM Design",
+    Wong        = "Color-Blind Friendly",
+    Tol         = "Scientific (Color Blind Safe)",
+    Viridis     = "Viridis",
+    ColorBrewer = "ColorBrewer"
+  )
+  # Unlabeled themes fall back to their own name rather than dropping out.
+  display <- ifelse(themes %in% names(labels), labels[themes], themes)
+  stats::setNames(themes, display)
+}
+
 #' Generate Distinct Colors with Theme Support
 #' 
 #' Generates N distinct colors using the specified theme's color palette
@@ -290,6 +353,47 @@ get_historical_comparison_colors <- function(theme = "MMCD") {
   )
   
   return(colors)
+}
+
+#' Convert a hex color to an rgba() CSS/plotly string
+#'
+#' @param hex Hex color (e.g. "#dc2626")
+#' @param alpha Opacity 0-1
+#' @return "rgba(r,g,b,alpha)" string
+hex_to_rgba <- function(hex, alpha = 1) {
+  if (is.null(hex) || length(hex) != 1 || is.na(hex) || !nzchar(hex)) {
+    hex <- "#dc2626"
+  }
+  v <- tryCatch(col2rgb(hex)[, 1], error = function(e) c(220, 38, 38))
+  sprintf("rgba(%d,%d,%d,%s)", v[1], v[2], v[3], format(alpha, trim = TRUE))
+}
+
+#' Pick a readable foreground color for a given background
+#'
+#' Value boxes paint text directly onto a metric/indicator color. Most of those
+#' are dark enough for white text, but some are not — Viridis `warning`
+#' (#FDE724) and Wong `#F0E442` are near-yellow and render white text unreadable.
+#' Chooses via WCAG relative luminance rather than a hardcoded "#ffffff".
+#'
+#' @param bg_color Hex background color
+#' @param dark Foreground to use on light backgrounds
+#' @param light Foreground to use on dark backgrounds
+#' @return Hex color string
+contrast_text_color <- function(bg_color, dark = "#1a1a1a", light = "#ffffff") {
+  if (is.null(bg_color) || length(bg_color) != 1 ||
+      is.na(bg_color) || !nzchar(bg_color)) {
+    return(light)
+  }
+  rgb_vals <- tryCatch(col2rgb(bg_color)[, 1] / 255, error = function(e) NULL)
+  if (is.null(rgb_vals)) return(light)
+
+  # WCAG 2.x relative luminance
+  lin <- ifelse(rgb_vals <= 0.03928,
+                rgb_vals / 12.92,
+                ((rgb_vals + 0.055) / 1.055) ^ 2.4)
+  luminance <- sum(c(0.2126, 0.7152, 0.0722) * lin)
+
+  if (luminance > 0.45) dark else light
 }
 
 # NULL coalescing operator

@@ -150,7 +150,7 @@ parse_unified_params <- function(query_string) {
   
   # Parse theme
   color_theme <- "MMCD"  # default
-  if (!is.null(query$theme) && query$theme %in% c("MMCD", "IBM", "Wong", "Tol", "Viridis")) {
+  if (!is.null(query$theme) && query$theme %in% get_available_themes()) {
     color_theme <- query$theme
   }
   

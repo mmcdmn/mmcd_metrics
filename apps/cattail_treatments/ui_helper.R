@@ -111,12 +111,7 @@ cattail_treatments_ui <- function() {
                      selected = "sites"),
         
         selectInput("color_theme", "Color Theme:",
-                    choices = c("MMCD (Default)" = "MMCD",
-                                "IBM Design" = "IBM",
-                                "Color-Blind Friendly" = "Wong",
-                                "Scientific" = "Tol",
-                                "Viridis" = "Viridis",
-                                "ColorBrewer" = "ColorBrewer"),
+                    choices = get_theme_choices(),
                     selected = "MMCD"),
         
         tags$small(style = "color: #999;", "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug).")

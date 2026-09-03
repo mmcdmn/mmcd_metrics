@@ -80,7 +80,7 @@ catch_basin_ui <- function() {
         
         # Shared controls
         selectInput("color_theme", "Color Theme:",
-                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    choices = get_available_themes(),
                     selected = "MMCD"),
         
         selectInput("zone_filter", "Zone Display:",
@@ -201,12 +201,7 @@ create_filter_panel <- function() {
       ),
       column(3,
         selectInput("color_theme", "Color Theme:",
-                   choices = c("MMCD (Default)" = "MMCD",
-                              "IBM Design" = "IBM",
-                              "Color-Blind Friendly" = "Wong",
-                              "Scientific" = "Tol",
-                              "Viridis" = "Viridis",
-                              "ColorBrewer" = "ColorBrewer"),
+                   choices = get_theme_choices(),
                    selected = "MMCD"),
         tags$small(style = "color: #666;", "Changes chart colors")
       ),

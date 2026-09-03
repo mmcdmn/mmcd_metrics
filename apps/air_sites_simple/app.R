@@ -135,7 +135,10 @@ server <- function(input, output, session) {
   raw_data <- eventReactive(input$refresh, {
     inputs <- refresh_inputs()
     withProgress(message = "Loading air sites data...", value = 0.5, {
-      get_air_sites_data(
+      # Shared 2-min Redis cache (see cached_call in server_utilities.R).
+      # Key covers every argument below, so a change to any filter reloads.
+      cached_call(
+        "air_sites_simple:raw", get_air_sites_data,
         analysis_date = inputs$analysis_date,
         facility_filter = inputs$facility_filter,
         priority_filter = NULL,

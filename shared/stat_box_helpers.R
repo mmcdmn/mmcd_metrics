@@ -10,8 +10,28 @@
 #' @param icon Icon name (without "fa-" prefix), Shiny icon object, or path to image
 #' @param icon_type Type of icon: "fontawesome" (default) or "image"
 #' @param metric_id Optional metric ID for info button (shows description + wiki link)
+#' @param theme Color theme name; used to resolve `bg_color` when a status
+#'   keyword ("good"/"warning"/"alert" or a theme status name) is passed instead
+#'   of a hex code.
 #' @return A Shiny value box UI element
-create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon = NULL, icon_type = "fontawesome", metric_id = NULL) {
+create_stat_box <- function(value, title, bg_color, text_color = NULL, icon = NULL,
+                            icon_type = "fontawesome", metric_id = NULL,
+                            theme = getOption("mmcd.color.theme", "MMCD")) {
+  # Accept a status keyword in place of a raw hex, so callers can stop
+  # hardcoding colors. Anything already starting with "#" passes through.
+  bg_color <- resolve_box_color(bg_color, theme = theme)
+
+  # text_color defaults to NULL = auto-contrast. Callers passing an explicit
+  # color still win. White text was previously hardcoded, which is unreadable
+  # on light indicator colors (e.g. Viridis warning #FDE724).
+  if (is.null(text_color)) {
+    text_color <- if (exists("contrast_text_color", mode = "function", inherits = TRUE)) {
+      contrast_text_color(bg_color)
+    } else {
+      "#ffffff"
+    }
+  }
+
   # Convert icon name to icon object or image element
   icon_element <- NULL
   if (!is.null(icon)) {
@@ -95,31 +115,52 @@ create_stat_box <- function(value, title, bg_color, text_color = "#ffffff", icon
 #' @param title The title/label for the value box
 #' @param status Status type (e.g., "unknown", "completed", "needs_inspection", etc.)
 #' @param icon Shiny icon for the value box
-#' @param theme Color theme name (default "default")
+#' @param theme Color theme name. Defaults to the active theme; the previous
+#'   default of "default" was not a valid theme name and made every call emit
+#'   "Theme 'default' not found" while ignoring the configured theme.
 #' @return A Shiny value box UI element
-create_status_stat_box <- function(value, title, status, icon = NULL, theme = "default") {
-  # Get status colors for the theme
-  colors <- get_status_colors(theme = theme)
-  
-  # Safely get the background color for this status
-  # Use named vector access with fallback for unknown statuses
-  bg_color <- if (status %in% names(colors)) {
-    colors[[status]]
-  } else {
-    "#3c8dbc"  # Default blue fallback
-  }
-  
-  # Additional safety check
-  if (is.null(bg_color) || length(bg_color) == 0 || is.na(bg_color)) {
-    bg_color <- "#3c8dbc"  # Default blue
-  }
-  
-  # Use the create_stat_box function with theme colors
+create_status_stat_box <- function(value, title, status, icon = NULL,
+                                   theme = getOption("mmcd.color.theme", "MMCD")) {
   create_stat_box(
     value = value,
     title = title,
-    bg_color = bg_color,
-    text_color = "#ffffff",
-    icon = icon
+    bg_color = resolve_box_color(status, theme = theme),
+    icon = icon,
+    theme = theme
   )
+}
+
+#' Resolve a stat box background color from a hex, status name, or indicator name
+#'
+#' Accepts, in order: a literal hex ("#1f77b4"), one of the indicator keywords
+#' ("good"/"warning"/"alert"), or one of the theme status names ("active",
+#' "completed", "planned", "needs_action", "in_lab", "needs_treatment",
+#' "unknown"). Anything unrecognised falls back to a neutral blue.
+#'
+#' @param x Hex color, indicator keyword, or status name
+#' @param theme Color theme name
+#' @return Hex color string
+resolve_box_color <- function(x, theme = getOption("mmcd.color.theme", "MMCD")) {
+  fallback <- "#3c8dbc"
+
+  # A typo'd or missing lookup upstream can produce NA; don't emit "NA" into CSS.
+  if (is.null(x) || length(x) != 1 || is.na(x) || !nzchar(as.character(x))) {
+    return(fallback)
+  }
+  x <- as.character(x)
+  if (startsWith(x, "#")) return(x)
+
+  if (x %in% c("good", "warning", "alert")) {
+    ind <- tryCatch(get_indicator_colors(theme = theme), error = function(e) NULL)
+    if (!is.null(ind) && !is.na(ind[x])) return(unname(ind[x]))
+    return(fallback)
+  }
+
+  colors <- tryCatch(get_status_colors(theme = theme), error = function(e) NULL)
+  if (!is.null(colors) && x %in% names(colors)) {
+    v <- colors[[x]]
+    if (!is.null(v) && length(v) == 1 && !is.na(v) && nzchar(v)) return(unname(v))
+  }
+
+  fallback
 }

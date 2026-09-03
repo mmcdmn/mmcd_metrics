@@ -46,7 +46,7 @@ trap_surveillance_ui <- function() {
               ),
               hr(),
               selectInput("color_theme", "Color Theme:",
-                         choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                         choices = get_available_themes(),
                          selected = "MMCD"),
               hr(),
               checkboxInput("compare_mode", "Compare Two Weeks", value = FALSE),

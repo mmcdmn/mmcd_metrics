@@ -57,6 +57,10 @@ air_inspection_checklist_ui <- function() {
         checkboxInput("show_unfinished_only", "Show Only Unfinished",
                       value = FALSE),
 
+        selectInput("color_theme", "Color Theme:",
+                    choices = get_theme_choices(),
+                    selected = "MMCD"),
+
         checkboxInput("show_active_treatment", "Show Prehatch Treatment Sites",
                       value = FALSE),
 

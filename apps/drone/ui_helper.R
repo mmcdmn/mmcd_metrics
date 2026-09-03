@@ -93,7 +93,7 @@ drone_ui <- function() {
                  format = "yyyy-mm-dd"),
         
         selectInput("color_theme", "Color Theme:",
-                    choices = c("MMCD", "IBM", "Wong", "Tol", "Viridis", "ColorBrewer"),
+                    choices = get_available_themes(),
                     selected = "MMCD"),
         
         checkboxInput("prehatch_only", "Show Only Prehatch Sites", value = TRUE),

@@ -126,6 +126,24 @@ if (!exists("%||%", mode = "function")) {
 }
 
 # =============================================================================
+# DEBUG LOGGING
+# =============================================================================
+# Diagnostic tracing that used to run unconditionally inside render paths and
+# data loaders. Off by default; enable with options(mmcd.debug = TRUE) (or the
+# MMCD_DEBUG environment variable) when investigating a specific app.
+mmcd_debug_enabled <- function() {
+  opt <- getOption("mmcd.debug", NULL)
+  if (!is.null(opt)) return(isTRUE(opt))
+  nzchar(Sys.getenv("MMCD_DEBUG"))
+}
+
+#' Print a debug line only when debug logging is enabled
+mmcd_debug <- function(...) {
+  if (mmcd_debug_enabled()) cat(...)
+  invisible(NULL)
+}
+
+# =============================================================================
 # IN-MEMORY LOOKUP CACHE (Fast per-process cache)
 # =============================================================================
 
@@ -1366,22 +1384,28 @@ generate_distinct_colors_internal <- function(n, theme = getOption("mmcd.color.t
 #' Returns:
 #'   If alpha_zones is NULL: Named vector where names are facility short names and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
-get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
-  # Try Redis cache for color mappings (7-day TTL)
-  if (exists("get_cached_color_mapping", mode = "function")) {
-    cached <- tryCatch({
-      get_cached_color_mapping(
-        "facility_base_colors",
-        gen_func = function() {
-          .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
-        },
-        alpha_zones, combined_groups, theme
-      )
-    }, error = function(e) NULL)
-    if (!is.null(cached)) return(cached)
-  }
-  .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
+# Build a stable in-memory cache key for a colour mapping. Arguments are
+# small (a theme name plus optional zone/group vectors), so pasting them is
+# cheaper and more legible than hashing.
+.color_cache_key <- function(cache_id, alpha_zones, combined_groups, theme) {
+  paste0("color:", cache_id, ":", theme,
+         ":az=", paste(as.character(alpha_zones), collapse = "|"),
+         ":cg=", paste(as.character(combined_groups), collapse = "|"))
 }
+
+get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
+  # In-process memory cache. This used to go to Redis (7-day TTL), but the
+  # work being cached is a small local lookup over ~7 facilities - a network
+  # round trip plus serialize/unserialize cost more than recomputing it.
+  key <- .color_cache_key("facility_base_colors", alpha_zones, combined_groups, theme)
+  cached <- get_memory_cached(key)
+  if (!is.null(cached)) return(cached)
+
+  result <- .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
+  if (!is.null(result)) set_memory_cached(key, result)
+  result
+}
+
 
 #' Internal uncached implementation
 .get_facility_base_colors_uncached <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
@@ -1486,21 +1510,18 @@ get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL,
 #'   If alpha_zones is NULL: Named vector where names are foreman shortnames and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
 get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
-  # Try Redis cache for color mappings (7-day TTL)
-  if (exists("get_cached_color_mapping", mode = "function")) {
-    cached <- tryCatch({
-      get_cached_color_mapping(
-        "foreman_colors",
-        gen_func = function() {
-          .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
-        },
-        alpha_zones, combined_groups, theme
-      )
-    }, error = function(e) NULL)
-    if (!is.null(cached)) return(cached)
-  }
-  .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
+  # In-process memory cache. This used to go to Redis (7-day TTL), but the
+  # work being cached is a small local lookup over ~7 facilities - a network
+  # round trip plus serialize/unserialize cost more than recomputing it.
+  key <- .color_cache_key("foreman_colors", alpha_zones, combined_groups, theme)
+  cached <- get_memory_cached(key)
+  if (!is.null(cached)) return(cached)
+
+  result <- .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
+  if (!is.null(result)) set_memory_cached(key, result)
+  result
 }
+
 
 #' Internal uncached implementation
 .get_foreman_colors_uncached <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
@@ -1624,12 +1645,15 @@ get_status_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
     "unknown" = "#A9A9A9"      # Dark gray for unknown status
   )
   
-  # For MMCD theme or if theme system not available, use default colors
-  if (theme == "MMCD" || !exists("get_theme_palette", mode = "function", inherits = TRUE)) {
+  # If the theme system is unavailable, fall back to the baked-in MMCD copy.
+  if (!exists("get_theme_palette", mode = "function", inherits = TRUE)) {
     return(default_colors)
   }
   
-  # Try to use theme-specific status colors for non-MMCD themes
+  # Read status colors from the palette for EVERY theme, MMCD included.
+  # Previously MMCD short-circuited to default_colors above, which made the
+  # hardcoded block a second source of truth for colors that also live in
+  # color_themes.R. They agreed, but nothing kept them in sync.
   tryCatch({
     palette <- get_theme_palette(theme)
     if (!is.null(palette$status)) {
@@ -1642,6 +1666,40 @@ get_status_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
   
   # Final fallback to default MMCD colors
   return(default_colors)
+}
+
+# Resolve good/warning/alert indicator colors for value boxes and status chips.
+#
+# Precedence: theme palette `indicators` -> optional global override from
+# config/app_config.yaml `thresholds.colors` -> hardcoded MMCD literals.
+#
+# The config override is intentionally LAST so that setting thresholds.colors
+# pins one set of status colors across every theme. It is commented out in
+# app_config.yaml by default; if it is populated, themes stop affecting these
+# three colors entirely (that is the documented purpose of the key).
+#
+# Lives here rather than in config.R because this file already sources
+# color_themes.R; config.R does not, and adding that edge would make the
+# config loader depend on the theme system.
+get_indicator_colors <- function(theme = getOption("mmcd.color.theme", "MMCD")) {
+  base <- c(good = "#16a34a", warning = "#eab308", alert = "#dc2626")
+
+  themed <- tryCatch(get_theme_palette(theme)$indicators, error = function(e) NULL)
+  if (!is.null(themed)) {
+    for (k in names(base)) {
+      if (!is.na(themed[k]) && nzchar(themed[k])) base[[k]] <- unname(themed[k])
+    }
+  }
+
+  override <- tryCatch(get_status_indicator_colors(), error = function(e) NULL)
+  if (!is.null(override)) {
+    for (k in names(base)) {
+      v <- override[[k]]
+      if (!is.null(v) && length(v) == 1 && !is.na(v) && nzchar(v)) base[[k]] <- as.character(v)
+    }
+  }
+
+  base
 }
 
 # Map hex colors to Shiny named colors for valueBox and dashboard elements
@@ -1729,6 +1787,12 @@ get_mosquito_species_colors <- function() {
     Ae_japonicus_52 = "#008000", Ps_ciliata_44 = "#a52a2a", Ps_columbiae_45 = "#008000",
     Ps_ferox_46 = "#000000", sp471ps_un = "#808080", Ps_horrida_47 = "#FF0000", sp38_inorn = "#0000FF",
     Total_Psorophora = "#00FFFF", Culiseta_melanura = "#FF0000", sp40_minne = "#ffa500", sp41_morsi = "#a52a2a",
+    # Culiseta species are referenced under two key spellings in the codebase:
+    # mosquito-monitoring/app.R uses Cs_*_NN while display_functions.R and the
+    # keys above use the sp*/Culiseta_* form. Both resolve to the same color so
+    # either spelling works; do not drop one without migrating its callers.
+    Cs_inornata_38 = "#0000FF", Cs_melanura_39 = "#FF0000",
+    Cs_minnesotae_40 = "#ffa500", Cs_morsitans_41 = "#a52a2a",
     sp411cs_un = "#808080", Or_signifera_43 = "#87cefa", Ur_sapphirina_48 = "#00008b", sp49_smith = "#0000FF"
   ))
 }

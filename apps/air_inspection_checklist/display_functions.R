@@ -7,10 +7,14 @@
 #' @param bg_color Background color
 #' @return Shiny tag
 create_summary_box <- function(value, label, bg_color = "#f8f9fa") {
-  # Auto-detect text color: white for dark backgrounds, dark for light ones
-  is_dark <- bg_color %in% c("#28a745", "#dc3545", "#007bff", "#dc2626", "#16a34a")
-  text_color <- if (is_dark) "#ffffff" else "#333333"
-  label_color <- if (is_dark) "rgba(255,255,255,0.85)" else "#666666"
+  # Text color by measured luminance rather than a hardcoded list of "dark"
+  # hexes, which silently failed for any color not in that list.
+  text_color <- if (exists("contrast_text_color", mode = "function", inherits = TRUE)) {
+    contrast_text_color(bg_color, dark = "#333333", light = "#ffffff")
+  } else {
+    "#333333"
+  }
+  label_color <- if (text_color == "#ffffff") "rgba(255,255,255,0.85)" else "#666666"
   
   div(class = "summary-box",
       style = paste0("background-color:", bg_color, "; flex: 1; min-width: 120px;"),
@@ -42,7 +46,8 @@ bug_badge_html <- function(bug_status) {
 #' @param data Data frame from get_checklist_data()
 #' @param show_unfinished_only Logical, filter to only not-inspected sites
 #' @return Shiny tagList
-build_checklist_html <- function(data, show_unfinished_only = FALSE) {
+build_checklist_html <- function(data, show_unfinished_only = FALSE,
+                                 theme = getOption("mmcd.color.theme", "MMCD")) {
   if (is.null(data) || nrow(data) == 0) {
     return(div(style = "text-align: center; padding: 40px; color: #999;",
                icon("clipboard-list", style = "font-size: 48px;"),
@@ -54,7 +59,9 @@ build_checklist_html <- function(data, show_unfinished_only = FALSE) {
   if (show_unfinished_only) {
     data <- data[!data$was_inspected, ]
     if (nrow(data) == 0) {
-      return(div(style = "text-align: center; padding: 40px; color: #28a745;",
+      .all_done_color <- tryCatch(unname(get_indicator_colors(theme = theme)[["good"]]),
+                                  error = function(e) "#28a745")
+      return(div(style = paste0("text-align: center; padding: 40px; color: ", .all_done_color, ";"),
                  icon("check-circle", style = "font-size: 48px;"),
                  h4("All sites have been inspected!"),
                  p("All RED air sites have inspections within the lookback window.")))
@@ -69,18 +76,29 @@ build_checklist_html <- function(data, show_unfinished_only = FALSE) {
   red_bugs <- sum(data$bug_status == "Red Bugs", na.rm = TRUE)
   pending_lab <- sum(data$bug_status == "Pending Lab", na.rm = TRUE)
 
-  pct_color <- if (pct_complete >= 90) "#28a745" else if (pct_complete >= 60) "#ffc107" else "#dc3545"
+  # Status colors from the shared indicator palette instead of this app's own
+  # Bootstrap set, so the checklist agrees with the overview value boxes.
+  .ind <- tryCatch(get_indicator_colors(theme = theme), error = function(e) NULL)
+  .ic <- function(k, fallback) {
+    if (is.null(.ind) || !k %in% names(.ind)) fallback else unname(.ind[[k]])
+  }
+  COLOR_OK    <- .ic("good",    "#28a745")
+  COLOR_WARN  <- .ic("warning", "#ffc107")
+  COLOR_BAD   <- .ic("alert",   "#dc3545")
+  COLOR_EMPTY <- "#f8f9fa"
+
+  pct_color <- if (pct_complete >= 90) COLOR_OK else if (pct_complete >= 60) COLOR_WARN else COLOR_BAD
 
   value_boxes <- div(class = "checklist-value-boxes",
     style = "display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;",
     create_summary_box(paste0(inspected_sites, " / ", total_sites),
                        paste0("Inspected (", pct_complete, "%)"), pct_color),
     create_summary_box(not_inspected, "Not Inspected",
-                       if (not_inspected == 0) "#28a745" else "#f8f9fa"),
+                       if (not_inspected == 0) COLOR_OK else COLOR_EMPTY),
     create_summary_box(red_bugs, "Red Bugs",
-                       if (red_bugs > 0) "#dc3545" else "#f8f9fa"),
+                       if (red_bugs > 0) COLOR_BAD else COLOR_EMPTY),
     create_summary_box(pending_lab, "Pending Lab",
-                       if (pending_lab > 0) "#ffc107" else "#f8f9fa")
+                       if (pending_lab > 0) COLOR_WARN else COLOR_EMPTY)
   )
 
   # ---- Build checklist grouped by FOS -> AirMap -> Sites ----

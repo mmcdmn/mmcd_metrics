@@ -4,6 +4,74 @@
 # These work with any group_by type (zone, facility, fos).
 # =============================================================================
 
+#' Color for a historical-average reference line
+#'
+#' 5-year and 10-year average lines need two visually distinct colors that are
+#' not the series colors. Pulls two well-separated entries from the theme's
+#' primary palette instead of the previous hardcoded blue/purple.
+#' @param theme Color theme name
+#' @param years 5 or 10
+#' @return Hex color string
+.avg_line_color <- function(theme = "MMCD", years = 10) {
+  pal <- tryCatch(get_theme_palette(theme)$primary, error = function(e) NULL)
+  fallback <- if (years == 5) "#2196F3" else "#9C27B0"
+  if (is.null(pal) || length(pal) < 5) return(fallback)
+  idx <- if (years == 5) 1 else 5
+  if (idx > length(pal)) return(fallback)
+  pal[[idx]]
+}
+
+#' Create the dashboard-level status color key
+#'
+#' Explains what the value box colors mean. This is deliberately ONE per screen
+#' — it describes the boxes as a group, not any single metric or chart, so it is
+#' rendered once above the summary stats rather than per card or per chart.
+#' (create_overview_legend() below is the separate per-chart *series* legend.)
+#'
+#' Deliberately carries no threshold numbers: the rules differ per metric
+#' (10-year average vs fixed percentage vs goal) and live in
+#' config/app_config.yaml, so spelling them out here would go stale.
+#'
+#' @param theme Color theme name
+#' @return Shiny tag
+#' @export
+create_status_legend <- function(theme = "MMCD") {
+  ind <- tryCatch(get_indicator_colors(theme = theme), error = function(e) NULL)
+  g <- function(key, fallback) {
+    if (is.null(ind) || !key %in% names(ind)) return(fallback)
+    v <- unname(ind[[key]])
+    if (is.null(v) || length(v) != 1 || is.na(v) || !nzchar(v)) fallback else v
+  }
+
+  items <- list(
+    list(color = g("good",    "#16a34a"), label = "On track"),
+    list(color = g("warning", "#eab308"), label = "Slightly behind"),
+    list(color = g("alert",   "#dc2626"), label = "Needs attention")
+  )
+
+  tags$div(
+    class = "status-legend",
+    style = paste0(
+      "display:flex;flex-wrap:wrap;align-items:center;gap:18px;",
+      "justify-content:center;padding:8px 12px;margin-bottom:12px;",
+      "font-size:12px;font-weight:600;"
+    ),
+    tags$span(
+      style = "opacity:0.75;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;",
+      "Box color"
+    ),
+    lapply(items, function(it) {
+      tags$span(
+        style = "display:inline-flex;align-items:center;gap:6px;",
+        tags$span(style = paste0(
+          "display:inline-block;width:12px;height:12px;border-radius:3px;",
+          "background:", it$color, ";border:1px solid rgba(0,0,0,0.25);")),
+        it$label
+      )
+    })
+  )
+}
+
 #' Create a legend HTML element for overview charts
 #' Shows what the colors mean based on current theme
 #' @param theme Color theme name
@@ -13,6 +81,9 @@
 #' @export
 create_overview_legend <- function(theme = "MMCD", metric_id = NULL, metric_config = NULL) {
   status_colors <- get_status_colors(theme = theme)
+  # The "total" backdrop was the one hardcoded swatch here (#D32F2F) while the
+  # other two already followed the theme.
+  total_swatch <- unname(get_indicator_colors(theme = theme)[["alert"]])
   
   # Default labels - can be customized per metric via registry
   total_label <- "Total Sites"
@@ -53,7 +124,7 @@ create_overview_legend <- function(theme = "MMCD", metric_id = NULL, metric_conf
   
   HTML(paste0(
     '<div class="chart-legend" style="display: flex; gap: 15px; justify-content: center; padding: 4px 0; font-size: 11px; font-weight: 600;">',
-    '<span><span style="display: inline-block; width: 12px; height: 12px; background: #D32F2F; opacity: 0.3; margin-right: 5px; border: 1px solid #999;"></span>', total_label, '</span>',
+    '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', total_swatch, '; opacity: 0.3; margin-right: 5px; border: 1px solid #999;"></span>', total_label, '</span>',
     '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["active"]), '; margin-right: 5px; border: 1px solid #999;"></span>', active_label, '</span>',
     '<span><span style="display: inline-block; width: 12px; height: 12px; background: ', unname(status_colors["planned"]), '; margin-right: 5px; border: 1px solid #999;"></span>', expiring_label, '</span>',
     '</div>'
@@ -137,7 +208,8 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
   
   # cattail_treatments uses lighter red background to show progress "filling up"
   red_alpha <- if (metric_type == "cattail_treatments") 0.15 else 0.3
-  red_fill <- paste0("rgba(211,47,47,", red_alpha, ")")
+  # Same color as the legend's "total" swatch, so chart and legend stay in step.
+  red_fill <- hex_to_rgba(unname(get_indicator_colors(theme = theme)[["alert"]]), red_alpha)
   
   # Build native plot_ly horizontal bar chart (avoids expensive ggplotly conversion)
   # Layered bars: red background (total) → orange (expiring) → green (active)
@@ -482,8 +554,8 @@ create_comparison_chart <- function(avg_data, current_data, title, y_label, bar_
       name = ten_year_label,
       type = "scatter",
       mode = "lines+markers",
-      line = list(color = "#9C27B0", width = 2, dash = "dot"),
-      marker = list(color = "#9C27B0", size = 5),
+      line = list(color = .avg_line_color(theme, 10), width = 2, dash = "dot"),
+      marker = list(color = .avg_line_color(theme, 10), size = 5),
       hovertemplate = paste0(
         "<b>Week %{x}</b><br>",
         ten_year_label, ": %{y:,.0f}<br>",
@@ -642,7 +714,7 @@ create_yearly_grouped_chart <- function(data, title, y_label, theme = "MMCD", ov
     name = paste0("5-Yr Avg (", format(round(five_year_avg, 0), big.mark = ","), ")"),
     type = "scatter",
     mode = "lines",
-    line = list(color = "#2196F3", width = 2, dash = "dash"),
+    line = list(color = .avg_line_color(theme, 5), width = 2, dash = "dash"),
     hovertemplate = paste0("5-Year Avg: ", format(round(five_year_avg, 0), big.mark = ","), "<extra></extra>")
   )
   
@@ -653,7 +725,7 @@ create_yearly_grouped_chart <- function(data, title, y_label, theme = "MMCD", ov
     name = paste0("10-Yr Avg (", format(round(ten_year_avg, 0), big.mark = ","), ")"),
     type = "scatter",
     mode = "lines",
-    line = list(color = "#9C27B0", width = 2, dash = "dot"),
+    line = list(color = .avg_line_color(theme, 10), width = 2, dash = "dot"),
     hovertemplate = paste0("10-Year Avg: ", format(round(ten_year_avg, 0), big.mark = ","), "<extra></extra>")
   )
   

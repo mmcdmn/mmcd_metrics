@@ -200,10 +200,17 @@ apply_data_filters <- function(data, facility_filter = NULL,
 # Function to get ground prehatch data from database
 # Uses load_raw_data as single source of truth and processes status like get_site_details_data
 # Standard column names added: total_count, active_count, expiring_count, expired_count
+# `raw_data` lets a caller that already holds the result of load_raw_data()
+# pass it in. app.R loads it once and shares it with get_site_details_data(),
+# which needs exactly the same query - previously each function ran it
+# separately, so every refresh hit the database twice. Left NULL (the API
+# route's usage) the function loads its own copy as before.
 get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = Sys.Date(), 
-                                      expiring_days = 14) {
+                                      expiring_days = 14, raw_data = NULL) {
   # Load raw data using the unified function
-  raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
+  if (is.null(raw_data)) {
+    raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
+  }
   
   if (is.null(raw_data$sites) || nrow(raw_data$sites) == 0) {
     return(data.frame())
@@ -276,9 +283,13 @@ get_ground_prehatch_data <- function(zone_filter = c("1", "2"), analysis_date = 
 }
 
 # Function to get site details data - uses same source as charts
-get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date()) {
+# See get_ground_prehatch_data() for why `raw_data` is accepted here.
+get_site_details_data <- function(expiring_days = 14, analysis_date = Sys.Date(),
+                                  raw_data = NULL) {
   # Load raw data using the unified function - same as charts use
-  raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
+  if (is.null(raw_data)) {
+    raw_data <- load_raw_data(analysis_date = analysis_date, include_archive = FALSE)
+  }
   
   if (is.null(raw_data$sites) || nrow(raw_data$sites) == 0) {
     return(data.frame())

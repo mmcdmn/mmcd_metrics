@@ -97,6 +97,11 @@ tryCatch({
   cat("✓ stat_box_helpers.R loaded\n")
 }, error = function(e) cat("✗ stat_box_helpers.R failed:", e$message, "\n"))
 
+tryCatch({
+  source("shared/historical_helpers.R")
+  cat("✓ historical_helpers.R loaded\n")
+}, error = function(e) cat("✗ historical_helpers.R failed:", e$message, "\n"))
+
 # Re-load test stubs AFTER db_helpers to override DB-dependent functions
 if (TESTING_MODE_ISOLATED) {
   source("tests/test_stubs.R")

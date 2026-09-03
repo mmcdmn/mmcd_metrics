@@ -126,6 +126,24 @@ if (!exists("%||%", mode = "function")) {
 }
 
 # =============================================================================
+# DEBUG LOGGING
+# =============================================================================
+# Diagnostic tracing that used to run unconditionally inside render paths and
+# data loaders. Off by default; enable with options(mmcd.debug = TRUE) (or the
+# MMCD_DEBUG environment variable) when investigating a specific app.
+mmcd_debug_enabled <- function() {
+  opt <- getOption("mmcd.debug", NULL)
+  if (!is.null(opt)) return(isTRUE(opt))
+  nzchar(Sys.getenv("MMCD_DEBUG"))
+}
+
+#' Print a debug line only when debug logging is enabled
+mmcd_debug <- function(...) {
+  if (mmcd_debug_enabled()) cat(...)
+  invisible(NULL)
+}
+
+# =============================================================================
 # IN-MEMORY LOOKUP CACHE (Fast per-process cache)
 # =============================================================================
 
@@ -1366,22 +1384,28 @@ generate_distinct_colors_internal <- function(n, theme = getOption("mmcd.color.t
 #' Returns:
 #'   If alpha_zones is NULL: Named vector where names are facility short names and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
-get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
-  # Try Redis cache for color mappings (7-day TTL)
-  if (exists("get_cached_color_mapping", mode = "function")) {
-    cached <- tryCatch({
-      get_cached_color_mapping(
-        "facility_base_colors",
-        gen_func = function() {
-          .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
-        },
-        alpha_zones, combined_groups, theme
-      )
-    }, error = function(e) NULL)
-    if (!is.null(cached)) return(cached)
-  }
-  .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
+# Build a stable in-memory cache key for a colour mapping. Arguments are
+# small (a theme name plus optional zone/group vectors), so pasting them is
+# cheaper and more legible than hashing.
+.color_cache_key <- function(cache_id, alpha_zones, combined_groups, theme) {
+  paste0("color:", cache_id, ":", theme,
+         ":az=", paste(as.character(alpha_zones), collapse = "|"),
+         ":cg=", paste(as.character(combined_groups), collapse = "|"))
 }
+
+get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
+  # In-process memory cache. This used to go to Redis (7-day TTL), but the
+  # work being cached is a small local lookup over ~7 facilities - a network
+  # round trip plus serialize/unserialize cost more than recomputing it.
+  key <- .color_cache_key("facility_base_colors", alpha_zones, combined_groups, theme)
+  cached <- get_memory_cached(key)
+  if (!is.null(cached)) return(cached)
+
+  result <- .get_facility_base_colors_uncached(alpha_zones, combined_groups, theme)
+  if (!is.null(result)) set_memory_cached(key, result)
+  result
+}
+
 
 #' Internal uncached implementation
 .get_facility_base_colors_uncached <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
@@ -1486,21 +1510,18 @@ get_facility_base_colors <- function(alpha_zones = NULL, combined_groups = NULL,
 #'   If alpha_zones is NULL: Named vector where names are foreman shortnames and values are hex colors.
 #'   If alpha_zones provided: List with $colors (named vector) and $alpha_values (named vector for zones).
 get_foreman_colors <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {
-  # Try Redis cache for color mappings (7-day TTL)
-  if (exists("get_cached_color_mapping", mode = "function")) {
-    cached <- tryCatch({
-      get_cached_color_mapping(
-        "foreman_colors",
-        gen_func = function() {
-          .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
-        },
-        alpha_zones, combined_groups, theme
-      )
-    }, error = function(e) NULL)
-    if (!is.null(cached)) return(cached)
-  }
-  .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
+  # In-process memory cache. This used to go to Redis (7-day TTL), but the
+  # work being cached is a small local lookup over ~7 facilities - a network
+  # round trip plus serialize/unserialize cost more than recomputing it.
+  key <- .color_cache_key("foreman_colors", alpha_zones, combined_groups, theme)
+  cached <- get_memory_cached(key)
+  if (!is.null(cached)) return(cached)
+
+  result <- .get_foreman_colors_uncached(alpha_zones, combined_groups, theme)
+  if (!is.null(result)) set_memory_cached(key, result)
+  result
 }
+
 
 #' Internal uncached implementation
 .get_foreman_colors_uncached <- function(alpha_zones = NULL, combined_groups = NULL, theme = getOption("mmcd.color.theme", "MMCD")) {

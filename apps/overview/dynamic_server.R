@@ -519,8 +519,13 @@ get_historical_week_avg <- function(metric_id, week_num, zone_filter = c("1", "2
 #' @return Historical average value or NULL if not available
 get_historical_week_avg_by_entity <- function(metric_id, week_num, entity_col, entity_value,
                                                zone_filter = c("1", "2"), cache_prefix = "hist_entity") {
-  # Check Redis cache first (7-day TTL)
-  cache_key <- paste0(cache_prefix, ":", metric_id, ":", entity_value, ":w", week_num)
+  # Check Redis cache first (7-day TTL).
+  # zone_filter MUST be part of the key: it is passed to
+  # get_cached_raw_historical() below and changes the result, so omitting it
+  # served a P1-only average for a P1+P2 request (and vice versa) for up to a
+  # week. get_cached_raw_historical() keys on it for the same reason.
+  cache_key <- paste0(cache_prefix, ":", metric_id, ":", entity_value,
+                      ":z", paste(zone_filter, collapse = "_"), ":w", week_num)
   if (exists("redis_is_active", mode = "function") && redis_is_active()) {
     cached <- tryCatch(redis_get(cache_key), error = function(e) NULL)
     if (!is.null(cached)) return(cached)
@@ -2025,11 +2030,12 @@ build_overview_server <- function(input, output, session,
           req(historical_data())
           hist_data <- historical_data()[[local_metric_id]]
           
-          # DEBUG: Log what data we have
-          cat("DEBUG Historical", local_metric_id, ":\n")
-          cat("  - Average rows:", if (!is.null(hist_data$average)) nrow(hist_data$average) else "NULL", "\n")
-          cat("  - Current rows:", if (!is.null(hist_data$current)) nrow(hist_data$current) else "NULL", "\n")
-          cat("  - Yearly data rows:", if (!is.null(hist_data$yearly_data)) nrow(hist_data$yearly_data) else "NULL", "\n")
+          # Fires once per metric on every historical render - gated so it
+          # costs nothing unless options(mmcd.debug = TRUE) is set.
+          mmcd_debug("DEBUG Historical", local_metric_id, ":\n")
+          mmcd_debug("  - Average rows:", if (!is.null(hist_data$average)) nrow(hist_data$average) else "NULL", "\n")
+          mmcd_debug("  - Current rows:", if (!is.null(hist_data$current)) nrow(hist_data$current) else "NULL", "\n")
+          mmcd_debug("  - Yearly data rows:", if (!is.null(hist_data$yearly_data)) nrow(hist_data$yearly_data) else "NULL", "\n")
           
           # Check if this metric uses yearly grouped chart
           if (isTRUE(local_config$historical_type == "yearly_grouped")) {

@@ -82,10 +82,6 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
   
   # Special logic for weekly active treatments (active sites and active acres)
   if (hist_time_period == "weekly" && hist_display_metric %in% c("active_count", "active_acres")) {
-    # Generate all weeks in the range
-    all_weeks <- seq.Date(start_date, end_date, by = "week")
-    week_data <- data.frame()
-
     # PRE1ONLY sites need only ONE prehatch treatment per year — a treatment
     # counts as active from its date through the rest of that YEAR, not just
     # within effect_days.
@@ -95,41 +91,37 @@ create_historical_data <- function(start_year, end_year, hist_time_period, hist_
         pull(sitecode)
     } else character(0)
 
-    for (week_start in all_weeks) {
-      week_friday <- as.Date(week_start) + 4  # Friday of that week
-      week_label <- paste0(year(week_friday), "-W", sprintf("%02d", week(week_friday)))
+    # Both rules are intervals starting at inspdate, so they collapse into a
+    # single treatment_end: PRE1ONLY runs to Dec 31 of the treatment's own year
+    # (equivalent to the old `year(inspdate) == year(friday)` test), everything
+    # else runs for effect_days. That lets one vectorised expansion cover both
+    # instead of a per-week filter loop. See shared/historical_helpers.R.
+    fridays <- weekly_fridays(start_date, end_date)
 
-      # Find sites/acres with active treatment on that Friday
-      active_treatments <- ground_treatments %>%
-        mutate(
-          treatment_end = as.Date(inspdate) + ifelse(is.na(effect_days), 14, effect_days),
-          .is_pre1 = sitecode %in% pre1only_codes
-        ) %>%
-        filter(
-          as.Date(inspdate) <= week_friday,
-          ( .is_pre1 & year(as.Date(inspdate)) == year(week_friday)) |
-          (!.is_pre1 & treatment_end >= week_friday)
-        )
-      
-      if (nrow(active_treatments) > 0) {
-        # For weekly active, we need sitecode, facility, zone, fosarea, time_period
-        # and acres if doing active_acres metric
-        if (hist_display_metric == "active_acres") {
-          # Active treatments already have acres (renamed from treated_acres)
-          active_data <- active_treatments %>%
-            mutate(time_period = week_label) %>%
-            select(sitecode, facility, zone, fosarea, acres, time_period)
-        } else {
-          # For sites metric, just use what we have
-          active_data <- active_treatments %>%
-            mutate(time_period = week_label) %>%
-            select(sitecode, facility, zone, fosarea, time_period)
-        }
-        
-        week_data <- bind_rows(week_data, active_data)
-      }
+    active_by_week <- ground_treatments %>%
+      mutate(
+        inspdate = as.Date(inspdate),
+        .is_pre1 = sitecode %in% pre1only_codes,
+        treatment_end = as.Date(ifelse(
+          .is_pre1,
+          as.Date(paste0(year(inspdate), "-12-31")),
+          inspdate + ifelse(is.na(effect_days), 14, effect_days)
+        ), origin = "1970-01-01")
+      ) %>%
+      expand_active_by_week(fridays)
+
+    # For weekly active, we need sitecode, facility, zone, fosarea, time_period
+    # and acres if doing active_acres metric
+    week_data <- if (hist_display_metric == "active_acres") {
+      # Active treatments already have acres (renamed from treated_acres)
+      active_by_week %>%
+        select(sitecode, facility, zone, fosarea, acres, time_period)
+    } else {
+      # For sites metric, just use what we have
+      active_by_week %>%
+        select(sitecode, facility, zone, fosarea, time_period)
     }
-    
+
     data_source <- week_data
   } else {
     # Yearly logic: treatments or sites treated

@@ -26,6 +26,9 @@ clean_text <- function(value, max_chars = 32L) {
   if (is.null(value) || !nzchar(trimws(value %||% ""))) return(NULL)
   s <- trimws(as.character(value))
   if (nchar(s) > max_chars) stop(paste0("value too long (max ", max_chars, " chars)"))
+  # Character set is the UNION of the two copies that used to exist (this one
+  # and a stricter duplicate in plumber.R). Widened deliberately so removing
+  # that duplicate could not start rejecting input that already worked.
   if (!grepl("^[A-Za-z0-9 _+.-]+$", s)) stop("value contains invalid characters")
   s
 }
@@ -53,7 +56,9 @@ validate_facility <- function(v) {
 validate_foreman <- function(v) {
   if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
   s <- trimws(as.character(v))
-  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 _-]+$", s)) stop("invalid foreman format")
+  # "." included: plumber.R's former duplicate allowed it, and foreman
+  # shortnames can carry an initial (e.g. "Smith J."). Union of both copies.
+  if (nchar(s) > 32L || !grepl("^[A-Za-z0-9 ._-]+$", s)) stop("invalid foreman format")
   lkp <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
   if (is.null(lkp) || nrow(lkp) == 0) return(NULL)
   row <- lkp[tolower(lkp$shortname) == tolower(s), ]

@@ -179,12 +179,19 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     # Companion restart listener — stays alive independently on port 9001.
     # nginx routes /v1/private/restart-companion here so the UI can trigger
     # a restart even when the main Plumber process is completely dead.
-    Rscript -e '
-      pr <- plumber::plumb("/srv/api/companion.R")
-      pr$run(host="127.0.0.1", port=9001, swagger=FALSE)
-    ' > /var/log/plumber-companion.log 2>&1 &
+    (
+      while true; do
+        Rscript -e '
+          pr <- plumber::plumb("/srv/api/companion.R")
+          pr$run(host="127.0.0.1", port=9001, swagger=FALSE)
+        ' >> /var/log/plumber-companion.log 2>&1
+        echo "[companion-watchdog] Companion exited — restarting in 2s" \
+          >> /var/log/plumber-companion.log
+        sleep 2
+      done
+    ) &
     PIDS+=($!)
-    echo "  ✓ Companion restart listener on port 9001  (PID ${PIDS[-1]})"
+    echo "  ✓ Companion restart listener on port 9001  (watchdog PID ${PIDS[-1]})"
 
     # Wait for Plumber to be ready before starting nginx
     RETRIES=0
@@ -271,11 +278,18 @@ echo "Starting Plumber REST API on port ${PLUMBER_PORT} (with watchdog)..."
 echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID $!)"
 
 # Companion restart listener on port 9001 (stays alive even when main Plumber is dead).
-Rscript -e '
-  pr <- plumber::plumb("/srv/api/companion.R")
-  pr$run(host="127.0.0.1", port=9001, swagger=FALSE)
-' > /var/log/plumber-companion.log 2>&1 &
-echo "  ✓ Companion restart listener on port 9001  (PID $!)"
+(
+  while true; do
+    Rscript -e '
+      pr <- plumber::plumb("/srv/api/companion.R")
+      pr$run(host="127.0.0.1", port=9001, swagger=FALSE)
+    ' >> /var/log/plumber-companion.log 2>&1
+    echo "[companion-watchdog] Companion exited — restarting in 2s" \
+      >> /var/log/plumber-companion.log
+    sleep 2
+  done
+) &
+echo "  ✓ Companion restart listener on port 9001  (watchdog PID $!)"
 
 SHINY_INSTANCE_ID="1" SHINY_INSTANCE_PORT="$LISTEN_PORT" exec /usr/bin/shiny-server
 cleanup

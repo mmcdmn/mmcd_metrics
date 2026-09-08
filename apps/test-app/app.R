@@ -592,22 +592,28 @@ server <- function(input, output, session) {
     api_status("Sending restart request...")
     tryCatch({
       key <- Sys.getenv("API_KEYS", "mmcd-sheets-abc123xyz")
-      # Use system curl for reliability (httr not guaranteed)
+      tmp <- tempfile()
+      on.exit(unlink(tmp), add = TRUE)
       result <- system2("curl", args = c(
-        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "-s", "-o", tmp, "-w", "%{http_code}",
         "-X", "POST",
         "-H", paste0("Authorization: Bearer ", key),
         "http://127.0.0.1:9001/restart"
       ), stdout = TRUE, stderr = TRUE)
       code <- trimws(paste(result, collapse = ""))
-      if (code == "200") {
+      body <- tryCatch(paste(readLines(tmp, warn = FALSE), collapse = ""), error = function(e) "")
+      signaled <- tryCatch(isTRUE(jsonlite::fromJSON(body)$signaled), error = function(e) FALSE)
+      if (code == "200" && signaled) {
         api_status(paste0("[OK] Restart triggered at ", format(Sys.time(), "%H:%M:%S"),
                           ". API should be back in ~3 seconds."))
+      } else if (code == "200" && !signaled) {
+        api_status(paste0("[WARN] Companion reached but PID file missing \u2014 watchdog will auto-restart. (",
+                          format(Sys.time(), "%H:%M:%S"), ")"))
       } else {
         api_status(paste0("[WARN] Got HTTP ", code, ". API may already be down \u2014 watchdog will restart it."))
       }
     }, error = function(e) {
-      api_status(paste0("[INFO] Could not reach API (already down?). Watchdog will restart it. Error: ", e$message))
+      api_status(paste0("[INFO] Could not reach companion (port 9001 down?). Error: ", e$message))
     })
   })
 

@@ -565,7 +565,7 @@
             <div class="category-header" onclick="toggleCategory('cat-tests')">
                 <div class="category-header-left">
                     <h2>Tests</h2>
-                    <span class="category-count">3 apps</span>
+                    <span class="category-count">4 apps</span>
                 </div>
                 <button class="category-toggle" aria-label="Toggle Tests">+</button>
             </div>
@@ -583,6 +583,12 @@
                             <h3>Trap Surveillance Test</h3>
                             <p>Prototype app to compute section vector index using k-nearest traps.</p>
                             <a href="trap_survillance_test/" class="app-link">Open Application</a>
+                        </div>
+                        <div class="app-card">
+                            <img src="shared/assets/layer-group.jpg" alt="FOS Capacity Planning" class="app-icon">
+                            <h3>FOS Capacity Planning (NEW)</h3>
+                            <p>Strategic / border-to-border planning: ground &amp; air sites, prehatch sites and acres, sections, and catch basins per FOS area (P1 vs P2, by priority), with staffing ratios (techs per FOS), facility-to-section driving distance, averages, and a what-if planner to promote P2 areas into P1 and estimate added staff.</p>
+                            <a href="fos_capacity_planning/" class="app-link">Open Application</a>
                         </div>
                         <!-- MMCD AI Assistant card -->
                         <div class="app-card" style="grid-column: 1 / -1; text-align: left; padding: 0; overflow: hidden;">
@@ -661,6 +667,7 @@
         Give Feedback
     </a>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
     <script>
         // =====================================================================
         // Collapsible category logic
@@ -1000,7 +1007,7 @@
         // Locally, we hit localhost:8000 directly.
         const IS_LOCAL = window.location.hostname === 'localhost'
                       || window.location.hostname === '127.0.0.1';
-        let LLM_ENDPOINT = IS_LOCAL ? 'http://localhost:8000/chat' : null;
+        let LLM_ENDPOINT = IS_LOCAL ? 'http://localhost:8001/api/chat' : null;
 
         // Fetch the registered tunnel URL from the API (production only)
         if (!IS_LOCAL) {
@@ -1008,7 +1015,7 @@
                 .then(r => r.json())
                 .then(data => {
                     if (data.tunnel_url) {
-                        LLM_ENDPOINT = data.tunnel_url + '/chat';
+                        LLM_ENDPOINT = data.tunnel_url + '/api/chat';
                         document.getElementById('llm-status').textContent = 'AI Assistant';
                         document.getElementById('llm-status').style.color = '#7c8a97';
                         document.getElementById('chat-send-btn').disabled = false;
@@ -1026,9 +1033,13 @@
         }
 
         let chatHistory = [];
+        // Obrenna tracks conversation history server-side by chat_id, unlike the
+        // old stateless orchestrator which took the full message array each turn.
+        let chatId = null;
 
         function clearChat() {
             chatHistory = [];
+            chatId = null;
             const container = document.getElementById('chat-messages');
             container.innerHTML = `
                 <div class="chat-msg chat-assistant">
@@ -1104,7 +1115,7 @@
                 const resp = await fetch(LLM_ENDPOINT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messages: chatHistory }),
+                    body: JSON.stringify({ message: text, chat_id: chatId }),
                 });
 
                 if (!resp.ok) {
@@ -1119,13 +1130,19 @@
                 }
 
                 const data = await resp.json();
-                const reply = data.content || data.message?.content || 'No response received.';
+                chatId = data.chat_id || chatId;
+                const reply = data.message?.text || data.content || 'No response received.';
 
                 // Remove thinking indicator
                 thinkBubble.parentElement.remove();
 
-                appendMessage('assistant', reply);
+                const bubble = appendMessage('assistant', reply);
                 chatHistory.push({ role: 'assistant', content: reply });
+
+                const artifactIds = data.message?.artifacts || [];
+                for (const artifactId of artifactIds) {
+                    await renderArtifactChart(artifactId, bubble);
+                }
             } catch (err) {
                 thinkBubble.parentElement.remove();
                 // Try to extract server error message from JSON response
@@ -1138,6 +1155,84 @@
                 sendBtn.disabled = false;
                 input.disabled = false;
                 input.focus();
+            }
+        }
+
+        // Base URL for fetching a generated artifact, derived from the chat
+        // endpoint (which ends in /api/chat) so it always points at the same
+        // backend the chat request itself just went to.
+        function artifactsBaseUrl() {
+            return LLM_ENDPOINT.replace(/\/api\/chat$/, '');
+        }
+
+        async function renderArtifactChart(artifactId, bubble) {
+            try {
+                const resp = await fetch(artifactsBaseUrl() + '/api/artifacts/' + artifactId);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const blocks = data.artifact?.spec?.blocks || [];
+                for (const block of blocks) {
+                    if (block.type === 'chart') drawChart(bubble, block.chart);
+                }
+            } catch (err) {
+                // Best-effort: the text reply already answered the question,
+                // so a chart-fetch failure shouldn't surface as a chat error.
+            }
+        }
+
+        const CHART_PALETTE = ['#2f6f6a', '#c76b3f', '#6b6fc7', '#a35c8f', '#5b8c3e'];
+
+        function drawChart(bubble, chart) {
+            const canvas = document.createElement('canvas');
+            canvas.style.maxWidth = '100%';
+            canvas.style.marginTop = '10px';
+            canvas.height = 220;
+
+            try {
+                if (typeof Chart === 'undefined') throw new Error('Chart.js did not load');
+                const typeMap = { bar: 'bar', line: 'line', area: 'line', pie: 'pie' };
+                const isPie = chart.type === 'pie';
+                bubble.appendChild(canvas);
+                new Chart(canvas, {
+                    type: typeMap[chart.type] || 'bar',
+                    data: {
+                        labels: chart.x,
+                        datasets: chart.series.map((s, i) => ({
+                            label: s.name,
+                            data: s.data,
+                            fill: chart.type === 'area',
+                            backgroundColor: isPie
+                                ? chart.x.map((_, j) => CHART_PALETTE[j % CHART_PALETTE.length])
+                                : CHART_PALETTE[i % CHART_PALETTE.length],
+                            borderColor: CHART_PALETTE[i % CHART_PALETTE.length],
+                            borderWidth: isPie ? 1 : 2,
+                            tension: chart.type === 'line' || chart.type === 'area' ? 0.25 : 0,
+                        })),
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: { display: true, text: chart.title },
+                            legend: { display: chart.series.length > 1 || isPie },
+                        },
+                        scales: isPie ? {} : {
+                            x: { stacked: !!chart.stacked },
+                            y: { stacked: !!chart.stacked },
+                        },
+                    },
+                });
+            } catch (err) {
+                // A blank, sized canvas left in the DOM after a failed draw
+                // reads as a broken page with no explanation. Pull it and say
+                // so instead -- the text reply above already answered the
+                // question either way.
+                canvas.remove();
+                const note = document.createElement('div');
+                note.style.color = '#8a8f98';
+                note.style.fontSize = '0.85em';
+                note.style.marginTop = '8px';
+                note.textContent = 'Chart could not be displayed.';
+                bubble.appendChild(note);
             }
         }
 

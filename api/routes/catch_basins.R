@@ -336,3 +336,81 @@ function(req, res,
     ), sched)
   }, error = function(e) api_error(res, 400, e$message))
 }
+
+# ── Catch Basin Treatments By Week (time series) ──
+
+#* Get catch basin treatment counts bucketed by week, over a date range.
+#* Unlike the snapshot-style endpoints above (one point-in-time analysis_date),
+#* this counts individual treatment EVENTS (inspdate) within the requested
+#* range -- answers "how many treatments happened each week / this year",
+#* a real trend, not "what does the status look like as of one date".
+#* Reuses the app's load_historical_treatments() (individual treatment rows
+#* with inspdate, via load_raw_data(include_archive=TRUE, ...)) -- NO new SQL.
+#* Returns a bare array (one point per week), matching the surveillance
+#* mle-trend endpoint's convention: [{"yrwk": 202619, "treated_count": 12}, ...].
+#* @param facility Facility code. Omit for all.
+#* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
+#* @param start_date Start of the range (YYYY-MM-DD). Default January 1 of the current year.
+#* @param end_date End of the range (YYYY-MM-DD). Default today.
+#* @get /treatments-by-week
+#* @serializer json
+function(req, res,
+         facility = NULL,
+         zone = "1,2",
+         start_date = NULL,
+         end_date = NULL) {
+  tryCatch({
+    fac <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else "all"
+    zn  <- validate_zone(zone)
+
+    today <- Sys.Date()
+    sd <- if (!is.null(start_date) && nzchar(start_date)) {
+      d <- tryCatch(as.Date(start_date, "%Y-%m-%d"), error = function(e) as.Date(NA))
+      if (is.na(d)) stop("start_date must be YYYY-MM-DD")
+      d
+    } else {
+      as.Date(sprintf("%d-01-01", as.integer(format(today, "%Y"))))
+    }
+    ed <- if (!is.null(end_date) && nzchar(end_date)) {
+      d <- tryCatch(as.Date(end_date, "%Y-%m-%d"), error = function(e) as.Date(NA))
+      if (is.na(d)) stop("end_date must be YYYY-MM-DD")
+      d
+    } else {
+      today
+    }
+    if (ed > today + 1L) stop("end_date cannot be in the future")
+    if (sd > ed) stop("start_date must be before end_date")
+    if (as.numeric(ed - sd) > 5 * 365) stop("date range cannot exceed 5 years")
+
+    start_year <- as.integer(format(sd, "%Y"))
+    end_year   <- as.integer(format(ed, "%Y"))
+
+    data <- cb_env$load_raw_data(
+      include_archive = TRUE,
+      start_year      = start_year,
+      end_year        = end_year,
+      zone_filter     = zn
+    )
+    treatments <- data$treatments
+    if (!is.null(treatments) && nrow(treatments) > 0) {
+      treatments <- treatments[treatments$inspdate >= sd & treatments$inspdate <= ed, , drop = FALSE]
+      if (!identical(fac, "all")) {
+        treatments <- treatments[treatments$facility == fac, , drop = FALSE]
+      }
+    }
+
+    if (is.null(treatments) || nrow(treatments) == 0) {
+      return(list())
+    }
+
+    weekly <- treatments %>%
+      mutate(yrwk = year(inspdate) * 100L + week(inspdate)) %>%
+      group_by(yrwk) %>%
+      summarize(treated_count = n(), .groups = "drop") %>%
+      arrange(yrwk)
+
+    lapply(seq_len(nrow(weekly)), function(i) {
+      list(yrwk = as.integer(weekly$yrwk[i]), treated_count = as.integer(weekly$treated_count[i]))
+    })
+  }, error = function(e) api_error(res, 400, e$message))
+}

@@ -919,20 +919,20 @@ function(year = NULL, facility = NULL, res) {
     # ── Query A: most recent inspection per site (all action='9', any reinspect value)
     insp_sql <- sprintf("
       WITH AllInsp AS (
-        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan, emp1
+        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan, emp1, acres_plan
         FROM public.dblarv_insptrt_current
         WHERE action = '9'
           AND EXTRACT(YEAR FROM inspdate) = %d
           %s
         UNION ALL
-        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan, emp1
+        SELECT sitecode, inspdate, wet, numdip, airgrnd_plan, emp1, acres_plan
         FROM public.dblarv_insptrt_archive
         WHERE action = '9'
           AND EXTRACT(YEAR FROM inspdate) = %d
           %s
       ),
       ValidSites AS (
-        SELECT sitecode FROM public.loc_breeding_sites
+        SELECT sitecode, acres FROM public.loc_breeding_sites
         WHERE enddate IS NULL OR enddate > CURRENT_DATE
       ),
       Ranked AS (
@@ -952,8 +952,10 @@ function(year = NULL, facility = NULL, res) {
              r.numdip,
              r.airgrnd_plan,
              r.emp1,
-             COALESCE(e.shortname, r.emp1) AS emp_name
+             COALESCE(e.shortname, r.emp1) AS emp_name,
+             ROUND(COALESCE(r.acres_plan, vs.acres)::numeric, 2) AS acres
       FROM Ranked r
+      LEFT JOIN ValidSites vs ON r.sitecode = vs.sitecode
       LEFT JOIN Employees e ON r.emp1 = e.emp_num::text
       WHERE r.rn = 1
       ORDER BY r.sitecode
@@ -994,8 +996,17 @@ function(year = NULL, facility = NULL, res) {
       ORDER BY r.sitecode
     ", yr, fac_clause, yr, fac_clause)
 
+    # ── Query C: base acres for all valid sites (used by GAS for uninspected rows)
+    sites_sql <- "
+      SELECT sitecode, ROUND(acres::numeric, 2) AS acres
+      FROM public.loc_breeding_sites
+      WHERE enddate IS NULL OR enddate > CURRENT_DATE
+      ORDER BY sitecode
+    "
+
     insp_rows   <- DBI::dbGetQuery(con, insp_sql)
     reinsp_rows <- DBI::dbGetQuery(con, reinsp_sql)
+    sites_rows  <- DBI::dbGetQuery(con, sites_sql)
 
     if ("reinspect_done" %in% names(reinsp_rows))
       reinsp_rows$reinspect_done <- as.logical(reinsp_rows$reinspect_done)
@@ -1007,6 +1018,7 @@ function(year = NULL, facility = NULL, res) {
       facility_filter = facility %||% "all",
       inspections     = insp_rows,
       reinspects      = reinsp_rows,
+      sites           = sites_rows,
       refreshed_at    = as.character(Sys.time())
     )
   }, error = function(e) api_error(res, 400, e$message))

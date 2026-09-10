@@ -29,6 +29,7 @@
 const CONFIG = {
   YEAR:          new Date().getFullYear(),
   SITES_TAB:     'Sites',
+  P2_TAB:        'Sites P2',
   SUMMARY_TAB:   'Summary',
   REINSPECT_TAB: 'Reinspects',
   DATA_START:    2,      // row 1 = header
@@ -65,11 +66,15 @@ function refreshData() {
 
     const inspMap   = {};
     const reinspSet = {};
+    const acresMap  = {};
     (apiData.inspections || []).forEach(row => {
       inspMap[String(row.sitecode).trim()] = row;
     });
     (apiData.reinspects || []).forEach(row => {
       reinspSet[String(row.sitecode).trim()] = row;
+    });
+    (apiData.sites || []).forEach(row => {
+      acresMap[String(row.sitecode).trim()] = row.acres;
     });
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -86,14 +91,15 @@ function refreshData() {
       sheet.getRange(CONFIG.DATA_START, CONFIG.COL.SITECODE,
                      lastRow - CONFIG.DATA_START + 1, 1)
            .getValues()
-           .forEach(([sc]) => { if (sc) sheetSitecodes.add(String(sc).trim()); });
+           .forEach(([sc]) => { if (sc) sheetSitecodes.add(String(sc).trim().replace(/^"|"$/g, '')); });
     });
     const filteredReinspects = (apiData.reinspects || [])
       .filter(r => sheetSitecodes.has(String(r.sitecode).trim()));
     Logger.log('Reinspects: ' + (apiData.reinspects || []).length + ' from API → '
                + filteredReinspects.length + ' in this sheet');
 
-    updateSitesTab_(ss, inspMap, reinspSet);
+    updateSitesTab_(ss, inspMap, reinspSet, acresMap);
+    updateSitesTab_(ss, inspMap, reinspSet, acresMap, CONFIG.P2_TAB);
     updateSummaryTab_(ss);
     updateReinspectsTab_(ss, filteredReinspects);
 
@@ -208,9 +214,10 @@ function removeClaimsFromRedis_(sitecodes) {
 // SITES TAB — fill cols C–H from API data + Redis claims
 // ============================================================================
 
-function updateSitesTab_(ss, inspMap, reinspSet) {
-  const sheet = ss.getSheetByName(CONFIG.SITES_TAB);
-  if (!sheet) { Logger.log('No "Sites" tab'); return; }
+function updateSitesTab_(ss, inspMap, reinspSet, acresMap, tabName) {
+  tabName = tabName || CONFIG.SITES_TAB;
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) { Logger.log('No "' + tabName + '" tab'); return; }
 
   const lastRow = sheet.getLastRow();
   if (lastRow < CONFIG.DATA_START) return;
@@ -227,42 +234,46 @@ function updateSitesTab_(ss, inspMap, reinspSet) {
   const newClaims = [];
   const toRemove  = [];
 
-  // Build 6 cols: EMP, LAST_INSP, WET, DIP, PLAN, REINSPECT
+  // Build 7 cols: ACRES, EMP, LAST_INSP, WET, DIP, PLAN, REINSPECT
   const writeData = sitecodes.map((r, i) => {
-    const sc    = String(r[0]).trim();
+    const sc    = String(r[0]).trim().replace(/^"|"$/g, '');
     const insp  = sc ? inspMap[sc] : null;
     const typed = String(empVals[i][0]).trim();
 
     if (insp) {
-      // Site is inspected — use resolved name (falls back to emp# if no name found)
+      // Site is inspected — acres_plan (if set) already folded in via COALESCE in SQL
       const apiEmp = String(insp.emp_name || insp.emp1 || '').trim();
       if (typed && typed !== apiEmp) toRemove.push(sc);
       const dip  = (insp.numdip !== null && insp.numdip !== undefined && insp.numdip !== '')
                    ? Number(insp.numdip) : '';
       const plan = PLAN_NAMES[insp.airgrnd_plan] || (insp.airgrnd_plan || '');
-      return [apiEmp, insp.last_insp_date || '', insp.wet || '', dip, plan, reinspSet[sc] ? 'Y' : ''];
+      const acres = insp.acres !== null && insp.acres !== undefined ? Number(insp.acres) : (acresMap[sc] !== undefined ? Number(acresMap[sc]) : '');
+      return [acres, apiEmp, insp.last_insp_date || '', insp.wet || '', dip, plan, reinspSet[sc] ? 'Y' : ''];
     }
 
     // Not yet inspected — handle claiming
     const redisClaim = claimMap[sc] || '';
     let empToShow = redisClaim;
 
-    if (typed && typed !== redisClaim) {
-      // User typed a new emp# — push as claim
+    if (!typed && redisClaim) {
+      toRemove.push(sc);
+      empToShow = '';
+    } else if (typed && typed !== redisClaim) {
       newClaims.push({ sitecode: sc, emp_num: typed });
       empToShow = typed;
     }
 
-    return [empToShow, '', '', '', '', reinspSet[sc] ? 'Y' : ''];
+    const acres = acresMap[sc] !== undefined ? Number(acresMap[sc]) : '';
+    return [acres, empToShow, '', '', '', '', reinspSet[sc] ? 'Y' : ''];
   });
 
   if (newClaims.length > 0) pushClaimsToRedis_(newClaims);
   if (toRemove.length  > 0) removeClaimsFromRedis_(toRemove);
 
-  // Write cols C–H (6 cols starting at EMP=3)
-  sheet.getRange(CONFIG.DATA_START, CONFIG.COL.EMP, dataRows, 6).setValues(writeData);
+  // Write cols B–H (7 cols starting at ACRES=2)
+  sheet.getRange(CONFIG.DATA_START, CONFIG.COL.ACRES, dataRows, 7).setValues(writeData);
   setSitecodeLinks_(sheet, CONFIG.DATA_START, dataRows);
-  Logger.log('Sites tab: ' + dataRows + ' rows written, ' + newClaims.length + ' new claim(s)');
+  Logger.log(tabName + ': ' + dataRows + ' rows written, ' + newClaims.length + ' new claim(s)');
 }
 
 // ============================================================================
@@ -400,16 +411,19 @@ function setSitecodeLinks_(sheet, startRow, numRows) {
 
   let changed = false;
   const updated = richTexts.map((row, i) => {
-    const sc = String(values[i][0]).trim();
-    if (!sc || !/^\d{4}/.test(sc)) return row;
+    const sc = String(values[i][0]).trim().replace(/^"|"$/g, '');
+    if (!sc || !/^\d{4,}/.test(sc)) return row;
     const url      = SITECODE_URL_BASE + encodeURIComponent(sc);
     const existing = row[0];
     if (existing && existing.getLinkUrl() === url) return row;
     changed = true;
-    return [SpreadsheetApp.newRichTextValue().setText(sc).setLinkUrl(url).build()];
+    return [SpreadsheetApp.newRichTextValue().setText(sc).setLinkUrl(url).build()];  // sc already stripped of quotes
   });
 
-  if (changed) range.setRichTextValues(updated);
+  if (changed) {
+    range.setNumberFormat('@');  // force text so E-codes aren't converted to scientific notation
+    range.setRichTextValues(updated);
+  }
 }
 
 // ============================================================================

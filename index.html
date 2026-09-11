@@ -307,16 +307,49 @@
             border-bottom-left-radius: 4px;
             font-style: italic;
         }
+
+        /* ---- Accessibility (WCAG 2.1 AA) ----
+           Mirrors shared/accessibility_helpers.R so the static landing
+           page matches the Shiny apps. */
+        .a11y-skip-link {
+            position: absolute; left: -9999px; top: auto;
+            width: 1px; height: 1px; overflow: hidden; z-index: 100000;
+        }
+
+        .a11y-skip-link:focus {
+            position: fixed; left: 8px; top: 8px;
+            width: auto; height: auto; overflow: visible;
+            padding: 10px 18px; background: #ffffff; color: #10253f;
+            font-weight: 700; text-decoration: underline;
+            border: 2px solid #55606B; border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            outline: 3px solid #1d4ed8; outline-offset: 2px;
+        }
+
+        /* Visible keyboard focus on every interactive element. */
+        a:focus-visible, button:focus-visible,
+        select:focus-visible, input:focus-visible {
+            outline: 3px solid #1d4ed8; outline-offset: 2px;
+        }
+
+        #main-content:focus { outline: none; }
+
+        /* The toggle's #e8eef6 fill is only 1.17:1 on white, so the
+           button's hit area needs a real boundary (WCAG 1.4.11). */
+        .category-toggle { border: 1px solid #55606B !important; }
     </style>
 </head>
 
 <body>
+    <a class="a11y-skip-link" href="#main-content">Skip to main content</a>
     <div class="container">
         <!-- Header -->
         <div class="page-header">
             <h1>MMCD Analytics Dashboard</h1>
             <p class="description">Metropolitan Mosquito Control District &mdash; Data Analysis Applications</p>
         </div>
+
+        <main id="main-content" tabindex="-1">
 
         <!-- ============================================================= -->
         <!-- DASHBOARDS  (always visible, not collapsible)                  -->
@@ -325,24 +358,24 @@
             <h2>Dashboards</h2>
             <div class="apps-grid">
                 <div class="app-card">
-                    <img src="shared/assets/layer-group.jpg" alt="Overview Dashboard" class="app-icon">
+                    <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
                     <h3>Overview Dashboard</h3>
                     <p>Unified dashboard showing MMCD treatment progress. View district-level aggregation by zone (P1 vs P2), or drill down by zone and metric to see facilities-level and facility-specific data. Includes Catch Basin, Drone, Ground Prehatch, Structures, and Cattail metrics.</p>
                     <a href="overview/" class="app-link">Open Dashboard</a>
                 </div>
                 <div class="app-card">
-                    <img src="shared/assets/layer-group.jpg" alt="FOS Overview" class="app-icon">
+                    <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
                     <h3>FOS Overview Dashboard (NEW)</h3>
                     <p>5 key metrics for FOS: Ground prehatch by township, Suco goal progress for facility, catch basin metric, air work progress, and bioassay.</p>
                     <div style="margin-bottom: 10px;">
-                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">Facility:</label>
-                        <select id="fos_facility" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="fos_facility">Facility:</label>
+                        <select id="fos_facility" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
                             <option value="" disabled selected>Loading facilities...</option>
                         </select>
                     </div>
                     <div style="margin-bottom: 10px;">
-                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">FOS Area:</label>
-                        <select id="fos_area" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="fos_area">FOS Area:</label>
+                        <select id="fos_area" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
                             <option value="" disabled selected>Loading FOS areas...</option>
                         </select>
                     </div>
@@ -372,25 +405,25 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/larvae.png" alt="Larvae" class="app-icon">
+                            <img src="shared/assets/larvae.png" alt="" class="app-icon">
                             <h3>Inspections Coverage</h3>
                             <p>Analyze inspection coverage for all sites, filter by air/ground, FOS area, facility, and zone. Identify sites with no inspection in the last X years using both current and archive records.</p>
                             <a href="inspections/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/ground.png" alt="ground" class="app-icon">
+                            <img src="shared/assets/ground.png" alt="" class="app-icon">
                             <h3>Ground Prehatch Progress</h3>
                             <p>Monitor ground prehatch treatment progress including site counts, treatment status, and coverage metrics. Track treated, expiring, expired, and untreated prehatch sites by facility and zone.</p>
                             <a href="ground_prehatch_progress/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/helicopter-solid-full.svg" alt="Air" class="app-icon">
+                            <img src="shared/assets/helicopter-solid-full.svg" alt="" class="app-icon">
                             <h3>Air</h3>
                             <p>Air site status tracking and pipeline management for breeding sites. Monitor rainfall, inspections, treatments, and status transitions in the air site workflow.</p>
                             <a href="air_sites_simple/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/drone.jpg" alt="Drone" class="app-icon">
+                            <img src="shared/assets/drone.jpg" alt="" class="app-icon">
                             <h3>Drone Treatment</h3>
                             <p>Comprehensive drone treatment tracking with real-time progress metrics, historical analysis, and site average calculations. Includes both active treatment monitoring and historical trend visualization.</p>
                             <a href="drone/" class="app-link">Open Application</a>
@@ -415,25 +448,25 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/catchbasin.png" alt="Catch Basin" class="app-icon">
+                            <img src="shared/assets/catchbasin.png" alt="" class="app-icon">
                             <h3>Catch Basin Progress</h3>
                             <p>Monitor catch basin treatment status across facilities. Track wet catch basins, active treatments, and treatment coverage percentages. View summary statistics and detailed breakdowns by facility.</p>
                             <a href="catch_basin_status/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/catchbasin.png" alt="Catch Basin" class="app-icon">
+                            <img src="shared/assets/catchbasin.png" alt="" class="app-icon">
                             <h3>Structure Progress</h3>
                             <p>Comprehensive tracking of structure treatment operations with current progress metrics and historical trends analysis. Includes both active treatment monitoring and historical data visualization.</p>
                             <a href="struct_trt/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/tree-solid-full.svg" alt="SUCO" class="app-icon">
+                            <img src="shared/assets/tree-solid-full.svg" alt="" class="app-icon">
                             <h3>Suco</h3>
                             <p>SUCO historical analysis dashboard with interactive maps, location filtering, and temporal trend analysis. Includes facility and foreman-based grouping.</p>
                             <a href="suco_history/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="Trap Surveillance" class="app-icon">
+                            <img src="shared/assets/adult.png" alt="" class="app-icon">
                             <h3>Trap Surveillance</h3>
                             <p>Vector surveillance dashboard showing mosquito abundance, MLE/MIR infection rates, and Vector Index by Vector Index Area. Uses pre-calculated database views for Culex species monitoring.</p>
                             <a href="trap_surveillance/" class="app-link">Open Application</a>
@@ -458,13 +491,13 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="Mosquito" class="app-icon">
+                            <img src="shared/assets/adult.png" alt="" class="app-icon">
                             <h3>Mosquito Surveillance Map</h3>
                             <p>Interactive geographic mapping of mosquito surveillance data with species filtering, surveillance type selection, and temporal analysis. Visualize mosquito counts across monitoring locations. This will take some time to load, so be patient.</p>
                             <a href="mosquito_surveillance_map/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="Mosquito" class="app-icon">
+                            <img src="shared/assets/adult.png" alt="" class="app-icon">
                             <h3>Mosquito Monitoring</h3>
                             <p>CO2 trap mosquito surveillance data with species analysis, facility comparisons, and zone filtering. Interactive charts with hover details and customizable date ranges.</p>
                             <a href="mosquito-monitoring/" class="app-link">Open Application</a>
@@ -489,13 +522,13 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/cattail_background.png" alt="Cattail" class="app-icon">
+                            <img src="shared/assets/cattail_background.png" alt="" class="app-icon">
                             <h3>Cattail Inspections</h3>
                             <p>Track cattail inspection progress versus annual goals. Monitor inspection status, coverage metrics, and planned treatments for cattail management sites.</p>
                             <a href="cattail_inspections/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/cattail_background.png" alt="Cattail" class="app-icon">
+                            <img src="shared/assets/cattail_background.png" alt="" class="app-icon">
                             <h3>Cattail Treatments</h3>
                             <p>Comprehensive cattail treatment tracking dashboard. Monitor treatment progress, material usage, acreage treated, and treatment effectiveness by facility and zone.</p>
                             <a href="cattail_treatments/" class="app-link">Open Application</a>
@@ -520,29 +553,29 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/layer-group.jpg" alt="Section Cards" class="app-icon">
+                            <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
                             <h3>Section Cards</h3>
                             <p>Generate printable section cards for breeding sites and structures with customizable fields and formats.</p>
                             <a href="section-cards/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/helicopter-solid-full.svg" alt="Air Checklist" class="app-icon">
+                            <img src="shared/assets/helicopter-solid-full.svg" alt="" class="app-icon">
                             <h3>Air Inspection Checklist</h3>
                             <div style="margin-bottom: 10px;">
-                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">Facility:</label>
-                                <select id="air_facility" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="air_facility">Facility:</label>
+                                <select id="air_facility" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
                                     <option value="" disabled selected>Loading facilities...</option>
                                 </select>
                             </div>
                             <div style="margin-bottom: 10px;">
-                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">FOS Area:</label>
-                                <select id="air_fos" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="air_fos">FOS Area:</label>
+                                <select id="air_fos" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
                                     <option value="" disabled selected>Loading FOS areas...</option>
                                 </select>
                             </div>
                             <div style="margin-bottom: 10px;">
-                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;">Your Name:</label>
-                                <select id="air_employee" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="air_employee">Your Name:</label>
+                                <select id="air_employee" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
                                     <option value="" disabled selected>Loading employees...</option>
                                 </select>
                             </div>
@@ -573,19 +606,19 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/larvae.png" alt="Larvae" class="app-icon">
+                            <img src="shared/assets/larvae.png" alt="" class="app-icon">
                             <h3>Control Efficacy</h3>
                             <p>Track treatment efficacy through systematic checkback analysis. Monitor checkback completion rates, treatment-to-checkback timing, and dip count changes to measure control effectiveness Between species and material types.</p>
                             <a href="control_efficacy/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="Mosquito" class="app-icon">
+                            <img src="shared/assets/adult.png" alt="" class="app-icon">
                             <h3>Trap Surveillance Test</h3>
                             <p>Prototype app to compute section vector index using k-nearest traps.</p>
                             <a href="trap_survillance_test/" class="app-link">Open Application</a>
                         </div>
                         <div class="app-card">
-                            <img src="shared/assets/layer-group.jpg" alt="FOS Capacity Planning" class="app-icon">
+                            <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
                             <h3>FOS Capacity Planning (NEW)</h3>
                             <p>Strategic / border-to-border planning: ground &amp; air sites, prehatch sites and acres, sections, and catch basins per FOS area (P1 vs P2, by priority), with staffing ratios (techs per FOS), facility-to-section driving distance, averages, and a what-if planner to promote P2 areas into P1 and estimate added staff.</p>
                             <a href="fos_capacity_planning/" class="app-link">Open Application</a>
@@ -602,7 +635,7 @@
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <span id="llm-status" style="font-size: 11px; color: #7c8a97;">AI Assistant</span>
-                                    <button onclick="clearChat()" style="background: none; border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Clear</button>
+                                    <button onclick="clearChat()" style="background: none; border: 1px solid #55606B; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Clear</button>
                                 </div>
                             </div>
                             <!-- Chat messages area -->
@@ -615,8 +648,8 @@
                             </div>
                             <!-- Input area -->
                             <div style="display: flex; padding: 12px 20px; gap: 8px; background: #fff;">
-                                <input type="text" id="chat-input" placeholder="Ask about dipping procedures, treatment protocols, equipment..."
-                                    style="flex: 1; padding: 10px 14px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;"
+                                <input type="text" id="chat-input" aria-label="Ask the MMCD Assistant a question" placeholder="Ask about dipping procedures, treatment protocols, equipment..."
+                                    style="flex: 1; padding: 10px 14px; border: 1px solid #55606B; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;"
                                     onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}">
                                 <button id="chat-send-btn" onclick="sendChat()"
                                     style="background-color: #2c5aa0; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;">
@@ -644,7 +677,7 @@
                 <div class="category-body-inner">
                     <div class="apps-grid">
                         <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="About" class="app-icon">
+                            <img src="shared/assets/adult.png" alt="" class="app-icon">
                             <h3>About This Platform</h3>
                             <p>Credits and information about the development team behind the MMCD Analytics Platform. Learn about the contributors and technologies used in building these analytical tools.</p>
                             <a href="about/" class="app-link">View Credits</a>
@@ -653,6 +686,8 @@
                 </div>
             </div>
         </div>
+
+        </main>
 
         <!-- Footer -->
         <div class="page-footer">

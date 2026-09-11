@@ -10,7 +10,7 @@ library(leaflet)
 #' Create the main UI for the cattail treatments app
 #' @return Shiny UI object
 cattail_treatments_ui <- function() {
-  fluidPage(
+  accessible_page(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
     
@@ -118,7 +118,7 @@ cattail_treatments_ui <- function() {
       ),
       
       # Main panel with tabs
-      mainPanel(
+      accessible_main_panel(
         tabsetPanel(id = "tabs",
           tabPanel("Progress", value = "progress",
                    fluidRow(

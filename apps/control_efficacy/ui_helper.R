@@ -7,7 +7,7 @@ control_efficacy_ui <- function() {
   
   current_year <- as.integer(format(Sys.Date(), "%Y"))
   
-  fluidPage(
+  accessible_page(
     shinyjs::useShinyjs(),
     get_universal_text_css(),
     

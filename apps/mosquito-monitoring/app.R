@@ -13,6 +13,7 @@ library(RPostgreSQL)
 # Source shared helper functions - only for db connection
 suppressWarnings({
   source("../../shared/db_helpers.R")
+  source("../../shared/accessibility_helpers.R")
 })
 
 # Set application name for AWS RDS monitoring
@@ -101,7 +102,7 @@ shapespecieslist <- list("Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_sum
                          Or_signifera_43 = 18, Ur_sapphirina_48 = 18, sp49_smith = 18)
               
 
-ui <- fluidPage(
+ui <- accessible_page(
   theme = bslib::bs_theme(bootswatch = "united"),
   tabsetPanel(
     tabPanel( "Compare",

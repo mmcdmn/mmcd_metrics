@@ -5,6 +5,7 @@
 source("../../shared/app_libraries.R")
 source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 
 # Source external function files
 source("data_functions.R")
@@ -28,7 +29,7 @@ tryCatch({
 # USER INTERFACE
 # =============================================================================
 
-ui <- fluidPage(
+ui <- accessible_page(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(base_increase = 8),
   
@@ -122,7 +123,7 @@ ui <- fluidPage(
     ),
     
     # Main panel with single tabset (merged Current/Archive)
-    mainPanel(
+    accessible_main_panel(
       tabsetPanel(id = "tabs",
         tabPanel("Graph", value = "graph",
                  br(),

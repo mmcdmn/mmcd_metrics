@@ -29,7 +29,7 @@ get_fosarea_display_choices <- function() {
 
 # Create the main UI panel with shared filters
 create_main_ui <- function() {
-  fluidPage(
+  accessible_page(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
     
@@ -106,7 +106,7 @@ create_main_ui <- function() {
       ),
       
       # Main panel with tabs
-      mainPanel(
+      accessible_main_panel(
         tabsetPanel(
           id = "tabs",
           

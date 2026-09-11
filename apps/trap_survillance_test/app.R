@@ -6,6 +6,7 @@ library(ggplot2)
 library(plotly)
 
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 source("ui_helper.R")
 source("data_functions.R")
 source("mle_trap_based.R")

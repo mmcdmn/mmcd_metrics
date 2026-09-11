@@ -4,7 +4,7 @@
 #' Create the main UI for the ground prehatch progress app
 #' @return Shiny UI object
 ground_prehatch_ui <- function() {
-  fluidPage(
+  accessible_page(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
     # Application title
@@ -134,7 +134,7 @@ ground_prehatch_ui <- function() {
       ),
       
       # Main panel with tabs
-      mainPanel(
+      accessible_main_panel(
         tabsetPanel(
           id = "tabs",
           tabPanel("Progress Overview", value = "overview", 

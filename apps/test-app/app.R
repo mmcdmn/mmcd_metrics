@@ -18,6 +18,7 @@ suppressPackageStartupMessages({
 if (!exists("%||%")) `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 source("../../shared/cache_utilities.R")
 source("../../shared/config.R")
 
@@ -36,7 +37,7 @@ format_ttl <- function(seconds) {
 # =============================================================================
 # UI
 # =============================================================================
-ui <- dashboardPage(
+ui <- accessible_dashboard_page(
   skin = "black",
   dashboardHeader(title = "MMCD Admin"),
   

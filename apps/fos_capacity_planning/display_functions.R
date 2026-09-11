@@ -10,22 +10,31 @@ CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "air_sites",
                            "avg_miles")
 
 #' Workload-study crew estimate (2001 Ch. 11 method): convert the promoted
-#' sections' site counts into seasonal jobs, then hours, then crews.
-#'   jobs  = site_count(kind) x jobs-per-site rate
-#'   hours = jobs x hours-per-job
-#'   crews = total hours / hours-per-crew-season
+#' sections' site counts into seasonal jobs, then on-site hours, ADD seasonal
+#' travel (drive-time) hours, then crews.
+#'   jobs     = site_count(kind) x jobs-per-site rate
+#'   on-site  = jobs x hours-per-job
+#'   travel   = sum_section( round trips/season x 2 x one-way drive hours )
+#'   crews    = (on-site + travel) hours / hours-per-crew-season
 #'
-#' @param promoted_sections section-grain df (ground_sites, air_sites) being added
+#' @param promoted_sections section-grain df (ground_sites, air_sites, miles) being added
 #' @param rates          named vector job_type -> jobs-per-distinct-site (P1)
 #' @param hours_per_job  named vector job_type -> hours (editable; default study)
 #' @param hrs_per_crew   hours a crew works air+gnd insp/trt per season (def 2184)
-#' @return list(by_job = df, totals = list)
+#' @param trips_per_section round trips a crew drives to each section per season
+#'   (editable planning assumption; 0 disables the travel term)
+#' @param avg_mph, circuity  drive-time estimate params (see est_drive_minutes)
+#' @return list(by_job = df, totals = list) — totals$hours is the FULL pool
+#'   (on-site + travel); onsite_hours and travel_hours are broken out.
 estimate_crews <- function(promoted_sections, rates,
                            hours_per_job = STUDY_HOURS_PER_JOB,
-                           hrs_per_crew = STUDY_CREW_HOURS_SEASON) {
+                           hrs_per_crew = STUDY_CREW_HOURS_SEASON,
+                           trips_per_section = DEFAULT_TRIPS_PER_SECTION,
+                           avg_mph = 45, circuity = 1.3) {
   jt <- names(JOB_TYPE_LABELS)
-  g_sites <- if (nrow(promoted_sections) > 0) sum(promoted_sections$ground_sites, na.rm = TRUE) else 0
-  a_sites <- if (nrow(promoted_sections) > 0) sum(promoted_sections$air_sites, na.rm = TRUE) else 0
+  n_sec   <- if (!is.null(promoted_sections)) nrow(promoted_sections) else 0
+  g_sites <- if (n_sec > 0) sum(promoted_sections$ground_sites, na.rm = TRUE) else 0
+  a_sites <- if (n_sec > 0) sum(promoted_sections$air_sites, na.rm = TRUE) else 0
 
   rate_v <- ifelse(jt %in% names(rates), as.numeric(rates[jt]), 0)
   hpj_v  <- ifelse(jt %in% names(hours_per_job), as.numeric(hours_per_job[jt]), 0)
@@ -44,17 +53,30 @@ estimate_crews <- function(promoted_sections, rates,
     check.names = FALSE, stringsAsFactors = FALSE
   )
 
-  total_hours <- sum(hours, na.rm = TRUE)
+  onsite_hours <- sum(hours, na.rm = TRUE)
+
+  # Seasonal travel: each section is visited `trips_per_section` times (round
+  # trips), so travel hrs = trips x 2 x one-way drive hours, summed over sections.
+  travel_hours <- 0
+  if (n_sec > 0 && !is.null(promoted_sections$miles) && trips_per_section > 0) {
+    one_way_hrs  <- est_drive_minutes(promoted_sections$miles, avg_mph, circuity) / 60
+    travel_hours <- sum(trips_per_section * 2 * one_way_hrs, na.rm = TRUE)
+  }
+
+  total_hours <- onsite_hours + travel_hours
   crews <- if (hrs_per_crew > 0) total_hours / hrs_per_crew else NA_real_
 
   list(
     by_job = by_job,
     totals = list(
       ground_sites = g_sites, air_sites = a_sites,
-      jobs  = sum(jobs, na.rm = TRUE),
-      hours = round(total_hours, 1),
+      n_sections   = n_sec,
+      jobs         = sum(jobs, na.rm = TRUE),
+      onsite_hours = round(onsite_hours, 1),
+      travel_hours = round(travel_hours, 1),
+      hours        = round(total_hours, 1),
       hrs_per_crew = hrs_per_crew,
-      crews = round(crews, 2)
+      crews        = round(crews, 2)
     )
   )
 }

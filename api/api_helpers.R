@@ -82,9 +82,9 @@ validate_date <- function(v) {
   d
 }
 
-validate_lookback <- function(v) {
+validate_lookback <- function(v, max_days = 150L) {
   n <- suppressWarnings(as.integer(v %||% 2L))
-  if (is.na(n) || n < 1L || n > 14L) stop("lookback_days must be 1-14")
+  if (is.na(n) || n < 1L || n > max_days) stop(paste0("lookback_days must be 1-", max_days))
   n
 }
 

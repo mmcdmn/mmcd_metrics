@@ -258,6 +258,12 @@ get_accessibility_js <- function() {
           var el = findMain();
           if (!el) { return; }
           el.setAttribute('role', 'main');
+          /* Name the landmark so it announces as 'Main content, region' and
+             reads clearly in the screen-reader landmark list, matching what
+             main_landmark() sets server-side. */
+          if (!el.hasAttribute('aria-label')) {
+            el.setAttribute('aria-label', 'Main content');
+          }
           if (!el.id) { el.id = 'main-content'; }
           if (!el.hasAttribute('tabindex')) { el.setAttribute('tabindex', '-1'); }
           el.classList.add('a11y-main-landmark');
@@ -350,20 +356,19 @@ skip_link <- function(target_id = "main-content", label = "Skip to main content"
 
 #' Wrap content in a <main> landmark
 #'
-#' Gives the skip link an exact destination and adds a navigable landmark for
-#' screen readers. tabindex="-1" lets a non-interactive container receive
-#' programmatic focus without entering the tab sequence.
-#'
+#' Gives the skip link an exact destination and adds a navigable landmark
 #' @param ... Content to wrap
 #' @param id Element id (must match the skip link target)
+#' @param label Accessible name for the landmark
 #' @return A Shiny tag
 #' @export
-main_landmark <- function(..., id = "main-content") {
+main_landmark <- function(..., id = "main-content", label = "Main content") {
   shiny::tags$main(
-    id       = id,
-    class    = "a11y-main-landmark",
-    tabindex = "-1",
-    role     = "main",
+    id           = id,
+    class        = "a11y-main-landmark",
+    tabindex     = "-1",
+    role         = "main",
+    `aria-label` = label,
     ...
   )
 }
@@ -377,11 +382,13 @@ main_landmark <- function(..., id = "main-content") {
 #' @param ... Content (as for mainPanel)
 #' @param width Bootstrap column width (as for mainPanel)
 #' @param id Landmark id
+#' @param label Accessible name for the landmark
 #' @return A Shiny tag
 #' @export
-accessible_main_panel <- function(..., width = 8, id = "main-content") {
+accessible_main_panel <- function(..., width = 8, id = "main-content",
+                                  label = "Main content") {
   shiny::mainPanel(
-    main_landmark(..., id = id),
+    main_landmark(..., id = id, label = label),
     width = width
   )
 }

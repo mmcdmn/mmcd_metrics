@@ -460,17 +460,6 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* Generic site-inspection data — returns the most recent record per sitecode
 #* for any requested action code(s) within a lookback window.
 #*
-#* Returns ALL columns from the inspection table so the generic GAS filler can
-#* map any field to any sheet column via CONFIG.COLUMNS. Fields missing from a
-#* given record come back as null (not omitted) so the GAS can distinguish
-#* "never recorded" from zero.  A `was_completed` boolean is added: true when a
-#* matching record exists for the site, false when the site is in
-#* loc_breeding_sites but has no matching record in the window.
-#*
-#* Available source fields for CONFIG.COLUMNS in the generic filler:
-#*   sitecode, action, inspdate, numdip, wet, emp1, emp2, matcode, amts,
-#*   acres, acres_plan, airgrnd_plan, sampnum_yr, posttrt_p, reinspect,
-#*   remarks, pkey_pg, was_completed
 #*
 #* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
 #* @param lookback_days Days back to search (1–150, default 14)
@@ -489,6 +478,9 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
     lb_v    <- validate_lookback(lookback_days, max_days = 150L)
     date_v  <- Sys.Date()
     start_v <- date_v - lb_v
+
+    con <- get_db_connection()
+    on.exit(safe_disconnect(con), add = TRUE)
 
     tbl <- get_table_strategy(date_v)
     # Union current + archive tables when the lookback window spans both years

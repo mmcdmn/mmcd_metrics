@@ -1631,7 +1631,13 @@ build_overview_server <- function(input, output, session,
         emp <- as.character(crew$emp_num[i])
         cells <- lapply(seq_along(days), function(d) {
           tags$td(style = "padding:2px 6px;vertical-align:top;",
-            textAreaInput(paste0("task_", emp, "_", d), label = NULL,
+            textAreaInput(paste0("task_", emp, "_", d),
+                          # Visually hidden label: the grid conveys employee/day
+                          # position visually, but assistive tech needs each
+                          # textarea to carry its own accessible name.
+                          label = tags$span(class = "sr-only",
+                                            paste0("Task for ", crew$shortname[i],
+                                                   " on ", days[[d]])),
                           rows = 2, width = "220px", resize = "vertical"))
         })
         tags$tr(

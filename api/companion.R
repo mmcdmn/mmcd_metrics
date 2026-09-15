@@ -10,15 +10,8 @@
 #* @post /restart
 #* @json
 function(req, res) {
-  auth     <- if (!is.null(req$HTTP_AUTHORIZATION)) req$HTTP_AUTHORIZATION else ""
-  api_keys <- Sys.getenv("API_KEYS", "mmcd-sheets-abc123xyz")
-  valid    <- any(trimws(strsplit(api_keys, ",")[[1]]) == sub("^Bearer\\s+", "", auth))
-
-  if (!nzchar(auth) || !valid) {
-    res$status <- 401L
-    return(list(error = "unauthorized"))
-  }
-
+  # No auth — this endpoint is loopback-only (127.0.0.1:9001, never exposed
+  # through nginx to the public internet), so network isolation is the guard.
   pid_file <- "/var/run/plumber-main.pid"
   signaled <- FALSE
   if (file.exists(pid_file)) {

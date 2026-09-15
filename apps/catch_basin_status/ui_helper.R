@@ -4,7 +4,7 @@
 #' Create the main UI for the catch basin status app
 #' @return Shiny UI object
 catch_basin_ui <- function() {
-  fluidPage(
+  accessible_page(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
     
@@ -127,7 +127,7 @@ catch_basin_ui <- function() {
       ),
       
       # Main panel with tabs
-      mainPanel(
+      accessible_main_panel(
         tabsetPanel(
           id = "tabs",
           tabPanel("Status Overview", value = "overview", 

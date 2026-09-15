@@ -17,6 +17,7 @@ suppressPackageStartupMessages({
 # Source the shared database helper functions
 suppressWarnings({
   source("../../shared/db_helpers.R")
+  source("../../shared/accessibility_helpers.R")
 })
 
 # Source the external function files
@@ -27,7 +28,7 @@ source("flow_testing_functions.R")
 set_app_name("red_air_legacy")
 
 # Define UI
-ui <- dashboardPage(
+ui <- accessible_dashboard_page(
   dashboardHeader(title = "Air Work Pipeline"),
   
   dashboardSidebar(

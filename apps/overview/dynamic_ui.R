@@ -345,7 +345,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
     }
   }
   
-  fluidPage(
+  accessible_page(
     # Include universal CSS from db_helpers
     get_universal_text_css(),
     

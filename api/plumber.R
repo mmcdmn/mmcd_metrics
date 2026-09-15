@@ -457,6 +457,132 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 }
 
 
+#* Generic site-inspection data — returns the most recent record per sitecode
+#* for any requested action code(s) within a lookback window.
+#*
+#* Returns ALL columns from the inspection table so the generic GAS filler can
+#* map any field to any sheet column via CONFIG.COLUMNS. Fields missing from a
+#* given record come back as null (not omitted) so the GAS can distinguish
+#* "never recorded" from zero.  A `was_completed` boolean is added: true when a
+#* matching record exists for the site, false when the site is in
+#* loc_breeding_sites but has no matching record in the window.
+#*
+#* Available source fields for CONFIG.COLUMNS in the generic filler:
+#*   sitecode, action, inspdate, numdip, wet, emp1, emp2, matcode, amts,
+#*   acres, acres_plan, airgrnd_plan, sampnum_yr, posttrt_p, reinspect,
+#*   remarks, pkey_pg, was_completed
+#*
+#* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
+#* @param lookback_days Days back to search (1–150, default 14)
+#* @param facility      Optional facility code (MO, E, W, N, Sr, Sj …)
+#* @get /v1/private/site-inspections
+#* @json
+function(actions = NULL, lookback_days = 14, facility = NULL, res) {
+  tryCatch({
+    if (is.null(actions) || !nzchar(trimws(actions %||% "")))
+      stop("actions parameter is required (e.g. actions=9 or actions=1,3)")
+
+    action_list <- trimws(unlist(strsplit(as.character(actions), ",")))
+    if (length(action_list) == 0 || any(!grepl("^[0-9A-Za-z]{1,4}$", action_list)))
+      stop("actions must be comma-separated alphanumeric codes, e.g. '9' or '1,3'")
+
+    lb_v    <- validate_lookback(lookback_days, max_days = 150L)
+    date_v  <- Sys.Date()
+    start_v <- date_v - lb_v
+
+    tbl <- get_table_strategy(date_v)
+    # Union current + archive tables when the lookback window spans both years
+    ins_tbl <- if (tbl$query_archive && !tbl$query_current)
+                 "dblarv_insptrt_archive"
+               else if (!tbl$query_archive)
+                 "dblarv_insptrt_current"
+               else
+                 "(SELECT * FROM dblarv_insptrt_current
+                   UNION ALL SELECT * FROM dblarv_insptrt_archive)"
+
+    fac_filter <- ""
+    if (!is.null(facility) && nzchar(trimws(facility %||% ""))) {
+      fac_v      <- validate_facility(facility)
+      fac_filter <- paste0("AND LEFT(i.sitecode, 2) = '", fac_v, "'")
+    }
+
+    action_sql <- paste0("'", paste(action_list, collapse = "','"), "'")
+
+    query <- sprintf("
+      WITH ActiveSites AS (
+        SELECT sitecode
+        FROM public.loc_breeding_sites
+        WHERE enddate IS NULL OR enddate > CURRENT_DATE
+      ),
+      Ranked AS (
+        SELECT
+          i.sitecode,
+          i.action,
+          i.inspdate,
+          i.numdip,
+          i.wet,
+          i.emp1,
+          i.emp2,
+          i.matcode,
+          i.amts,
+          i.acres,
+          i.acres_plan,
+          i.airgrnd_plan,
+          i.sampnum_yr,
+          i.posttrt_p,
+          i.reinspect,
+          i.remarks,
+          i.pkey_pg,
+          ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
+        FROM %s i
+        WHERE i.inspdate BETWEEN '%s'::date AND '%s'::date
+          AND i.action IN (%s)
+          AND i.sitecode IN (SELECT sitecode FROM ActiveSites)
+          %s
+      )
+      SELECT
+        s.sitecode,
+        r.action,
+        r.inspdate,
+        r.numdip,
+        r.wet,
+        r.emp1,
+        r.emp2,
+        r.matcode,
+        r.amts,
+        r.acres,
+        r.acres_plan,
+        r.airgrnd_plan,
+        r.sampnum_yr,
+        r.posttrt_p,
+        r.reinspect,
+        r.remarks,
+        r.pkey_pg,
+        (r.sitecode IS NOT NULL) AS was_completed
+      FROM ActiveSites s
+      LEFT JOIN Ranked r ON s.sitecode = r.sitecode AND r.rn = 1
+      ORDER BY s.sitecode
+    ", ins_tbl,
+       format(start_v, "%Y-%m-%d"),
+       format(date_v,  "%Y-%m-%d"),
+       action_sql,
+       fac_filter)
+
+    rows <- DBI::dbGetQuery(con, query)
+    if (nrow(rows) > 0)
+      rows$was_completed <- as.logical(rows$was_completed)
+
+    list(
+      count         = nrow(rows),
+      as_of         = format(date_v, "%Y-%m-%d"),
+      lookback_days = lb_v,
+      actions       = action_list,
+      data          = rows
+    )
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+
 #* Checkback checklist — sites needing post-treatment re-inspection.
 #* Returns per-site rows for treated sites that still need a checkback,
 #* grouped by brood (consecutive treatment days at same facility).

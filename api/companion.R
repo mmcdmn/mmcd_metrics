@@ -14,21 +14,28 @@ function(req, res) {
   # through nginx to the public internet), so network isolation is the guard.
   pid_file <- "/var/run/plumber-main.pid"
   signaled <- FALSE
+
   if (file.exists(pid_file)) {
     pid <- suppressWarnings(as.integer(readLines(pid_file, n = 1L)))
     if (!is.na(pid) && pid > 0L) {
-      system2("kill", c("-TERM", as.character(pid)))
-      message("[companion] Sent SIGTERM to Plumber PID ", pid)
+      # SIGKILL (not SIGTERM) — httpuv catches SIGTERM and may not exit;
+      # SIGKILL cannot be caught or ignored by any process.
+      system2("kill", c("-9", as.character(pid)))
+      message("[companion] Sent SIGKILL to Plumber PID ", pid)
       signaled <- TRUE
     }
+  }
+
+  if (!signaled) {
+    # PID file missing or stale — find and kill any Rscript running run_plumber.R
+    result <- system("pkill -9 -f 'run_plumber.R'", intern = TRUE)
+    message("[companion] pkill -9 run_plumber.R — watchdog will restart")
+    signaled <- TRUE
   }
 
   list(
     status   = "restarting",
     signaled = signaled,
-    message  = if (signaled)
-      "Plumber process signaled. Watchdog will restart within ~3 seconds."
-    else
-      "PID file not found — watchdog will restart Plumber if it is not already running."
+    message  = "Plumber process killed. Watchdog will restart within ~3 seconds."
   )
 }

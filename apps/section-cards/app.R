@@ -18,6 +18,7 @@ suppressPackageStartupMessages({
 
 # Source shared helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 
 # Source external function files
 source("ui_helper.R")
@@ -44,7 +45,7 @@ load_env_vars()
 # UI Definition
 # =============================================================================
 
-ui <- fluidPage(
+ui <- accessible_page(
   
   # Initialize shinyjs
   useShinyjs(),

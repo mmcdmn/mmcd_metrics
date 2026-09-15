@@ -14,6 +14,7 @@ library(plotly)
 library(rlang)  # for %||% operator
 
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")

@@ -15,6 +15,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 source("../../shared/server_utilities.R")
 source("../../shared/stat_box_helpers.R")
 

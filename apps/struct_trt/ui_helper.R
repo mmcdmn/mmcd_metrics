@@ -45,7 +45,7 @@ create_help_text <- function() {
 #' Create the main UI for the structure treatment app
 #' @return Shiny UI object
 struct_trt_ui <- function() {
-  fluidPage(
+  accessible_page(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
     
@@ -180,7 +180,7 @@ struct_trt_ui <- function() {
       ),
       
       # Main panel with tabs
-      mainPanel(
+      accessible_main_panel(
         tabsetPanel(id = "tabs",
           tabPanel("Current Progress", value = "current",
                    br(),

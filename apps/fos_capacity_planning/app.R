@@ -20,6 +20,7 @@ suppressPackageStartupMessages({
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1 && is.na(a))) b else a
 
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 source("data_functions.R")
 source("display_functions.R")
 
@@ -42,7 +43,7 @@ METRIC_CHOICES <- c(
 # =============================================================================
 # UI
 # =============================================================================
-ui <- fluidPage(
+ui <- accessible_page(
   tags$head(tags$style(HTML("
     body { font-family: 'Segoe UI', Arial, sans-serif; }
     .well { background:#f5f7fa; }
@@ -126,7 +127,9 @@ ui <- fluidPage(
           tags$p(style = "margin:4px 0;font-family:Consolas,monospace;font-size:13px;",
             HTML("<b>A. Added techs</b> = &Sigma;<sub>FOS</sub> ( &lceil;new P1 load &divide; load-per-tech&rceil; &minus; &lceil;current P1 load &divide; load-per-tech&rceil; )")),
           tags$p(style = "margin:4px 0;font-family:Consolas,monospace;font-size:13px;",
-            HTML("<b>B. Crews</b> = &Sigma;<sub>job type</sub> ( sites &times; jobs-per-site &times; hours-per-job ) &divide; hours-per-crew-season")),
+            HTML("<b>B. Additional crews</b> = [ &Sigma;<sub>job type</sub> ( sites &times; jobs-per-site &times; hours-per-job ) + travel ] &divide; hours-per-crew-season")),
+          tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
+            HTML("travel = &Sigma;<sub>section</sub> ( round trips &times; 2 &times; one-way drive time )")),
           tags$p(class = "metric-note", style = "margin:8px 0 0;",
             "Click a section on the map to add/remove it; hold ",
             tags$b("Shift"), " and drag a box to add many. Every number in the ",
@@ -157,11 +160,13 @@ ui <- fluidPage(
         )
       ),
       hr(),
-      h4("Estimate B — crews needed (2001 Workload Study method)"),
+      h4("Estimate B — ADDITIONAL crews needed (2001 Workload Study method)"),
       tags$p(class = "metric-note",
         "site counts × jobs-per-site (live, from actual treatments) × ",
         "hours-per-job (editable, 2001 study defaults) ÷ hours-per-crew-season ",
-        "= crews required. A crew = 1 FOS + its inspectors."),
+        "= ADDITIONAL crews to service the selected area at P1 intensity ",
+        "(the study's expansion figure — not a facility total, and not net of ",
+        "current P2 effort). A crew = 1 FOS + its inspectors."),
       wellPanel(
         fluidRow(
           column(2, selectInput("wi_rate_year", "Jobs/site season:", choices = NULL)),
@@ -176,6 +181,18 @@ ui <- fluidPage(
           column(2, numericInput("wi_h_gnd_insp_trt", "Hrs gnd insp&trt", 1.08, 0, step = 0.05)),
           column(2, numericInput("wi_h_gnd_trt", "Hrs gnd trt", 0.55, 0, step = 0.05)),
           column(2, numericInput("wi_h_gnd_insp", "Hrs gnd insp", 0.17, 0, step = 0.05))
+        ),
+        tags$p(class = "metric-note", style = "margin:8px 0 2px;",
+               tags$b("Drive time"), " (added to the hours pool): each promoted ",
+               "section is driven this many round trips per season. Set trips to ",
+               "0 to exclude travel (e.g. if the hours-per-job above already ",
+               "include drive time)."),
+        fluidRow(
+          column(3, numericInput("wi_crew_trips", "Round trips/section (season)",
+                                 DEFAULT_TRIPS_PER_SECTION, 0, step = 1)),
+          column(2, numericInput("wi_avg_mph", "Avg mph", 45, 5, 80, 1)),
+          column(3, numericInput("wi_circuity", "Road circuity factor",
+                                 1.3, 1, 2, 0.05))
         )
       ),
       fluidRow(
@@ -458,7 +475,7 @@ server <- function(input, output, session) {
     disp <- s[, c("Sel", "sectcode", "fos_name", "ground_sites", "air_sites",
                   "prehatch_sites", "wet_cb", "miles")]
     disp$drive_min <- est_drive_minutes(disp$miles,
-                                        input$avg_mph %||% 45, input$circuity %||% 1.3)
+                                        input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3)
     names(disp) <- c("Sel", "Section", "FOS", "Ground", "Air", "PH sites",
                      "WetCB", "Miles", "Drive min")
     DT::datatable(disp, rownames = FALSE, filter = "top", selection = "none",
@@ -528,32 +545,43 @@ server <- function(input, output, session) {
              gnd_insp_trt = input$wi_h_gnd_insp_trt, gnd_trt = input$wi_h_gnd_trt,
              gnd_insp = input$wi_h_gnd_insp)
     estimate_crews(promo, rates, hpj,
-                   input$wi_crew_hours %||% STUDY_CREW_HOURS_SEASON)
+                   input$wi_crew_hours %||% STUDY_CREW_HOURS_SEASON,
+                   trips_per_section = input$wi_crew_trips %||% DEFAULT_TRIPS_PER_SECTION,
+                   avg_mph  = input$wi_avg_mph %||% 45,
+                   circuity = input$wi_circuity %||% 1.3)
   })
 
   output$wi_crew_summary <- renderUI({
     r <- wi_crew_result(); t <- r$totals
     tags$div(
       tags$p(sprintf(
-        "Promoted area: %s ground + %s air sites → %s seasonal jobs → %s staff-hours.",
+        "Promoted area: %s ground + %s air sites across %s section(s) → %s seasonal jobs.",
         format(t$ground_sites, big.mark = ","), format(t$air_sites, big.mark = ","),
-        format(t$jobs, big.mark = ","), format(t$hours, big.mark = ","))),
+        format(t$n_sections, big.mark = ","), format(t$jobs, big.mark = ","))),
       tags$p(HTML(sprintf(
-        "<span style='font-family:Consolas,monospace;'>Crews = %s hrs &divide; %s hrs/crew = <b>%.2f</b></span>",
+        "<span style='font-family:Consolas,monospace;'>%s on-site hrs + %s travel hrs = %s total hrs &divide; %s hrs/crew = <b>%.2f</b></span>",
+        format(t$onsite_hours, big.mark = ","), format(t$travel_hours, big.mark = ","),
         format(t$hours, big.mark = ","), format(t$hrs_per_crew, big.mark = ","),
         t$crews))),
-      tags$h3(style = "color:#2c5aa0;", sprintf("Crews required: %.2f", t$crews))
+      tags$h3(style = "color:#2c5aa0;",
+              sprintf("Additional crews needed: %.2f", t$crews)),
+      tags$p(class = "metric-note",
+             "Crews to service the selected area at P1 intensity (a crew = 1 FOS + its inspectors).")
     )
   })
 
   output$wi_crew_by_job <- DT::renderDT({
-    r <- wi_crew_result(); bj <- r$by_job
-    total_row <- data.frame(
-      Job = "TOTAL", Sites = NA, `Jobs/site` = NA,
-      Jobs = sum(bj$Jobs, na.rm = TRUE), `Hrs/job` = NA,
-      Hours = round(sum(bj$Hours, na.rm = TRUE), 1),
+    r <- wi_crew_result(); bj <- r$by_job; t <- r$totals
+    travel_row <- data.frame(
+      Job = "Travel (drive time)", Sites = NA, `Jobs/site` = NA,
+      Jobs = NA, `Hrs/job` = NA, Hours = t$travel_hours,
       check.names = FALSE)
-    DT::datatable(rbind(bj, total_row), rownames = FALSE,
+    total_row <- data.frame(
+      Job = "TOTAL (incl. travel)", Sites = NA, `Jobs/site` = NA,
+      Jobs = sum(bj$Jobs, na.rm = TRUE), `Hrs/job` = NA,
+      Hours = t$hours,
+      check.names = FALSE)
+    DT::datatable(rbind(bj, travel_row, total_row), rownames = FALSE,
                   options = list(dom = "t", scrollX = TRUE))
   })
 

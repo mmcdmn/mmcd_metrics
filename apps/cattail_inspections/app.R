@@ -16,6 +16,7 @@ suppressPackageStartupMessages({
 
 # Source the shared database helper functions
 source("../../shared/db_helpers.R")
+source("../../shared/accessibility_helpers.R")
 source("../../shared/server_utilities.R")
 
 # Source the planned treatment functions
@@ -40,7 +41,7 @@ tryCatch({
   message("[cattail_inspections] Lookup tables preloaded")
 }, error = function(e) message("[cattail_inspections] Preload warning: ", e$message))
 
-ui <- fluidPage(
+ui <- accessible_page(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
   titlePanel("Cattail Inspection Progress and Treatment Planning"),

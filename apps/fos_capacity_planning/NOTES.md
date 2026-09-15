@@ -50,8 +50,10 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 ## Workload-study crew model (2001 Ch. 11) — What-If "Estimate B"
 
 Second staffing estimate alongside the load-per-tech one, using MMCD's established
-expansion-proposal method: **site counts × jobs-per-site × hours-per-job ÷
-hours-per-crew-season = crews required** (crew = 1 FOS + its inspectors).
+expansion-proposal method, now with **drive time** folded in:
+**( site counts × jobs-per-site × hours-per-job + travel ) ÷ hours-per-crew-season
+= crews required** (crew = 1 FOS + its inspectors). Travel (drive-time) hours are
+added on top of the study's on-site hours — see the `estimate_crews` bullet.
 
 - **`load_jobs_per_site(year)`** — live jobs-per-distinct-site rates from
   `dblarv_insptrt_current`+`archive` for the season, by facility × zone × job_type
@@ -63,9 +65,18 @@ hours-per-crew-season = crews required** (crew = 1 FOS + its inspectors).
   means (Table 11.3): air trt 1.35, air insp 0.66, gnd insp&trt 1.08, gnd trt 0.55,
   gnd insp 0.17. Hours-per-crew-season default 2,184 (Table 11.6). Constants:
   `STUDY_HOURS_PER_JOB`, `STUDY_CREW_HOURS_SEASON`, `JOB_TYPE_LABELS`, `JOB_TYPE_SITEKIND`.
-- **`estimate_crews(promoted_sections, rates, hours_per_job, hrs_per_crew)`** — jobs =
-  site_count(kind) × rate; hours = jobs × hrs/job; crews = Σhours ÷ hrs/crew. Verified:
-  all 339 Sr P2 sections (1309 gnd + 298 air) → 9,601 jobs → 6,621 hrs → 3.03 crews.
+- **`estimate_crews(promoted_sections, rates, hours_per_job, hrs_per_crew,
+  trips_per_section, avg_mph, circuity)`** — *on-site:* jobs = site_count(kind) × rate,
+  hours = jobs × hrs/job. *Travel (added):* each promoted section is driven
+  `trips_per_section` round trips/season, so travel hrs = Σ_section trips × 2 ×
+  (one-way drive hours from `est_drive_minutes(miles, avg_mph, circuity)`). **crews =
+  (on-site + travel) ÷ hrs/crew.** Returns `totals$onsite_hours`, `travel_hours`, and
+  `hours` (= the full on-site + travel pool). Verified on-site (no travel): all 339 Sr
+  P2 sections (1309 gnd + 298 air) → 9,601 jobs → 6,621 hrs → 3.03 crews. `avg_mph`/
+  `circuity`/trips are editable on the What-If tab (`wi_avg_mph`, `wi_circuity`,
+  `wi_crew_trips`; `DEFAULT_TRIPS_PER_SECTION = 8`, a planning assumption not a study
+  value). **Caveat:** if the study hours-per-job already include travel, set trips = 0
+  to avoid double-counting.
 
 ## Interactive section map (What-If)
 
@@ -84,8 +95,13 @@ of sections to promote is driven by the map into a shared `sel` reactiveVal:
 Both estimates recompute **live** from `sel()` (no run button). The two governing
 equations are shown up front, and every input number is exposed:
 - **A. Added techs** = Σ_FOS ( ⌈new P1 ÷ load-per-tech⌉ − ⌈current P1 ÷ load-per-tech⌉ )
-- **B. Crews** = Σ_jobtype ( sites × jobs-per-site × hours-per-job ) ÷ hours-per-crew-season
-  (the by-job table shows sites, jobs/site, jobs, hrs/job, hours, and a TOTAL row).
+- **B. Additional crews** = [ Σ_jobtype ( sites × jobs-per-site × hours-per-job ) + travel ] ÷ hours-per-crew-season,
+  where **travel = Σ_section ( round trips × 2 × one-way drive time )**. The by-job table
+  shows sites, jobs/site, jobs, hrs/job, hours, plus a **Travel (drive time)** row and a
+  **TOTAL (incl. travel)** row; the summary breaks out on-site + travel = total hrs.
+  Computed from the **promoted sections only**, so it is the *additional* crews to service
+  the selected area at P1 intensity (matches the study's expansion figure, Table 11.6) —
+  **not** a facility total, and not net of current P2 effort.
 
 ## App (`app.R`) — three tabs
 

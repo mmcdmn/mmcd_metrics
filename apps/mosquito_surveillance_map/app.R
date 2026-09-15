@@ -25,6 +25,7 @@ UTMshapeCITYdata <- sf::st_read("shp/CTUs.shp")
 # Source shared helper functions
 suppressWarnings({
   source("../../shared/db_helpers.R")
+  source("../../shared/accessibility_helpers.R")
 })
 
 # Set application name for AWS RDS monitoring
@@ -126,7 +127,7 @@ dfmapMISS2163UTM <- st_transform(dfmapMISS4326, crs=2163)
   )
 }
 
-ui <- fluidPage(
+ui <- accessible_page(
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
   theme = bslib::bs_theme(bootswatch = "united"),

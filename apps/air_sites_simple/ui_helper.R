@@ -3,7 +3,7 @@
 #' Create the main UI for the air sites simple app
 #' @return Shiny UI object
 air_sites_simple_ui <- function() {
-  fluidPage(
+  accessible_page(
     get_universal_text_css(),
     titlePanel("Air Work Pipeline - Simple"),
 
@@ -140,7 +140,7 @@ air_sites_simple_ui <- function() {
       # =====================================================================
       # MAIN PANEL WITH TABS
       # =====================================================================
-      mainPanel(
+      accessible_main_panel(
         tabsetPanel(id = "main_tabset",
 
           # =================================================================

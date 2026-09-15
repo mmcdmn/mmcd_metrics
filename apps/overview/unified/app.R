@@ -29,6 +29,7 @@ suppressPackageStartupMessages({
 
 # Source shared database helpers (adjust path since we're in unified/ subfolder)
 source("../../../shared/db_helpers.R")
+source("../../../shared/accessibility_helpers.R")
 source("../../../shared/config.R")
 source("../../../shared/stat_box_helpers.R")
 

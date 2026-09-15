@@ -36,6 +36,13 @@ JOB_TYPE_SITEKIND <- c(air_trt = "air", air_insp = "air",
                        gnd_insp_trt = "ground", gnd_trt = "ground",
                        gnd_insp = "ground")
 
+# Planning assumption (NOT a 2001-study value): how many round trips a crew
+# drives to a given section over a season. Used by the What-If crew estimate to
+# turn straight-line facility->section miles into seasonal travel hours. Editable
+# in the UI; set to 0 to drop travel entirely (e.g. if the study hours-per-job
+# already bake in travel).
+DEFAULT_TRIPS_PER_SECTION <- 8
+
 #' Jobs-per-distinct-site multipliers from ACTUAL treatment data, by
 #' facility x zone x job_type, plus a DISTRICT roll-up. rate = jobs / distinct
 #' sites serviced (matches Workload Study Table 11.4). Computed live so it beats

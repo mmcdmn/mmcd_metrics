@@ -2,7 +2,7 @@ library(shiny)
 library(shinydashboard)
 
 trap_ui <- function() {
-  dashboardPage(
+  accessible_dashboard_page(
     dashboardHeader(title = "Trap Surveillance Test"),
     dashboardSidebar(
       sidebarMenu(

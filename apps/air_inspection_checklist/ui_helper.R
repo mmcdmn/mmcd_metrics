@@ -12,7 +12,7 @@ air_inspection_checklist_ui <- function() {
   css_href <- paste0("checklist.css?v=", css_mtime)
   js_src <- paste0("checklist.js?v=", js_mtime)
 
-  fluidPage(
+  accessible_page(
     get_universal_text_css(),
     tags$head(
       tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, maximum-scale=5"),
@@ -77,7 +77,7 @@ air_inspection_checklist_ui <- function() {
         )
       ),
 
-      mainPanel(
+      accessible_main_panel(
         width = 9,
         uiOutput("checklist_display")
       )

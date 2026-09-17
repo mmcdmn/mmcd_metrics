@@ -1,7 +1,7 @@
 # Companion restart listener — runs on port 9001, separate from the main
 # Plumber API (port 9000). Stays alive independently so the web UI can
 # trigger a restart even when the main process is completely dead.
-#
+# reset api
 # nginx routes: POST /v1/private/restart-companion  →  POST /restart here
 # startup.sh writes the main Plumber PID to /var/run/plumber-main.pid
 # after each (re)start; this endpoint reads that file and sends SIGTERM.

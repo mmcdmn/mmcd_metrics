@@ -460,6 +460,10 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* Generic site-inspection data — returns the most recent record per sitecode
 #* for any requested action code(s) within a lookback window.
 #*
+#* Available source fields for CONFIG.COLUMNS in the generic filler:
+#*   inspdate, numdip, wet, emp1, emp2, matcode, amts, acres, acres_plan,
+#*   airgrnd_plan, sampnum_yr, posttrt_p, reinspect, rems1, rems2, comments,
+#*   action, pkey_pg, was_completed
 #*
 #* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
 #* @param lookback_days Days back to search (1–150, default 14)
@@ -523,7 +527,9 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
           i.sampnum_yr,
           i.posttrt_p,
           i.reinspect,
-          i.remarks,
+          i.rems1,
+          i.rems2,
+          i.comments,
           i.pkey_pg,
           ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
         FROM %s i
@@ -548,7 +554,9 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
         r.sampnum_yr,
         r.posttrt_p,
         r.reinspect,
-        r.remarks,
+        r.rems1,
+        r.rems2,
+        r.comments,
         r.pkey_pg,
         (r.sitecode IS NOT NULL) AS was_completed
       FROM ActiveSites s

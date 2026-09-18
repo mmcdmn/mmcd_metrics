@@ -113,7 +113,7 @@ ui <- accessible_dashboard_page(
         fluidRow(
           box(title = "API Management", status = "danger", solidHeader = TRUE, width = 6,
             p("If the API is returning 502 errors, click below to restart the Plumber process.",
-              "The watchdog will bring it back up within ~3 seconds."),
+              "Waits until the API answers again (up to 90s), then shows the result and the recent API log."),
             actionButton("restartApi", "Restart API", icon = icon("power-off"),
                          class = "btn-danger"),
             br(), br(),
@@ -590,32 +590,30 @@ server <- function(input, output, session) {
   api_health <- reactiveVal("")
 
   observeEvent(input$restartApi, {
-    api_status("Sending restart request...")
-    tryCatch({
-      key <- Sys.getenv("API_KEYS", "mmcd-sheets-abc123xyz")
-      tmp <- tempfile()
-      on.exit(unlink(tmp), add = TRUE)
-      result <- system2("curl", args = c(
-        "-s", "-o", tmp, "-w", "%{http_code}",
-        "-X", "POST",
-        "-H", paste0("Authorization: Bearer ", key),
-        "http://127.0.0.1:9001/restart"
-      ), stdout = TRUE, stderr = TRUE)
-      code <- trimws(paste(result, collapse = ""))
-      body <- tryCatch(paste(readLines(tmp, warn = FALSE), collapse = ""), error = function(e) "")
-      signaled <- tryCatch(isTRUE(jsonlite::fromJSON(body)$signaled), error = function(e) FALSE)
-      if (code == "200" && signaled) {
-        api_status(paste0("[OK] Restart triggered at ", format(Sys.time(), "%H:%M:%S"),
-                          ". API should be back in ~3 seconds."))
-      } else if (code == "200" && !signaled) {
-        api_status(paste0("[WARN] Companion reached but PID file missing \u2014 watchdog will auto-restart. (",
-                          format(Sys.time(), "%H:%M:%S"), ")"))
-      } else {
-        api_status(paste0("[WARN] Got HTTP ", code, ". API may already be down \u2014 watchdog will restart it."))
-      }
-    }, error = function(e) {
-      api_status(paste0("[INFO] Could not reach companion (port 9001 down?). Error: ", e$message))
-    })
+    # The companion replies only after the API answers again (max ~90s).
+    out <- tryCatch(
+      system2("curl", c("-s", "-m", "120", "-X", "POST", "http://127.0.0.1:9001/restart"),
+              stdout = TRUE, stderr = TRUE),
+      error = function(e) paste("curl failed:", e$message))
+    raw <- paste(out, collapse = "\n")
+    r <- tryCatch(jsonlite::fromJSON(raw), error = function(e) NULL)
+    now <- format(Sys.time(), "%H:%M:%S")
+    msg <- if (is.null(r)) {
+      paste0("[FAIL] ", now, " No valid reply from the companion on port 9001:\n",
+             if (nzchar(raw)) raw else "(no response)")
+    } else if (isTRUE(r$api_up)) {
+      paste0("[OK] ", now, " API is back up and answering (took ", r$seconds, "s).")
+    } else {
+      paste0("[FAIL] ", now, " API did NOT come back within ", r$seconds, "s.")
+    }
+    if (!is.null(r)) {
+      if (!isTRUE(r$watchdog_running))
+        msg <- paste0(msg, "\nThe watchdog was not running; the companion started it.")
+      if (length(r$log_tail))
+        msg <- paste0(msg, "\n\nLast lines of /var/log/plumber-api.log:\n",
+                      paste(r$log_tail, collapse = "\n"))
+    }
+    api_status(msg)
   })
 
   output$apiRestartStatus <- renderText({ api_status() })

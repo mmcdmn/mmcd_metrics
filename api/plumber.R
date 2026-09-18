@@ -463,7 +463,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* Available source fields for CONFIG.COLUMNS in the generic filler:
 #*   inspdate, numdip, wet, emp1, emp2, matcode, amts, acres, acres_plan,
 #*   airgrnd_plan, sampnum_yr, posttrt_p, reinspect, rems1, rems2, comments,
-#*   action, pkey_pg, was_completed
+#*   action, pkey_pg, was_completed, activeTrt
 #*
 #* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
 #* @param lookback_days Days back to search (1–150, default 14)
@@ -531,8 +531,10 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
           i.rems2,
           i.comments,
           i.pkey_pg,
+          mt.effect_days,
           ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
         FROM %s i
+        LEFT JOIN mattype_list_targetdose mt ON i.matcode = mt.matcode
         WHERE i.inspdate BETWEEN '%s'::date AND '%s'::date
           AND i.action IN (%s)
           AND i.sitecode IN (SELECT sitecode FROM ActiveSites)
@@ -558,7 +560,12 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
         r.rems2,
         r.comments,
         r.pkey_pg,
-        (r.sitecode IS NOT NULL) AS was_completed
+        (r.sitecode IS NOT NULL) AS was_completed,
+        (
+          r.matcode IS NOT NULL
+          AND r.matcode != ''
+          AND r.inspdate + INTERVAL '1 day' * COALESCE(r.effect_days, 14) > CURRENT_DATE
+        ) AS activetrt
       FROM ActiveSites s
       LEFT JOIN Ranked r ON s.sitecode = r.sitecode AND r.rn = 1
       ORDER BY s.sitecode
@@ -569,8 +576,11 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
        fac_filter)
 
     rows <- DBI::dbGetQuery(con, query)
-    if (nrow(rows) > 0)
+    if (nrow(rows) > 0) {
       rows$was_completed <- as.logical(rows$was_completed)
+      rows$activetrt     <- as.logical(rows$activetrt)
+      names(rows)[names(rows) == "activetrt"] <- "activeTrt"
+    }
 
     list(
       count         = nrow(rows),

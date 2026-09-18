@@ -155,31 +155,18 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
     redis-cli -h 127.0.0.1 DEL "mmcd:route_log" > /dev/null 2>&1
     echo "  Workers registered, load counters initialized"
 
-        # Start Plumber REST API with watchdog — auto-restarts on exit/crash.
-        # PID written to /var/run/plumber-main.pid so the companion can signal it.
-        echo "Starting Plumber REST API on port ${PLUMBER_PORT} (with watchdog)..."
-    (
-      while true; do
-        Rscript -e '
-          pr <- source("/srv/api/run_plumber.R")$value
-          pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
-        ' >> /var/log/plumber-api.log 2>&1 &
-        PLUMBER_PID=$!
-        echo "$PLUMBER_PID" > /var/run/plumber-main.pid
-        echo "[watchdog] Plumber started (PID $PLUMBER_PID)" >> /var/log/plumber-api.log
-        wait "$PLUMBER_PID"
-        echo "[watchdog] Plumber (PID $PLUMBER_PID) exited — restarting in 2s" \
-          >> /var/log/plumber-api.log
-        sleep 2
-      done
-    ) &
+    # Start Plumber REST API under its watchdog (restarts on crash or hang).
+    echo "Starting Plumber REST API on port ${PLUMBER_PORT} (with watchdog)..."
+    PLUMBER_PORT="$PLUMBER_PORT" bash /srv/api/plumber_watchdog.sh &
     PIDS+=($!)
-        echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID ${PIDS[-1]})"
+    echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID ${PIDS[-1]})"
 
     # Companion restart listener — stays alive independently on port 9001.
     # nginx routes /v1/private/restart-companion here so the UI can trigger
     # a restart even when the main Plumber process is completely dead.
+    # set +e: under the script-wide set -e a non-zero exit would end this loop.
     (
+      set +e
       while true; do
         Rscript -e '
           pr <- plumber::plumb("/srv/api/companion.R")
@@ -258,27 +245,14 @@ if [ "$LISTEN_PORT" != "3838" ]; then
     sed -i "s/listen 3838/listen ${LISTEN_PORT}/" /etc/shiny-server/shiny-server.conf
 fi
 
-# Start Plumber REST API with watchdog — auto-restarts on exit/crash (single-worker mode).
+# Start Plumber REST API under its watchdog (restarts on crash or hang).
 echo "Starting Plumber REST API on port ${PLUMBER_PORT} (with watchdog)..."
-(
-  while true; do
-    Rscript -e '
-      pr <- source("/srv/api/run_plumber.R")$value
-      pr$run(host="127.0.0.1", port='"${PLUMBER_PORT}"', swagger=FALSE)
-    ' >> /var/log/plumber-api.log 2>&1 &
-    PLUMBER_PID=$!
-    echo "$PLUMBER_PID" > /var/run/plumber-main.pid
-    echo "[watchdog] Plumber started (PID $PLUMBER_PID)" >> /var/log/plumber-api.log
-    wait "$PLUMBER_PID"
-    echo "[watchdog] Plumber (PID $PLUMBER_PID) exited — restarting in 2s" \
-      >> /var/log/plumber-api.log
-    sleep 2
-  done
-) &
+PLUMBER_PORT="$PLUMBER_PORT" bash /srv/api/plumber_watchdog.sh &
 echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID $!)"
 
 # Companion restart listener on port 9001 (stays alive even when main Plumber is dead).
 (
+  set +e
   while true; do
     Rscript -e '
       pr <- plumber::plumb("/srv/api/companion.R")

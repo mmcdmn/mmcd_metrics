@@ -124,12 +124,9 @@ ground_prehatch_ui <- function() {
         # Help text (collapsible)
         hr(),
         div(id = "help-section",
-          tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-                 style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-                 HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-          div(style = "display: none;",
-            create_help_text()
-          )
+          # Real button + aria-expanded (shared a11y_disclosure); replaces the
+          # <a onclick=toggle()> link that never reported its open state.
+          a11y_disclosure("help_toggle", "Show/Hide Help", create_help_text())
         )
       ),
       
@@ -142,7 +139,7 @@ ground_prehatch_ui <- function() {
                    create_important_note(),
                    # Summary statistics
                    div(
-                     h4("Summary Statistics", style = "color: #3c8dbc; margin-bottom: 15px;"),
+                     h4("Summary Statistics", style = "color: #2c5aa0; margin-bottom: 15px;"),
                      create_overview_value_boxes()
                    ),
                    br(),
@@ -255,7 +252,7 @@ create_important_note <- function() {
 create_help_text <- function() {
   div(
     style = "background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #17a2b8;",
-    h5("How to Use This Dashboard", style = "color: #17a2b8; margin-top: 0;"),
+    h5("How to Use This Dashboard", style = "color: #0f6377; margin-top: 0;"),
     tags$ul(
       tags$li(tags$strong("Overview Tab:"), "View summary statistics and progress charts"),
       tags$li(tags$strong("Detailed View Tab:"), "Examine individual site details and download data"),
@@ -267,7 +264,7 @@ create_help_text <- function() {
       tags$li(tags$strong("Ground Site Definition:"), " Sites labeled as 'Ground' in the data are included in this analysis IF they also have an non null Prehatch field. Regardless of Drone status")
     ),
     br(),
-    h5("Historical Analysis Display Metrics", style = "color: #17a2b8; margin-top: 0;"),
+    h5("Historical Analysis Display Metrics", style = "color: #0f6377; margin-top: 0;"),
     div(
       style = "background-color: #fff; padding: 10px; border-radius: 3px; border: 1px solid #ddd;",
       

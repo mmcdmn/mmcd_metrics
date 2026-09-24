@@ -102,6 +102,12 @@ tryCatch({
   cat("✓ historical_helpers.R loaded\n")
 }, error = function(e) cat("✗ historical_helpers.R failed:", e$message, "\n"))
 
+
+tryCatch({
+  source("shared/server_utilities.R")
+  cat("✓ server_utilities.R loaded\n")
+}, error = function(e) cat("✗ server_utilities.R failed:", e$message, "\n"))
+
 # Re-load test stubs AFTER db_helpers to override DB-dependent functions
 if (TESTING_MODE_ISOLATED) {
   source("tests/test_stubs.R")
@@ -166,9 +172,13 @@ cat("+----------------------------------------------------------------------+\n"
 # Convert results to data frame for analysis
 results_df <- as.data.frame(shared_results)
 
+# testthat records a test that threw as error = TRUE with failed = 0, so a run
+# where 12 tests could not find their function still summed to zero failures and
+# exited 0. Errors are counted here and in the exit code.
 total_tests <- sum(results_df$passed) + sum(results_df$failed) + sum(results_df$skipped)
 total_passed <- sum(results_df$passed)
 total_failed <- sum(results_df$failed)
+total_errors <- sum(results_df$error)
 total_skipped <- sum(results_df$skipped)
 total_warnings <- sum(results_df$warning)
 
@@ -178,6 +188,7 @@ if (!is.null(app_results)) {
   total_tests <- total_tests + sum(app_results_df$passed) + sum(app_results_df$failed) + sum(app_results_df$skipped)
   total_passed <- total_passed + sum(app_results_df$passed)
   total_failed <- total_failed + sum(app_results_df$failed)
+  total_errors <- total_errors + sum(app_results_df$error)
   total_skipped <- total_skipped + sum(app_results_df$skipped)
   total_warnings <- total_warnings + sum(app_results_df$warning)
 }
@@ -188,6 +199,7 @@ if (!is.null(regression_results)) {
   total_tests <- total_tests + sum(regression_results_df$passed) + sum(regression_results_df$failed) + sum(regression_results_df$skipped)
   total_passed <- total_passed + sum(regression_results_df$passed)
   total_failed <- total_failed + sum(regression_results_df$failed)
+  total_errors <- total_errors + sum(regression_results_df$error)
   total_skipped <- total_skipped + sum(regression_results_df$skipped)
   total_warnings <- total_warnings + sum(regression_results_df$warning)
 }
@@ -195,11 +207,12 @@ if (!is.null(regression_results)) {
 cat(sprintf("|  Total Tests:    %4d                                                |\n", total_tests))
 cat(sprintf("|  [PASS] Passed:  %4d                                                |\n", total_passed))
 cat(sprintf("|  [FAIL] Failed:  %4d                                                |\n", total_failed))
+cat(sprintf("|  [ERR]  Errored: %4d                                                |\n", total_errors))
 cat(sprintf("|  [SKIP] Skipped: %4d                                                |\n", total_skipped))
 cat(sprintf("|  [WARN] Warnings:%4d                                                |\n", total_warnings))
 cat("+----------------------------------------------------------------------+\n")
 
-if (total_failed == 0) {
+if (total_failed == 0 && total_errors == 0) {
   cat("|  [PASS] ALL TESTS PASSED!                                           |\n")
 } else {
   cat("|  [FAIL] SOME TESTS FAILED - See details above                       |\n")
@@ -207,6 +220,6 @@ if (total_failed == 0) {
 cat("+----------------------------------------------------------------------+\n")
 
 # Return exit code for CI/CD
-if (total_failed > 0) {
+if (total_failed > 0 || total_errors > 0) {
   quit(status = 1)
 }

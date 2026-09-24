@@ -62,6 +62,7 @@ tmp/
 
 # Test output and temporary files
 tests/testthat/test-output/
+tests/manual/
 test-output/
 *.csv.tmp
 *_test.csv

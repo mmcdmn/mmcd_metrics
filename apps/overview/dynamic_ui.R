@@ -14,8 +14,10 @@
 get_metric_icon <- function(config) {
   if (!is.null(config$image_path)) {
     # Use image file (Shiny will serve from www directory)
-    tags$img(src = config$image_path, 
-             alt = config$display_name,
+    # Decorative: the only caller renders it beside the metric's visible title,
+    # so an alt would make screen readers read the name twice.
+    tags$img(src = config$image_path,
+             alt = "",
              style = "width: 20px; height: 20px; margin-right: 5px; vertical-align: middle;")
   } else {
     # Fallback to FontAwesome icon
@@ -162,8 +164,13 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
         paste0("<hr style='margin:6px 0;border-color:#ddd'>", as.character(config$filter_info))
       } else ""
     )
-    span(
+    # A real button so keyboard users can open the info popover; the icon is
+    # decorative, so the button carries the name.
+    tags$button(
+      type = "button",
       class = "chart-info-btn",
+      `aria-label` = paste("About", title_text),
+      style = "padding: 0; font: inherit;",
       `data-description` = combined_desc,
       `data-wiki-link` = wiki_link,
       shiny::icon("info-circle")
@@ -179,7 +186,9 @@ create_chart_panel <- function(metric_id, config, chart_height = "300px", is_his
     if (!is_historical) {
       uiOutput(legend_id)
     },
-    plotlyOutput(output_id, height = chart_height)
+    # Authored accessible name for every overview chart (current + historical),
+    # from the same title the panel shows.
+    a11y_figure(plotlyOutput(output_id, height = chart_height), label = title_text)
   )
 }
 
@@ -346,6 +355,10 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
   }
   
   accessible_page(
+    # This app builds its own header instead of titlePanel(), so name the
+    # browser tab explicitly (WCAG 2.4.2 Page Titled).
+    title = page_title,
+
     # Include universal CSS from db_helpers
     get_universal_text_css(),
     
@@ -356,8 +369,8 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       get_overview_js()
     ),
     
-    # Page Header with Back Button for drill-down views
-    div(class = "page-header",
+    # Page Header with Back Button for drill-down views (a banner landmark)
+    tags$header(class = "page-header",
       if (overview_type %in% c("fos", "facilities") || !is.null(metrics_filter)) {
         div(style = "margin-bottom: 8px;",
           tags$a(
@@ -379,6 +392,11 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
       )
     ),
     
+    # Everything below the banner is the page's main content. Wrapping it
+    # keeps all content inside a landmark and gives the skip link an exact
+    # target (this app has no mainPanel to annotate).
+    main_landmark(
+
     # Controls Panel
     div(class = "controls-panel",
       fluidRow(
@@ -473,5 +491,7 @@ build_overview_ui <- function(overview_type = "district", include_historical = T
                    selected = initial_theme)
       )
     )
+
+    )  # end main_landmark
   )
 }

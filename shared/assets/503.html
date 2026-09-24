@@ -1,9 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
   <title>Loading - MMCD Metrics</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="5">
+  <!--
+    Self-contained on purpose: nginx serves this page exactly when Shiny
+    Server - and with it shared/assets/accessibility.css/.js - is unavailable.
+
+    No <meta http-equiv="refresh">: an automatic reload the user cannot stop
+    fails WCAG 2.2.1 (Timing Adjustable). The script below retries on a
+    visible countdown that can be paused, resumed, or skipped.
+  -->
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -17,23 +25,89 @@
     }
     h1   { color: #2980b9; margin-bottom: 10px; }
     p    { color: #555; line-height: 1.6; }
-    .sub { font-size: 0.85em; color: #999; margin-top: 15px; }
+    .sub { font-size: 0.85em; color: #5f6368; margin-top: 15px; }
     .spinner {
       width: 40px; height: 40px; margin: 20px auto;
       border: 4px solid #e0e0e0; border-top: 4px solid #3498db;
       border-radius: 50%; animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation: none; }
+    }
+    .actions { margin-top: 18px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .actions button {
+      font: inherit; font-size: 0.95em; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+    }
+    .retry { background: #1f6391; color: #fff; border: 1px solid #1f6391; }
+    .pause { background: #fff; color: #1f2933; border: 1px solid #55606B; }
+    .actions button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
   </style>
 </head>
 <body>
-<div class="card">
-  <h1>&#x23F3; Almost There!</h1>
-  <div class="spinner"></div>
-  <p>The dashboard is loading. This page will<br>
-     <strong>automatically refresh</strong> in a few seconds.</p>
+<main class="card">
+  <h1><span aria-hidden="true">&#x23F3; </span>Almost There!</h1>
+  <div class="spinner" aria-hidden="true"></div>
+  <p>The dashboard is loading.
+     <span id="countdown">This page will try again in <strong><span id="seconds">5</span> seconds</strong>.</span></p>
+  <div class="actions">
+    <button type="button" class="retry" id="retry-now">Retry now</button>
+    <button type="button" class="pause" id="pause-retry">Pause automatic retry</button>
+  </div>
   <p class="sub">If this page persists, the server may be under heavy load.<br>
      Please wait &mdash; it will be available shortly.</p>
-</div>
+  <!-- Announces state changes once, instead of every countdown tick. -->
+  <div id="status" class="sr-only" role="status" aria-live="polite"></div>
+</main>
+<script>
+  (function () {
+    var DELAY = 5;
+    var remaining = DELAY;
+    var paused = false;
+    var secondsEl = document.getElementById('seconds');
+    var countdownEl = document.getElementById('countdown');
+    var pauseBtn = document.getElementById('pause-retry');
+    var statusEl = document.getElementById('status');
+
+    function announce(msg) {
+      statusEl.textContent = '';
+      setTimeout(function () { statusEl.textContent = msg; }, 100);
+    }
+
+    function retry() { window.location.reload(); }
+
+    var timer = setInterval(function () {
+      if (paused) { return; }
+      remaining -= 1;
+      if (remaining <= 0) { clearInterval(timer); retry(); return; }
+      secondsEl.textContent = remaining;
+    }, 1000);
+
+    document.getElementById('retry-now').addEventListener('click', retry);
+
+    pauseBtn.addEventListener('click', function () {
+      paused = !paused;
+      if (paused) {
+        pauseBtn.textContent = 'Resume automatic retry';
+        countdownEl.textContent = 'Automatic retry is paused.';
+        announce('Automatic retry paused.');
+      } else {
+        remaining = DELAY;
+        pauseBtn.textContent = 'Pause automatic retry';
+        countdownEl.innerHTML = 'This page will try again in <strong><span id="seconds">' +
+                                remaining + '</span> seconds</strong>.';
+        secondsEl = document.getElementById('seconds');
+        announce('Automatic retry resumed.');
+      }
+    });
+
+    announce('The dashboard is loading. This page will try again automatically in ' +
+             DELAY + ' seconds.');
+  })();
+</script>
 </body>
 </html>

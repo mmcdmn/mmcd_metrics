@@ -88,7 +88,7 @@ ui <- accessible_page(
             "refresh_goal_progress",
             "Refresh Data",
             icon = icon("refresh"),
-            style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
+            style = "color: #fff; background-color: #146c43; border-color: #146c43; width: 100%; font-weight: bold; margin-top: 10px;"
           )
         ),
         mainPanel(
@@ -172,7 +172,7 @@ ui <- accessible_page(
             "refresh_historical",
             "Refresh Data",
             icon = icon("refresh"),
-            style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
+            style = "color: #fff; background-color: #146c43; border-color: #146c43; width: 100%; font-weight: bold; margin-top: 10px;"
           )
         ),
         mainPanel(
@@ -222,7 +222,7 @@ ui <- accessible_page(
     #         "refresh_treatment",
     #         "Refresh Data",
     #         icon = icon("refresh"),
-    #         style = "color: #fff; background-color: #28a745; border-color: #28a745; width: 100%; font-weight: bold; margin-top: 10px;"
+    #         style = "color: #fff; background-color: #146c43; border-color: #146c43; width: 100%; font-weight: bold; margin-top: 10px;"
     #       )
     #     ),
     #     

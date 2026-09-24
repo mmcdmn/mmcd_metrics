@@ -46,7 +46,10 @@ load_env_vars()
 # =============================================================================
 
 ui <- accessible_page(
-  
+  # This app builds its own header instead of titlePanel(), so name the browser
+  # tab explicitly (WCAG 2.4.2 Page Titled).
+  title = "Section Cards",
+
   # Initialize shinyjs
   useShinyjs(),
   
@@ -263,7 +266,7 @@ server <- function(input, output, session) {
   # ==========================================================================
   observeEvent(input$show_instructions, {
     showModal(modalDialog(
-      tags$iframe(src = "instructions.pdf"),
+      tags$iframe(src = "instructions.pdf", title = "Section Cards instructions (PDF)"),
       title = "Section Cards Instructions",
       size = "l",
       easyClose = TRUE,
@@ -367,7 +370,8 @@ server <- function(input, output, session) {
         p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
         checkboxGroupInput(
           "title_fields",
-          NULL,
+          # Named after the h5 above it, which is visual only.
+          tags$span(class = "sr-only", "Title section fields"),
           choices = all_choices,
           selected = sel
         )
@@ -379,7 +383,7 @@ server <- function(input, output, session) {
         p(class = "help-block", "Select fields to display in the card header (sitecode is always included)"),
         checkboxGroupInput(
           "title_fields",
-          NULL,
+          tags$span(class = "sr-only", "Title section fields"),
           choices = list(
             "Priority" = "priority",
             "Structure Type" = "s_type",
@@ -418,7 +422,7 @@ server <- function(input, output, session) {
         p(class = "help-block", "Semi-transparent labels overlaid at the bottom of each card (on top of columns)"),
         checkboxGroupInput(
           "watermark_fields",
-          NULL,
+          tags$span(class = "sr-only", "Watermark fields"),
           choices = watermark_choices,
           selected = if (!is.null(prev_selected)) intersect(prev_selected, unlist(watermark_choices)) else character(0)
         )
@@ -708,20 +712,25 @@ server <- function(input, output, session) {
                         "border: 1px solid #ddd; border-radius: 3px; background-color: ", bg_color, ";"),
           checkboxInput(
             paste0("col_check_", col_id),
-            NULL,
+            # The column name sits in the span beside it, so the checkbox had no
+            # accessible name of its own. Hidden label, visible text unchanged.
+            tags$span(class = "sr-only", paste("Include", col_label)),
             value = if (col_id %in% names(current_states)) current_states[[col_id]] else FALSE,
             width = "30px"
           ),
           tags$span(col_label, style = "flex-grow: 1; padding-left: 3px; font-weight: 500;"),
           actionButton(
             paste0("col_up_", col_id),
-            "↑",
+            # An arrow glyph alone announces as "up arrow"; name the action.
+            tagList(tags$span("↑", `aria-hidden` = "true"),
+                    tags$span(class = "sr-only", paste("Move", col_label, "up"))),
             style = "padding: 1px 6px; margin-right: 2px; font-size: 12px;",
             onclick = sprintf("Shiny.setInputValue('move_col_up', '%s', {priority: 'event'})", col_id)
           ),
           actionButton(
             paste0("col_down_", col_id),
-            "↓",
+            tagList(tags$span("↓", `aria-hidden` = "true"),
+                    tags$span(class = "sr-only", paste("Move", col_label, "down"))),
             style = "padding: 1px 6px; font-size: 12px;",
             onclick = sprintf("Shiny.setInputValue('move_col_down', '%s', {priority: 'event'})", col_id)
           )

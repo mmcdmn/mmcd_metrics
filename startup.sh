@@ -25,6 +25,11 @@ echo "DB_NAME=${DB_NAME}" >> /srv/shiny-server/.env
 echo "Alex is really cool"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CARTO API KEY — required by CARTO on all basemaps.cartocdn.com tile requests.
+# ─────────────────────────────────────────────────────────────────────────────
+echo "CARTO_API_KEY=${CARTO_API_KEY}" >> /srv/shiny-server/.env
+
+# ─────────────────────────────────────────────────────────────────────────────
 # API KEY — used by the Plumber REST API to protect private endpoints.
 # ─────────────────────────────────────────────────────────────────────────────
 echo "API_KEYS=${API_KEYS:-mmcd-sheets-abc123xyz}" >> /srv/shiny-server/.env

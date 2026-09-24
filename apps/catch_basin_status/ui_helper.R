@@ -118,12 +118,9 @@ catch_basin_ui <- function() {
         
         # Help button at bottom
         hr(),
-        tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-               style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-               HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-        div(style = "display: none;",
-          create_help_text()
-        )
+        # Real button + aria-expanded (shared a11y_disclosure); replaces the
+        # <a onclick=toggle()> link that never reported its open state.
+        a11y_disclosure("help_toggle", "Show/Hide Help", create_help_text())
       ),
       
       # Main panel with tabs
@@ -263,7 +260,7 @@ create_filter_panel <- function() {
 create_help_text <- function() {
   div(
     style = "background-color: #f0f8ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #17a2b8;",
-    h4("How to Use This Dashboard", style = "color: #17a2b8; margin-top: 0;"),
+    h4("How to Use This Dashboard", style = "color: #0f6377; margin-top: 0;"),
     tags$ul(
       tags$li(strong("Facility:"), " Filter data by specific facility or view all facilities combined."),
       tags$li(strong("FOS:"), " Filter by Field Operations Supervisor area."),
@@ -276,7 +273,7 @@ create_help_text <- function() {
       tags$li(strong("Detailed View:"), " Browse detailed data table with all catch basin counts and percentages."),
       tags$li(strong("Historical Analysis:"), " Analyze catch basin treatment trends over time.")
     ),
-    h4("Key Metrics", style = "color: #17a2b8;"),
+    h4("Key Metrics", style = "color: #0f6377;"),
     tags$ul(
       tags$li(strong("Total Wet Catch Basins:"), " Count of all catch basins currently classified as wet (status_udw='W')."),
       tags$li(strong("Wet CB with Active Treatment:"), " Count of wet catch basins with current active or expiring treatment."),
@@ -286,7 +283,7 @@ create_help_text <- function() {
       tags$li(strong("Expired:"), " Catch basins with treatments that have passed their effective treatment period."),
       tags$li(strong("Never Treated:"), " Wet catch basins that have never received any treatment this year.")
     ),
-    h4("Historical Metrics Explained", style = "color: #17a2b8;"),
+    h4("Historical Metrics Explained", style = "color: #0f6377;"),
     tags$ul(
       tags$li(strong("Yearly - Total Treatments:"), " Counts every treatment applied. Since catch basins are treated multiple times per year, a single catch basin treated 3 times will contribute 3 to this count. Use this to track treatment workload."),
       tags$li(strong("Yearly - Unique Wet CB Treated:"), " Counts each catch basin only once, regardless of how many times it was treated. Use this to track coverage of the wet catch basin inventory."),

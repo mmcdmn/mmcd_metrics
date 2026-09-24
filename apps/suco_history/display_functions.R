@@ -61,12 +61,10 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
   # Get facility and foremen lookups for display names
   facilities <- get_facility_lookup()
   
-  # Set up basemap provider
-  basemap <- switch(input$basemap,
-                    "osm" = providers$OpenStreetMap,
-                    "carto" = providers$CartoDB.Positron,
-                    "satellite" = providers$Esri.WorldImagery,
-                    providers$CartoDB.Positron)
+  # Basemap choice ("osm" / "carto" / "satellite"); resolved to tiles by
+  # add_basemap_tiles() (shared/geometry_helpers.R), which routes "carto"
+  # through the authenticated CARTO tile helper.
+  basemap <- input$basemap
   
   # Handle case when no data is available
   if (nrow(data) == 0) {
@@ -78,7 +76,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     
     return(
       leaflet() %>%
-        addProviderTiles(basemap) %>%
+        add_basemap_tiles(basemap) %>%
         setView(lng = -93.2, lat = 45.0, zoom = 9) %>%
         addControl(html = paste0("<div style='background-color: white; padding: 10px;'><h4>", message_text, "</h4></div>"),
                    position = "topleft")
@@ -122,7 +120,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     # Create map with facility coloring - use safe bounds calculation
     bounds <- calculate_map_bounds(data)
     m <- leaflet(data) %>%
-      addProviderTiles(basemap, group = "Base Map")
+      add_basemap_tiles(basemap, group = "Base Map")
     m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
@@ -267,7 +265,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     # Create map with location-aggregated markers - use safe bounds calculation
     bounds <- calculate_map_bounds(location_summary, lng_col = "longitude", lat_col = "latitude")
     m <- leaflet(location_summary) %>%
-      addProviderTiles(basemap, group = "Base Map")
+      add_basemap_tiles(basemap, group = "Base Map")
     m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
@@ -326,7 +324,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     if (nrow(data) == 0) {
       return(
         leaflet() %>%
-          addProviderTiles(basemap) %>%
+          add_basemap_tiles(basemap) %>%
           setView(lng = -93.2, lat = 45.0, zoom = 9) %>%
           addControl(html = "<div style='background-color: white; padding: 10px;'><h4>No SUCO locations with valid FOS data available</h4></div>",
                      position = "topleft")
@@ -384,7 +382,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     # Create map with foreman coloring - use safe bounds calculation
     bounds <- calculate_map_bounds(data)
     m <- leaflet(data) %>%
-      addProviderTiles(basemap, group = "Base Map")
+      add_basemap_tiles(basemap, group = "Base Map")
     m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters
@@ -464,7 +462,7 @@ create_suco_map <- function(data, input, data_source = "all", theme = "MMCD", gr
     # Create base map - use safe bounds calculation for single-point case
     bounds <- calculate_map_bounds(data)
     m <- leaflet(data) %>%
-      addProviderTiles(basemap, group = "Base Map")
+      add_basemap_tiles(basemap, group = "Base Map")
     m <- apply_map_bounds(m, bounds)
     
     # Add background layers (facility, zone boundaries, harborages) with filters

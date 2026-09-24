@@ -10,6 +10,14 @@ library(sf)
 
 # Source color themes
 source("../../shared/color_themes.R")
+# For add_carto_tiles() (authenticated CARTO tiles). Guarded + multi-path so
+# this survives being source()'d from either the app's own directory (Shiny
+# runtime) or the project root (tests).
+if (!exists("add_carto_tiles", mode = "function")) {
+  for (.gh_path in c("../../shared/geometry_helpers.R", "shared/geometry_helpers.R")) {
+    if (file.exists(.gh_path)) { source(.gh_path); break }
+  }
+}
 
 build_trap_status_legend_html <- function() {
   paste0(
@@ -143,7 +151,7 @@ render_surveillance_map <- function(combined_data, areas_sf,
     addMapPane("areas", zIndex = 410) %>%
     addMapPane("traps", zIndex = 450) %>%
     addTiles(group = "OpenStreetMap") %>%
-    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    add_carto_tiles(group = "CartoDB Light") %>%
     addProviderTiles("Esri.WorldImagery", group = "Satellite")
   
   # Add area polygons (in "areas" pane — below traps)
@@ -452,7 +460,7 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
     addMapPane("areas", zIndex = 410) %>%
     addMapPane("traps", zIndex = 450) %>%
     addTiles(group = "OpenStreetMap") %>%
-    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    add_carto_tiles(group = "CartoDB Light") %>%
     addProviderTiles("Esri.WorldImagery", group = "Satellite") %>%
     addPolygons(
       fillColor = ~div_pal(delta),
@@ -710,7 +718,7 @@ render_trap_performance_map <- function(perf_data, areas_sf = NULL) {
     addMapPane("areas", zIndex = 410) %>%
     addMapPane("traps", zIndex = 450) %>%
     addTiles(group = "OpenStreetMap") %>%
-    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    add_carto_tiles(group = "CartoDB Light") %>%
     addProviderTiles("Esri.WorldImagery", group = "Satellite")
   
   # Add VI area polygons as background (if available)
@@ -887,7 +895,7 @@ render_trap_analysis_map <- function(risk_data, risk_surface = NULL,
     addMapPane("areas", zIndex = 410) %>%
     addMapPane("traps", zIndex = 450) %>%
     addTiles(group = "OpenStreetMap") %>%
-    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    add_carto_tiles(group = "CartoDB Light") %>%
     addProviderTiles("Esri.WorldImagery", group = "Satellite")
   
   overlay_groups <- c()

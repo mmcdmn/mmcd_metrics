@@ -12,7 +12,8 @@ create_field_selector <- function() {
       h5("Site Type"),
       radioButtons(
         "site_type",
-        NULL,
+        # The "Site Type" heading above is visual only; name the group itself.
+        tags$span(class = "sr-only", "Site type"),
         choices = c("Air/Ground Sites" = "breeding", "Structures" = "structures"),
         selected = "breeding",
         inline = TRUE

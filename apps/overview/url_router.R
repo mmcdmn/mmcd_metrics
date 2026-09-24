@@ -623,7 +623,7 @@ get_breadcrumb_css <- function() {
       font-size: 14px;
     }
     .breadcrumb-link {
-      color: #007bff;
+      color: #2c5aa0;
       text-decoration: none;
       cursor: pointer;
     }

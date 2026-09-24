@@ -71,7 +71,7 @@ create_site_map <- function(data, theme = getOption("mmcd.color.theme", "MMCD"),
   
   # Create map
   map <- leaflet(data) %>%
-    addProviderTiles(providers$CartoDB.Positron, group = "Base Map")
+    add_carto_tiles(group = "Base Map")
   
   # Add background layers (facility boundaries, zone boundaries, air site polygons)
   map <- add_background_layers_to_airsite_map(map, facility_filter, load_air_site_polygons)

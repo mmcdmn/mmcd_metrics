@@ -170,12 +170,9 @@ struct_trt_ui <- function() {
         # Help text for historical metrics (collapsible)
         hr(),
         div(id = "help-section",
-          tags$a(href = "#", onclick = "$(this).next().toggle(); return false;", 
-                 style = "color: #17a2b8; text-decoration: none; font-size: 15px;",
-                 HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-          div(style = "display: none;",
-            create_help_text()
-          )
+          # Real button + aria-expanded (shared a11y_disclosure); replaces the
+          # <a onclick=toggle()> link that never reported its open state.
+          a11y_disclosure("help_toggle", "Show/Hide Help", create_help_text())
         )
       ),
       

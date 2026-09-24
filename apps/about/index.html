@@ -5,6 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>About - MMCD Analytics Platform</title>
+    <!-- Platform-wide accessibility styling + behavior (same files every Shiny app uses). -->
+    <link rel="stylesheet" href="../shared/assets/accessibility.css">
+    <script src="../shared/assets/accessibility.js" defer></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -115,38 +118,33 @@
             color: #666;
         }
 
-        /* ---- Accessibility (WCAG 2.1 AA) ----
-           Mirrors shared/accessibility_helpers.R. */
-        .a11y-skip-link {
-            position: absolute; left: -9999px; top: auto;
-            width: 1px; height: 1px; overflow: hidden; z-index: 100000;
+        /* Link text: #007bff was 3.98:1 on white (text needs 4.5:1). The shared
+           --a11y-link token is 7.84:1; white on it (hover) is 7.84:1 too. */
+        .contributor-info a,
+        .back-link {
+            color: var(--a11y-link, #0b5394);
         }
 
-        .a11y-skip-link:focus {
-            position: fixed; left: 8px; top: 8px;
-            width: auto; height: auto; overflow: visible;
-            padding: 10px 18px; background: #ffffff; color: #10253f;
-            font-weight: 700; text-decoration: underline;
-            border: 2px solid #55606B; border-radius: 4px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-            outline: 3px solid #1d4ed8; outline-offset: 2px;
+        .contributor-info a {
+            border-color: var(--a11y-link, #0b5394);
         }
 
-        a:focus-visible, button:focus-visible {
-            outline: 3px solid #1d4ed8; outline-offset: 2px;
+        .contributor-info a:hover {
+            background-color: var(--a11y-link, #0b5394);
+            color: white;
         }
-
-        #main-content:focus { outline: none; }
     </style>
 </head>
 
 <body>
     <a class="a11y-skip-link" href="#main-content">Skip to main content</a>
     <div class="container">
-        <a href="../" class="back-link">← Back to Dashboard</a>
-        
+        <nav aria-label="Site">
+            <a href="../" class="back-link"><span aria-hidden="true">← </span>Back to Dashboard</a>
+        </nav>
+
         <main id="main-content" tabindex="-1">
-        <h1>📊 About MMCD Analytics Platform</h1>
+        <h1><span aria-hidden="true">📊 </span>About MMCD Analytics Platform</h1>
         
         <p>The MMCD Analytics Platform is a comprehensive suite of analytical tools designed to support the Metropolitan Mosquito Control District's operations, surveillance, and treatment activities. This platform provides real-time insights and historical analysis capabilities for mosquito control professionals.</p>
 
@@ -158,9 +156,9 @@
             <p><strong>Lead Developer & Data Analyst</strong></p>
             <p>Primary developer responsible for the majority of the platform's applications including data infrastructure, visualization systems, and analytical tools. He also has really good hair.</p>
             <div class="contributor-info">
-                <a href="mailto:datatech@mmcd.org">📧 datatech@mmcd.org</a>
-                <a href="https://ablepacifist.github.io/" target="_blank">🌐 Portfolio & Resume</a>
-                <a href="https://forms.office.com/Pages/ResponsePage.aspx?id=VXD2uT7_yUu4VJEMUJ6h0kuX0Xp1jd1Hng9UWDT6X_5UMlhRUE5UWkM3RElJUEhFQTdWWUpGUUNGSCQlQCN0PWcu&origin=Invitation&channel=1" target="_blank">💬 Give Feedback</a>
+                <a href="mailto:datatech@mmcd.org"><span aria-hidden="true">📧 </span>datatech@mmcd.org</a>
+                <a href="https://ablepacifist.github.io/" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">🌐 </span>Portfolio & Resume</a>
+                <a href="https://forms.office.com/Pages/ResponsePage.aspx?id=VXD2uT7_yUu4VJEMUJ6h0kuX0Xp1jd1Hng9UWDT6X_5UMlhRUE5UWkM3RElJUEhFQTdWWUpGUUNGSCQlQCN0PWcu&origin=Invitation&channel=1" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">💬 </span>Give Feedback</a>
             </div>
             <div class="applications">
                 <strong>Applications developed:</strong> Overview Dashboard, FOS Overview Dashboard, Inspections Coverage, Ground Prehatch Progress, Air Sites, Drone Treatment, Catch Basin Progress, Structure Progress, SUCO History, Trap Surveillance, Cattail Inspections, Cattail Treatments, Section Cards, Air Inspection Checklist, Admin Tools, Control Efficacy
@@ -208,10 +206,10 @@
 
         </main>
 
-        <div class="footer">
+        <footer class="footer">
             <p>Metropolitan Mosquito Control District | Analytics Platform<br>
             Version 2026 | Built with R Shiny</p>
-        </div>
+        </footer>
     </div>
 </body>
 

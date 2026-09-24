@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMCD Analytics Dashboard</title>
     <link rel="icon" type="image/png" href="shared/assets/favicon.ico">
+    <!-- Platform-wide accessibility styling + behavior (same files every Shiny app uses). -->
+    <link rel="stylesheet" href="shared/assets/accessibility.css">
+    <script src="shared/assets/accessibility.js" defer></script>
     <style>
         body {
             font-family: 'Segoe UI', Arial, sans-serif;
@@ -102,7 +105,44 @@
             background-color: #1e3d6f;
         }
 
-        /* ---- Collapsible category boxes ---- */
+        /* ---- Launchers (pick filters, open an app pre-filtered) ---- */
+        .launcher-field {
+            margin-bottom: 10px;
+            text-align: left;
+        }
+
+        .launcher-label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #333;
+        }
+
+        .launcher-select {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #55606B;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .launcher-submit {
+            width: 100%;
+            background-color: #2c5aa0;
+            color: white;
+            padding: 8px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        /* ---- Collapsible category boxes ----
+           Each header is a real <button aria-expanded> inside the <h2>; the
+           body is a shared a11y-collapse region (accessibility.css), which is
+           removed from the Tab order and accessibility tree while collapsed. */
         .category-box {
             background-color: #fff;
             border-radius: 10px;
@@ -112,11 +152,23 @@
             border: 1px solid #e0e4ea;
         }
 
+        .category-heading {
+            margin: 0;
+            font-size: inherit;
+            font-weight: inherit;
+        }
+
         .category-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
+            width: 100%;
             padding: 16px 24px;
+            background: none;
+            border: 0;
+            font: inherit;
+            color: inherit;
+            text-align: left;
             cursor: pointer;
             user-select: none;
             transition: background-color 0.15s;
@@ -132,8 +184,7 @@
             gap: 12px;
         }
 
-        .category-header h2 {
-            margin: 0;
+        .category-title {
             font-size: 20px;
             font-weight: 700;
             color: #2c5aa0;
@@ -148,16 +199,17 @@
             border-radius: 12px;
         }
 
+        /* Decorative "+" affordance; the button's text is its name. Its #e8eef6
+           fill is only 1.17:1 on white, so it keeps a 3:1 border (WCAG 1.4.11). */
         .category-toggle {
             width: 28px;
             height: 28px;
             border-radius: 50%;
             background-color: #e8eef6;
             color: #2c5aa0;
-            border: none;
+            border: 1px solid var(--a11y-border, #55606B);
             font-size: 18px;
             font-weight: 700;
-            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -165,26 +217,16 @@
             flex-shrink: 0;
         }
 
-        .category-toggle:hover {
+        .category-header:hover .category-toggle {
             background-color: #d0daec;
         }
 
-        .category-box.open .category-toggle {
+        .category-header[aria-expanded="true"] .category-toggle {
             transform: rotate(45deg);
-        }
-
-        .category-body {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.35s ease;
         }
 
         .category-body-inner {
             padding: 0 24px 20px 24px;
-        }
-
-        .category-box.open .category-body {
-            max-height: 2000px;
         }
 
         /* Dashboard section (always open, no collapse) */
@@ -227,7 +269,7 @@
         /* Footer */
         .page-footer {
             text-align: center;
-            color: #999;
+            color: #5f6368;
             font-size: 13px;
             margin-top: 8px;
             padding: 16px 0 4px 0;
@@ -243,7 +285,7 @@
 
         .controls-bar button {
             background: none;
-            border: 1px solid #c8cfd8;
+            border: 1px solid #55606B;
             color: #555;
             padding: 5px 14px;
             border-radius: 6px;
@@ -302,422 +344,344 @@
 
         .chat-bubble-thinking {
             background-color: #fff;
-            color: #999;
+            color: #5f6368;
             border: 1px solid #e0e4ea;
             border-bottom-left-radius: 4px;
             font-style: italic;
         }
 
-        /* ---- Accessibility (WCAG 2.1 AA) ----
-           Mirrors shared/accessibility_helpers.R so the static landing
-           page matches the Shiny apps. */
-        .a11y-skip-link {
-            position: absolute; left: -9999px; top: auto;
-            width: 1px; height: 1px; overflow: hidden; z-index: 100000;
+        .chat-input-row {
+            display: flex;
+            padding: 12px 20px;
+            gap: 8px;
+            background: #fff;
+            margin: 0;
         }
-
-        .a11y-skip-link:focus {
-            position: fixed; left: 8px; top: 8px;
-            width: auto; height: auto; overflow: visible;
-            padding: 10px 18px; background: #ffffff; color: #10253f;
-            font-weight: 700; text-decoration: underline;
-            border: 2px solid #55606B; border-radius: 4px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-            outline: 3px solid #1d4ed8; outline-offset: 2px;
-        }
-
-        /* Visible keyboard focus on every interactive element. */
-        a:focus-visible, button:focus-visible,
-        select:focus-visible, input:focus-visible {
-            outline: 3px solid #1d4ed8; outline-offset: 2px;
-        }
-
-        #main-content:focus { outline: none; }
-
-        /* The toggle's #e8eef6 fill is only 1.17:1 on white, so the
-           button's hit area needs a real boundary (WCAG 1.4.11). */
-        .category-toggle { border: 1px solid #55606B !important; }
     </style>
 </head>
 
 <body>
     <a class="a11y-skip-link" href="#main-content">Skip to main content</a>
     <div class="container">
-        <!-- Header -->
-        <div class="page-header">
+        <header class="page-header">
             <h1>MMCD Analytics Dashboard</h1>
             <p class="description">Metropolitan Mosquito Control District &mdash; Data Analysis Applications</p>
-        </div>
+        </header>
 
         <main id="main-content" tabindex="-1">
+            <!-- Dashboards + collapsible categories are rendered from APP_CATEGORIES below. -->
+            <div id="dashboards-section"></div>
 
-        <!-- ============================================================= -->
-        <!-- DASHBOARDS  (always visible, not collapsible)                  -->
-        <!-- ============================================================= -->
-        <div class="dashboard-section">
-            <h2>Dashboards</h2>
-            <div class="apps-grid">
-                <div class="app-card">
-                    <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
-                    <h3>Overview Dashboard</h3>
-                    <p>Unified dashboard showing MMCD treatment progress. View district-level aggregation by zone (P1 vs P2), or drill down by zone and metric to see facilities-level and facility-specific data. Includes Catch Basin, Drone, Ground Prehatch, Structures, and Cattail metrics.</p>
-                    <a href="overview/" class="app-link">Open Dashboard</a>
-                </div>
-                <div class="app-card">
-                    <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
-                    <h3>FOS Overview Dashboard (NEW)</h3>
-                    <p>5 key metrics for FOS: Ground prehatch by township, Suco goal progress for facility, catch basin metric, air work progress, and bioassay.</p>
-                    <div style="margin-bottom: 10px;">
-                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="fos_facility">Facility:</label>
-                        <select id="fos_facility" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
-                            <option value="" disabled selected>Loading facilities...</option>
-                        </select>
-                    </div>
-                    <div style="margin-bottom: 10px;">
-                        <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="fos_area">FOS Area:</label>
-                        <select id="fos_area" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
-                            <option value="" disabled selected>Loading FOS areas...</option>
-                        </select>
-                    </div>
-                    <button onclick="openFOSOverview()" style="width: 100%; background-color: #2c5aa0; color: white; padding: 8px; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 12px;">Open Dashboard</button>
-                </div>
+            <div class="controls-bar">
+                <button type="button" id="expand-all">Expand All</button>
+                <button type="button" id="collapse-all">Collapse All</button>
             </div>
-        </div>
 
-        <!-- Expand / Collapse all -->
-        <div class="controls-bar">
-            <button onclick="expandAll()">Expand All</button>
-            <button onclick="collapseAll()">Collapse All</button>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- FLOODWATER                                                     -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-floodwater">
-            <div class="category-header" onclick="toggleCategory('cat-floodwater')">
-                <div class="category-header-left">
-                    <h2>Floodwater</h2>
-                    <span class="category-count">4 apps</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle Floodwater">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/larvae.png" alt="" class="app-icon">
-                            <h3>Inspections Coverage</h3>
-                            <p>Analyze inspection coverage for all sites, filter by air/ground, FOS area, facility, and zone. Identify sites with no inspection in the last X years using both current and archive records.</p>
-                            <a href="inspections/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/ground.png" alt="" class="app-icon">
-                            <h3>Ground Prehatch Progress</h3>
-                            <p>Monitor ground prehatch treatment progress including site counts, treatment status, and coverage metrics. Track treated, expiring, expired, and untreated prehatch sites by facility and zone.</p>
-                            <a href="ground_prehatch_progress/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/helicopter-solid-full.svg" alt="" class="app-icon">
-                            <h3>Air</h3>
-                            <p>Air site status tracking and pipeline management for breeding sites. Monitor rainfall, inspections, treatments, and status transitions in the air site workflow.</p>
-                            <a href="air_sites_simple/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/drone.jpg" alt="" class="app-icon">
-                            <h3>Drone Treatment</h3>
-                            <p>Comprehensive drone treatment tracking with real-time progress metrics, historical analysis, and site average calculations. Includes both active treatment monitoring and historical trend visualization.</p>
-                            <a href="drone/" class="app-link">Open Application</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- VECTOR                                                         -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-vector">
-            <div class="category-header" onclick="toggleCategory('cat-vector')">
-                <div class="category-header-left">
-                    <h2>Vector</h2>
-                    <span class="category-count">4 apps</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle Vector">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/catchbasin.png" alt="" class="app-icon">
-                            <h3>Catch Basin Progress</h3>
-                            <p>Monitor catch basin treatment status across facilities. Track wet catch basins, active treatments, and treatment coverage percentages. View summary statistics and detailed breakdowns by facility.</p>
-                            <a href="catch_basin_status/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/catchbasin.png" alt="" class="app-icon">
-                            <h3>Structure Progress</h3>
-                            <p>Comprehensive tracking of structure treatment operations with current progress metrics and historical trends analysis. Includes both active treatment monitoring and historical data visualization.</p>
-                            <a href="struct_trt/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/tree-solid-full.svg" alt="" class="app-icon">
-                            <h3>Suco</h3>
-                            <p>SUCO historical analysis dashboard with interactive maps, location filtering, and temporal trend analysis. Includes facility and foreman-based grouping.</p>
-                            <a href="suco_history/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="" class="app-icon">
-                            <h3>Trap Surveillance</h3>
-                            <p>Vector surveillance dashboard showing mosquito abundance, MLE/MIR infection rates, and Vector Index by Vector Index Area. Uses pre-calculated database views for Culex species monitoring.</p>
-                            <a href="trap_surveillance/" class="app-link">Open Application</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- MONDAY SAMPLES                                                 -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-monday">
-            <div class="category-header" onclick="toggleCategory('cat-monday')">
-                <div class="category-header-left">
-                    <h2>Monday Samples</h2>
-                    <span class="category-count">2 apps</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle Monday Samples">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="" class="app-icon">
-                            <h3>Mosquito Surveillance Map</h3>
-                            <p>Interactive geographic mapping of mosquito surveillance data with species filtering, surveillance type selection, and temporal analysis. Visualize mosquito counts across monitoring locations. This will take some time to load, so be patient.</p>
-                            <a href="mosquito_surveillance_map/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="" class="app-icon">
-                            <h3>Mosquito Monitoring</h3>
-                            <p>CO2 trap mosquito surveillance data with species analysis, facility comparisons, and zone filtering. Interactive charts with hover details and customizable date ranges.</p>
-                            <a href="mosquito-monitoring/" class="app-link">Open Application</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- CATTAIL                                                        -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-cattail">
-            <div class="category-header" onclick="toggleCategory('cat-cattail')">
-                <div class="category-header-left">
-                    <h2>Cattail</h2>
-                    <span class="category-count">2 apps</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle Cattail">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/cattail_background.png" alt="" class="app-icon">
-                            <h3>Cattail Inspections</h3>
-                            <p>Track cattail inspection progress versus annual goals. Monitor inspection status, coverage metrics, and planned treatments for cattail management sites.</p>
-                            <a href="cattail_inspections/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/cattail_background.png" alt="" class="app-icon">
-                            <h3>Cattail Treatments</h3>
-                            <p>Comprehensive cattail treatment tracking dashboard. Monitor treatment progress, material usage, acreage treated, and treatment effectiveness by facility and zone.</p>
-                            <a href="cattail_treatments/" class="app-link">Open Application</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- UTILITIES                                                      -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-utilities">
-            <div class="category-header" onclick="toggleCategory('cat-utilities')">
-                <div class="category-header-left">
-                    <h2>Utilities</h2>
-                    <span class="category-count">3 apps</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle Utilities">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
-                            <h3>Section Cards</h3>
-                            <p>Generate printable section cards for breeding sites and structures with customizable fields and formats.</p>
-                            <a href="section-cards/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/helicopter-solid-full.svg" alt="" class="app-icon">
-                            <h3>Air Inspection Checklist</h3>
-                            <div style="margin-bottom: 10px;">
-                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="air_facility">Facility:</label>
-                                <select id="air_facility" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
-                                    <option value="" disabled selected>Loading facilities...</option>
-                                </select>
-                            </div>
-                            <div style="margin-bottom: 10px;">
-                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="air_fos">FOS Area:</label>
-                                <select id="air_fos" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
-                                    <option value="" disabled selected>Loading FOS areas...</option>
-                                </select>
-                            </div>
-                            <div style="margin-bottom: 10px;">
-                                <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 12px; color: #333;" for="air_employee">Your Name:</label>
-                                <select id="air_employee" style="width: 100%; padding: 6px; border: 1px solid #55606B; border-radius: 3px; font-size: 12px;">
-                                    <option value="" disabled selected>Loading employees...</option>
-                                </select>
-                            </div>
-                            <button onclick="openAirChecklist()" style="width: 100%; background-color: #2c5aa0; color: white; padding: 8px; border: none; border-radius: 3px; cursor: pointer; font-weight: bold; font-size: 12px;">Open Application</button>
-                        </div>
-                        <div class="app-card">
-                            <h3>Admin Tools</h3>
-                            <p>Administrative tools and utilities. Update cached data when lookups and historical data change.</p>
-                            <a href="test-app/" class="app-link">Open Application</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- TESTS                                                          -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-tests">
-            <div class="category-header" onclick="toggleCategory('cat-tests')">
-                <div class="category-header-left">
-                    <h2>Tests</h2>
-                    <span class="category-count">4 apps</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle Tests">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/larvae.png" alt="" class="app-icon">
-                            <h3>Control Efficacy</h3>
-                            <p>Track treatment efficacy through systematic checkback analysis. Monitor checkback completion rates, treatment-to-checkback timing, and dip count changes to measure control effectiveness Between species and material types.</p>
-                            <a href="control_efficacy/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="" class="app-icon">
-                            <h3>Trap Surveillance Test</h3>
-                            <p>Prototype app to compute section vector index using k-nearest traps.</p>
-                            <a href="trap_survillance_test/" class="app-link">Open Application</a>
-                        </div>
-                        <div class="app-card">
-                            <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
-                            <h3>FOS Capacity Planning (NEW)</h3>
-                            <p>Strategic / border-to-border planning: ground &amp; air sites, prehatch sites and acres, sections, and catch basins per FOS area (P1 vs P2, by priority), with staffing ratios (techs per FOS), facility-to-section driving distance, averages, and a what-if planner to promote P2 areas into P1 and estimate added staff.</p>
-                            <a href="fos_capacity_planning/" class="app-link">Open Application</a>
-                        </div>
-                        <!-- MMCD AI Assistant card -->
-                        <div class="app-card" style="grid-column: 1 / -1; text-align: left; padding: 0; overflow: hidden;">
-                            <div style="padding: 20px 20px 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #2c5aa0, #1e3d6f); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; font-weight: bold; flex-shrink: 0;">AI</div>
-                                    <div>
-                                        <h3 style="margin: 0; font-size: 16px;">MMCD Assistant</h3>
-                                        <p style="margin: 2px 0 0 0; font-size: 12px; color: #888;">Ask questions about MMCD procedures, protocols, and field operations</p>
-                                    </div>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 8px;">
-                                    <span id="llm-status" style="font-size: 11px; color: #7c8a97;">AI Assistant</span>
-                                    <button onclick="clearChat()" style="background: none; border: 1px solid #55606B; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Clear</button>
-                                </div>
-                            </div>
-                            <!-- Chat messages area -->
-                            <div id="chat-messages" style="height: 360px; overflow-y: auto; padding: 12px 20px; background-color: #f8f9fb; border-top: 1px solid #e8ecf0; border-bottom: 1px solid #e8ecf0;">
-                                <div class="chat-msg chat-assistant">
-                                    <div class="chat-bubble chat-bubble-assistant">
-                                        Hi! I'm the MMCD Assistant. I know about MMCD procedures, protocols, mosquito biology, field operations, and more from the <a href="https://mmcd.wiki" target="_blank">MMCD Wiki</a>. Ask me anything!
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- Input area -->
-                            <div style="display: flex; padding: 12px 20px; gap: 8px; background: #fff;">
-                                <input type="text" id="chat-input" aria-label="Ask the MMCD Assistant a question" placeholder="Ask about dipping procedures, treatment protocols, equipment..."
-                                    style="flex: 1; padding: 10px 14px; border: 1px solid #55606B; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;"
-                                    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}">
-                                <button id="chat-send-btn" onclick="sendChat()"
-                                    style="background-color: #2c5aa0; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;">
-                                    Send
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============================================================= -->
-        <!-- ABOUT                                                          -->
-        <!-- ============================================================= -->
-        <div class="category-box" id="cat-about">
-            <div class="category-header" onclick="toggleCategory('cat-about')">
-                <div class="category-header-left">
-                    <h2>About</h2>
-                    <span class="category-count">1 app</span>
-                </div>
-                <button class="category-toggle" aria-label="Toggle About">+</button>
-            </div>
-            <div class="category-body">
-                <div class="category-body-inner">
-                    <div class="apps-grid">
-                        <div class="app-card">
-                            <img src="shared/assets/adult.png" alt="" class="app-icon">
-                            <h3>About This Platform</h3>
-                            <p>Credits and information about the development team behind the MMCD Analytics Platform. Learn about the contributors and technologies used in building these analytical tools.</p>
-                            <a href="about/" class="app-link">View Credits</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
+            <div id="app-categories"></div>
         </main>
 
-        <!-- Footer -->
-        <div class="page-footer">
+        <footer class="page-footer">
             <p>Metropolitan Mosquito Control District | Analytics Platform</p>
-        </div>
+            <a class="feedback-link"
+               href="https://forms.office.com/Pages/ResponsePage.aspx?id=VXD2uT7_yUu4VJEMUJ6h0kuX0Xp1jd1Hng9UWDT6X_5UMlhRUE5UWkM3RElJUEhFQTdWWUpGUUNGSCQlQCN0PWcu&origin=Invitation&channel=1"
+               target="_blank"
+               rel="noopener noreferrer">
+                Give Feedback
+            </a>
+        </footer>
     </div>
 
-    <a class="feedback-link"
-       href="https://forms.office.com/Pages/ResponsePage.aspx?id=VXD2uT7_yUu4VJEMUJ6h0kuX0Xp1jd1Hng9UWDT6X_5UMlhRUE5UWkM3RElJUEhFQTdWWUpGUUNGSCQlQCN0PWcu&origin=Invitation&channel=1"
-       target="_blank"
-       rel="noopener noreferrer">
-        Give Feedback
-    </a>
+    <!-- =================================================================
+         Special cards: hand-written because they hold forms or the chat.
+         APP_CATEGORIES places them with { template: "<id>" } entries.
+         ================================================================= -->
+
+    <template id="tpl-fos-launcher">
+        <div class="app-card">
+            <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
+            <h3>FOS Overview Dashboard (NEW)</h3>
+            <p>5 key metrics for FOS: Ground prehatch by township, Suco goal progress for facility, catch basin metric, air work progress, and bioassay.</p>
+            <form class="launcher" id="fos-launcher">
+                <div class="launcher-field">
+                    <label class="launcher-label" for="fos_facility">Facility:</label>
+                    <select id="fos_facility" class="launcher-select" required>
+                        <option value="" disabled selected>Loading facilities...</option>
+                    </select>
+                </div>
+                <div class="launcher-field">
+                    <label class="launcher-label" for="fos_area">FOS Area:</label>
+                    <select id="fos_area" class="launcher-select" required>
+                        <option value="" disabled selected>Loading FOS areas...</option>
+                    </select>
+                </div>
+                <button type="submit" class="launcher-submit">Open Dashboard</button>
+            </form>
+        </div>
+    </template>
+
+    <template id="tpl-air-launcher">
+        <div class="app-card">
+            <img src="shared/assets/helicopter-solid-full.svg" alt="" class="app-icon">
+            <h3>Air Inspection Checklist</h3>
+            <form class="launcher" id="air-launcher">
+                <div class="launcher-field">
+                    <label class="launcher-label" for="air_facility">Facility:</label>
+                    <select id="air_facility" class="launcher-select" required>
+                        <option value="" disabled selected>Loading facilities...</option>
+                    </select>
+                </div>
+                <div class="launcher-field">
+                    <label class="launcher-label" for="air_fos">FOS Area:</label>
+                    <select id="air_fos" class="launcher-select" required>
+                        <option value="" disabled selected>Loading FOS areas...</option>
+                    </select>
+                </div>
+                <div class="launcher-field">
+                    <label class="launcher-label" for="air_employee">Your Name:</label>
+                    <select id="air_employee" class="launcher-select">
+                        <option value="" disabled selected>Loading employees...</option>
+                    </select>
+                </div>
+                <button type="submit" class="launcher-submit">Open Application</button>
+            </form>
+        </div>
+    </template>
+
+    <template id="tpl-assistant">
+        <!-- MMCD AI Assistant card -->
+        <div class="app-card" style="grid-column: 1 / -1; text-align: left; padding: 0; overflow: hidden;">
+            <div style="padding: 20px 20px 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div aria-hidden="true" style="width: 36px; height: 36px; background: linear-gradient(135deg, #2c5aa0, #1e3d6f); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; font-weight: bold; flex-shrink: 0;">AI</div>
+                    <div>
+                        <h3 style="margin: 0; font-size: 16px;">MMCD Assistant</h3>
+                        <p style="margin: 2px 0 0 0; font-size: 12px; color: #5f6368;">Ask questions about MMCD procedures, protocols, and field operations</p>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span id="llm-status" role="status" style="font-size: 11px; color: #5f6368;">AI Assistant</span>
+                    <button type="button" id="chat-clear-btn" style="background: none; border: 1px solid #55606B; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666;">Clear</button>
+                </div>
+            </div>
+            <!-- Chat messages: role="log" announces each new reply politely. -->
+            <div id="chat-messages" role="log" aria-live="polite" aria-label="MMCD Assistant conversation" tabindex="0"
+                 style="height: 360px; overflow-y: auto; padding: 12px 20px; background-color: #f8f9fb; border-top: 1px solid #e8ecf0; border-bottom: 1px solid #e8ecf0;">
+                <div class="chat-msg chat-assistant">
+                    <div class="chat-bubble chat-bubble-assistant">
+                        Hi! I'm the MMCD Assistant. I know about MMCD procedures, protocols, mosquito biology, field operations, and more from the <a href="https://mmcd.wiki" target="_blank">MMCD Wiki</a>. Ask me anything!
+                    </div>
+                </div>
+            </div>
+            <!-- Input: a real form, so Enter submits natively. -->
+            <form class="chat-input-row" id="chat-form">
+                <input type="text" id="chat-input" aria-label="Ask the MMCD Assistant a question" autocomplete="off"
+                    placeholder="Ask about dipping procedures, treatment protocols, equipment..."
+                    style="flex: 1; padding: 10px 14px; border: 1px solid #55606B; border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;">
+                <button type="submit" id="chat-send-btn"
+                    style="background-color: #2c5aa0; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                    Send
+                </button>
+            </form>
+        </div>
+    </template>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
     <script>
         // =====================================================================
-        // Collapsible category logic
+        // App catalog - the single list the landing page is built from.
+        // Adding an app = one entry here. The renderer below emits all the
+        // accessible markup (decorative icons, headings, link context,
+        // disclosure buttons), so every card comes out compliant.
+        //   { name, url, icon, desc, linkText }   ordinary app card
+        //   { template: "tpl-..." }               hand-written special card
+        // A category with collapsible: false renders as an always-open section.
         // =====================================================================
-        function toggleCategory(id) {
-            document.getElementById(id).classList.toggle('open');
+        const APP_CATEGORIES = [
+            {
+                id: 'dashboards', title: 'Dashboards', collapsible: false, apps: [
+                    { name: 'Overview Dashboard', url: 'overview/', icon: 'layer-group.jpg', linkText: 'Open Dashboard',
+                      desc: 'Unified dashboard showing MMCD treatment progress. View district-level aggregation by zone (P1 vs P2), or drill down by zone and metric to see facilities-level and facility-specific data. Includes Catch Basin, Drone, Ground Prehatch, Structures, and Cattail metrics.' },
+                    { template: 'tpl-fos-launcher' }
+                ]
+            },
+            {
+                id: 'floodwater', title: 'Floodwater', apps: [
+                    { name: 'Inspections Coverage', url: 'inspections/', icon: 'larvae.png',
+                      desc: 'Analyze inspection coverage for all sites, filter by air/ground, FOS area, facility, and zone. Identify sites with no inspection in the last X years using both current and archive records.' },
+                    { name: 'Ground Prehatch Progress', url: 'ground_prehatch_progress/', icon: 'ground.png',
+                      desc: 'Monitor ground prehatch treatment progress including site counts, treatment status, and coverage metrics. Track treated, expiring, expired, and untreated prehatch sites by facility and zone.' },
+                    { name: 'Air', url: 'air_sites_simple/', icon: 'helicopter-solid-full.svg',
+                      desc: 'Air site status tracking and pipeline management for breeding sites. Monitor rainfall, inspections, treatments, and status transitions in the air site workflow.' },
+                    { name: 'Drone Treatment', url: 'drone/', icon: 'drone.jpg',
+                      desc: 'Comprehensive drone treatment tracking with real-time progress metrics, historical analysis, and site average calculations. Includes both active treatment monitoring and historical trend visualization.' }
+                ]
+            },
+            {
+                id: 'vector', title: 'Vector', apps: [
+                    { name: 'Catch Basin Progress', url: 'catch_basin_status/', icon: 'catchbasin.png',
+                      desc: 'Monitor catch basin treatment status across facilities. Track wet catch basins, active treatments, and treatment coverage percentages. View summary statistics and detailed breakdowns by facility.' },
+                    { name: 'Structure Progress', url: 'struct_trt/', icon: 'catchbasin.png',
+                      desc: 'Comprehensive tracking of structure treatment operations with current progress metrics and historical trends analysis. Includes both active treatment monitoring and historical data visualization.' },
+                    { name: 'Suco', url: 'suco_history/', icon: 'tree-solid-full.svg',
+                      desc: 'SUCO historical analysis dashboard with interactive maps, location filtering, and temporal trend analysis. Includes facility and foreman-based grouping.' },
+                    { name: 'Trap Surveillance', url: 'trap_surveillance/', icon: 'adult.png',
+                      desc: 'Vector surveillance dashboard showing mosquito abundance, MLE/MIR infection rates, and Vector Index by Vector Index Area. Uses pre-calculated database views for Culex species monitoring.' }
+                ]
+            },
+            {
+                id: 'monday', title: 'Monday Samples', apps: [
+                    { name: 'Mosquito Surveillance Map', url: 'mosquito_surveillance_map/', icon: 'adult.png',
+                      desc: 'Interactive geographic mapping of mosquito surveillance data with species filtering, surveillance type selection, and temporal analysis. Visualize mosquito counts across monitoring locations. This will take some time to load, so be patient.' },
+                    { name: 'Mosquito Monitoring', url: 'mosquito-monitoring/', icon: 'adult.png',
+                      desc: 'CO2 trap mosquito surveillance data with species analysis, facility comparisons, and zone filtering. Interactive charts with hover details and customizable date ranges.' }
+                ]
+            },
+            {
+                id: 'cattail', title: 'Cattail', apps: [
+                    { name: 'Cattail Inspections', url: 'cattail_inspections/', icon: 'cattail_background.png',
+                      desc: 'Track cattail inspection progress versus annual goals. Monitor inspection status, coverage metrics, and planned treatments for cattail management sites.' },
+                    { name: 'Cattail Treatments', url: 'cattail_treatments/', icon: 'cattail_background.png',
+                      desc: 'Comprehensive cattail treatment tracking dashboard. Monitor treatment progress, material usage, acreage treated, and treatment effectiveness by facility and zone.' }
+                ]
+            },
+            {
+                id: 'utilities', title: 'Utilities', apps: [
+                    { name: 'Section Cards', url: 'section-cards/', icon: 'layer-group.jpg',
+                      desc: 'Generate printable section cards for breeding sites and structures with customizable fields and formats.' },
+                    { template: 'tpl-air-launcher' },
+                    { name: 'Admin Tools', url: 'test-app/',
+                      desc: 'Administrative tools and utilities. Update cached data when lookups and historical data change.' }
+                ]
+            },
+            {
+                id: 'tests', title: 'Tests', apps: [
+                    { name: 'Control Efficacy', url: 'control_efficacy/', icon: 'larvae.png',
+                      desc: 'Track treatment efficacy through systematic checkback analysis. Monitor checkback completion rates, treatment-to-checkback timing, and dip count changes to measure control effectiveness Between species and material types.' },
+                    { name: 'Trap Surveillance Test', url: 'trap_survillance_test/', icon: 'adult.png',
+                      desc: 'Prototype app to compute section vector index using k-nearest traps.' },
+                    { name: 'FOS Capacity Planning (NEW)', url: 'fos_capacity_planning/', icon: 'layer-group.jpg',
+                      desc: 'Strategic / border-to-border planning: ground & air sites, prehatch sites and acres, sections, and catch basins per FOS area (P1 vs P2, by priority), with staffing ratios (techs per FOS), facility-to-section driving distance, averages, and a what-if planner to promote P2 areas into P1 and estimate added staff.' },
+                    { template: 'tpl-assistant' }
+                ]
+            },
+            {
+                id: 'about', title: 'About', apps: [
+                    { name: 'About This Platform', url: 'about/', icon: 'adult.png', linkText: 'View Credits',
+                      desc: 'Credits and information about the development team behind the MMCD Analytics Platform. Learn about the contributors and technologies used in building these analytical tools.' }
+                ]
+            }
+        ];
+
+        // =====================================================================
+        // Renderer - builds every card and category with DOM APIs (no HTML
+        // strings, so catalog text can never inject markup).
+        // =====================================================================
+        function el(tag, attrs, text) {
+            const node = document.createElement(tag);
+            Object.keys(attrs || {}).forEach(k => node.setAttribute(k, attrs[k]));
+            if (text !== undefined) node.textContent = text;
+            return node;
         }
 
-        function expandAll() {
-            document.querySelectorAll('.category-box').forEach(box => box.classList.add('open'));
+        function renderCard(app) {
+            if (app.template) {
+                return document.getElementById(app.template).content.cloneNode(true);
+            }
+            const card = el('div', { class: 'app-card' });
+            if (app.icon) {
+                // Decorative: the heading below names the app.
+                card.appendChild(el('img', { src: 'shared/assets/' + app.icon, alt: '', class: 'app-icon' }));
+            }
+            card.appendChild(el('h3', {}, app.name));
+            if (app.desc) card.appendChild(el('p', {}, app.desc));
+            // Link purpose (WCAG 2.4.4): screen readers hear "Open Application:
+            // Inspections Coverage"; the visible text stays the start of that
+            // name (WCAG 2.5.3).
+            const link = el('a', { href: app.url, class: 'app-link' }, app.linkText || 'Open Application');
+            link.appendChild(el('span', { class: 'sr-only' }, ': ' + app.name));
+            card.appendChild(link);
+            return card;
         }
 
-        function collapseAll() {
-            document.querySelectorAll('.category-box').forEach(box => box.classList.remove('open'));
+        function renderCategory(cat) {
+            const grid = el('div', { class: 'apps-grid' });
+            cat.apps.forEach(app => grid.appendChild(renderCard(app)));
+
+            if (cat.collapsible === false) {
+                const section = el('div', { class: 'dashboard-section' });
+                section.appendChild(el('h2', {}, cat.title));
+                section.appendChild(grid);
+                return section;
+            }
+
+            // WAI-ARIA disclosure: a real button inside the heading, whose visible
+            // text is its accessible name (no aria-label overriding the "+").
+            const bodyId = 'cat-' + cat.id + '-body';
+            const box = el('div', { class: 'category-box', id: 'cat-' + cat.id });
+            const heading = el('h2', { class: 'category-heading' });
+            const button = el('button', {
+                type: 'button', class: 'category-header', 'data-a11y-disclosure': '',
+                'aria-expanded': 'false', 'aria-controls': bodyId
+            });
+            const left = el('span', { class: 'category-header-left' });
+            left.appendChild(el('span', { class: 'category-title' }, cat.title));
+            left.appendChild(el('span', { class: 'category-count' },
+                cat.apps.length + (cat.apps.length === 1 ? ' app' : ' apps')));
+            button.appendChild(left);
+            button.appendChild(el('span', { class: 'category-toggle', 'aria-hidden': 'true' }, '+'));
+            heading.appendChild(button);
+            box.appendChild(heading);
+
+            // Collapsed = visibility:hidden via the shared a11y-collapse class, so
+            // the cards leave the Tab order and the accessibility tree.
+            const body = el('div', { class: 'category-body a11y-collapse', id: bodyId });
+            const inner = el('div', { class: 'category-body-inner' });
+            inner.appendChild(grid);
+            body.appendChild(inner);
+            box.appendChild(body);
+            return box;
         }
+
+        function renderCatalog() {
+            const dashboards = document.getElementById('dashboards-section');
+            const categories = document.getElementById('app-categories');
+            APP_CATEGORIES.forEach(cat => {
+                (cat.collapsible === false ? dashboards : categories).appendChild(renderCategory(cat));
+            });
+        }
+
+        renderCatalog();
+
+        // =====================================================================
+        // Collapsible category logic (toggling itself is the shared disclosure
+        // behavior in shared/assets/accessibility.js)
+        // =====================================================================
+        function setAllCategories(open) {
+            if (!window.A11y) return;
+            document.querySelectorAll('.category-header[data-a11y-disclosure]')
+                .forEach(btn => window.A11y.setDisclosure(btn, open));
+        }
+
+        document.getElementById('expand-all').addEventListener('click', () => setAllCategories(true));
+        document.getElementById('collapse-all').addEventListener('click', () => setAllCategories(false));
+
+        // =====================================================================
+        // Launchers + chat are real forms: native required-field validation
+        // replaces alert(), and Enter submits.
+        // =====================================================================
+        document.getElementById('fos-launcher').addEventListener('submit', function (e) {
+            e.preventDefault();
+            openFOSOverview();
+        });
+        document.getElementById('air-launcher').addEventListener('submit', function (e) {
+            e.preventDefault();
+            openAirChecklist();
+        });
+        document.getElementById('chat-form').addEventListener('submit', function (e) {
+            e.preventDefault();
+            sendChat();
+        });
+        document.getElementById('chat-clear-btn').addEventListener('click', clearChat);
 
         // =====================================================================
         // Data loading
@@ -726,21 +690,21 @@
         // Store all foremen and employees for filtering
         let allForemen = [];
         let allEmployees = [];
-        
+
         // Load real facility and FOS options from the air_inspection_checklist app
         document.addEventListener('DOMContentLoaded', async function() {
             console.log('Loading real filter options from database...');
             await loadRealFacilities();
             await loadRealForemen();
             await loadRealEmployees();
-            
+
             // Set up facility change handler to filter FOS and Employee options
             document.getElementById('air_facility').addEventListener('change', function() {
                 filterFOSByFacility();
                 filterEmployeesByFacilityAndFOS();
             });
             document.getElementById('air_fos').addEventListener('change', filterEmployeesByFacilityAndFOS);
-            
+
             // Also populate FOS overview dropdowns (reuse same data)
             populateFOSOverviewDropdowns();
             document.getElementById('fos_facility').addEventListener('change', filterFOSOverviewByFacility);
@@ -751,16 +715,16 @@
             try {
                 const facilitySelect = document.getElementById('air_facility');
                 const jsonUrl = 'air_inspection_checklist/facilities.json';
-                
+
                 console.log('Fetching facilities from:', jsonUrl);
                 const response = await fetch(jsonUrl);
-                
+
                 if (response.ok) {
                     const facilities = await response.json();
                     console.log('Facilities loaded from database:', facilities);
-                    
+
                     facilitySelect.innerHTML = '<option value="all">All Facilities</option>';
-                    
+
                     if (Array.isArray(facilities)) {
                         facilities.forEach(facility => {
                             const option = document.createElement('option');
@@ -793,14 +757,14 @@
             try {
                 const fosSelect = document.getElementById('air_fos');
                 const jsonUrl = 'air_inspection_checklist/foremen.json';
-                
+
                 console.log('Fetching foremen from:', jsonUrl);
                 const response = await fetch(jsonUrl);
-                
+
                 if (response.ok) {
                     allForemen = await response.json();
                     console.log('Foremen loaded from database:', allForemen);
-                    
+
                     // Initial population - show all foremen
                     filterFOSByFacility();
                 } else if (retries > 0) {
@@ -821,14 +785,14 @@
                 document.getElementById('air_fos').innerHTML = '<option value="">Error loading FOS areas</option>';
             }
         }
-        
+
         // Load employees from the air_inspection_checklist Shiny app
         async function loadRealEmployees(retries = 3, delay = 2000) {
             try {
                 const jsonUrl = 'air_inspection_checklist/employees.json';
                 console.log('Fetching employees from:', jsonUrl);
                 const response = await fetch(jsonUrl);
-                
+
                 if (response.ok) {
                     allEmployees = await response.json();
                     console.log('Employees loaded:', allEmployees.length);
@@ -856,18 +820,18 @@
             const facilitySelect = document.getElementById('air_facility');
             const fosSelect = document.getElementById('air_fos');
             const selectedFacility = facilitySelect.value;
-            
+
             console.log('Filtering FOS for facility:', selectedFacility);
-            
+
             // Filter foremen by facility
             let filteredForemen = allForemen;
             if (selectedFacility && selectedFacility !== 'all') {
                 filteredForemen = allForemen.filter(fos => fos.facility === selectedFacility);
             }
-            
+
             // Rebuild FOS dropdown
             fosSelect.innerHTML = '<option value="all">All FOS Areas</option>';
-            
+
             if (Array.isArray(filteredForemen)) {
                 filteredForemen.forEach(fos => {
                     const option = document.createElement('option');
@@ -876,7 +840,7 @@
                     fosSelect.appendChild(option);
                 });
             }
-            
+
             console.log('FOS options filtered:', filteredForemen.length, 'options');
         }
 
@@ -885,14 +849,14 @@
             const facility = document.getElementById('air_facility').value;
             const fos = document.getElementById('air_fos').value;
             const empSelect = document.getElementById('air_employee');
-            
+
             let filtered = allEmployees;
-            
+
             // Filter by facility
             if (facility && facility !== 'all') {
                 filtered = filtered.filter(e => e.facility === facility);
             }
-            
+
             // Filter by FOS - find the FOS emp_num from foremen list, then match employee fieldsuper
             if (fos && fos !== 'all') {
                 const fosEntry = allForemen.find(f => f.code === fos);
@@ -900,7 +864,7 @@
                     filtered = filtered.filter(e => e.fieldsuper === fosEntry.emp_num);
                 }
             }
-            
+
             empSelect.innerHTML = '<option value="" selected>Select your name (optional)</option>';
             filtered.forEach(emp => {
                 const option = document.createElement('option');
@@ -908,41 +872,43 @@
                 option.textContent = emp.label;
                 empSelect.appendChild(option);
             });
-            
+
             console.log('Employee options filtered:', filtered.length);
         }
 
-        // Open air inspection checklist with filters
+        // Open air inspection checklist with filters. Called from the form's
+        // submit handler, so the browser's required-field validation has
+        // already run; the guard only covers engines without it.
         function openAirChecklist() {
             const facility = document.getElementById('air_facility').value;
             const fos = document.getElementById('air_fos').value;
             const emp = document.getElementById('air_employee').value;
-            
+
             if (!facility || !fos) {
-                alert('Please select both a Facility and FOS Area');
+                document.getElementById('air-launcher').reportValidity();
                 return;
             }
-            
+
             console.log('Opening air checklist with filters:', { facility, fos, emp });
-            
+
             // Build query string - only include non-'all' values
             const params = new URLSearchParams();
-            
+
             // Facility: only pass if not 'all'
             if (facility && facility !== 'all' && facility !== '') {
                 params.append('facility', facility);
             }
-            
+
             // FOS: only pass if not 'all' (app checks for empty string, so don't pass 'all')
             if (fos && fos !== 'all' && fos !== '') {
                 params.append('fos', fos);
             }
-            
+
             // Employee: pass emp_num if selected
             if (emp && emp !== '') {
                 params.append('emp', emp);
             }
-            
+
             // Redirect to the air inspection checklist app
             const appUrl = 'air_inspection_checklist/' + (params.toString() ? '?' + params.toString() : '');
             console.log('Redirecting to:', appUrl);
@@ -952,15 +918,15 @@
         // =====================================================================
         // FOS Overview Dashboard - reuses same facilities/foremen data
         // =====================================================================
-        
+
         // Populate FOS overview dropdowns from already-loaded data
         function populateFOSOverviewDropdowns() {
             const facilitySelect = document.getElementById('fos_facility');
-            
+
             // Copy facilities from the air checklist dropdown
             const airFacilitySelect = document.getElementById('air_facility');
             facilitySelect.innerHTML = '<option value="" disabled selected>Select Facility</option>';
-            
+
             for (let i = 0; i < airFacilitySelect.options.length; i++) {
                 const opt = airFacilitySelect.options[i];
                 if (opt.value && opt.value !== 'all') {
@@ -970,28 +936,28 @@
                     facilitySelect.appendChild(option);
                 }
             }
-            
+
             // Initialize FOS dropdown as empty until facility selected
             const fosSelect = document.getElementById('fos_area');
             fosSelect.innerHTML = '<option value="" disabled selected>Select facility first</option>';
         }
-        
+
         // Filter FOS overview areas by selected facility
         function filterFOSOverviewByFacility() {
             const facilitySelect = document.getElementById('fos_facility');
             const fosSelect = document.getElementById('fos_area');
             const selectedFacility = facilitySelect.value;
-            
+
             if (!selectedFacility) {
                 fosSelect.innerHTML = '<option value="" disabled selected>Select facility first</option>';
                 return;
             }
-            
+
             // Filter foremen by selected facility
             const filteredForemen = allForemen.filter(fos => fos.facility === selectedFacility);
-            
+
             fosSelect.innerHTML = '<option value="" disabled selected>Select FOS Area</option>';
-            
+
             filteredForemen.forEach(fos => {
                 const option = document.createElement('option');
                 option.value = fos.code;
@@ -999,22 +965,18 @@
                 fosSelect.appendChild(option);
             });
         }
-        
-        // Open FOS Overview Dashboard with selected facility and FOS
+
+        // Open FOS Overview Dashboard with selected facility and FOS. Called
+        // from the form's submit handler (required-field validation already ran).
         function openFOSOverview() {
             const facility = document.getElementById('fos_facility').value;
             const fos = document.getElementById('fos_area').value;
-            
-            if (!facility) {
-                alert('Please select a Facility');
+
+            if (!facility || !fos) {
+                document.getElementById('fos-launcher').reportValidity();
                 return;
             }
-            
-            if (!fos) {
-                alert('Please select a FOS Area');
-                return;
-            }
-            
+
             // Build URL to overview app with FOS view params.
             // Only load the two pre-built metrics the detail dashboard reads from data[[]].
             // The other 3 sections (prehatch township, air work, bioassays) load their
@@ -1027,7 +989,7 @@
             params.append('fos', fos);
             params.append('metric', fosMetrics.join(','));
             params.append('zone', '1');
-            
+
             const appUrl = 'overview/?' + params.toString();
             console.log('Opening FOS Overview:', appUrl);
             window.location.href = appUrl;
@@ -1052,7 +1014,7 @@
                     if (data.tunnel_url) {
                         LLM_ENDPOINT = data.tunnel_url + '/api/chat';
                         document.getElementById('llm-status').textContent = 'AI Assistant';
-                        document.getElementById('llm-status').style.color = '#7c8a97';
+                        document.getElementById('llm-status').style.color = '#5f6368';
                         document.getElementById('chat-send-btn').disabled = false;
                     } else {
                         document.getElementById('llm-status').textContent = 'Offline';
@@ -1082,6 +1044,8 @@
                         Hi! I'm the MMCD Assistant. I know about MMCD procedures, protocols, mosquito biology, field operations, and more from the <a href="https://mmcd.wiki" target="_blank">MMCD Wiki</a>. Ask me anything!
                     </div>
                 </div>`;
+            // Re-apply shared enhancements (new-tab notice on the wiki link).
+            if (window.A11y) window.A11y.enhance(container);
         }
 
         function appendMessage(role, text) {
@@ -1222,6 +1186,10 @@
             canvas.style.maxWidth = '100%';
             canvas.style.marginTop = '10px';
             canvas.height = 220;
+            // A canvas exposes nothing to assistive tech; name it (WCAG 1.1.1).
+            // The reply text above carries the substance of the answer.
+            canvas.setAttribute('role', 'img');
+            canvas.setAttribute('aria-label', 'Chart: ' + (chart.title || 'data from the answer above'));
 
             try {
                 if (typeof Chart === 'undefined') throw new Error('Chart.js did not load');
@@ -1263,7 +1231,7 @@
                 // question either way.
                 canvas.remove();
                 const note = document.createElement('div');
-                note.style.color = '#8a8f98';
+                note.style.color = '#5f6368';
                 note.style.fontSize = '0.85em';
                 note.style.marginTop = '8px';
                 note.textContent = 'Chart could not be displayed.';

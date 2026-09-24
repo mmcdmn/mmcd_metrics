@@ -126,12 +126,9 @@ air_sites_simple_ui <- function() {
         # Help section
         hr(),
         div(id = "help-section",
-            tags$a(href = "#", onclick = "$(this).next().toggle(); return false;",
-                   style = "color: #17a2b8; text-decoration: none; font-size: 14px;",
-                   HTML("<i class='fa fa-question-circle'></i> Show/Hide Help")),
-            div(style = "display: none;",
-                create_help_text()
-            )
+            # Real button + aria-expanded (shared a11y_disclosure); replaces the
+            # <a onclick=toggle()> link that never reported its open state.
+            a11y_disclosure("help_toggle", "Show/Hide Help", create_help_text())
         ),
 
         width = 3
@@ -149,7 +146,7 @@ air_sites_simple_ui <- function() {
           tabPanel("Air Site Status",
             br(),
             div(style = "padding: 10px; text-align: center; background-color: #d1ecf1; border: 1px solid #bee5eb; border-radius: 4px; margin-bottom: 15px;",
-                tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+                tags$i(class = "fa fa-info-circle", style = "color: #0f6377;"),
                 tags$small(" Note: 'Needs Inspection' status is currently under review. This dashboard shows the process from inspection to treatment.")
             ),
             fluidRow(
@@ -219,7 +216,7 @@ air_sites_simple_ui <- function() {
           tabPanel("Pipeline Snapshot",
             br(),
             div(style = "padding: 10px; text-align: center; background-color: #d1ecf1; border: 1px solid #bee5eb; border-radius: 4px; margin-bottom: 15px;",
-                tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+                tags$i(class = "fa fa-info-circle", style = "color: #0f6377;"),
                 tags$small(" Status filter only affects the flow chart visualization.")
             ),
             fluidRow(
@@ -291,7 +288,7 @@ air_sites_simple_ui <- function() {
           tabPanel("Historical Analysis",
             br(),
             div(style = "padding: 10px; text-align: center; background-color: #d1ecf1; border: 1px solid #bee5eb; border-radius: 4px; margin-bottom: 15px;",
-                tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+                tags$i(class = "fa fa-info-circle", style = "color: #0f6377;"),
                 tags$small(" This analysis shows inspection history and treatment volumes over the selected date range.")
             ),
             fluidRow(

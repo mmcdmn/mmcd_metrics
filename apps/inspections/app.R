@@ -430,7 +430,6 @@ server <- function(input, output, session) {
           value = format(total_sites, big.mark = ","),
           title = "Sites Analyzed",
           bg_color = unname(status_colors["active"]),
-          text_color = "#ffffff",
           icon = icon("map-marker")
         )
       })
@@ -456,7 +455,6 @@ server <- function(input, output, session) {
           value = paste0(wet_pct, "%"),
           title = "Average Wet Frequency",
           bg_color = unname(status_colors["completed"]),
-          text_color = "#ffffff",
           icon = icon("percentage")
         )
       })
@@ -471,7 +469,6 @@ server <- function(input, output, session) {
           value = "-",
           title = "Sites Analyzed",
           bg_color = unname(status_colors["unknown"]),
-          text_color = "#ffffff",
           icon = icon("map-marker")
         )
       })
@@ -483,7 +480,6 @@ server <- function(input, output, session) {
           value = "-",
           title = "Average Wet Frequency",
           bg_color = unname(status_colors["unknown"]),
-          text_color = "#ffffff",
           icon = icon("percentage")
         )
       })

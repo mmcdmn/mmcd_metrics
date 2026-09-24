@@ -120,7 +120,7 @@ ui <- accessible_dashboard_page(
               ),
               column(8,
                 div(style = "padding-top: 10px;",
-                  tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+                  tags$i(class = "fa fa-info-circle", style = "color: #0f6377;"),
                   " Click 'Refresh Data' to load current site status information with the selected filters."
                 )
               )

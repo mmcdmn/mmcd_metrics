@@ -51,7 +51,7 @@ create_main_ui <- function() {
         ),
         
         tags$small(
-          tags$i(class = "fa fa-info-circle", style = "color: #17a2b8;"),
+          tags$i(class = "fa fa-info-circle", style = "color: #0f6377;"),
           " Note: This button will load in new data. To run an analysis on this data, click the analysis buttons below.",
           style = "color: #666; font-style: italic; display: block; margin-bottom: 15px;"
         ),
@@ -122,11 +122,11 @@ create_main_ui <- function() {
                 div(style = "position: relative;",
                   uiOutput("gaps_button_ui"),
                   div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #FF5722; animation: bounce 1s infinite;",
+                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
                     HTML("&#x27A4;")
                   ),
                   tags$small("← Click here after loading data!", 
-                    style = "position: absolute; left: -60px; top: 50px; color: #FF5722; font-weight: bold; white-space: nowrap;")
+                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
                 )
               ),
               column(4,
@@ -167,11 +167,11 @@ create_main_ui <- function() {
                 div(style = "position: relative;",
                   uiOutput("red_bug_button_ui"),
                   div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #FF5722; animation: bounce 1s infinite;",
+                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
                     HTML("&#x27A4;")
                   ),
                   tags$small("← Click here after loading data!",
-                    style = "position: absolute; left: -60px; top: 50px; color: #FF5722; font-weight: bold; white-space: nowrap;")
+                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
                 )
               ),
               column(4,
@@ -220,11 +220,11 @@ create_main_ui <- function() {
                 div(style = "position: relative;",
                   uiOutput("wet_button_ui"),
                   div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #FF5722; animation: bounce 1s infinite;",
+                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
                     HTML("&#x27A4;")
                   ),
                   tags$small("← Click here after loading data!", 
-                    style = "position: absolute; left: -60px; top: 50px; color: #FF5722; font-weight: bold; white-space: nowrap;")
+                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
                 )
               )
             ),
@@ -273,11 +273,11 @@ create_main_ui <- function() {
                 div(style = "position: relative;",
                   uiOutput("larvae_button_ui"),
                   div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #FF5722; animation: bounce 1s infinite;",
+                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
                     HTML("&#x27A4;")
                   ),
                   tags$small("← Click here after loading data!", 
-                    style = "position: absolute; left: -60px; top: 50px; color: #FF5722; font-weight: bold; white-space: nowrap;")
+                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
                 )
               ),
               column(4,

@@ -1097,7 +1097,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             bg_color = box_color,
             theme = theme,
             icon = NULL,  # No icon for facility view
-            icon_type = "fontawesome"
+            icon_type = "fontawesome",
+            content_attrs = stat_box_toggle_attrs()  # keyboard-operable toggle
           )
         )
       )
@@ -1262,7 +1263,8 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
             bg_color = box_color,
             theme = theme,
             icon = icon("user-tie"),
-            icon_type = "fontawesome"
+            icon_type = "fontawesome",
+            content_attrs = stat_box_toggle_attrs()  # keyboard-operable toggle
           )
         )
       )
@@ -1378,7 +1380,10 @@ generate_summary_stats <- function(data, metrics_filter = NULL, overview_type = 
                 theme = theme,
                 icon = if (!is.null(config$image_path)) config$image_path else config$icon,
                 icon_type = if (!is.null(config$image_path)) "image" else "fontawesome",
-                metric_id = metric_id
+                metric_id = metric_id,
+                # A box with a redirect navigates (a link); otherwise it toggles
+                # its chart. Either way the info button stays a separate control.
+                content_attrs = if (nzchar(redirect_url)) stat_box_link_attrs() else stat_box_toggle_attrs()
               )
             )
           ),
@@ -1738,7 +1743,7 @@ build_overview_server <- function(input, output, session,
       if (is.null(html)) return(NULL)
       tagList(
         tags$h4(style = "margin-top:16px;", "Preview"),
-        tags$iframe(srcdoc = html,
+        tags$iframe(srcdoc = html, title = "Crew note preview",
           style = "width:100%;height:60vh;border:1px solid #ccc;border-radius:6px;")
       )
     })

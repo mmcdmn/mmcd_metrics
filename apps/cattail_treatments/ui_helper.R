@@ -114,7 +114,7 @@ cattail_treatments_ui <- function() {
                     choices = get_theme_choices(),
                     selected = "MMCD"),
         
-        tags$small(style = "color: #999;", "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug).")
+        tags$small(style = "color: #5f6368;", "Note: cattail Year runs from Fall (Sept-Dec) to Summer (May-Aug).")
       ),
       
       # Main panel with tabs

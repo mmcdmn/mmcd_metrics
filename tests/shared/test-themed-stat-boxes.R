@@ -54,12 +54,18 @@ test_that("create_stat_box accepts a status keyword and applies theme color", {
 })
 
 test_that("create_stat_box auto-picks readable text color", {
-  # Viridis warning is near-yellow: must get dark text, not white.
+  # Viridis warning is near-yellow (#FDE724): white is 1.26:1, dark is 13.78:1.
   html <- render_html(create_stat_box("1", "Warn", "warning", theme = "Viridis"))
   expect_true(grepl("#1a1a1a", html, fixed = TRUE))
-  # MMCD good is dark: white text.
+  # MMCD good (#16a34a) reads as dark but is not: white is only 3.30:1, under
+  # the 4.5:1 AA minimum, while near-black is 5.28:1. contrast_text_color now
+  # measures both candidates instead of splitting on a luminance threshold.
   html2 <- render_html(create_stat_box("1", "Good", "good", theme = "MMCD"))
-  expect_true(grepl("#ffffff", html2, fixed = TRUE))
+  expect_true(grepl("#1a1a1a", html2, fixed = TRUE))
+  # MMCD alert (#dc2626) is genuinely dark: white wins at 4.83:1 vs 3.60:1,
+  # so the white-text branch stays covered.
+  html3 <- render_html(create_stat_box("1", "Alert", "alert", theme = "MMCD"))
+  expect_true(grepl("#ffffff", html3, fixed = TRUE))
 })
 
 test_that("create_stat_box stays backwards compatible", {

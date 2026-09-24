@@ -140,7 +140,9 @@ test_that("contrast_text_color picks readable text for light and dark", {
   expect_equal(contrast_text_color("#ffffff"), "#1a1a1a")
   # Viridis warning is near-yellow; white text on it is unreadable
   expect_equal(contrast_text_color("#FDE724"), "#1a1a1a")
-  expect_equal(contrast_text_color("#16a34a"), "#ffffff")
+  # Mid-tone green: white is only 3.30:1 here (below the 4.5:1 AA minimum)
+  # while near-black is 5.28:1, so the readable choice is the dark one.
+  expect_equal(contrast_text_color("#16a34a"), "#1a1a1a")
 })
 
 test_that("contrast_text_color handles NULL/NA/empty without erroring", {

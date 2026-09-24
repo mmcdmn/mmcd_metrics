@@ -1,24 +1,23 @@
 # Statistical Box Helper Functions
 # Functions for creating themed value boxes in Shiny apps
 
-#' Create a custom stat box with specified colors
 #'
-#' @param value The main value to display
-#' @param title The title/label for the value box
-#' @param bg_color Background color (hex code)
-#' @param text_color Text color (hex code, default white)
-#' @param icon Icon name (without "fa-" prefix), Shiny icon object, or path to image
-#' @param icon_type Type of icon: "fontawesome" (default) or "image"
-#' @param metric_id Optional metric ID for info button (shows description + wiki link)
-#' @param theme Color theme name; used to resolve `bg_color` when a status
-#'   keyword ("good"/"warning"/"alert" or a theme status name) is passed instead
-#'   of a hex code.
-#' @return A Shiny value box UI element
+#' @param state_selector CSS selector of the ancestor whose .active class
+#'   reflects the open state (the element the app's click handler toggles)
+stat_box_toggle_attrs <- function(state_selector = ".stat-box-clickable") {
+  list(role = "button", tabindex = "0", `data-a11y-toggle` = state_selector)
+}
+
+#' Attributes for a stat box whose click navigates elsewhere (activates on Enter).
+stat_box_link_attrs <- function() {
+  list(role = "link", tabindex = "0")
+}
+
 create_stat_box <- function(value, title, bg_color, text_color = NULL, icon = NULL,
                             icon_type = "fontawesome", metric_id = NULL,
-                            theme = getOption("mmcd.color.theme", "MMCD")) {
-  # Accept a status keyword in place of a raw hex, so callers can stop
-  # hardcoding colors. Anything already starting with "#" passes through.
+                            theme = getOption("mmcd.color.theme", "MMCD"),
+                            content_attrs = NULL) {
+  # content_attrs: named list of attributes for the value/title area, used by
   bg_color <- resolve_box_color(bg_color, theme = theme)
 
   # text_color defaults to NULL = auto-contrast. Callers passing an explicit
@@ -38,6 +37,8 @@ create_stat_box <- function(value, title, bg_color, text_color = NULL, icon = NU
     if (icon_type == "image") {
       icon_element <- tags$img(
         src = icon,
+        # Decorative: the box's visible title already names the metric.
+        alt = "",
         style = "width: 48px; height: 48px; opacity: 0.9;"
       )
     } else if (is.character(icon)) {
@@ -55,7 +56,10 @@ create_stat_box <- function(value, title, bg_color, text_color = NULL, icon = NU
     
     if (nzchar(description) || nzchar(wiki_link)) {
       info_btn <- tags$button(
+        type = "button",
         class = "stat-box-info-btn",
+        # Icon-only control: name it (the icon is decorative).
+        `aria-label` = paste0("About ", if (is.character(title)) title else "this metric"),
         `data-metric-id` = metric_id,
         `data-description` = description,
         `data-wiki-link` = wiki_link,
@@ -89,17 +93,22 @@ create_stat_box <- function(value, title, bg_color, text_color = NULL, icon = NU
       "justify-content: space-between;"
     ),
     info_btn,
-    div(
-      style = "flex: 1;",
-      div(
-        style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
-        value
+    do.call(div, c(
+      list(
+        style = "flex: 1;",
+        div(
+          style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
+          value
+        ),
+        div(
+          # No opacity: fading the title over a colored box cost ~10% contrast
+          # and pushed it under 4.5:1 on some theme colors.
+          style = "font-size: 14px;",
+          title
+        )
       ),
-      div(
-        style = "font-size: 14px; opacity: 0.9;",
-        title
-      )
-    ),
+      content_attrs
+    )),
     if (!is.null(icon_element)) {
       div(
         style = "font-size: 36px; opacity: 0.8;",

@@ -5,6 +5,15 @@ library(stringr)  # For str_to_title function
 library(leaflet)  # For map functionality
 library(sf)       # For spatial data handling
 
+# For add_basemap_tiles() / add_carto_tiles() (authenticated CARTO tiles).
+# Guarded + multi-path so this survives being source()'d from either the
+# app's own directory (Shiny runtime) or the project root (tests).
+if (!exists("add_basemap_tiles", mode = "function")) {
+  for (.gh_path in c("../../shared/geometry_helpers.R", "shared/geometry_helpers.R")) {
+    if (file.exists(.gh_path)) { source(.gh_path); break }
+  }
+}
+
 # Function to create progress chart 
 create_progress_chart <- function(data, group_by, expiring_filter = "all", expiring_days = 14, return_height_info = FALSE, theme = "MMCD", display_metric = "sites") {
   if (nrow(data) == 0) {
@@ -649,18 +658,9 @@ create_ground_map <- function(spatial_data, basemap = "carto", site_filter = "al
                   spatial_data$last_material))
   )
   
-  # Choose base tiles
-  if (basemap == "satellite") {
-    tiles <- "Esri.WorldImagery"
-  } else if (basemap == "osm") {
-    tiles <- "OpenStreetMap"
-  } else {
-    tiles <- "CartoDB.Positron"  # carto
-  }
-  
   # Create map
   map <- leaflet(spatial_data) %>%
-    addProviderTiles(tiles) %>%
+    add_basemap_tiles(basemap) %>%
     addCircleMarkers(
       radius = 6,
       color = "#000000",

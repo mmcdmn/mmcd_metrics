@@ -223,7 +223,7 @@ server <- function(input, output, session) {
     label <- if (inputs$metric_type == "acres") "Total Air Site Acres" else "Total Air Sites"
     formatted <- if (inputs$metric_type == "acres") paste0(format(metric_val, big.mark = ","), " ac") else format(metric_val, big.mark = ",")
     colors <- get_status_colors(theme = current_theme())
-    create_stat_box(value = formatted, title = label, bg_color = colors[["completed"]], text_color = "#ffffff", icon = icon("helicopter"))
+    create_stat_box(value = formatted, title = label, bg_color = colors[["completed"]], icon = icon("helicopter"))
   })
 
   output$sites_unknown <- renderUI({
@@ -554,7 +554,7 @@ server <- function(input, output, session) {
     data <- historical_data()
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = nrow(data), title = "Total Sites",
-                    bg_color = colors[["completed"]], text_color = "#ffffff", icon = icon("map-marker"))
+                    bg_color = colors[["completed"]], icon = icon("map-marker"))
   })
 
   output$hist_total_inspections <- renderUI({
@@ -563,7 +563,7 @@ server <- function(input, output, session) {
     total <- sum(data$total_inspections, na.rm = TRUE)
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = format(total, big.mark = ","), title = "Total Inspections",
-                    bg_color = colors[["completed"]], text_color = "#ffffff", icon = icon("search"))
+                    bg_color = colors[["completed"]], icon = icon("search"))
   })
 
   output$hist_total_red_bug_inspections <- renderUI({
@@ -572,7 +572,7 @@ server <- function(input, output, session) {
     total <- sum(data$red_bug_inspections, na.rm = TRUE)
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = format(total, big.mark = ","), title = "Red Bug Inspections",
-                    bg_color = colors[["needs_treatment"]], text_color = "#ffffff", icon = icon("bug"))
+                    bg_color = colors[["needs_treatment"]], icon = icon("bug"))
   })
 
   output$hist_overall_red_bug_ratio <- renderUI({
@@ -583,7 +583,7 @@ server <- function(input, output, session) {
     ratio <- if (total_insp > 0) round((total_red / total_insp) * 100, 1) else 0
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = paste0(ratio, "%"), title = "% Inspections with Red Bugs",
-                    bg_color = colors[["planned"]], text_color = "#ffffff", icon = icon("percent"))
+                    bg_color = colors[["planned"]], icon = icon("percent"))
   })
 
   output$hist_total_treatments <- renderUI({
@@ -592,7 +592,7 @@ server <- function(input, output, session) {
     treatments <- sum(data$total_operations[data$operation_type == 'treatment'], na.rm = TRUE)
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = format(treatments, big.mark = ","), title = "Total Treatments",
-                    bg_color = colors[["active"]], text_color = "#ffffff", icon = icon("spray-can"))
+                    bg_color = colors[["active"]], icon = icon("spray-can"))
   })
 
   output$hist_total_treatment_acres <- renderUI({
@@ -601,7 +601,7 @@ server <- function(input, output, session) {
     acres <- sum(data$total_acres[data$operation_type == 'treatment'], na.rm = TRUE)
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = format(round(acres, 1), big.mark = ","), title = "Treatment Acres",
-                    bg_color = colors[["active"]], text_color = "#ffffff", icon = icon("area-chart"))
+                    bg_color = colors[["active"]], icon = icon("area-chart"))
   })
 
   output$hist_total_inspection_acres <- renderUI({
@@ -610,7 +610,7 @@ server <- function(input, output, session) {
     acres <- sum(data$total_acres[data$operation_type == 'inspection'], na.rm = TRUE)
     colors <- get_status_colors(theme = current_theme())
     create_stat_box(value = format(round(acres, 1), big.mark = ","), title = "Inspection Acres",
-                    bg_color = colors[["completed"]], text_color = "#ffffff", icon = icon("search"))
+                    bg_color = colors[["completed"]], icon = icon("search"))
   })
 
   # Historical inspection table

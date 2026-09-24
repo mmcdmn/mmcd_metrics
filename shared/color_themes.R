@@ -388,12 +388,23 @@ contrast_text_color <- function(bg_color, dark = "#1a1a1a", light = "#ffffff") {
   if (is.null(rgb_vals)) return(light)
 
   # WCAG 2.x relative luminance
-  lin <- ifelse(rgb_vals <= 0.03928,
-                rgb_vals / 12.92,
-                ((rgb_vals + 0.055) / 1.055) ^ 2.4)
-  luminance <- sum(c(0.2126, 0.7152, 0.0722) * lin)
+  relative_luminance <- function(rgb01) {
+    lin <- ifelse(rgb01 <= 0.03928, rgb01 / 12.92, ((rgb01 + 0.055) / 1.055) ^ 2.4)
+    sum(c(0.2126, 0.7152, 0.0722) * lin)
+  }
+  luminance <- relative_luminance(rgb_vals)
 
-  if (luminance > 0.45) dark else light
+  # Compare the two candidates instead of splitting on a luminance threshold:
+  # a mid-tone background (e.g. #3c8dbc) sits below any sensible threshold yet
+  # gives white only 3.67:1, where near-black reaches 5.68:1.
+  contrast_with <- function(fg) {
+    fg_rgb <- tryCatch(col2rgb(fg)[, 1] / 255, error = function(e) NULL)
+    if (is.null(fg_rgb)) return(0)
+    pair <- sort(c(relative_luminance(fg_rgb), luminance), decreasing = TRUE)
+    (pair[1] + 0.05) / (pair[2] + 0.05)
+  }
+
+  if (contrast_with(dark) >= contrast_with(light)) dark else light
 }
 
 # NULL coalescing operator

@@ -1,0 +1,337 @@
+/* =============================================================================
+   MMCD SHARED ACCESSIBILITY CSS (WCAG 2.1 AA)
+   =============================================================================
+   The single source of accessibility styling for the whole platform.
+
+     * Shiny apps      - inlined by shared/accessibility_helpers.R
+                         (accessible_page / accessible_dashboard_page)
+     * Static pages    - <link rel="stylesheet" href="shared/assets/accessibility.css">
+
+   Change a rule here and every app and page picks it up.
+   Colors are custom properties so a page can override a token without
+   copying rules (get_accessibility_css(border_color =, focus_color =) does
+   exactly that for Shiny apps).
+   ============================================================================= */
+
+:root {
+  /* #55606B: 6.42:1 on white, 5.89:1 on the #f5f5f5 sidebar well - well past
+     the 3:1 WCAG 1.4.11 needs for control boundaries. A fixed neutral on
+     purpose: shared/color_themes.R surface colors are tuned for dark data-viz
+     cards, not the light page every app renders its controls on. */
+  --a11y-border: #55606B;
+  /* Disabled controls are exempt from 1.4.11; still 3.15:1 on white. */
+  --a11y-border-disabled: #8a929c;
+  /* Focus ring: 6.70:1 on white, distinct from the border color. */
+  --a11y-focus: #1d4ed8;
+  /* Link-style controls (disclosures): 7.84:1 on white, 7.19:1 on #f5f5f5. */
+  --a11y-link: #0b5394;
+  /* Filled accent (slider value + bar). MMCD brand blue: white text on it is
+     6.82:1, and it is 5.07:1 against the slider track. */
+  --a11y-accent: #2c5aa0;
+}
+
+
+/* --- Status colors (Bootstrap 3 buttons + AdminLTE boxes) ------------------
+   Both frameworks ship status colors that fail WCAG 1.4.3 with any text color:
+   white on Bootstrap's success #5cb85c is 2.48:1, on AdminLTE's aqua #00c0ef
+   2.15:1, and AdminLTE even sets #444 text on its green (3.06:1). These are the
+   same hues darkened until white text clears 4.5:1, so "green = good,
+   red = problem" still reads the same - just darker. */
+:root {
+  --a11y-success: #146c43;  /* white text 6.45:1 */
+  --a11y-info:    #0f6377;  /* white text 6.84:1 */
+  --a11y-warning: #8a5a00;  /* white text 5.93:1 */
+  --a11y-danger:  #b02a1f;  /* white text 6.57:1 */
+  --a11y-primary: #2c5aa0;  /* white text 6.82:1 (MMCD brand blue) */
+}
+
+.btn-success,
+.btn-success:hover, .btn-success:focus, .btn-success:active {
+  background-color: var(--a11y-success) !important;
+  border-color: var(--a11y-success) !important;
+  color: #ffffff !important;
+}
+
+.btn-info,
+.btn-info:hover, .btn-info:focus, .btn-info:active {
+  background-color: var(--a11y-info) !important;
+  border-color: var(--a11y-info) !important;
+  color: #ffffff !important;
+}
+
+.btn-warning,
+.btn-warning:hover, .btn-warning:focus, .btn-warning:active {
+  background-color: var(--a11y-warning) !important;
+  border-color: var(--a11y-warning) !important;
+  color: #ffffff !important;
+}
+
+.btn-danger,
+.btn-danger:hover, .btn-danger:focus, .btn-danger:active {
+  background-color: var(--a11y-danger) !important;
+  border-color: var(--a11y-danger) !important;
+  color: #ffffff !important;
+}
+
+.btn-primary,
+.btn-primary:hover, .btn-primary:focus, .btn-primary:active {
+  background-color: var(--a11y-primary) !important;
+  border-color: var(--a11y-primary) !important;
+  color: #ffffff !important;
+}
+
+/* AdminLTE value boxes, solid box headers and labels (shinydashboard apps) */
+.bg-green, .bg-green-active, .label-success,
+.box-success.box-solid > .box-header,
+.callout-success {
+  background-color: var(--a11y-success) !important;
+  color: #ffffff !important;
+}
+
+.bg-aqua, .bg-aqua-active, .label-info,
+.box-info.box-solid > .box-header,
+.callout-info {
+  background-color: var(--a11y-info) !important;
+  color: #ffffff !important;
+}
+
+.bg-yellow, .bg-yellow-active, .label-warning,
+.box-warning.box-solid > .box-header,
+.callout-warning {
+  background-color: var(--a11y-warning) !important;
+  color: #ffffff !important;
+}
+
+.bg-red, .bg-red-active, .label-danger,
+.box-danger.box-solid > .box-header,
+.callout-danger {
+  background-color: var(--a11y-danger) !important;
+  color: #ffffff !important;
+}
+
+.bg-blue, .bg-light-blue, .bg-light-blue-active, .label-primary,
+.box-primary.box-solid > .box-header,
+.skin-blue .main-header .navbar,
+.skin-blue .main-header .logo {
+  background-color: var(--a11y-primary) !important;
+  color: #ffffff !important;
+}
+
+/* Bootstrap's muted text is #737373/#777, which is 4.35:1 and 4.11:1 on the
+   #f5f5f5 of a well or sidebarPanel - just under the 4.5:1 body text needs.
+   #5f6368 is 5.55:1 there and 6.05:1 on white. */
+.help-block,
+.text-muted,
+small.help-block {
+  color: #5f6368 !important;
+}
+
+/* Text inside a colored value box or box header inherits the white above. */
+.small-box > .inner p,
+.small-box > .inner h3,
+.box-solid > .box-header > .box-title,
+.box-solid > .box-header > .box-tools .btn {
+  color: #ffffff !important;
+}
+
+
+/* --- Sliders (ion.rangeSlider, every sliderInput) --------------------------
+   Shiny ships #428bca here: white-on-blue value bubbles at 3.63:1 (text needs
+   4.5:1) and a filled bar at 2.70:1 against its track (needs 3:1). */
+.irs--shiny .irs-from,
+.irs--shiny .irs-to,
+.irs--shiny .irs-single {
+  background-color: var(--a11y-accent) !important;
+  color: #ffffff !important;
+}
+
+.irs--shiny .irs-bar {
+  background: var(--a11y-accent) !important;
+  border-color: var(--a11y-accent) !important;
+}
+
+
+/* --- WCAG 1.4.11 Non-text Contrast ------------------------------------------
+   Unfilled controls rely on their border to show the hit area. Bootstrap and
+   AdminLTE default to #ccc / #ced4da (~1.5:1 on white). Filled buttons
+   (.btn-primary etc.) are excluded: their fill already delineates the hit area
+   and a gray border would fight the app's theme. */
+.form-control,
+.selectize-input,
+.selectize-control.single .selectize-input,
+.selectize-control.multi .selectize-input,
+textarea,
+select,
+input[type='text'],
+input[type='number'],
+input[type='date'],
+input[type='search'],
+input[type='email'],
+input[type='password'],
+.btn-default,
+.btn:not(.btn-primary):not(.btn-success):not(.btn-info):not(.btn-warning):not(.btn-danger):not(.btn-link) {
+  border: 1px solid var(--a11y-border) !important;
+}
+
+/* Grouped inputs (date ranges, numeric steppers) keep their outer boundary. */
+.input-group .form-control,
+.input-group-addon,
+.input-daterange .input-group-addon {
+  border: 1px solid var(--a11y-border) !important;
+}
+
+.form-control[disabled],
+.form-control[readonly],
+fieldset[disabled] .form-control,
+.btn[disabled],
+.btn.disabled {
+  border-color: var(--a11y-border-disabled) !important;
+}
+
+
+/* --- WCAG 2.4.7 Focus Visible ----------------------------------------------- */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
+.btn:focus-visible,
+.selectize-input.focus {
+  outline: 3px solid var(--a11y-focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* Engines without :focus-visible still get a ring. */
+.btn:focus,
+.form-control:focus {
+  outline: 3px solid var(--a11y-focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* The main landmark is focused programmatically by the skip link. It is not a
+   control, so no ring - the scroll position is the feedback. */
+.a11y-main-landmark:focus,
+.a11y-main-landmark:focus-visible,
+#main-content:focus,
+#main-content:focus-visible {
+  outline: none !important;
+}
+
+
+/* --- WCAG 2.4.1 Bypass Blocks: skip link ------------------------------------
+   Off-screen until focused, then pinned top-left so the first Tab reveals it. */
+.a11y-skip-link {
+  position: absolute !important;
+  left: -9999px !important;
+  top: auto !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  z-index: 100000 !important;
+}
+
+.a11y-skip-link:focus,
+.a11y-skip-link:focus-visible {
+  position: fixed !important;
+  left: 8px !important;
+  top: 8px !important;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+  padding: 10px 18px !important;
+  background: #ffffff !important;
+  color: #10253f !important;
+  font-weight: 700 !important;
+  text-decoration: underline !important;
+  border: 2px solid var(--a11y-border) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
+  outline: 3px solid var(--a11y-focus) !important;
+  outline-offset: 2px !important;
+}
+
+
+/* --- Visually hidden --------------------------------------------------------
+   Bootstrap 3 ships .sr-only, Bootstrap 5 renamed it .visually-hidden, and the
+   static pages have neither. Define both so hidden labels behave identically
+   everywhere. */
+.sr-only,
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+
+/* --- Page banner (accessible_page turns titlePanel's h2 into header > h1) ---
+   The h1 carries class "h2", so Bootstrap 3 and 5 size it exactly like the old
+   h2; this only makes sure the header element adds no spacing of its own. */
+.a11y-banner {
+  margin: 0;
+  padding: 0;
+}
+
+
+/* --- Disclosures (a11y_disclosure() and the landing-page categories) -------
+   A real <button> styled as a link. Button semantics + aria-expanded replace
+   the old <a href="#" onclick="toggle()"> pattern. */
+.a11y-disclosure {
+  background: none;
+  border: 0 !important;
+  padding: 0;
+  margin: 0 0 6px 0;
+  font: inherit;
+  color: var(--a11y-link);
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+
+.a11y-disclosure:hover {
+  color: #083d6e;
+}
+
+/* Animated collapse: visibility:hidden removes the collapsed content from the
+   accessibility tree AND the Tab order (max-height:0 alone does neither), and
+   the visibility transition is delayed so the slide still plays. */
+.a11y-collapse {
+  max-height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  transition: max-height 0.35s ease, visibility 0s linear 0.35s;
+}
+
+.a11y-collapse.is-open {
+  max-height: 4000px;
+  visibility: visible;
+  transition: max-height 0.35s ease, visibility 0s linear 0s;
+}
+
+
+/* --- Figures (a11y_figure) ------------------------------------------------- */
+figure.a11y-figure {
+  margin: 0;
+}
+
+figure.a11y-figure > figcaption.a11y-figure-caption {
+  margin: 6px 0 0 0;
+  font-size: 0.95em;
+  color: #3d4550;
+}
+
+
+/* --- Clickable non-button elements (role="button", e.g. overview value boxes)
+   Keyboard activation comes from accessibility.js; this makes the affordance
+   visible to mouse users too. */
+[role='button']:not(button):not(input),
+[role='link']:not(a) {
+  cursor: pointer;
+}

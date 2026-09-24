@@ -9,6 +9,14 @@ library(plotly)
 
 # Source color themes
 source("../../shared/color_themes.R")
+# For add_carto_tiles() (authenticated CARTO tiles). Guarded + multi-path so
+# this survives being source()'d from either the app's own directory (Shiny
+# runtime) or the project root (tests).
+if (!exists("add_carto_tiles", mode = "function")) {
+  for (.gh_path in c("../../shared/geometry_helpers.R", "shared/geometry_helpers.R")) {
+    if (file.exists(.gh_path)) { source(.gh_path); break }
+  }
+}
 
 # Helper to safely get column value handling .x/.y suffixes
 get_col_safe <- function(df, col_name) {
@@ -151,7 +159,7 @@ render_vector_map_leaflet <- function(sections_sf, trap_df = NULL, species_label
   # Create base map with OpenStreetMap tiles
   m <- leaflet(sections_sf) %>%
     addTiles(group = "OpenStreetMap") %>%
-    addProviderTiles("CartoDB.Positron", group = "CartoDB Light") %>%
+    add_carto_tiles(group = "CartoDB Light") %>%
     addProviderTiles("Esri.WorldImagery", group = "Satellite")
   
   # Add section polygons with color and popup

@@ -6,10 +6,11 @@
 #
 # CONTENTS:
 # 1. Shapefile Loading
-# 2. Map Bounds Handling  
+# 2. Map Bounds Handling
 # 3. Coordinate Validation
 # 4. Leaflet Map Helpers
-# 5. Background Layer Helpers
+# 5. CARTO Basemap Tiles (Authenticated)
+# 6. Background Layer Helpers
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -297,67 +298,112 @@ filter_valid_coordinates <- function(data, x_col = "x", y_col = "y") {
 # =============================================================================
 
 #' Create a base leaflet map with standard options
-#' 
+#'
 #' @param data sf object or data frame with coordinate columns (or NULL)
 #' @param basemap Basemap type: "osm", "carto", "satellite"
 #' @param lng_col Longitude column name (for data frames)
 #' @param lat_col Latitude column name (for data frames)
 #' @return Leaflet map object with bounds set
 #' @export
-create_base_map <- function(data = NULL, basemap = "carto", 
+create_base_map <- function(data = NULL, basemap = "carto",
                             lng_col = "longitude", lat_col = "latitude") {
-  # Get basemap provider
-  provider <- switch(basemap,
-    "osm" = providers$OpenStreetMap,
-    "carto" = providers$CartoDB.Positron,
-    "satellite" = providers$Esri.WorldImagery,
-    providers$CartoDB.Positron
-  )
-  
   # Create map
   m <- leaflet(data) %>%
-    addProviderTiles(provider, group = "Base Map")
-  
+    add_basemap_tiles(basemap, group = "Base Map")
+
   # Calculate and apply bounds if data provided
   if (!is.null(data)) {
     bounds <- calculate_map_bounds(data, lng_col, lat_col)
     m <- apply_map_bounds(m, bounds)
   }
-  
+
   m
 }
 
 #' Create an empty placeholder map with a message
-#' 
+#'
 #' @param message_text Message to display on the map
 #' @param basemap Basemap type
 #' @param center Center coordinates c(lng, lat)
 #' @param zoom Zoom level
 #' @return Leaflet map with message control
 #' @export
-create_empty_map <- function(message_text = "No data available", 
+create_empty_map <- function(message_text = "No data available",
                               basemap = "carto",
                               center = c(-93.2, 45.0),
                               zoom = 9) {
-  provider <- switch(basemap,
-    "osm" = providers$OpenStreetMap,
-    "carto" = providers$CartoDB.Positron,
-    "satellite" = providers$Esri.WorldImagery,
-    providers$CartoDB.Positron
-  )
-  
   leaflet() %>%
-    addProviderTiles(provider) %>%
+    add_basemap_tiles(basemap) %>%
     setView(lng = center[1], lat = center[2], zoom = zoom) %>%
     addControl(
-      html = paste0("<div style='background-color: white; padding: 10px; border-radius: 5px;'><h4>", 
+      html = paste0("<div style='background-color: white; padding: 10px; border-radius: 5px;'><h4>",
                     message_text, "</h4></div>"),
       position = "topleft"
     )
 }
 
 # =============================================================================
-# 5. BACKGROUND LAYER HELPERS
+# 5. CARTO BASEMAP TILES (AUTHENTICATED)
+# =============================================================================
+# CARTO now requires an API key on every basemaps.cartocdn.com tile request.
+
+# CARTO raster style path (mirrors the {z}/{x}/{y}.png style segment CARTO
+# expects after /rastertiles/). "light_all" = CartoDB Positron, the style
+# every app here currently uses.
+CARTO_STYLE_PATHS <- c(
+  light_all = "light_all",
+  dark_all  = "dark_all",
+  voyager   = "voyager"
+)
+
+#' Build an authenticated CARTO raster tile URL template for addTiles().
+#'
+#' @param style One of names(CARTO_STYLE_PATHS); default "light_all" (Positron)
+#' @return URL template string with {z}/{x}/{y} placeholders and the API key
+#' @export
+carto_tile_url <- function(style = "light_all") {
+  path <- if (style %in% names(CARTO_STYLE_PATHS)) CARTO_STYLE_PATHS[[style]] else CARTO_STYLE_PATHS[["light_all"]]
+  key <- Sys.getenv("CARTO_API_KEY")
+  if (!nzchar(key)) {
+    warning("[geometry_helpers] CARTO_API_KEY is not set -- CARTO basemap tiles will fail to load")
+  }
+  sprintf("https://basemaps.cartocdn.com/rastertiles/%s/{z}/{x}/{y}.png?key=%s", path, key)
+}
+
+#' Add the authenticated CARTO basemap layer to a leaflet map
+#'
+#' @param map A leaflet map
+#' @param style CARTO style (see carto_tile_url())
+#' @param group Optional layer-control group name
+#' @export
+add_carto_tiles <- function(map, style = "light_all", group = NULL) {
+  addTiles(
+    map,
+    urlTemplate = carto_tile_url(style),
+    attribution = paste0(
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ',
+      'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'),
+    group = group
+  )
+}
+
+#' Add a user-selected basemap layer
+#' @param map A leaflet map
+#' @param choice One of "osm", "satellite", "carto" (default)
+#' @param group Optional layer-control group name
+#' @export
+add_basemap_tiles <- function(map, choice = "carto", group = NULL) {
+  if (identical(choice, "osm")) {
+    return(addProviderTiles(map, providers$OpenStreetMap, group = group))
+  }
+  if (identical(choice, "satellite")) {
+    return(addProviderTiles(map, providers$Esri.WorldImagery, group = group))
+  }
+  add_carto_tiles(map, group = group)
+}
+
+# =============================================================================
+# 6. BACKGROUND LAYER HELPERS
 # =============================================================================
 
 #' Add facility and zone boundary layers to a map

@@ -7,6 +7,7 @@ source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/stat_box_helpers.R")
 source("../../shared/historical_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Source external function files
 source("ui_helper.R")
@@ -43,7 +44,7 @@ for (path in env_paths) {
   }
 }
 
-ui <- struct_trt_ui()
+ui <- tagList(url_state_js(), struct_trt_ui())
 
 server <- function(input, output, session) {
   
@@ -109,7 +110,28 @@ server <- function(input, output, session) {
                           selected = valid_selection)
     }
   })
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Single Refresh
+  # button gates every view, so refresh_for always returns "refresh".
+  wire_deep_links(input, output, session, spec = list(
+    tabs           = list(input = "tabs",                      type = "tab"),
+    facility       = list(input = "facility_filter",           type = "select"),
+    zone           = list(input = "zone_filter",               type = "radio"),
+    fos            = list(input = "foreman_filter",            type = "selectize"),
+    group_by       = list(input = "group_by",                  type = "select"),
+    structure_type = list(input = "structure_type_filter",     type = "selectize"),
+    time_period    = list(input = "hist_time_period",          type = "radio"),
+    metric_yearly  = list(input = "hist_display_metric_yearly", type = "radio"),
+    metric_weekly  = list(input = "hist_display_metric_weekly", type = "radio"),
+    chart_type_regular = list(input = "hist_chart_type_regular", type = "select"),
+    chart_type_prop    = list(input = "hist_chart_type_prop",    type = "select"),
+    year_range     = list(input = "hist_year_range",           type = "slider_range"),
+    expiring_days  = list(input = "expiring_days",             type = "slider"),
+    custom_today   = list(input = "custom_today",              type = "date"),
+    status_types   = list(input = "status_types",              type = "checkgroup"),
+    color_theme    = list(input = "color_theme",               type = "select")
+  ))
+
   # =============================================================================
   # THEME HANDLING
   # =============================================================================

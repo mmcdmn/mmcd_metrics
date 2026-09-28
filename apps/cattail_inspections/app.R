@@ -18,6 +18,7 @@ suppressPackageStartupMessages({
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/server_utilities.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Source the planned treatment functions
 source("planned_treatment_functions.R")
@@ -42,11 +43,14 @@ tryCatch({
 }, error = function(e) message("[cattail_inspections] Preload warning: ", e$message))
 
 ui <- accessible_page(
+  # Deep-linking + auto-refresh client glue (shared/url_state_helpers.R)
+  url_state_js(),
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
   titlePanel("Cattail Inspection Progress and Treatment Planning"),
-  
+
   tabsetPanel(
+    id = "tabs",
     # First tab: Progress vs Goal
     tabPanel("Progress vs Goal",
       sidebarLayout(
@@ -241,7 +245,27 @@ ui <- accessible_page(
   )
 )
 
-server <- function(input, output) {
+server <- function(input, output, session) {
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Two Refresh
+  # buttons keyed by tab title (tabPanels have no explicit value=).
+  wire_deep_links(input, output, session,
+    spec = list(
+      tabs            = list(input = "tabs",                 type = "tab"),
+      goal_year       = list(input = "goal_year",            type = "select"),
+      goal_column     = list(input = "goal_column",          type = "select"),
+      hist_zone       = list(input = "hist_zone",            type = "select"),
+      hist_years      = list(input = "hist_years",           type = "numeric"),
+      hist_facility   = list(input = "hist_facility_filter", type = "selectize"),
+      hist_metric     = list(input = "hist_metric",          type = "radio"),
+      sites_view_type = list(input = "sites_view_type",      type = "radio"),
+      custom_today    = list(input = "custom_today",         type = "date"),
+      theme_historical = list(input = "color_theme_historical", type = "select"),
+      theme_progress   = list(input = "color_theme_progress",   type = "select")
+    ),
+    refresh_for = function(state) {
+      if (identical(state[["tabs"]], "Historical Comparison")) "refresh_historical" else "refresh_goal_progress"
+    })
+
   # Reactive theme values for each tab
   current_theme_progress <- reactive({
     input$color_theme_progress

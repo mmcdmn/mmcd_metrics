@@ -15,14 +15,31 @@ library(rlang)  # for %||% operator
 
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
 
-ui <- trap_surveillance_ui()
+ui <- tagList(url_state_js(), trap_surveillance_ui())
 
 server <- function(input, output, session) {
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Targets the main
+  # map view (filters + Refresh Data). The analysis tab has its own button.
+  wire_deep_links(input, output, session, spec = list(
+    metric_type        = list(input = "metric_type",        type = "select"),
+    species            = list(input = "species",            type = "select"),
+    year               = list(input = "year",               type = "select"),
+    yrwk               = list(input = "yrwk",               type = "select"),
+    infection_metric   = list(input = "infection_metric",   type = "select"),
+    compare_mode       = list(input = "compare_mode",       type = "checkbox"),
+    yrwk_b             = list(input = "yrwk_b",             type = "select"),
+    analysis_year      = list(input = "analysis_year",      type = "select"),
+    analysis_bandwidth = list(input = "analysis_bandwidth", type = "slider"),
+    analysis_radius    = list(input = "analysis_radius",    type = "slider"),
+    color_theme        = list(input = "color_theme",        type = "select")
+  ))
+
   # =========================================================================
   # INITIALIZATION - Load years and species on startup
   # =========================================================================

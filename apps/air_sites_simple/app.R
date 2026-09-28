@@ -9,6 +9,7 @@ source("../../shared/accessibility_helpers.R")
 source("../../shared/stat_box_helpers.R")
 
 # Source app-specific function files
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
@@ -31,13 +32,40 @@ tryCatch({
 # USER INTERFACE
 # =============================================================================
 
-ui <- air_sites_simple_ui()
+ui <- tagList(url_state_js(), air_sites_simple_ui())
 
 # =============================================================================
 # SERVER LOGIC
 # =============================================================================
 
 server <- function(input, output, session) {
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). The Historical
+  # Analysis tab refreshes via hist_refresh, the others via refresh. main_tabset
+  # panels have no explicit value= so their input value is the panel title.
+  wire_deep_links(input, output, session,
+    spec = list(
+      main_tabset        = list(input = "main_tabset",       type = "tab"),
+      facility           = list(input = "facility_filter",   type = "select"),
+      zone               = list(input = "zone_filter",       type = "select"),
+      metric_type        = list(input = "metric_type",       type = "radio"),
+      status             = list(input = "status_filter",     type = "select"),
+      priority           = list(input = "priority_filter",   type = "selectize"),
+      material           = list(input = "material_filter",   type = "selectize"),
+      volume_time_period = list(input = "volume_time_period", type = "radio"),
+      process_status     = list(input = "process_status_filter", type = "checkgroup"),
+      hist_chart_type    = list(input = "hist_chart_type",   type = "select"),
+      hist_start_date    = list(input = "hist_start_date",   type = "date"),
+      hist_end_date      = list(input = "hist_end_date",     type = "date"),
+      analysis_date      = list(input = "analysis_date",     type = "date"),
+      larvae_threshold   = list(input = "larvae_threshold",  type = "numeric"),
+      bti_effect_days    = list(input = "bti_effect_days_override", type = "numeric"),
+      show_polygons      = list(input = "load_air_site_polygons", type = "checkbox"),
+      color_theme        = list(input = "color_theme",       type = "select")
+    ),
+    refresh_for = function(state) {
+      if (identical(state[["main_tabset"]], "Historical Analysis")) "hist_refresh" else "refresh"
+    })
 
   # ===========================================================================
   # THEME SUPPORT

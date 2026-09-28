@@ -17,6 +17,7 @@ source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/stat_box_helpers.R")
 source("../../shared/server_utilities.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Set application name for AWS RDS monitoring
 set_app_name("cattail_treatments")
@@ -38,11 +39,37 @@ source("historical_functions.R")
 source("ui_helper.R")
 
 # Define UI
-ui <- cattail_treatments_ui()
+ui <- tagList(url_state_js(), cattail_treatments_ui())
 
 # Define Server
 server <- function(input, output, session) {
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Two Refresh
+  # buttons: the Historical tab refreshes via refresh_historical, others via
+  # refresh_data.
+  wire_deep_links(input, output, session,
+    spec = list(
+      tabs                = list(input = "tabs",                type = "tab"),
+      facility            = list(input = "facility_filter",     type = "select"),
+      zone                = list(input = "zone_display",        type = "radio"),
+      fos                 = list(input = "foreman_filter",      type = "selectize"),
+      group_by            = list(input = "group_by",            type = "radio"),
+      display_metric      = list(input = "display_metric",      type = "radio"),
+      display_metric_type = list(input = "display_metric_type", type = "radio"),
+      time_period         = list(input = "time_period",         type = "select"),
+      hist_status_metric  = list(input = "hist_status_metric",  type = "select"),
+      chart_type          = list(input = "chart_type",          type = "select"),
+      progress_chart_type = list(input = "progress_chart_type", type = "select"),
+      hist_chart_type     = list(input = "hist_chart_type",     type = "select"),
+      year_range          = list(input = "year_range",          type = "slider_range"),
+      analysis_date       = list(input = "analysis_date",       type = "date"),
+      basemap             = list(input = "basemap",             type = "radio"),
+      color_theme         = list(input = "color_theme",         type = "select")
+    ),
+    refresh_for = function(state) {
+      if (identical(state[["tabs"]], "historical")) "refresh_historical" else "refresh_data"
+    })
+
   # =============================================================================
   # INITIALIZE FILTERS
   # =============================================================================

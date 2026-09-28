@@ -9,6 +9,7 @@ source("../../shared/stat_box_helpers.R")
 source("../../shared/historical_helpers.R")
 
 # Source external function files
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 source("ui_helper.R")
 source("data_functions.R")
 source("display_functions.R")
@@ -38,14 +39,36 @@ tryCatch({
 # USER INTERFACE
 # =============================================================================
 
-ui <- drone_ui()
+ui <- tagList(url_state_js(), drone_ui())
 
 # =============================================================================
 # SERVER LOGIC
 # =============================================================================
 
 server <- function(input, output, session) {
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Single Refresh
+  # button gates every view.
+  wire_deep_links(input, output, session, spec = list(
+    tabs                = list(input = "tabs",                   type = "tab"),
+    facility            = list(input = "facility_filter",        type = "select"),
+    zone                = list(input = "zone_option",            type = "select"),
+    fos                 = list(input = "foreman_filter",         type = "selectize"),
+    group_by            = list(input = "group_by",               type = "select"),
+    display_metric      = list(input = "current_display_metric", type = "radio"),
+    time_period         = list(input = "hist_time_period",       type = "radio"),
+    hist_display_metric = list(input = "hist_display_metric",    type = "radio"),
+    hist_chart_type     = list(input = "hist_chart_type",        type = "select"),
+    prehatch_only       = list(input = "prehatch_only",          type = "checkbox"),
+    site_stat_type      = list(input = "site_stat_type",         type = "radio"),
+    year_range          = list(input = "hist_year_range",        type = "slider_range"),
+    site_year_range     = list(input = "site_year_range",        type = "slider_range"),
+    expiring_days       = list(input = "expiring_days",          type = "slider"),
+    analysis_date       = list(input = "analysis_date",          type = "date"),
+    map_basemap         = list(input = "map_basemap",            type = "select"),
+    color_theme         = list(input = "color_theme",            type = "select")
+  ))
+
   # Theme handling
   current_theme <- reactive({
     input$color_theme

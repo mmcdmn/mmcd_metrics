@@ -22,6 +22,7 @@ suppressPackageStartupMessages({
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/geometry_helpers.R")  # for add_carto_tiles() (authenticated CARTO tiles)
+source("../../shared/url_state_helpers.R")  # deep-linking engine
 source("data_functions.R")
 source("display_functions.R")
 
@@ -51,6 +52,7 @@ ui <- accessible_page(
     h2 { color:#2c5aa0; }
     .metric-note { color:#555; font-size:13px; }
   "))),
+  url_state_js(),  # deep-linking client glue (shared)
   titlePanel("FOS Capacity & Border-to-Border Planning"),
   tags$p(class = "metric-note",
     "Per-FOS-area inventory for 5-year planning. Zones: P1 and P2. ",
@@ -62,7 +64,7 @@ ui <- accessible_page(
 
     # ---- Tab 1: Capacity by FOS ------------------------------------------
     tabPanel(
-      "Capacity by FOS",
+      "Capacity by FOS", value = "capacity",
       br(),
       wellPanel(
         fluidRow(
@@ -97,7 +99,7 @@ ui <- accessible_page(
 
     # ---- Tab 2: Staffing --------------------------------------------------
     tabPanel(
-      "Staffing",
+      "Staffing", value = "staffing",
       br(),
       h4("FOS per facility & techs per FOS"),
       tags$p(class = "metric-note",
@@ -108,7 +110,7 @@ ui <- accessible_page(
 
     # ---- Tab 3: What-If Planner ------------------------------------------
     tabPanel(
-      "What-If Planner",
+      "What-If Planner", value = "whatif",
       br(),
       wellPanel(
         fluidRow(
@@ -214,6 +216,29 @@ ui <- accessible_page(
 # SERVER
 # =============================================================================
 server <- function(input, output, session) {
+
+  # Deep-linking (shared/url_state_helpers.R). This app is LIVE (estimates
+  # recompute reactively, no Refresh button), so refresh_for returns
+  # character(0): the engine applies inputs (with its two-pass settle so the
+  # facility->section-selection reset doesn't clobber deep-linked values) and
+  # clicks nothing.
+  wire_deep_links(input, output, session, spec = list(
+    tabs           = list(input = "tabs",         type = "tab"),
+    cap_facility   = list(input = "cap_facility", type = "select"),
+    cap_priority   = list(input = "cap_priority", type = "checkbox"),
+    cap_drivetime  = list(input = "cap_drivetime", type = "checkbox"),
+    avg_mph        = list(input = "avg_mph",      type = "numeric"),
+    circuity       = list(input = "circuity",     type = "numeric"),
+    wi_facility    = list(input = "wi_facility",  type = "select"),
+    wi_metric      = list(input = "wi_metric",    type = "select"),
+    wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
+    wi_rate_year   = list(input = "wi_rate_year", type = "select"),
+    wi_rate_scope  = list(input = "wi_rate_scope", type = "radio"),
+    wi_crew_hours  = list(input = "wi_crew_hours", type = "numeric"),
+    wi_crew_trips  = list(input = "wi_crew_trips", type = "numeric"),
+    wi_avg_mph     = list(input = "wi_avg_mph",   type = "numeric"),
+    wi_circuity    = list(input = "wi_circuity",  type = "numeric")
+  ), refresh_for = function(state) character(0))
 
   # ---- Load + aggregate once per session --------------------------------
   base <- reactiveVal(NULL)

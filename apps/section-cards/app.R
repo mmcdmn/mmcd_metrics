@@ -19,6 +19,7 @@ suppressPackageStartupMessages({
 # Source shared helper functions
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Source external function files
 source("ui_helper.R")
@@ -46,6 +47,7 @@ load_env_vars()
 # =============================================================================
 
 ui <- accessible_page(
+  url_state_js(),
   # This app builds its own header instead of titlePanel(), so name the browser
   # tab explicitly (WCAG 2.4.2 Page Titled).
   title = "Section Cards",
@@ -257,7 +259,35 @@ ui <- accessible_page(
 # =============================================================================
 
 server <- function(input, output, session) {
-  
+
+  # Deep-linking (shared/url_state_helpers.R). Apply the filters/options, then
+  # click Generate Cards.
+  wire_deep_links(input, output, session,
+    spec = list(
+      facility         = list(input = "filter_facility",        type = "select"),
+      zone             = list(input = "filter_zone",            type = "select"),
+      priority         = list(input = "filter_priority",        type = "select"),
+      fosarea          = list(input = "filter_fosarea",         type = "select"),
+      section          = list(input = "filter_section",         type = "select"),
+      towncode         = list(input = "filter_towncode",        type = "select"),
+      air_gnd          = list(input = "filter_air_gnd",         type = "select"),
+      drone            = list(input = "filter_drone",           type = "select"),
+      status_udw       = list(input = "filter_status_udw",      type = "select"),
+      structure_type   = list(input = "filter_structure_type",  type = "select"),
+      site_type        = list(input = "site_type",              type = "radio"),
+      cards_per_page   = list(input = "cards_per_page",         type = "select"),
+      num_rows         = list(input = "num_rows",               type = "numeric"),
+      double_sided     = list(input = "double_sided",           type = "checkbox"),
+      split_by_section = list(input = "split_by_section",       type = "checkbox"),
+      split_by_priority= list(input = "split_by_priority",      type = "checkbox"),
+      split_by_type    = list(input = "split_by_type",          type = "checkbox"),
+      use_webster      = list(input = "use_webster",            type = "checkbox"),
+      autofill_history = list(input = "autofill_history",       type = "checkbox"),
+      title_fields     = list(input = "title_fields",           type = "checkgroup"),
+      watermark_fields = list(input = "watermark_fields",       type = "checkgroup")
+    ),
+    refresh_for = function(state) "generate_cards")
+
   # Reactive values
   cards_data <- reactiveVal(NULL)
   

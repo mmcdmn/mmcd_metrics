@@ -40,6 +40,20 @@ source("/srv/shiny-server/shared/db_helpers.R")
 source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/shiny-server/shared/redis_cache.R")
 
+# ── Embed layer: metric registry (chart metadata) + cache-only embed payloads.
+# Sourced with a local fallback so the API can also be exercised outside the
+# container. Guarded so a missing registry never breaks the rest of the API.
+tryCatch({
+  for (p in c("/srv/shiny-server/apps/overview/metric_registry.R",
+              "../apps/overview/metric_registry.R")) {
+    if (file.exists(p)) { source(p); break }
+  }
+  for (p in c("/srv/shiny-server/shared/embed_helpers.R",
+              "../shared/embed_helpers.R")) {
+    if (file.exists(p)) { source(p); break }
+  }
+}, error = function(e) message("[api] Embed layer not loaded (non-fatal): ", e$message))
+
 # Give Plumber its own distinct PostgreSQL application_name in pg_stat_activity.
 tryCatch({
   if (exists("set_app_name", mode = "function")) {
@@ -213,6 +227,55 @@ function() {
     list(threshold = 2L, threshold_date = NA,
          as_of = as.character(Sys.Date()), error = e$message)
   })
+}
+
+
+# =============================================================================
+# ── PUBLIC EMBED ENDPOINTS  (no API key; CACHE-ONLY, never a live DB query)
+# =============================================================================
+# Power drop-in charts/tiles on external sites (JS webster app, public website).
+# They read ONLY the already-warm historical_averages Redis cache, so a public
+# embed never makes a viewer -- or the DB -- wait. On a cache miss the payload
+# comes back status "unavailable" (HTTP 200) so the widget shows a soft message.
+# auto_unbox=TRUE keeps scalars as scalars (series/points stay arrays).
+
+#* List embeddable metrics (id, display name, y label, category)
+#* @get /v1/public/embed/metrics
+#* @serializer json list(auto_unbox = TRUE)
+function(res) {
+  res$setHeader("Cache-Control", "public, max-age=300")
+  tryCatch(
+    list(status = "ok", metrics = get_embed_metric_list()),
+    error = function(e) list(status = "error", error = conditionMessage(e))
+  )
+}
+
+#* One chart's cached series, ready to plot. No filters, no DB.
+#* @param metric registry id, e.g. "ground_prehatch"
+#* @param type   average type: "10yr" (default), "5yr", "yearly_district", "yearly_facilities"
+#* @get /v1/public/embed/chart
+#* @serializer json list(auto_unbox = TRUE)
+function(metric = "", type = "10yr", res) {
+  res$setHeader("Cache-Control", "public, max-age=60")
+  if (!nzchar(metric)) return(list(status = "error", error = "missing 'metric'"))
+  tryCatch(
+    get_embed_chart_payload(metric, type),
+    error = function(e) list(status = "error", metric = metric, error = conditionMessage(e))
+  )
+}
+
+#* One metric's latest cached value as a single stat tile. No filters, no DB.
+#* @param metric registry id, e.g. "ground_prehatch"
+#* @param type   average type (default "10yr")
+#* @get /v1/public/embed/statbox
+#* @serializer json list(auto_unbox = TRUE)
+function(metric = "", type = "10yr", res) {
+  res$setHeader("Cache-Control", "public, max-age=60")
+  if (!nzchar(metric)) return(list(status = "error", error = "missing 'metric'"))
+  tryCatch(
+    get_embed_statbox_payload(metric, type),
+    error = function(e) list(status = "error", metric = metric, error = conditionMessage(e))
+  )
 }
 
 

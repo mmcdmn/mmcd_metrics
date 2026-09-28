@@ -27,6 +27,7 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
   source("../../shared/accessibility_helpers.R")
 })
+source("../../shared/url_state_helpers.R")  # deep-linking engine
 
 # Set application name for AWS RDS monitoring
 set_app_name("mosquito_surveillance_map")
@@ -128,6 +129,7 @@ dfmapMISS2163UTM <- st_transform(dfmapMISS4326, crs=2163)
 }
 
 ui <- accessible_page(
+  url_state_js(),
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(),
   theme = bslib::bs_theme(bootswatch = "united"),
@@ -170,7 +172,19 @@ ui <- accessible_page(
   )
 
 
-server <- function(input, output) {
+server <- function(input, output, session) {
+
+  # Deep-linking (shared/url_state_helpers.R). Auto-updating map: apply filters
+  # from the URL; no Refresh button to click (refresh_for returns none).
+  wire_deep_links(input, output, session,
+    spec = list(
+      species     = list(input = "species",     type = "select"),
+      survtype    = list(input = "survtype",     type = "select"),
+      date_range  = list(input = "daterange",    type = "daterange"),
+      labels      = list(input = "labels",        type = "checkbox"),
+      color_theme = list(input = "color_theme",   type = "select")
+    ),
+    refresh_for = function(state) character(0))
 
   # Theme handling - .mosq_band_colors() reads getOption("mmcd.color.theme")
   observeEvent(input$color_theme, {

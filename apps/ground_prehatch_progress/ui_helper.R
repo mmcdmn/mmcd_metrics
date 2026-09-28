@@ -7,6 +7,8 @@ ground_prehatch_ui <- function() {
   accessible_page(
     # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
+    # Deep-linking + auto-refresh client glue (shared/url_state_helpers.R)
+    url_state_js(),
     # Application title
     titlePanel("Ground Prehatch Treatment Progress"),
     
@@ -132,6 +134,8 @@ ground_prehatch_ui <- function() {
       
       # Main panel with tabs
       accessible_main_panel(
+        # Auto-refresh status + pause control (only shown when ?autorefresh=true)
+        uiOutput("autorefresh_bar"),
         tabsetPanel(
           id = "tabs",
           tabPanel("Progress Overview", value = "overview", 

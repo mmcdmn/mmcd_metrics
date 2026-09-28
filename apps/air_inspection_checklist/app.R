@@ -7,6 +7,7 @@ source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/stat_box_helpers.R")
+source("../../shared/url_state_helpers.R")  # autorefresh bar + pause control
 
 # Source app-specific function files
 source("ui_helper.R")
@@ -211,7 +212,42 @@ server <- function(input, output, session) {
     if (!is.null(url_lookback)) {
       updateSliderInput(session, "lookback_days", value = url_lookback)
     }
+
+    # Zone display (P1 Only=1 | P2 Only=2 | P1 and P2 Combined=1,2)
+    if (!is.null(query$zone) && query$zone != "") {
+      updateSelectInput(session, "zone_filter", selected = query$zone)
+    }
+    # Color theme
+    if (!is.null(query$theme) && query$theme != "") {
+      updateSelectInput(session, "color_theme", selected = query$theme)
+    }
+    # Analysis date (YYYY-MM-DD)
+    if (!is.null(query$analysis_date) && query$analysis_date != "") {
+      d <- suppressWarnings(as.Date(query$analysis_date))
+      if (!is.na(d)) updateDateInput(session, "analysis_date", value = d)
+    }
+    # Show-only-unfinished toggle
+    if (!is.null(query$show_unfinished) && query$show_unfinished != "") {
+      updateCheckboxInput(session, "show_unfinished_only",
+                          value = tolower(query$show_unfinished) %in% c("true","1","yes","on"))
+    }
+    # Show prehatch/active-treatment sites toggle
+    if (!is.null(query$show_active_treatment) && query$show_active_treatment != "") {
+      updateCheckboxInput(session, "show_active_treatment",
+                          value = tolower(query$show_active_treatment) %in% c("true","1","yes","on"))
+    }
   })
+
+  # ===========================================================================
+  # AUTO-REFRESH (?autorefresh=true) — re-click Refresh on an interval with a
+  # visible Pause control (WCAG 2.2.2). The view already auto-loads on open.
+  # ===========================================================================
+  if (autorefresh_enabled(query)) {
+    insertUI("body", where = "afterBegin",
+             ui = autorefresh_indicator_ui(300000), immediate = TRUE)
+    observe_autorefresh(input, session, "refresh",
+                        enabled = TRUE, interval_ms = 300000)
+  }
 
   # ===========================================================================
   # UPDATE FOS CHOICES WHEN FACILITY CHANGES

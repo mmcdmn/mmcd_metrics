@@ -6,6 +6,7 @@ source("../../shared/app_libraries.R")
 source("../../shared/server_utilities.R")
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Source external function files
 source("data_functions.R")
@@ -30,6 +31,8 @@ tryCatch({
 # =============================================================================
 
 ui <- accessible_page(
+  # Deep-linking + auto-refresh client glue (shared/url_state_helpers.R)
+  url_state_js(),
   # Use universal CSS from db_helpers for consistent text sizing
   get_universal_text_css(base_increase = 8),
   
@@ -157,7 +160,24 @@ ui <- accessible_page(
 # =============================================================================
 
 server <- function(input, output, session) {
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Single Refresh
+  # button gates every view.
+  wire_deep_links(input, output, session, spec = list(
+    tabs               = list(input = "tabs",               type = "tab"),
+    facility           = list(input = "facility_filter",    type = "select"),
+    zone               = list(input = "zone_filter",        type = "select"),
+    fos                = list(input = "foreman_filter",     type = "selectize"),
+    group_by           = list(input = "group_by",           type = "radio"),
+    species            = list(input = "species_filter",     type = "select"),
+    graph_type         = list(input = "graph_type",         type = "select"),
+    top_locations_mode = list(input = "top_locations_mode", type = "select"),
+    basemap            = list(input = "basemap",            type = "select"),
+    date_range         = list(input = "date_range",         type = "daterange"),
+    load_harborages    = list(input = "load_harborages",    type = "checkbox"),
+    color_theme        = list(input = "color_theme",        type = "select")
+  ))
+
   # Theme handling
   current_theme <- reactive({
     input$color_theme

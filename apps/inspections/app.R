@@ -11,6 +11,7 @@ library(ggplot2)
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/server_utilities.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 source("data_functions.R")
 source("display_functions.R")
 source("ui_helper.R")
@@ -19,11 +20,42 @@ source("ui_helper.R")
 set_app_name("inspections")
 
 # Define UI
-ui <- create_main_ui()
+ui <- tagList(url_state_js(), create_main_ui())
 
 # Define server logic
 server <- function(input, output, session) {
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Two-stage app:
+  # load_data must run before each tab's analyze_* button, so refresh_for
+  # returns a SEQUENCE [load_data, analyze_<tab>].
+  wire_deep_links(input, output, session,
+    spec = list(
+      tabs              = list(input = "tabs",              type = "tab"),
+      facility          = list(input = "facility",          type = "select"),
+      zone              = list(input = "zone",              type = "radio"),
+      fos               = list(input = "fosarea",           type = "selectize"),
+      priority          = list(input = "priority",          type = "selectize"),
+      air_gnd           = list(input = "air_gnd",           type = "select"),
+      drone_filter      = list(input = "drone_filter",      type = "radio"),
+      red_bug_group_by  = list(input = "red_bug_group_by",  type = "radio"),
+      prehatch_only     = list(input = "prehatch_only",     type = "checkbox"),
+      spring_only       = list(input = "spring_only",       type = "checkbox"),
+      years_gap         = list(input = "years_gap",         type = "numeric"),
+      years_red_bug_gap = list(input = "years_red_bug_gap", type = "numeric"),
+      years_back        = list(input = "years_back",        type = "numeric"),
+      larvae_threshold  = list(input = "larvae_threshold",  type = "numeric"),
+      min_inspections   = list(input = "min_inspections",   type = "numeric"),
+      color_theme       = list(input = "color_theme",       type = "select")
+    ),
+    refresh_for = function(state) {
+      tb <- state[["tabs"]]; if (is.null(tb)) tb <- "red_bug_gaps"
+      analyze <- switch(tb,
+        gaps = "analyze_gaps", larvae = "analyze_larvae",
+        red_bug_gaps = "analyze_red_bugs", analytics = "analyze_wet",
+        "analyze_red_bugs")
+      c("load_data", analyze)
+    })
+
   # Reactive theme handling
   current_theme <- reactive({
     input$color_theme

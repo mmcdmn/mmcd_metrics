@@ -9,6 +9,7 @@ source("../../shared/stat_box_helpers.R")
 source("../../shared/historical_helpers.R")
 
 # Source external function files
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 source("data_functions.R")
 source("display_functions.R")
 source("ui_helper.R")
@@ -21,14 +22,38 @@ set_app_name("catch_basin_status")
 # USER INTERFACE
 # =============================================================================
 
-ui <- catch_basin_ui()
+ui <- tagList(url_state_js(), catch_basin_ui())
 
 # =============================================================================
 # SERVER LOGIC
 # =============================================================================
 
 server <- function(input, output, session) {
-  
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Historical tab
+  # refreshes via hist_refresh, the others via refresh.
+  wire_deep_links(input, output, session,
+    spec = list(
+      tabs            = list(input = "tabs",                       type = "tab"),
+      facility        = list(input = "facility_filter",            type = "select"),
+      zone            = list(input = "zone_filter",                type = "select"),
+      fos             = list(input = "foreman_filter",             type = "selectize"),
+      group_by        = list(input = "group_by",                   type = "select"),
+      time_period     = list(input = "hist_time_period",           type = "radio"),
+      metric          = list(input = "hist_display_metric",        type = "radio"),
+      metric_yearly   = list(input = "hist_display_metric_yearly", type = "radio"),
+      metric_weekly   = list(input = "hist_display_metric_weekly", type = "radio"),
+      chart_type      = list(input = "hist_chart_type",            type = "select"),
+      expiring_filter = list(input = "expiring_filter",            type = "radio"),
+      expiring_days   = list(input = "expiring_days",              type = "slider"),
+      year_range      = list(input = "hist_year_range",            type = "slider_range"),
+      custom_today    = list(input = "custom_today",               type = "date"),
+      color_theme     = list(input = "color_theme",                type = "select")
+    ),
+    refresh_for = function(state) {
+      if (identical(state[["tabs"]], "historical")) "hist_refresh" else "refresh"
+    })
+
   # =============================================================================
   # THEME SUPPORT
   # =============================================================================

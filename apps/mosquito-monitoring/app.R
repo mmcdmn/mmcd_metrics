@@ -15,6 +15,7 @@ suppressWarnings({
   source("../../shared/db_helpers.R")
   source("../../shared/accessibility_helpers.R")
 })
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Set application name for AWS RDS monitoring
 set_app_name("mosquito_monitoring")
@@ -103,8 +104,10 @@ shapespecieslist <- list("Total_Ae_+_Cq" = 1, Total_Ae_springs = 1, Total_Ae_sum
               
 
 ui <- accessible_page(
+  url_state_js(),
   theme = bslib::bs_theme(bootswatch = "united"),
   tabsetPanel(
+    id = "mm_tabs",
     tabPanel( "Compare",
               
               titlePanel("CO2 Traps"),
@@ -167,6 +170,23 @@ ui <- accessible_page(
 
 
 server <- function(input, output, session) {
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Plots are gated by
+  # an Update button per tab: "All" -> button, "Compare" -> buttonONE.
+  wire_deep_links(input, output, session,
+    spec = list(
+      mm_tabs    = list(input = "mm_tabs",    type = "tab"),
+      facility   = list(input = "facility",   type = "select"),
+      species    = list(input = "species",    type = "select"),
+      years      = list(input = "years",      type = "slider_range"),
+      facilityONE = list(input = "facilityONE", type = "select"),
+      speciesONE  = list(input = "speciesONE",  type = "select"),
+      zoneONE     = list(input = "zoneONE",     type = "select"),
+      yearsONE    = list(input = "yearsONE",    type = "slider_range")
+    ),
+    refresh_for = function(state) {
+      if (identical(state[["mm_tabs"]], "Compare")) "buttonONE" else "button"
+    })
   
   logscale <- reactiveVal(TRUE)
   whichplot <- reactiveVal(TRUE)

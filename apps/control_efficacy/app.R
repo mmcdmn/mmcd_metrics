@@ -18,6 +18,7 @@ source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/server_utilities.R")
 source("../../shared/stat_box_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Source external function files
 source("ui_helper.R")
@@ -56,13 +57,35 @@ if (getRversion() >= "2.15.1") {
 # USER INTERFACE
 # =============================================================================
 
-ui <- control_efficacy_ui()
+ui <- tagList(url_state_js(), control_efficacy_ui())
 
 # =============================================================================
 # SERVER LOGIC
 # =============================================================================
 
 server <- function(input, output, session) {
+
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Single Refresh
+  # button (refresh_data_progress) gates every tab.
+  wire_deep_links(input, output, session,
+    spec = list(
+      tabs               = list(input = "tabs",                    type = "tab"),
+      facility           = list(input = "facility_filter",         type = "select"),
+      comparison_mode    = list(input = "comparison_mode",         type = "select"),
+      genus              = list(input = "genus_filter",            type = "select"),
+      material_type      = list(input = "material_type_filter",    type = "select"),
+      dosage             = list(input = "dosage_filter",           type = "select"),
+      matcode            = list(input = "matcode_filter_progress", type = "select"),
+      season             = list(input = "season_filter",           type = "checkgroup"),
+      trt_type           = list(input = "trt_type_filter",         type = "checkgroup"),
+      use_mullas         = list(input = "use_mullas",              type = "checkbox"),
+      checkback_type     = list(input = "checkback_type_progress", type = "radio"),
+      checkback_number   = list(input = "checkback_number_progress", type = "numeric"),
+      checkback_percent  = list(input = "checkback_percent_progress", type = "numeric"),
+      year_range         = list(input = "year_range",              type = "slider_range"),
+      color_theme        = list(input = "color_theme",             type = "select")
+    ),
+    refresh_for = function(state) "refresh_data_progress")
 
   # ===========================================================================
   # HELP MODAL

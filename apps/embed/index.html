@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MMCD Embed</title>
+<!--
+  MMCD drop-in embed widget.
+  Renders ONE chart or ONE stat tile with no filter chrome, from the cache-only
+  public API (/v1/public/embed/*). Meant to be iframed into external sites (the
+  JS "webster" app, the public website) or fetched directly by those consumers.
+
+  URL params:
+    metric  registry id, e.g. ground_prehatch  (required)
+    type    chart | statbox                     (default chart)
+    avg     10yr | 5yr | yearly_district | yearly_facilities  (default 10yr)
+
+  Examples:
+    /embed/?metric=ground_prehatch
+    /embed/?metric=ground_prehatch&type=statbox
+    /embed/?metric=drone&avg=5yr
+-->
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<style>
+  :root {
+    --bg: transparent;
+    --fg: #1f2a37;
+    --muted: #6b7280;
+    --accent: #2c5aa0;
+    --card: #ffffff;
+    --border: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fg: #e5e7eb; --muted: #9ca3af; --card: #111827; --border: #374151;
+    }
+  }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--fg);
+  }
+  #wrap { padding: 8px; box-sizing: border-box; }
+  #chart { width: 100%; height: 92vh; min-height: 240px; }
+  .msg {
+    display: flex; align-items: center; justify-content: center;
+    height: 90vh; min-height: 200px; color: var(--muted); text-align: center;
+    padding: 0 16px; font-size: 15px;
+  }
+  /* Stat tile */
+  .tile {
+    max-width: 320px; margin: 12px auto; padding: 20px 22px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .tile .label { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile .value { color: var(--accent); font-size: 44px; font-weight: 700; line-height: 1.1; margin: 6px 0 2px; }
+  .tile .name  { color: var(--fg); font-size: 15px; font-weight: 600; }
+  .tile .asof  { color: var(--muted); font-size: 11px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="chart" style="display:none;"></div>
+  <div id="tile-host"></div>
+  <div id="message" class="msg">Loading&hellip;</div>
+</div>
+<script>
+(function () {
+  var qp = new URLSearchParams(window.location.search);
+  var metric = qp.get("metric") || "";
+  var type = (qp.get("type") || "chart").toLowerCase();
+  var avg = qp.get("avg") || "10yr";
+
+  var elChart = document.getElementById("chart");
+  var elTile = document.getElementById("tile-host");
+  var elMsg = document.getElementById("message");
+
+  function showMessage(text) {
+    elMsg.textContent = text;
+    elMsg.style.display = "flex";
+    elChart.style.display = "none";
+    elTile.innerHTML = "";
+  }
+
+  if (!metric) { showMessage("No metric specified."); return; }
+
+  var endpoint = type === "statbox" ? "statbox" : "chart";
+  var url = "/v1/public/embed/" + endpoint +
+            "?metric=" + encodeURIComponent(metric) +
+            "&type=" + encodeURIComponent(avg);
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];
+    });
+  }
+
+  function renderStatbox(d) {
+    if (!d || d.status !== "ok") { showMessage("This metric is refreshing. Check back shortly."); return; }
+    elMsg.style.display = "none";
+    elChart.style.display = "none";
+    var v = (d.value == null) ? "–" : (Math.round(Number(d.value) * 10) / 10).toLocaleString();
+    elTile.innerHTML =
+      '<div class="tile">' +
+        '<div class="label">' + esc(d.label) + '</div>' +
+        '<div class="value">' + esc(v) + '</div>' +
+        '<div class="name">' + esc(d.display_name) + '</div>' +
+        (d.updated_at ? '<div class="asof">as of ' + esc(d.updated_at) + '</div>' : '') +
+      '</div>';
+  }
+
+  function renderChart(d) {
+    if (!d || d.status !== "ok" || !d.series || !d.series.length) {
+      showMessage("This chart is refreshing. Check back shortly.");
+      return;
+    }
+    elMsg.style.display = "none";
+    elTile.innerHTML = "";
+    elChart.style.display = "block";
+
+    var traces = d.series.map(function (s) {
+      return {
+        type: "scatter", mode: "lines+markers",
+        name: s.name,
+        x: s.points.map(function (p) { return p.x; }),
+        y: s.points.map(function (p) { return p.y; })
+      };
+    });
+    var layout = {
+      title: { text: d.display_name || d.metric, font: { size: 16 } },
+      margin: { t: 40, r: 16, b: 44, l: 56 },
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      yaxis: { title: d.y_label || "" },
+      xaxis: { automargin: true },
+      showlegend: traces.length > 1,
+      legend: { orientation: "h", y: -0.2 }
+    };
+    Plotly.newPlot(elChart, traces, layout, { displayModeBar: false, responsive: true });
+  }
+
+  fetch(url, { headers: { "Accept": "application/json" } })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d && d.status === "error") { showMessage("Unavailable: " + esc(d.error || "unknown error")); return; }
+      if (type === "statbox") renderStatbox(d); else renderChart(d);
+    })
+    .catch(function () { showMessage("Could not load embed data."); });
+})();
+</script>
+</body>
+</html>

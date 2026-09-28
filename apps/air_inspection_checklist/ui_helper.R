@@ -19,6 +19,7 @@ air_inspection_checklist_ui <- function() {
       tags$link(rel = "stylesheet", type = "text/css", href = css_href),
       tags$script(src = js_src)
     ),
+    url_state_js(),  # autorefresh click + copy-link handlers (shared)
 
     # Mobile sidebar toggle button (hidden on desktop via CSS)
     tags$button(id = "sidebar-toggle", HTML("&#9776; Filters")),

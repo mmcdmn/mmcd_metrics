@@ -7,6 +7,7 @@ source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/stat_box_helpers.R")
 source("../../shared/historical_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 
 # Source external function files
 source("data_functions.R")
@@ -169,7 +170,51 @@ server <- function(input, output, session) {
     
     updateSelectizeInput(session, "foreman_filter", choices = foremen_choices, selected = "all")
   })
-  
+
+  # =============================================================================
+  # DEEP-LINKING + AUTO-REFRESH  (shared/url_state_helpers.R)
+  # =============================================================================
+  # A link like /ground_prehatch_progress/?tabs=historical&facility=Sr&
+  #   hist_display_metric=acres&autorefresh=true lands directly on that view with
+  # filters applied and (optionally) auto-refreshing -- no manual clicks.
+  # Note: hist_display_metric applies cleanly when hist_time_period matches its
+  # default ("yearly"); deep-linking a weekly metric may be reset by the
+  # hist_time_period observer above.
+  gp_url_spec <- list(
+    tabs                = list(input = "tabs",                type = "tab"),
+    facility            = list(input = "facility_filter",     type = "select"),
+    zone                = list(input = "zone_filter",         type = "select"),
+    fos                 = list(input = "foreman_filter",      type = "selectize"),
+    group_by            = list(input = "group_by",            type = "select"),
+    display_metric      = list(input = "display_metric",      type = "radio"),
+    expiring_filter     = list(input = "expiring_filter",     type = "radio"),
+    expiring_days       = list(input = "expiring_days",       type = "slider"),
+    custom_today        = list(input = "custom_today",        type = "date"),
+    hist_time_period    = list(input = "hist_time_period",    type = "radio"),
+    hist_display_metric = list(input = "hist_display_metric", type = "radio"),
+    hist_chart_type     = list(input = "hist_chart_type",     type = "select"),
+    hist_year_range     = list(input = "hist_year_range",     type = "slider_range"),
+    include_drone       = list(input = "include_drone",       type = "checkbox"),
+    color_theme         = list(input = "color_theme",         type = "select")
+  )
+  autorefresh_on <- reactiveVal(FALSE)
+  deeplink_applied <- reactiveVal(FALSE)
+  observeEvent(input$mmcd_url_state_raw, {
+    if (isTRUE(deeplink_applied())) return()
+    deeplink_applied(TRUE)
+    state <- parse_url_state(input$mmcd_url_state_raw)
+    apply_url_state(session, state, gp_url_spec)
+    refresh_id <- if (identical(state[["tabs"]], "historical")) "hist_refresh" else "refresh"
+    trigger_deeplink_refresh(session, refresh_id)
+    if (autorefresh_enabled(state)) {
+      autorefresh_on(TRUE)
+      observe_autorefresh(input, session, refresh_id, enabled = TRUE)
+    }
+  })
+  output$autorefresh_bar <- renderUI({
+    if (isTRUE(autorefresh_on())) autorefresh_indicator_ui() else NULL
+  })
+
   # Update chart type default when zone filter changes to P1 and P2 separate
   observeEvent(input$zone_filter, {
     # Only update if on historical tab and switching to P1 and P2 separate

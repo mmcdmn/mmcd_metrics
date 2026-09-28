@@ -40,9 +40,7 @@ source("/srv/shiny-server/shared/db_helpers.R")
 source("/srv/shiny-server/shared/app_libraries.R")
 source("/srv/shiny-server/shared/redis_cache.R")
 
-# ── Embed layer: metric registry (chart metadata) + cache-only embed payloads.
-# Sourced with a local fallback so the API can also be exercised outside the
-# container. Guarded so a missing registry never breaks the rest of the API.
+# Embed layer: metric registry (chart metadata) + cache-only embed payloads.
 tryCatch({
   for (p in c("/srv/shiny-server/apps/overview/metric_registry.R",
               "../apps/overview/metric_registry.R")) {
@@ -63,11 +61,6 @@ tryCatch({
 }, error = function(e) {
   message("[api] Could not set DB application_name: ", e$message)
 })
-
-# Claim constants come from shared/redis_cache.R (sourced above) so the API and
-# the air-checklist app cannot drift apart. This file used to define its own
-# 12-day CLAIM_TTL against the app's 2 days; because the TTL applies to the
-# whole daily hash, the shorter one won whenever the app wrote last.
 
 load_env_vars()
 
@@ -265,8 +258,8 @@ function(metric = "", type = "10yr", res) {
 }
 
 #* One metric's latest cached value as a single stat tile. No filters, no DB.
-#* @param metric registry id, e.g. "ground_prehatch"
-#* @param type   average type (default "10yr")
+#* @param metric registry id
+#* @param type   average type
 #* @get /v1/public/embed/statbox
 #* @serializer json list(auto_unbox = TRUE)
 function(metric = "", type = "10yr", res) {

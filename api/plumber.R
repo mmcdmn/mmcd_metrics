@@ -50,6 +50,10 @@ tryCatch({
               "../shared/embed_helpers.R")) {
     if (file.exists(p)) { source(p); break }
   }
+  for (p in c("/srv/shiny-server/shared/embed_producers.R",
+              "../shared/embed_producers.R")) {
+    if (file.exists(p)) { source(p); break }
+  }
 }, error = function(e) message("[api] Embed layer not loaded (non-fatal): ", e$message))
 
 # Give Plumber its own distinct PostgreSQL application_name in pg_stat_activity.
@@ -224,51 +228,81 @@ function() {
 
 
 # =============================================================================
-# ── PUBLIC EMBED ENDPOINTS  (no API key; CACHE-ONLY, never a live DB query)
+# ── PUBLIC EMBED ENDPOINTS  (no API key)
 # =============================================================================
-# Power drop-in charts/tiles on external sites (JS webster app, public website).
-# They read ONLY the already-warm historical_averages Redis cache, so a public
-# embed never makes a viewer -- or the DB -- wait. On a cache miss the payload
-# comes back status "unavailable" (HTTP 200) so the widget shows a soft message.
-# auto_unbox=TRUE keeps scalars as scalars (series/points stay arrays).
+# drop-in charts/tiles on external sites (JS webster app, public website).
 
-#* List embeddable metrics (id, display name, y label, category)
+
+# Parse the raw query string into a named list (arbitrary embed filter params).
+.embed_query_list <- function(req) {
+  qs <- req$QUERY_STRING
+  if (is.null(qs)) qs <- ""
+  qs <- sub("^\\?", "", qs)
+  if (!nzchar(qs)) return(list())
+  as.list(shiny::parseQueryString(qs))
+}
+
+#* List embeddable metrics (v1) + the v2 app catalog (apps, views, params).
 #* @get /v1/public/embed/metrics
 #* @serializer json list(auto_unbox = TRUE)
 function(res) {
   res$setHeader("Cache-Control", "public, max-age=300")
   tryCatch(
-    list(status = "ok", metrics = get_embed_metric_list()),
+    list(status = "ok",
+         metrics = get_embed_metric_list(),
+         apps = if (exists("get_embed_app_catalog", mode = "function")) get_embed_app_catalog() else list()),
     error = function(e) list(status = "error", error = conditionMessage(e))
   )
 }
 
-#* One chart's cached series, ready to plot. No filters, no DB.
-#* @param metric registry id, e.g. "ground_prehatch"
-#* @param type   average type: "10yr" (default), "5yr", "yearly_district", "yearly_facilities"
+#* One chart's data series, ready to plot.
+#* @param app    app id, e.g. "suco_history" (v2). Omit + pass `metric` for v1.
+#* @param view   the tab/view, e.g. "graph","historical","top_locations","current"
+#* @param metric (v1 back-compat) registry id, e.g. "ground_prehatch"
+#* @param type   (v1) average type: "10yr" (default),"5yr","yearly_district","yearly_facilities"
 #* @get /v1/public/embed/chart
 #* @serializer json list(auto_unbox = TRUE)
-function(metric = "", type = "10yr", res) {
+function(req, res, app = "", metric = "", type = "10yr") {
   res$setHeader("Cache-Control", "public, max-age=60")
-  if (!nzchar(metric)) return(list(status = "error", error = "missing 'metric'"))
-  tryCatch(
-    get_embed_chart_payload(metric, type),
-    error = function(e) list(status = "error", metric = metric, error = conditionMessage(e))
-  )
+  # v1 path: metric only, no app
+  if (!nzchar(app) && nzchar(metric)) {
+    return(tryCatch(get_embed_chart_payload(metric, type),
+                    error = function(e) list(status = "error", metric = metric, error = conditionMessage(e))))
+  }
+  if (!nzchar(app)) return(list(status = "error", error = "missing 'app' (or 'metric' for v1)"))
+  query <- .embed_query_list(req)
+  tryCatch(get_embed_result(app, query),
+           error = function(e) list(status = "error", app = app, error = conditionMessage(e)))
 }
 
-#* One metric's latest cached value as a single stat tile. No filters, no DB.
-#* @param metric registry id
-#* @param type   average type
+#* One value as a single stat tile: the latest point of the app's first series.
+#* @param app    app id (v2). Omit + pass `metric` for v1.
+#* @param metric (v1 back-compat) registry id
+#* @param type   (v1) average type
 #* @get /v1/public/embed/statbox
 #* @serializer json list(auto_unbox = TRUE)
-function(metric = "", type = "10yr", res) {
+function(req, res, app = "", metric = "", type = "10yr") {
   res$setHeader("Cache-Control", "public, max-age=60")
-  if (!nzchar(metric)) return(list(status = "error", error = "missing 'metric'"))
-  tryCatch(
-    get_embed_statbox_payload(metric, type),
-    error = function(e) list(status = "error", metric = metric, error = conditionMessage(e))
-  )
+  # v1 path
+  if (!nzchar(app) && nzchar(metric)) {
+    return(tryCatch(get_embed_statbox_payload(metric, type),
+                    error = function(e) list(status = "error", metric = metric, error = conditionMessage(e))))
+  }
+  if (!nzchar(app)) return(list(status = "error", error = "missing 'app' (or 'metric' for v1)"))
+  query <- .embed_query_list(req)
+  tryCatch({
+    r <- get_embed_result(app, query)
+    if (!identical(as.character(r$status), "ok") || length(r$series) == 0) {
+      return(list(status = r$status, app = r$app, view = r$view,
+                  label = r$y_label, updated_at = r$updated_at, source = r$source))
+    }
+    pts <- r$series[[1]]$points
+    last_val <- if (length(pts) > 0) pts[[length(pts)]]$y else jsonlite::unbox(NA)
+    list(status = jsonlite::unbox("ok"), app = r$app, view = r$view,
+         label = r$y_label, value = last_val,
+         series_name = if (!is.null(r$series[[1]]$name)) r$series[[1]]$name else jsonlite::unbox(""),
+         updated_at = r$updated_at, source = r$source)
+  }, error = function(e) list(status = "error", app = app, error = conditionMessage(e)))
 }
 
 
@@ -517,9 +551,6 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* for any requested action code(s) within a lookback window.
 #*
 #* Available source fields for CONFIG.COLUMNS in the generic filler:
-#*   inspdate, numdip, wet, emp1, emp2, matcode, amts, acres, acres_plan,
-#*   airgrnd_plan, sampnum_yr, posttrt_p, reinspect, rems1, rems2, comments,
-#*   action, pkey_pg, was_completed, activeTrt
 #*
 #* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
 #* @param lookback_days Days back to search (1–150, default 14)
@@ -552,19 +583,26 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
                  "(SELECT * FROM dblarv_insptrt_current
                    UNION ALL SELECT * FROM dblarv_insptrt_archive)"
 
+    # Filter on the site's own facility column — sitecodes are numeric, so the
+    # facility code is never a sitecode prefix.
     fac_filter <- ""
     if (!is.null(facility) && nzchar(trimws(facility %||% ""))) {
       fac_v      <- validate_facility(facility)
-      fac_filter <- paste0("AND LEFT(i.sitecode, 2) = '", fac_v, "'")
+      fac_filter <- paste0("AND facility = ", DBI::dbQuoteString(con, fac_v))
     }
 
     action_sql <- paste0("'", paste(action_list, collapse = "','"), "'")
 
     query <- sprintf("
       WITH ActiveSites AS (
-        SELECT sitecode
+        SELECT sitecode,
+               acres AS site_acres,
+               air_gnd,
+               priority,
+               type AS site_type
         FROM public.loc_breeding_sites
-        WHERE enddate IS NULL OR enddate > CURRENT_DATE
+        WHERE (enddate IS NULL OR enddate > CURRENT_DATE)
+          %s
       ),
       Ranked AS (
         SELECT
@@ -594,10 +632,13 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
         WHERE i.inspdate BETWEEN '%s'::date AND '%s'::date
           AND i.action IN (%s)
           AND i.sitecode IN (SELECT sitecode FROM ActiveSites)
-          %s
       )
       SELECT
         s.sitecode,
+        s.site_acres,
+        s.air_gnd,
+        s.priority,
+        s.site_type,
         r.action,
         r.inspdate,
         r.numdip,
@@ -625,11 +666,11 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
       FROM ActiveSites s
       LEFT JOIN Ranked r ON s.sitecode = r.sitecode AND r.rn = 1
       ORDER BY s.sitecode
-    ", ins_tbl,
+    ", fac_filter,
+       ins_tbl,
        format(start_v, "%Y-%m-%d"),
        format(date_v,  "%Y-%m-%d"),
-       action_sql,
-       fac_filter)
+       action_sql)
 
     rows <- DBI::dbGetQuery(con, query)
     if (nrow(rows) > 0) {
@@ -1089,9 +1130,6 @@ function(req, res) {
 
 
 #* Cattail inspection checklist — per-site action='9' records for the season.
-#* Returns two arrays: original inspections (most recent per site) and
-#* reinspect records (sites with a reinspect='t' entry this year).
-#* Used to drive the Cattail Inspections Google Sheet.
 #*
 #* @param year     Season year (2020–2030). Default current year.
 #* @param facility Optional facility code (MO, E, W, N, Sr, Sj …)

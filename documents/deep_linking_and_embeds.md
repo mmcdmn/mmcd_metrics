@@ -51,13 +51,16 @@ Engine: `shared/url_state_helpers.R` (deep link + auto-refresh),
 |---|---|
 | Overview (district/facility/FOS) | `/overview/` |
 
-### Embed infrastructure — built
+### Embed infrastructure — built (v2: full filter parity)
 
-- Public cache-only API: `/v1/public/embed/chart`, `/v1/public/embed/statbox`,
-  `/v1/public/embed/metrics`.
-- Static widget page: `/embed/`.
-- Serves **district/zone-level** historical series for `historical_enabled`
-  metrics. Per-facility embeds are a follow-up.
+- Public API (no key, CORS `*`): `/v1/public/embed/chart`,
+  `/v1/public/embed/statbox`, `/v1/public/embed/metrics`; static widget `/embed/`.
+- The embed API now accepts the **same params** as the deep-link URLs (app, view,
+  facility, zone, fos, group_by, graph_type, time_period, …) and reproduces each
+  app's own chart data — **peek Redis → compute-live-on-miss → cache (short TTL)**.
+  Returns data-series JSON + resolved options; the widget draws by `graph_type`.
+- v1 `?metric=<id>&type=<avg>` (cache-only historical_averages) still works.
+- Per-app rollout is in progress — see §4 "App coverage".
 
 ### Not yet done
 
@@ -460,35 +463,83 @@ Example: `.../overview/?view=district`
 
 ## 4. Embed widgets & API
 
+The embed API now accepts the **same params** as the deep-link URLs above, per
+app. An embed URL mirrors a deep link. Simply, swap the app path for
+`?app=<app>` on `/embed/` or `/v1/public/embed/chart`.
+
 ### Widget page (iframe-able) — `/embed/`
 
 | Param | Options |
 |---|---|
-| `metric` | `ground_prehatch` \| `drone` \| `catch_basin` \| `structure` \| `cattail_treatments` \| `mosquito_monitoring` |
-| `type` | `chart` \| `statbox` |
-| `avg` | `10yr` \| `5yr` \| `yearly_district` \| `yearly_facilities` |
+| `app` | an app id (see coverage table below) — **required** for v2 |
+| `view` | the app's tab/view (e.g. `graph`, `historical`, `top_locations`) |
+| `kind` | `chart` \| `statbox` (default `chart`) |
+| *...filters* | any of that app's params from §3 (facility, zone, fos, group_by, graph_type, time_period, display_metric, …) — forwarded verbatim |
 
 Examples:
-- `http://localhost:3838/embed/?metric=ground_prehatch`
-- `http://localhost:3838/embed/?metric=drone&type=statbox`
-- `<iframe src="http://localhost:3838/embed/?metric=ground_prehatch" width="600" height="400" style="border:0"></iframe>`
+- `http://localhost:3838/embed/?app=suco_history&view=graph&group_by=facility&graph_type=bar`
+- `http://localhost:3838/embed/?app=ground_prehatch_progress&view=historical&facility=Sr&display_metric=acres`
+- `<iframe src="http://localhost:3838/embed/?app=drone&view=historical" width="600" height="400" style="border:0"></iframe>`
 
-### JSON API (cache-only, no key, CORS `*`)
+### How it works (freshness)
 
-- `GET /v1/public/embed/metrics`
-- `GET /v1/public/embed/chart?metric=<id>&type=<avg>`
-- `GET /v1/public/embed/statbox?metric=<id>&type=<avg>`
+- **Peek → compute → cache.** A request first checks Redis. Warm combo → instant
+  (`source:"cache"`). Cold/rare combo → the API runs that app's own data code once,
+  returns it (`source:"live"`), and caches it for a short TTL (~5 min) so repeats
+  are instant. A public viewer never gets a 500 — failures/empties come back
+  `status:"unavailable"` (HTTP 200) and the widget shows a soft message.
+- Each chart returns **data series + resolved options** (JSON); the widget draws it
+  with the resolved `graph_type` client-side.
 
-Example: `http://localhost:3838/v1/public/embed/chart?metric=ground_prehatch&type=10yr`
+### JSON API (no key, CORS `*`)
+
+- `GET /v1/public/embed/metrics` — lists v1 metrics **and** the v2 `apps` catalog
+  (each app's `views` + accepted `params`).
+- `GET /v1/public/embed/chart?app=<app>&view=<view>&<filters…>`
+- `GET /v1/public/embed/statbox?app=<app>&view=<view>&<filters…>` — the latest
+  point of the first series as a tile.
+
+Example: `http://localhost:3838/v1/public/embed/chart?app=suco_history&view=graph&group_by=facility&graph_type=bar`
+
+**v1 back-compat:** the old `?metric=<id>&type=<avg>` form still works on both
+`/embed/` and the JSON endpoints (serves the cache-only historical_averages series).
+
+### App coverage (embed v2 producers)
+
+| App | Views wired | Status |
+|---|---|---|
+| suco_history | `graph`, `top_locations` | ✅ done |
+| ground_prehatch_progress | `historical` | ✅ done |
+| drone | `historical` | ✅ done |
+| catch_basin_status | `historical` | ✅ done |
+| struct_trt | `historical` | ✅ done |
+| cattail_inspections | `historical` | ✅ done |
+| trap_surveillance, mosquito-monitoring | trend charts | ⏳ producer pending (series) |
+| cattail_treatments | `historical` | ⏳ producer pending (aggregation inside its chart fn) |
+| mosquito_surveillance_map, air_sites_simple | map (points) | ⏳ producer pending (`map` payload ready) |
+| control_efficacy | boxplot | ⏳ producer pending (`boxplot` payload ready) |
+| inspections | gap tables | ⏳ producer pending (`table` payload ready) |
+
+**Payload kinds** (chosen: extend per type) — all four are built in the framework
+and rendered by the widget: `series` (x/y, drawn by `graph_type`), `map`
+(points `[{lat,lon,value,label}]` → OpenStreetMap), `boxplot` (per-group
+min/q1/median/q3/max), `table` (columns + rows). Each response carries
+`payload_type`. Remaining work is per-app **producers** that feed these shapes.
+
+**Out of embed scope** (no graph to embed): section-cards, fos_capacity_planning,
+air_inspection_checklist, and all legacy apps.
 
 ---
 
 ## 5. Known limitations
 
-- Embeds are **district/zone-level**; per-facility embeds need the facility-filtered
-  cache tier warmed (follow-up).
+- Embed v2 is being rolled out per app (see coverage table); apps marked *in
+  progress* still only answer the v1 metric-based embed.
+- First view of a **cold** filter combo runs one live query (then cached) — not
+  instant; warm combos are instant.
+- Map / boxplot / gap-table apps don't fit the `{x,y}` series JSON yet — a payload
+  shape for those is an open decision.
 - `(from DB)` params (facility, FOS, species, years, some chart/priority/material
   filters) load their choices at runtime — the value list is whatever the app's
   dropdown currently shows; facility short codes are `all | E | N | Sj | Sr | Wm | Wp`.
-- Deep-linking a **weekly** metric on an app that resets it when `time_period`
-  changes works best when you also pass `time_period=weekly` in the same URL.
+

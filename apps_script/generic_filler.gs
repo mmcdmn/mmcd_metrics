@@ -37,6 +37,9 @@ const CONFIG = {
   //   Required when using /private/site-inspections (e.g. [9] or [1,3]).
   //   Ignored by endpoints that don't return an 'action' field.
   API_ENDPOINT:  '/private/site-inspections',
+  // FACILITY: limit the response to one facility (E, N, Sj, Sr, Wm, Wp).
+  // Leave '' to pull every active site in the district (~86,000 rows — slow).
+  FACILITY:      '',
   ACTIONS:       [],          // e.g. [9] for acres-plan treatments, [1,3] for ground inspections
   LOOKBACK_DAYS: 14,
   REFRESH_MINUTES: 1,
@@ -53,6 +56,9 @@ const CONFIG = {
   SKIP_TABS:    ['Summary', 'Config', 'Template', 'Instructions'],
   SKIP_ROW_PATTERN: /^book\s|^(sites?|total|totals|done)\b|^\d{1,4}$/i,
 
+ // everything with this pattern is treated as a sitecode. everything else is skipped
+  SITECODE_PATTERN: /^\d{6}/,
+
   // ── Claiming ──────────────────────────────────────────────────────────────
   // When an employee types their emp# in CLAIM_COL on an open (unfilled) site,
   // the claim is pushed to Redis so all sheets see it.
@@ -68,7 +74,15 @@ const CONFIG = {
 
   // ── Output columns ────────────────────────────────────────────────────────
   //
-  // Valid source field names from /private/site-inspections:
+  // SITE data fields — acres, air/ground designation, priority, and site type.
+  // Pair these with always: true so they stay filled in on open sites.
+  //   site_acres   — acres from the site record (the inspection 'acres' below
+  //                  is almost never filled in — use this one)
+  //   air_gnd      — the site's air/ground designation (A or G)
+  //   priority     — RED / ORANGE / YELLOW / BLUE / GREEN / PURPLE
+  //   site_type    — site type code
+  //
+  // INSPECTION fields — blank until the site has a record in the lookback window:
   //   inspdate     — date of the inspection or treatment (use format: 'date')
   //   numdip       — larvae per dip count
   //   wet          — percent wet code (0–9, A, S)
@@ -92,6 +106,9 @@ const CONFIG = {
   //    source: one of the field names above
   //    col:    column letter to write into
   //    format: 'date' to format dates nicely; omit for raw value
+  //    always: true to keep the value even when the site has no recent record
+  //            (use for the SITE data fields; omit for inspection results so they
+  //             still clear when a site ages out of the lookback window)
   //
   //  mode: 'highlight'
   //    color: CSS hex color to apply when rule matches
@@ -203,7 +220,8 @@ function getTabConfig_(tabName) {
 
   const valueCols = columns
     .filter(c => c.mode === 'value' && c.col)
-    .map(c => ({ source: c.source, col: colNum_(c.col), colLetter: c.col, format: c.format || '' }));
+    .map(c => ({ source: c.source, col: colNum_(c.col), colLetter: c.col,
+                 format: c.format || '', always: c.always === true }));
 
   const hlCols = columns
     .filter(c => c.mode === 'highlight')
@@ -222,12 +240,14 @@ function getTabConfig_(tabName) {
     filledField:  pick('FILLED_FIELD')  || 'was_inspected',
     lookback:     pick('LOOKBACK_DAYS') || 14,
     endpoint:     pick('API_ENDPOINT')  || '/private/air-checklist',
+    facility:     pick('FACILITY')      || '',
     actions:      pick('ACTIONS')       || [],
     enableClaims: toBool_(pick('ENABLE_CLAIMS'), true),
     claimCol:     colNum_(pick('CLAIM_COL') || 'D'),
     claimColor:   pick('CLAIM_COLOR')   || '#FFF2CC',
     preserveSet:  new Set(preserveCols.map(colNum_)),
     skipPattern:  pick('SKIP_ROW_PATTERN') || CONFIG.SKIP_ROW_PATTERN,
+    sitePattern:  pick('SITECODE_PATTERN') || CONFIG.SITECODE_PATTERN,
     skipTabs:     new Set(pick('SKIP_TABS') || []),
     valueCols,
     hlCols,
@@ -251,6 +271,7 @@ function fetchData_(tabCfg) {
   const actions = tabCfg.actions || [];
   let url = base + tabCfg.endpoint + '?lookback_days=' + tabCfg.lookback;
   if (actions.length > 0) url += '&actions=' + actions.join(',');
+  if (tabCfg.facility)    url += '&facility=' + encodeURIComponent(tabCfg.facility);
 
   const r = UrlFetchApp.fetch(url, {
     method: 'get',
@@ -327,7 +348,8 @@ function buildValueArrays_(siteRows, dataRows, lookup, tabCfg) {
 
     for (const vc of tabCfg.valueCols) {
       if (tabCfg.preserveSet.has(vc.col)) continue;  // never touch preserved cols
-      if (filled && info[vc.source] !== undefined && info[vc.source] !== null) {
+      if ((filled || vc.always) && info &&
+          info[vc.source] !== undefined && info[vc.source] !== null) {
         let val = info[vc.source];
         if (vc.format === 'date' && val) val = String(val);
         out[vc.col][idx][0] = val;
@@ -619,7 +641,7 @@ function refreshData() {
       for (let i = 0; i < numRows; i++) {
         const sc = String(scValues[i][0]).trim();
         if (!sc || isSkipRow_(sc, tc.skipPattern)) continue;
-        if (!lookup[sc]) continue;
+        if (!lookup[sc] && !tc.sitePattern.test(sc)) continue;
         siteRows[sc] = i;
         if (i > lastDataIdx) lastDataIdx = i;
       }

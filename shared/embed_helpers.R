@@ -147,3 +147,299 @@ get_embed_metric_list <- function() {
     )
   })
 }
+
+# =============================================================================
+# EMBED v2 FRAMEWORK -- full filter/group_by/graph parity with the URL handler.
+# -----------------------------------------------------------------------------
+# Unlike the v1 cache-only helpers above (which only read the warm
+# historical_averages hash), v2 accepts the SAME params the deep-link URLs
+# expose (facility, zone, fos, group_by, graph_type, time_period, view, ...) and
+# reproduces each app's own chart data by running that app's own data functions
+# (see shared/embed_producers.R). Results are peek-cached in Redis; on a miss we
+# compute once and cache with a short TTL. A public viewer never gets a 500 --
+# failures/empties come back as status "unavailable".
+#
+# Depends (sourced by caller, e.g. api/plumber.R, AFTER this file):
+#   - shared/redis_cache.R   (redis_get/redis_set/build_cache_key/TTL_5_MIN)
+#   - shared/embed_producers.R (EMBED_PRODUCERS registry + EMBED_PARAM_SPEC)
+# =============================================================================
+
+CACHE_PREFIX_EMBED <- "embed"   # embed v2 per-filter results (short TTL)
+
+#' Coerce/validate one raw query value by declared type.
+#' Types: enum, int, num, logical, date, daterange, csv, string.
+.embed_coerce <- function(raw, type, allowed = NULL, default = NULL) {
+  if (is.null(raw) || length(raw) == 0 || !nzchar(as.character(raw)[1])) return(default)
+  v <- as.character(raw)[1]
+  out <- switch(
+    type,
+    int     = suppressWarnings(as.integer(v)),
+    num     = suppressWarnings(as.numeric(v)),
+    logical = tolower(v) %in% c("true", "1", "yes", "on"),
+    date    = suppressWarnings(as.Date(v)),
+    daterange = {
+      parts <- trimws(strsplit(v, ",")[[1]])
+      d <- suppressWarnings(as.Date(parts))
+      if (all(is.na(d))) NULL else d
+    },
+    csv     = trimws(strsplit(v, ",")[[1]]),
+    # enum + string: keep as-is
+    v
+  )
+  if (length(out) == 1 && is.na(out)) return(default)
+  # enum validation (single or csv): drop values not in `allowed`
+  if (!is.null(allowed) && type %in% c("enum", "csv", "string")) {
+    keep <- out[out %in% allowed]
+    if (length(keep) == 0) return(default)
+    out <- keep
+  }
+  out
+}
+
+#' Parse + validate an app's embed params from a raw query list.
+#' Reads EMBED_PARAM_SPEC[[app]] (from shared/embed_producers.R).
+#' @return named list of normalized params, always including `$view`.
+#' @export
+parse_embed_params <- function(app, query) {
+  spec <- .embed_spec_for(app)
+  if (is.null(spec)) return(NULL)
+  # Resolve the view (tab) first.
+  view <- .embed_coerce(query[["view"]], "enum",
+                        allowed = spec$views, default = spec$default_view)
+  p <- list(view = view)
+  for (nm in names(spec$params)) {
+    ps <- spec$params[[nm]]
+    p[[nm]] <- .embed_coerce(query[[nm]], ps$type %||% "string",
+                             allowed = ps$allowed, default = ps$default)
+  }
+  p
+}
+
+#' Look up an app's param spec (defined in shared/embed_producers.R).
+.embed_spec_for <- function(app) {
+  if (exists("EMBED_PARAM_SPEC", mode = "list")) {
+    sp <- get("EMBED_PARAM_SPEC")
+    if (!is.null(sp[[app]])) return(sp[[app]])
+  }
+  NULL
+}
+
+#' Look up an app's producer for a view (defined in shared/embed_producers.R).
+.embed_producer_for <- function(app, view) {
+  if (!exists("EMBED_PRODUCERS", mode = "list")) return(NULL)
+  reg <- get("EMBED_PRODUCERS")
+  app_reg <- reg[[app]]
+  if (is.null(app_reg)) return(NULL)
+  fn <- app_reg[[view]]
+  if (is.null(fn)) fn <- app_reg[["default"]]
+  fn
+}
+
+#' Deterministic cache key from app + view + sorted params.
+#' @export
+embed_cache_key <- function(app, view, params) {
+  # sort params by name so query-string order never changes the key
+  p <- params[order(names(params))]
+  build_cache_key(CACHE_PREFIX_EMBED, app, view, p)
+}
+
+.embed_format_x <- function(x) {
+  if (inherits(x, "Date")) return(format(x, "%Y-%m-%d"))
+  as.character(x)
+}
+
+#' Turn a producer descriptor into JSON-ready grouped series.
+#' descriptor: list(df, x_col, y_col, group_col=NULL, x_label, y_label, resolved_options)
+#' One series per unique value of group_col (fallback: zone, then a single series).
+#' @export
+normalize_series <- function(descriptor) {
+  df <- descriptor$df
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(list())
+  xcol <- descriptor$x_col; ycol <- descriptor$y_col
+  if (is.null(xcol) || !(xcol %in% names(df))) xcol <- .embed_pick_col(df, .EMBED_X_CANDIDATES)
+  if (is.null(ycol) || !(ycol %in% names(df))) ycol <- .embed_pick_col(df, .EMBED_Y_CANDIDATES)
+  if (is.null(xcol) || is.null(ycol)) return(list())
+  gcol <- descriptor$group_col
+  if (!is.null(gcol) && !(gcol %in% names(df))) gcol <- NULL
+  if (is.null(gcol) && "zone" %in% names(df)) gcol <- "zone"
+
+  make_points <- function(sx, sy) lapply(seq_along(sy), function(i) {
+    list(x = jsonlite::unbox(.embed_format_x(sx[i])),
+         y = jsonlite::unbox(if (is.na(sy[i])) NA else as.numeric(sy[i])))
+  })
+
+  if (is.null(gcol)) {
+    return(list(list(name = jsonlite::unbox(descriptor$y_label %||% ycol),
+                     points = make_points(df[[xcol]], df[[ycol]]))))
+  }
+  groups <- unique(df[[gcol]])
+  lapply(groups, function(g) {
+    sel <- df[[gcol]] == g
+    list(name = jsonlite::unbox(as.character(g)),
+         points = make_points(df[[xcol]][sel], df[[ycol]][sel]))
+  })
+}
+
+#' Wrap resolved params as an unboxed JSON object (scalars stay scalars).
+.embed_unbox_options <- function(opts) {
+  if (is.null(opts) || length(opts) == 0) return(list())
+  lapply(opts, function(v) {
+    if (length(v) == 1) jsonlite::unbox(as.character(v)) else as.character(v)
+  })
+}
+
+# -----------------------------------------------------------------------------
+# Non-series payload kinds (chosen: extend the payload per type).
+# A producer sets descriptor$kind to "map" | "boxplot" | "table" (default
+# "series"); get_embed_result dispatches to the matching normalizer below.
+# -----------------------------------------------------------------------------
+
+EMBED_MAX_POINTS <- 5000L   # cap map points per payload
+EMBED_MAX_ROWS   <- 1000L   # cap table rows per payload
+
+#' Map payload: [{lat, lon, value?, label?}] from lat/lon (+ optional value/label) cols.
+#' @export
+normalize_map <- function(descriptor) {
+  df <- descriptor$df
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(list())
+  latc <- descriptor$lat_col; lonc <- descriptor$lon_col
+  if (is.null(latc) || is.null(lonc) || !all(c(latc, lonc) %in% names(df))) return(list())
+  lat <- suppressWarnings(as.numeric(df[[latc]]))
+  lon <- suppressWarnings(as.numeric(df[[lonc]]))
+  ok <- !is.na(lat) & !is.na(lon)
+  df <- df[ok, , drop = FALSE]; lat <- lat[ok]; lon <- lon[ok]
+  n <- min(nrow(df), EMBED_MAX_POINTS)
+  vc <- descriptor$value_col; lc <- descriptor$label_col
+  lapply(seq_len(n), function(i) {
+    pt <- list(lat = jsonlite::unbox(lat[i]), lon = jsonlite::unbox(lon[i]))
+    if (!is.null(vc) && vc %in% names(df)) {
+      v <- df[[vc]][i]
+      pt$value <- jsonlite::unbox(if (is.na(v)) NA else if (is.numeric(v)) as.numeric(v) else as.character(v))
+    }
+    if (!is.null(lc) && lc %in% names(df)) pt$label <- jsonlite::unbox(as.character(df[[lc]][i]))
+    pt
+  })
+}
+
+#' Boxplot payload: [{name, min, q1, median, q3, max, n}] per group.
+#' @export
+normalize_boxplot <- function(descriptor) {
+  df <- descriptor$df
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(list())
+  vcol <- descriptor$value_col
+  if (is.null(vcol) || !(vcol %in% names(df))) return(list())
+  gcol <- descriptor$group_col
+  if (!is.null(gcol) && !(gcol %in% names(df))) gcol <- NULL
+  groups <- if (is.null(gcol)) list(list(name = descriptor$y_label %||% vcol, sel = rep(TRUE, nrow(df))))
+            else lapply(unique(df[[gcol]]), function(g) list(name = as.character(g), sel = df[[gcol]] == g))
+  out <- lapply(groups, function(grp) {
+    v <- suppressWarnings(as.numeric(df[[vcol]][grp$sel]))
+    v <- v[!is.na(v)]
+    if (length(v) == 0) return(NULL)
+    q <- as.numeric(stats::quantile(v, c(0, .25, .5, .75, 1), names = FALSE, type = 7))
+    list(name = jsonlite::unbox(as.character(grp$name)),
+         min = jsonlite::unbox(q[1]), q1 = jsonlite::unbox(q[2]),
+         median = jsonlite::unbox(q[3]), q3 = jsonlite::unbox(q[4]),
+         max = jsonlite::unbox(q[5]), n = jsonlite::unbox(length(v)))
+  })
+  out[!vapply(out, is.null, logical(1))]
+}
+
+#' Table payload: list(columns=[...], rows=[{col: val, ...}]).
+#' @export
+normalize_table <- function(descriptor) {
+  df <- descriptor$df
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(list(columns = list(), rows = list()))
+  cols <- descriptor$columns
+  if (is.null(cols)) cols <- names(df)
+  cols <- cols[cols %in% names(df)]
+  cap <- descriptor$max_rows %||% EMBED_MAX_ROWS
+  n <- min(nrow(df), cap)
+  rows <- lapply(seq_len(n), function(i) {
+    r <- lapply(cols, function(cn) {
+      v <- df[[cn]][i]
+      jsonlite::unbox(if (length(v) == 0 || is.na(v)) NA
+                      else if (is.numeric(v)) as.numeric(v) else as.character(v))
+    })
+    names(r) <- cols
+    r
+  })
+  list(columns = as.list(cols), rows = rows)
+}
+
+#' Build the JSON payload for a descriptor, dispatching on descriptor$kind.
+#' Returns the payload WITHOUT the per-response `source` tag.
+.embed_build_payload <- function(app, view, desc, err = NULL) {
+  kind <- desc$kind %||% "series"
+  base <- list(
+    app          = jsonlite::unbox(app),
+    view         = jsonlite::unbox(view %||% ""),
+    payload_type = jsonlite::unbox(kind),
+    resolved_options = .embed_unbox_options(desc$resolved_options),
+    x_label      = jsonlite::unbox(desc$x_label %||% ""),
+    y_label      = jsonlite::unbox(desc$y_label %||% "Value"),
+    updated_at   = jsonlite::unbox(format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"))
+  )
+  empty <- !is.null(err) || is.null(desc$df) || !is.data.frame(desc$df) || nrow(desc$df) == 0
+  if (empty) {
+    payload <- c(base, list(status = jsonlite::unbox("unavailable")),
+                 switch(kind,
+                        map     = list(points = list()),
+                        boxplot = list(boxes = list()),
+                        table   = list(columns = list(), rows = list()),
+                        list(series = list())))
+    if (!is.null(err)) payload$note <- jsonlite::unbox(err)
+    return(payload)
+  }
+  data_parts <- switch(kind,
+    map     = list(points = normalize_map(desc)),
+    boxplot = list(boxes = normalize_boxplot(desc)),
+    table   = normalize_table(desc),
+    list(series = normalize_series(desc)))
+  c(base, list(status = jsonlite::unbox("ok")), data_parts)
+}
+
+#' MAIN v2 entry: peek cache -> compute via producer -> cache -> return payload.
+#' @param app   app id (e.g. "suco_history")
+#' @param query raw named list from the request query string
+#' @return JSON-ready list (auto_unbox serializer); status ok|unavailable|error
+#' @export
+get_embed_result <- function(app, query) {
+  p <- parse_embed_params(app, query)
+  if (is.null(p)) {
+    return(list(status = jsonlite::unbox("error"),
+                error = jsonlite::unbox(sprintf("unknown or unsupported app '%s'", app))))
+  }
+  view <- p$view
+  key  <- tryCatch(embed_cache_key(app, view, p), error = function(e) NULL)
+
+  # 1. cache peek
+  if (!is.null(key)) {
+    cached <- tryCatch(redis_get(key), error = function(e) NULL)
+    if (!is.null(cached) && is.list(cached)) {
+      cached$source <- jsonlite::unbox("cache")
+      return(cached)
+    }
+  }
+
+  # 2. compute live via the app's producer
+  producer <- .embed_producer_for(app, view)
+  if (is.null(producer)) {
+    return(list(status = jsonlite::unbox("error"), app = jsonlite::unbox(app),
+                view = jsonlite::unbox(view %||% ""),
+                error = jsonlite::unbox(sprintf("no embed view '%s' for app '%s'", view, app))))
+  }
+  desc <- tryCatch(producer(p), error = function(e) {
+    structure(list(), embed_error = conditionMessage(e))
+  })
+  if (is.null(desc)) desc <- structure(list(), embed_error = "producer returned NULL")
+  err <- attr(desc, "embed_error")
+  payload <- .embed_build_payload(app, view, desc, err)
+
+  # 3. cache only successful payloads (without the per-response `source` tag)
+  if (identical(as.character(payload$status), "ok") && !is.null(key)) {
+    tryCatch(redis_set(key, payload, ttl = if (exists("TTL_5_MIN")) TTL_5_MIN else 300L),
+             error = function(e) NULL)
+  }
+  c(payload, list(source = jsonlite::unbox("live")))
+}

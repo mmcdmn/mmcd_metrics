@@ -31,6 +31,7 @@ const CONFIG = {
   SITES_TAB:     'Sites',
   P2_TAB:        'Sites P2',
   SUMMARY_TAB:   'Summary',
+  CLAIM_COLOR:   '#FFF2CC',   // row color while claimed but not yet inspected
   REINSPECT_TAB: 'Reinspects',
   DATA_START:    2,      // row 1 = header
   COL: {
@@ -47,6 +48,11 @@ const CONFIG = {
 
 const PLAN_NAMES        = { A: 'Air', D: 'Drone', G: 'Ground', N: 'None', U: 'Unknown' };
 const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
+
+// Dont count headers as sitecodes
+function isSitecode_(v) {
+  return /^\d{6}/.test(String(v).trim().replace(/^"|"$/g, ''));
+}
 
 // ============================================================================
 // MAIN ENTRY POINT
@@ -91,7 +97,9 @@ function refreshData() {
       sheet.getRange(CONFIG.DATA_START, CONFIG.COL.SITECODE,
                      lastRow - CONFIG.DATA_START + 1, 1)
            .getValues()
-           .forEach(([sc]) => { if (sc) sheetSitecodes.add(String(sc).trim().replace(/^"|"$/g, '')); });
+           .forEach(([sc]) => {
+             if (isSitecode_(sc)) sheetSitecodes.add(String(sc).trim().replace(/^"|"$/g, ''));
+           });
     });
     const filteredReinspects = (apiData.reinspects || [])
       .filter(r => sheetSitecodes.has(String(r.sitecode).trim()));
@@ -228,6 +236,9 @@ function updateSitesTab_(ss, inspMap, reinspSet, acresMap, tabName) {
   // Read current EMP col to detect user-typed claims before overwriting
   const empVals = sheet.getRange(CONFIG.DATA_START, CONFIG.COL.EMP, dataRows, 1).getValues();
 
+  // Existing B–H, so town label rows can be written back untouched
+  const existing = sheet.getRange(CONFIG.DATA_START, CONFIG.COL.ACRES, dataRows, 7).getValues();
+
   // Fetch active claims from Redis
   const claimMap = fetchClaims_();
 
@@ -237,7 +248,8 @@ function updateSitesTab_(ss, inspMap, reinspSet, acresMap, tabName) {
   // Build 7 cols: ACRES, EMP, LAST_INSP, WET, DIP, PLAN, REINSPECT
   const writeData = sitecodes.map((r, i) => {
     const sc    = String(r[0]).trim().replace(/^"|"$/g, '');
-    const insp  = sc ? inspMap[sc] : null;
+    if (!isSitecode_(sc)) return existing[i];
+    const insp  = inspMap[sc];
     const typed = String(empVals[i][0]).trim();
 
     if (insp) {
@@ -272,9 +284,38 @@ function updateSitesTab_(ss, inspMap, reinspSet, acresMap, tabName) {
 
   // Write cols B–H (7 cols starting at ACRES=2)
   sheet.getRange(CONFIG.DATA_START, CONFIG.COL.ACRES, dataRows, 7).setValues(writeData);
+  applyClaimHighlights_(sheet, dataRows, sitecodes, writeData);
   setSitecodeLinks_(sheet, CONFIG.DATA_START, dataRows);
   Logger.log(tabName + ': ' + dataRows + ' rows written, ' + newClaims.length + ' new claim(s)');
 }
+
+// ============================================================================
+// CLAIM HIGHLIGHTS — color A–H while claimed, clear once inspected
+// ============================================================================
+
+// Covers every row the tab currently has, so sitecodes added at the bottom
+// behave like the rest. Only CLAIM_COLOR is ever removed, so any other
+// coloring on a row is left as-is.
+function applyClaimHighlights_(sheet, dataRows, sitecodes, writeData) {
+  const range = sheet.getRange(CONFIG.DATA_START, CONFIG.COL.SITECODE, dataRows, 8);
+  const bg    = range.getBackgrounds();
+  const claim = CONFIG.CLAIM_COLOR.toLowerCase();
+  let changed = false;
+
+  for (let i = 0; i < dataRows; i++) {
+    if (!isSitecode_(sitecodes[i][0])) continue;
+    const claimed = !!writeData[i][1] && !writeData[i][2];  // emp set, no insp date
+
+    for (let c = 0; c < 8; c++) {
+      const cur  = String(bg[i][c] || '').toLowerCase();
+      const want = claimed ? CONFIG.CLAIM_COLOR : (cur === claim ? null : bg[i][c]);
+      if (want !== bg[i][c]) { bg[i][c] = want; changed = true; }
+    }
+  }
+
+  if (changed) range.setBackgrounds(bg);
+}
+
 
 // ============================================================================
 // SUMMARY TAB — computed totals from the Sites tab
@@ -298,7 +339,7 @@ function updateSummaryTab_(ss) {
 
   data.forEach(row => {
     const sc       = String(row[0]).trim();
-    if (!sc) return;
+    if (!isSitecode_(sc)) return;
     const acres    = parseFloat(row[1]) || 0;
     const lastInsp = String(row[3]).trim();   // col D (index 3)
     const plan     = String(row[6]).trim();   // col G (index 6)

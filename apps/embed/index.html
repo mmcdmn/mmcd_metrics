@@ -6,19 +6,23 @@
 <title>MMCD Embed</title>
 <!--
   MMCD drop-in embed widget.
-  Renders ONE chart or ONE stat tile with no filter chrome, from the cache-only
-  public API (/v1/public/embed/*). Meant to be iframed into external sites (the
-  JS "webster" app, the public website) or fetched directly by those consumers.
+  Renders ONE chart or ONE stat tile with no filter chrome, from the public API
+  (/v1/public/embed/*). Iframe it into external sites (the JS "webster" app, the
+  public website) or fetch the JSON directly.
 
-  URL params:
-    metric  registry id, e.g. ground_prehatch  (required)
-    type    chart | statbox                     (default chart)
-    avg     10yr | 5yr | yearly_district | yearly_facilities  (default 10yr)
+  v2 (full parity with the deep-link URLs) -- mirror any deep link:
+    app     app id, e.g. suco_history, ground_prehatch_progress, drone (required)
+    view    the tab/view, e.g. graph | historical | top_locations
+    kind    chart | statbox   (default chart)
+    ...plus any of that app's filters (facility, zone, fos, group_by,
+       graph_type, time_period, display_metric, ...) -- forwarded verbatim.
 
   Examples:
-    /embed/?metric=ground_prehatch
-    /embed/?metric=ground_prehatch&type=statbox
-    /embed/?metric=drone&avg=5yr
+    /embed/?app=suco_history&view=graph&group_by=facility&graph_type=bar
+    /embed/?app=ground_prehatch_progress&view=historical&facility=Sr&display_metric=acres
+    /embed/?app=drone&view=historical&kind=statbox
+
+  v1 (back-compat): ?metric=ground_prehatch[&type=statbox][&avg=5yr]
 -->
 <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
 <style>
@@ -47,7 +51,6 @@
     height: 90vh; min-height: 200px; color: var(--muted); text-align: center;
     padding: 0 16px; font-size: 15px;
   }
-  /* Stat tile */
   .tile {
     max-width: 320px; margin: 12px auto; padding: 20px 22px;
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
@@ -57,38 +60,55 @@
   .tile .value { color: var(--accent); font-size: 44px; font-weight: 700; line-height: 1.1; margin: 6px 0 2px; }
   .tile .name  { color: var(--fg); font-size: 15px; font-weight: 600; }
   .tile .asof  { color: var(--muted); font-size: 11px; margin-top: 10px; }
+  /* Data table */
+  table.embed-tbl { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.embed-tbl th, table.embed-tbl td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  table.embed-tbl th { background: rgba(127,127,127,.08); font-weight: 600; position: sticky; top: 0; }
+  table.embed-tbl tr:nth-child(even) td { background: rgba(127,127,127,.04); }
+  #table-host { max-height: 92vh; overflow: auto; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="chart" style="display:none;"></div>
   <div id="tile-host"></div>
+  <div id="table-host" style="display:none;"></div>
   <div id="message" class="msg">Loading&hellip;</div>
 </div>
 <script>
 (function () {
   var qp = new URLSearchParams(window.location.search);
+  var app = qp.get("app") || "";
   var metric = qp.get("metric") || "";
-  var type = (qp.get("type") || "chart").toLowerCase();
-  var avg = qp.get("avg") || "10yr";
+  // render kind: v2 uses `kind`; v1 used `type` (chart|statbox)
+  var kind = (qp.get("kind") || (app ? "chart" : (qp.get("type") || "chart"))).toLowerCase();
 
   var elChart = document.getElementById("chart");
   var elTile = document.getElementById("tile-host");
+  var elTable = document.getElementById("table-host");
   var elMsg = document.getElementById("message");
 
   function showMessage(text) {
     elMsg.textContent = text;
     elMsg.style.display = "flex";
     elChart.style.display = "none";
+    elTable.style.display = "none";
     elTile.innerHTML = "";
   }
 
-  if (!metric) { showMessage("No metric specified."); return; }
+  if (!app && !metric) { showMessage("No app or metric specified."); return; }
 
-  var endpoint = type === "statbox" ? "statbox" : "chart";
-  var url = "/v1/public/embed/" + endpoint +
-            "?metric=" + encodeURIComponent(metric) +
-            "&type=" + encodeURIComponent(avg);
+  var endpoint = kind === "statbox" ? "statbox" : "chart";
+  var url;
+  if (app) {
+    // v2: forward the page's full query string; the API reads app/view/filters.
+    url = "/v1/public/embed/" + endpoint + window.location.search;
+  } else {
+    // v1 back-compat
+    url = "/v1/public/embed/" + endpoint +
+          "?metric=" + encodeURIComponent(metric) +
+          "&type=" + encodeURIComponent(qp.get("avg") || "10yr");
+  }
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -96,8 +116,12 @@
     });
   }
 
+  function titleFor(d) {
+    return d.display_name || d.app || d.metric || "";
+  }
+
   function renderStatbox(d) {
-    if (!d || d.status !== "ok") { showMessage("This metric is refreshing. Check back shortly."); return; }
+    if (!d || d.status !== "ok") { showMessage("This tile is refreshing. Check back shortly."); return; }
     elMsg.style.display = "none";
     elChart.style.display = "none";
     var v = (d.value == null) ? "–" : (Math.round(Number(d.value) * 10) / 10).toLocaleString();
@@ -105,9 +129,23 @@
       '<div class="tile">' +
         '<div class="label">' + esc(d.label) + '</div>' +
         '<div class="value">' + esc(v) + '</div>' +
-        '<div class="name">' + esc(d.display_name) + '</div>' +
+        '<div class="name">' + esc(d.display_name || d.series_name || d.app || d.metric) + '</div>' +
         (d.updated_at ? '<div class="asof">as of ' + esc(d.updated_at) + '</div>' : '') +
       '</div>';
+  }
+
+  // Map the app's graph_type to a Plotly trace config + layout barmode.
+  function traceConfig(gtype) {
+    switch ((gtype || "").toLowerCase()) {
+      case "bar":          return { type: "bar", barmode: "group" };
+      case "grouped_bar":  return { type: "bar", barmode: "group" };
+      case "stacked_bar":  return { type: "bar", barmode: "stack" };
+      case "point":        return { type: "scatter", mode: "markers" };
+      case "area":         return { type: "scatter", mode: "lines", fill: "tozeroy" };
+      case "step":         return { type: "scatter", mode: "lines", line: { shape: "hv" } };
+      case "line":         return { type: "scatter", mode: "lines+markers" };
+      default:             return { type: "scatter", mode: "lines+markers" };
+    }
   }
 
   function renderChart(d) {
@@ -119,32 +157,118 @@
     elTile.innerHTML = "";
     elChart.style.display = "block";
 
+    var opts = d.resolved_options || {};
+    var cfg = traceConfig(opts.graph_type);
+
     var traces = d.series.map(function (s) {
-      return {
-        type: "scatter", mode: "lines+markers",
+      var t = {
         name: s.name,
         x: s.points.map(function (p) { return p.x; }),
         y: s.points.map(function (p) { return p.y; })
       };
+      t.type = cfg.type;
+      if (cfg.mode) t.mode = cfg.mode;
+      if (cfg.fill) t.fill = cfg.fill;
+      if (cfg.line) t.line = cfg.line;
+      return t;
     });
     var layout = {
-      title: { text: d.display_name || d.metric, font: { size: 16 } },
-      margin: { t: 40, r: 16, b: 44, l: 56 },
+      title: { text: titleFor(d), font: { size: 16 } },
+      margin: { t: 40, r: 16, b: 60, l: 56 },
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
       yaxis: { title: d.y_label || "" },
-      xaxis: { automargin: true },
+      xaxis: { title: d.x_label || "", automargin: true },
       showlegend: traces.length > 1,
       legend: { orientation: "h", y: -0.2 }
     };
+    if (cfg.barmode) layout.barmode = cfg.barmode;
     Plotly.newPlot(elChart, traces, layout, { displayModeBar: false, responsive: true });
+  }
+
+  function renderMap(d) {
+    if (!d || d.status !== "ok" || !d.points || !d.points.length) {
+      showMessage("This map is refreshing. Check back shortly."); return;
+    }
+    elMsg.style.display = "none"; elTile.innerHTML = ""; elTable.style.display = "none";
+    elChart.style.display = "block";
+    var lats = d.points.map(function (p) { return p.lat; });
+    var lons = d.points.map(function (p) { return p.lon; });
+    var text = d.points.map(function (p) { return p.label != null ? String(p.label) : ""; });
+    var vals = d.points.map(function (p) { return p.value; });
+    var hasVal = vals.some(function (v) { return typeof v === "number"; });
+    var marker = { size: 9, opacity: 0.85 };
+    if (hasVal) { marker.color = vals; marker.colorscale = "YlOrRd"; marker.showscale = true; }
+    else { marker.color = "#2c5aa0"; }
+    var trace = { type: "scattermapbox", lat: lats, lon: lons, text: text,
+                  mode: "markers", marker: marker, hoverinfo: "text+lat+lon" };
+    var cLat = lats.reduce(function (a, b) { return a + b; }, 0) / lats.length;
+    var cLon = lons.reduce(function (a, b) { return a + b; }, 0) / lons.length;
+    var layout = {
+      title: { text: titleFor(d), font: { size: 16 } },
+      margin: { t: 34, r: 0, b: 0, l: 0 },
+      mapbox: { style: "open-street-map", center: { lat: cLat, lon: cLon }, zoom: 8 }
+    };
+    Plotly.newPlot(elChart, [trace], layout, { displayModeBar: false, responsive: true });
+  }
+
+  function renderBox(d) {
+    if (!d || d.status !== "ok" || !d.boxes || !d.boxes.length) {
+      showMessage("This chart is refreshing. Check back shortly."); return;
+    }
+    elMsg.style.display = "none"; elTile.innerHTML = ""; elTable.style.display = "none";
+    elChart.style.display = "block";
+    // Precomputed box stats (one box per group).
+    var names = d.boxes.map(function (b) { return b.name; });
+    var trace = {
+      type: "box", x: names,
+      lowerfence: d.boxes.map(function (b) { return b.min; }),
+      q1: d.boxes.map(function (b) { return b.q1; }),
+      median: d.boxes.map(function (b) { return b.median; }),
+      q3: d.boxes.map(function (b) { return b.q3; }),
+      upperfence: d.boxes.map(function (b) { return b.max; }),
+      marker: { color: "#2c5aa0" }
+    };
+    var layout = {
+      title: { text: titleFor(d), font: { size: 16 } },
+      margin: { t: 40, r: 16, b: 60, l: 56 },
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      yaxis: { title: d.y_label || "" }, xaxis: { title: d.x_label || "", automargin: true },
+      showlegend: false
+    };
+    Plotly.newPlot(elChart, [trace], layout, { displayModeBar: false, responsive: true });
+  }
+
+  function renderTable(d) {
+    if (!d || d.status !== "ok" || !d.rows || !d.rows.length) {
+      showMessage("This table is refreshing. Check back shortly."); return;
+    }
+    elMsg.style.display = "none"; elChart.style.display = "none"; elTile.innerHTML = "";
+    var cols = d.columns || Object.keys(d.rows[0] || {});
+    var html = '<table class="embed-tbl"><thead><tr>';
+    cols.forEach(function (c) { html += '<th>' + esc(c) + '</th>'; });
+    html += '</tr></thead><tbody>';
+    d.rows.forEach(function (row) {
+      html += '<tr>';
+      cols.forEach(function (c) { html += '<td>' + esc(row[c]) + '</td>'; });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    elTable.innerHTML = html;
+    elTable.style.display = "block";
   }
 
   fetch(url, { headers: { "Accept": "application/json" } })
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (d && d.status === "error") { showMessage("Unavailable: " + esc(d.error || "unknown error")); return; }
-      if (type === "statbox") renderStatbox(d); else renderChart(d);
+      if (endpoint === "statbox") { renderStatbox(d); return; }
+      switch ((d && d.payload_type) || "series") {
+        case "map":     renderMap(d); break;
+        case "boxplot": renderBox(d); break;
+        case "table":   renderTable(d); break;
+        default:        renderChart(d);
+      }
     })
     .catch(function () { showMessage("Could not load embed data."); });
 })();

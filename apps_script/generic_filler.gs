@@ -335,10 +335,16 @@ function evalRule_(apiRow, rule) {
  * Write value-mode columns. For filled sites: pull values from API.
  * For unfilled / expired sites: clear (unless column is in preserveSet).
  * Returns { colNum: [values array] } map for batch writing.
+ *
+ * A column is left out of the result entirely — not even cleared — when it is
+ * in PRESERVE_COLS or is the claim column, because every column in the result
+ * is written to the sheet, blanks included.
  */
-function buildValueArrays_(siteRows, dataRows, lookup, tabCfg) {
+function buildValueArrays_(siteRows, dataRows, lookup, tabCfg, claimOwnedCol) {
   const out = {};
   for (const vc of tabCfg.valueCols) {
+    if (tabCfg.preserveSet.has(vc.col)) continue;
+    if (claimOwnedCol && vc.col === claimOwnedCol) continue;
     out[vc.col] = Array.from({ length: dataRows }, () => ['']);
   }
 
@@ -347,7 +353,7 @@ function buildValueArrays_(siteRows, dataRows, lookup, tabCfg) {
     const filled = info && info[tabCfg.filledField];
 
     for (const vc of tabCfg.valueCols) {
-      if (tabCfg.preserveSet.has(vc.col)) continue;  // never touch preserved cols
+      if (out[vc.col] === undefined) continue;  // preserved or claim-owned
       if ((filled || vc.always) && info &&
           info[vc.source] !== undefined && info[vc.source] !== null) {
         let val = info[vc.source];
@@ -533,9 +539,11 @@ function loadClaimState_() {
 /**
  * Two-way claim sync between sheet EMP column and Redis.
  * filledField: the API response key that marks a site as done.
+ * apiField:    optional field (e.g. 'emp1') written into the column once a
+ *              site is inspected, so the real inspector replaces the claim.
  * Returns { pushed, pulled, removed } counts.
  */
-function syncClaims_(siteRows, lookup, empCol, filledField) {
+function syncClaims_(siteRows, lookup, empCol, filledField, apiField) {
   const REMOVED     = '__REMOVED__';
   const redisClaims = fetchClaims_();
   const claimState  = loadClaimState_();
@@ -552,8 +560,13 @@ function syncClaims_(siteRows, lookup, empCol, filledField) {
   }
 
   for (const [sc, idx] of Object.entries(siteRows)) {
-    // Skip sites that are already filled — claims only apply to open sites
-    if (lookup[sc] && lookup[sc][filledField]) continue;
+    // Filled sites are no longer claimable — show who actually did the work
+    if (lookup[sc] && lookup[sc][filledField]) {
+      if (apiField && lookup[sc][apiField] !== undefined && lookup[sc][apiField] !== null) {
+        empCol[idx][0] = resolveName(lookup[sc][apiField]);
+      }
+      continue;
+    }
 
     const sheetVal   = String(empCol[idx][0] || '').trim();
     const stateEntry = claimState[sc];
@@ -648,8 +661,16 @@ function refreshData() {
       if (Object.keys(siteRows).length === 0) continue;
       const dataRows = lastDataIdx + 1;
 
+      // The claims logic owns CLAIM_COL. Read it BEFORE any writing, so a
+      // freshly typed claim can never be read back after being blanked.
+      const claimOwnedCol = (tc.enableClaims && tc.claimCol) ? tc.claimCol : null;
+      const empCol = claimOwnedCol ? readCol_(sheet, ds, claimOwnedCol, dataRows) : null;
+      // If a value column targets CLAIM_COL, its field fills in once inspected.
+      const claimVc = claimOwnedCol
+        ? tc.valueCols.filter(v => v.col === claimOwnedCol)[0] : null;
+
       // ── Write value columns ──
-      const valueArrays = buildValueArrays_(siteRows, dataRows, lookup, tc);
+      const valueArrays = buildValueArrays_(siteRows, dataRows, lookup, tc, claimOwnedCol);
       for (const [colNum, data] of Object.entries(valueArrays)) {
         writeCol_(sheet, ds, Number(colNum), dataRows, data);
       }
@@ -659,10 +680,9 @@ function refreshData() {
 
       // ── Claims sync ──
       let claimResult = { pushed: 0, pulled: 0, removed: 0 };
-      let empCol = null;
-      if (tc.enableClaims && tc.claimCol) {
-        empCol = readCol_(sheet, ds, tc.claimCol, dataRows);
-        claimResult = syncClaims_(siteRows, lookup, empCol, tc.filledField);
+      if (claimOwnedCol) {
+        claimResult = syncClaims_(siteRows, lookup, empCol, tc.filledField,
+                                  claimVc ? claimVc.source : null);
         writeCol_(sheet, ds, tc.claimCol, dataRows, empCol);
         applyClaimHighlights_(sheet, ds, siteRows, lookup, empCol, tc);
       }

@@ -192,24 +192,47 @@
     }
     elMsg.style.display = "none"; elTile.innerHTML = ""; elTable.style.display = "none";
     elChart.style.display = "block";
-    var lats = d.points.map(function (p) { return p.lat; });
-    var lons = d.points.map(function (p) { return p.lon; });
-    var text = d.points.map(function (p) { return p.label != null ? String(p.label) : ""; });
-    var vals = d.points.map(function (p) { return p.value; });
-    var hasVal = vals.some(function (v) { return typeof v === "number"; });
-    var marker = { size: 9, opacity: 0.85 };
-    if (hasVal) { marker.color = vals; marker.colorscale = "YlOrRd"; marker.showscale = true; }
-    else { marker.color = "#2c5aa0"; }
-    var trace = { type: "scattermapbox", lat: lats, lon: lons, text: text,
-                  mode: "markers", marker: marker, hoverinfo: "text+lat+lon" };
-    var cLat = lats.reduce(function (a, b) { return a + b; }, 0) / lats.length;
-    var cLon = lons.reduce(function (a, b) { return a + b; }, 0) / lons.length;
+    var pts = d.points;
+    // Marker radius comes from the server (the app's staged size-by-count scale);
+    // fall back to a fixed size when a view sends no `size`.
+    function hover(p) {
+      var t = (p.label != null ? String(p.label) : "");
+      if (p.value != null) t += (t ? "<br>" : "") + (d.y_label || "count") + ": " + p.value;
+      return t;
+    }
+    function build(keep) {
+      var f = pts.filter(keep);
+      return {
+        lat: f.map(function (p) { return p.lat; }),
+        lon: f.map(function (p) { return p.lon; }),
+        text: f.map(hover),
+        size: f.map(function (p) { return (typeof p.size === "number") ? p.size : 8; })
+      };
+    }
+    var isZero = function (p) { return Number(p.value) === 0; };
+    var nz = build(function (p) { return !isZero(p); });
+    var zr = build(isZero);
+    var traces = [];
+    // Non-zero samples: solid colored markers, sized by specimen count.
+    if (nz.lat.length) traces.push({
+      type: "scattermapbox", mode: "markers", hoverinfo: "text",
+      lat: nz.lat, lon: nz.lon, text: nz.text,
+      marker: { size: nz.size, color: "#1f77b4", opacity: 0.85 }
+    });
+    // Zero-count samples: faded grey (matches the app's hollow/grey-outlined look).
+    if (zr.lat.length) traces.push({
+      type: "scattermapbox", mode: "markers", hoverinfo: "text",
+      lat: zr.lat, lon: zr.lon, text: zr.text,
+      marker: { size: zr.size, color: "#9ca3af", opacity: 0.5 }
+    });
+    var cLat = pts.reduce(function (a, p) { return a + p.lat; }, 0) / pts.length;
+    var cLon = pts.reduce(function (a, p) { return a + p.lon; }, 0) / pts.length;
     var layout = {
       title: { text: titleFor(d), font: { size: 16 } },
-      margin: { t: 34, r: 0, b: 0, l: 0 },
-      mapbox: { style: "open-street-map", center: { lat: cLat, lon: cLon }, zoom: 8 }
+      margin: { t: 34, r: 0, b: 0, l: 0 }, showlegend: false,
+      mapbox: { style: "open-street-map", center: { lat: cLat, lon: cLon }, zoom: 9 }
     };
-    Plotly.newPlot(elChart, [trace], layout, { displayModeBar: false, responsive: true });
+    Plotly.newPlot(elChart, traces, layout, { displayModeBar: false, responsive: true });
   }
 
   function renderBox(d) {

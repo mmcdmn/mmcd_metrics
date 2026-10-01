@@ -80,11 +80,13 @@ load_app_env <- function(app_folder, files = c("data_functions.R")) {
        x_label = x_label, y_label = y_label, resolved_options = resolved_options)
 }
 
-#' Map descriptor: points from lat/lon (+ optional value/label) columns.
-.embed_desc_map <- function(df, lat_col, lon_col, value_col = NULL, label_col = NULL,
-                            x_label = "", y_label = "", resolved_options = list()) {
+#' Map descriptor: points from lat/lon (+ optional value/size/label) columns.
+#' `size_col` carries a per-point marker radius (the app's staged size scale).
+.embed_desc_map <- function(df, lat_col, lon_col, value_col = NULL, size_col = NULL,
+                            label_col = NULL, x_label = "", y_label = "",
+                            resolved_options = list()) {
   list(kind = "map", df = df, lat_col = lat_col, lon_col = lon_col,
-       value_col = value_col, label_col = label_col,
+       value_col = value_col, size_col = size_col, label_col = label_col,
        x_label = x_label, y_label = y_label, resolved_options = resolved_options)
 }
 
@@ -135,7 +137,7 @@ get_embed_app_catalog <- function() {
 # suco_history  (richest bespoke filters; worked example)
 # ---------------------------------------------------------------------------
 EMBED_PARAM_SPEC[["suco_history"]] <- list(
-  views = c("graph", "top_locations"),
+  views = c("graph", "top_locations", "map", "detailed"),
   default_view = "graph",
   params = list(
     facility           = list(type = "string",  default = "all"),
@@ -145,6 +147,8 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
     species            = list(type = "string",  default = "All"),
     graph_type         = list(type = "enum",    allowed = c("stacked_bar","bar","line","point","area"), default = "stacked_bar"),
     top_locations_mode = list(type = "enum",    allowed = c("visits","species"), default = "visits"),
+    basemap            = list(type = "enum",    allowed = c("osm","carto","satellite"), default = "osm"),
+    color_theme        = list(type = "string",  default = "MMCD"),
     date_range         = list(type = "daterange", default = NULL)
   )
 )
@@ -188,9 +192,87 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
                                       top_locations_mode = mode, graph_type = "bar"))
 }
 
+# Staged marker radius by specimen count -- EXACT copy of the app's scale in
+# create_spatial_data() (data_functions.R) so the embed map matches the app.
+.suco_marker_size <- function(cnt) {
+  cnt <- suppressWarnings(as.numeric(cnt)); cnt[is.na(cnt)] <- 0
+  dplyr::case_when(
+    cnt == 0   ~ 4,  cnt == 1   ~ 6,  cnt <= 5   ~ 8,  cnt <= 10  ~ 10,
+    cnt <= 20  ~ 12, cnt <= 30  ~ 14, cnt <= 50  ~ 16, cnt <= 75  ~ 18,
+    cnt <= 100 ~ 20, TRUE       ~ 22)
+}
+
+# Extract a single species' count from the app's species_summary ("<br>"-joined
+# "Name: N" lines) -- mirrors create_spatial_data()'s per-species sapply.
+.suco_species_count <- function(summary, species_filter) {
+  vapply(summary, function(s) {
+    if (is.na(s) || s %in% c("No species data available", "No species identified")) return(0)
+    lines <- unlist(strsplit(s, "<br>"))
+    line <- lines[grepl(species_filter, lines, fixed = TRUE)]
+    if (length(line) > 0) {
+      m <- regexpr(": ([0-9]+)", line[1])
+      if (m > 0) return(as.numeric(gsub(": ", "", regmatches(line[1], m))))
+    }
+    0
+  }, numeric(1), USE.NAMES = FALSE)
+}
+
+.suco_map_producer <- function(p) {
+  env <- load_app_env("suco_history")
+  if (is.null(env)) return(NULL)
+  gb   <- p$group_by %||% "mmcd_all"
+  spec <- p$species %||% "All"
+  # Always request species detail -- marker size is driven by specimen count.
+  d <- env$get_suco_data("all", p$date_range, TRUE)
+  d <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
+                            p$zone %||% "all", p$date_range, spec)
+  if (!is.data.frame(d) || nrow(d) == 0 || !all(c("x", "y") %in% names(d))) {
+    return(.embed_desc_map(data.frame(), "y", "x"))
+  }
+  # display_species_count: the whole-sample total, or the one filtered species.
+  if (!identical(spec, "All") && "species_summary" %in% names(d)) {
+    cnt <- .suco_species_count(d$species_summary, spec)
+  } else if ("total_species_count" %in% names(d)) {
+    cnt <- suppressWarnings(as.numeric(d$total_species_count))
+  } else {
+    cnt <- rep(0, nrow(d))
+  }
+  cnt[is.na(cnt)] <- 0
+  d$.count <- cnt
+  d$.size  <- .suco_marker_size(cnt)
+  # Human label (park and/or sitecode).
+  lab <- if ("park_name" %in% names(d)) as.character(d$park_name) else rep("", nrow(d))
+  lab[is.na(lab)] <- ""
+  if ("sitecode" %in% names(d)) {
+    sc <- as.character(d$sitecode)
+    lab <- ifelse(nzchar(lab), paste0(lab, " (", sc, ")"), sc)
+  }
+  d$.label <- lab
+  .embed_desc_map(d, lat_col = "y", lon_col = "x",
+                  value_col = ".count", size_col = ".size", label_col = ".label",
+                  y_label = "Specimen count",
+                  resolved_options = list(view = "map", group_by = gb,
+                                          species = spec, basemap = p$basemap %||% "osm"))
+}
+
+.suco_detailed_producer <- function(p) {
+  env <- load_app_env("suco_history")
+  if (is.null(env)) return(NULL)
+  d <- env$get_suco_data("all", p$date_range, TRUE)  # species detail cols needed
+  d <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
+                            p$zone %||% "all", p$date_range, p$species %||% "All")
+  df <- env$create_detailed_samples_table(d, p$species %||% "All")
+  # Drop the HTML-linked Sitecode column so the table renders as plain text.
+  cols <- c("Date", "Facility", "FOS", "Zone", "Location", "Species_Count", "Species_Found")
+  .embed_desc_table(df, columns = cols,
+                    resolved_options = list(view = "detailed"))
+}
+
 EMBED_PRODUCERS[["suco_history"]] <- list(
   graph         = .suco_graph_producer,
   top_locations = .suco_top_locations_producer,
+  map           = .suco_map_producer,
+  detailed      = .suco_detailed_producer,
   default       = .suco_graph_producer
 )
 
@@ -307,7 +389,7 @@ EMBED_PRODUCERS[["ground_prehatch_progress"]] <- local({
 # drone (historical trend)
 # ---------------------------------------------------------------------------
 EMBED_PARAM_SPEC[["drone"]] <- list(
-  views = c("historical"),
+  views = c("historical", "site_stats"),
   default_view = "historical",
   params = list(
     facility       = list(type = "string",  default = "all"),
@@ -321,12 +403,28 @@ EMBED_PARAM_SPEC[["drone"]] <- list(
     prehatch_only  = list(type = "logical", default = FALSE)
   )
 )
+.drone_site_stats_producer <- function(p) {
+  env <- load_app_env("drone", c("data_functions.R"))
+  if (is.null(env) || is.null(env$get_site_stats_data) || is.null(env$get_sitecode_data)) return(NULL)
+  zf  <- .embed_zone_to_filter(p$zone)
+  yrs <- .embed_resolve_years(p)
+  gb  <- p$group_by %||% "mmcd_all"
+  raw <- env$get_sitecode_data(yrs$start, yrs$end, zf$filter,
+                               p$facility %||% "all", p$fos %||% "all",
+                               isTRUE(p$prehatch_only))
+  if (!is.data.frame(raw) || nrow(raw) == 0) return(.embed_desc_table(data.frame()))
+  df <- env$get_site_stats_data(raw, zf$filter,
+                                combine_zones = identical(zf$display, "combined"),
+                                group_by = gb)
+  .embed_desc_table(df, resolved_options = list(view = "site_stats", group_by = gb))
+}
+
 EMBED_PRODUCERS[["drone"]] <- local({
-  prod <- make_historical_producer(
+  hist <- make_historical_producer(
     "drone",
     extra_fn = function(p) list(prehatch_only = isTRUE(p$prehatch_only)),
     default_metric = "treatment_acres")
-  list(historical = prod, default = prod)
+  list(historical = hist, site_stats = .drone_site_stats_producer, default = hist)
 })
 
 # ---------------------------------------------------------------------------

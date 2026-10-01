@@ -309,12 +309,16 @@ normalize_map <- function(descriptor) {
   ok <- !is.na(lat) & !is.na(lon)
   df <- df[ok, , drop = FALSE]; lat <- lat[ok]; lon <- lon[ok]
   n <- min(nrow(df), EMBED_MAX_POINTS)
-  vc <- descriptor$value_col; lc <- descriptor$label_col
+  vc <- descriptor$value_col; lc <- descriptor$label_col; sc <- descriptor$size_col
   lapply(seq_len(n), function(i) {
     pt <- list(lat = jsonlite::unbox(lat[i]), lon = jsonlite::unbox(lon[i]))
     if (!is.null(vc) && vc %in% names(df)) {
       v <- df[[vc]][i]
       pt$value <- jsonlite::unbox(if (is.na(v)) NA else if (is.numeric(v)) as.numeric(v) else as.character(v))
+    }
+    if (!is.null(sc) && sc %in% names(df)) {
+      s <- suppressWarnings(as.numeric(df[[sc]][i]))
+      pt$size <- jsonlite::unbox(if (is.na(s)) NA else s)
     }
     if (!is.null(lc) && lc %in% names(df)) pt$label <- jsonlite::unbox(as.character(df[[lc]][i]))
     pt

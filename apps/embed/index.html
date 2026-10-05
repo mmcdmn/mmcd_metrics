@@ -197,6 +197,7 @@
     // fall back to a fixed size when a view sends no `size`.
     function hover(p) {
       var t = (p.label != null ? String(p.label) : "");
+      if (p.category != null && p.category !== "") t += (t ? "<br>" : "") + p.category;
       if (p.value != null) t += (t ? "<br>" : "") + (d.y_label || "count") + ": " + p.value;
       return t;
     }
@@ -209,31 +210,58 @@
         size: f.map(function (p) { return (typeof p.size === "number") ? p.size : 8; })
       };
     }
-    var isZero = function (p) { return Number(p.value) === 0; };
-    var nz = build(function (p) { return !isZero(p); });
-    var zr = build(isZero);
     var traces = [];
-    // Non-zero samples: solid colored markers, sized by specimen count.
-    if (nz.lat.length) traces.push({
-      type: "scattermapbox", mode: "markers", hoverinfo: "text",
-      lat: nz.lat, lon: nz.lon, text: nz.text,
-      marker: { size: nz.size, color: "#1f77b4", opacity: 0.85 }
-    });
-    // Zero-count samples: faded grey (matches the app's hollow/grey-outlined look).
-    if (zr.lat.length) traces.push({
-      type: "scattermapbox", mode: "markers", hoverinfo: "text",
-      lat: zr.lat, lon: zr.lon, text: zr.text,
-      marker: { size: zr.size, color: "#9ca3af", opacity: 0.5 }
-    });
+    var hasCategory = pts.some(function (p) { return p.category != null && p.category !== ""; });
+    if (hasCategory) {
+      // Color points by category (e.g. treatment status), one trace per category.
+      var palette = ["#2c5aa0", "#e67e22", "#27ae60", "#c0392b", "#8e44ad",
+                     "#16a085", "#d35400", "#7f8c8d", "#2980b9", "#f1c40f"];
+      var cats = [];
+      pts.forEach(function (p) {
+        var c = (p.category == null || p.category === "") ? "—" : String(p.category);
+        if (cats.indexOf(c) === -1) cats.push(c);
+      });
+      cats.forEach(function (c, i) {
+        var g = build(function (p) {
+          var pc = (p.category == null || p.category === "") ? "—" : String(p.category);
+          return pc === c;
+        });
+        if (!g.lat.length) return;
+        traces.push({
+          type: "scattermapbox", mode: "markers", hoverinfo: "text", name: c,
+          lat: g.lat, lon: g.lon, text: g.text,
+          marker: { size: g.size, color: palette[i % palette.length], opacity: 0.85 }
+        });
+      });
+    } else {
+      // Value-driven styling: non-zero solid/colored, zero-count faded grey
+      // (matches the app's hollow/grey-outlined look).
+      var isZero = function (p) { return Number(p.value) === 0; };
+      var nz = build(function (p) { return !isZero(p); });
+      var zr = build(isZero);
+      if (nz.lat.length) traces.push({
+        type: "scattermapbox", mode: "markers", hoverinfo: "text",
+        lat: nz.lat, lon: nz.lon, text: nz.text,
+        marker: { size: nz.size, color: "#1f77b4", opacity: 0.85 }
+      });
+      if (zr.lat.length) traces.push({
+        type: "scattermapbox", mode: "markers", hoverinfo: "text",
+        lat: zr.lat, lon: zr.lon, text: zr.text,
+        marker: { size: zr.size, color: "#9ca3af", opacity: 0.5 }
+      });
+    }
     var cLat = pts.reduce(function (a, p) { return a + p.lat; }, 0) / pts.length;
     var cLon = pts.reduce(function (a, p) { return a + p.lon; }, 0) / pts.length;
     var layout = {
       title: { text: titleFor(d), font: { size: 16 } },
-      margin: { t: 34, r: 0, b: 0, l: 0 }, showlegend: false,
+      margin: { t: 34, r: 0, b: 0, l: 0 }, showlegend: hasCategory,
+      legend: { orientation: "h", y: -0.02 },
       mapbox: { style: "open-street-map", center: { lat: cLat, lon: cLon }, zoom: 9 }
     };
     Plotly.newPlot(elChart, traces, layout, { displayModeBar: false, responsive: true });
   }
+
+  // hover text already includes value; add category when present.
 
   function renderBox(d) {
     if (!d || d.status !== "ok" || !d.boxes || !d.boxes.length) {

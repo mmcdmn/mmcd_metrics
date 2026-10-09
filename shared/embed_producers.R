@@ -50,6 +50,26 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) 
   "apps"
 }
 
+#' Absolute path to an app's folder under apps/ (NULL if it can't be resolved).
+.embed_app_dir <- function(app_folder) {
+  base <- .embed_apps_base()
+  d <- file.path(base, app_folder)
+  if (dir.exists(d)) normalizePath(d, winslash = "/", mustWork = FALSE) else NULL
+}
+
+#' Run `expr` with the working directory set to the app's folder, restoring it
+#' afterward. Needed because some app functions (e.g. drone's
+#' create_historical_data) `source('data_functions.R')` by RELATIVE path at call
+#' time -- fine in-app (cwd = app dir) but "cannot open the connection" in the
+#' plumber process whose cwd is elsewhere.
+.embed_in_app_wd <- function(app_folder, expr) {
+  d <- .embed_app_dir(app_folder)
+  if (is.null(d)) return(force(expr))
+  old <- getwd(); on.exit(setwd(old), add = TRUE)
+  setwd(d)
+  force(expr)
+}
+
 #' Load (and cache) an app's data functions into an isolated environment.
 #' @param app_folder folder under apps/ (e.g. "suco_history")
 #' @param files      R files in that folder to source (default data_functions.R)
@@ -106,6 +126,39 @@ load_app_env <- function(app_folder, files = c("data_functions.R")) {
                               x_label = "", y_label = "", resolved_options = list()) {
   list(kind = "table", df = df, columns = columns, max_rows = max_rows,
        x_label = x_label, y_label = y_label, resolved_options = resolved_options)
+}
+
+#' Choropleth descriptor: filled polygons shaded by a binned value (e.g. the
+#' trap VI-area map). `geojson` is a parsed GeoJSON FeatureCollection (one
+#' feature per area, `id` = the join key); `areas` is the parallel per-area
+#' {id,value,label}. The binned color scale (breaks + colors + na_color) rides
+#' in resolved_options so the widget shades exactly as the app's Leaflet does.
+#' `df` is the feature attribute table (drives the empty-data check only).
+.embed_desc_choropleth <- function(df, geojson, areas, color_scale = NULL,
+                                   feature_id_key = "properties.viarea",
+                                   x_label = "", y_label = "", resolved_options = list()) {
+  list(kind = "choropleth", df = df, geojson = geojson, areas = areas,
+       color_scale = color_scale, feature_id_key = feature_id_key,
+       x_label = x_label, y_label = y_label, resolved_options = resolved_options)
+}
+
+#' Convert an sf object to a parsed GeoJSON FeatureCollection (list), keeping
+#' only `keep_cols` as feature properties. Uses GDAL via sf (no extra package):
+#' writes a temp .geojson and reads it back parsed so plumber's JSON serializer
+#' re-emits it verbatim. Returns NULL on any failure.
+.embed_sf_to_geojson <- function(sf_obj, keep_cols = NULL) {
+  if (!requireNamespace("sf", quietly = TRUE)) return(NULL)
+  tryCatch({
+    g <- sf_obj
+    if (!is.null(keep_cols)) {
+      keep <- intersect(keep_cols, names(g))
+      g <- g[, keep]  # sf keeps the geometry column automatically
+    }
+    tf <- tempfile(fileext = ".geojson")
+    on.exit(unlink(tf), add = TRUE)
+    sf::st_write(g, tf, driver = "GeoJSON", quiet = TRUE, delete_dsn = TRUE)
+    jsonlite::fromJSON(readLines(tf, warn = FALSE), simplifyVector = FALSE)
+  }, error = function(e) NULL)
 }
 
 # =============================================================================
@@ -280,6 +333,11 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
 .suco_detailed_producer <- function(p) {
   env <- load_app_env("suco_history")
   if (is.null(env)) return(NULL)
+  # create_detailed_samples_table() calls make_sitecode_link() (defined in
+  # shared/server_utilities.R, not sourced in the plumber process). We drop the
+  # Sitecode column anyway, so give the env an identity stub.
+  if (is.null(env$make_sitecode_link))
+    env$make_sitecode_link <- function(x) as.character(x)
   d <- env$get_suco_data("all", p$date_range, TRUE)  # species detail cols needed
   d <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
                             p$zone %||% "all", p$date_range, p$species %||% "All")
@@ -371,7 +429,9 @@ make_historical_producer <- function(app_folder,
       zone_filter         = zf$filter,
       foreman_filter      = p$fos %||% "all"
     ), extra_fn(p))
-    df <- do.call(env[[fn_name]], args)
+    # Some apps' historical fns re-source files by relative path at call time,
+    # so run with cwd = the app folder (restored afterward).
+    df <- .embed_in_app_wd(app_folder, do.call(env[[fn_name]], args))
     .embed_desc(df, x_col = out_x, y_col = out_y, group_col = out_group,
                 x_label = if (identical(tp, "weekly")) "Week" else "Year",
                 y_label = .embed_metric_label(dm),
@@ -560,7 +620,7 @@ EMBED_PARAM_SPEC[["drone"]] <- list(
 
 # Current Progress: per-group Active / Expiring / Expired drone sites (or acres).
 .drone_current_producer <- function(p) {
-  env <- load_app_env("drone", c("data_functions.R"))
+  env <- load_app_env("drone", c("data_functions.R", "display_functions.R"))
   if (is.null(env) || is.null(env$load_raw_data) || is.null(env$apply_data_filters) ||
       is.null(env$process_current_data)) return(NULL)
   zf <- .embed_zone_to_filter(p$zone)
@@ -763,7 +823,9 @@ EMBED_PARAM_SPEC[["cattail_inspections"]] <- list(
     goal_year     = list(type = "string", default = NULL),
     goal_column   = list(type = "enum", allowed = c("total","p1","p2","separate"), default = "total"),
     custom_today  = list(type = "date",   default = NULL),
-    facility      = list(type = "string", default = "all")
+    facility      = list(type = "string", default = "all"),
+    view_type     = list(type = "enum", allowed = c("acres","sites"), default = "acres"),
+    plan_types    = list(type = "csv",    default = NULL)
   )
 )
 .cattail_insp_historical_producer <- function(p) {
@@ -815,7 +877,11 @@ EMBED_PARAM_SPEC[["cattail_inspections"]] <- list(
                                       goal_year = yr, graph_type = "grouped_bar"))
 }
 
-# Treatment Planning: planned acres per facility, grouped by plan type.
+# Treatment Planning: one bar per plan type (Air/Drone/Ground/None/Unknown),
+# summed across facilities (or filtered to one) -- EXACTLY as the app's
+# create_treatment_plan_plot_with_data does (x = plan_type, y = acres or site
+# count per view_type). get_treatment_plan_data returns per-facility x plan_type
+# rows with total_acres; "sites" view counts rows (n()) like the app's "all" path.
 .cattail_insp_treatment_producer <- function(p) {
   env <- load_app_env("cattail_inspections", c("planned_treatment_functions.R"))
   if (is.null(env) || is.null(env$get_treatment_plan_data)) return(NULL)
@@ -823,11 +889,25 @@ EMBED_PARAM_SPEC[["cattail_inspections"]] <- list(
   if (!is.data.frame(df) || nrow(df) == 0) return(.embed_desc(data.frame(), "x", "y"))
   fac <- p$facility %||% "all"
   if (!identical(fac, "all") && "facility" %in% names(df)) df <- df[df$facility == fac, , drop = FALSE]
+  pt <- p$plan_types
+  if (!is.null(pt) && !(length(pt) == 1 && identical(pt, "all")) && "airgrnd_plan" %in% names(df))
+    df <- df[df$airgrnd_plan %in% pt, , drop = FALSE]
   if (nrow(df) == 0) return(.embed_desc(data.frame(), "x", "y"))
   df$plan_type <- as.character(df$plan_type)
-  .embed_desc(df, x_col = "facility", y_col = "total_acres", group_col = "plan_type",
-              x_label = "Facility", y_label = "Planned acres",
-              resolved_options = list(view = "treatment_planning", graph_type = "grouped_bar"))
+  view_type <- p$view_type %||% "acres"
+  acres <- tapply(suppressWarnings(as.numeric(df$total_acres)), df$plan_type,
+                  function(z) sum(z, na.rm = TRUE))
+  sites <- tapply(rep(1L, nrow(df)), df$plan_type, sum)
+  pts <- names(acres)
+  out <- data.frame(
+    plan_type = pts,
+    value = if (identical(view_type, "sites")) as.numeric(sites[pts]) else as.numeric(acres[pts]),
+    stringsAsFactors = FALSE)
+  .embed_desc(out, x_col = "plan_type", y_col = "value", group_col = NULL,
+              x_label = "Plan Type",
+              y_label = if (identical(view_type, "sites")) "Number of Sites" else "Total Acres",
+              resolved_options = list(view = "treatment_planning", view_type = view_type,
+                                      graph_type = "bar"))
 }
 
 EMBED_PRODUCERS[["cattail_inspections"]] <- list(
@@ -950,17 +1030,20 @@ EMBED_PRODUCERS[["inspections"]] <- list(
 # does. (The map view is sf-based -> deferred to the careful pass.)
 # ---------------------------------------------------------------------------
 EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
-  views = c("abundance", "infection", "vector_index"),
+  views = c("abundance", "infection", "vector_index", "map"),
   default_view = "abundance",
   params = list(
     year             = list(type = "int",    default = NULL),
+    yrwk             = list(type = "int",    default = NULL),
     species          = list(type = "string", default = "Total_Cx_vectors"),
-    infection_metric = list(type = "enum", allowed = c("mle", "mir"), default = "mle")
+    infection_metric = list(type = "enum", allowed = c("mle", "mir"), default = "mle"),
+    metric_type      = list(type = "enum", allowed = c("abundance", "infection", "vector_index"), default = "abundance"),
+    color_theme      = list(type = "string", default = "MMCD")
   )
 )
 .trap_year <- function(p) {
   y <- suppressWarnings(as.integer(p$year))
-  if (is.na(y)) as.integer(format(Sys.Date(), "%Y")) else y
+  if (length(y) != 1 || is.na(y)) as.integer(format(Sys.Date(), "%Y")) else y
 }
 .trap_week_col <- function(df) {
   if (!("week" %in% names(df)) && "yrwk" %in% names(df))
@@ -1016,10 +1099,92 @@ EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
                                       species = p$species %||% "Total_Cx_vectors",
                                       graph_type = "line"))
 }
+# VI-area choropleth: shaded polygons, exactly as render_surveillance_map draws
+# them. Reproduces its metric selection + non-linear colorBin scale, joins the
+# per-area values onto the VI-area polygons, and emits a GeoJSON FeatureCollection
+# + the binned color scale so the widget shades identically (choropleth kind).
+.trap_map_producer <- function(p) {
+  env <- load_app_env("trap_surveillance", c("data_functions.R"))
+  if (is.null(env) || is.null(env$fetch_combined_area_data) ||
+      is.null(env$load_vi_area_geometries)) return(NULL)
+  if (!requireNamespace("sf", quietly = TRUE)) return(NULL)
+  spp <- p$species %||% "Total_Cx_vectors"
+  inf_met <- p$infection_metric %||% "mle"
+  metric_type <- p$metric_type %||% "abundance"
+
+  # Resolve the week: explicit yrwk, else the latest available week for the year.
+  yrwk <- suppressWarnings(as.integer(p$yrwk))
+  if (is.na(yrwk)) {
+    yr <- .trap_year(p)
+    wk <- tryCatch(env$fetch_available_weeks(yr), error = function(e) NULL)
+    if (is.data.frame(wk) && nrow(wk) > 0 && "yrwk" %in% names(wk))
+      yrwk <- suppressWarnings(as.integer(wk$yrwk[which.max(as.integer(wk$yrwk))]))
+  }
+  if (is.na(yrwk)) return(.embed_desc_choropleth(data.frame(), NULL, list()))
+
+  areas_sf <- tryCatch(env$load_vi_area_geometries(), error = function(e) NULL)
+  if (is.null(areas_sf) || !inherits(areas_sf, "sf") || nrow(areas_sf) == 0)
+    return(.embed_desc_choropleth(data.frame(), NULL, list()))
+  combined <- tryCatch(env$fetch_combined_area_data(yrwk = yrwk, spp_name = spp,
+                       infection_metric = inf_met), error = function(e) NULL)
+
+  # Metric column + non-linear breaks (verbatim from render_surveillance_map).
+  if (metric_type == "vector_index") {
+    metric_col <- "vector_index"; metric_label <- "Vector Index (N x P)"; fmt <- "%.4f"
+    fixed_breaks <- c(0, 0.02, 0.08, 0.2, 0.5, 1.0, 2.0)
+  } else if (metric_type == "infection") {
+    if (identical(inf_met, "mle")) {
+      metric_col <- "infection_rate"; metric_label <- "MLE (Infection Rate)"; fmt <- "%.6f"
+      fixed_breaks <- c(0, 0.001, 0.005, 0.01, 0.02, 0.04, 0.06)
+    } else {
+      metric_col <- "mir_raw"; metric_label <- "MIR (per 1000)"; fmt <- "%.6f"
+      fixed_breaks <- c(0, 2, 5, 15, 30, 60, 100)
+    }
+  } else {
+    metric_col <- "avg_per_trap"; metric_label <- "Avg Mosquitoes/Trap"; fmt <- "%.1f"
+    fixed_breaks <- c(0, 1, 3, 7, 12, 20, 30)
+  }
+
+  # Join per-area values onto the polygons (same left_join as the app).
+  areas_sf$viarea <- as.character(areas_sf$viarea)
+  val <- rep(NA_real_, nrow(areas_sf))
+  if (is.data.frame(combined) && nrow(combined) > 0 && metric_col %in% names(combined)) {
+    combined$viarea <- as.character(combined$viarea)
+    m <- match(areas_sf$viarea, combined$viarea)
+    val <- suppressWarnings(as.numeric(combined[[metric_col]][m]))
+  }
+  map_sf <- areas_sf[, "viarea"]
+  map_sf$value <- val
+
+  # Heat ramp: theme ramp if present, else the app's literal fallback.
+  n_bins <- length(fixed_breaks) - 1
+  theme_heat <- tryCatch(get_theme_palette(p$color_theme %||% "MMCD")$sequential_heat,
+                         error = function(e) NULL)
+  if (is.null(theme_heat) || length(theme_heat) < 2)
+    theme_heat <- c("#ffffcc", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#800026")
+  heat_colors <- grDevices::colorRampPalette(theme_heat)(n_bins)
+
+  geojson <- .embed_sf_to_geojson(map_sf, keep_cols = c("viarea", "value"))
+  if (is.null(geojson)) return(.embed_desc_choropleth(data.frame(), NULL, list()))
+  areas <- lapply(seq_len(nrow(map_sf)), function(i)
+    list(id = map_sf$viarea[i], value = map_sf$value[i], label = map_sf$viarea[i]))
+
+  .embed_desc_choropleth(
+    df = data.frame(viarea = map_sf$viarea, value = map_sf$value, stringsAsFactors = FALSE),
+    geojson = geojson, areas = areas,
+    feature_id_key = "properties.viarea",
+    color_scale = list(breaks = fixed_breaks, colors = heat_colors,
+                       na_color = "#C0C0C0", legend_max = max(fixed_breaks)),
+    x_label = "", y_label = metric_label,
+    resolved_options = list(
+      view = "map", metric_type = metric_type, infection_metric = inf_met,
+      species = spp, yrwk = yrwk, metric_label = metric_label, value_format = fmt))
+}
 EMBED_PRODUCERS[["trap_surveillance"]] <- list(
   abundance    = .trap_abundance_producer,
   infection    = .trap_infection_producer,
   vector_index = .trap_vi_producer,
+  map          = .trap_map_producer,
   default      = .trap_abundance_producer
 )
 
@@ -1029,7 +1194,7 @@ EMBED_PRODUCERS[["trap_surveillance"]] <- list(
 # (status map + pipeline funnel -> deferred to the careful pass.)
 # ---------------------------------------------------------------------------
 EMBED_PARAM_SPEC[["air_sites_simple"]] <- list(
-  views = c("historical", "status"),
+  views = c("historical", "status", "pipeline"),
   default_view = "historical",
   params = list(
     facility           = list(type = "string", default = "all"),
@@ -1103,9 +1268,31 @@ EMBED_PARAM_SPEC[["air_sites_simple"]] <- list(
                   y_label = "Acres",
                   resolved_options = list(view = "status"))
 }
+# Pipeline Snapshot: the per-facility treatment-process summary table (same
+# loader as the status map, then the app's create_treatment_process_summary).
+.air_pipeline_producer <- function(p) {
+  env <- load_app_env("air_sites_simple", c("data_functions.R", "display_functions.R"))
+  if (is.null(env) || is.null(env$get_air_sites_data) ||
+      is.null(env$create_treatment_process_summary))
+    return(NULL)
+  fac <- p$facility; if (is.null(fac) || identical(fac, "all")) fac <- NULL
+  pri <- p$priority; if (is.null(pri) || (length(pri) == 1 && identical(pri, "all"))) pri <- NULL
+  zone <- p$zone %||% "all"; zf <- if (zone %in% c("all", "All")) NULL else zone
+  data <- tryCatch(env$get_air_sites_data(analysis_date = Sys.Date(),
+    facility_filter = fac, priority_filter = pri, zone_filter = zf,
+    larvae_threshold = p$larvae_threshold %||% 2L), error = function(e) NULL)
+  metric <- p$metric_type %||% "sites"
+  if (!is.data.frame(data)) data <- data.frame()
+  summ <- tryCatch(env$create_treatment_process_summary(data, metric_type = metric),
+                   error = function(e) NULL)
+  if (!is.data.frame(summ)) return(.embed_desc_table(data.frame()))
+  .embed_desc_table(summ, x_label = "", y_label = "",
+                    resolved_options = list(view = "pipeline", metric_type = metric))
+}
 EMBED_PRODUCERS[["air_sites_simple"]] <- list(
   historical = .air_historical_producer,
   status     = .air_status_map_producer,
+  pipeline   = .air_pipeline_producer,
   default    = .air_historical_producer
 )
 
@@ -1235,13 +1422,18 @@ EMBED_PRODUCERS[["control_efficacy"]] <- list(
 # (historical = buried aggregation, map = sf -> deferred.)
 # ---------------------------------------------------------------------------
 EMBED_PARAM_SPEC[["cattail_treatments"]] <- list(
-  views = c("progress"),
+  views = c("progress", "map", "historical"),
   default_view = "progress",
   params = list(
     facility            = list(type = "string", default = "all"),
+    foreman             = list(type = "string", default = "all"),
     zone_display        = list(type = "enum", allowed = c("p1","p2","separate","combined"), default = "combined"),
-    group_by            = list(type = "enum", allowed = c("mmcd_all","foreman","facility"), default = "facility"),
-    display_metric_type = list(type = "enum", allowed = c("sites","acres"), default = "sites")
+    group_by            = list(type = "enum", allowed = c("mmcd_all","foreman","facility","zone"), default = "facility"),
+    display_metric_type = list(type = "enum", allowed = c("sites","acres"), default = "sites"),
+    hist_status_metric  = list(type = "enum", allowed = c("need_treatment","treated","pct_treated"), default = "need_treatment"),
+    hist_chart_type     = list(type = "enum", allowed = c("line","area","stacked_bar","grouped_bar"), default = "line"),
+    year_range          = list(type = "csv", default = NULL),
+    basemap             = list(type = "enum", allowed = c("carto","satellite","osm"), default = "carto")
   )
 )
 .cattail_trt_progress_producer <- function(p) {
@@ -1286,7 +1478,224 @@ EMBED_PARAM_SPEC[["cattail_treatments"]] <- list(
               resolved_options = list(view = "progress", group_by = gb,
                                       display_metric_type = metric, graph_type = "stacked_bar"))
 }
+# Treatment map: cattail sites colored by status (filtered$sites is sf).
+.cattail_trt_map_producer <- function(p) {
+  env <- load_app_env("cattail_treatments", c("data_functions.R"))
+  if (is.null(env) || is.null(env$load_raw_data) || is.null(env$apply_data_filters))
+    return(NULL)
+  zd <- p$zone_display %||% "combined"
+  zone_filter <- switch(zd, "p1" = "1", "p2" = "2", "separate" = c("1", "2"), c("1", "2"))
+  cur <- as.integer(format(Sys.Date(), "%Y"))
+  raw <- tryCatch(env$load_raw_data(analysis_date = Sys.Date(), include_archive = TRUE,
+                  start_year = cur - 2, end_year = cur), error = function(e) NULL)
+  if (is.null(raw)) return(.embed_desc_map(data.frame(), "lat", "lon"))
+  filt <- env$apply_data_filters(data = raw, zone_filter = zone_filter,
+                                 facility_filter = p$facility %||% "all")
+  sites <- filt$sites
+  if (is.null(sites) || nrow(sites) == 0) return(.embed_desc_map(data.frame(), "lat", "lon"))
+  if (inherits(sites, "sf")) {
+    if (!requireNamespace("sf", quietly = TRUE)) return(.embed_desc_map(data.frame(), "lat", "lon"))
+    coords <- sf::st_coordinates(sites)
+    df <- sf::st_drop_geometry(sites)
+    df$.lon <- coords[, 1]; df$.lat <- coords[, 2]
+  } else if (all(c("x", "y") %in% names(sites))) {
+    df <- sites; df$.lon <- df$x; df$.lat <- df$y
+  } else if (all(c("longitude", "latitude") %in% names(sites))) {
+    df <- sites; df$.lon <- df$longitude; df$.lat <- df$latitude
+  } else {
+    return(.embed_desc_map(data.frame(), "lat", "lon"))
+  }
+  ccol <- if ("final_status" %in% names(df)) "final_status"
+          else if ("state" %in% names(df)) "state" else NULL
+  .embed_desc_map(df, lat_col = ".lat", lon_col = ".lon", category_col = ccol,
+                  label_col = if ("sitecode" %in% names(df)) "sitecode" else NULL,
+                  resolved_options = list(view = "map", basemap = p$basemap %||% "carto"))
+}
+# Historical Analysis: inspection-year series by group_label. Reproduces the
+# plot_data pipeline inside create_historical_analysis_chart (group_label build +
+# the per-display_metric aggregation) from get_historical_cattail_data's
+# $inspections/$treatments frames -> one series per group_label.
+.cattail_trt_historical_producer <- function(p) {
+  env <- load_app_env("cattail_treatments", c("data_functions.R", "historical_functions.R"))
+  if (is.null(env) || is.null(env$get_historical_cattail_data)) return(NULL)
+  cur <- as.integer(format(Sys.Date(), "%Y"))
+  yr <- suppressWarnings(as.integer(p$year_range))
+  yr <- yr[!is.na(yr)]
+  if (length(yr) >= 2) { sy <- min(yr); ey <- max(yr) } else { sy <- cur - 4; ey <- cur }
+  start_date <- as.Date(paste0(sy, "-09-01"))
+  end_date   <- as.Date(paste0(ey + 1, "-08-01"))
+  display_metric <- p$hist_status_metric %||% "need_treatment"
+  metric_type    <- p$display_metric_type %||% "sites"
+  group_by       <- p$group_by %||% "facility"
+  zd <- p$zone_display %||% "combined"
+  combine_zones <- !identical(zd, "separate")
+  fac_f <- p$facility %||% "all"
+  fos_f <- p$foreman %||% "all"
+
+  hist <- tryCatch(env$get_historical_cattail_data(
+    time_period = "yearly", display_metric = display_metric,
+    start_date = start_date, end_date = end_date), error = function(e) NULL)
+  if (is.null(hist)) return(.embed_desc(data.frame(), "x", "y"))
+  insp <- hist$inspections; trt <- hist$treatments
+  if (is.null(insp)) insp <- data.frame(); if (is.null(trt)) trt <- data.frame()
+
+  fac_lk <- tryCatch(get_facility_lookup(), error = function(e) NULL)
+  fos_lk <- tryCatch(get_foremen_lookup(), error = function(e) NULL)
+  add_labels <- function(d) {
+    if (!is.data.frame(d) || nrow(d) == 0) return(d)
+    d$facility_short <- d$facility
+    if (!is.null(fac_lk) && all(c("full_name", "short_name") %in% names(fac_lk))) {
+      m <- fac_lk$short_name[match(d$facility, fac_lk$full_name)]
+      d$facility_short <- ifelse(is.na(m), d$facility, m)
+    }
+    d$foreman_name <- paste("FOS", d$fosarea)
+    if (!is.null(fos_lk) && all(c("emp_num", "shortname") %in% names(fos_lk))) {
+      m <- fos_lk$shortname[match(d$fosarea, fos_lk$emp_num)]
+      d$foreman_name <- ifelse(is.na(m), paste("FOS", d$fosarea), m)
+    }
+    d$group_label <- with(d,
+      ifelse(group_by == "facility" & !combine_zones, paste(facility_short, "- Zone", zone),
+      ifelse(group_by == "facility" &  combine_zones, facility_short,
+      ifelse(group_by == "foreman"  & !combine_zones, paste(foreman_name, "- Zone", zone),
+      ifelse(group_by == "foreman"  &  combine_zones, foreman_name,
+      ifelse(group_by == "zone", paste("Zone", zone), "All"))))))
+    d
+  }
+  insp <- add_labels(insp); trt <- add_labels(trt)
+  valid <- function(f) !is.null(f) && !(length(f) == 1 && f %in% c("all", "All", ""))
+  if (valid(fac_f)) {
+    if (nrow(insp) > 0) insp <- insp[insp$facility %in% fac_f, , drop = FALSE]
+    if (nrow(trt)  > 0) trt  <- trt[trt$facility %in% fac_f, , drop = FALSE]
+  }
+  if (valid(fos_f)) {
+    if (nrow(insp) > 0) insp <- insp[insp$foreman_name %in% fos_f, , drop = FALSE]
+    if (nrow(trt)  > 0) trt  <- trt[trt$foreman_name %in% fos_f, , drop = FALSE]
+  }
+
+  `%>%` <- magrittr::`%>%`
+  plot_data <- NULL; y_label <- "Sites Need Treatment"
+  if (display_metric == "treated") {
+    y_label <- if (metric_type == "acres") "Acres Treated" else "Sites Treated"
+    if (nrow(trt) > 0) {
+      if (metric_type == "acres") {
+        plot_data <- trt %>%
+          dplyr::group_by(sitecode, inspection_year, group_label) %>%
+          dplyr::arrange(dplyr::desc(trtdate)) %>% dplyr::slice(1) %>% dplyr::ungroup() %>%
+          dplyr::group_by(inspection_year, group_label) %>%
+          dplyr::summarise(value = sum(dplyr::coalesce(treated_acres, 0), na.rm = TRUE), .groups = "drop")
+      } else {
+        plot_data <- trt %>%
+          dplyr::group_by(inspection_year, group_label) %>%
+          dplyr::summarise(value = dplyr::n_distinct(sitecode), .groups = "drop")
+      }
+    }
+  } else if (display_metric == "pct_treated") {
+    y_label <- "% Sites Treated (of Need Treatment)"
+    need_c <- if (nrow(insp) > 0) insp %>% dplyr::filter(need_treatment == TRUE) %>%
+        dplyr::group_by(sitecode, inspection_year, group_label) %>%
+        dplyr::arrange(dplyr::desc(inspdate)) %>% dplyr::slice(1) %>% dplyr::ungroup() %>%
+        dplyr::group_by(inspection_year, group_label) %>%
+        dplyr::summarise(sites_need = dplyr::n_distinct(sitecode), .groups = "drop") else NULL
+    trt_c <- if (nrow(trt) > 0) trt %>%
+        dplyr::group_by(inspection_year, group_label) %>%
+        dplyr::summarise(sites_treated = dplyr::n_distinct(sitecode), .groups = "drop") else NULL
+    if (!is.null(need_c) && nrow(need_c) > 0) {
+      plot_data <- need_c
+      if (!is.null(trt_c)) plot_data <- dplyr::left_join(plot_data, trt_c, by = c("inspection_year", "group_label"))
+      if (!("sites_treated" %in% names(plot_data))) plot_data$sites_treated <- 0
+      plot_data <- plot_data %>% dplyr::mutate(
+        sites_treated = ifelse(is.na(sites_treated), 0, sites_treated),
+        value = ifelse(sites_need > 0, (sites_treated / sites_need) * 100, 0))
+    }
+  } else {
+    y_label <- if (metric_type == "acres") "Acres Need Treatment" else "Sites Need Treatment"
+    if (nrow(insp) > 0) {
+      base <- insp %>% dplyr::filter(need_treatment == TRUE) %>%
+        dplyr::group_by(sitecode, inspection_year, group_label) %>%
+        dplyr::arrange(dplyr::desc(inspdate)) %>% dplyr::slice(1) %>% dplyr::ungroup()
+      plot_data <- if (metric_type == "acres")
+        base %>% dplyr::group_by(inspection_year, group_label) %>%
+          dplyr::summarise(value = sum(acres, na.rm = TRUE), .groups = "drop")
+      else
+        base %>% dplyr::group_by(inspection_year, group_label) %>%
+          dplyr::summarise(value = dplyr::n_distinct(sitecode), .groups = "drop")
+    }
+  }
+  if (is.null(plot_data) || nrow(plot_data) == 0) return(.embed_desc(data.frame(), "x", "y"))
+  plot_data <- as.data.frame(plot_data)
+  plot_data$.x <- as.character(plot_data$inspection_year)
+  ct <- p$hist_chart_type %||% "line"
+  gt <- switch(ct, "grouped_bar" = "bar", "stacked_bar" = "stacked_bar", ct)
+  .embed_desc(plot_data, x_col = ".x", y_col = "value", group_col = "group_label",
+              x_label = "Inspection Year", y_label = y_label,
+              resolved_options = list(view = "historical", group_by = group_by,
+                                      display_metric = display_metric,
+                                      display_metric_type = metric_type, graph_type = gt))
+}
 EMBED_PRODUCERS[["cattail_treatments"]] <- list(
-  progress = .cattail_trt_progress_producer,
-  default  = .cattail_trt_progress_producer
+  progress   = .cattail_trt_progress_producer,
+  map        = .cattail_trt_map_producer,
+  historical = .cattail_trt_historical_producer,
+  default    = .cattail_trt_progress_producer
+)
+
+# ---------------------------------------------------------------------------
+# mosquito-monitoring (avg mosquitoes/trap over time by species). The app loads
+# at module scope and aggregates inline; we reproduce load_raw_data() + the
+# per-inspdate/species mean. "All" view = zone 1 (the app's main chart).
+# ---------------------------------------------------------------------------
+EMBED_PARAM_SPEC[["mosquito-monitoring"]] <- list(
+  views = c("All", "Compare"),
+  default_view = "All",
+  params = list(
+    facility    = list(type = "string", default = "All"),
+    species     = list(type = "csv",    default = "Total_Ae_+_Cq"),
+    years       = list(type = "string", default = NULL),
+    facilityONE = list(type = "string", default = "All"),
+    speciesONE  = list(type = "csv",    default = "Total_Ae_+_Cq"),
+    zoneONE     = list(type = "enum", allowed = c("1", "2+X", "All"), default = "All"),
+    yearsONE    = list(type = "string", default = NULL)
+  )
+)
+.mm_series <- function(m0, facility, species, years_param, zones) {
+  if (!is.data.frame(m0) || nrow(m0) == 0) return(data.frame())
+  if (!identical(facility, "All") && "facility" %in% names(m0))
+    m0 <- m0[which(m0$facility %in% facility), , drop = FALSE]
+  yr <- .embed_resolve_years(list(year_range = years_param))
+  keep <- rep(TRUE, nrow(m0))
+  if ("Year" %in% names(m0)) keep <- keep & m0$Year >= yr$start & m0$Year <= yr$end
+  if ("spp_name" %in% names(m0)) keep <- keep & m0$spp_name %in% species
+  if (!is.null(zones) && "zone" %in% names(m0)) keep <- keep & m0$zone %in% zones
+  m0 <- m0[which(keep), , drop = FALSE]
+  if (nrow(m0) == 0 || !all(c("inspdate", "spp_name", "mosqcount") %in% names(m0))) return(data.frame())
+  g <- dplyr::summarise(dplyr::group_by(m0, inspdate, spp_name),
+                        avg = round(mean(mosqcount, na.rm = TRUE), 1), .groups = "drop")
+  as.data.frame(g)
+}
+.mosquito_monitoring_all_producer <- function(p) {
+  env <- load_app_env("mosquito-monitoring", c("data_functions.R"))
+  if (is.null(env) || is.null(env$load_raw_data)) return(NULL)
+  m0 <- tryCatch(env$load_raw_data(), error = function(e) NULL)
+  g <- .mm_series(m0, p$facility %||% "All", p$species %||% "Total_Ae_+_Cq", p$years, c(1))
+  if (nrow(g) == 0) return(.embed_desc(data.frame(), "inspdate", "avg"))
+  .embed_desc(g, x_col = "inspdate", y_col = "avg", group_col = "spp_name",
+              x_label = "Date", y_label = "Avg per trap (Zone 1)",
+              resolved_options = list(view = "All", graph_type = "line"))
+}
+.mosquito_monitoring_compare_producer <- function(p) {
+  env <- load_app_env("mosquito-monitoring", c("data_functions.R"))
+  if (is.null(env) || is.null(env$load_raw_data)) return(NULL)
+  m0 <- tryCatch(env$load_raw_data(), error = function(e) NULL)
+  z <- switch(p$zoneONE %||% "All", "1" = c(1), "2+X" = c(2, "X"), NULL)
+  g <- .mm_series(m0, p$facilityONE %||% "All", p$speciesONE %||% "Total_Ae_+_Cq", p$yearsONE, z)
+  if (nrow(g) == 0) return(.embed_desc(data.frame(), "inspdate", "avg"))
+  .embed_desc(g, x_col = "inspdate", y_col = "avg", group_col = "spp_name",
+              x_label = "Date", y_label = "Avg per trap",
+              resolved_options = list(view = "Compare", zone = p$zoneONE %||% "All",
+                                      graph_type = "line"))
+}
+EMBED_PRODUCERS[["mosquito-monitoring"]] <- list(
+  All     = .mosquito_monitoring_all_producer,
+  Compare = .mosquito_monitoring_compare_producer,
+  default = .mosquito_monitoring_all_producer
 )

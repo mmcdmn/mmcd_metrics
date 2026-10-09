@@ -3,17 +3,6 @@
 # =============================================================================
 # Builds small, stable, embed-ready payloads for the public drop-in endpoints
 # (/v1/public/embed/*) and the static widget page (apps/embed/).
-#
-# HARD RULE: these helpers are CACHE-ONLY. They read the already-warm
-# `historical_averages` Redis hash (kept fresh for every historical_enabled
-# metric by regenerate_cache(), 14-day TTL) via get_cached_average_redis(), and
-# they NEVER trigger a live DB load. A public embed must never make a viewer --
-# or the database -- wait. On a cache miss the payload comes back status
-# "unavailable" so the widget can show a gentle "refreshing" message instead.
-#
-# Depends on (sourced by the caller, e.g. api/plumber.R):
-#   - shared/redis_cache.R   (get_cached_average_redis, redis_get, HISTORICAL_META_KEY)
-#   - apps/overview/metric_registry.R (get_metric_config, get_historical_metrics)
 # =============================================================================
 
 if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
@@ -149,22 +138,11 @@ get_embed_metric_list <- function() {
 }
 
 # =============================================================================
-# EMBED v2 FRAMEWORK -- full filter/group_by/graph parity with the URL handler.
+# EMBED FRAMEWORK -- full filter/group_by/graph parity with the URL handler.
 # -----------------------------------------------------------------------------
-# Unlike the v1 cache-only helpers above (which only read the warm
-# historical_averages hash), v2 accepts the SAME params the deep-link URLs
-# expose (facility, zone, fos, group_by, graph_type, time_period, view, ...) and
-# reproduces each app's own chart data by running that app's own data functions
-# (see shared/embed_producers.R). Results are peek-cached in Redis; on a miss we
-# compute once and cache with a short TTL. A public viewer never gets a 500 --
-# failures/empties come back as status "unavailable".
-#
-# Depends (sourced by caller, e.g. api/plumber.R, AFTER this file):
-#   - shared/redis_cache.R   (redis_get/redis_set/build_cache_key/TTL_5_MIN)
-#   - shared/embed_producers.R (EMBED_PRODUCERS registry + EMBED_PARAM_SPEC)
 # =============================================================================
 
-CACHE_PREFIX_EMBED <- "embed"   # embed v2 per-filter results (short TTL)
+CACHE_PREFIX_EMBED <- "embed"   # embed  per-filter results (short TTL)
 
 #' Coerce/validate one raw query value by declared type.
 #' Types: enum, int, num, logical, date, daterange, csv, string.
@@ -375,6 +353,35 @@ normalize_table <- function(descriptor) {
   list(columns = as.list(cols), rows = rows)
 }
 
+#' Choropleth payload helper: parallel per-area [{id, value, label}]. The
+#' GeoJSON FeatureCollection and the binned color scale are attached separately
+#' in .embed_build_payload (geojson passes through as-is; scale is in options).
+#' @export
+normalize_choropleth <- function(descriptor) {
+  areas <- descriptor$areas
+  if (is.null(areas) || length(areas) == 0) return(list())
+  lapply(areas, function(a) {
+    out <- list(id = jsonlite::unbox(as.character(a$id)))
+    v <- a$value
+    out$value <- jsonlite::unbox(if (is.null(v) || (length(v) == 1 && is.na(v))) NA
+                                 else if (is.numeric(v)) as.numeric(v) else as.character(v))
+    if (!is.null(a$label)) out$label <- jsonlite::unbox(as.character(a$label))
+    out
+  })
+}
+
+#' Binned color scale for a choropleth: breaks/colors stay arrays, na_color and
+#' legend_max unbox to scalars. Returns NULL if no scale was supplied.
+.embed_choropleth_scale <- function(cs) {
+  if (is.null(cs)) return(NULL)
+  list(
+    breaks     = as.numeric(cs$breaks),
+    colors     = as.character(cs$colors),
+    na_color   = jsonlite::unbox(as.character(cs$na_color %||% "#C0C0C0")),
+    legend_max = jsonlite::unbox(as.numeric(cs$legend_max %||% max(cs$breaks)))
+  )
+}
+
 #' Build the JSON payload for a descriptor, dispatching on descriptor$kind.
 #' Returns the payload WITHOUT the per-response `source` tag.
 .embed_build_payload <- function(app, view, desc, err = NULL) {
@@ -392,17 +399,23 @@ normalize_table <- function(descriptor) {
   if (empty) {
     payload <- c(base, list(status = jsonlite::unbox("unavailable")),
                  switch(kind,
-                        map     = list(points = list()),
-                        boxplot = list(boxes = list()),
-                        table   = list(columns = list(), rows = list()),
+                        map        = list(points = list()),
+                        boxplot    = list(boxes = list()),
+                        table      = list(columns = list(), rows = list()),
+                        choropleth = list(geojson = NULL, areas = list(),
+                                          feature_id_key = jsonlite::unbox(desc$feature_id_key %||% "properties.id"),
+                                          color_scale = .embed_choropleth_scale(desc$color_scale)),
                         list(series = list())))
     if (!is.null(err)) payload$note <- jsonlite::unbox(err)
     return(payload)
   }
   data_parts <- switch(kind,
-    map     = list(points = normalize_map(desc)),
-    boxplot = list(boxes = normalize_boxplot(desc)),
-    table   = normalize_table(desc),
+    map        = list(points = normalize_map(desc)),
+    boxplot    = list(boxes = normalize_boxplot(desc)),
+    table      = normalize_table(desc),
+    choropleth = list(geojson = desc$geojson, areas = normalize_choropleth(desc),
+                      feature_id_key = jsonlite::unbox(desc$feature_id_key %||% "properties.id"),
+                      color_scale = .embed_choropleth_scale(desc$color_scale)),
     list(series = normalize_series(desc)))
   c(base, list(status = jsonlite::unbox("ok")), data_parts)
 }

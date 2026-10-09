@@ -177,7 +177,9 @@
       margin: { t: 40, r: 16, b: 60, l: 56 },
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
-      yaxis: { title: d.y_label || "" },
+      // Anchor the value axis at 0 so magnitudes read honestly (Plotly would
+      // otherwise auto-zoom a line/area chart to start partway up).
+      yaxis: { title: d.y_label || "", rangemode: "tozero" },
       xaxis: { title: d.x_label || "", automargin: true },
       showlegend: traces.length > 1,
       legend: { orientation: "h", y: -0.2 }
@@ -290,6 +292,65 @@
     Plotly.newPlot(elChart, [trace], layout, { displayModeBar: false, responsive: true });
   }
 
+  function renderChoropleth(d) {
+    if (!d || d.status !== "ok" || !d.geojson || !d.areas || !d.areas.length) {
+      showMessage("This map is refreshing. Check back shortly."); return;
+    }
+    elMsg.style.display = "none"; elTile.innerHTML = ""; elTable.style.display = "none";
+    elChart.style.display = "block";
+    var cs = d.color_scale || {};
+    var breaks = cs.breaks || [0, 1]; var colors = cs.colors || ["#feb24c"];
+    var lmax = cs.legend_max || breaks[breaks.length - 1] || 1;
+    var naColor = cs.na_color || "#C0C0C0";
+    var fidk = d.feature_id_key || "properties.id";
+    var fmt = (d.resolved_options && d.resolved_options.value_format) || "%.2f";
+    function fmtVal(v) {
+      if (v == null) return "No data available";
+      var m = fmt.match(/%\.(\d+)f/);
+      return (m ? Number(v).toFixed(+m[1]) : String(v));
+    }
+    // Stepped colorscale from the app's non-linear colorBin breaks.
+    var scale = [];
+    for (var i = 0; i < colors.length && i + 1 < breaks.length; i++) {
+      scale.push([Math.min(breaks[i] / lmax, 1), colors[i]]);
+      scale.push([Math.min(breaks[i + 1] / lmax, 1), colors[i]]);
+    }
+    var withData = d.areas.filter(function (a) { return a.value != null; });
+    var noData   = d.areas.filter(function (a) { return a.value == null; });
+    var traces = [];
+    if (noData.length) {
+      // Grey no-data areas (matches the app's #C0C0C0 na.color).
+      traces.push({
+        type: "choroplethmapbox", geojson: d.geojson, featureidkey: fidk,
+        locations: noData.map(function (a) { return a.id; }),
+        z: noData.map(function () { return 0; }),
+        colorscale: [[0, naColor], [1, naColor]], showscale: false,
+        marker: { opacity: 0.65, line: { color: "#333", width: 1 } },
+        text: noData.map(function (a) { return String(a.label != null ? a.label : a.id); }),
+        hovertemplate: "%{text}: No data available<extra></extra>"
+      });
+    }
+    if (withData.length) {
+      traces.push({
+        type: "choroplethmapbox", geojson: d.geojson, featureidkey: fidk,
+        locations: withData.map(function (a) { return a.id; }),
+        z: withData.map(function (a) { return Math.min(Number(a.value), lmax); }),
+        zmin: 0, zmax: lmax, colorscale: scale, showscale: true,
+        colorbar: { title: { text: d.y_label || "", side: "right" }, thickness: 14 },
+        marker: { opacity: 0.65, line: { color: "#333", width: 1 } },
+        customdata: withData.map(function (a) { return fmtVal(a.value); }),
+        text: withData.map(function (a) { return String(a.label != null ? a.label : a.id); }),
+        hovertemplate: "%{text}: %{customdata}<extra></extra>"
+      });
+    }
+    var layout = {
+      title: { text: titleFor(d), font: { size: 16 } },
+      margin: { t: 34, r: 0, b: 0, l: 0 }, showlegend: false,
+      mapbox: { style: "open-street-map", center: { lat: 44.95, lon: -93.3 }, zoom: 8.5 }
+    };
+    Plotly.newPlot(elChart, traces, layout, { displayModeBar: false, responsive: true });
+  }
+
   function renderTable(d) {
     if (!d || d.status !== "ok" || !d.rows || !d.rows.length) {
       showMessage("This table is refreshing. Check back shortly."); return;
@@ -315,10 +376,11 @@
       if (d && d.status === "error") { showMessage("Unavailable: " + esc(d.error || "unknown error")); return; }
       if (endpoint === "statbox") { renderStatbox(d); return; }
       switch ((d && d.payload_type) || "series") {
-        case "map":     renderMap(d); break;
-        case "boxplot": renderBox(d); break;
-        case "table":   renderTable(d); break;
-        default:        renderChart(d);
+        case "map":        renderMap(d); break;
+        case "choropleth": renderChoropleth(d); break;
+        case "boxplot":    renderBox(d); break;
+        case "table":      renderTable(d); break;
+        default:           renderChart(d);
       }
     })
     .catch(function () { showMessage("Could not load embed data."); });

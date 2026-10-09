@@ -1035,12 +1035,29 @@ EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
   params = list(
     year             = list(type = "int",    default = NULL),
     yrwk             = list(type = "int",    default = NULL),
+    analysis_date    = list(type = "date",   default = NULL),
     species          = list(type = "string", default = "Total_Cx_vectors"),
     infection_metric = list(type = "enum", allowed = c("mle", "mir"), default = "mle"),
     metric_type      = list(type = "enum", allowed = c("abundance", "infection", "vector_index"), default = "abundance"),
     color_theme      = list(type = "string", default = "MMCD")
   )
 )
+ # make date-to-yrwk resolution function
+.trap_yrwk_for_date <- function(env, d) {
+  d <- suppressWarnings(as.Date(d)); if (length(d) != 1 || is.na(d)) return(NA_integer_)
+  yr <- as.integer(format(d, "%Y"))
+  wk <- tryCatch(env$fetch_available_weeks(yr), error = function(e) NULL)
+  if (!is.data.frame(wk) || nrow(wk) == 0 || !("yrwk" %in% names(wk))) return(NA_integer_)
+  # MMWR/epiweek matches the US (Sunday-based) week-of-year (%U) for this data
+  # (verified against lookup_weeknum); pick the closest available epiweek.
+  target <- as.integer(format(d, "%U"))
+  ew <- if ("epiweek" %in% names(wk)) suppressWarnings(as.integer(wk$epiweek))
+        else suppressWarnings(as.integer(wk$yrwk)) %% 100L
+  yk <- suppressWarnings(as.integer(wk$yrwk))
+  ok <- !is.na(ew) & !is.na(yk); ew <- ew[ok]; yk <- yk[ok]
+  if (length(yk) == 0) return(NA_integer_)
+  yk[which.min(abs(ew - target))]
+}
 .trap_year <- function(p) {
   y <- suppressWarnings(as.integer(p$year))
   if (length(y) != 1 || is.na(y)) as.integer(format(Sys.Date(), "%Y")) else y
@@ -1112,18 +1129,22 @@ EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
   inf_met <- p$infection_metric %||% "mle"
   metric_type <- p$metric_type %||% "abundance"
 
-  # Resolve the week: explicit yrwk, else the latest available week for the year.
+  # Resolve the week: explicit yrwk, else the week nearest analysis_date, else
+  # the latest available week for the year.
   # (NULL yrwk -> as.integer() is integer(0); guard length so is.na() doesn't
   # choke on a zero-length value -- "argument is of length zero".)
   yrwk <- suppressWarnings(as.integer(p$yrwk))
   if (length(yrwk) != 1 || is.na(yrwk)) {
     yrwk <- NA_integer_
-    yr <- .trap_year(p)
-    wk <- tryCatch(env$fetch_available_weeks(yr), error = function(e) NULL)
-    if (is.data.frame(wk) && nrow(wk) > 0 && "yrwk" %in% names(wk)) {
-      cand <- suppressWarnings(as.integer(wk$yrwk))
-      cand <- cand[!is.na(cand)]
-      if (length(cand) > 0) yrwk <- max(cand)
+    if (!is.null(p$analysis_date)) yrwk <- .trap_yrwk_for_date(env, p$analysis_date)
+    if (length(yrwk) != 1 || is.na(yrwk)) {
+      yr <- .trap_year(p)
+      wk <- tryCatch(env$fetch_available_weeks(yr), error = function(e) NULL)
+      if (is.data.frame(wk) && nrow(wk) > 0 && "yrwk" %in% names(wk)) {
+        cand <- suppressWarnings(as.integer(wk$yrwk))
+        cand <- cand[!is.na(cand)]
+        if (length(cand) > 0) yrwk <- max(cand)
+      }
     }
   }
   if (length(yrwk) != 1 || is.na(yrwk)) return(.embed_desc_choropleth(data.frame(), NULL, list()))

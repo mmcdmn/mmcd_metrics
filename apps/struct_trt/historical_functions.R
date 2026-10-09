@@ -79,9 +79,18 @@ load_historical_struct_data <- function(start_year, end_year,
     # Determine which years need current table vs archive table
     # Query full requested range - database will return what exists
     current_years_needed <- start_year:end_year
-    # For archive, query all years before current table starts
+    # Archive holds older seasons. Query the FULL requested range from the
+    # archive too -- NOT just up to (current table's min year - 1). The current
+    # table's min inspdate year reflects ALL list_types, but structure (STR)
+    # treatments for a given year can still live in the archive even when the
+    # current table has that year for other list_types. Concretely: 2025 STR
+    # data is in the archive, while the current table's 2025 rows are non-STR
+    # and its STR data starts at 2026. Capping the archive at min(current)-1
+    # (=2024) silently dropped all of 2025. Both queries are year-filtered and
+    # the combined result is de-duplicated below, so querying the overlapping
+    # range from both tables is safe.
     archive_start_year <- start_year
-    archive_end_year <- min(current_table_years, na.rm = TRUE) - 1
+    archive_end_year <- end_year
     use_archive <- archive_start_year <= archive_end_year
     
     all_data <- data.frame()
@@ -147,7 +156,15 @@ load_historical_struct_data <- function(start_year, end_year,
       archive_data <- dbGetQuery(con, archive_query)
       all_data <- bind_rows(all_data, archive_data)
     }
-    
+
+    # Both tables were queried over the (possibly overlapping) requested range,
+    # so drop any exact-duplicate treatment rows a year present in both tables
+    # could otherwise contribute (the per-query SELECT DISTINCT only de-dupes
+    # within one table).
+    if (nrow(all_data) > 0) {
+      all_data <- dplyr::distinct(all_data)
+    }
+
     # Add facility and foreman name lookups
     if (nrow(all_data) > 0) {
       facility_lookup <- get_facility_lookup()

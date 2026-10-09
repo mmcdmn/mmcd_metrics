@@ -1113,14 +1113,20 @@ EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
   metric_type <- p$metric_type %||% "abundance"
 
   # Resolve the week: explicit yrwk, else the latest available week for the year.
+  # (NULL yrwk -> as.integer() is integer(0); guard length so is.na() doesn't
+  # choke on a zero-length value -- "argument is of length zero".)
   yrwk <- suppressWarnings(as.integer(p$yrwk))
-  if (is.na(yrwk)) {
+  if (length(yrwk) != 1 || is.na(yrwk)) {
+    yrwk <- NA_integer_
     yr <- .trap_year(p)
     wk <- tryCatch(env$fetch_available_weeks(yr), error = function(e) NULL)
-    if (is.data.frame(wk) && nrow(wk) > 0 && "yrwk" %in% names(wk))
-      yrwk <- suppressWarnings(as.integer(wk$yrwk[which.max(as.integer(wk$yrwk))]))
+    if (is.data.frame(wk) && nrow(wk) > 0 && "yrwk" %in% names(wk)) {
+      cand <- suppressWarnings(as.integer(wk$yrwk))
+      cand <- cand[!is.na(cand)]
+      if (length(cand) > 0) yrwk <- max(cand)
+    }
   }
-  if (is.na(yrwk)) return(.embed_desc_choropleth(data.frame(), NULL, list()))
+  if (length(yrwk) != 1 || is.na(yrwk)) return(.embed_desc_choropleth(data.frame(), NULL, list()))
 
   areas_sf <- tryCatch(env$load_vi_area_geometries(), error = function(e) NULL)
   if (is.null(areas_sf) || !inherits(areas_sf, "sf") || nrow(areas_sf) == 0)
@@ -1206,9 +1212,16 @@ EMBED_PARAM_SPEC[["air_sites_simple"]] <- list(
     hist_chart_type    = list(type = "string", default = "line"),
     hist_start_date    = list(type = "date",   default = NULL),
     hist_end_date      = list(type = "date",   default = NULL),
+    analysis_date      = list(type = "date",   default = NULL),
     larvae_threshold   = list(type = "int",    default = 2L)
   )
 )
+
+.air_analysis_date <- function(p) {
+  d <- p$analysis_date
+  if (is.null(d) || length(d) != 1 || is.na(d)) return(Sys.Date())
+  dd <- suppressWarnings(as.Date(d)); if (is.na(dd)) Sys.Date() else dd
+}
 .air_historical_producer <- function(p) {
   env <- load_app_env("air_sites_simple", c("data_functions.R", "historical_functions.R"))
   if (is.null(env) || is.null(env$get_comprehensive_historical_data)) return(NULL)
@@ -1249,7 +1262,7 @@ EMBED_PARAM_SPEC[["air_sites_simple"]] <- list(
   fac <- p$facility; if (is.null(fac) || identical(fac, "all")) fac <- NULL
   pri <- p$priority; if (is.null(pri) || (length(pri) == 1 && identical(pri, "all"))) pri <- NULL
   zone <- p$zone %||% "all"; zf <- if (zone %in% c("all", "All")) NULL else zone
-  data <- tryCatch(env$get_air_sites_data(analysis_date = Sys.Date(),
+  data <- tryCatch(env$get_air_sites_data(analysis_date = .air_analysis_date(p),
     facility_filter = fac, priority_filter = pri, zone_filter = zf,
     larvae_threshold = p$larvae_threshold %||% 2L), error = function(e) NULL)
   if (!is.data.frame(data) || nrow(data) == 0) return(.embed_desc_map(data.frame(), "latitude", "longitude"))
@@ -1278,7 +1291,7 @@ EMBED_PARAM_SPEC[["air_sites_simple"]] <- list(
   fac <- p$facility; if (is.null(fac) || identical(fac, "all")) fac <- NULL
   pri <- p$priority; if (is.null(pri) || (length(pri) == 1 && identical(pri, "all"))) pri <- NULL
   zone <- p$zone %||% "all"; zf <- if (zone %in% c("all", "All")) NULL else zone
-  data <- tryCatch(env$get_air_sites_data(analysis_date = Sys.Date(),
+  data <- tryCatch(env$get_air_sites_data(analysis_date = .air_analysis_date(p),
     facility_filter = fac, priority_filter = pri, zone_filter = zf,
     larvae_threshold = p$larvae_threshold %||% 2L), error = function(e) NULL)
   metric <- p$metric_type %||% "sites"

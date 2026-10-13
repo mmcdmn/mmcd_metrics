@@ -38,7 +38,7 @@ Engine: `shared/url_state_helpers.R` (deep link + auto-refresh),
 | Inspections | `/inspections/` | **two-stage**: auto-clicks Load Data → the tab's Analyze |
 | Cattail Inspections | `/cattail_inspections/` | 2 refresh buttons (per tab) |
 | Trap Surveillance | `/trap_surveillance/` | targets the main map view |
-| Control Efficacy | `/control_efficacy/` | single refresh, 3 tabs |
+| Checkback Efficacy | `/control_efficacy/` | single refresh, 4 tabs (incl. Bioassay Efficacy); route keeps the `control_efficacy` id |
 | Mosquito Monitoring | `/mosquito-monitoring/` | Update button per tab (All / Compare) |
 | Mosquito Surveillance Map | `/mosquito_surveillance_map/` | auto-updating map (no refresh click) |
 | Section Cards | `/section-cards/` | filters + Generate Cards |
@@ -324,12 +324,23 @@ Example: `.../cattail_inspections/?tabs=Historical%20Comparison&hist_metric=acre
 
 Example: `.../trap_surveillance/?metric_type=vector_index&infection_metric=mle`
 
-### Control Efficacy — `/control_efficacy/`
+### Checkback Efficacy — `/control_efficacy/`
+
+The app is labelled **Checkback Efficacy**; the route, the embed app id and all
+param names keep the original `control_efficacy` spelling, so existing links and
+embeds are unaffected.
+
+Four tabs. The `efficacy` / `progress` / `status_tables` tabs measure **checkback**
+efficacy (pre- vs post-treatment dip counts, `action='4'`). The `bioassay` tab
+measures **bioassay** efficacy (pupal emergence tests, `action='P'`) and has its
+own `bio_*` filters.
 
 | Param | Options |
 |---|---|
-| `tabs` | `efficacy` \| `progress` \| `status_tables` |
-| `facility` | facility |
+| `tabs` | `efficacy` \| `bioassay` \| `progress` \| `status_tables` |
+| `facility` | facility (shared by all tabs) |
+| `year_range` | from,to (shared by all tabs) |
+| `color_theme` | color_theme |
 | `comparison_mode` | `genus` \| `material` \| `dosage` |
 | `genus` | `Both` \| `Aedes` \| `Culex` |
 | `material_type` | `all` \| `bti` \| `methoprene` \| `spinosad` |
@@ -341,10 +352,24 @@ Example: `.../trap_surveillance/?metric_type=vector_index&infection_metric=mle`
 | `checkback_type` | `(from DB)` |
 | `checkback_number` | number |
 | `checkback_percent` | number |
-| `year_range` | from,to |
-| `color_theme` | color_theme |
 
-Example: `.../control_efficacy/?tabs=progress&facility=Sr&year_range=2020,2025`
+Bioassay tab (`tabs=bioassay`) — every sidebar filter is a param:
+
+| Param | Options |
+|---|---|
+| `bio_comparison` | `window` \| `material` \| `dosage` \| `genus` |
+| `bio_genus` | `Both` \| `Aedes` \| `Culex` \| `Unknown` |
+| `bio_season` | `Spring` \| `Summer` (comma-separated) |
+| `bio_trt_type` | `Air` \| `Ground` \| `Drone` \| `Catch Basin` \| `None` (comma-separated, URL-encode spaces) |
+| `bio_window` | `Within window` \| `Past expiry` \| `Untreated` (comma-separated, **URL-encode spaces**) |
+| `bio_material_type` | `all` \| `bti` \| `methoprene` \| `spinosad` |
+| `bio_dosage` | `all` `(more from DB)` |
+| `bio_pending` | `true` \| `false` — include bioassays still awaiting an emergence count in the table |
+
+Examples:
+- `.../control_efficacy/?tabs=progress&facility=Sr&year_range=2020,2025`
+- `.../control_efficacy/?tabs=bioassay&bio_comparison=material&bio_window=Within%20window&facility=Sr`
+- `.../control_efficacy/?tabs=bioassay&bio_trt_type=Ground,Catch%20Basin&bio_pending=true`
 
 ### Mosquito Monitoring — `/mosquito-monitoring/`
 
@@ -480,66 +505,10 @@ Examples:
 - `http://localhost:3838/embed/?app=suco_history&view=graph&group_by=facility&graph_type=bar`
 - `http://localhost:3838/embed/?app=ground_prehatch_progress&view=historical&facility=Sr&display_metric=acres`
 - `<iframe src="http://localhost:3838/embed/?app=drone&view=historical" width="600" height="400" style="border:0"></iframe>`
+- `http://localhost:3838/embed/?app=trap_surveillance&view=map&metric_type=vector_index&infection_metric=mle` (VI-area choropleth)
+- `http://localhost:3838/embed/?app=air_sites_simple&view=pipeline&metric_type=acres` (process-summary table)
+- `http://localhost:3838/embed/?app=cattail_treatments&view=historical&hist_status_metric=treated&group_by=foreman`
+- `http://localhost:3838/embed/?app=control_efficacy&view=bioassay&bio_comparison=window` (bioassay % inhibition)
 
-### How it works (freshness)
-
-- **Peek → compute → cache.** A request first checks Redis. Warm combo → instant
-  (`source:"cache"`). Cold/rare combo → the API runs that app's own data code once,
-  returns it (`source:"live"`), and caches it for a short TTL (~5 min) so repeats
-  are instant. A public viewer never gets a 500 — failures/empties come back
-  `status:"unavailable"` (HTTP 200) and the widget shows a soft message.
-- Each chart returns **data series + resolved options** (JSON); the widget draws it
-  with the resolved `graph_type` client-side.
-
-### JSON API (no key, CORS `*`)
-
-- `GET /v1/public/embed/metrics` — lists v1 metrics **and** the v2 `apps` catalog
-  (each app's `views` + accepted `params`).
-- `GET /v1/public/embed/chart?app=<app>&view=<view>&<filters…>`
-- `GET /v1/public/embed/statbox?app=<app>&view=<view>&<filters…>` — the latest
-  point of the first series as a tile.
-
-Example: `http://localhost:3838/v1/public/embed/chart?app=suco_history&view=graph&group_by=facility&graph_type=bar`
-
-**v1 back-compat:** the old `?metric=<id>&type=<avg>` form still works on both
-`/embed/` and the JSON endpoints (serves the cache-only historical_averages series).
-
-### App coverage (embed v2 producers)
-
-| App | Views wired | Status |
-|---|---|---|
-| suco_history | `graph`, `top_locations` | ✅ done |
-| ground_prehatch_progress | `historical` | ✅ done |
-| drone | `historical` | ✅ done |
-| catch_basin_status | `historical` | ✅ done |
-| struct_trt | `historical` | ✅ done |
-| cattail_inspections | `historical` | ✅ done |
-| trap_surveillance, mosquito-monitoring | trend charts | ⏳ producer pending (series) |
-| cattail_treatments | `historical` | ⏳ producer pending (aggregation inside its chart fn) |
-| mosquito_surveillance_map, air_sites_simple | map (points) | ⏳ producer pending (`map` payload ready) |
-| control_efficacy | boxplot | ⏳ producer pending (`boxplot` payload ready) |
-| inspections | gap tables | ⏳ producer pending (`table` payload ready) |
-
-**Payload kinds** (chosen: extend per type) — all four are built in the framework
-and rendered by the widget: `series` (x/y, drawn by `graph_type`), `map`
-(points `[{lat,lon,value,label}]` → OpenStreetMap), `boxplot` (per-group
-min/q1/median/q3/max), `table` (columns + rows). Each response carries
-`payload_type`. Remaining work is per-app **producers** that feed these shapes.
-
-**Out of embed scope** (no graph to embed): section-cards, fos_capacity_planning,
-air_inspection_checklist, and all legacy apps.
 
 ---
-
-## 5. Known limitations
-
-- Embed v2 is being rolled out per app (see coverage table); apps marked *in
-  progress* still only answer the v1 metric-based embed.
-- First view of a **cold** filter combo runs one live query (then cached) — not
-  instant; warm combos are instant.
-- Map / boxplot / gap-table apps don't fit the `{x,y}` series JSON yet — a payload
-  shape for those is an open decision.
-- `(from DB)` params (facility, FOS, species, years, some chart/priority/material
-  filters) load their choices at runtime — the value list is whatever the app's
-  dropdown currently shows; facility short codes are `all | E | N | Sj | Sr | Wm | Wp`.
-

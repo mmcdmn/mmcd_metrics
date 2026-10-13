@@ -118,10 +118,15 @@ The database contains the following tables (organized by category):
   - `'9'` - Cattail inspection
   - `'A'` - Aerial (AIR) treatment
   - `'D'` - Drone treatment
+  - `'P'` - Pupae for bioassay (pupae collected and held to count adult emergence)
   - Others exist for various operational codes
 - `matcode` (TEXT) - Material/product code used for treatment (NULL for inspections)
 - `wet` (TEXT) - Water depth indicator: numeric value (as text) for depth, or `'A'` for flooded
 - `numdip` (INTEGER) - Number of larvae found PER dip
+- `pupaecnt` (INTEGER) - Bioassay only (`action = 'P'`): pupae collected for the emergence test
+- `emergedcnt` (INTEGER, NULLABLE) - Bioassay only: adults that emerged. **NULL means the result has not been recorded yet (pending), NOT zero emergence.** Constrained to `emergedcnt <= pupaecnt`, and reset when `pupaecnt = 0`.
+- `sampnum_yr` (TEXT) - Sample number for this visit; joins `dblarv_species_current/archive` for species composition. For `action = 'P'` this is the pupal/larval sample
+- `presamp_yr` (TEXT) - Sample number of the pre-inspection this record refers back to
 - `acres` (NUMERIC) - Acres treated or inspected
 - `zone` (TEXT) - Priority zone: `'1'` (P1) or `'2'` (P2) - **Note**: May be NULL or inconsistent, prefer `gis_sectcode.zone`
 - `facility` (TEXT) - Facility code (Sr, Sj, N, E, MO, etc.) - **Note**: Prefer `gis_sectcode.facility` for consistency
@@ -135,7 +140,7 @@ The database contains the following tables (organized by category):
 - Cattail Inspections
 - Cattail Treatments
 - Air Sites Simple
-- Control Efficacy
+- Checkback Efficacy / Bioassay Efficacy (`apps/control_efficacy`)
 
 **Common Filters**:
 - Action codes for different operations (`action = '3'` for ground treatments, `action = '2'` for inspections only, `action = '1'` for inspect and treat)
@@ -147,6 +152,7 @@ The database contains the following tables (organized by category):
 - **Missing zone/facility data**: Not all records have `zone` or `facility`. Always join with `gis_sectcode` for complete coverage.
 - **Cattail operations**: Use `action = '9'` for inspections, `action IN ('3', 'A')` for treatments
 - **Prehatch treatments**: Join with `mattype_list_targetdose` where `prehatch = 'prehatch'` or where `prehatch = 'briquet'`
+- **`effect_days` lives on two tables and they disagree.** `mattype_list_targetdose.effect_days` is per-`matcode` and is what every app in this repo reads; `mattype_list.effect_days` is per-`mattype` and differs for several materials (e.g. Alt_P35 is 30 in targetdose, 35 in mattype_list; Sumilarv_0.5G is 150 vs 28). Use the targetdose value, and be aware the two can diverge.
 
 ---
 

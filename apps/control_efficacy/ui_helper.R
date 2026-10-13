@@ -45,7 +45,7 @@ control_efficacy_ui <- function() {
       "))
     ),
     
-    titlePanel("Control Efficacy - Air Treatment Checkbacks"),
+    titlePanel("Checkback Efficacy - Air Treatment Checkbacks"),
     
     # Toggle button OUTSIDE the layout so it's always visible
     div(style = "margin-bottom: 15px;",
@@ -196,6 +196,73 @@ control_efficacy_ui <- function() {
                 ),
                 
                 checkboxInput("use_mullas", "Use Mulla's formula", value = FALSE)
+              ),
+
+              # Bioassay Tab Filters
+              conditionalPanel(
+                condition = "input.tabs == 'bioassay'",
+                hr(),
+                h5("Bioassay Filters"),
+
+                selectInput(
+                  "bio_comparison_mode", "Compare By:",
+                  choices = c("By Material Window" = "window",
+                              "By Material" = "material",
+                              "By Dosage" = "dosage",
+                              "By Genus" = "genus"),
+                  selected = "window"
+                ),
+
+                selectInput(
+                  "bio_genus_filter", "Genus:",
+                  choices = c("All" = "Both", "Aedes" = "Aedes",
+                              "Culex" = "Culex", "Unknown" = "Unknown"),
+                  selected = "Both"
+                ),
+
+                checkboxGroupInput(
+                  "bio_season_filter", "Season:",
+                  choices = c("Spring" = "Spring", "Summer" = "Summer"),
+                  selected = c("Spring", "Summer"),
+                  inline = TRUE
+                ),
+
+                checkboxGroupInput(
+                  "bio_trt_type_filter", "Treatment Type:",
+                  choices = c("Air" = "Air", "Ground" = "Ground",
+                              "Drone" = "Drone", "Catch Basin" = "Catch Basin",
+                              "None" = "None"),
+                  selected = c("Air", "Ground", "Drone", "Catch Basin", "None"),
+                  inline = TRUE
+                ),
+
+                checkboxGroupInput(
+                  "bio_window_filter", "Material Window:",
+                  choices = c("Within window" = "Within window",
+                              "Past expiry" = "Past expiry",
+                              "Untreated" = "Untreated"),
+                  selected = c("Within window", "Past expiry", "Untreated")
+                ),
+
+                selectInput(
+                  "bio_material_type_filter", "Material Type:",
+                  choices = c(
+                    "All Materials" = "all",
+                    "Bti Only" = "bti",
+                    "Methoprene Only" = "methoprene",
+                    "Spinosad Only" = "spinosad"
+                  ),
+                  selected = "all"
+                ),
+
+                selectInput(
+                  "bio_dosage_filter", "Target Dosage:",
+                  choices = c("All Dosages" = "all"),
+                  selected = "all"
+                ),
+
+                checkboxInput("bio_include_pending",
+                              "Include pending in table", value = FALSE)
               )
             ), # end filter_section
             
@@ -219,7 +286,7 @@ control_efficacy_ui <- function() {
             
             # --- Control Efficacy ---
             tabPanel(
-              "Control Efficacy", value = "efficacy",
+              "Checkback Efficacy", value = "efficacy",
               br(),
               fluidRow(
                 column(3, uiOutput("efficacy_valid_count")),
@@ -245,6 +312,49 @@ control_efficacy_ui <- function() {
               DT::dataTableOutput("invalid_details")
             ),
             
+            # --- Bioassay Efficacy ---
+            tabPanel(
+              "Bioassay Efficacy", value = "bioassay",
+              br(),
+              fluidRow(
+                column(3, uiOutput("bio_total_count")),
+                column(3, uiOutput("bio_pending_count")),
+                column(3, uiOutput("bio_median_inhibition")),
+                column(3, uiOutput("bio_past_expiry_count"))
+              ),
+              br(),
+              div(class = "alert alert-info", role = "note",
+                tags$i(class = "fa fa-info-circle", `aria-hidden` = "true"),
+                tags$span(style = "font-size: 0.9em;",
+                  " A bioassay holds pupae collected from a site to count how many emerge as adults.",
+                  " % Inhibition = 100 x (1 - emerged / pupae). Bioassays with no emergence count",
+                  " entered yet are ", tags$b("pending"), " and are excluded from the chart and",
+                  " statistics rather than scored as 100% inhibition."
+                )
+              ),
+              h4("% Emergence Inhibition"),
+              a11y_figure(
+                plotly::plotlyOutput("inhibition_boxplot", height = "600px"),
+                label = paste("Box plot of bioassay percent emergence inhibition,",
+                              "grouped by the selected comparison, season and year"),
+                caption = paste("Pending bioassays and those that found no pupae are",
+                                "excluded. Negative values mean more adults emerged",
+                                "than the pupae count implies.")
+              ),
+              br(),
+              h4("Bioassay Data Table"),
+              DT::dataTableOutput("bioassay_table"),
+              br(),
+              h4("Pending Bioassays"),
+              div(class = "alert alert-warning", role = "note",
+                tags$i(class = "fa fa-clock", `aria-hidden` = "true"),
+                tags$span(style = "font-size: 0.9em;",
+                  " Pupae were collected but no emergence count has been recorded yet.",
+                )
+              ),
+              DT::dataTableOutput("bioassay_pending_table")
+            ),
+
             # --- Checkback Progress ---
             tabPanel(
               "Checkback Progress", value = "progress",

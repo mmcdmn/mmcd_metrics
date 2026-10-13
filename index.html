@@ -399,7 +399,7 @@
     <template id="tpl-fos-launcher">
         <div class="app-card">
             <img src="shared/assets/layer-group.jpg" alt="" class="app-icon">
-            <h3>FOS Overview Dashboard (NEW)</h3>
+            <h3>FOS Overview Dashboard</h3>
             <p>5 key metrics for FOS: Ground prehatch by township, Suco goal progress for facility, catch basin metric, air work progress, and bioassay.</p>
             <form class="launcher" id="fos-launcher">
                 <div class="launcher-field">
@@ -529,7 +529,9 @@
                 ]
             },
             {
-                id: 'monday', title: 'Monday Samples', apps: [
+                id: 'monday', title: 'Samples (NEW)', apps: [
+                    { name: ' Efficacy (NEW)', url: 'control_efficacy/', icon: 'larvae.png',
+                      desc: 'Track treatment efficacy through checkbacks and bioassay (NEW) analysis across species, timing, and treatment types.' },
                     { name: 'Mosquito Surveillance Map', url: 'mosquito_surveillance_map/', icon: 'adult.png',
                       desc: 'Interactive geographic mapping of mosquito surveillance data with species filtering, surveillance type selection, and temporal analysis. Visualize mosquito counts across monitoring locations. This will take some time to load, so be patient.' },
                     { name: 'Mosquito Monitoring', url: 'mosquito-monitoring/', icon: 'adult.png',
@@ -555,8 +557,7 @@
             },
             {
                 id: 'tests', title: 'Tests', apps: [
-                    { name: 'Control Efficacy', url: 'control_efficacy/', icon: 'larvae.png',
-                      desc: 'Track treatment efficacy through systematic checkback analysis. Monitor checkback completion rates, treatment-to-checkback timing, and dip count changes to measure control effectiveness Between species and material types.' },
+
                     { name: 'Trap Surveillance Test', url: 'trap_survillance_test/', icon: 'adult.png',
                       desc: 'Prototype app to compute section vector index using k-nearest traps.' },
                     { name: 'FOS Capacity Planning (NEW)', url: 'fos_capacity_planning/', icon: 'layer-group.jpg',

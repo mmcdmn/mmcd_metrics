@@ -4,6 +4,7 @@
 # Functions:
 # - create_checkback_progress_chart() - Progress bars for checkback completion by brood
 # - create_reduction_boxplot() - Box plots of % reduction by genus/season/year
+# - create_inhibition_boxplot() - Box plots of bioassay % emergence inhibition
 
 library(ggplot2)
 library(plotly)
@@ -127,7 +128,12 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD", comparison_m
     return(ggplotly(p))
   }
   
-  # Determine fill variable and colors based on comparison mode
+  # Determine fill variable and colors based on comparison mode.
+  # Colours come from the shared theme system so the Color Theme selector
+  # actually drives this chart.
+  status_cols <- get_status_colors(theme = theme)
+  palette     <- get_theme_palette(theme)
+
   fill_colors <- NULL
   if (comparison_mode == "material" && "active_ingredient" %in% names(plot_data)) {
     plot_data$fill_var <- ifelse(is.na(plot_data$active_ingredient), "Unknown", plot_data$active_ingredient)
@@ -138,7 +144,16 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD", comparison_m
   } else {
     plot_data$fill_var <- plot_data$genus
     fill_label <- "Genus"
-    fill_colors <- c("Aedes" = "#D32F2F", "Culex" = "#1976D2")
+    fill_colors <- c(
+      "Aedes" = unname(palette$primary[4]),
+      "Culex" = unname(palette$primary[1])
+    )
+  }
+
+  if (is.null(fill_colors)) {
+    lv <- sort(unique(plot_data$fill_var))
+    fill_colors <- setNames(generate_distinct_colors(length(lv), theme), lv)
+    if ("Unknown" %in% lv) fill_colors[["Unknown"]] <- unname(status_cols[["unknown"]])
   }
   
   # Build x-axis categories with sample counts
@@ -172,8 +187,11 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD", comparison_m
       outlier.size = 1.5,
       width = 0.7
     ) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", linewidth = 0.5) +
-    geom_hline(yintercept = 80, linetype = "dotted", color = "forestgreen", linewidth = 0.7, alpha = 0.7) +
+    geom_hline(yintercept = 0, linetype = "dashed",
+               color = unname(palette$surface[["neutral"]]), linewidth = 0.5) +
+    geom_hline(yintercept = 80, linetype = "dotted",
+               color = unname(palette$indicators[["good"]]),
+               linewidth = 0.7, alpha = 0.7) +
     scale_y_continuous(
       breaks = seq(-10, 100, by = 10),
       labels = function(x) paste0(x, "%")
@@ -213,3 +231,144 @@ create_reduction_boxplot <- function(efficacy_data, theme = "MMCD", comparison_m
   return(p_plotly)
 }
 
+#' Create bioassay emergence-inhibition box plot
+#'
+#' X-axis: "Year Season" category
+#' Y-axis: % Inhibition. Negative values are kept -- more adults emerged than
+#'         the pupae count implies is normal, which is real signal, not noise.
+#'         (The checkback boxplot clamps negatives; this one deliberately does not.)
+#'
+#' @param bio_data Data frame from load_bioassay_data() / filter_bioassay_data()
+#' @param theme Character. Color theme ("MMCD", "IBM", "Wong", etc.)
+#' @param comparison_mode "genus", "material", "dosage", or "window"
+#'
+#' @return plotly object
+create_inhibition_boxplot <- function(bio_data, theme = "MMCD", comparison_mode = "genus") {
+
+  if (is.null(bio_data) || nrow(bio_data) == 0) {
+    p <- ggplot() +
+      geom_text(aes(x = 1, y = 1, label = "No bioassay data available"), size = 6) +
+      theme_void()
+    return(ggplotly(p))
+  }
+
+  plot_data <- bio_data %>%
+    filter(!is.na(pct_inhibition), !is.na(season))
+
+  if (nrow(plot_data) == 0) {
+    p <- ggplot() +
+      geom_text(aes(x = 1, y = 1,
+                    label = "No scored bioassays\n(emergence counts not yet recorded)"), size = 5) +
+      theme_void()
+    return(ggplotly(p))
+  }
+
+  # All colours come from the shared theme system so the chart follows the
+  # Color Theme selector and stays colour-blind safe on the accessible themes.
+  status_cols <- get_status_colors(theme = theme)
+  palette     <- get_theme_palette(theme)
+
+  fill_colors <- NULL
+  if (comparison_mode == "material" && "active_ingredient" %in% names(plot_data)) {
+    plot_data$fill_var <- ifelse(is.na(plot_data$active_ingredient), "Unknown",
+                                 plot_data$active_ingredient)
+    fill_label <- "Material"
+  } else if (comparison_mode == "dosage" && "dosage_label" %in% names(plot_data)) {
+    plot_data$fill_var <- ifelse(is.na(plot_data$dosage_label), "Unknown",
+                                 plot_data$dosage_label)
+    fill_label <- "Dosage"
+  } else if (comparison_mode == "window" && "material_window" %in% names(plot_data)) {
+    plot_data$fill_var <- plot_data$material_window
+    fill_label <- "Material Window"
+    # Same status colours the stat boxes use, so the two read as one system.
+    fill_colors <- c(
+      "Within window" = unname(status_cols[["active"]]),
+      "Past expiry"   = unname(status_cols[["needs_treatment"]]),
+      "Untreated"     = unname(status_cols[["unknown"]])
+    )
+  } else {
+    plot_data$fill_var <- plot_data$genus
+    fill_label <- "Genus"
+    fill_colors <- c(
+      "Aedes"   = unname(palette$primary[4]),
+      "Culex"   = unname(palette$primary[1]),
+      "Unknown" = unname(status_cols[["unknown"]])
+    )
+  }
+
+  # Material and dosage have a variable number of levels, so draw from the
+  # theme's categorical ramp instead of letting ggplot pick its own hues.
+  if (is.null(fill_colors)) {
+    lv <- sort(unique(plot_data$fill_var))
+    fill_colors <- setNames(generate_distinct_colors(length(lv), theme), lv)
+    if ("Unknown" %in% lv) fill_colors[["Unknown"]] <- unname(status_cols[["unknown"]])
+  }
+
+  plot_data$base_cat <- paste(plot_data$year, plot_data$season)
+  cat_counts <- plot_data %>%
+    group_by(base_cat) %>%
+    summarise(cat_n = dplyr::n(), .groups = "drop")
+  sorted_cats <- sort(unique(plot_data$base_cat))
+  label_map <- setNames(
+    paste0(sorted_cats, "\n(n=", cat_counts$cat_n[match(sorted_cats, cat_counts$base_cat)], ")"),
+    sorted_cats
+  )
+  plot_data$category <- factor(label_map[plot_data$base_cat], levels = label_map)
+
+  y_lo <- min(-5, floor(min(plot_data$pct_inhibition, na.rm = TRUE) / 10) * 10)
+  y_hi <- 110
+
+  subtitle_text <- "Dashed = 0% (all pupae emerged) | Dotted green = 90% target"
+  n_pending <- sum(bio_data$is_pending, na.rm = TRUE)
+  if (n_pending > 0) {
+    subtitle_text <- paste0(subtitle_text, "  |  ", n_pending,
+                            " pending (no emergence count yet)")
+  }
+  n_zero <- sum(bio_data$is_zero_pupae, na.rm = TRUE)
+  if (n_zero > 0) {
+    subtitle_text <- paste0(subtitle_text, "  |  ", n_zero, " found no pupae")
+  }
+
+  p <- ggplot(plot_data, aes(x = category, y = pct_inhibition, fill = fill_var)) +
+    geom_boxplot(
+      position = position_dodge(width = 0.8),
+      alpha = 0.7,
+      outlier.shape = 16,
+      outlier.alpha = 0.4,
+      outlier.size = 1.5,
+      width = 0.7
+    ) +
+    geom_hline(yintercept = 0, linetype = "dashed",
+               color = unname(palette$surface[["neutral"]]), linewidth = 0.5) +
+    geom_hline(yintercept = 90, linetype = "dotted",
+               color = unname(palette$indicators[["good"]]),
+               linewidth = 0.7, alpha = 0.7) +
+    scale_y_continuous(labels = function(x) paste0(x, "%")) +
+    coord_cartesian(ylim = c(y_lo, y_hi)) +
+    labs(
+      title = paste("% Emergence Inhibition by", fill_label, "/ Season / Year"),
+      subtitle = subtitle_text,
+      x = "",
+      y = "% Inhibition"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray40"),
+      axis.title.y = element_text(size = 16, face = "bold"),
+      axis.text.x = element_text(size = 14, angle = 30, hjust = 1),
+      axis.text.y = element_text(size = 13),
+      legend.title = element_text(size = 14, face = "bold"),
+      legend.text = element_text(size = 13),
+      panel.grid.minor = element_blank()
+    )
+
+  if (!is.null(fill_colors)) {
+    p <- p + scale_fill_manual(values = fill_colors, name = fill_label)
+  } else {
+    p <- p + labs(fill = fill_label)
+  }
+
+  ggplotly(p) %>%
+    layout(hovermode = "closest", boxmode = "group")
+}

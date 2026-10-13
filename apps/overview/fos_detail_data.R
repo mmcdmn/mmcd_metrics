@@ -392,14 +392,14 @@ load_fos_bioassays <- function(facility, analysis_date) {
 
   con <- get_db_connection()
   if (is.null(con)) {
-    return(data.frame(fosarea = character(), shortname = character(), n = integer()))
+    return(data.frame(fosarea = character(), shortname = character(), n = integer(), n_with_pupae = integer()))
   }
 
   tryCatch({
     result <- dbGetQuery(con, sprintf("
       SELECT sc.fosarea, el.shortname,
              COUNT(*) AS n,
-             SUM(CASE WHEN i.numdip > 0 THEN 1 ELSE 0 END) AS n_with_pupae
+             SUM(CASE WHEN i.pupaecnt > 0 THEN 1 ELSE 0 END) AS n_with_pupae
       FROM dblarv_insptrt_current i
       JOIN gis_sectcode sc ON LEFT(i.sitecode, 7) = sc.sectcode
       LEFT JOIN employee_list el
@@ -415,12 +415,13 @@ load_fos_bioassays <- function(facility, analysis_date) {
 
     safe_disconnect(con)
     result$n <- as.integer(result$n)
+    result$n_with_pupae <- as.integer(result$n_with_pupae)
     result
 
   }, error = function(e) {
     safe_disconnect(con)
     warning(paste("[load_fos_bioassays] Error:", e$message))
-    data.frame(fosarea = character(), shortname = character(), n = integer())
+    data.frame(fosarea = character(), shortname = character(), n = integer(), n_with_pupae = integer())
   })
 }
 

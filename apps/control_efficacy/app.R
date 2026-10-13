@@ -26,6 +26,7 @@ source("data_functions.R")
 source("efficacy_data_functions.R")
 source("checkback_functions.R")
 source("display_functions.R")
+source("bioassay_data_functions.R")
 
 # Set application name for AWS RDS monitoring
 set_app_name("control_efficacy")
@@ -49,7 +50,11 @@ if (getRversion() >= "2.15.1") {
     "sites_treated", "timing_df", "days_to_checkback", "facility_display",
     "genus", "season", "trt_type", "trt_action", "pre_genus_pct", "post_genus_pct",
     "pre_genus_dips", "post_genus_dips", "pct_reduction", "pre_numdip", "post_numdip",
-    "sampnum_yr", "per", "total_pct", "category"
+    "sampnum_yr", "per", "total_pct", "category",
+    "pupaecnt", "emergedcnt", "pct_inhibition", "is_pending", "is_zero_pupae",
+    "genus_pct", "has_species", "material_window", "days_past_expiry",
+    "prior_trt_material", "prior_trt_date", "prior_trt_expiry",
+    "active_ingredient", "dosage_label", "base_cat", "cat_n", "fill_var"
   ))
 }
 
@@ -83,7 +88,15 @@ server <- function(input, output, session) {
       checkback_number   = list(input = "checkback_number_progress", type = "numeric"),
       checkback_percent  = list(input = "checkback_percent_progress", type = "numeric"),
       year_range         = list(input = "year_range",              type = "slider_range"),
-      color_theme        = list(input = "color_theme",             type = "select")
+      color_theme        = list(input = "color_theme",             type = "select"),
+      bio_comparison     = list(input = "bio_comparison_mode",     type = "select"),
+      bio_genus          = list(input = "bio_genus_filter",        type = "select"),
+      bio_season         = list(input = "bio_season_filter",       type = "checkgroup"),
+      bio_trt_type       = list(input = "bio_trt_type_filter",     type = "checkgroup"),
+      bio_window         = list(input = "bio_window_filter",       type = "checkgroup"),
+      bio_material_type  = list(input = "bio_material_type_filter", type = "select"),
+      bio_dosage         = list(input = "bio_dosage_filter",       type = "select"),
+      bio_pending        = list(input = "bio_include_pending",     type = "checkbox")
     ),
     refresh_for = function(state) "refresh_data_progress")
 
@@ -205,6 +218,56 @@ server <- function(input, output, session) {
           tags$b("Fixed Number Mode:"), " min(fixed_number, sites_treated)",
           tags$br(),
           tags$b("Completion Rate:"), " (completed / needed) \u00D7 100"
+        )
+      ),
+
+      h3(style = "margin-top: 25px;", "Bioassay Efficacy"),
+      tags$dl(
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Bioassay (action 'P')"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          "Pupae are collected from a site (", tags$code("pupaecnt"), ") and held to count",
+          " how many emerge as adults (", tags$code("emergedcnt"), ")."
+        ),
+
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "% Emergence Inhibition"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          tags$code("% Inhibition = 100 \u00D7 (1 - emergedcnt / pupaecnt)"),
+          tags$br(),
+          "Example: 40 pupae, 4 emerged \u2192 (1 - 4/40) = 90% inhibition."
+        ),
+
+        tags$dt(style = "font-size: 16px; margin-top: 15px; color: #856404;", "Pending Bioassays"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          "An emergence count is entered only after the holding period ends. Until then ",
+          tags$code("emergedcnt"), " is empty, which means ", tags$b("pending"),
+          " \u2014 not zero emergence. Pending bioassays are excluded from the chart and from",
+          " every statistic, and are listed separately so they read as outstanding work."
+        ),
+
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Material Window"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          "Each bioassay is matched to the most recent treatment at that site on or before",
+          " the bioassay date. Expiry is ", tags$code("treatment date + effect_days"),
+          " from mattype_list_targetdose, defaulting to 14 days when effect_days is missing.",
+          tags$ul(
+            tags$li(tags$b("Within window:"), " the bioassay falls inside the effective period"),
+            tags$li(tags$b("Past expiry:"), " taken after the material lapsed \u2014 low inhibition is expected here"),
+            tags$li(tags$b("Untreated:"), " no treatment found at the site, a natural-emergence reference")
+          ),
+          tags$br(),
+          tags$b("Known gap: "), "bioassays taken at catch-basin or structure sitecodes",
+          " (codes ending in a letter group, e.g. ", tags$code("-A02"), ") almost always read",
+          tags$b(" Untreated"), ". A catch-basin treatment is recorded once against the route and",
+          " fanned out to individual basins through a separate link table, so the basin's own",
+          " sitecode never appears on the treatment record. Those bioassays may well have been",
+          " treated \u2014 this view simply cannot see it yet."
+        ),
+
+        tags$dt(style = "font-size: 16px; margin-top: 15px;", "Genus"),
+        tags$dd(style = "font-size: 14px; margin-left: 20px;",
+          "Taken from the bioassay's own larval sample, using whichever genus holds the",
+          " largest share of that sample. Bioassays with no species data are kept and shown",
+          " as ", tags$b("Unknown"), " rather than dropped."
         )
       ),
 
@@ -831,6 +894,221 @@ server <- function(input, output, session) {
           c(-50, 0, 25, 50, 75, 90, 95),
           c("#67001f", "#d73027", "#f46d43", "#fee08b", "#d9ef8b",
             "#a6d96a", "#66bd63", "#1a9850")))
+  })
+
+  # ===========================================================================
+  # BIOASSAY EFFICACY TAB
+  # ===========================================================================
+
+  # Dosage choices follow the bioassay material-type selection
+  observeEvent(input$bio_material_type_filter, {
+    ingredient <- input$bio_material_type_filter
+    con <- get_db_connection()
+    if (!is.null(con)) {
+      dosages <- load_dosage_options(con, if (ingredient == "all") NULL else ingredient)
+      safe_disconnect(con)
+      if (!is.null(dosages) && nrow(dosages) > 0) {
+        labels <- unique(dosages$dosage_label)
+        choices <- c("All Dosages" = "all", setNames(labels, labels))
+      } else {
+        choices <- c("All Dosages" = "all")
+      }
+    } else {
+      choices <- c("All Dosages" = "all")
+    }
+    updateSelectInput(session, "bio_dosage_filter", choices = choices, selected = "all")
+  })
+
+  bioassay_data_raw <- eventReactive(input$refresh_data_progress, {
+    req(input$year_range)
+
+    withProgress(message = "Loading bioassay data (SQL + species)...", value = 0.3, {
+      load_bioassay_data(
+        start_year = input$year_range[1],
+        end_year   = input$year_range[2]
+      )
+    })
+  })
+
+  bioassay_data_filtered <- reactive({
+    data <- bioassay_data_raw()
+    if (is.null(data) || nrow(data) == 0) return(NULL)
+
+    # Material type -> matcodes through the app's existing lookup, so the Bti
+    # special case (Bti_VbacGS) stays consistent with the checkback tab.
+    allowed <- NULL
+    mat_filter <- input$bio_material_type_filter
+    if (!is.null(mat_filter) && mat_filter != "all") {
+      con <- get_db_connection()
+      if (!is.null(con)) {
+        allowed <- get_matcodes_by_ingredient(con, mat_filter)
+        safe_disconnect(con)
+      }
+    }
+
+    filter_bioassay_data(
+      bio_data         = data,
+      genus            = input$bio_genus_filter,
+      seasons          = input$bio_season_filter,
+      trt_types        = input$bio_trt_type_filter,
+      windows          = input$bio_window_filter,
+      allowed_matcodes = allowed,
+      dosage           = input$bio_dosage_filter,
+      facility         = input$facility_filter
+    )
+  })
+
+  output$bio_total_count <- renderUI({
+    data <- bioassay_data_filtered()
+    scored <- if (!is.null(data)) sum(!is.na(data$pct_inhibition)) else 0
+    status_colors <- get_status_colors(theme = input$color_theme)
+    create_stat_box(value = scored, title = "Scored Bioassays",
+                    bg_color = status_colors["unknown"], icon = icon("vial"))
+  })
+
+  output$bio_pending_count <- renderUI({
+    data <- bioassay_data_filtered()
+    pending <- if (!is.null(data)) sum(data$is_pending, na.rm = TRUE) else 0
+    status_colors <- get_status_colors(theme = input$color_theme)
+    create_stat_box(value = pending, title = "Pending Results",
+                    bg_color = status_colors["needs_action"], icon = icon("clock"))
+  })
+
+  output$bio_median_inhibition <- renderUI({
+    data <- bioassay_data_filtered()
+    med <- 0
+    if (!is.null(data) && any(!is.na(data$pct_inhibition))) {
+      med <- round(median(data$pct_inhibition, na.rm = TRUE), 1)
+    }
+    status_colors <- get_status_colors(theme = input$color_theme)
+    color <- if (med >= 90) {
+      status_colors["active"]
+    } else if (med >= 70) {
+      status_colors["needs_action"]
+    } else {
+      status_colors["needs_treatment"]
+    }
+    create_stat_box(value = paste0(med, "%"), title = "Median % Inhibition",
+                    bg_color = color, icon = icon("chart-line"))
+  })
+
+  output$bio_past_expiry_count <- renderUI({
+    data <- bioassay_data_filtered()
+    n_past <- if (!is.null(data)) sum(data$material_window == "Past expiry", na.rm = TRUE) else 0
+    status_colors <- get_status_colors(theme = input$color_theme)
+    create_stat_box(value = n_past, title = "Past Material Expiry",
+                    bg_color = status_colors["needs_treatment"], icon = icon("hourglass-end"))
+  })
+
+  output$inhibition_boxplot <- renderPlotly({
+    withProgress(message = "Rendering bioassay box plots...", value = 0.5, {
+      comp_mode <- if (!is.null(input$bio_comparison_mode)) input$bio_comparison_mode else "window"
+      create_inhibition_boxplot(
+        bio_data = bioassay_data_filtered(),
+        theme = input$color_theme,
+        comparison_mode = comp_mode
+      )
+    })
+  })
+
+  output$bioassay_table <- DT::renderDataTable({
+    data <- bioassay_data_filtered()
+
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No bioassay data available. Click Refresh Data."))
+    }
+
+    # Bioassays that found no pupae are neither scored nor pending.
+    data <- data[!data$is_zero_pupae, ]
+
+    if (!isTRUE(input$bio_include_pending)) {
+      data <- data[!data$is_pending, ]
+    }
+    if (nrow(data) == 0) {
+      return(data.frame(Message = "No scored bioassays match these filters."))
+    }
+
+    display_data <- data %>%
+      mutate(
+        `% Inhibition` = round(pct_inhibition, 1),
+        `Genus %` = round(genus_pct, 0)
+      ) %>%
+      select(
+        Site = sitecode, Facility = facility,
+        Year = year, Season = season, Genus = genus, `Genus %`,
+        `Bio Date` = inspdate,
+        Pupae = pupaecnt, Emerged = emergedcnt, `% Inhibition`,
+        `Mat Code` = prior_trt_material, Material = active_ingredient,
+        Dosage = dosage_label, `Trt Type` = trt_type,
+        `Trt Date` = prior_trt_date, `Days from Trt` = days_from_trt,
+        `Material Window` = material_window, `Days Past Expiry` = days_past_expiry
+      ) %>%
+      arrange(desc(`Bio Date`), Site)
+
+    display_data$Site <- make_sitecode_link(display_data$Site)
+
+    # Ramp built from the theme's indicator colours (alert -> warning -> good)
+    # rather than a hardcoded RdYlGn, with a WCAG-checked text colour per stop.
+    cuts       <- c(0, 25, 50, 75, 90, 95)
+    indicators <- get_theme_palette(input$color_theme)$indicators
+    inhib_bg   <- grDevices::colorRampPalette(
+      c(indicators[["alert"]], indicators[["warning"]], indicators[["good"]])
+    )(length(cuts) + 1)
+    inhib_fg   <- vapply(inhib_bg, contrast_text_color, character(1), USE.NAMES = FALSE)
+
+    status_cols <- get_status_colors(theme = input$color_theme)
+    window_bg <- vapply(c("active", "needs_treatment", "unknown"),
+                        function(k) hex_to_rgba(status_cols[[k]], 0.18),
+                        character(1), USE.NAMES = FALSE)
+
+    datatable(display_data,
+      escape = FALSE,
+      options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE,
+                     columnDefs = list(list(className = 'dt-center', targets = '_all'))),
+      rownames = FALSE, filter = 'top'
+    ) %>%
+      formatStyle("% Inhibition",
+        backgroundColor = styleInterval(cuts, inhib_bg),
+        color           = styleInterval(cuts, inhib_fg)) %>%
+      formatStyle("Material Window",
+        backgroundColor = styleEqual(
+          c("Within window", "Past expiry", "Untreated"), window_bg))
+  })
+
+  output$bioassay_pending_table <- DT::renderDataTable({
+    data <- bioassay_data_filtered()
+
+    if (is.null(data) || nrow(data) == 0) {
+      return(data.frame(Message = "No bioassay data available"))
+    }
+
+    pending <- data[data$is_pending, ]
+    if (nrow(pending) == 0) {
+      return(data.frame(Message = "No pending bioassays - every matching bioassay has an emergence count"))
+    }
+
+    display_data <- pending %>%
+      mutate(`Days Waiting` = as.integer(Sys.Date() - inspdate)) %>%
+      select(
+        Site = sitecode, Facility = facility,
+        `Bio Date` = inspdate, `Days Waiting`,
+        Season = season, Genus = genus, Pupae = pupaecnt,
+        `Mat Code` = prior_trt_material, Material = active_ingredient,
+        `Trt Date` = prior_trt_date, `Material Window` = material_window
+      ) %>%
+      arrange(desc(`Days Waiting`), Site)
+
+    display_data$Site <- make_sitecode_link(display_data$Site)
+
+    pending_bg <- hex_to_rgba(get_status_colors(theme = input$color_theme)[["planned"]], 0.15)
+
+    datatable(display_data,
+      escape = FALSE,
+      options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE,
+                     columnDefs = list(list(className = 'dt-center', targets = '_all'))),
+      rownames = FALSE, filter = 'top'
+    ) %>%
+      formatStyle(columns = names(display_data), backgroundColor = pending_bg)
   })
 }
 

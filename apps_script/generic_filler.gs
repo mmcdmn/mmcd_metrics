@@ -56,8 +56,8 @@ const CONFIG = {
   SKIP_TABS:    ['Summary', 'Config', 'Template', 'Instructions'],
   SKIP_ROW_PATTERN: /^book\s|^(sites?|total|totals|done)\b|^\d{1,4}$/i,
 
- // everything with this pattern is treated as a sitecode. everything else is skipped
-  SITECODE_PATTERN: /^\d{6}/,
+  // Rows whose sitecode doesn't match this are skipped unless the API knows them.
+  SITECODE_PATTERN: /^\d{6}[A-Z]?-?\d+$/i,
 
   // ── Claiming ──────────────────────────────────────────────────────────────
   // When an employee types their emp# in CLAIM_COL on an open (unfilled) site,
@@ -647,12 +647,21 @@ function refreshData() {
                             tc.lookback !== globalCfg.lookback;
       const lookup = needsOwnFetch ? fetchData_(tc) : globalData;
 
+      // Sitecodes must stay text: Sheets turns E-sites into numbers otherwise
+      const scRange = sheet.getRange(ds, tc.scCol, numRows, 1);
+      scRange.setNumberFormat('@');
+
       // Build siteRows map: sitecode → 0-based row index within data range
-      const scValues = sheet.getRange(ds, tc.scCol, numRows, 1).getValues();
+      const scValues = scRange.getValues();
       const siteRows = {};
       let lastDataIdx = -1;
       for (let i = 0; i < numRows; i++) {
-        const sc = String(scValues[i][0]).trim();
+        const raw = scValues[i][0];
+        if (typeof raw === 'number') {
+          Logger.log('Tab "' + name + '" row ' + (ds + i) + ': sitecode is a number (' + raw + ') — re-type it');
+          continue;
+        }
+        const sc = String(raw).trim();
         if (!sc || isSkipRow_(sc, tc.skipPattern)) continue;
         if (!lookup[sc] && !tc.sitePattern.test(sc)) continue;
         siteRows[sc] = i;

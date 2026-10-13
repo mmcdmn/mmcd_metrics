@@ -1391,7 +1391,7 @@ EMBED_PRODUCERS[["mosquito_surveillance_map"]] <- list(
 # pct_reduction grouped by the comparison dimension.
 # ---------------------------------------------------------------------------
 EMBED_PARAM_SPEC[["control_efficacy"]] <- list(
-  views = c("boxplot"),
+  views = c("boxplot", "bioassay", "bioassay_table"),
   default_view = "boxplot",
   params = list(
     comparison_mode = list(type = "enum", allowed = c("genus","material","dosage"), default = "genus"),
@@ -1402,11 +1402,24 @@ EMBED_PARAM_SPEC[["control_efficacy"]] <- list(
     trt_type        = list(type = "csv", allowed = c("Air","Ground","Drone"), default = c("Air","Ground","Drone")),
     facility        = list(type = "string", default = "all"),
     year_range      = list(type = "string", default = NULL),
-    use_mullas      = list(type = "logical", default = FALSE)
+    use_mullas      = list(type = "logical", default = FALSE),
+    # bioassay views -- names match the app's deep-link URL keys so an embed
+    # URL mirrors a deep link. Every sidebar filter is reachable here.
+    bio_comparison    = list(type = "enum", allowed = c("window","material","dosage","genus"), default = "window"),
+    bio_genus         = list(type = "enum", allowed = c("Both","Aedes","Culex","Unknown"), default = "Both"),
+    bio_season        = list(type = "csv", allowed = c("Spring","Summer"), default = c("Spring","Summer")),
+    bio_trt_type      = list(type = "csv", allowed = c("Air","Ground","Drone","Catch Basin","None"),
+                             default = c("Air","Ground","Drone","Catch Basin","None")),
+    bio_window        = list(type = "csv", allowed = c("Within window","Past expiry","Untreated"),
+                             default = c("Within window","Past expiry","Untreated")),
+    bio_material_type = list(type = "string", default = "all"),
+    bio_dosage        = list(type = "string", default = "all"),
+    bio_pending       = list(type = "logical", default = FALSE)
   )
 )
 .control_efficacy_boxplot_producer <- function(p) {
-  env <- load_app_env("control_efficacy", c("data_functions.R"))
+  env <- load_app_env("control_efficacy",
+                      c("data_functions.R", "efficacy_data_functions.R"))
   if (is.null(env) || is.null(env$load_efficacy_data)) return(NULL)
   yrs <- .embed_resolve_years(p)
   d <- tryCatch(env$load_efficacy_data(start_year = yrs$start, end_year = yrs$end,
@@ -1447,6 +1460,89 @@ EMBED_PARAM_SPEC[["control_efficacy"]] <- list(
 EMBED_PRODUCERS[["control_efficacy"]] <- list(
   boxplot = .control_efficacy_boxplot_producer,
   default = .control_efficacy_boxplot_producer
+)
+
+# ---------------------------------------------------------------------------
+# control_efficacy -- bioassay views (action='P' pupal emergence tests).
+# % Inhibition = 100 * (1 - emergedcnt / pupaecnt). These call the app's own
+# load/filter functions rather than reimplementing the sidebar logic, so the
+# embed cannot drift from the tab.
+# ---------------------------------------------------------------------------
+.bioassay_filtered <- function(p) {
+  env <- load_app_env("control_efficacy",
+                      c("data_functions.R", "bioassay_data_functions.R"))
+  if (is.null(env) || is.null(env$load_bioassay_data)) return(NULL)
+
+  yrs <- .embed_resolve_years(p)
+  d <- tryCatch(env$load_bioassay_data(start_year = yrs$start, end_year = yrs$end),
+                error = function(e) NULL)
+  if (!is.data.frame(d) || nrow(d) == 0) return(NULL)
+
+  # Material type -> matcodes through the app's own lookup, so the Bti_VbacGS
+  # special case stays consistent with the checkback view.
+  allowed <- NULL
+  mat <- p$bio_material_type %||% "all"
+  if (!identical(mat, "all") && !is.null(env$get_matcodes_by_ingredient)) {
+    con <- tryCatch(get_db_connection(), error = function(e) NULL)
+    if (!is.null(con)) {
+      allowed <- tryCatch(env$get_matcodes_by_ingredient(con, mat),
+                          error = function(e) character(0))
+      tryCatch(safe_disconnect(con), error = function(e) NULL)
+    }
+  }
+
+  tryCatch(env$filter_bioassay_data(
+    bio_data         = d,
+    genus            = p$bio_genus %||% "Both",
+    seasons          = p$bio_season %||% c("Spring", "Summer"),
+    trt_types        = p$bio_trt_type %||% c("Air","Ground","Drone","Catch Basin","None"),
+    windows          = p$bio_window %||% c("Within window","Past expiry","Untreated"),
+    allowed_matcodes = allowed,
+    dosage           = p$bio_dosage %||% "all",
+    facility         = p$facility %||% "all"
+  ), error = function(e) NULL)
+}
+
+.control_efficacy_bioassay_producer <- function(p) {
+  d <- .bioassay_filtered(p)
+  if (!is.data.frame(d) || nrow(d) == 0) return(.embed_desc_boxplot(data.frame(), "pct_inhibition"))
+  # Drops pending and zero-pupae rows, matching create_inhibition_boxplot().
+  d <- d[which(!is.na(d$pct_inhibition)), , drop = FALSE]
+  if (nrow(d) == 0) return(.embed_desc_boxplot(data.frame(), "pct_inhibition"))
+  cm <- p$bio_comparison %||% "window"
+  gcol <- if (identical(cm, "material") && "active_ingredient" %in% names(d)) "active_ingredient"
+          else if (identical(cm, "dosage") && "dosage_label" %in% names(d)) "dosage_label"
+          else if (identical(cm, "genus")) "genus"
+          else "material_window"
+  # Negative inhibition is real signal here, so unlike the checkback boxplot
+  # this is deliberately not clamped at 0.
+  .embed_desc_boxplot(d, value_col = "pct_inhibition", group_col = gcol,
+                      y_label = "% Inhibition",
+                      resolved_options = list(view = "bioassay", comparison_mode = cm))
+}
+
+.control_efficacy_bioassay_table_producer <- function(p) {
+  d <- .bioassay_filtered(p)
+  if (!is.data.frame(d) || nrow(d) == 0) return(.embed_desc_table(data.frame()))
+  # Bioassays that found no pupae are neither scored nor pending.
+  d <- d[which(!d$is_zero_pupae), , drop = FALSE]
+  if (!isTRUE(p$bio_pending)) d <- d[which(!d$is_pending), , drop = FALSE]
+  if (nrow(d) == 0) return(.embed_desc_table(data.frame()))
+  cols <- c("sitecode", "facility", "year", "season", "genus", "inspdate",
+            "pupaecnt", "emergedcnt", "pct_inhibition", "prior_trt_material",
+            "active_ingredient", "dosage_label", "trt_type", "prior_trt_date",
+            "days_from_trt", "material_window", "days_past_expiry")
+  cols <- cols[cols %in% names(d)]
+  .embed_desc_table(d, columns = cols,
+                    resolved_options = list(view = "bioassay_table",
+                                            include_pending = isTRUE(p$bio_pending)))
+}
+
+EMBED_PRODUCERS[["control_efficacy"]] <- list(
+  boxplot        = .control_efficacy_boxplot_producer,
+  bioassay       = .control_efficacy_bioassay_producer,
+  bioassay_table = .control_efficacy_bioassay_table_producer,
+  default        = .control_efficacy_boxplot_producer
 )
 
 # ---------------------------------------------------------------------------

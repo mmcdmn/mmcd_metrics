@@ -43,7 +43,7 @@ Engine: `shared/url_state_helpers.R` (deep link + auto-refresh),
 | Mosquito Surveillance Map | `/mosquito_surveillance_map/` | auto-updating map (no refresh click) |
 | Section Cards | `/section-cards/` | filters + Generate Cards |
 | Air Inspection Checklist | `/air_inspection_checklist/` | bespoke parser (claims/emp feature); auto-loads on open, now covers all filters + autorefresh |
-| FOS Capacity Planning | `/fos_capacity_planning/` | live estimates (no refresh click); deep-links tab + facility + what-if inputs |
+| Capacity Planner | `/capacity_planner/` | live estimates (no refresh click); deep-links tab + facility + what-if inputs |
 
 ### Already self-sufficient (its own URL params, not this engine)
 
@@ -447,7 +447,7 @@ with no Refresh click needed.
 
 Example: `.../air_inspection_checklist/?facility=Sr&zone=1&priority=RED&lookback=3`
 
-### FOS Capacity Planning — `/fos_capacity_planning/` (live, no Refresh click)
+### Capacity Planner — `/capacity_planner/` (live, no Refresh click)
 
 Estimates recompute reactively, so params apply and the view updates with no
 button click. (Section promotion in the What-If planner is interactive and not
@@ -471,7 +471,7 @@ deep-linked.)
 | `wi_avg_mph` | number (What-If drive-time speed) |
 | `wi_circuity` | number (What-If circuity factor) |
 
-Example: `.../fos_capacity_planning/?tabs=whatif&wi_facility=Sr&wi_rate_scope=FAC`
+Example: `.../capacity_planner/?tabs=whatif&wi_facility=Sr&wi_rate_scope=FAC`
 
 ### Overview (its own params) — `/overview/`
 

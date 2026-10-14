@@ -21,12 +21,11 @@ suppressPackageStartupMessages({
 
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
-source("../../shared/geometry_helpers.R")  # for add_carto_tiles() (authenticated CARTO tiles)
 source("../../shared/url_state_helpers.R")  # deep-linking engine
 source("data_functions.R")
 source("display_functions.R")
 
-set_app_name("fos_capacity_planning")
+set_app_name("capacity_planner")
 
 message("[fos_capacity] Preloading lookup tables...")
 tryCatch({
@@ -452,7 +451,7 @@ server <- function(input, output, session) {
       g$sectcode, g$fos_name, g$ground_sites, g$air_sites, g$wet_cb, g$miles)
     bb <- as.numeric(sf::st_bbox(g))
     leaflet::leaflet(g) %>%
-      add_carto_tiles() %>%
+      leaflet::addTiles() %>%
       leaflet::addPolygons(
         layerId = ~sectcode, group = "base",
         weight = 1, color = "#7c8a97", fillColor = "#c9d3df", fillOpacity = 0.5,

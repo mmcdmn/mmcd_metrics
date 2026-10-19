@@ -4,7 +4,7 @@
 #   - ground / air / prehatch sites + prehatch acres  (loc_breeding_sites)
 #   - sections managed                                 (gis_sectcode)
 #   - wet catch basins                                 (loc_catchbasin)
-#   - techs (Inspectors) per FOS, FOS per facility     (employee_list)
+#   - techs per crew / crews / drone techs per facility (config defaults, user-editable)
 #   - straight-line miles facility -> section centroid (PostGIS)
 # All grouped by facility / fosarea / zone (P1 = '1', P2 = '2').
 # =============================================================================
@@ -42,6 +42,17 @@ JOB_TYPE_SITEKIND <- c(air_trt = "air", air_insp = "air",
 # in the UI; set to 0 to drop travel entirely (e.g. if the study hours-per-job
 # already bake in travel).
 DEFAULT_TRIPS_PER_SECTION <- 8
+
+# ROM-confirmed district staffing (used if config/app_config.yaml can't be read;
+# keep in sync with capacity_planner.staffing there). Crew = 1 FOS + ground techs.
+CAPACITY_STAFFING_FALLBACK <- data.frame(
+  facility          = c("Sr", "Sj", "Wp", "N", "E", "Wm"),
+  crews             = c(4, 4, 5, 6, 7, 5),
+  techs_per_crew    = c(5, 5, 5, 8, 6, 5),
+  drone_techs       = c(2, 2, 4, 4, 3, 4),
+  drone_offload_pct = c(0, 0, 0, 0, 0, 0),
+  stringsAsFactors = FALSE
+)
 
 #' Jobs-per-distinct-site multipliers from ACTUAL treatment data, by
 #' facility x zone x job_type, plus a DISTRICT roll-up. rate = jobs / distinct
@@ -205,29 +216,46 @@ load_section_geo <- function(facility) {
   })
 }
 
-#' Staffing structure from employee_list.
+#' District staffing defaults (replaces the unreliable employee_list.active
+#' count). Read from config/app_config.yaml (capacity_planner.staffing); falls
+#' back to CAPACITY_STAFFING_FALLBACK if the config is missing or unreadable.
+#' One crew = 1 FOS area + its ground techs. Drone techs are facility-level and
+#' are NOT counted in techs_per_crew.
 #'
-#' @return list(techs = df[fosarea, n_techs], fos_per_fac = df[facility, n_fos])
-load_capacity_staffing <- function() {
-  con <- get_db_connection()
-  on.exit(safe_disconnect(con), add = TRUE)
+#' @return data.frame: facility, crews, techs_per_crew, drone_techs, drone_offload_pct
+default_staffing <- function() {
+  if (!exists("get_app_config", mode = "function") &&
+      file.exists("../../shared/config.R")) {
+    source("../../shared/config.R")
+  }
+  cfg <- tryCatch(get_app_config()$capacity_planner$staffing, error = function(e) NULL)
+  if (is.null(cfg) || length(cfg) == 0) return(CAPACITY_STAFFING_FALLBACK)
 
-  techs <- tryCatch(dbGetQuery(con, "
-    SELECT fieldsuper AS fosarea, COUNT(*)::int AS n_techs
-    FROM employee_list
-    WHERE active = true AND emp_type = 'Inspector'
-      AND fieldsuper IS NOT NULL AND fieldsuper <> ''
-    GROUP BY fieldsuper
-  "), error = function(e) data.frame(fosarea = character(), n_techs = integer()))
+  num <- function(x, d) if (is.null(x) || is.na(suppressWarnings(as.numeric(x)))) d else as.numeric(x)
+  df <- data.frame(
+    facility          = names(cfg),
+    crews             = vapply(cfg, function(x) num(x$crews, 0), numeric(1)),
+    techs_per_crew    = vapply(cfg, function(x) num(x$techs_per_crew, 0), numeric(1)),
+    drone_techs       = vapply(cfg, function(x) num(x$drone_techs, 0), numeric(1)),
+    drone_offload_pct = vapply(cfg, function(x) num(x$drone_offload_pct, 0), numeric(1)),
+    stringsAsFactors = FALSE, row.names = NULL
+  )
+  df
+}
 
-  fos_per_fac <- tryCatch(dbGetQuery(con, "
-    SELECT facility, COUNT(*)::int AS n_fos
-    FROM employee_list
-    WHERE active = true AND emp_type = 'FieldSuper' AND facility IS NOT NULL
-    GROUP BY facility
-  "), error = function(e) data.frame(facility = character(), n_fos = integer()))
-
-  list(techs = techs, fos_per_fac = fos_per_fac)
+#' Number of FOS areas the DB has per facility (from section-grain data). Used
+#' only as a cross-check against the configured crew counts (1 crew = 1 FOS area).
+#'
+#' @param sections Output of load_capacity_sections()
+#' @return data.frame: facility, db_fos_areas
+db_fos_area_counts <- function(sections) {
+  if (is.null(sections) || nrow(sections) == 0) {
+    return(data.frame(facility = character(), db_fos_areas = integer()))
+  }
+  agg <- stats::aggregate(fosarea ~ facility, data = sections,
+                          FUN = function(x) length(unique(x)))
+  names(agg)[2] <- "db_fos_areas"
+  agg
 }
 
 # -----------------------------------------------------------------------------
@@ -238,7 +266,7 @@ load_capacity_staffing <- function() {
 #' shortname, facility full name, and tech counts.
 #'
 #' @param sections  Output of load_capacity_sections()
-#' @param staffing  Output of load_capacity_staffing()
+#' @param staffing  Staffing table (default_staffing() or the user's edited copy)
 #' @return data.frame per facility/fosarea/zone with the capacity columns
 aggregate_capacity_by_fos <- function(sections, staffing) {
   if (is.null(sections) || nrow(sections) == 0) return(data.frame())
@@ -273,12 +301,13 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
   agg$facility_name <- ifelse(agg$facility %in% names(fac_name),
                               fac_name[agg$facility], agg$facility)
 
-  techs <- staffing$techs
-  tech_map <- if (!is.null(techs) && nrow(techs) > 0) {
-    setNames(techs$n_techs, as.character(techs$fosarea))
-  } else integer(0)
-  agg$n_techs <- ifelse(as.character(agg$fosarea) %in% names(tech_map),
-                        as.integer(tech_map[as.character(agg$fosarea)]), 0L)
+  # Staffing is set per facility (1 crew = 1 FOS area), so every FOS area in a
+  # facility gets that facility's techs per crew. Drone techs/offload stay
+  # facility-level (repeated on each FOS row).
+  idx <- match(agg$facility, staffing$facility)
+  agg$n_techs           <- ifelse(is.na(idx), 0, staffing$techs_per_crew[idx])
+  agg$drone_techs       <- ifelse(is.na(idx), 0, staffing$drone_techs[idx])
+  agg$drone_offload_pct <- ifelse(is.na(idx), 0, staffing$drone_offload_pct[idx])
 
   agg %>% dplyr::arrange(facility, fos_name, zone)
 }

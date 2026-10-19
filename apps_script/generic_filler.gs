@@ -118,11 +118,11 @@ const CONFIG = {
   //           Omit rule entirely to always highlight when site has data.
   //
   COLUMNS: [
-    { mode: 'value', source: 'inspdate',   col: 'C', format: 'date' },
-    { mode: 'value', source: 'numdip',     col: 'D' },
-    { mode: 'value', source: 'emp1',       col: 'E' },
-    { mode: 'value', source: 'acres',      col: 'F' },
-    { mode: 'value', source: 'acres_plan', col: 'G' },
+  //  { mode: 'value', source: 'inspdate',   col: 'C', format: 'date' },
+  //  { mode: 'value', source: 'numdip',     col: 'D' },
+  //  { mode: 'value', source: 'emp1',       col: 'E' },
+  //  { mode: 'value', source: 'acres',      col: 'F' },
+  //  { mode: 'value', source: 'acres_plan', col: 'G' },
 
     // ── Highlight examples (uncomment and change) ──
     // Green on cols D–G when numdip > 0:
@@ -427,7 +427,13 @@ function applyClaimHighlights_(sheet, ds, siteRows, lookup, claimColData, tabCfg
 // ════════════════════════════════════════════════════════════════════════════
 
 const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
-
+/**
+ * Set hyperlinks on sitecode cells to the SITECODE_URL_BASE.
+ * @param {Sheet} sheet - The sheet containing the sitecode cells.
+ * @param {number} ds - The data start row offset.
+ * @param {number} scCol - The column number of the sitecode cells.
+ * @param {Object} siteRows - A mapping of sitecode to row index.
+ */
 function setSitecodeLinks_(sheet, ds, scCol, siteRows) {
   if (!scCol) return;
   for (const [sc, idx] of Object.entries(siteRows)) {
@@ -648,11 +654,11 @@ function refreshData() {
       const lookup = needsOwnFetch ? fetchData_(tc) : globalData;
 
       // Sitecodes must stay text: Sheets turns E-sites into numbers otherwise
-      const scRange = sheet.getRange(ds, tc.scCol, numRows, 1);
+      const scRange = sheet.getRange(ds, tc.scCol, numRows, 1); // format: data start, through end of sheet data, number of entities in the range, the number of cols
       scRange.setNumberFormat('@');
 
       // Build siteRows map: sitecode → 0-based row index within data range
-      const scValues = scRange.getValues();
+      const scValues = scRange.getValues(); // 2D array made from our scRange
       const siteRows = {};
       let lastDataIdx = -1;
       for (let i = 0; i < numRows; i++) {

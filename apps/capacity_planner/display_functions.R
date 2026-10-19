@@ -114,6 +114,50 @@ capacity_wide <- function(cap) {
   as.data.frame(w) %>% dplyr::arrange(facility, fos_name)
 }
 
+# Ground-treated metrics that drones can take over (air sites, sections and wet
+# catch basins are not offloaded by drone techs).
+DRONE_OFFSET_METRICS <- c("ground_sites", "prehatch_sites", "prehatch_acres")
+
+#' Staffing baseline per facility + district: what each tech / crew is carrying
+#' today (P1 load), using the configured/edited staffing rather than the DB
+#' active flag. Drone techs are facility-level and reported separately.
+#'
+#' @param cap    aggregate_capacity_by_fos() output (P1/P2 rows per FOS area)
+#' @param staff  staffing table (facility, crews, techs_per_crew, drone_techs,
+#'               drone_offload_pct)
+#' @return data.frame, DISTRICT row first: crews, ground_techs, drone_techs,
+#'   P1 prehatch acres / ground / air sites and per-tech, per-crew and
+#'   air-per-drone-tech ratios
+staffing_baseline <- function(cap, staff) {
+  if (is.null(cap) || nrow(cap) == 0 || is.null(staff) || nrow(staff) == 0) {
+    return(data.frame())
+  }
+  p1 <- cap[cap$zone == "1", , drop = FALSE]
+  load <- p1 %>%
+    dplyr::group_by(facility) %>%
+    dplyr::summarise(p1_acres  = sum(prehatch_acres, na.rm = TRUE),
+                     p1_ground = sum(ground_sites, na.rm = TRUE),
+                     p1_air    = sum(air_sites, na.rm = TRUE), .groups = "drop")
+  b <- merge(staff, load, by = "facility", all.x = TRUE)
+  for (col in c("p1_acres", "p1_ground", "p1_air")) b[[col]][is.na(b[[col]])] <- 0
+  b$ground_techs <- b$crews * b$techs_per_crew
+
+  tot <- data.frame(
+    facility = "DISTRICT",
+    crews = sum(b$crews), techs_per_crew = NA_real_,
+    drone_techs = sum(b$drone_techs), drone_offload_pct = NA_real_,
+    p1_acres = sum(b$p1_acres), p1_ground = sum(b$p1_ground),
+    p1_air = sum(b$p1_air), ground_techs = sum(b$ground_techs))
+  b <- rbind(tot, b[, names(tot)])
+
+  div <- function(n, d) ifelse(d > 0, round(n / d, 1), NA_real_)
+  b$acres_per_tech  <- div(b$p1_acres,  b$ground_techs)
+  b$acres_per_crew  <- div(b$p1_acres,  b$crews)
+  b$ground_per_tech <- div(b$p1_ground, b$ground_techs)
+  b$air_per_drone   <- div(b$p1_air,    b$drone_techs)
+  b
+}
+
 #' What-if: promote a set of P2 sections into P1 and estimate added techs.
 #'
 #' For each affected FOS, moves the promoted sections' loads from P2 to P1, then
@@ -126,6 +170,8 @@ capacity_wide <- function(cap) {
 #' @param metric    which load drives staffing: one of CAPACITY_ZONE_METRICS
 #'                  (excluding avg_miles) e.g. "ground_sites", "sections", "wet_cb"
 #' @param per_tech  manageable load of `metric` per tech (editable baseline)
+#'                  Ground-treated metrics (DRONE_OFFSET_METRICS) are first reduced
+#'                  by each facility's drone_offload_pct (carried in `cap`).
 #' @return list(by_fos = df, totals = list)
 whatif_compute <- function(sections, promote_sectcodes, cap,
                            metric = "ground_sites", per_tech = NULL) {
@@ -156,9 +202,18 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
   by$added_load <- by$new_p1 - by$cur_p1
 
   # Names + current techs from cap
+  if (!"drone_offload_pct" %in% names(cap)) cap$drone_offload_pct <- 0
   fos_info <- unique(cap[, c("fosarea", "fos_name", "facility", "facility_name",
-                             "n_techs")])
+                             "n_techs", "drone_offload_pct")])
   by <- merge(by, fos_info, by = "fosarea", all.x = TRUE)
+
+  # Drones take a share of the ground-treated load; staff only the remainder.
+  if (metric %in% DRONE_OFFSET_METRICS) {
+    keep <- 1 - pmin(pmax(ifelse(is.na(by$drone_offload_pct), 0, by$drone_offload_pct), 0), 100) / 100
+    by$cur_p1 <- round(by$cur_p1 * keep, 1)
+    by$new_p1 <- round(by$new_p1 * keep, 1)
+    by$added_load <- by$new_p1 - by$cur_p1
+  }
 
   # Per-tech capacity: default = current district average P1 load / tech
   if (is.null(per_tech) || is.na(per_tech) || per_tech <= 0) {

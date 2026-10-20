@@ -48,7 +48,7 @@ DEFAULT_TRIPS_PER_SECTION <- 8
 CAPACITY_STAFFING_FALLBACK <- data.frame(
   facility          = c("Sr", "Sj", "Wp", "N", "E", "Wm"),
   crews             = c(4, 4, 5, 6, 7, 5),
-  techs_per_crew    = c(5, 5, 5, 8, 6, 5),
+  techs_per_crew    = c(5, 6, 5, 8, 6, 5),
   drone_techs       = c(2, 2, 4, 4, 3, 4),
   drone_offload_pct = c(0, 0, 0, 0, 0, 0),
   drone_air_offload_pct = c(0, 0, 0, 0, 0, 0),

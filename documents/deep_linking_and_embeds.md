@@ -464,6 +464,9 @@ deep-linked.)
 | `wi_facility` | a facility `(from DB)` — What-If planner facility |
 | `wi_metric` | staffing driver id `(from DB)` — Estimate A |
 | `wi_per_tech` | number (capacity per tech) |
+| `wi_techs_per_crew` | number (techs per crew for the What-If facility) |
+| `wi_drone_offload` | number 0-100 (% of the What-If facility's ground load drones take over) |
+| `wi_drone_air_offload` | number 0-100 (% of the What-If facility's air-site inspections drones take over) |
 | `wi_rate_year` | a year `(from DB)` — jobs/site season |
 | `wi_rate_scope` | `DISTRICT` \| `FAC` |
 | `wi_crew_hours` | number (hrs / crew-season) |

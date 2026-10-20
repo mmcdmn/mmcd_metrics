@@ -207,7 +207,7 @@ runtime:
 capacity_planner:
   staffing:
     "Sr": { crews: 4, techs_per_crew: 5, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Rosemount
-    "Sj": { crews: 4, techs_per_crew: 5, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Jordan
+    "Sj": { crews: 4, techs_per_crew: 6, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Jordan
     "Wp": { crews: 5, techs_per_crew: 5, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # Plymouth
     "N":   { crews: 6, techs_per_crew: 8, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # North
     "E":   { crews: 7, techs_per_crew: 6, drone_techs: 3, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # East

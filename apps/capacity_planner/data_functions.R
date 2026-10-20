@@ -22,7 +22,7 @@ CAPACITY_PREHATCH_TYPES <- c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")
 # air+ground insp/trt per season (Table 11.6). Hours are NOT in any database, so
 # these are editable UI defaults. Job types map to dblarv_insptrt action codes.
 JOB_TYPE_LABELS <- c(
-  air_trt      = "Air treatment",       # actions A, D
+  air_trt      = "Air treatment",       # action A only (drone 'D' is a GROUND-site treatment, not air)
   air_insp     = "Air inspection",      # action 4
   gnd_insp_trt = "Ground insp & treat", # action 1
   gnd_trt      = "Ground treatment",    # action 3
@@ -51,12 +51,15 @@ CAPACITY_STAFFING_FALLBACK <- data.frame(
   techs_per_crew    = c(5, 5, 5, 8, 6, 5),
   drone_techs       = c(2, 2, 4, 4, 3, 4),
   drone_offload_pct = c(0, 0, 0, 0, 0, 0),
+  drone_air_offload_pct = c(0, 0, 0, 0, 0, 0),
   stringsAsFactors = FALSE
 )
 
 #' Jobs-per-distinct-site multipliers from ACTUAL treatment data, by
 #' facility x zone x job_type, plus a DISTRICT roll-up. rate = jobs / distinct
-#' sites serviced (matches Workload Study Table 11.4). Computed live so it beats
+#' sites serviced (matches Workload Study Table 11.4). Drone treatments (action
+#' 'D') are deliberately excluded: they are done on GROUND sites by drone techs,
+#' not air treatments, so they must not inflate the air-treatment rate. Computed live so it beats
 #' the stale 2001 numbers.
 #'
 #' @param year  Season to measure (default = last complete year)
@@ -71,18 +74,18 @@ load_jobs_per_site <- function(year = as.integer(format(Sys.Date(), "%Y")) - 1) 
     WITH ins AS (
       SELECT i.sitecode, i.action FROM dblarv_insptrt_current i
       WHERE EXTRACT(YEAR FROM i.inspdate) = %d
-        AND i.action IN ('1','2','3','4','A','D')
+        AND i.action IN ('1','2','3','4','A')
       UNION ALL
       SELECT i.sitecode, i.action FROM dblarv_insptrt_archive i
       WHERE EXTRACT(YEAR FROM i.inspdate) = %d
-        AND i.action IN ('1','2','3','4','A','D')
+        AND i.action IN ('1','2','3','4','A')
     ),
     j AS (
       SELECT sc.facility, sc.zone,
              CASE ins.action
                WHEN '1' THEN 'gnd_insp_trt' WHEN '2' THEN 'gnd_insp'
                WHEN '3' THEN 'gnd_trt'      WHEN '4' THEN 'air_insp'
-               WHEN 'A' THEN 'air_trt'      WHEN 'D' THEN 'air_trt'
+               WHEN 'A' THEN 'air_trt'
              END AS job_type,
              ins.sitecode
       FROM ins
@@ -222,7 +225,8 @@ load_section_geo <- function(facility) {
 #' One crew = 1 FOS area + its ground techs. Drone techs are facility-level and
 #' are NOT counted in techs_per_crew.
 #'
-#' @return data.frame: facility, crews, techs_per_crew, drone_techs, drone_offload_pct
+#' @return data.frame: facility, crews, techs_per_crew, drone_techs, drone_offload_pct,
+#'   drone_air_offload_pct
 default_staffing <- function() {
   if (!exists("get_app_config", mode = "function") &&
       file.exists("../../shared/config.R")) {
@@ -238,6 +242,7 @@ default_staffing <- function() {
     techs_per_crew    = vapply(cfg, function(x) num(x$techs_per_crew, 0), numeric(1)),
     drone_techs       = vapply(cfg, function(x) num(x$drone_techs, 0), numeric(1)),
     drone_offload_pct = vapply(cfg, function(x) num(x$drone_offload_pct, 0), numeric(1)),
+    drone_air_offload_pct = vapply(cfg, function(x) num(x$drone_air_offload_pct, 0), numeric(1)),
     stringsAsFactors = FALSE, row.names = NULL
   )
   df
@@ -308,6 +313,7 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
   agg$n_techs           <- ifelse(is.na(idx), 0, staffing$techs_per_crew[idx])
   agg$drone_techs       <- ifelse(is.na(idx), 0, staffing$drone_techs[idx])
   agg$drone_offload_pct <- ifelse(is.na(idx), 0, staffing$drone_offload_pct[idx])
+  agg$drone_air_offload_pct <- ifelse(is.na(idx), 0, staffing$drone_air_offload_pct[idx])
 
   agg %>% dplyr::arrange(facility, fos_name, zone)
 }

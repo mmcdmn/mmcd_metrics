@@ -104,11 +104,12 @@ ui <- accessible_page(
       h4("Staffing assumptions (editable)"),
       tags$p(class = "metric-note",
              "Confirmed district staffing. One crew = 1 FOS area + its ground techs. ",
-             "Double-click a Crews, Techs/crew, Drone techs or Drone offload cell to ",
+             "Double-click a Crews, Techs/crew, Drone techs or offload cell to ",
              "change it; all estimates update. Drone techs are kept out of the ground ",
-             "tech count. Drone offload % = share of a facility's ground-treated load ",
-             "(ground sites, prehatch sites/acres) that drones take over, which lowers ",
-             "the load that ground techs are staffed for."),
+             "tech count. Ground offload % = share of a facility's ground-treated load ",
+             "(ground sites, prehatch sites/acres) that drones take over. Air offload % = ",
+             "share of air-site inspections drones take over. All ground techs inspect air ",
+             "sites too; drones only help. Offloads lower the load the techs are staffed for."),
       div(style = "overflow-x:auto;", DT::DTOutput("staff_edit")),
       div(style = "margin-top:6px;",
           actionButton("staff_reset", "Reset to defaults", class = "btn-default btn-sm")),
@@ -148,12 +149,16 @@ ui <- accessible_page(
           column(4, numericInput("wi_drone_offload",
                                  "Drone offload % of ground load (this facility)",
                                  value = NA, min = 0, max = 100, step = 5)),
-          column(4, uiOutput("wi_baseline"))
+          column(4, numericInput("wi_drone_air_offload",
+                                 "Drone offload % of air inspections (this facility)",
+                                 value = NA, min = 0, max = 100, step = 5))
         ),
+        fluidRow(column(12, uiOutput("wi_baseline"))),
         tags$p(class = "metric-note",
-               "Staffing edits here are shared with the Staffing tab. Drone offload ",
-               "applies to ground sites and prehatch sites/acres (not air sites, ",
-               "sections or catch basins)."),
+               "Staffing edits here are shared with the Staffing tab. Ground offload ",
+               "applies to ground sites and prehatch sites/acres; air offload applies to ",
+               "air sites (all techs inspect air sites, drones help). Sections and catch ",
+               "basins are not offloaded."),
         # Equations — how each estimate is computed (shown up front)
         tags$div(style = paste0("background:#eef3fb;border:1px solid #d0daec;",
                                 "border-radius:6px;padding:10px 14px;margin-top:6px;"),
@@ -266,6 +271,7 @@ server <- function(input, output, session) {
     wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
     wi_techs_per_crew = list(input = "wi_techs_per_crew", type = "numeric"),
     wi_drone_offload  = list(input = "wi_drone_offload",  type = "numeric"),
+    wi_drone_air_offload = list(input = "wi_drone_air_offload", type = "numeric"),
     wi_rate_year   = list(input = "wi_rate_year", type = "select"),
     wi_rate_scope  = list(input = "wi_rate_scope", type = "radio"),
     wi_crew_hours  = list(input = "wi_crew_hours", type = "numeric"),
@@ -401,7 +407,8 @@ server <- function(input, output, session) {
   # ---- Staffing table ---------------------------------------------------
   # Editable assumptions table. Column indexes are 0-based (rownames = FALSE).
   STAFF_EDIT_COLS <- c("1" = "crews", "2" = "techs_per_crew",
-                       "4" = "drone_techs", "5" = "drone_offload_pct")
+                       "4" = "drone_techs", "5" = "drone_offload_pct",
+                       "6" = "drone_air_offload_pct")
 
   output$staff_edit <- DT::renderDT({
     b <- base(); req(b)
@@ -410,16 +417,18 @@ server <- function(input, output, session) {
     d <- data.frame(
       Facility = s$facility, Crews = s$crews, `Techs/crew` = s$techs_per_crew,
       `Ground techs` = s$crews * s$techs_per_crew, `Drone techs` = s$drone_techs,
-      `Drone offload %` = s$drone_offload_pct,
+      `Ground offload %` = s$drone_offload_pct,
+      `Air offload %` = s$drone_air_offload_pct,
       `DB FOS areas` = db$db_fos_areas[match(s$facility, db$facility)],
       check.names = FALSE)
     tot <- data.frame(Facility = "DISTRICT", Crews = sum(d$Crews), `Techs/crew` = NA,
                       `Ground techs` = sum(d$`Ground techs`),
                       `Drone techs` = sum(d$`Drone techs`),
-                      `Drone offload %` = NA, `DB FOS areas` = sum(d$`DB FOS areas`, na.rm = TRUE),
+                      `Ground offload %` = NA, `Air offload %` = NA,
+                      `DB FOS areas` = sum(d$`DB FOS areas`, na.rm = TRUE),
                       check.names = FALSE)
     DT::datatable(rbind(d, tot), rownames = FALSE, selection = "none",
-                  editable = list(target = "cell", disable = list(columns = c(0, 3, 6))),
+                  editable = list(target = "cell", disable = list(columns = c(0, 3, 7))),
                   options = list(dom = "t", pageLength = 20, ordering = FALSE))
   })
 
@@ -429,7 +438,7 @@ server <- function(input, output, session) {
     s <- staff()
     if (is.na(col) || info$row > nrow(s)) return()   # DISTRICT row / locked columns
     v <- suppressWarnings(as.numeric(info$value))
-    if (is.na(v) || v < 0 || (col == "drone_offload_pct" && v > 100)) {
+    if (is.na(v) || v < 0 || (grepl("offload_pct$", col) && v > 100)) {
       showNotification("Enter a non-negative number (offload is 0-100).", type = "warning")
       staff(s)   # re-render to discard the bad edit
       return()
@@ -457,10 +466,10 @@ server <- function(input, output, session) {
     bl <- staffing_baseline(cap_live(), staff()); req(nrow(bl) > 0)
     disp <- bl[, c("facility", "crews", "ground_techs", "drone_techs", "p1_acres",
                    "acres_per_tech", "acres_per_crew", "p1_ground", "ground_per_tech",
-                   "p1_air", "air_per_drone")]
+                   "p1_air", "air_per_tech")]
     names(disp) <- c("Facility", "Crews", "Ground techs", "Drone techs", "P1 PH acres",
                      "Acres/tech", "Acres/crew", "P1 Ground", "Ground/tech",
-                     "P1 Air", "Air/drone tech")
+                     "P1 Air", "Air/tech")
     DT::datatable(disp, rownames = FALSE, selection = "none",
                   options = list(dom = "t", pageLength = 20, ordering = FALSE, scrollX = TRUE))
   })
@@ -622,6 +631,7 @@ server <- function(input, output, session) {
     row <- s[s$facility == fac, ]
     updateNumericInput(session, "wi_techs_per_crew", value = row$techs_per_crew)
     updateNumericInput(session, "wi_drone_offload", value = row$drone_offload_pct)
+    updateNumericInput(session, "wi_drone_air_offload", value = row$drone_air_offload_pct)
   })
 
   set_wi_staff <- function(col, v, lo, hi) {
@@ -634,6 +644,8 @@ server <- function(input, output, session) {
                ignoreInit = TRUE)
   observeEvent(input$wi_drone_offload, set_wi_staff("drone_offload_pct", input$wi_drone_offload, 0, 100),
                ignoreInit = TRUE)
+  observeEvent(input$wi_drone_air_offload, set_wi_staff("drone_air_offload_pct", input$wi_drone_air_offload, 0, 100),
+               ignoreInit = TRUE)
 
   output$wi_baseline <- renderUI({
     bl <- staffing_baseline(cap_live(), staff()); req(nrow(bl) > 0, input$wi_facility)
@@ -641,9 +653,9 @@ server <- function(input, output, session) {
     f <- function(x) if (is.na(x)) "n/a" else format(x, big.mark = ",")
     tags$div(class = "metric-note", style = "margin-top:25px;",
       HTML(sprintf(
-        "<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs<br/>%s PH acres/tech &middot; %s PH acres/crew &middot; %s air sites/drone tech",
+        "<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs<br/>%s PH acres/tech &middot; %s PH acres/crew &middot; %s air sites/tech",
         r$facility, f(r$crews), f(r$ground_techs), f(r$drone_techs),
-        f(r$acres_per_tech), f(r$acres_per_crew), f(r$air_per_drone))))
+        f(r$acres_per_tech), f(r$acres_per_crew), f(r$air_per_tech))))
   })
 
   # ---- Estimate A: load per tech (live) ---------------------------------

@@ -56,7 +56,8 @@ ui <- accessible_page(
   tags$p(class = "metric-note",
     "Per-FOS-area inventory for 5-year planning. Zones: P1 and P2. ",
     "All counts are the active universe (breeding sites, wet catch basins, ",
-    "sections, and assigned Inspectors)."),
+    "sections). Staffing comes from the confirmed district crew counts ",
+    "(editable on the Staffing and What-If tabs), not the database active flag."),
 
   tabsetPanel(
     id = "tabs",
@@ -100,9 +101,30 @@ ui <- accessible_page(
     tabPanel(
       "Staffing", value = "staffing",
       br(),
-      h4("FOS per facility & techs per FOS"),
+      h4("Staffing assumptions (editable)"),
       tags$p(class = "metric-note",
-             "Inspectors reporting to each FieldSuper (FOS), and FOS per facility. ",
+             "Confirmed district staffing. One crew = 1 FOS area + its ground techs. ",
+             "Double-click a Crews, Techs/crew, Drone techs or offload cell to ",
+             "change it; all estimates update. Drone techs are kept out of the ground ",
+             "tech count. Ground offload % = share of a facility's ground-treated load ",
+             "(ground sites, prehatch sites/acres) that drones take over. Air offload % = ",
+             "share of air-site inspections drones take over. All ground techs inspect air ",
+             "sites too; drones only help. Offloads lower the load the techs are staffed for."),
+      div(style = "overflow-x:auto;", DT::DTOutput("staff_edit")),
+      div(style = "margin-top:6px;",
+          actionButton("staff_reset", "Reset to defaults", class = "btn-default btn-sm")),
+      uiOutput("staff_check"),
+      br(),
+      h4("Baseline: what each tech and crew carries (P1)"),
+      tags$p(class = "metric-note",
+             "P1 prehatch acres, ground sites and air sites divided by ground techs, ",
+             "crews and drone techs. This is the average load a tech / crew is able ",
+             "to cover, and the baseline for the What-If planner."),
+      div(style = "overflow-x:auto;", DT::DTOutput("staff_baseline")),
+      br(),
+      h4("Techs per FOS area"),
+      tags$p(class = "metric-note",
+             "Each FOS area is one crew, so it carries its facility's techs per crew. ",
              "Load-per-tech uses P1 load."),
       div(style = "overflow-x:auto;", DT::DTOutput("staff_table"))
     ),
@@ -121,6 +143,22 @@ ui <- accessible_page(
                                   "Load per tech (blank = district avg)",
                                   value = NA, min = 1))
         ),
+        fluidRow(
+          column(4, numericInput("wi_techs_per_crew",
+                                 "Techs per crew (this facility)", value = NA, min = 0, step = 1)),
+          column(4, numericInput("wi_drone_offload",
+                                 "Drone offload % of ground load (this facility)",
+                                 value = NA, min = 0, max = 100, step = 5)),
+          column(4, numericInput("wi_drone_air_offload",
+                                 "Drone offload % of air inspections (this facility)",
+                                 value = NA, min = 0, max = 100, step = 5))
+        ),
+        fluidRow(column(12, uiOutput("wi_baseline"))),
+        tags$p(class = "metric-note",
+               "Staffing edits here are shared with the Staffing tab. Ground offload ",
+               "applies to ground sites and prehatch sites/acres; air offload applies to ",
+               "air sites (all techs inspect air sites, drones help). Sections and catch ",
+               "basins are not offloaded."),
         # Equations — how each estimate is computed (shown up front)
         tags$div(style = paste0("background:#eef3fb;border:1px solid #d0daec;",
                                 "border-radius:6px;padding:10px 14px;margin-top:6px;"),
@@ -231,6 +269,9 @@ server <- function(input, output, session) {
     wi_facility    = list(input = "wi_facility",  type = "select"),
     wi_metric      = list(input = "wi_metric",    type = "select"),
     wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
+    wi_techs_per_crew = list(input = "wi_techs_per_crew", type = "numeric"),
+    wi_drone_offload  = list(input = "wi_drone_offload",  type = "numeric"),
+    wi_drone_air_offload = list(input = "wi_drone_air_offload", type = "numeric"),
     wi_rate_year   = list(input = "wi_rate_year", type = "select"),
     wi_rate_scope  = list(input = "wi_rate_scope", type = "radio"),
     wi_crew_hours  = list(input = "wi_crew_hours", type = "numeric"),
@@ -239,13 +280,16 @@ server <- function(input, output, session) {
     wi_circuity    = list(input = "wi_circuity",  type = "numeric")
   ), refresh_for = function(state) character(0))
 
-  # ---- Load + aggregate once per session --------------------------------
+  # ---- Staffing state (defaults from config; user-editable) -------------
+  # Single source for the Staffing and What-If tabs.
+  staff <- reactiveVal(default_staffing())
+
+  # ---- Load once per session --------------------------------------------
   base <- reactiveVal(NULL)
   observe({
     if (!is.null(base())) return()
     sections <- load_capacity_sections()
-    staffing <- load_capacity_staffing()
-    cap      <- aggregate_capacity_by_fos(sections, staffing)
+    cap      <- aggregate_capacity_by_fos(sections, staff())
     priority <- load_capacity_by_priority()
     # FOS name onto sections for the what-if picker
     foremen <- tryCatch(get_foremen_lookup(), error = function(e) data.frame())
@@ -255,8 +299,7 @@ server <- function(input, output, session) {
     sections$fos_name <- ifelse(as.character(sections$fosarea) %in% names(fos_name),
                                 fos_name[as.character(sections$fosarea)],
                                 paste0("FOS ", sections$fosarea))
-    base(list(sections = sections, staffing = staffing, cap = cap,
-              priority = priority))
+    base(list(sections = sections, priority = priority))
     # Populate facility choices
     facs <- sort(unique(cap$facility))
     fac_lkp <- tryCatch(get_facility_lookup(), error = function(e) data.frame())
@@ -281,9 +324,14 @@ server <- function(input, output, session) {
                       selected = as.character(cur_yr - 1))
   })
 
-  cap_filtered <- reactive({
+  # Capacity table re-aggregated whenever the staffing assumptions change
+  cap_live <- reactive({
     b <- base(); req(b)
-    cap <- b$cap
+    aggregate_capacity_by_fos(b$sections, staff())
+  })
+
+  cap_filtered <- reactive({
+    cap <- cap_live()
     if (!is.null(input$cap_facility) && input$cap_facility != "all") {
       cap <- cap[cap$facility == input$cap_facility, ]
     }
@@ -357,17 +405,84 @@ server <- function(input, output, session) {
   })
 
   # ---- Staffing table ---------------------------------------------------
+  # Editable assumptions table. Column indexes are 0-based (rownames = FALSE).
+  STAFF_EDIT_COLS <- c("1" = "crews", "2" = "techs_per_crew",
+                       "4" = "drone_techs", "5" = "drone_offload_pct",
+                       "6" = "drone_air_offload_pct")
+
+  output$staff_edit <- DT::renderDT({
+    b <- base(); req(b)
+    s <- staff()
+    db <- db_fos_area_counts(b$sections)
+    d <- data.frame(
+      Facility = s$facility, Crews = s$crews, `Techs/crew` = s$techs_per_crew,
+      `Ground techs` = s$crews * s$techs_per_crew, `Drone techs` = s$drone_techs,
+      `Ground offload %` = s$drone_offload_pct,
+      `Air offload %` = s$drone_air_offload_pct,
+      `DB FOS areas` = db$db_fos_areas[match(s$facility, db$facility)],
+      check.names = FALSE)
+    tot <- data.frame(Facility = "DISTRICT", Crews = sum(d$Crews), `Techs/crew` = NA,
+                      `Ground techs` = sum(d$`Ground techs`),
+                      `Drone techs` = sum(d$`Drone techs`),
+                      `Ground offload %` = NA, `Air offload %` = NA,
+                      `DB FOS areas` = sum(d$`DB FOS areas`, na.rm = TRUE),
+                      check.names = FALSE)
+    DT::datatable(rbind(d, tot), rownames = FALSE, selection = "none",
+                  editable = list(target = "cell", disable = list(columns = c(0, 3, 7))),
+                  options = list(dom = "t", pageLength = 20, ordering = FALSE))
+  })
+
+  observeEvent(input$staff_edit_cell_edit, {
+    info <- input$staff_edit_cell_edit
+    col <- STAFF_EDIT_COLS[as.character(info$col)]
+    s <- staff()
+    if (is.na(col) || info$row > nrow(s)) return()   # DISTRICT row / locked columns
+    v <- suppressWarnings(as.numeric(info$value))
+    if (is.na(v) || v < 0 || (grepl("offload_pct$", col) && v > 100)) {
+      showNotification("Enter a non-negative number (offload is 0-100).", type = "warning")
+      staff(s)   # re-render to discard the bad edit
+      return()
+    }
+    s[[col]][info$row] <- v
+    staff(s)
+  })
+
+  observeEvent(input$staff_reset, staff(default_staffing()))
+
+  output$staff_check <- renderUI({
+    b <- base(); req(b)
+    s <- staff(); db <- db_fos_area_counts(b$sections)
+    n <- db$db_fos_areas[match(s$facility, db$facility)]
+    bad <- !is.na(n) & n != s$crews
+    if (!any(bad)) return(NULL)
+    tags$p(class = "metric-note", style = "color:#a15c00;margin-top:6px;",
+      "Check: ", paste(sprintf("%s has %d crews but %d FOS areas in the database",
+                               s$facility[bad], as.integer(s$crews[bad]), as.integer(n[bad])),
+                       collapse = "; "),
+      ". Per-FOS numbers assume one crew per FOS area; district totals use the crews entered above.")
+  })
+
+  output$staff_baseline <- DT::renderDT({
+    bl <- staffing_baseline(cap_live(), staff()); req(nrow(bl) > 0)
+    disp <- bl[, c("facility", "crews", "ground_techs", "drone_techs", "p1_acres",
+                   "acres_per_tech", "acres_per_crew", "p1_ground", "ground_per_tech",
+                   "p1_air", "air_per_tech")]
+    names(disp) <- c("Facility", "Crews", "Ground techs", "Drone techs", "P1 PH acres",
+                     "Acres/tech", "Acres/crew", "P1 Ground", "Ground/tech",
+                     "P1 Air", "Air/tech")
+    DT::datatable(disp, rownames = FALSE, selection = "none",
+                  options = list(dom = "t", pageLength = 20, ordering = FALSE, scrollX = TRUE))
+  })
+
   output$staff_table <- DT::renderDT({
     b <- base(); req(b)
-    cap <- b$cap
+    cap <- cap_live()
     p1 <- cap[cap$zone == "1", ]
     p1$ground_per_tech <- ifelse(p1$n_techs > 0, round(p1$ground_sites / p1$n_techs, 1), NA)
     p1$sections_per_tech <- ifelse(p1$n_techs > 0, round(p1$sections / p1$n_techs, 1), NA)
     p1$wetcb_per_tech <- ifelse(p1$n_techs > 0, round(p1$wet_cb / p1$n_techs, 1), NA)
-    fpf <- b$staffing$fos_per_fac
-    fpf_map <- if (nrow(fpf) > 0) setNames(fpf$n_fos, fpf$facility) else integer(0)
-    p1$fos_in_facility <- ifelse(p1$facility %in% names(fpf_map),
-                                 as.integer(fpf_map[p1$facility]), NA)
+    s <- staff()
+    p1$fos_in_facility <- as.integer(s$crews[match(p1$facility, s$facility)])
     disp <- p1[, c("facility_name", "fos_name", "n_techs", "fos_in_facility",
                    "ground_sites", "ground_per_tech", "sections", "sections_per_tech",
                    "wet_cb", "wetcb_per_tech")]
@@ -507,11 +622,47 @@ server <- function(input, output, session) {
                   options = list(pageLength = 10, scrollX = TRUE))
   })
 
+  # ---- What-If staffing controls (shared with the Staffing tab) ----------
+  # Facility switch or a Staffing-tab edit -> refresh the inputs; an input edit
+  # -> write back to staff(). Only writes when the value differs, so no loop.
+  observe({
+    s <- staff(); fac <- input$wi_facility
+    req(fac, fac %in% s$facility)
+    row <- s[s$facility == fac, ]
+    updateNumericInput(session, "wi_techs_per_crew", value = row$techs_per_crew)
+    updateNumericInput(session, "wi_drone_offload", value = row$drone_offload_pct)
+    updateNumericInput(session, "wi_drone_air_offload", value = row$drone_air_offload_pct)
+  })
+
+  set_wi_staff <- function(col, v, lo, hi) {
+    fac <- isolate(input$wi_facility); s <- isolate(staff())
+    if (is.null(fac) || !fac %in% s$facility || is.null(v) || is.na(v)) return()
+    v <- min(max(v, lo), hi); i <- which(s$facility == fac)
+    if (!isTRUE(s[[col]][i] == v)) { s[[col]][i] <- v; staff(s) }
+  }
+  observeEvent(input$wi_techs_per_crew, set_wi_staff("techs_per_crew", input$wi_techs_per_crew, 0, Inf),
+               ignoreInit = TRUE)
+  observeEvent(input$wi_drone_offload, set_wi_staff("drone_offload_pct", input$wi_drone_offload, 0, 100),
+               ignoreInit = TRUE)
+  observeEvent(input$wi_drone_air_offload, set_wi_staff("drone_air_offload_pct", input$wi_drone_air_offload, 0, 100),
+               ignoreInit = TRUE)
+
+  output$wi_baseline <- renderUI({
+    bl <- staffing_baseline(cap_live(), staff()); req(nrow(bl) > 0, input$wi_facility)
+    r <- bl[bl$facility == input$wi_facility, ]; req(nrow(r) == 1)
+    f <- function(x) if (is.na(x)) "n/a" else format(x, big.mark = ",")
+    tags$div(class = "metric-note", style = "margin-top:25px;",
+      HTML(sprintf(
+        "<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs<br/>%s PH acres/tech &middot; %s PH acres/crew &middot; %s air sites/tech",
+        r$facility, f(r$crews), f(r$ground_techs), f(r$drone_techs),
+        f(r$acres_per_tech), f(r$acres_per_crew), f(r$air_per_tech))))
+  })
+
   # ---- Estimate A: load per tech (live) ---------------------------------
   wi_result <- reactive({
     b <- base(); req(b)
     per_tech <- if (is.null(input$wi_per_tech) || is.na(input$wi_per_tech)) NULL else input$wi_per_tech
-    whatif_compute(b$sections, sel(), b$cap,
+    whatif_compute(b$sections, sel(), cap_live(),
                    metric = input$wi_metric, per_tech = per_tech)
   })
 

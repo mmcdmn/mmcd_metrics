@@ -190,3 +190,25 @@ display:
 runtime:
   route_ttl_seconds: 600       # Sticky session TTL for load balancer routing
   max_workers: 10              # Number of Shiny Server worker instances
+
+
+# =============================================================================
+# CAPACITY PLANNER — DISTRICT STAFFING DEFAULTS
+# =============================================================================
+# ROM-confirmed staffing, replacing the unreliable employee_list.active flag.
+# Keyed by facility abbreviation. One crew = 1 FOS area + its ground techs.
+#   crews              number of crews (= FOS areas) at the facility
+#   techs_per_crew     ground techs per crew (excludes the FOS)
+#   drone_techs           facility-level drone techs (new 2025/2026; NOT counted as ground techs)
+#   drone_offload_pct     % of the facility's GROUND treatment load that drones take over (0 until calibrated)
+#   drone_air_offload_pct % of the facility's AIR-site inspections that drones take over (0 until calibrated)
+# ALL ground techs also inspect air sites; drones just help with that the same way they help on the ground.
+# Users can override all of these in the app (Staffing / What-If tabs).
+capacity_planner:
+  staffing:
+    "Sr": { crews: 4, techs_per_crew: 5, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Rosemount
+    "Sj": { crews: 4, techs_per_crew: 5, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Jordan
+    "Wp": { crews: 5, techs_per_crew: 5, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # Plymouth
+    "N":   { crews: 6, techs_per_crew: 8, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # North
+    "E":   { crews: 7, techs_per_crew: 6, drone_techs: 3, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # East
+    "Wm": { crews: 5, techs_per_crew: 5, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # West Maple Grove

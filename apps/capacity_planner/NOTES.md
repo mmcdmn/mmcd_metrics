@@ -12,7 +12,7 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 | `gis_sectcode` | `sectcode`, `facility`, `zone` (1/2), `fosarea`, `latloncentroid` |
 | `loc_catchbasin` | `sitecode`, `status_udw`, `lettergrp`, `enddate` |
 | `gis_facility` | `abbrv`, `the_geom` (facility point) |
-| `employee_list` | `emp_type`, `active`, `facility`, `fieldsuper` |
+| `employee_list` | *(no longer used for tech counts: the `active` flag was unreliable)* |
 
 ## R-Side Logic (`data_functions.R`)
 
@@ -26,11 +26,18 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   `integer64`/bit64 which mis-reads as a garbage double otherwise).
 - **`load_capacity_by_priority()`** — site grain grouped by facility/fosarea/zone/priority
   (priority is a site attribute, so it can't roll up from section grain).
-- **`load_capacity_staffing()`** — techs per FOS (`emp_type='Inspector'` grouped by
-  `fieldsuper` = the FOS emp_num they report to, which equals `gis_sectcode.fosarea`);
-  FOS per facility (`emp_type='FieldSuper'` by facility). `active=true`.
+- **`default_staffing()`** — ROM-confirmed district staffing per facility (crews, techs per
+  crew, drone techs, ground offload %, air offload %) from `config/app_config.yaml` →
+  `capacity_planner.staffing` (fallback: `CAPACITY_STAFFING_FALLBACK`). **Replaces the
+  `employee_list` `active` count**, which was inconsistent. 1 crew = 1 FOS area + its ground
+  techs (techs exclude the FOS); this matches the DB's FOS-area count per facility
+  (E7 N6 Sj4 Sr4 Wm5 Wp5). Drone techs are facility-level and are NOT in the ground tech
+  count. Users edit these in the app (session-only); config is the default.
+- **`db_fos_area_counts(sections)`** — FOS areas per facility in the DB, shown as a
+  cross-check against configured crews.
 - **`aggregate_capacity_by_fos()`** — rolls sections up to facility×fosarea×zone; adds FOS
-  shortname (`get_foremen_lookup`), facility full name (`get_facility_lookup`), techs.
+  shortname (`get_foremen_lookup`), facility full name (`get_facility_lookup`), and from
+  the staffing table `n_techs` (= facility techs/crew), `drone_techs`, `drone_offload_pct`.
 - **`capacity_averages(cap, zone)`** — mean of each metric across FOS areas, per facility
   and district-wide.
 
@@ -41,6 +48,17 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate — no
   routing dependency. *Future:* an optional `facility_section_drivetime` lookup (routed
   minutes from an offline batch) can override, falling back to this estimate.
+- **`staffing_baseline(cap, staff)`** — per facility + DISTRICT: P1 prehatch acres, ground
+  and air sites divided by ground techs (crews × techs/crew) and crews → acres/tech,
+  acres/crew, ground sites/tech, air sites/tech. **ALL ground techs inspect air sites**, so
+  air load is per ground tech, not per drone tech. This is the "what a tech /
+  crew can cover" baseline.
+- **Drone offload** — drones help ground techs in two ways, each its own per-facility %:
+  `drone_offload_pct` scales `DRONE_OFFSET_METRICS` (ground sites, prehatch sites/acres) and
+  `drone_air_offload_pct` scales `DRONE_AIR_OFFSET_METRICS` (air sites = air *inspections*) by
+  `(1 − pct/100)` before Estimate A, so ground techs are staffed only for what drones don't
+  take. Drone treatments (action `D`) are on GROUND sites. Default 0% (not yet calibrated).
+  Sections / wet CB are never offloaded.
 - **`whatif_compute(sections, promote_sectcodes, cap, metric, per_tech)`** — moves promoted
   P2 sections into P1, recomputes each FOS's P1 load of `metric`, and estimates
   **added techs = ceil(new_P1/per_tech) − ceil(cur_P1/per_tech)** (the increase caused by
@@ -57,7 +75,7 @@ added on top of the study's on-site hours — see the `estimate_crews` bullet.
 
 - **`load_jobs_per_site(year)`** — live jobs-per-distinct-site rates from
   `dblarv_insptrt_current`+`archive` for the season, by facility × zone × job_type
-  (+ DISTRICT roll-up via `GROUPING SETS`). Action→job map: `A`/`D`→air_trt, `4`→air_insp,
+  (+ DISTRICT roll-up via `GROUPING SETS`). Action→job map: `A`→air_trt (**not** `D`: drone treatments are on GROUND sites and are excluded), `4`→air_insp,
   `1`→gnd_insp_trt, `3`→gnd_trt, `2`→gnd_insp. `rate = jobs ÷ distinct sites serviced`
   (Table 11.4). Expansion uses the **P1** rates (P1 sites are serviced more often).
 - **Hours-per-job** is NOT in any DB (no timesheet — only GPS `track_point_realtime` +
@@ -107,9 +125,13 @@ equations are shown up front, and every input number is exposed:
 
 1. **Capacity by FOS** — wide table (P1/P2 per metric), facility filter, priority-breakdown
    toggle, optional est. drive-time columns, averages (P1/P2), CSV download.
-2. **Staffing** — techs per FOS, FOS per facility, P1 load-per-tech ratios.
-3. **What-If Planner** — pick facility → select P2 sections → Estimate → added-techs summary
-   + per-FOS impact table.
+2. **Staffing** — editable staffing table (crews, techs/crew, drone techs, drone offload %,
+   Reset to defaults, DB FOS-area cross-check), the P1 baseline table (acres/tech,
+   acres/crew, air sites/tech), and techs per FOS with P1 load-per-tech ratios.
+   Edits drive every estimate (`staff` reactiveVal → `cap_live()`).
+3. **What-If Planner** — pick facility → (optionally edit that facility's techs/crew and
+   drone offload %, shared with the Staffing tab) → select P2 sections → Estimate →
+   added-techs summary + per-FOS impact table.
 
 ## Cross-checks (validated against live DB)
 

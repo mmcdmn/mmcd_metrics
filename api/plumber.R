@@ -599,7 +599,8 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
                acres AS site_acres,
                air_gnd,
                priority,
-               type AS site_type
+               type AS site_type,
+               remarks AS site_remarks
         FROM public.loc_breeding_sites
         WHERE (enddate IS NULL OR enddate > CURRENT_DATE)
           %s
@@ -639,6 +640,7 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
         s.air_gnd,
         s.priority,
         s.site_type,
+        s.site_remarks,
         r.action,
         r.inspdate,
         r.numdip,

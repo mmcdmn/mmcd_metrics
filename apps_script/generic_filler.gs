@@ -81,6 +81,10 @@ const CONFIG = {
   //   air_gnd      — the site's air/ground designation (A or G)
   //   priority     — RED / ORANGE / YELLOW / BLUE / GREEN / PURPLE
   //   site_type    — site type code
+  //   site_remarks — the site's standing notes (access, owner, permissions...).
+  //                  This is almost always what you want for "remarks" — the
+  //                  inspection fields rems1/rems2 below are per-visit notes
+  //                  and are populated on well under 1% of ground visits.
   //
   // INSPECTION fields — blank until the site has a record in the lookback window:
   //   inspdate     — date of the inspection or treatment (use format: 'date')
@@ -114,15 +118,18 @@ const CONFIG = {
   //    color: CSS hex color to apply when rule matches
   //    cols:  array of column letters, e.g. ['C','D']
   //           OR null to color ALL value-mode columns on that row
-  //    rule:  { field, op, value }  — op is '>' '<' '=' '>=' '<='
-  //           Omit rule entirely to always highlight when site has data.
+  //    rule:  { field, op, value }  — op is '>' '<' '=' '>=' '<=' 'in'
+  //           'in' matches when the field equals any entry of value (an
+  //           array), e.g. { field:'action', op:'in', value:['1','3'] }.
+  //           Use this instead of two separate highlight entries whenever
+  //           you need an OR.
   //
   COLUMNS: [
-    { mode: 'value', source: 'inspdate',   col: 'C', format: 'date' },
-    { mode: 'value', source: 'numdip',     col: 'D' },
-    { mode: 'value', source: 'emp1',       col: 'E' },
-    { mode: 'value', source: 'acres',      col: 'F' },
-    { mode: 'value', source: 'acres_plan', col: 'G' },
+  //  { mode: 'value', source: 'inspdate',   col: 'C', format: 'date' },
+  //  { mode: 'value', source: 'numdip',     col: 'D' },
+  //  { mode: 'value', source: 'emp1',       col: 'E' },
+  //  { mode: 'value', source: 'acres',      col: 'F' },
+  //  { mode: 'value', source: 'acres_plan', col: 'G' },
 
     // ── Highlight examples (uncomment and change) ──
     // Green on cols D–G when numdip > 0:
@@ -186,12 +193,21 @@ function readCol_(sheet, dataStart, col, numRows) {
 function writeCol_(sheet, dataStart, col, numRows, data) {
   if (!col || !data) return;
   try {
-    sheet.getRange(dataStart, col, numRows, 1).setValues(data);
+    const range = sheet.getRange(dataStart, col, numRows, 1);
+    // setValues() never touches an existing cell format. A cell that was ever
+    // formatted as Date/Time/Currency (even once, even in a previous version
+    // of this sheet) keeps that format forever, so a later numeric write —
+    // e.g. numdip = 0.7 — renders as "12/30/1899 16:48:00" instead of 0.7.
+    // Plain text format stops Sheets from ever reinterpreting a written
+    // value, the same fix already used for the sitecode column.
+    range.setNumberFormat('@');
+    range.setValues(data);
     SpreadsheetApp.flush();
   } catch (e) {
     try {
       const range = sheet.getRange(dataStart, col, numRows, 1);
       range.clearDataValidations();
+      range.setNumberFormat('@');
       range.setValues(data);
       SpreadsheetApp.flush();
       Logger.log('writeCol_ retry OK after clearing validation on tab "' + sheet.getName() + '" col ' + col);
@@ -307,15 +323,12 @@ function fetchData_(tabCfg) {
 // RULE EVALUATION
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Evaluate a highlight rule against an API row.
- * rule = { field, op, value }  — op is '>', '<', '=', '>=', '<='
- * Returns true to apply the highlight color.
- */
+
 function evalRule_(apiRow, rule) {
   if (!rule) return true;  // no rule = always highlight
   const raw = apiRow[rule.field];
   if (raw === undefined || raw === null || raw === '') return false;
+  if (rule.op === 'in') return Array.isArray(rule.value) && rule.value.map(String).includes(String(raw));
   const v = Number(raw);
   const t = Number(rule.value);
   if (rule.op === '>')  return v >  t;
@@ -371,11 +384,7 @@ function buildValueArrays_(siteRows, dataRows, lookup, tabCfg, claimOwnedCol) {
 // APPLY HIGHLIGHTS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Apply / clear highlight-mode COLUMNS for each site row.
- * Multiple highlight entries can overlap; later entries in COLUMNS win
- * if they target the same cell.
- */
+
 function applyHighlights_(sheet, ds, siteRows, lookup, tabCfg) {
   if (tabCfg.hlCols.length === 0) return;
 
@@ -384,19 +393,21 @@ function applyHighlights_(sheet, ds, siteRows, lookup, tabCfg) {
     const filled = info && info[tabCfg.filledField];
     const row    = ds + idx;
 
+    const winner = {};  // colNum -> color ('' means already resolved to null)
     for (const hl of tabCfg.hlCols) {
       // Resolve which columns to color
       const targetCols = hl.cols !== null ? hl.cols : tabCfg.allValueColNums;
       if (!targetCols || targetCols.length === 0) continue;
 
-      const applies = filled ? evalRule_(info, hl.rule) : false;
-      const color   = applies ? hl.color : null;
-
-      // Apply to each target column individually to avoid large contiguous-range assumptions
+      const applies = filled && evalRule_(info, hl.rule);
       for (const cn of targetCols) {
         if (tabCfg.preserveSet.has(cn)) continue;
-        sheet.getRange(row, cn).setBackground(color);
+        if (applies) winner[cn] = hl.color;          // a match always wins, even over an earlier match
+        else if (!(cn in winner)) winner[cn] = null; // only a placeholder — a later match can still override it
       }
+    }
+    for (const cn of Object.keys(winner)) {
+      sheet.getRange(row, Number(cn)).setBackground(winner[cn]);
     }
   }
 }
@@ -427,7 +438,13 @@ function applyClaimHighlights_(sheet, ds, siteRows, lookup, claimColData, tabCfg
 // ════════════════════════════════════════════════════════════════════════════
 
 const SITECODE_URL_BASE = 'https://webster.mmcd.org/map?search=';
-
+/**
+ * Set hyperlinks on sitecode cells to the SITECODE_URL_BASE.
+ * @param {Sheet} sheet - The sheet containing the sitecode cells.
+ * @param {number} ds - The data start row offset.
+ * @param {number} scCol - The column number of the sitecode cells.
+ * @param {Object} siteRows - A mapping of sitecode to row index.
+ */
 function setSitecodeLinks_(sheet, ds, scCol, siteRows) {
   if (!scCol) return;
   for (const [sc, idx] of Object.entries(siteRows)) {
@@ -648,11 +665,11 @@ function refreshData() {
       const lookup = needsOwnFetch ? fetchData_(tc) : globalData;
 
       // Sitecodes must stay text: Sheets turns E-sites into numbers otherwise
-      const scRange = sheet.getRange(ds, tc.scCol, numRows, 1);
+      const scRange = sheet.getRange(ds, tc.scCol, numRows, 1); // format: data start, through end of sheet data, number of entities in the range, the number of cols
       scRange.setNumberFormat('@');
 
       // Build siteRows map: sitecode → 0-based row index within data range
-      const scValues = scRange.getValues();
+      const scValues = scRange.getValues(); // 2D array made from our scRange
       const siteRows = {};
       let lastDataIdx = -1;
       for (let i = 0; i < numRows; i++) {

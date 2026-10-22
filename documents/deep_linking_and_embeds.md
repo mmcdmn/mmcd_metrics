@@ -45,49 +45,6 @@ Engine: `shared/url_state_helpers.R` (deep link + auto-refresh),
 | Air Inspection Checklist | `/air_inspection_checklist/` | bespoke parser (claims/emp feature); auto-loads on open, now covers all filters + autorefresh |
 | Capacity Planner | `/capacity_planner/` | live estimates (no refresh click); deep-links tab + facility + what-if inputs |
 
-### Already self-sufficient (its own URL params, not this engine)
-
-| App | Route |
-|---|---|
-| Overview (district/facility/FOS) | `/overview/` |
-
-### Embed infrastructure — built (v2: full filter parity)
-
-- Public API (no key, CORS `*`): `/v1/public/embed/chart`,
-  `/v1/public/embed/statbox`, `/v1/public/embed/metrics`; static widget `/embed/`.
-- The embed API now accepts the **same params** as the deep-link URLs (app, view,
-  facility, zone, fos, group_by, graph_type, time_period, …) and reproduces each
-  app's own chart data — **peek Redis → compute-live-on-miss → cache (short TTL)**.
-  Returns data-series JSON + resolved options; the widget draws by `graph_type`.
-- v1 `?metric=<id>&type=<avg>` (cache-only historical_averages) still works.
-- Per-app rollout is in progress — see §4 "App coverage".
-
-### Not yet done
-
-| App | Why |
-|---|---|
-| red_air_legacy | legacy, superseded by `air_sites_simple`; **not deployed** (no `shiny-server.conf` route) |
-| about, embed, refresh_views, test-app, trap_survillance_test | static / headless / test pages |
-
-### Verification status
-
-All 16 apps parse-clean; 10 construct-verified locally, the rest pull
-container-only packages so they are parse-verified (they construct in the
-container). Accessibility + per-app suites pass. Deep links + embeds confirmed
-working in the browser by the user.
-
-**Filter-coverage audit (every deployed app):** each app's discrete inputs were
-extracted from source (via `getParseData`) and cross-checked against its
-deep-link spec — **no data filter is missing**. Notes from the audit:
-- Ground Prehatch's Historical tab reads the **main** sidebar
-  facility/zone/fos/group_by (already in the spec); its `hist_*` sidebar copies
-  are vestigial (nothing reads them), so they are intentionally not mapped.
-- Engine fix (this round): a two-pass apply now re-applies URL state after the
-  initial cross-input cascade settles, so a value like `fos=1904` is no longer
-  clobbered when setting `facility=` resets the FOS dropdown. Applies to every
-  app with a parent→child filter reset.
-
----
 
 ## 2. How to use the URLs (localhost)
 
@@ -458,6 +415,8 @@ deep-linked.)
 | `tabs` | `capacity` \| `staffing` \| `whatif` |
 | `cap_facility` | `all` `(or facility from DB)` — Capacity tab facility |
 | `cap_priority` | `true` \| `false` — break down by priority |
+| `cap_measure` | `both` \| `sites` \| `acres` — show site counts, acres, or both |
+| `avg_metric` | a metric id, e.g. `ground_sites`, `ground_acres`, `air_sites`, `air_acres`, `prehatch_sites`, `prehatch_acres`, `sections`, `wet_cb`, `avg_miles` — box-plot metric in the Averages section |
 | `cap_drivetime` | `true` \| `false` — show est. drive time |
 | `avg_mph` | number (Capacity tab drive-time speed) |
 | `circuity` | number (road circuity factor) |

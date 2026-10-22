@@ -114,7 +114,7 @@ load_jobs_per_site <- function(year = as.integer(format(Sys.Date(), "%Y")) - 1) 
 #' table (aggregated up) AND the what-if section picker (used as-is).
 #'
 #' @return data.frame: facility, fosarea, zone, sectcode, ground_sites, air_sites,
-#'   prehatch_sites, prehatch_acres, wet_cb, miles
+#'   ground_acres, air_acres, prehatch_sites, prehatch_acres, wet_cb, miles
 load_capacity_sections <- function() {
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
@@ -123,6 +123,8 @@ load_capacity_sections <- function() {
     SELECT sc.facility, sc.fosarea, sc.zone, sc.sectcode,
            COALESCE(bs.ground_sites, 0)   AS ground_sites,
            COALESCE(bs.air_sites, 0)      AS air_sites,
+           COALESCE(bs.ground_acres, 0)   AS ground_acres,
+           COALESCE(bs.air_acres, 0)      AS air_acres,
            COALESCE(bs.prehatch_sites, 0) AS prehatch_sites,
            COALESCE(bs.prehatch_acres, 0) AS prehatch_acres,
            COALESCE(cb.wet_cb, 0)         AS wet_cb,
@@ -137,6 +139,8 @@ load_capacity_sections <- function() {
       SELECT left(b.sitecode, 7) AS sectcode,
              (COUNT(*) FILTER (WHERE b.air_gnd = 'G'))::int AS ground_sites,
              (COUNT(*) FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites,
+             COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'G'), 0)::numeric AS ground_acres,
+             COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'A'), 0)::numeric AS air_acres,
              (COUNT(*) FILTER (WHERE b.prehatch IN %s))::int AS prehatch_sites,
              COALESCE(SUM(b.acres) FILTER (WHERE b.prehatch IN %s), 0)::numeric AS prehatch_acres
       FROM loc_breeding_sites b
@@ -160,7 +164,9 @@ load_capacity_sections <- function() {
     warning(paste("[load_capacity_sections]", e$message)); data.frame()
   })
   if (nrow(df) > 0) {
-    df$prehatch_acres <- round(as.numeric(df$prehatch_acres), 1)
+    for (col in c("ground_acres", "air_acres", "prehatch_acres")) {
+      df[[col]] <- round(as.numeric(df[[col]]), 3)   # round after summing, not per section
+    }
     df$miles <- round(as.numeric(df$miles), 1)
   }
   df
@@ -169,7 +175,7 @@ load_capacity_sections <- function() {
 #' Site-grain capacity broken down by priority (for the priority-breakdown view).
 #'
 #' @return data.frame: facility, fosarea, zone, priority, ground_sites, air_sites,
-#'   prehatch_sites, prehatch_acres
+#'   ground_acres, air_acres, prehatch_sites, prehatch_acres
 load_capacity_by_priority <- function() {
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
@@ -179,6 +185,8 @@ load_capacity_by_priority <- function() {
            COALESCE(NULLIF(b.priority, ''), '(none)') AS priority,
            (COUNT(*) FILTER (WHERE b.air_gnd = 'G'))::int AS ground_sites,
            (COUNT(*) FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites,
+           COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'G'), 0)::numeric AS ground_acres,
+           COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'A'), 0)::numeric AS air_acres,
            (COUNT(*) FILTER (WHERE b.prehatch IN %s))::int AS prehatch_sites,
            COALESCE(SUM(b.acres) FILTER (WHERE b.prehatch IN %s), 0)::numeric AS prehatch_acres
     FROM loc_breeding_sites b
@@ -193,7 +201,11 @@ load_capacity_by_priority <- function() {
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_by_priority]", e$message)); data.frame()
   })
-  if (nrow(df) > 0) df$prehatch_acres <- round(as.numeric(df$prehatch_acres), 1)
+  if (nrow(df) > 0) {
+    for (col in c("ground_acres", "air_acres", "prehatch_acres")) {
+      df[[col]] <- round(as.numeric(df[[col]]), 3)   # round after summing, not per section
+    }
+  }
   df
 }
 
@@ -282,6 +294,8 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
       sections       = dplyr::n_distinct(sectcode),
       ground_sites   = sum(ground_sites, na.rm = TRUE),
       air_sites      = sum(air_sites, na.rm = TRUE),
+      ground_acres   = round(sum(ground_acres, na.rm = TRUE), 1),
+      air_acres      = round(sum(air_acres, na.rm = TRUE), 1),
       prehatch_sites = sum(prehatch_sites, na.rm = TRUE),
       prehatch_acres = round(sum(prehatch_acres, na.rm = TRUE), 1),
       wet_cb         = sum(wet_cb, na.rm = TRUE),
@@ -318,31 +332,53 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
   agg %>% dplyr::arrange(facility, fos_name, zone)
 }
 
-#' Averages of the capacity columns across FOS areas, for a given zone.
-#' Returns per-facility means and a district-wide mean.
+#' Mean AND median of the capacity columns across FOS areas, for a given zone.
+#' Returns per-facility rows and a district-wide row (DISTRICT is first).
 #'
 #' @param cap  Output of aggregate_capacity_by_fos()
 #' @param zone_val  "1" or "2"
-#' @return data.frame: scope ("District" or facility), then mean of each metric
-capacity_averages <- function(cap, zone_val) {
+#' @param metrics  metric columns to summarise (default CAPACITY_ZONE_METRICS);
+#'   n_techs is always added
+#' @return data.frame: scope, n_fos, then <metric>_mean and <metric>_median
+capacity_averages <- function(cap, zone_val, metrics = NULL) {
   if (is.null(cap) || nrow(cap) == 0) return(data.frame())
   z <- cap[cap$zone == zone_val, , drop = FALSE]
   if (nrow(z) == 0) return(data.frame())
 
-  metric_cols <- c("sections", "ground_sites", "air_sites", "prehatch_sites",
-                   "prehatch_acres", "wet_cb", "avg_miles", "n_techs")
+  if (is.null(metrics)) metrics <- CAPACITY_ZONE_METRICS
+  metric_cols <- c(metrics, "n_techs")
+  fns <- list(mean   = ~ round(mean(.x, na.rm = TRUE), 1),
+              median = ~ round(stats::median(.x, na.rm = TRUE), 1))
 
   per_fac <- z %>%
     dplyr::group_by(scope = facility) %>%
-    dplyr::summarise(dplyr::across(dplyr::all_of(metric_cols),
-                                   ~ round(mean(.x, na.rm = TRUE), 1)),
-                     n_fos = dplyr::n(), .groups = "drop")
+    dplyr::summarise(n_fos = dplyr::n(),
+                     dplyr::across(dplyr::all_of(metric_cols), fns,
+                                   .names = "{.col}_{.fn}"),
+                     .groups = "drop")
 
   district <- z %>%
-    dplyr::summarise(scope = "DISTRICT",
-                     dplyr::across(dplyr::all_of(metric_cols),
-                                   ~ round(mean(.x, na.rm = TRUE), 1)),
-                     n_fos = dplyr::n())
+    dplyr::summarise(scope = "DISTRICT", n_fos = dplyr::n(),
+                     dplyr::across(dplyr::all_of(metric_cols), fns,
+                                   .names = "{.col}_{.fn}"))
 
   dplyr::bind_rows(district, per_fac)
+}
+
+#' One row per FOS area for a box plot: a DISTRICT group (all FOS areas) plus one
+#' group per facility. Each point is a FOS area.
+#'
+#' @param cap  Output of aggregate_capacity_by_fos() (already facility-filtered)
+#' @param zone_val  "1" or "2"
+#' @param metric  a column of `cap` (e.g. "ground_sites", "air_acres")
+#' @return data.frame: group (factor, DISTRICT first), value, fos_name
+capacity_boxplot_data <- function(cap, zone_val, metric) {
+  if (is.null(cap) || nrow(cap) == 0 || !metric %in% names(cap)) return(data.frame())
+  z <- cap[cap$zone == zone_val, , drop = FALSE]
+  if (nrow(z) == 0) return(data.frame())
+  fac <- data.frame(group = z$facility, value = as.numeric(z[[metric]]),
+                    fos_name = z$fos_name, stringsAsFactors = FALSE)
+  df <- rbind(transform(fac, group = "DISTRICT"), fac)
+  df$group <- factor(df$group, levels = c("DISTRICT", sort(unique(z$facility))))
+  df[!is.na(df$value), , drop = FALSE]
 }

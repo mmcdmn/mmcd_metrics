@@ -32,14 +32,18 @@ tryCatch({
   get_facility_lookup(); get_foremen_lookup()
 }, error = function(e) message("[fos_capacity] Preload warning: ", e$message))
 
+# Every site count is paired with its acres (sections / catch basins are count-only)
 METRIC_CHOICES <- c(
   "Ground sites"   = "ground_sites",
+  "Ground acres"   = "ground_acres",
   "Air sites"      = "air_sites",
+  "Air acres"      = "air_acres",
   "Prehatch sites" = "prehatch_sites",
   "Prehatch acres" = "prehatch_acres",
   "Sections"       = "sections",
   "Wet catch basins" = "wet_cb"
 )
+BOX_METRIC_CHOICES <- c(METRIC_CHOICES, "Avg miles from facility" = "avg_miles")
 
 # =============================================================================
 # UI
@@ -76,6 +80,13 @@ ui <- accessible_page(
                                   "Show est. drive time", FALSE)),
           column(3, downloadButton("cap_download", "Download CSV"))
         ),
+        fluidRow(
+          column(12, radioButtons("cap_measure", "Show:",
+                                  c("Site counts and acres" = "both",
+                                    "Site counts only" = "sites",
+                                    "Acres only" = "acres"),
+                                  selected = "both", inline = TRUE))
+        ),
         conditionalPanel(
           "input.cap_drivetime",
           fluidRow(
@@ -86,14 +97,26 @@ ui <- accessible_page(
         )
       ),
       h4("Capacity per FOS area (P1 / P2)"),
+      tags$p(class = "metric-note",
+             "Columns are labelled as site counts or acres (ground, air and prehatch ",
+             "each have both). Sections and wet catch basins are counts only. ",
+             "Use the toggle above to show sites, acres, or both."),
       div(style = "overflow-x:auto;", DT::DTOutput("cap_table")),
       br(),
       h4("Averages per FOS area"),
       tags$p(class = "metric-note",
-             "Mean load per FOS area, by facility and district-wide."),
+             "Mean and median load per FOS area, by facility and district-wide (all facilities, ",
+             "regardless of the facility filter above). In the ",
+             "box plot each point is one FOS area; the box is the middle 50% with the ",
+             "median line, the dashed line is the mean, and whiskers reach the ",
+             "lowest/highest values within 1.5 x the box height."),
+      selectInput("avg_metric", "Box plot metric:", choices = BOX_METRIC_CHOICES,
+                  selected = "ground_sites", width = "320px"),
       tabsetPanel(
-        tabPanel("P1", br(), DT::DTOutput("avg_p1")),
-        tabPanel("P2", br(), DT::DTOutput("avg_p2"))
+        tabPanel("P1", br(), plotly::plotlyOutput("box_p1", height = 380),
+                 uiOutput("box_note_p1"), br(), DT::DTOutput("avg_p1")),
+        tabPanel("P2", br(), plotly::plotlyOutput("box_p2", height = 380),
+                 uiOutput("box_note_p2"), br(), DT::DTOutput("avg_p2"))
       )
     ),
 
@@ -117,9 +140,9 @@ ui <- accessible_page(
       br(),
       h4("Baseline: what each tech and crew carries (P1)"),
       tags$p(class = "metric-note",
-             "P1 prehatch acres, ground sites and air sites divided by ground techs, ",
-             "crews and drone techs. This is the average load a tech / crew is able ",
-             "to cover, and the baseline for the What-If planner."),
+             "P1 ground, air and prehatch sites and acres divided by ground techs and ",
+             "crews. This is the average load a tech / crew carries, and the baseline ",
+             "for the What-If planner. All ground techs inspect air sites."),
       div(style = "overflow-x:auto;", DT::DTOutput("staff_baseline")),
       br(),
       h4("Techs per FOS area"),
@@ -263,6 +286,8 @@ server <- function(input, output, session) {
     tabs           = list(input = "tabs",         type = "tab"),
     cap_facility   = list(input = "cap_facility", type = "select"),
     cap_priority   = list(input = "cap_priority", type = "checkbox"),
+    cap_measure    = list(input = "cap_measure",  type = "radio"),
+    avg_metric     = list(input = "avg_metric",   type = "select"),
     cap_drivetime  = list(input = "cap_drivetime", type = "checkbox"),
     avg_mph        = list(input = "avg_mph",      type = "numeric"),
     circuity       = list(input = "circuity",     type = "numeric"),
@@ -351,10 +376,12 @@ server <- function(input, output, session) {
       pri$FOS <- ifelse(as.character(pri$fosarea) %in% names(nm),
                         nm[as.character(pri$fosarea)], paste0("FOS ", pri$fosarea))
       pri$Zone <- paste0("P", pri$zone)
-      disp <- pri[, c("facility", "FOS", "Zone", "priority",
-                      "ground_sites", "air_sites", "prehatch_sites", "prehatch_acres")]
+      pcols <- c("ground_sites", "ground_acres", "air_sites", "air_acres",
+                 "prehatch_sites", "prehatch_acres")
+      pcols <- pcols[pcols %in% capacity_visible_metrics(input$cap_measure %||% "both")]
+      disp <- pri[, c("facility", "FOS", "Zone", "priority", pcols)]
       names(disp) <- c("Facility", "FOS", "Zone", "Priority",
-                       "Ground", "Air", "PH sites", "PH acres")
+                       unname(CAPACITY_METRIC_LABELS[pcols]))
       return(DT::datatable(disp, rownames = FALSE, filter = "top",
                            options = list(pageLength = 25, scrollX = TRUE)))
     }
@@ -364,22 +391,10 @@ server <- function(input, output, session) {
       w$drive_min_P1 <- est_drive_minutes(w$avg_miles_P1, input$avg_mph, input$circuity)
       w$drive_min_P2 <- est_drive_minutes(w$avg_miles_P2, input$avg_mph, input$circuity)
     }
-    disp <- w
+    disp <- select_measure_cols(w, input$cap_measure %||% "both")
     disp$facility <- NULL; disp$fosarea <- NULL
-    # nicer names
-    names(disp) <- gsub("_P1", " P1", names(disp))
-    names(disp) <- gsub("_P2", " P2", names(disp))
-    names(disp) <- gsub("facility_name", "Facility", names(disp))
-    names(disp) <- gsub("fos_name", "FOS", names(disp))
-    names(disp) <- gsub("n_techs", "Techs", names(disp))
-    names(disp) <- gsub("sections", "Sect", names(disp))
-    names(disp) <- gsub("ground_sites", "Ground", names(disp))
-    names(disp) <- gsub("air_sites", "Air", names(disp))
-    names(disp) <- gsub("prehatch_sites", "PHsite", names(disp))
-    names(disp) <- gsub("prehatch_acres", "PHac", names(disp))
-    names(disp) <- gsub("wet_cb", "WetCB", names(disp))
-    names(disp) <- gsub("avg_miles", "AvgMi", names(disp))
-    names(disp) <- gsub("drive_min", "DriveMin", names(disp))
+    # explicit labels: "Ground sites P1", "Ground acres P1", ...
+    names(disp) <- vapply(names(disp), capacity_col_label, character(1))
     DT::datatable(disp, rownames = FALSE, filter = "top",
                   options = list(pageLength = 40, scrollX = TRUE))
   })
@@ -389,20 +404,56 @@ server <- function(input, output, session) {
     content = function(file) {
       cap <- cap_filtered()
       out <- if (isTRUE(input$cap_priority)) base()$priority else capacity_wide(cap)
+      out <- select_measure_cols(out, input$cap_measure %||% "both")
       utils::write.csv(out, file, row.names = FALSE)
     }
   )
 
-  output$avg_p1 <- DT::renderDT({
-    cap <- cap_filtered(); req(nrow(cap) > 0)
-    DT::datatable(capacity_averages(cap, "1"), rownames = FALSE,
-                  options = list(pageLength = 15, scrollX = TRUE))
-  })
-  output$avg_p2 <- DT::renderDT({
-    cap <- cap_filtered(); req(nrow(cap) > 0)
-    DT::datatable(capacity_averages(cap, "2"), rownames = FALSE,
-                  options = list(pageLength = 15, scrollX = TRUE))
-  })
+  # The averages section always covers every facility (not the facility filter), so
+  # the DISTRICT row / box is the true district, not just the filtered facility.
+  avg_table <- function(zone_val) {
+    cap <- cap_live(); req(nrow(cap) > 0)
+    measure <- input$cap_measure %||% "both"
+    a <- capacity_averages(cap, zone_val, capacity_visible_metrics(measure))
+    names(a) <- vapply(names(a), capacity_col_label, character(1))
+    DT::datatable(a, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+  }
+  output$avg_p1 <- DT::renderDT(avg_table("1"))
+  output$avg_p2 <- DT::renderDT(avg_table("2"))
+
+  # Box plot of one metric across FOS areas: DISTRICT box + one box per facility
+  box_plot <- function(zone_val) {
+    cap <- cap_live(); req(nrow(cap) > 0)
+    m <- input$avg_metric %||% "ground_sites"
+    d <- capacity_boxplot_data(cap, zone_val, m); req(nrow(d) > 0)
+    plotly::plot_ly(
+      d, x = ~group, y = ~value, type = "box", boxpoints = "all", jitter = 0.4,
+      pointpos = 0, boxmean = TRUE, text = ~fos_name, hoverinfo = "y+text",
+      line = list(color = "#2c5aa0", width = 1.5),
+      fillcolor = "rgba(44,90,160,0.18)",
+      marker = list(color = "#2c5aa0", size = 5, opacity = 0.7)) %>%
+      plotly::layout(
+        xaxis = list(title = ""),
+        yaxis = list(title = sprintf("%s per FOS area (P%s)",
+                                     capacity_col_label(m), zone_val)),
+        showlegend = FALSE)
+  }
+  # Text summary of the same numbers (the plot itself is not screen-reader friendly)
+  box_note <- function(zone_val) {
+    cap <- cap_live(); req(nrow(cap) > 0)
+    m <- input$avg_metric %||% "ground_sites"
+    d <- capacity_boxplot_data(cap, zone_val, m)
+    v <- d$value[d$group == "DISTRICT"]; req(length(v) > 0)
+    tags$p(class = "metric-note", sprintf(
+      "DISTRICT %s, P%s, across %d FOS areas: min %s, median %s, mean %s, max %s.",
+      tolower(capacity_col_label(m)), zone_val, length(v),
+      format(round(min(v), 1), big.mark = ","), format(round(stats::median(v), 1), big.mark = ","),
+      format(round(mean(v), 1), big.mark = ","), format(round(max(v), 1), big.mark = ",")))
+  }
+  output$box_p1 <- plotly::renderPlotly(box_plot("1"))
+  output$box_p2 <- plotly::renderPlotly(box_plot("2"))
+  output$box_note_p1 <- renderUI(box_note("1"))
+  output$box_note_p2 <- renderUI(box_note("2"))
 
   # ---- Staffing table ---------------------------------------------------
   # Editable assumptions table. Column indexes are 0-based (rownames = FALSE).
@@ -464,12 +515,19 @@ server <- function(input, output, session) {
 
   output$staff_baseline <- DT::renderDT({
     bl <- staffing_baseline(cap_live(), staff()); req(nrow(bl) > 0)
-    disp <- bl[, c("facility", "crews", "ground_techs", "drone_techs", "p1_acres",
-                   "acres_per_tech", "acres_per_crew", "p1_ground", "ground_per_tech",
-                   "p1_air", "air_per_tech")]
-    names(disp) <- c("Facility", "Crews", "Ground techs", "Drone techs", "P1 PH acres",
-                     "Acres/tech", "Acres/crew", "P1 Ground", "Ground/tech",
-                     "P1 Air", "Air/tech")
+    cols <- c(facility = "Facility", crews = "Crews", ground_techs = "Ground techs",
+              drone_techs = "Drone techs",
+              p1_ground_sites = "P1 Ground sites", ground_sites_per_tech = "Ground sites/tech",
+              p1_ground_acres = "P1 Ground acres", ground_acres_per_tech = "Ground acres/tech",
+              ground_acres_per_crew = "Ground acres/crew",
+              p1_air_sites = "P1 Air sites", air_sites_per_tech = "Air sites/tech",
+              p1_air_acres = "P1 Air acres", air_acres_per_tech = "Air acres/tech",
+              air_acres_per_crew = "Air acres/crew",
+              p1_ph_sites = "P1 Prehatch sites", ph_sites_per_tech = "Prehatch sites/tech",
+              p1_ph_acres = "P1 Prehatch acres", ph_acres_per_tech = "Prehatch acres/tech",
+              ph_acres_per_crew = "Prehatch acres/crew")
+    disp <- bl[, names(cols)]
+    names(disp) <- unname(cols)
     DT::datatable(disp, rownames = FALSE, selection = "none",
                   options = list(dom = "t", pageLength = 20, ordering = FALSE, scrollX = TRUE))
   })
@@ -478,17 +536,23 @@ server <- function(input, output, session) {
     b <- base(); req(b)
     cap <- cap_live()
     p1 <- cap[cap$zone == "1", ]
-    p1$ground_per_tech <- ifelse(p1$n_techs > 0, round(p1$ground_sites / p1$n_techs, 1), NA)
-    p1$sections_per_tech <- ifelse(p1$n_techs > 0, round(p1$sections / p1$n_techs, 1), NA)
-    p1$wetcb_per_tech <- ifelse(p1$n_techs > 0, round(p1$wet_cb / p1$n_techs, 1), NA)
+    pt <- function(x) ifelse(p1$n_techs > 0, round(x / p1$n_techs, 1), NA)
+    p1$ground_per_tech <- pt(p1$ground_sites)
+    p1$ground_acres_per_tech <- pt(p1$ground_acres)
+    p1$air_per_tech <- pt(p1$air_sites)
+    p1$air_acres_per_tech <- pt(p1$air_acres)
+    p1$sections_per_tech <- pt(p1$sections)
+    p1$wetcb_per_tech <- pt(p1$wet_cb)
     s <- staff()
     p1$fos_in_facility <- as.integer(s$crews[match(p1$facility, s$facility)])
     disp <- p1[, c("facility_name", "fos_name", "n_techs", "fos_in_facility",
-                   "ground_sites", "ground_per_tech", "sections", "sections_per_tech",
-                   "wet_cb", "wetcb_per_tech")]
+                   "ground_sites", "ground_per_tech", "ground_acres", "ground_acres_per_tech",
+                   "air_sites", "air_per_tech", "air_acres", "air_acres_per_tech",
+                   "sections", "sections_per_tech", "wet_cb", "wetcb_per_tech")]
     names(disp) <- c("Facility", "FOS", "Techs", "FOS in facility",
-                     "P1 Ground", "Ground/tech", "P1 Sect", "Sect/tech",
-                     "P1 WetCB", "WetCB/tech")
+                     "P1 Ground sites", "Ground sites/tech", "P1 Ground acres", "Ground acres/tech",
+                     "P1 Air sites", "Air sites/tech", "P1 Air acres", "Air acres/tech",
+                     "P1 Sections", "Sections/tech", "P1 Wet CB", "Wet CB/tech")
     DT::datatable(disp, rownames = FALSE, filter = "top",
                   options = list(pageLength = 40, scrollX = TRUE))
   })
@@ -517,8 +581,8 @@ server <- function(input, output, session) {
     g <- tryCatch(sf::st_as_sf(geo, wkt = "wkt", crs = 4326),
                   error = function(e) NULL)
     if (is.null(g)) return(NULL)
-    attrs <- b$sections[, c("sectcode", "fos_name", "ground_sites",
-                            "air_sites", "wet_cb", "miles")]
+    attrs <- b$sections[, c("sectcode", "fos_name", "ground_sites", "ground_acres",
+                            "air_sites", "air_acres", "wet_cb", "miles")]
     merge(g, attrs, by = "sectcode", all.x = TRUE)
   })
 
@@ -562,8 +626,10 @@ server <- function(input, output, session) {
       return(leaflet::leaflet() %>% leaflet::addTiles())
     }
     lbl <- sprintf(
-      "<b>%s</b><br/>FOS: %s<br/>Ground %d &middot; Air %d &middot; WetCB %d<br/>%.1f mi from facility",
-      g$sectcode, g$fos_name, g$ground_sites, g$air_sites, g$wet_cb, g$miles)
+      paste0("<b>%s</b><br/>FOS: %s<br/>Ground %d sites / %.1f ac &middot; ",
+             "Air %d sites / %.1f ac &middot; WetCB %d<br/>%.1f mi from facility"),
+      g$sectcode, g$fos_name, g$ground_sites, g$ground_acres, g$air_sites, g$air_acres,
+      g$wet_cb, g$miles)
     bb <- as.numeric(sf::st_bbox(g))
     leaflet::leaflet(g) %>%
       leaflet::addTiles() %>%
@@ -612,11 +678,14 @@ server <- function(input, output, session) {
   output$wi_sections <- DT::renderDT({
     s <- wi_p2(); req(nrow(s) > 0)
     s$Sel <- ifelse(as.character(s$sectcode) %in% sel(), "✓", "")
-    disp <- s[, c("Sel", "sectcode", "fos_name", "ground_sites", "air_sites",
-                  "prehatch_sites", "wet_cb", "miles")]
+    disp <- s[, c("Sel", "sectcode", "fos_name", "ground_sites", "ground_acres",
+                  "air_sites", "air_acres", "prehatch_sites", "prehatch_acres",
+                  "wet_cb", "miles")]
+    for (col in c("ground_acres", "air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
     disp$drive_min <- est_drive_minutes(disp$miles,
                                         input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3)
-    names(disp) <- c("Sel", "Section", "FOS", "Ground", "Air", "PH sites",
+    names(disp) <- c("Sel", "Section", "FOS", "Ground sites", "Ground acres",
+                     "Air sites", "Air acres", "PH sites", "PH acres",
                      "WetCB", "Miles", "Drive min")
     DT::datatable(disp, rownames = FALSE, filter = "top", selection = "none",
                   options = list(pageLength = 10, scrollX = TRUE))
@@ -653,9 +722,14 @@ server <- function(input, output, session) {
     f <- function(x) if (is.na(x)) "n/a" else format(x, big.mark = ",")
     tags$div(class = "metric-note", style = "margin-top:25px;",
       HTML(sprintf(
-        "<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs<br/>%s PH acres/tech &middot; %s PH acres/crew &middot; %s air sites/tech",
+        paste0("<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs",
+               "<br/>Ground: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
+               "<br/>Air: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
+               "<br/>Prehatch: %s acres/tech &middot; %s acres/crew"),
         r$facility, f(r$crews), f(r$ground_techs), f(r$drone_techs),
-        f(r$acres_per_tech), f(r$acres_per_crew), f(r$air_per_tech))))
+        f(r$ground_sites_per_tech), f(r$ground_acres_per_tech), f(r$ground_acres_per_crew),
+        f(r$air_sites_per_tech), f(r$air_acres_per_tech), f(r$air_acres_per_crew),
+        f(r$ph_acres_per_tech), f(r$ph_acres_per_crew))))
   })
 
   # ---- Estimate A: load per tech (live) ---------------------------------

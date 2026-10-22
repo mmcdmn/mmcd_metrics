@@ -17,7 +17,8 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 ## R-Side Logic (`data_functions.R`)
 
 - **`load_capacity_sections()`** — section grain (one row per `gis_sectcode`), with
-  ground/air/prehatch site counts + prehatch acres (from `loc_breeding_sites`, joined
+  ground/air/prehatch site counts **and acres** (`ground_acres`, `air_acres`,
+  `prehatch_acres`; every site count has an acres partner; from `loc_breeding_sites`, joined
   `LEFT(sitecode,7)=sectcode`, `enddate IS NULL`), wet catch basins
   (`status_udw='W'`, `lettergrp<>'Z'`), and straight-line **miles** facility→section
   (`ST_Distance` on `gis_facility.the_geom` centroid vs `gis_sectcode.latloncentroid`,
@@ -38,8 +39,19 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 - **`aggregate_capacity_by_fos()`** — rolls sections up to facility×fosarea×zone; adds FOS
   shortname (`get_foremen_lookup`), facility full name (`get_facility_lookup`), and from
   the staffing table `n_techs` (= facility techs/crew), `drone_techs`, `drone_offload_pct`.
-- **`capacity_averages(cap, zone)`** — mean of each metric across FOS areas, per facility
-  and district-wide.
+- **`capacity_averages(cap, zone, metrics)`** — **mean and median** (`<metric>_mean`,
+  `<metric>_median`) of each metric across FOS areas, per facility and DISTRICT. The
+  Averages section always covers all facilities (ignores the facility filter) so DISTRICT is
+  the true district.
+- **`capacity_boxplot_data(cap, zone, metric)`** — one row per FOS area with a DISTRICT group
+  + one group per facility; drives the plotly box plots (median line, dashed mean, FOS-area
+  points) in the Averages section. A text summary under each plot repeats the DISTRICT
+  min/median/mean/max for screen readers.
+- **Sites / acres toggle** — `capacity_visible_metrics(measure)`, `select_measure_cols()` and
+  `capacity_col_label()` (display_functions.R) drive the "Show" radio (`cap_measure`: both /
+  sites / acres) on the capacity table, priority view, averages and CSV. Columns are labelled
+  explicitly ("Ground sites P1", "Ground acres P1"). Sections and wet catch basins are
+  count-only (no acres).
 
 ## Display / What-If (`display_functions.R`)
 
@@ -48,13 +60,13 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate — no
   routing dependency. *Future:* an optional `facility_section_drivetime` lookup (routed
   minutes from an offline batch) can override, falling back to this estimate.
-- **`staffing_baseline(cap, staff)`** — per facility + DISTRICT: P1 prehatch acres, ground
-  and air sites divided by ground techs (crews × techs/crew) and crews → acres/tech,
-  acres/crew, ground sites/tech, air sites/tech. **ALL ground techs inspect air sites**, so
+- **`staffing_baseline(cap, staff)`** — per facility + DISTRICT: P1 ground, air and prehatch
+  sites and acres divided by ground techs (crews × techs/crew) and crews → sites/tech,
+  acres/tech, acres/crew for each of ground, air and prehatch. **ALL ground techs inspect air sites**, so
   air load is per ground tech, not per drone tech. This is the "what a tech /
   crew can cover" baseline.
 - **Drone offload** — drones help ground techs in two ways, each its own per-facility %:
-  `drone_offload_pct` scales `DRONE_OFFSET_METRICS` (ground sites, prehatch sites/acres) and
+  `drone_offload_pct` scales `DRONE_OFFSET_METRICS` (ground sites/acres, prehatch sites/acres) and
   `drone_air_offload_pct` scales `DRONE_AIR_OFFSET_METRICS` (air sites = air *inspections*) by
   `(1 − pct/100)` before Estimate A, so ground techs are staffed only for what drones don't
   take. Drone treatments (action `D`) are on GROUND sites. Default 0% (not yet calibrated).
@@ -123,8 +135,9 @@ equations are shown up front, and every input number is exposed:
 
 ## App (`app.R`) — three tabs
 
-1. **Capacity by FOS** — wide table (P1/P2 per metric), facility filter, priority-breakdown
-   toggle, optional est. drive-time columns, averages (P1/P2), CSV download.
+1. **Capacity by FOS** — wide table (P1/P2 per metric), facility filter, sites/acres/both
+   toggle, priority-breakdown toggle, optional est. drive-time columns, averages with
+   mean + median and box plots (P1/P2, selectable metric), CSV download.
 2. **Staffing** — editable staffing table (crews, techs/crew, drone techs, drone offload %,
    Reset to defaults, DB FOS-area cross-check), the P1 baseline table (acres/tech,
    acres/crew, air sites/tech), and techs per FOS with P1 load-per-tech ratios.

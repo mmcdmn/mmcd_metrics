@@ -31,7 +31,6 @@ const CONFIG = {
   // API_ENDPOINT: path appended to API_BASE Script Property.
   //   '/private/air-checklist'    — aerial inspection workflow (actions 2 & 4 only)
   //   '/private/site-inspections' — generic; use with ACTIONS to pick any action code(s)
-  //   '/private/cattail-checklist'— cattail-specific (action 9 + site metadata)
   //
   // ACTIONS: action codes to keep from the response.
   //   Required when using /private/site-inspections (e.g. [9] or [1,3]).

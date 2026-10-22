@@ -5,9 +5,56 @@
 # so they can be unit-tested against the live data loaders.
 # =============================================================================
 
-CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "air_sites",
+# Every site count is paired with an acres figure (ground, air, prehatch).
+# Sections and wet catch basins are not sites with acres, so they are count-only.
+CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "ground_acres",
+                           "air_sites", "air_acres",
                            "prehatch_sites", "prehatch_acres", "wet_cb",
                            "avg_miles")
+CAPACITY_SITE_METRICS <- c("ground_sites", "air_sites", "prehatch_sites")
+CAPACITY_ACRE_METRICS <- c("ground_acres", "air_acres", "prehatch_acres")
+
+CAPACITY_METRIC_LABELS <- c(
+  sections = "Sections", ground_sites = "Ground sites", ground_acres = "Ground acres",
+  air_sites = "Air sites", air_acres = "Air acres",
+  prehatch_sites = "Prehatch sites", prehatch_acres = "Prehatch acres",
+  wet_cb = "Wet catch basins", avg_miles = "Avg miles", n_techs = "Techs",
+  max_miles = "Max miles")
+
+#' Metrics shown for the sites / acres / both toggle (count-only metrics always show).
+capacity_visible_metrics <- function(measure = "both") {
+  m <- CAPACITY_ZONE_METRICS
+  if (identical(measure, "sites")) return(setdiff(m, CAPACITY_ACRE_METRICS))
+  if (identical(measure, "acres")) return(setdiff(m, CAPACITY_SITE_METRICS))
+  m
+}
+
+#' Drop the hidden-measure columns from a table whose columns are metric names,
+#' optionally with a _P1/_P2/_mean/_median suffix.
+select_measure_cols <- function(df, measure = "both") {
+  base_nm <- sub("(_P[12]|_mean|_median)$", "", names(df))
+  hide <- setdiff(CAPACITY_ZONE_METRICS, capacity_visible_metrics(measure))
+  df[, !(base_nm %in% hide), drop = FALSE]
+}
+
+#' Human-readable column label, e.g. "ground_acres_P1" -> "Ground acres P1".
+capacity_col_label <- function(nm) {
+  special <- c(facility_name = "Facility", facility = "Facility", fos_name = "FOS",
+               fosarea = "FOS area", scope = "Scope", n_fos = "FOS areas",
+               drive_min = "Drive min")
+  if (nm %in% names(special)) return(unname(special[nm]))
+  suffix <- ""
+  for (sfx in c("_P1", "_P2", "_mean", "_median")) {
+    if (endsWith(nm, sfx)) {
+      suffix <- paste0(" ", substring(sfx, 2))
+      nm <- substr(nm, 1, nchar(nm) - nchar(sfx))
+      break
+    }
+  }
+  lab <- if (nm %in% names(CAPACITY_METRIC_LABELS)) CAPACITY_METRIC_LABELS[[nm]] else
+         if (nm %in% names(special)) special[[nm]] else nm
+  paste0(lab, suffix)
+}
 
 #' Workload-study crew estimate (2001 Ch. 11 method): convert the promoted
 #' sections' site counts into seasonal jobs, then on-site hours, ADD seasonal
@@ -117,19 +164,22 @@ capacity_wide <- function(cap) {
 # prehatch sites/acres; drone treatments 'D' are on GROUND sites) use drone_offload_pct,
 # and air-site inspections use drone_air_offload_pct. ALL ground techs inspect air
 # sites; drones only help. Sections and wet catch basins are not offloaded.
-DRONE_OFFSET_METRICS <- c("ground_sites", "prehatch_sites", "prehatch_acres")
-DRONE_AIR_OFFSET_METRICS <- c("air_sites")
+DRONE_OFFSET_METRICS <- c("ground_sites", "ground_acres", "prehatch_sites", "prehatch_acres")
+DRONE_AIR_OFFSET_METRICS <- c("air_sites", "air_acres")
 
 #' Staffing baseline per facility + district: what each tech / crew carries (P1
-#' load) using the configured/edited staffing, not the DB active flag. Air sites are
-#' checked by ALL ground techs (not just drone techs), so air sites/tech is the main
-#' air ratio; drone techs are reported separately.
+#' load) using the configured/edited staffing, not the DB active flag. Every site
+#' count is paired with its acres. Air sites are checked by ALL ground techs (not
+#' just drone techs), so air load is per ground tech; drone techs are reported
+#' separately.
 #'
 #' @param cap    aggregate_capacity_by_fos() output (P1/P2 rows per FOS area)
 #' @param staff  staffing table (facility, crews, techs_per_crew, drone_techs,
 #'               drone_offload_pct, drone_air_offload_pct)
-#' @return data.frame, DISTRICT row first: crews, ground_techs, drone_techs,
-#'   P1 prehatch acres / ground / air sites and per-tech and per-crew ratios
+#' @return data.frame, DISTRICT row first: crews, ground_techs, drone_techs, P1
+#'   loads (p1_<kind>_sites / p1_<kind>_acres for ground, air, ph) and per-tech
+#'   (<kind>_sites_per_tech, <kind>_acres_per_tech) and per-crew
+#'   (<kind>_acres_per_crew) ratios
 staffing_baseline <- function(cap, staff) {
   if (is.null(cap) || nrow(cap) == 0 || is.null(staff) || nrow(staff) == 0) {
     return(data.frame())
@@ -137,27 +187,34 @@ staffing_baseline <- function(cap, staff) {
   p1 <- cap[cap$zone == "1", , drop = FALSE]
   load <- p1 %>%
     dplyr::group_by(facility) %>%
-    dplyr::summarise(p1_acres  = sum(prehatch_acres, na.rm = TRUE),
-                     p1_ground = sum(ground_sites, na.rm = TRUE),
-                     p1_air    = sum(air_sites, na.rm = TRUE), .groups = "drop")
+    dplyr::summarise(
+      p1_ground_sites = sum(ground_sites, na.rm = TRUE),
+      p1_ground_acres = round(sum(ground_acres, na.rm = TRUE), 1),
+      p1_air_sites    = sum(air_sites, na.rm = TRUE),
+      p1_air_acres    = round(sum(air_acres, na.rm = TRUE), 1),
+      p1_ph_sites     = sum(prehatch_sites, na.rm = TRUE),
+      p1_ph_acres     = round(sum(prehatch_acres, na.rm = TRUE), 1),
+      .groups = "drop")
+  load_cols <- setdiff(names(load), "facility")
   b <- merge(staff, load, by = "facility", all.x = TRUE)
-  for (col in c("p1_acres", "p1_ground", "p1_air")) b[[col]][is.na(b[[col]])] <- 0
+  for (col in load_cols) b[[col]][is.na(b[[col]])] <- 0
   b$ground_techs <- b$crews * b$techs_per_crew
 
-  tot <- data.frame(
-    facility = "DISTRICT",
-    crews = sum(b$crews), techs_per_crew = NA_real_,
-    drone_techs = sum(b$drone_techs), drone_offload_pct = NA_real_,
-    drone_air_offload_pct = NA_real_,
-    p1_acres = sum(b$p1_acres), p1_ground = sum(b$p1_ground),
-    p1_air = sum(b$p1_air), ground_techs = sum(b$ground_techs))
-  b <- rbind(tot, b[, names(tot)])
+  keep <- c("facility", "crews", "techs_per_crew", "drone_techs", "drone_offload_pct",
+            "drone_air_offload_pct", load_cols, "ground_techs")
+  b <- b[, keep]
+  tot <- b[1, , drop = FALSE]
+  tot[1, ] <- NA
+  tot$facility <- "DISTRICT"
+  for (col in c("crews", "drone_techs", load_cols, "ground_techs")) tot[[col]] <- sum(b[[col]])
+  b <- rbind(tot, b)
 
   div <- function(n, d) ifelse(d > 0, round(n / d, 1), NA_real_)
-  b$acres_per_tech  <- div(b$p1_acres,  b$ground_techs)
-  b$acres_per_crew  <- div(b$p1_acres,  b$crews)
-  b$ground_per_tech <- div(b$p1_ground, b$ground_techs)
-  b$air_per_tech    <- div(b$p1_air,    b$ground_techs)
+  for (m in load_cols) {
+    key <- sub("^p1_", "", m)                      # e.g. ground_acres
+    b[[paste0(key, "_per_tech")]] <- div(b[[m]], b$ground_techs)
+    if (grepl("acres$", key)) b[[paste0(key, "_per_crew")]] <- div(b[[m]], b$crews)
+  }
   b
 }
 

@@ -45,14 +45,21 @@ jobs:
           libnode-dev \
           libpoppler-cpp-dev
     
+    # R packages with compiled code (sf, stringi, ...) link against system libs
+    # (libgdal, libicu). A cache built on one Ubuntu release breaks on another
+    # ("libgdal.so.34 / libicui18n.so.74: cannot open shared object file"), so the
+    # cache key must include the Ubuntu version.
+    - name: Get Ubuntu version
+      id: osver
+      run: echo "version=$(lsb_release -rs)" >> "$GITHUB_OUTPUT"
+
     - name: Cache R packages
       uses: actions/cache@v4
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-R${{ steps.setup-r.outputs.installed-r-version }}-v2-${{ hashFiles('**/*.R') }}
+        key: ${{ runner.os }}-${{ steps.osver.outputs.version }}-R${{ steps.setup-r.outputs.installed-r-version }}-v3-${{ hashFiles('**/*.R') }}
         restore-keys: |
-          ${{ runner.os }}-R${{ steps.setup-r.outputs.installed-r-version }}-v2-
-          ${{ runner.os }}-R${{ steps.setup-r.outputs.installed-r-version }}-
+          ${{ runner.os }}-${{ steps.osver.outputs.version }}-R${{ steps.setup-r.outputs.installed-r-version }}-v3-
 
     - name: Install R dependencies
       run: |

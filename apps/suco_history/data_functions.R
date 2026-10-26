@@ -70,8 +70,45 @@ get_optimal_table_strategy <- function(date_range) {
   })
 }
 
+# Normalize a facility filter to what the SQL layer needs.
+# Returns NULL (no filter) for NULL / NA / "all"; otherwise the facility code.
+# Accepts the short code ("Sj") or the full display name ("South Jordan"), exact
+# and case-sensitive like filter_suco_data(). A value that is neither a known
+# facility nor a plain code is returned as NA_character_ ("match nothing"), so
+# get_suco_data() returns the same empty result the R-side filter gave.
+normalize_suco_facility <- function(facility_filter) {
+  if (is.null(facility_filter) || length(facility_filter) == 0) return(NULL)
+  f <- as.character(facility_filter)[1]
+  if (is.na(f) || identical(f, "all")) return(NULL)
+  lookup <- tryCatch(get_facility_lookup(), error = function(e) data.frame())
+  if (is.data.frame(lookup) && nrow(lookup) > 0) {
+    if (f %in% lookup$short_name) return(f)
+    hit <- which(lookup$full_name == f)
+    if (length(hit) > 0) return(as.character(lookup$short_name[hit[1]]))
+  }
+  # Codes the lookup leaves out (OT, MF, ...) still pass if they are plain codes.
+  if (grepl("^[A-Za-z0-9]{1,8}$", f)) return(f)
+  NA_character_
+}
+
+# Wrap a finished SUCO query so the facility filter runs AFTER the DISTINCT ON /
+# harborage-join resolution. Filtering inside the query could keep a different
+# harborage row (and so a different facility) than the unfiltered query picks.
+# `quoted_facility` must already be a SQL literal (DBI::dbQuoteString).
+wrap_suco_facility_sql <- function(sql, quoted_facility) {
+  paste0("SELECT q.* FROM (", sql, ") q WHERE q.facility = ", quoted_facility,
+         " ORDER BY q.id")
+}
+
 # Get SUCO data with optimized table querying
-get_suco_data <- function(data_source = "all", date_range = NULL, return_species_details = FALSE) {
+# facility_filter: NULL/"all" = every facility; otherwise a facility code or full
+# name, filtered in SQL (see wrap_suco_facility_sql).
+get_suco_data <- function(data_source = "all", date_range = NULL, return_species_details = FALSE,
+                          facility_filter = NULL) {
+  fac_code <- normalize_suco_facility(facility_filter)
+  if (length(fac_code) == 1 && is.na(fac_code)) {
+    return(data.frame())  # unknown facility: nothing can match
+  }
   con <- get_db_connection()
   if (is.null(con)) {
     return(data.frame())  # Return empty data frame if connection fails
@@ -141,6 +178,11 @@ WHERE s.survtype = '7'
 AND s.inspdate BETWEEN '%s' AND '%s'
 ORDER BY s.id, h.startdate DESC NULLS LAST
 ", start_date, end_date)
+  }
+  
+  if (!is.null(fac_code)) {
+    quoted_fac <- DBI::dbQuoteString(con, fac_code)
+    queries <- lapply(queries, wrap_suco_facility_sql, quoted_facility = quoted_fac)
   }
   
   # Execute queries and combine results
@@ -959,6 +1001,7 @@ load_raw_data <- function(analysis_date = Sys.Date(),
                           include_archive = FALSE,
                           start_year = NULL,
                           end_year = NULL,
+                          facility_filter = NULL,
                           ...) {
   
   # Determine date range based on parameters
@@ -981,7 +1024,8 @@ load_raw_data <- function(analysis_date = Sys.Date(),
   suco_data <- get_suco_data(
     data_source = if (include_archive) "all" else "current",
     date_range = date_range,
-    return_species_details = FALSE
+    return_species_details = FALSE,
+    facility_filter = facility_filter
   )
   
   if (nrow(suco_data) == 0) {

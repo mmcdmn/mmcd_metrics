@@ -652,13 +652,19 @@ load_data_by_fos <- function(metric,
   # Load raw site-level data
   raw_data <- tryCatch({
     if ("load_raw_data" %in% names(env)) {
-      env$load_raw_data(
+      load_args <- list(
         analysis_date = analysis_date,
         expiring_days = expiring_days,
         zone_filter = zone_filter,
         status_types = character(0),
         include_archive = TRUE
       )
+      # Loaders that declare facility_filter (SUCO) filter in SQL. The R-side
+      # facility filter further down still runs, so results are unchanged.
+      if ("facility_filter" %in% names(formals(env$load_raw_data))) {
+        load_args$facility_filter <- facility_filter
+      }
+      do.call(env$load_raw_data, load_args)
     } else {
       list(sites = data.frame(), treatments = data.frame())
     }
@@ -694,6 +700,14 @@ load_data_by_fos <- function(metric,
   
   sites <- raw_data$sites
   if (is.null(sites) || nrow(sites) == 0) {
+    # A facility-filtered SUCO load is empty when that facility has no SUCOs. Return
+    # exactly what the SUCO summary below gives for zero rows (including its
+    # zero-length logical display_name), so the result matches an R-side filter.
+    if (metric == "suco" && !is.null(facility_filter) && facility_filter != "all") {
+      return(dplyr::tibble(fos = character(), display_name = logical(),
+                           facility = character(), total = integer(),
+                           active = integer(), expiring = integer()))
+    }
     return(data.frame(fos = character(), display_name = character(),
                       total = integer(), active = integer(), expiring = integer()))
   }

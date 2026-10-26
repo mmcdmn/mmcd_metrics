@@ -193,6 +193,22 @@ SELECT ainspecnum, spp, cnt FROM public.dbadult_species_archive WHERE ainspecnum
 
 <p>Uses <code>get<em>historical</em>year<em>ranges(con, "public.dbadult</em>insp<em>current", "public.dbadult</em>insp_archive", "inspdate")</code> to determine which tables have data for the requested date range.</p>
 
+<h3>5. Facility Filter (optional, SQL-side)</h3>
+
+<p><code>get<em>suco</em>data(..., facility<em>filter = NULL)</code> filters by facility in the database. <code>NULL</code> or <code>"all"</code> returns every facility (the queries above, unchanged). Any other value is resolved by <code>normalize</em>suco<em>facility()</code> to a facility code: the short code (<code>"Sj"</code>) or the full name (<code>"South Jordan"</code>) is accepted, exact and case-sensitive like <code>filter</em>suco_data()</code>. A value that is neither a known facility nor a plain alphanumeric code returns an empty data frame without querying.</p>
+
+<p>The filter wraps the finished query (<code>wrap<em>suco</em>facility_sql()</code>):</p>
+
+<pre><code class="sql">
+SELECT q.* FROM ( &lt;query 1 or 2 above&gt; ) q WHERE q.facility = '&lt;code&gt;' ORDER BY q.id
+</code></pre>
+
+<p>It has to run <strong>after</strong> the <code>DISTINCT ON (s.id)</code> / harborage join, not inside it. <code>facility</code> is the <code>COALESCE(g.facility, h.facility, s.facility)</code> result, and filtering inside the query could keep a different harborage row (and so a different facility) than the unfiltered query picks. The code is quoted with <code>DBI::dbQuoteString()</code>.</p>
+
+<p>Every caller passes the facility to this one function: the app (<code>app.R</code>, part of the <code>cached<em>call</code> key), the API <code>.load</em>suco()</code> (<code>/suco/summary</code>, <code>/suco/summary-by-group</code>, <code>/suco/top-locations</code>), the four SUCO embed producers (<code>shared/embed<em>producers.R</code>) and <code>load</em>raw<em>data()</code> (used by the Overview FOS views). The district and facility Overview views pass nothing, because they need every facility. <code>filter</em>suco_data()</code> still applies the facility afterwards; it is a no-op on already-filtered data.</p>
+
+<p>Species data (query 3) is not filtered by facility or date.</p>
+
 <hr>
 
 <h2>R-Side Logic</h2>

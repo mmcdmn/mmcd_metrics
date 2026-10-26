@@ -62,6 +62,8 @@ load_raw_data <- function(analysis_date, expiring_days = 7,
 }
 ```
 
+`load_raw_data()` may also declare an optional `facility_filter = NULL` argument when the app can filter by facility in SQL (SUCO does). The FOS views pass the facility only to loaders that declare it; loaders without it are called exactly as above, and the facility is still filtered in R afterwards.
+
 ### Step 3: Done!
 
 That's it! The framework will automatically:

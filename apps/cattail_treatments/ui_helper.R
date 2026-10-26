@@ -83,7 +83,7 @@ cattail_treatments_ui <- function() {
           radioButtons("basemap", "Base Map:",
                       choices = c("Street" = "carto", "Satellite" = "satellite",
                                   "OpenStreetMap" = "osm"),
-                      selected = "carto")
+                      selected = "osm")
         ),
         
         # Shared controls

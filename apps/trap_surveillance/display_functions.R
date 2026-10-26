@@ -365,7 +365,7 @@ render_surveillance_map <- function(combined_data, areas_sf,
   # Layer control
   m <- m %>%
     addLayersControl(
-      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      baseGroups = c("OpenStreetMap", "CartoDB Light", "Satellite"),
       overlayGroups = overlay_groups,
       options = layersControlOptions(collapsed = TRUE)
     ) %>%
@@ -563,7 +563,7 @@ render_comparison_map <- function(data_a, data_b, areas_sf,
   
   m %>%
     addLayersControl(
-      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      baseGroups = c("OpenStreetMap", "CartoDB Light", "Satellite"),
       overlayGroups = overlay_groups,
       options = layersControlOptions(collapsed = TRUE)) %>%
     addScaleBar(position = "bottomleft")
@@ -800,7 +800,7 @@ render_trap_performance_map <- function(perf_data, areas_sf = NULL) {
   
   m <- m %>%
     addLayersControl(
-      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      baseGroups = c("OpenStreetMap", "CartoDB Light", "Satellite"),
       overlayGroups = overlay_groups,
       options = layersControlOptions(collapsed = TRUE)
     ) %>%
@@ -1075,7 +1075,7 @@ render_trap_analysis_map <- function(risk_data, risk_surface = NULL,
   
   m <- m %>%
     addLayersControl(
-      baseGroups = c("CartoDB Light", "OpenStreetMap", "Satellite"),
+      baseGroups = c("OpenStreetMap", "CartoDB Light", "Satellite"),
       overlayGroups = overlay_groups,
       options = layersControlOptions(collapsed = FALSE)
     ) %>%

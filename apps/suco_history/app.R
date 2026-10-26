@@ -109,7 +109,7 @@ ui <- accessible_page(
                     choices = c("OpenStreetMap" = "osm",
                                 "Carto Light" = "carto",
                                 "Esri Satellite" = "satellite"),
-                    selected = "carto"),
+                    selected = "osm"),
         checkboxInput("load_harborages", "Load Harborage Polygons", value = FALSE),
         p(style = "font-size: 0.85em; color: #666; margin-top: -5px;",
           "(Large geometry - may slow map loading)")
@@ -275,8 +275,10 @@ server <- function(input, output, session) {
       # Request species details if grouping by species
       return_species_details <- inputs$group_by == "species_name"
       # Shared 2-min Redis cache (see cached_call in server_utilities.R).
+      # Facility is filtered in SQL; it is part of the cache key via cached_call.
       cached_call("suco_history:data", get_suco_data,
-                  "all", inputs$date_range, return_species_details)
+                  "all", inputs$date_range, return_species_details,
+                  facility_filter = normalize_suco_facility(inputs$facility_filter))
     })
   })
   

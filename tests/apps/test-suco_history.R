@@ -410,7 +410,7 @@ test_that("get_suco_data returns valid structure", {
   skip_if(use_stubs, "Skipping integration test in isolated mode")
   
   tryCatch({
-    data <- get_suco_data(year = 2024, use_archive = FALSE)
+    data <- get_suco_data(date_range = as.Date(c("2024-06-01", "2024-06-30")))
     
     required_cols <- c("ainspecnum", "facility", "foreman", "inspdate", 
                        "sitecode", "x", "y")
@@ -418,6 +418,159 @@ test_that("get_suco_data returns valid structure", {
     expect_true(all(required_cols %in% names(data)))
   }, error = function(e) {
     skip("Database not available")
+  })
+})
+
+# =============================================================================
+# FACILITY FILTER (SQL-side) -- get_suco_data(facility_filter =)
+# The facility is filtered in SQL, so these guard (a) what reaches the SQL and
+# (b) that every caller passes it. Output equivalence with the old R-side
+# filter is checked against the database in the integration test below.
+# =============================================================================
+
+.repo_file <- function(rel_path) {
+  for (p in c(file.path("../..", rel_path), rel_path)) if (file.exists(p)) return(p)
+  stop("Cannot find ", rel_path)
+}
+
+# Run `code` with global functions temporarily replaced by `mocks` (a named list).
+with_global_mocks <- function(mocks, code) {
+  g <- globalenv()
+  old <- lapply(names(mocks), function(n) get0(n, envir = g, inherits = FALSE))
+  names(old) <- names(mocks)
+  for (n in names(mocks)) assign(n, mocks[[n]], envir = g)
+  on.exit(for (n in names(mocks)) {
+    if (is.null(old[[n]])) rm(list = n, envir = g) else assign(n, old[[n]], envir = g)
+  })
+  force(code)
+}
+
+.mock_facilities <- function() {
+  data.frame(short_name = c("E", "Sj", "Sr"),
+             full_name = c("Eagan", "South Jordan", "South Rosemount"),
+             stringsAsFactors = FALSE)
+}
+
+test_that("normalize_suco_facility maps every accepted form to one code", {
+  with_global_mocks(list(get_facility_lookup = .mock_facilities), {
+    expect_null(normalize_suco_facility(NULL))
+    expect_null(normalize_suco_facility("all"))
+    expect_null(normalize_suco_facility(NA_character_))
+    expect_null(normalize_suco_facility(character(0)))
+    expect_equal(normalize_suco_facility("Sj"), "Sj")
+    expect_equal(normalize_suco_facility("South Jordan"), "Sj")
+    # exact and case-sensitive, like filter_suco_data(): not canonicalized
+    expect_equal(normalize_suco_facility("sj"), "sj")
+    # codes the lookup leaves out still pass as plain codes
+    expect_equal(normalize_suco_facility("OT"), "OT")
+  })
+})
+
+test_that("normalize_suco_facility turns anything unsafe into 'match nothing'", {
+  with_global_mocks(list(get_facility_lookup = .mock_facilities), {
+    expect_true(is.na(normalize_suco_facility("E'; DROP TABLE dbadult_insp_current;--")))
+    expect_true(is.na(normalize_suco_facility("Not A Facility")))
+    expect_true(is.na(normalize_suco_facility("")))
+  })
+})
+
+test_that("wrap_suco_facility_sql filters AFTER the inner query and keeps its order", {
+  inner <- "SELECT DISTINCT ON (s.id) s.id FROM t s ORDER BY s.id"
+  sql <- wrap_suco_facility_sql(inner, DBI::dbQuoteString(DBI::ANSI(), "Sj"))
+  expect_equal(sql, paste0("SELECT q.* FROM (", inner, ") q WHERE q.facility = 'Sj' ORDER BY q.id"))
+  # a quote in the value is doubled by dbQuoteString, never closes the literal
+  sql2 <- wrap_suco_facility_sql(inner, DBI::dbQuoteString(DBI::ANSI(), "O'Brien"))
+  expect_true(grepl("q.facility = 'O''Brien' ORDER BY", sql2, fixed = TRUE))
+})
+
+test_that("get_suco_data sends the facility to the SQL (code or full name) and only then", {
+  sent <- character()
+  mocks <- list(
+    get_facility_lookup = .mock_facilities,
+    get_db_connection = function() DBI::ANSI(),
+    safe_disconnect = function(con) invisible(NULL),
+    get_optimal_table_strategy = function(date_range) list(query_current = TRUE, query_archive = TRUE),
+    dbGetQuery = function(con, statement, ...) { sent <<- c(sent, statement); data.frame() }
+  )
+  dr <- as.Date(c("2024-06-01", "2024-06-30"))
+  with_global_mocks(mocks, {
+    suppressMessages(capture.output({
+      sent <- character(); get_suco_data("all", dr, FALSE, facility_filter = "Sj"); by_code <- sent
+      sent <- character(); get_suco_data("all", dr, FALSE, facility_filter = "South Jordan"); by_name <- sent
+      sent <- character(); get_suco_data("all", dr, FALSE, facility_filter = "all"); no_filter <- sent
+      sent <- character(); get_suco_data("all", dr, FALSE); default <- sent
+    }))
+  })
+  # one query per table (current + archive), each filtered on the resolved code
+  expect_length(by_code, 2)
+  expect_true(all(grepl("WHERE q.facility = 'Sj' ORDER BY q.id", by_code, fixed = TRUE)))
+  expect_equal(by_name, by_code)
+  # no filter requested -> the original query, untouched
+  expect_length(no_filter, 2)
+  expect_false(any(grepl("q.facility", no_filter, fixed = TRUE)))
+  expect_equal(default, no_filter)
+})
+
+test_that("get_suco_data returns an empty frame for an unknown facility without querying", {
+  queried <- FALSE
+  mocks <- list(
+    get_facility_lookup = .mock_facilities,
+    get_db_connection = function() { queried <<- TRUE; DBI::ANSI() }
+  )
+  res <- with_global_mocks(mocks, get_suco_data("all", as.Date(c("2024-06-01", "2024-06-30")), FALSE,
+                                                facility_filter = "x'; DROP TABLE y;--"))
+  expect_s3_class(res, "data.frame")
+  expect_equal(nrow(res), 0)
+  expect_false(queried)
+})
+
+test_that("load_raw_data forwards facility_filter to get_suco_data", {
+  expect_true("facility_filter" %in% names(formals(load_raw_data)))
+  seen <- "unset"
+  mocks <- list(get_suco_data = function(data_source = "all", date_range = NULL,
+                                         return_species_details = FALSE, facility_filter = NULL) {
+    seen <<- facility_filter
+    data.frame()
+  })
+  suppressMessages(capture.output(
+    with_global_mocks(mocks, load_raw_data(analysis_date = as.Date("2024-06-12"),
+                                           include_archive = TRUE, facility_filter = "Sj"))
+  ))
+  expect_equal(seen, "Sj")
+})
+
+test_that("every SUCO caller passes the facility to get_suco_data", {
+  txt <- function(rel) paste(readLines(.repo_file(rel), warn = FALSE), collapse = "\n")
+  # embeds: all four producers
+  emb <- txt("shared/embed_producers.R")
+  expect_equal(lengths(regmatches(emb, gregexpr("env\\$get_suco_data\\(", emb))), 4)
+  expect_equal(lengths(regmatches(emb, gregexpr("env\\$get_suco_data\\([^)]*facility_filter = p\\$facility", emb))), 4)
+  # API loader shared by /suco/summary, /suco/summary-by-group, /suco/top-locations
+  expect_true(grepl("get_suco_data\\(data_source = ds, date_range = dr, facility_filter = fac\\)",
+                    txt("api/routes/surveillance.R")))
+  # suco_history app (facility is part of the cached_call key)
+  expect_true(grepl("facility_filter = normalize_suco_facility\\(inputs\\$facility_filter\\)",
+                    txt("apps/suco_history/app.R")))
+  # Overview FOS path: only loaders that declare the formal receive it
+  expect_true(grepl("\"facility_filter\" %in% names\\(formals\\(env\\$load_raw_data\\)\\)",
+                    txt("apps/overview/data_functions.R")))
+})
+
+test_that("SQL facility filter returns exactly what the old R-side filter did", {
+  skip_if(use_stubs, "Skipping integration test in isolated mode")
+
+  tryCatch({
+    dr <- as.Date(c("2024-06-01", "2024-09-30"))
+    all_rows <- get_suco_data("all", dr, FALSE)
+    skip_if(nrow(all_rows) == 0, "No SUCO data in range")
+    for (fac in unique(all_rows$facility)) {
+      via_r   <- filter_suco_data(all_rows, fac, "all", "all", dr, "All")
+      via_sql <- get_suco_data("all", dr, FALSE, facility_filter = fac)
+      expect_equal(via_sql, via_r, info = paste("facility", fac))
+    }
+    expect_equal(nrow(get_suco_data("all", dr, FALSE, facility_filter = "ZZ")), 0)
+  }, error = function(e) {
+    skip(paste("Database not available:", conditionMessage(e)))
   })
 })
 

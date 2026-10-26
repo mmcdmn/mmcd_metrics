@@ -67,6 +67,22 @@ SELECT ainspecnum, spp, cnt FROM public.dbadult_species_archive WHERE ainspecnum
 
 Uses `get_historical_year_ranges(con, "public.dbadult_insp_current", "public.dbadult_insp_archive", "inspdate")` to determine which tables have data for the requested date range.
 
+### 5. Facility Filter (optional, SQL-side)
+
+`get_suco_data(..., facility_filter = NULL)` filters by facility in the database. `NULL` or `"all"` returns every facility (the queries above, unchanged). Any other value is resolved by `normalize_suco_facility()` to a facility code: the short code (`"Sj"`) or the full name (`"South Jordan"`) is accepted, exact and case-sensitive like `filter_suco_data()`. A value that is neither a known facility nor a plain alphanumeric code returns an empty data frame without querying.
+
+The filter wraps the finished query (`wrap_suco_facility_sql()`):
+
+```sql
+SELECT q.* FROM ( <query 1 or 2 above> ) q WHERE q.facility = '<code>' ORDER BY q.id
+```
+
+It has to run **after** the `DISTINCT ON (s.id)` / harborage join, not inside it. `facility` is the `COALESCE(g.facility, h.facility, s.facility)` result, and filtering inside the query could keep a different harborage row (and so a different facility) than the unfiltered query picks. The code is quoted with `DBI::dbQuoteString()`.
+
+Every caller passes the facility to this one function: the app (`app.R`, part of the `cached_call` key), the API `.load_suco()` (`/suco/summary`, `/suco/summary-by-group`, `/suco/top-locations`), the four SUCO embed producers (`shared/embed_producers.R`) and `load_raw_data()` (used by the Overview FOS views). The district and facility Overview views pass nothing, because they need every facility. `filter_suco_data()` still applies the facility afterwards; it is a no-op on already-filtered data.
+
+Species data (query 3) is not filtered by facility or date.
+
 ---
 
 ## R-Side Logic

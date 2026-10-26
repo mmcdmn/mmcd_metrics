@@ -305,7 +305,7 @@ filter_valid_coordinates <- function(data, x_col = "x", y_col = "y") {
 #' @param lat_col Latitude column name (for data frames)
 #' @return Leaflet map object with bounds set
 #' @export
-create_base_map <- function(data = NULL, basemap = "carto",
+create_base_map <- function(data = NULL, basemap = "osm",
                             lng_col = "longitude", lat_col = "latitude") {
   # Create map
   m <- leaflet(data) %>%
@@ -329,7 +329,7 @@ create_base_map <- function(data = NULL, basemap = "carto",
 #' @return Leaflet map with message control
 #' @export
 create_empty_map <- function(message_text = "No data available",
-                              basemap = "carto",
+                              basemap = "osm",
                               center = c(-93.2, 45.0),
                               zoom = 9) {
   leaflet() %>%
@@ -389,10 +389,10 @@ add_carto_tiles <- function(map, style = "light_all", group = NULL) {
 
 #' Add a user-selected basemap layer
 #' @param map A leaflet map
-#' @param choice One of "osm", "satellite", "carto" (default)
+#' @param choice One of "osm" (default), "satellite", "carto"
 #' @param group Optional layer-control group name
 #' @export
-add_basemap_tiles <- function(map, choice = "carto", group = NULL) {
+add_basemap_tiles <- function(map, choice = "osm", group = NULL) {
   if (identical(choice, "osm")) {
     return(addProviderTiles(map, providers$OpenStreetMap, group = group))
   }

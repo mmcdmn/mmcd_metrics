@@ -69,7 +69,7 @@ drone_ui <- function() {
                       choices = c("Streets" = "carto",
                                   "Satellite" = "satellite",
                                   "OpenStreetMap" = "osm"),
-                      selected = "carto"),
+                      selected = "osm"),
           sliderInput("expiring_days", "Days Until Expiration:",
                       min = 1, max = 30, value = 7, step = 1)
         ),

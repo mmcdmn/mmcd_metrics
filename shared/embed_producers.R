@@ -215,7 +215,7 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
   if (is.null(env)) return(NULL)
   gb  <- p$group_by %||% "mmcd_all"
   rsd <- identical(gb, "species_name")
-  d   <- env$get_suco_data("all", p$date_range, rsd)
+  d   <- env$get_suco_data("all", p$date_range, rsd, facility_filter = p$facility)
   d   <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
                               p$zone %||% "all", p$date_range, p$species %||% "All")
   df  <- env$aggregate_suco_data(d, gb, p$zone %||% "all")
@@ -230,7 +230,8 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
   env <- load_app_env("suco_history")
   if (is.null(env)) return(NULL)
   mode <- p$top_locations_mode %||% "visits"
-  d <- env$get_suco_data("all", p$date_range, TRUE)  # needs species detail cols
+  d <- env$get_suco_data("all", p$date_range, TRUE,  # needs species detail cols
+                         facility_filter = p$facility)
   d <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
                             p$zone %||% "all", p$date_range, p$species %||% "All")
   tl <- env$get_top_locations(d, mode, p$species %||% "All")
@@ -280,7 +281,7 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
   gb   <- p$group_by %||% "mmcd_all"
   spec <- p$species %||% "All"
   # Always request species detail -- marker size is driven by specimen count.
-  d <- env$get_suco_data("all", p$date_range, TRUE)
+  d <- env$get_suco_data("all", p$date_range, TRUE, facility_filter = p$facility)
   d <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
                             p$zone %||% "all", p$date_range, spec)
   if (!is.data.frame(d) || nrow(d) == 0 || !all(c("x", "y") %in% names(d))) {
@@ -338,7 +339,8 @@ EMBED_PARAM_SPEC[["suco_history"]] <- list(
   # Sitecode column anyway, so give the env an identity stub.
   if (is.null(env$make_sitecode_link))
     env$make_sitecode_link <- function(x) as.character(x)
-  d <- env$get_suco_data("all", p$date_range, TRUE)  # species detail cols needed
+  d <- env$get_suco_data("all", p$date_range, TRUE,  # species detail cols needed
+                         facility_filter = p$facility)
   d <- env$filter_suco_data(d, p$facility %||% "all", p$fos,
                             p$zone %||% "all", p$date_range, p$species %||% "All")
   df <- env$create_detailed_samples_table(d, p$species %||% "All")
@@ -1563,7 +1565,7 @@ EMBED_PARAM_SPEC[["cattail_treatments"]] <- list(
     hist_status_metric  = list(type = "enum", allowed = c("need_treatment","treated","pct_treated"), default = "need_treatment"),
     hist_chart_type     = list(type = "enum", allowed = c("line","area","stacked_bar","grouped_bar"), default = "line"),
     year_range          = list(type = "csv", default = NULL),
-    basemap             = list(type = "enum", allowed = c("carto","satellite","osm"), default = "carto")
+    basemap             = list(type = "enum", allowed = c("carto","satellite","osm"), default = "osm")
   )
 )
 .cattail_trt_progress_producer <- function(p) {
@@ -1639,7 +1641,7 @@ EMBED_PARAM_SPEC[["cattail_treatments"]] <- list(
           else if ("state" %in% names(df)) "state" else NULL
   .embed_desc_map(df, lat_col = ".lat", lon_col = ".lon", category_col = ccol,
                   label_col = if ("sitecode" %in% names(df)) "sitecode" else NULL,
-                  resolved_options = list(view = "map", basemap = p$basemap %||% "carto"))
+                  resolved_options = list(view = "map", basemap = p$basemap %||% "osm"))
 }
 # Historical Analysis: inspection-year series by group_label. Reproduces the
 # plot_data pipeline inside create_historical_analysis_chart (group_label build +

@@ -556,7 +556,7 @@ prepare_download_data <- function(data, foremen_lookup) {
 }
 
 # Function to create ground prehatch map (simplified like drone app)
-create_ground_map <- function(spatial_data, basemap = "carto", site_filter = "all") {
+create_ground_map <- function(spatial_data, basemap = "osm", site_filter = "all") {
   # Robust null/empty data checking
   if (is.null(spatial_data) || !inherits(spatial_data, "sf") || nrow(spatial_data) == 0) {
     # Return empty map with explanation

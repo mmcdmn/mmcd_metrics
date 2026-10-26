@@ -2,7 +2,8 @@
 # API Routes — Surveillance
 # =============================================================================
 # Endpoints for trap surveillance, mosquito monitoring, and SUCO history.
-# Sources existing data_functions.R from each app — NO new SQL.
+# Sources existing data_functions.R from each app (no per-route SQL here; SUCO
+# facility filtering happens inside suco_history's get_suco_data).
 #
 # All endpoints are mounted under /v1/public/data/surveillance/...
 # =============================================================================
@@ -200,9 +201,10 @@ function(req, res) {
 # ── SUCO shared helpers ──
 SUCO_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "species_name")
 
-# Load + filter SUCO data once (reuses get_suco_data + filter_suco_data; no new SQL).
+# Load + filter SUCO data once (reuses get_suco_data + filter_suco_data). The facility
+# is filtered in SQL by get_suco_data; filter_suco_data still applies it (idempotent).
 .load_suco <- function(ds, dr, fac, fman, zn, spp) {
-  data <- suco_env$get_suco_data(data_source = ds, date_range = dr)
+  data <- suco_env$get_suco_data(data_source = ds, date_range = dr, facility_filter = fac)
   if (is.null(data) || nrow(data) == 0) return(data)
   suco_env$filter_suco_data(
     data, facility_filter = fac, foreman_filter = fman,

@@ -465,7 +465,7 @@ create_plans_table <- function(plans_data, foremen_lookup) {
 }
 
 # Function to create cattail treatments map
-create_cattail_map <- function(spatial_data, treatments_data, basemap = "carto", theme = "MMCD") {
+create_cattail_map <- function(spatial_data, treatments_data, basemap = "osm", theme = "MMCD") {
   
   # Robust null/empty data checking
   if (is.null(spatial_data) || !inherits(spatial_data, "sf") || nrow(spatial_data) == 0) {

@@ -57,6 +57,7 @@ ui <- accessible_page(
   "))),
   url_state_js(),  # deep-linking client glue (shared)
   titlePanel("FOS Capacity & Border-to-Border Planning"),
+  uiOutput("load_banner"),
   tags$p(class = "metric-note",
     "Per-FOS-area inventory for 5-year planning. Zones: P1 and P2. ",
     "All counts are the active universe (breeding sites, wet catch basins, ",
@@ -90,10 +91,34 @@ ui <- accessible_page(
         conditionalPanel(
           "input.cap_drivetime",
           fluidRow(
-            column(3, numericInput("avg_mph", "Avg mph", 45, 5, 80, 1)),
-            column(3, numericInput("circuity", "Road circuity factor",
-                                   1.3, 1, 2, 0.05))
-          )
+            column(6, radioButtons("cap_drive_mode", "Drive time from:",
+                                   c("Routed (OpenStreetMap roads)" = "routed",
+                                     "Straight-line estimate" = "estimate"),
+                                   selected = "routed", inline = TRUE))
+          ),
+          conditionalPanel(
+            "input.cap_drive_mode == 'routed'",
+            fluidRow(column(3, numericInput("cap_speed_pct", "Field speed vs. map speed (%)",
+                                            100, 20, 200, 5)))
+          ),
+          conditionalPanel(
+            "input.cap_drive_mode == 'estimate'",
+            fluidRow(
+              column(3, numericInput("avg_mph", "Avg mph", 45, 5, 80, 1)),
+              column(3, numericInput("circuity", "Road circuity factor",
+                                     1.3, 1, 2, 0.05))
+            )
+          ),
+          tags$p(class = "metric-note",
+            tags$b("Routed"), " times are real driving routes from the facility to each ",
+            "section's centroid on OpenStreetMap roads (free-flow speed limits, no live ",
+            "traffic; a centroid in a wetland is routed to the nearest road). Set the field ",
+            "speed below 100% if crews drive slower than the map assumes. ",
+            tags$b("Circuity"), " = road distance / straight-line distance. The straight-line ",
+            "estimate is straight-line miles x circuity / average mph. The table compares ",
+            "the two for each facility."),
+          uiOutput("drive_note"),
+          div(style = "overflow-x:auto;max-width:900px;", DT::DTOutput("drive_summary"))
         )
       ),
       h4("Capacity per FOS area (P1 / P2)"),
@@ -182,17 +207,37 @@ ui <- accessible_page(
                "applies to ground sites and prehatch sites/acres; air offload applies to ",
                "air sites (all techs inspect air sites, drones help). Sections and catch ",
                "basins are not offloaded."),
+        # Travel time — ONE shared setting for Estimate A and Estimate B
+        tags$div(style = "border-top:1px solid #d0daec;margin-top:10px;padding-top:8px;",
+          tags$div(style = "font-weight:600;color:#2c5aa0;", "Travel time (both estimates)"),
+          fluidRow(
+            column(4, checkboxInput("wi_travel", "Include travel time", TRUE)),
+            column(8, conditionalPanel(
+              "input.wi_travel",
+              radioButtons("wi_drive_mode", "One-way drive time from:",
+                           c("Routed (OpenStreetMap roads)" = "routed",
+                             "Straight-line estimate" = "estimate"),
+                           selected = "routed", inline = TRUE)))
+          ),
+          NULL
+        ),
         # Equations — how each estimate is computed (shown up front)
         tags$div(style = paste0("background:#eef3fb;border:1px solid #d0daec;",
                                 "border-radius:6px;padding:10px 14px;margin-top:6px;"),
           tags$div(style = "font-weight:600;color:#2c5aa0;margin-bottom:4px;",
                    "How the estimates are computed"),
           tags$p(style = "margin:4px 0;font-family:Consolas,monospace;font-size:13px;",
-            HTML("<b>A. Added techs</b> = &Sigma;<sub>FOS</sub> ( &lceil;new P1 load &divide; load-per-tech&rceil; &minus; &lceil;current P1 load &divide; load-per-tech&rceil; )")),
+            HTML("<b>A. Added techs</b> = &Sigma;<sub>FOS</sub> ( &lceil;current P1 load &divide; load-per-tech + added load &divide; (load-per-tech &times; travel ratio)&rceil; &minus; &lceil;current P1 load &divide; load-per-tech&rceil; )")),
+          tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
+            HTML("travel ratio = avg <i>t</i>(current P1 sections) &divide; avg <i>t</i>(promoted sections)")),
           tags$p(style = "margin:4px 0;font-family:Consolas,monospace;font-size:13px;",
             HTML("<b>B. Additional crews</b> = [ &Sigma;<sub>job type</sub> ( sites &times; jobs-per-site &times; hours-per-job ) + travel ] &divide; hours-per-crew-season")),
           tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
-            HTML("travel = &Sigma;<sub>section</sub> ( round trips &times; 2 &times; one-way drive time )")),
+            HTML("travel = &Sigma;<sub>section</sub> ( round trips &times; 2 &times; <i>t</i> )")),
+          tags$p(style = "margin:4px 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
+            HTML("<i>t</i> = one-way drive time = routed minutes &divide; field speed % &nbsp;|&nbsp; miles &times; circuity &divide; mph &times; 60 (straight-line)")),
+          tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
+            HTML("travel time off: travel ratio = 1, travel = 0. higher means less time traveling, lower is more time traveling")),
           tags$p(class = "metric-note", style = "margin:8px 0 0;",
             "Click a section on the map to add/remove it; hold ",
             tags$b("Shift"), " and drag a box to add many. Every number in the ",
@@ -253,9 +298,15 @@ ui <- accessible_page(
         fluidRow(
           column(3, numericInput("wi_crew_trips", "Round trips/section (season)",
                                  DEFAULT_TRIPS_PER_SECTION, 0, step = 1)),
-          column(2, numericInput("wi_avg_mph", "Avg mph", 45, 5, 80, 1)),
-          column(3, numericInput("wi_circuity", "Road circuity factor",
-                                 1.3, 1, 2, 0.05))
+          column(3, conditionalPanel(
+            "input.wi_travel && input.wi_drive_mode == 'routed'",
+            numericInput("wi_speed_pct", "Field speed vs. map speed (%)", 100, 20, 200, 5))),
+          column(2, conditionalPanel(
+            "input.wi_travel && input.wi_drive_mode == 'estimate'",
+            numericInput("wi_avg_mph", "Avg mph", 45, 5, 80, 1))),
+          column(3, conditionalPanel(
+            "input.wi_travel && input.wi_drive_mode == 'estimate'",
+            numericInput("wi_circuity", "Road circuity factor", 1.3, 1, 2, 0.05)))
         )
       ),
       fluidRow(
@@ -264,7 +315,13 @@ ui <- accessible_page(
           div(style = "overflow-x:auto;", DT::DTOutput("wi_crew_by_job"))
         ),
         column(5,
-          h5("Live jobs-per-site rates used (P1)"),
+          h5("Jobs per site used in Estimate B"),
+          tags$p(class = "metric-note",
+            "How many times each P1 site was actually serviced per season (jobs \u00f7 distinct ",
+            "sites, from real inspection/treatment records for the season chosen above). ",
+            "Estimate B multiplies the promoted sites by these rates, because promoting a ",
+            "section to P1 means its sites get serviced this often. Drone treatments are ",
+            "not counted as air work."),
           div(style = "overflow-x:auto;", DT::DTOutput("wi_rates"))
         )
       )
@@ -291,6 +348,11 @@ server <- function(input, output, session) {
     cap_drivetime  = list(input = "cap_drivetime", type = "checkbox"),
     avg_mph        = list(input = "avg_mph",      type = "numeric"),
     circuity       = list(input = "circuity",     type = "numeric"),
+    cap_drive_mode = list(input = "cap_drive_mode", type = "radio"),
+    cap_speed_pct  = list(input = "cap_speed_pct",  type = "numeric"),
+    wi_travel      = list(input = "wi_travel",      type = "checkbox"),
+    wi_drive_mode  = list(input = "wi_drive_mode",  type = "radio"),
+    wi_speed_pct   = list(input = "wi_speed_pct",   type = "numeric"),
     wi_facility    = list(input = "wi_facility",  type = "select"),
     wi_metric      = list(input = "wi_metric",    type = "select"),
     wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
@@ -310,10 +372,34 @@ server <- function(input, output, session) {
   staff <- reactiveVal(default_staffing())
 
   # ---- Load once per session --------------------------------------------
+  # The loaders swallow database errors and return empty tables. Saving an empty
+  # result for the whole session made the What-If sections show Shiny's generic
+  # "check your logs" error until the page was reloaded, so a failed load is
+  # reported (banner + log line) and retried via the button instead.
   base <- reactiveVal(NULL)
+  load_failed <- reactiveVal(FALSE)
+  load_nonce  <- reactiveVal(0)
+  routed_available <- reactiveVal(FALSE)
+  observeEvent(input$data_retry, load_nonce(load_nonce() + 1))
   observe({
-    if (!is.null(base())) return()
-    sections <- load_capacity_sections()
+    load_nonce()
+    if (!is.null(isolate(base()))) return()
+    sections <- tryCatch(load_capacity_sections(), error = function(e) {
+      message("[capacity_planner] load_capacity_sections failed: ", conditionMessage(e))
+      data.frame()
+    })
+    if (is.null(sections) || nrow(sections) == 0) {
+      message("[capacity_planner] no section data returned (database unreachable or query failed)")
+      load_failed(TRUE)
+      return()
+    }
+    load_failed(FALSE)
+    sections <- attach_routed_drivetimes(sections)
+    has_routed <- any(!is.na(sections$drive_min_routed))
+    routed_available(has_routed)
+    for (id in c("cap_drive_mode", "wi_drive_mode")) {
+      updateRadioButtons(session, id, selected = if (has_routed) "routed" else "estimate")
+    }
     cap      <- aggregate_capacity_by_fos(sections, staff())
     priority <- load_capacity_by_priority()
     # FOS name onto sections for the what-if picker
@@ -347,6 +433,14 @@ server <- function(input, output, session) {
     yrs <- as.character(seq(cur_yr, cur_yr - 5))
     updateSelectInput(session, "wi_rate_year", choices = yrs,
                       selected = as.character(cur_yr - 1))
+  })
+
+  output$load_banner <- renderUI({
+    if (!isTRUE(load_failed())) return(NULL)
+    div(class = "alert alert-warning", role = "alert",
+        tags$b("Capacity data could not be loaded from the database. "),
+        "Nothing is wrong with your selections; this is usually a short connection problem. ",
+        actionButton("data_retry", "Try again", class = "btn-sm btn-default"))
   })
 
   # Capacity table re-aggregated whenever the staffing assumptions change
@@ -388,8 +482,15 @@ server <- function(input, output, session) {
 
     w <- capacity_wide(cap)
     if (isTRUE(input$cap_drivetime)) {
-      w$drive_min_P1 <- est_drive_minutes(w$avg_miles_P1, input$avg_mph, input$circuity)
-      w$drive_min_P2 <- est_drive_minutes(w$avg_miles_P2, input$avg_mph, input$circuity)
+      secs <- base()$sections
+      secs$dm <- section_drive_minutes(secs, input$cap_drive_mode %||% "estimate",
+                                       input$avg_mph %||% 45, input$circuity %||% 1.3,
+                                       input$cap_speed_pct %||% 100)
+      m <- stats::aggregate(dm ~ fosarea + zone, data = secs,
+                            FUN = function(x) round(mean(x, na.rm = TRUE), 1))
+      for (z in c("1", "2")) {
+        w[[paste0("drive_min_P", z)]] <- m$dm[match(paste(w$fosarea, z), paste(m$fosarea, m$zone))]
+      }
     }
     disp <- select_measure_cols(w, input$cap_measure %||% "both")
     disp$facility <- NULL; disp$fosarea <- NULL
@@ -397,6 +498,22 @@ server <- function(input, output, session) {
     names(disp) <- vapply(names(disp), capacity_col_label, character(1))
     DT::datatable(disp, rownames = FALSE, filter = "top",
                   options = list(pageLength = 40, scrollX = TRUE))
+  })
+
+  output$drive_note <- renderUI({
+    if (isTRUE(routed_available())) return(NULL)
+    tags$p(class = "metric-note", style = "color:#a15c00;",
+           "Routed drive times are not available for this deployment; the straight-line ",
+           "estimate is being used.")
+  })
+
+  output$drive_summary <- DT::renderDT({
+    b <- base(); req(b)
+    s <- routed_summary(b$sections, input$avg_mph %||% 45, input$circuity %||% 1.3)
+    req(nrow(s) > 0)
+    DT::datatable(s, rownames = FALSE, selection = "none",
+                  caption = "Median per section (sections more than 1 mile from the facility)",
+                  options = list(dom = "t", ordering = FALSE, scrollX = TRUE))
   })
 
   output$cap_download <- downloadHandler(
@@ -569,6 +686,7 @@ server <- function(input, output, session) {
     b <- base(); req(b, input$wi_facility)
     s <- b$sections
     s <- s[s$facility == input$wi_facility & s$zone == "2", ]
+    req(nrow(s) > 0)
     s[order(s$fos_name, -s$miles), ]
   })
 
@@ -582,7 +700,7 @@ server <- function(input, output, session) {
                   error = function(e) NULL)
     if (is.null(g)) return(NULL)
     attrs <- b$sections[, c("sectcode", "fos_name", "ground_sites", "ground_acres",
-                            "air_sites", "air_acres", "wet_cb", "miles")]
+                            "air_sites", "air_acres", "wet_cb", "miles", "drive_min_routed")]
     merge(g, attrs, by = "sectcode", all.x = TRUE)
   })
 
@@ -627,9 +745,11 @@ server <- function(input, output, session) {
     }
     lbl <- sprintf(
       paste0("<b>%s</b><br/>FOS: %s<br/>Ground %d sites / %.1f ac &middot; ",
-             "Air %d sites / %.1f ac &middot; WetCB %d<br/>%.1f mi from facility"),
+             "Air %d sites / %.1f ac &middot; WetCB %d<br/>%.1f mi from facility%s"),
       g$sectcode, g$fos_name, g$ground_sites, g$ground_acres, g$air_sites, g$air_acres,
-      g$wet_cb, g$miles)
+      g$wet_cb, g$miles,
+      ifelse(is.na(g$drive_min_routed), "",
+             sprintf(" &middot; ~%.0f min drive (OSM)", g$drive_min_routed)))
     bb <- as.numeric(sf::st_bbox(g))
     leaflet::leaflet(g) %>%
       leaflet::addTiles() %>%
@@ -682,8 +802,9 @@ server <- function(input, output, session) {
                   "air_sites", "air_acres", "prehatch_sites", "prehatch_acres",
                   "wet_cb", "miles")]
     for (col in c("ground_acres", "air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
-    disp$drive_min <- est_drive_minutes(disp$miles,
-                                        input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3)
+    disp$drive_min <- section_drive_minutes(s, input$wi_drive_mode %||% "estimate",
+                                            input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3,
+                                            input$wi_speed_pct %||% 100)
     names(disp) <- c("Sel", "Section", "FOS", "Ground sites", "Ground acres",
                      "Air sites", "Air acres", "PH sites", "PH acres",
                      "WetCB", "Miles", "Drive min")
@@ -736,8 +857,15 @@ server <- function(input, output, session) {
   wi_result <- reactive({
     b <- base(); req(b)
     per_tech <- if (is.null(input$wi_per_tech) || is.na(input$wi_per_tech)) NULL else input$wi_per_tech
+    travel_on <- isTRUE(input$wi_travel %||% TRUE)
+    dm <- if (travel_on) {
+      section_drive_minutes(b$sections, input$wi_drive_mode %||% "estimate",
+                            input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3,
+                            input$wi_speed_pct %||% 100)
+    } else NULL
     whatif_compute(b$sections, sel(), cap_live(),
-                   metric = input$wi_metric, per_tech = per_tech)
+                   metric = input$wi_metric, per_tech = per_tech,
+                   drive_minutes = dm, travel_adjust = travel_on)
   })
 
   output$wi_summary <- renderUI({
@@ -746,7 +874,8 @@ server <- function(input, output, session) {
     cur_tot <- sum(r$by_fos$cur_p1, na.rm = TRUE)
     new_tot <- sum(r$by_fos$new_p1, na.rm = TRUE)
     tags$div(
-      tags$p(sprintf("Promoting %d P2 section(s) into P1.", t$promoted_n)),
+      tags$p(sprintf("Promoting %d P2 section(s) into P1. Travel time: %s.", t$promoted_n,
+                     if (isTRUE(t$travel_adjusted)) "ON (load per tech scaled by the travel ratio below)" else "OFF")),
       tags$p(HTML(sprintf(
         "Driver: <b>%s</b>. Baseline <b>%.1f</b> per tech. P1 %s: <b>%s</b> &rarr; <b>%s</b> (+%s).",
         metric_label, t$per_tech, metric_label,
@@ -763,9 +892,17 @@ server <- function(input, output, session) {
     if (nrow(by) == 0) return(DT::datatable(
       data.frame(Note = "Select sections on the map to see per-FOS impact"),
       rownames = FALSE, options = list(dom = "t")))
-    names(by) <- c("Facility", "FOS", "emp", "Techs", "Cur P1", "New P1",
-                   "Added", "Need (new)", "Add techs", "Gap now")
+    if (!isTRUE(r$totals$travel_adjusted)) {
+      by$avg_p1_min <- NULL; by$avg_promoted_min <- NULL; by$travel_ratio <- NULL
+      names(by) <- c("Facility", "FOS", "emp", "Techs", "Cur P1", "New P1",
+                     "Added", "Need (new)", "Add techs", "Gap now")
+    } else {
+      names(by) <- c("Facility", "FOS", "emp", "Techs", "Cur P1", "New P1",
+                     "Added", "Avg P1 min", "Avg promoted min", "Travel ratio",
+                     "Need (new)", "Add techs", "Gap now")
+    }
     by$emp <- NULL
+    if ("Travel ratio" %in% names(by)) by[["Travel ratio"]] <- round(by[["Travel ratio"]], 2)
     DT::datatable(by, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
   })
 
@@ -794,11 +931,16 @@ server <- function(input, output, session) {
     hpj <- c(air_trt = input$wi_h_air_trt, air_insp = input$wi_h_air_insp,
              gnd_insp_trt = input$wi_h_gnd_insp_trt, gnd_trt = input$wi_h_gnd_trt,
              gnd_insp = input$wi_h_gnd_insp)
+    travel_on <- isTRUE(input$wi_travel %||% TRUE)
     estimate_crews(promo, rates, hpj,
                    input$wi_crew_hours %||% STUDY_CREW_HOURS_SEASON,
-                   trips_per_section = input$wi_crew_trips %||% DEFAULT_TRIPS_PER_SECTION,
+                   trips_per_section = if (travel_on) input$wi_crew_trips %||% DEFAULT_TRIPS_PER_SECTION else 0,
                    avg_mph  = input$wi_avg_mph %||% 45,
-                   circuity = input$wi_circuity %||% 1.3)
+                   circuity = input$wi_circuity %||% 1.3,
+                   drive_minutes = if (travel_on) section_drive_minutes(
+                     promo, input$wi_drive_mode %||% "estimate",
+                     input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3,
+                     input$wi_speed_pct %||% 100) else NULL)
   })
 
   output$wi_crew_summary <- renderUI({
@@ -841,7 +983,7 @@ server <- function(input, output, session) {
     disp <- r[, c("Job", "jobs", "distinct_sites", "rate")]
     names(disp) <- c("Job", "Jobs (season)", "Distinct sites", "Jobs/site")
     DT::datatable(disp, rownames = FALSE,
-      caption = sprintf("%s P1, season %s", wi_scope(), unique(r$year)),
+      caption = sprintf("%s P1 sites, season %s", wi_scope(), unique(r$year)),
       options = list(dom = "t", scrollX = TRUE))
   })
 }

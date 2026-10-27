@@ -243,6 +243,7 @@ function getTabConfig_(tabName) {
     .map(c => ({
       color: c.color || '#FFFF00',
       rule:  c.rule || null,
+      always: c.always === true,
       // resolve cols list; null means all value columns (computed at call time)
       cols: c.cols ? c.cols.map(colNum_) : null,
     }));
@@ -398,7 +399,8 @@ function applyHighlights_(sheet, ds, siteRows, lookup, tabCfg) {
       const targetCols = hl.cols !== null ? hl.cols : tabCfg.allValueColNums;
       if (!targetCols || targetCols.length === 0) continue;
 
-      const applies = filled && evalRule_(info, hl.rule);
+      const eligible = hl.always ? !!info : filled;
+      const applies  = eligible && evalRule_(info, hl.rule);
       for (const cn of targetCols) {
         if (tabCfg.preserveSet.has(cn)) continue;
         if (applies) winner[cn] = hl.color;          // a match always wins, even over an earlier match

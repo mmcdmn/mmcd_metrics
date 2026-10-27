@@ -88,6 +88,39 @@ validate_lookback <- function(v, max_days = 150L) {
   n
 }
 
+# ── Inspection / sample table selection for a DATE RANGE ──
+INSP_COLS <- c("sitecode", "action", "inspdate", "numdip", "wet", "emp1", "emp2",
+               "matcode", "mattype", "amts", "acres", "acres_plan", "airgrnd_plan",
+               "sampnum_yr", "posttrt_p", "reinspect", "rems1", "rems2",
+               "comments", "pkey_pg")
+SAMPLE_COLS <- c("sampnum_yr", "redblue", "missing")
+
+tables_for_range <- function(start_date, end_date) {
+  a <- get_table_strategy(start_date)
+  b <- get_table_strategy(end_date)
+  list(current = isTRUE(a$query_current) || isTRUE(b$query_current),
+       archive = isTRUE(a$query_archive) || isTRUE(b$query_archive))
+}
+
+range_source <- function(need, current_tbl, archive_tbl, cols) {
+  if (need$current && need$archive) {
+    sel <- function(tbl) sprintf("SELECT %s FROM %s", paste(cols, collapse = ", "), tbl)
+    sprintf("(%s UNION ALL %s)", sel(current_tbl), sel(archive_tbl))
+  } else if (need$archive) {
+    archive_tbl
+  } else {
+    current_tbl
+  }
+}
+
+max_effect_days <- function(con) {
+  m <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT GREATEST(14, COALESCE(MAX(effect_days), 14))::int AS m
+                            FROM mattype_list_targetdose")$m[1],
+    error = function(e) NA_integer_)
+  if (is.na(m)) 150L else as.integer(m)
+}
+
 validate_priority <- function(v) {
   if (is.null(v) || !nzchar(trimws(v %||% ""))) return(NULL)
   valid <- c("RED", "YELLOW", "BLUE", "GREEN", "PURPLE")

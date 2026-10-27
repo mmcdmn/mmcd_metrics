@@ -209,6 +209,47 @@ load_capacity_by_priority <- function() {
   df
 }
 
+# Routed drive-time lookup built offline by scripts/build_drivetimes.R (OSRM on
+# OpenStreetMap roads). Free-flow times, facility point -> section centroid.
+ROUTED_DRIVETIME_FILE <- "data/facility_section_drivetime.csv"
+
+#' Read the routed facility -> section drive-time lookup.
+#'
+#' @param path CSV written by scripts/build_drivetimes.R
+#' @return data.frame(facility, sectcode, drive_min_routed, drive_miles_routed,
+#'   snap_m, snap_flag), or NULL when the file is missing/unreadable (the app then
+#'   falls back to the straight-line estimate)
+load_routed_drivetimes <- function(path = ROUTED_DRIVETIME_FILE) {
+  if (!file.exists(path)) return(NULL)
+  d <- tryCatch(suppressWarnings(utils::read.csv(path, stringsAsFactors = FALSE,
+                                                 colClasses = c(sectcode = "character"))),
+                error = function(e) { warning(paste("[load_routed_drivetimes]", e$message)); NULL })
+  need <- c("facility", "sectcode", "drive_min", "drive_miles")
+  if (is.null(d) || !all(need %in% names(d))) return(NULL)
+  if (!"snap_m" %in% names(d)) d$snap_m <- NA_real_
+  if (!"snap_flag" %in% names(d)) d$snap_flag <- !is.na(d$snap_m) & d$snap_m > 1000
+  names(d)[names(d) == "drive_min"]   <- "drive_min_routed"
+  names(d)[names(d) == "drive_miles"] <- "drive_miles_routed"
+  d[, c("facility", "sectcode", "drive_min_routed", "drive_miles_routed", "snap_m", "snap_flag")]
+}
+
+#' Add the routed drive-time columns to the section-grain table. Sections with no
+#' routed row get NA (section_drive_minutes() falls back to the estimate for them).
+attach_routed_drivetimes <- function(sections, routed = load_routed_drivetimes()) {
+  if (is.null(sections) || nrow(sections) == 0) return(sections)
+  if (is.null(routed)) {
+    sections$drive_min_routed <- NA_real_; sections$drive_miles_routed <- NA_real_
+    sections$snap_m <- NA_real_; sections$snap_flag <- NA
+    return(sections)
+  }
+  idx <- match(paste(sections$facility, sections$sectcode), paste(routed$facility, routed$sectcode))
+  sections$drive_min_routed   <- routed$drive_min_routed[idx]
+  sections$drive_miles_routed <- routed$drive_miles_routed[idx]
+  sections$snap_m             <- routed$snap_m[idx]
+  sections$snap_flag          <- routed$snap_flag[idx]
+  sections
+}
+
 #' Section polygons + centroids for one facility, for the interactive map.
 #'
 #' @param facility facility abbreviation

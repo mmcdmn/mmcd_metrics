@@ -300,7 +300,7 @@ LEFT JOIN dbadult_insp_current c ON c.sampnum_yr = p.sampnum_yr
 - `air_gnd` (TEXT) - Site type: `'A'` (air) or `'G'` (ground)
 - `priority` (TEXT) - Priority level: `'RED'`, `'YELLOW'`, `'BLUE'`, `'GREEN'`, `'PURPLE'`
 - `drone` (TEXT) - Drone eligible: `'Y'` (yes), `'M'` (maybe), `'N'` (no), or NULL (not eligible)
-- `prehatch` (TEXT) - Prehatch site indicator: `'Y'` or NULL
+- `prehatch` (TEXT) - Site treatment program (see "prehatch values" below); NULL = not a prehatch/BTI site
 - `acres` (NUMERIC) - Site acreage
 - `p1_totsitecount` (INTEGER) - P1 site count goal (cattails)
 - `p2_totsitecount` (INTEGER) - P2 site count goal (cattails)
@@ -325,9 +325,23 @@ WHERE enddate IS NULL  -- Only active sites
 **Common Filters**:
 - `air_gnd` for site type
 - `drone = 'Y'` for drone-eligible sites
-- `prehatch = 'Y'` for prehatch sites (spring season)
+- `prehatch IN ('PREHATCH','PELLET')` for standard prehatch sites (see "prehatch values" below)
 - `priority` for priority-based filtering
 - `status_udw = 'W'` for wet catch basins
+
+**`prehatch` values** (counts as of 2026-10-26; stored values are upper case):
+
+| Value | Sites | Meaning |
+|-------|-------|---------|
+| `PREHATCH` | 148,968 | Standard prehatch site, treated all season |
+| `PELLET` | 78,756 | Same as `PREHATCH` (standard prehatch, treated all season) |
+| `BRIQUET` | 450 | Briquet site: briquetted on the first round, and that treatment stays all year |
+| `PRE1ONLY` | 355 | Treated ONCE, then not again (usually because the site dries up) |
+| `BTI` | 128 | BTI use only; NOT a prehatch site |
+| NULL / empty | 51 | No prehatch designation |
+
+`PREHATCH` and `PELLET` are interchangeable: treat both as one "normal prehatch" group. `BTI` must be excluded from prehatch counts. Note this is different from `mattype_list_targetdose.prehatch` (`'prehatch'`/`'briquet'`), which classifies materials, not sites.
+
 
 **Join Pattern**:
 ```sql

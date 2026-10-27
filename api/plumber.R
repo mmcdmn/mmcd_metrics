@@ -553,7 +553,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* Available source fields for CONFIG.COLUMNS in the generic filler:
 #*
 #* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
-#* @param lookback_days Days back to search (1–150, default 14)
+#* @param lookback_days Days back to search (1–200, default 14)
 #* @param facility      Optional facility code (MO, E, W, N, Sr, Sj …)
 #* @get /v1/private/site-inspections
 #* @json
@@ -566,7 +566,7 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
     if (length(action_list) == 0 || any(!grepl("^[0-9A-Za-z]{1,4}$", action_list)))
       stop("actions must be comma-separated alphanumeric codes, e.g. '9' or '1,3'")
 
-    lb_v    <- validate_lookback(lookback_days, max_days = 150L)
+    lb_v    <- validate_lookback(lookback_days, max_days = 200L)
     date_v  <- Sys.Date()
     start_v <- date_v - lb_v
 

@@ -57,9 +57,26 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 
 - **`capacity_wide(cap)`** — pivots zone-specific metrics to P1/P2 columns (one row per FOS).
 - **`est_drive_minutes(miles, avg_mph, circuity)`** = `miles × circuity ÷ avg_mph × 60`
-  (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate — no
-  routing dependency. *Future:* an optional `facility_section_drivetime` lookup (routed
-  minutes from an offline batch) can override, falling back to this estimate.
+  (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate —
+  no routing dependency; used when routed times are unavailable or the user picks it.
+- **Routed drive times (default)** — `data/facility_section_drivetime.csv` (facility, sectcode,
+  drive_min, drive_miles, snap_m, snap_flag, built, osm_extract): one-way free-flow driving
+  time and road distance from the facility point (`gis_facility` centroid) to each section
+  centroid (`gis_sectcode.latloncentroid`), routed on OpenStreetMap roads by a self-hosted
+  **OSRM** (Docker, Minnesota Geofabrik extract). Built **offline** by
+  `scripts/build_drivetimes.R` (setup commands are in its header) and committed, because the
+  app's database connection is read-only; re-run it when sections or facilities change.
+  `load_routed_drivetimes()` / `attach_routed_drivetimes()` add `drive_min_routed`,
+  `drive_miles_routed`, `snap_m`, `snap_flag` to the section table;
+  `section_drive_minutes(sections, mode, avg_mph, circuity, speed_pct)` returns one-way
+  minutes (routed, falling back per section to the estimate; `speed_pct` scales routed
+  minutes, e.g. 80 = crews travel at 80% of map speed). `routed_summary()` compares routed
+  vs. straight-line per facility (circuity = road mi ÷ straight-line mi, implied mph).
+  Limits: no live traffic; times are facility → section (crews really chain sections in a
+  day); centroids inside wetlands/lakes snap to the nearest road (`snap_flag` = > 1 km).
+  First build (2026-10-26, 3,207 sections, none unreachable, 20 snapped > 1 km): median
+  circuity 1.43 (1.35–1.62 by facility; Sr highest because of river crossings) and implied
+  speed ~34 mph, so the old 1.3 / 45 mph estimate understated drive time by ~1.4× (Sr ~1.8×).
 - **`staffing_baseline(cap, staff)`** — per facility + DISTRICT: P1 ground, air and prehatch
   sites and acres divided by ground techs (crews × techs/crew) and crews → sites/tech,
   acres/tech, acres/crew for each of ground, air and prehatch. **ALL ground techs inspect air sites**, so
@@ -76,6 +93,18 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   **added techs = ceil(new_P1/per_tech) − ceil(cur_P1/per_tech)** (the increase caused by
   the promotion; unaffected FOS = 0). `per_tech` defaults to the district average P1
   load/tech and is editable in the UI. Also reports `gap_now` (current over/under vs baseline).
+  **Travel time (`drive_minutes`, `travel_adjust`):** per FOS, `travel_ratio` = (avg one-way
+  drive minutes to its current P1 sections) ÷ (avg to its promoted sections). The promoted
+  load is worked at `per_tech × travel_ratio` (farther than usual → ratio < 1 → each tech
+  carries less): `needed_new = ceil(cur_P1/per_tech + added_load/(per_tech × ratio))`; the
+  existing P1 load keeps the baseline capacity, and drone offload is applied first. Ratio 1
+  (no promoted sections, missing times, or travel off) reproduces the unadjusted formula
+  exactly. By-FOS table shows Avg P1 min / Avg promoted min / Travel ratio. The ratio is
+  relative, so the field-speed % does not change Estimate A (it does change B's travel hours);
+  switching routed ↔ straight-line source does.
+- **Shared travel control (What-If, top well):** one "Include travel time" checkbox
+  (`wi_travel`, default on) + source (routed / straight-line) + field speed % / avg mph /
+  circuity feed BOTH estimates. Off → A uses ratio 1 and B's travel hours are 0.
 
 ## Workload-study crew model (2001 Ch. 11) — What-If "Estimate B"
 
@@ -99,7 +128,8 @@ added on top of the study's on-site hours — see the `estimate_crews` bullet.
   trips_per_section, avg_mph, circuity)`** — *on-site:* jobs = site_count(kind) × rate,
   hours = jobs × hrs/job. *Travel (added):* each promoted section is driven
   `trips_per_section` round trips/season, so travel hrs = Σ_section trips × 2 ×
-  (one-way drive hours from `est_drive_minutes(miles, avg_mph, circuity)`). **crews =
+  (one-way drive hours from `section_drive_minutes()`: routed by default, else
+  `est_drive_minutes(miles, avg_mph, circuity)`). **crews =
   (on-site + travel) ÷ hrs/crew.** Returns `totals$onsite_hours`, `travel_hours`, and
   `hours` (= the full on-site + travel pool). Verified on-site (no travel): all 339 Sr
   P2 sections (1309 gnd + 298 air) → 9,601 jobs → 6,621 hrs → 3.03 crews. `avg_mph`/
@@ -124,7 +154,7 @@ of sections to promote is driven by the map into a shared `sel` reactiveVal:
 
 Both estimates recompute **live** from `sel()` (no run button). The two governing
 equations are shown up front, and every input number is exposed:
-- **A. Added techs** = Σ_FOS ( ⌈new P1 ÷ load-per-tech⌉ − ⌈current P1 ÷ load-per-tech⌉ )
+- **A. Added techs** = Σ_FOS ( ⌈current P1 ÷ load-per-tech + added load ÷ (load-per-tech × travel ratio)⌉ − ⌈current P1 ÷ load-per-tech⌉ )
 - **B. Additional crews** = [ Σ_jobtype ( sites × jobs-per-site × hours-per-job ) + travel ] ÷ hours-per-crew-season,
   where **travel = Σ_section ( round trips × 2 × one-way drive time )**. The by-job table
   shows sites, jobs/site, jobs, hrs/job, hours, plus a **Travel (drive time)** row and a

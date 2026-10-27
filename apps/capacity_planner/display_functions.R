@@ -71,13 +71,16 @@ capacity_col_label <- function(nm) {
 #' @param trips_per_section round trips a crew drives to each section per season
 #'   (editable planning assumption; 0 disables the travel term)
 #' @param avg_mph, circuity  drive-time estimate params (see est_drive_minutes)
+#' @param drive_minutes optional one-way drive minutes per promoted section (e.g.
+#'   routed times from section_drive_minutes()); when given it replaces the
+#'   straight-line estimate
 #' @return list(by_job = df, totals = list) — totals$hours is the FULL pool
 #'   (on-site + travel); onsite_hours and travel_hours are broken out.
 estimate_crews <- function(promoted_sections, rates,
                            hours_per_job = STUDY_HOURS_PER_JOB,
                            hrs_per_crew = STUDY_CREW_HOURS_SEASON,
                            trips_per_section = DEFAULT_TRIPS_PER_SECTION,
-                           avg_mph = 45, circuity = 1.3) {
+                           avg_mph = 45, circuity = 1.3, drive_minutes = NULL) {
   jt <- names(JOB_TYPE_LABELS)
   n_sec   <- if (!is.null(promoted_sections)) nrow(promoted_sections) else 0
   g_sites <- if (n_sec > 0) sum(promoted_sections$ground_sites, na.rm = TRUE) else 0
@@ -105,9 +108,15 @@ estimate_crews <- function(promoted_sections, rates,
   # Seasonal travel: each section is visited `trips_per_section` times (round
   # trips), so travel hrs = trips x 2 x one-way drive hours, summed over sections.
   travel_hours <- 0
-  if (n_sec > 0 && !is.null(promoted_sections$miles) && trips_per_section > 0) {
-    one_way_hrs  <- est_drive_minutes(promoted_sections$miles, avg_mph, circuity) / 60
-    travel_hours <- sum(trips_per_section * 2 * one_way_hrs, na.rm = TRUE)
+  if (n_sec > 0 && trips_per_section > 0) {
+    one_way_hrs <- if (!is.null(drive_minutes)) {
+      drive_minutes / 60
+    } else if (!is.null(promoted_sections$miles)) {
+      est_drive_minutes(promoted_sections$miles, avg_mph, circuity) / 60
+    } else NULL
+    if (!is.null(one_way_hrs)) {
+      travel_hours <- sum(trips_per_section * 2 * one_way_hrs, na.rm = TRUE)
+    }
   }
 
   total_hours <- onsite_hours + travel_hours
@@ -132,6 +141,48 @@ estimate_crews <- function(promoted_sections, rates,
 #' minutes = miles * circuity / avg_mph * 60
 est_drive_minutes <- function(miles, avg_mph = 45, circuity = 1.3) {
   round(miles * circuity / avg_mph * 60, 1)
+}
+
+#' One-way drive minutes per section: routed (OpenStreetMap roads) when available,
+#' otherwise the straight-line estimate (est_drive_minutes). Routed times are
+#' free-flow speed-limit times, so `speed_pct` (default 100) lets users scale them
+#' to real field pace: 80 = crews travel at 80% of map speed (minutes / 0.8).
+#'
+#' @param sections section-grain df (miles, optionally drive_min_routed)
+#' @param mode "routed" or "estimate"
+#' @param avg_mph,circuity straight-line estimate parameters (estimate mode / fallback)
+#' @param speed_pct percent of map speed crews actually travel at (routed mode)
+section_drive_minutes <- function(sections, mode = "routed", avg_mph = 45,
+                                  circuity = 1.3, speed_pct = 100) {
+  if (is.null(sections) || nrow(sections) == 0) return(numeric(0))
+  est <- est_drive_minutes(sections$miles, avg_mph, circuity)
+  if (!identical(mode, "routed") || is.null(sections$drive_min_routed)) return(est)
+  pct <- if (is.null(speed_pct) || is.na(speed_pct) || speed_pct <= 0) 100 else speed_pct
+  routed <- round(sections$drive_min_routed * 100 / pct, 1)
+  ifelse(is.na(routed), est, routed)
+}
+
+#' Per-facility comparison of routed vs straight-line distance/time, to show how
+#' realistic the circuity factor and average speed are.
+#'
+#' @param sections section-grain df with miles, drive_min_routed, drive_miles_routed
+#' @param avg_mph,circuity the straight-line estimate being compared against
+#' @return data.frame: facility (DISTRICT first), sections, median straight / road
+#'   miles, circuity (road / straight), implied mph, routed min, estimate min
+routed_summary <- function(sections, avg_mph = 45, circuity = 1.3) {
+  if (is.null(sections) || is.null(sections$drive_min_routed)) return(data.frame())
+  s <- sections[!is.na(sections$drive_min_routed) & !is.na(sections$miles) & sections$miles > 1, , drop = FALSE]
+  if (nrow(s) == 0) return(data.frame())
+  one <- function(d, label) data.frame(
+    Facility = label, Sections = nrow(d),
+    `Straight-line mi` = round(stats::median(d$miles), 1),
+    `Road mi` = round(stats::median(d$drive_miles_routed), 1),
+    Circuity = round(stats::median(d$drive_miles_routed / d$miles), 2),
+    `Avg mph (routed)` = round(stats::median(d$drive_miles_routed / (d$drive_min_routed / 60)), 1),
+    `Routed min` = round(stats::median(d$drive_min_routed), 1),
+    `Estimate min` = round(stats::median(est_drive_minutes(d$miles, avg_mph, circuity)), 1),
+    check.names = FALSE)
+  rbind(one(s, "DISTRICT"), do.call(rbind, lapply(split(s, s$facility), function(d) one(d, d$facility[1]))))
 }
 
 #' Pivot the per-FOS x zone capacity to one wide row per FOS area, with P1/P2
@@ -233,9 +284,18 @@ staffing_baseline <- function(cap, staff) {
 #'                  Ground-treated metrics (DRONE_OFFSET_METRICS) are first reduced
 #'                  by each facility's drone_offload_pct, and air sites by its
 #'                  drone_air_offload_pct (both carried in `cap`).
+#' @param drive_minutes optional one-way drive minutes per row of `sections`
+#'                  (see section_drive_minutes()). With `travel_adjust = TRUE`, each
+#'                  FOS's capacity for the PROMOTED load is scaled by
+#'                  ratio = avg drive minutes to its current P1 sections / avg drive
+#'                  minutes to its promoted sections (farther than usual -> ratio < 1
+#'                  -> each tech carries less). The existing P1 load keeps the
+#'                  baseline capacity.
+#' @param travel_adjust apply the travel-time ratio (default FALSE = no adjustment)
 #' @return list(by_fos = df, totals = list)
 whatif_compute <- function(sections, promote_sectcodes, cap,
-                           metric = "ground_sites", per_tech = NULL) {
+                           metric = "ground_sites", per_tech = NULL,
+                           drive_minutes = NULL, travel_adjust = FALSE) {
   empty <- list(by_fos = data.frame(), totals = list(added_techs = 0))
   if (is.null(sections) || nrow(sections) == 0) return(empty)
   if (!metric %in% setdiff(CAPACITY_ZONE_METRICS, "avg_miles")) {
@@ -243,6 +303,9 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
   }
 
   sec <- sections
+  # The section-grain table has one row per section, so the "sections" driver is a
+  # count of rows (it only exists as a column after FOS-level aggregation).
+  if (!"sections" %in% names(sec)) sec$sections <- 1L
   sec$promoted <- sec$sectcode %in% promote_sectcodes &
     as.character(sec$zone) == "2"
 
@@ -280,6 +343,33 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
     by$added_load <- by$new_p1 - by$cur_p1
   }
 
+  # Travel-time ratio per FOS: avg drive time to current P1 sections / avg drive
+  # time to promoted sections (1 = no adjustment / not computable)
+  by$avg_p1_min <- NA_real_
+  by$avg_promoted_min <- NA_real_
+  by$travel_ratio <- 1
+  use_travel <- isTRUE(travel_adjust) && !is.null(drive_minutes) &&
+    length(drive_minutes) == nrow(sec)
+  if (use_travel) {
+    sec$dm <- as.numeric(drive_minutes)
+    p1 <- sec[sec$zone == "1", , drop = FALSE]
+    pr <- sec[sec$promoted, , drop = FALSE]
+    raw1 <- raw2 <- rep(NA_real_, nrow(by))
+    if (nrow(p1) > 0) {
+      m1 <- tapply(p1$dm, as.character(p1$fosarea), mean, na.rm = TRUE)
+      raw1 <- as.numeric(m1[as.character(by$fosarea)])
+    }
+    if (nrow(pr) > 0) {
+      m2 <- tapply(pr$dm, as.character(pr$fosarea), mean, na.rm = TRUE)
+      raw2 <- as.numeric(m2[as.character(by$fosarea)])
+    }
+    by$avg_p1_min <- round(raw1, 1)           # rounded for display only
+    by$avg_promoted_min <- round(raw2, 1)
+    ratio <- raw1 / raw2                      # the calculation uses the exact ratio
+    ratio[is.na(ratio) | !is.finite(ratio) | ratio <= 0] <- 1
+    by$travel_ratio <- ratio
+  }
+
   # Per-tech capacity: default = current district average P1 load / tech
   if (is.null(per_tech) || is.na(per_tech) || per_tech <= 0) {
     tot_p1 <- sum(by$cur_p1, na.rm = TRUE)
@@ -290,7 +380,11 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
   if (!is.na(per_tech) && per_tech > 0) {
     # Techs a load requires at the per-tech baseline
     by$needed_now <- ceiling(by$cur_p1 / per_tech)   # for current P1 load
-    by$needed_new <- ceiling(by$new_p1 / per_tech)   # after promotion
+    # After promotion: the promoted load is worked at per_tech x travel_ratio
+    # (ratio 1 reproduces ceiling(new_p1 / per_tech) exactly)
+    eff_new <- ifelse(by$travel_ratio == 1, by$new_p1,
+                      by$cur_p1 + by$added_load / by$travel_ratio)
+    by$needed_new <- ceiling(eff_new / per_tech)
     # Additional techs the PROMOTION creates (0 for unaffected FOS)
     by$added_techs <- pmax(0, by$needed_new - by$needed_now)
     # Current over(-)/under(+) staffing vs the baseline (informational)
@@ -307,12 +401,14 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
 
   list(
     by_fos = by[, c("facility_name", "fos_name", "fosarea", "n_techs",
-                    "cur_p1", "new_p1", "added_load", "needed_new",
+                    "cur_p1", "new_p1", "added_load", "avg_p1_min",
+                    "avg_promoted_min", "travel_ratio", "needed_new",
                     "added_techs", "gap_now")],
     totals = list(
       per_tech    = round(per_tech, 1),
       metric      = metric,
       promoted_n  = length(promote_sectcodes),
+      travel_adjusted = use_travel,
       added_load  = sum(by$added_load, na.rm = TRUE),
       added_techs = sum(by$added_techs, na.rm = TRUE)
     )

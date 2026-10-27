@@ -418,7 +418,9 @@ deep-linked.)
 | `cap_measure` | `both` \| `sites` \| `acres` — show site counts, acres, or both |
 | `avg_metric` | a metric id, e.g. `ground_sites`, `ground_acres`, `air_sites`, `air_acres`, `prehatch_sites`, `prehatch_acres`, `sections`, `wet_cb`, `avg_miles` — box-plot metric in the Averages section |
 | `cap_drivetime` | `true` \| `false` — show est. drive time |
-| `avg_mph` | number (Capacity tab drive-time speed) |
+| `cap_drive_mode` | `routed` \| `estimate` — Capacity tab drive-time source (routed OpenStreetMap roads vs straight-line estimate) |
+| `cap_speed_pct` | number (field speed as % of map speed, routed mode) |
+| `avg_mph` | number (Capacity tab drive-time speed, estimate mode) |
 | `circuity` | number (road circuity factor) |
 | `wi_facility` | a facility `(from DB)` — What-If planner facility |
 | `wi_metric` | staffing driver id `(from DB)` — Estimate A |
@@ -430,7 +432,10 @@ deep-linked.)
 | `wi_rate_scope` | `DISTRICT` \| `FAC` |
 | `wi_crew_hours` | number (hrs / crew-season) |
 | `wi_crew_trips` | number (round trips/section/season) |
-| `wi_avg_mph` | number (What-If drive-time speed) |
+| `wi_travel` | `true` \| `false` — include travel time in both estimates (default true) |
+| `wi_drive_mode` | `routed` \| `estimate` — drive-time source for Estimate A and B |
+| `wi_speed_pct` | number (field speed as % of map speed, routed mode) |
+| `wi_avg_mph` | number (What-If drive-time speed, estimate mode) |
 | `wi_circuity` | number (What-If circuity factor) |
 
 Example: `.../capacity_planner/?tabs=whatif&wi_facility=Sr&wi_rate_scope=FAC`

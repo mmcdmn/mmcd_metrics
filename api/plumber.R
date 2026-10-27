@@ -348,7 +348,7 @@ function(facility = NULL, limit = 500, res) {
 #* @param facility     Optional facility code (MO, E, W, N, Sr, Sj …)
 #* @param foreman      Optional FOS shortname (e.g. Smith)
 #* @param zone         Zones to include: "1", "2", or "1,2"  (default "1,2")
-#* @param lookback_days How many days back to look for inspections (1–14, default 2)
+#* @param lookback_days How many days back to look for inspections (1–200, default 2)
 #* @param as_of        Analysis date YYYY-MM-DD (default today)
 #* @param priority     Optional priority filter (comma-sep): RED, YELLOW, BLUE, GREEN, PURPLE
 #* @get /v1/private/air-checklist
@@ -361,31 +361,22 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
     fac_v     <- validate_facility(facility)
     fos_emp_v <- validate_foreman(foreman)
     zone_v    <- validate_zone(zone)
-    lb_v      <- validate_lookback(lookback_days)
+    lb_v      <- validate_lookback(lookback_days, max_days = 200L)
     pri_v     <- validate_priority(priority)
     date_v    <- validate_date(as_of)
     start_v   <- date_v - lb_v
 
-    # ── 2. Choose current vs archive table based on actual DB year ranges
-    tbl     <- get_table_strategy(date_v)
-    ins_tbl <- if (tbl$query_archive && !tbl$query_current)
-                 "dblarv_insptrt_archive"
-               else if (!tbl$query_archive)
-                 "dblarv_insptrt_current"
-               else
-                 "(SELECT * FROM dblarv_insptrt_current
-                   UNION ALL SELECT * FROM dblarv_insptrt_archive)"
-    smp_tbl <- if (tbl$query_archive && !tbl$query_current)
-                 "dblarv_sample_archive"
-               else if (!tbl$query_archive)
-                 "dblarv_sample_current"
-               else
-                 "(SELECT * FROM dblarv_sample_current
-                   UNION ALL SELECT * FROM dblarv_sample_archive)"
-
-    # ── 3. Open connection; all quoting done with dbQuoteString
+    # ── 2. Open connection; all quoting done with dbQuoteString
     con <- get_db_connection()
     on.exit(safe_disconnect(con), add = TRUE)
+
+    # ── 3. Choose current vs archive tables for the WHOLE window (inspections
+    # reach back lb_v days, active-treatment lookups back max_effect_days)
+    trt_start_v <- date_v - max_effect_days(con)
+    need        <- tables_for_range(min(start_v, trt_start_v), date_v)
+    ins_tbl     <- range_source(need, "dblarv_insptrt_current", "dblarv_insptrt_archive", INSP_COLS)
+    smp_tbl     <- range_source(need, "dblarv_sample_current",  "dblarv_sample_archive",  SAMPLE_COLS)
+    trt_sql     <- as.character(trt_start_v)
 
     # WHERE clauses: validated values → dbQuoteString → IN clause
     fac_clause <- safe_in(con, "sc.fac_for_air", fac_v)
@@ -422,7 +413,7 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
           i.wet,
           i.emp1,
           i.sampnum_yr,
-          ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
+          ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC, i.pkey_pg DESC) AS rn
         FROM ", ins_tbl, " i
         WHERE i.inspdate BETWEEN '", lb_sql, "'::date AND '", d_sql, "'::date
           AND i.action IN ('2','4')
@@ -436,10 +427,10 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
           t.mattype,
           t.inspdate + INTERVAL '1 day' * COALESCE(mt.effect_days, 14)   AS trt_expiry,
           COALESCE(mt.prehatch, FALSE)                                    AS is_prehatch,
-          ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC) AS rn
+          ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC, t.pkey_pg DESC) AS rn
         FROM ", ins_tbl, " t
         LEFT JOIN mattype_list_targetdose mt ON t.matcode = mt.matcode
-        WHERE t.inspdate <= '", d_sql, "'::date
+        WHERE t.inspdate BETWEEN '", trt_sql, "'::date AND '", d_sql, "'::date
           AND t.action IN ('3','A','D')
           AND t.matcode IS NOT NULL AND t.matcode != ''
           AND t.sitecode IN (SELECT sitecode FROM RedAirSites)
@@ -550,7 +541,18 @@ function(facility = NULL, foreman = NULL, zone = "1,2",
 #* Generic site-inspection data — returns the most recent record per sitecode
 #* for any requested action code(s) within a lookback window.
 #*
-#* Available source fields for CONFIG.COLUMNS in the generic filler:
+#* One row per active site. Fields for CONFIG.COLUMNS in the generic filler:
+#*   Site record (always present): site_acres, air_gnd, priority, site_type,
+#*     site_remarks, remarks (access card note, else site_remarks), drone,
+#*     needs_sample, restricted_area, airmap_num, facility, fac_for_air, zone,
+#*     fosarea, fos_name, sectcode, township_name
+#*   Most recent record among `actions` in the window (blank if none):
+#*     action, inspdate, numdip, wet, emp1, emp2, inspector_name, matcode, amts,
+#*     acres, acres_plan, airgrnd_plan, sampnum_yr, posttrt_p, reinspect, rems1,
+#*     rems2, comments, pkey_pg, was_completed, bug_status, activeTrt
+#*   Active treatment (latest treatment, action 3/A/D, regardless of `actions`):
+#*     has_active_treatment, active_material, active_trt_date,
+#*     active_trt_expiry, is_prehatch
 #*
 #* @param actions       Comma-separated action codes, e.g. "9" or "1,3" (required)
 #* @param lookback_days Days back to search (1–200, default 14)
@@ -573,37 +575,47 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
     con <- get_db_connection()
     on.exit(safe_disconnect(con), add = TRUE)
 
-    tbl <- get_table_strategy(date_v)
-    # Union current + archive tables when the lookback window spans both years
-    ins_tbl <- if (tbl$query_archive && !tbl$query_current)
-                 "dblarv_insptrt_archive"
-               else if (!tbl$query_archive)
-                 "dblarv_insptrt_current"
-               else
-                 "(SELECT * FROM dblarv_insptrt_current
-                   UNION ALL SELECT * FROM dblarv_insptrt_archive)"
+    # Tables for the WHOLE window (records reach back lb_v days, active
+    # treatments back max_effect_days); see tables_for_range() in api_helpers.R
+    trt_start_v <- date_v - max_effect_days(con)
+    need    <- tables_for_range(min(start_v, trt_start_v), date_v)
+    ins_tbl <- range_source(need, "dblarv_insptrt_current", "dblarv_insptrt_archive", INSP_COLS)
+    smp_tbl <- range_source(need, "dblarv_sample_current",  "dblarv_sample_archive",  SAMPLE_COLS)
 
     # Filter on the site's own facility column — sitecodes are numeric, so the
     # facility code is never a sitecode prefix.
     fac_filter <- ""
     if (!is.null(facility) && nzchar(trimws(facility %||% ""))) {
       fac_v      <- validate_facility(facility)
-      fac_filter <- paste0("AND facility = ", DBI::dbQuoteString(con, fac_v))
+      fac_filter <- paste0("AND b.facility = ", DBI::dbQuoteString(con, fac_v))
     }
 
     action_sql <- paste0("'", paste(action_list, collapse = "','"), "'")
 
-    query <- sprintf("
+    d_sql   <- format(date_v,       "%Y-%m-%d")
+    lb_sql  <- format(start_v,      "%Y-%m-%d")
+    trt_sql <- format(trt_start_v,  "%Y-%m-%d")
+
+    # Same site/treatment/lab/township logic as /private/air-checklist, but for
+    # ANY site and ANY action codes.
+    query <- paste0("
       WITH ActiveSites AS (
-        SELECT sitecode,
-               acres AS site_acres,
-               air_gnd,
-               priority,
-               type AS site_type,
-               remarks AS site_remarks
-        FROM public.loc_breeding_sites
-        WHERE (enddate IS NULL OR enddate > CURRENT_DATE)
-          %s
+        SELECT DISTINCT ON (b.sitecode)
+               b.sitecode,
+               b.acres      AS site_acres,
+               b.air_gnd,
+               b.priority,
+               b.type       AS site_type,
+               b.remarks    AS site_remarks,
+               b.drone      AS site_drone,
+               b.sample     AS site_sample,
+               b.facility   AS site_facility,
+               sc.fac_for_air, sc.zone, sc.fosarea, sc.sectcode
+        FROM public.loc_breeding_sites b
+        LEFT JOIN gis_sectcode sc ON LEFT(b.sitecode, 7) = sc.sectcode
+        WHERE (b.enddate IS NULL OR b.enddate > CURRENT_DATE)
+          ", fac_filter, "
+        ORDER BY b.sitecode, b.enddate NULLS LAST
       ),
       Ranked AS (
         SELECT
@@ -627,12 +639,54 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
           i.comments,
           i.pkey_pg,
           mt.effect_days,
-          ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC) AS rn
-        FROM %s i
+          ROW_NUMBER() OVER (PARTITION BY i.sitecode ORDER BY i.inspdate DESC, i.pkey_pg DESC) AS rn
+        FROM ", ins_tbl, " i
         LEFT JOIN mattype_list_targetdose mt ON i.matcode = mt.matcode
-        WHERE i.inspdate BETWEEN '%s'::date AND '%s'::date
-          AND i.action IN (%s)
+        WHERE i.inspdate BETWEEN '", lb_sql, "'::date AND '", d_sql, "'::date
+          AND i.action IN (", action_sql, ")
           AND i.sitecode IN (SELECT sitecode FROM ActiveSites)
+      ),
+      RecentTreatments AS (
+        SELECT
+          t.sitecode,
+          t.inspdate  AS last_trt_date,
+          t.mattype,
+          t.inspdate + INTERVAL '1 day' * COALESCE(mt.effect_days, 14) AS trt_expiry,
+          COALESCE(mt.prehatch, FALSE) AS is_prehatch,
+          ROW_NUMBER() OVER (PARTITION BY t.sitecode ORDER BY t.inspdate DESC, t.pkey_pg DESC) AS rn
+        FROM ", ins_tbl, " t
+        LEFT JOIN mattype_list_targetdose mt ON t.matcode = mt.matcode
+        WHERE t.inspdate BETWEEN '", trt_sql, "'::date AND '", d_sql, "'::date
+          AND t.action IN ('3','A','D')
+          AND t.matcode IS NOT NULL AND t.matcode != ''
+          AND t.sitecode IN (SELECT sitecode FROM ActiveSites)
+      ),
+      ActiveTreatments AS (
+        SELECT sitecode, mattype AS active_material, last_trt_date, trt_expiry, is_prehatch
+        FROM RecentTreatments
+        WHERE rn = 1 AND trt_expiry > '", d_sql, "'::date
+      ),
+      LabResults AS (
+        SELECT ls.sampnum_yr, ls.redblue, ls.missing
+        FROM ", smp_tbl, " ls
+        WHERE ls.sampnum_yr IN (SELECT sampnum_yr FROM Ranked
+                                WHERE rn = 1 AND sampnum_yr IS NOT NULL)
+      ),
+      Employees AS (
+        SELECT DISTINCT ON (emp_num) emp_num, shortname
+        FROM employee_list
+        WHERE active = true
+        ORDER BY emp_num, pkey DESC
+      ),
+      FosNames AS (
+        SELECT DISTINCT ON (emp_num) emp_num, shortname AS fos_name
+        FROM employee_list
+        WHERE active = true AND emp_type = 'FieldSuper'
+        ORDER BY emp_num, pkey DESC
+      ),
+      TownLookup AS (
+        SELECT DISTINCT LPAD(CAST(towncode AS text), 4, '0') AS towncode4, city
+        FROM lookup_towncode_name
       )
       SELECT
         s.sitecode,
@@ -641,12 +695,25 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
         s.priority,
         s.site_type,
         s.site_remarks,
+        s.site_facility                                              AS facility,
+        s.fac_for_air,
+        s.zone,
+        s.fosarea,
+        fl.fos_name,
+        s.sectcode,
+        COALESCE(town.city, LEFT(s.sitecode, 4))                     AS township_name,
+        cards.airmap_num,
+        COALESCE(NULLIF(cards.remarks, ''), s.site_remarks, '')      AS remarks,
+        (COALESCE(cards.ra, '') != '')                               AS restricted_area,
+        (COALESCE(s.site_drone, '') IN ('Y','M'))                    AS drone,
+        (COALESCE(s.site_sample, '') != '')                          AS needs_sample,
         r.action,
         r.inspdate,
         r.numdip,
         r.wet,
         r.emp1,
         r.emp2,
+        emp.shortname                                                AS inspector_name,
         r.matcode,
         r.amts,
         r.acres,
@@ -664,20 +731,38 @@ function(actions = NULL, lookback_days = 14, facility = NULL, res) {
           r.matcode IS NOT NULL
           AND r.matcode != ''
           AND r.inspdate + INTERVAL '1 day' * COALESCE(r.effect_days, 14) > CURRENT_DATE
-        ) AS activetrt
+        ) AS activetrt,
+        CASE
+          WHEN r.sitecode IS NULL
+            OR r.sampnum_yr IS NULL
+            OR r.sampnum_yr = ''           THEN 'No Sample'
+          WHEN lr.missing IS TRUE          THEN 'Pending Lab'
+          WHEN lr.redblue = 'R'            THEN 'Red Bugs'
+          WHEN lr.redblue = 'B'            THEN 'Blue Bugs'
+          ELSE                                  'No Bugs'
+        END                                                          AS bug_status,
+        (at.sitecode IS NOT NULL)                                    AS has_active_treatment,
+        at.active_material,
+        at.last_trt_date                                             AS active_trt_date,
+        at.trt_expiry                                                AS active_trt_expiry,
+        COALESCE(at.is_prehatch, FALSE)                              AS is_prehatch
       FROM ActiveSites s
-      LEFT JOIN Ranked r ON s.sitecode = r.sitecode AND r.rn = 1
+      LEFT JOIN Ranked r             ON s.sitecode = r.sitecode AND r.rn = 1
+      LEFT JOIN LabResults lr        ON r.sampnum_yr = lr.sampnum_yr
+      LEFT JOIN ActiveTreatments at  ON s.sitecode = at.sitecode
+      LEFT JOIN loc_breeding_site_cards_sjsreast2 cards ON s.sitecode = cards.sitecode
+      LEFT JOIN TownLookup town      ON LEFT(s.sitecode, 4) = town.towncode4
+      LEFT JOIN Employees emp        ON r.emp1 = emp.emp_num::text
+      LEFT JOIN FosNames fl          ON s.fosarea = fl.emp_num::text
       ORDER BY s.sitecode
-    ", fac_filter,
-       ins_tbl,
-       format(start_v, "%Y-%m-%d"),
-       format(date_v,  "%Y-%m-%d"),
-       action_sql)
+    ")
 
     rows <- DBI::dbGetQuery(con, query)
     if (nrow(rows) > 0) {
-      rows$was_completed <- as.logical(rows$was_completed)
-      rows$activetrt     <- as.logical(rows$activetrt)
+      for (col in c("was_completed", "activetrt", "has_active_treatment",
+                    "is_prehatch", "restricted_area", "drone", "needs_sample")) {
+        if (col %in% names(rows)) rows[[col]] <- as.logical(rows[[col]])
+      }
       names(rows)[names(rows) == "activetrt"] <- "activeTrt"
     }
 

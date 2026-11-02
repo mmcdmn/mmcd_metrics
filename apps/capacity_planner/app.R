@@ -193,7 +193,7 @@ ui <- accessible_page(
         ),
         fluidRow(
           column(4, numericInput("wi_techs_per_crew",
-                                 "Techs per crew (this facility)", value = NA, min = 0, step = 1)),
+                                 "Techs per crew (this facility)", value = NA, min = 0, step = 0.01)),
           column(4, numericInput("wi_drone_offload",
                                  "Drone offload % of ground load (this facility)",
                                  value = NA, min = 0, max = 100, step = 5)),
@@ -227,9 +227,11 @@ ui <- accessible_page(
           tags$div(style = "font-weight:600;color:#2c5aa0;margin-bottom:4px;",
                    "How the estimates are computed"),
           tags$p(style = "margin:4px 0;font-family:Consolas,monospace;font-size:13px;",
-            HTML("<b>A. Added techs</b> = &Sigma;<sub>FOS</sub> ( &lceil;current P1 load &divide; load-per-tech + added load &divide; (load-per-tech &times; travel ratio)&rceil; &minus; &lceil;current P1 load &divide; load-per-tech&rceil; )")),
+            HTML("<b>A. Added techs</b> = &Sigma;<sub>FOS</sub> ( &lceil;current P1 load &divide; load-per-tech + added load &divide; (load-per-tech &times; capacity factor)&rceil; &minus; &lceil;current P1 load &divide; load-per-tech&rceil; )")),
           tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
-            HTML("travel ratio = avg <i>t</i>(current P1 sections) &divide; avg <i>t</i>(promoted sections)")),
+            HTML("capacity factor = 1 &divide; [ (1 &minus; <i>s</i>) + <i>s</i> &divide; travel ratio ] &nbsp;|&nbsp; <i>s</i> = travel share of workday")),
+          tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
+            HTML("travel ratio = median <i>t</i>(current P1 sections) &divide; median <i>t</i>(promoted sections)")),
           tags$p(style = "margin:4px 0;font-family:Consolas,monospace;font-size:13px;",
             HTML("<b>B. Additional crews</b> = [ &Sigma;<sub>job type</sub> ( sites &times; jobs-per-site &times; hours-per-job ) + travel ] &divide; hours-per-crew-season")),
           tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
@@ -237,7 +239,7 @@ ui <- accessible_page(
           tags$p(style = "margin:4px 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
             HTML("<i>t</i> = one-way drive time = routed minutes &divide; field speed % &nbsp;|&nbsp; miles &times; circuity &divide; mph &times; 60 (straight-line)")),
           tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
-            HTML("travel time off: travel ratio = 1, travel = 0. higher means less time traveling, lower is more time traveling")),
+            HTML("travel time off: capacity factor = 1, travel = 0. travel ratio above 1 = less time traveling, below 1 = more")),
           tags$p(class = "metric-note", style = "margin:8px 0 0;",
             "Click a section on the map to add/remove it; hold ",
             tags$b("Shift"), " and drag a box to add many. Every number in the ",
@@ -263,6 +265,9 @@ ui <- accessible_page(
         column(5,
           h4("Estimate A — load per tech"),
           uiOutput("wi_summary"),
+          conditionalPanel(
+            "input.wi_travel",
+            numericInput("wi_travel_share", "Travel share of workday (%)", 20, 0, 90, 5)),
           br(),
           div(style = "overflow-x:auto;", DT::DTOutput("wi_by_fos"))
         )
@@ -353,6 +358,7 @@ server <- function(input, output, session) {
     wi_travel      = list(input = "wi_travel",      type = "checkbox"),
     wi_drive_mode  = list(input = "wi_drive_mode",  type = "radio"),
     wi_speed_pct   = list(input = "wi_speed_pct",   type = "numeric"),
+    wi_travel_share = list(input = "wi_travel_share", type = "numeric"),
     wi_facility    = list(input = "wi_facility",  type = "select"),
     wi_metric      = list(input = "wi_metric",    type = "select"),
     wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
@@ -597,7 +603,8 @@ server <- function(input, output, session) {
                       check.names = FALSE)
     DT::datatable(rbind(d, tot), rownames = FALSE, selection = "none",
                   editable = list(target = "cell", disable = list(columns = c(0, 3, 7))),
-                  options = list(dom = "t", pageLength = 20, ordering = FALSE))
+                  options = list(dom = "t", pageLength = 20, ordering = FALSE)) %>%
+      DT::formatRound("Techs/crew", 2)
   })
 
   observeEvent(input$staff_edit_cell_edit, {
@@ -819,7 +826,7 @@ server <- function(input, output, session) {
     s <- staff(); fac <- input$wi_facility
     req(fac, fac %in% s$facility)
     row <- s[s$facility == fac, ]
-    updateNumericInput(session, "wi_techs_per_crew", value = row$techs_per_crew)
+    updateNumericInput(session, "wi_techs_per_crew", value = round(row$techs_per_crew, 2))
     updateNumericInput(session, "wi_drone_offload", value = row$drone_offload_pct)
     updateNumericInput(session, "wi_drone_air_offload", value = row$drone_air_offload_pct)
   })
@@ -865,7 +872,8 @@ server <- function(input, output, session) {
     } else NULL
     whatif_compute(b$sections, sel(), cap_live(),
                    metric = input$wi_metric, per_tech = per_tech,
-                   drive_minutes = dm, travel_adjust = travel_on)
+                   drive_minutes = dm, travel_adjust = travel_on,
+                   travel_share = input$wi_travel_share %||% 20)
   })
 
   output$wi_summary <- renderUI({
@@ -875,7 +883,7 @@ server <- function(input, output, session) {
     new_tot <- sum(r$by_fos$new_p1, na.rm = TRUE)
     tags$div(
       tags$p(sprintf("Promoting %d P2 section(s) into P1. Travel time: %s.", t$promoted_n,
-                     if (isTRUE(t$travel_adjusted)) "ON (load per tech scaled by the travel ratio below)" else "OFF")),
+                     if (isTRUE(t$travel_adjusted)) "ON (load per tech scaled by the capacity factor below)" else "OFF")),
       tags$p(HTML(sprintf(
         "Driver: <b>%s</b>. Baseline <b>%.1f</b> per tech. P1 %s: <b>%s</b> &rarr; <b>%s</b> (+%s).",
         metric_label, t$per_tech, metric_label,
@@ -893,16 +901,18 @@ server <- function(input, output, session) {
       data.frame(Note = "Select sections on the map to see per-FOS impact"),
       rownames = FALSE, options = list(dom = "t")))
     if (!isTRUE(r$totals$travel_adjusted)) {
-      by$avg_p1_min <- NULL; by$avg_promoted_min <- NULL; by$travel_ratio <- NULL
+      by$med_p1_min <- NULL; by$med_promoted_min <- NULL
+      by$travel_ratio <- NULL; by$capacity_factor <- NULL
       names(by) <- c("Facility", "FOS", "emp", "Techs", "Cur P1", "New P1",
                      "Added", "Need (new)", "Add techs", "Gap now")
     } else {
       names(by) <- c("Facility", "FOS", "emp", "Techs", "Cur P1", "New P1",
-                     "Added", "Avg P1 min", "Avg promoted min", "Travel ratio",
-                     "Need (new)", "Add techs", "Gap now")
+                     "Added", "Median P1 min", "Median promoted min", "Travel ratio",
+                     "Capacity factor", "Need (new)", "Add techs", "Gap now")
     }
     by$emp <- NULL
-    if ("Travel ratio" %in% names(by)) by[["Travel ratio"]] <- round(by[["Travel ratio"]], 2)
+    for (cn in c("Travel ratio", "Capacity factor"))
+      if (cn %in% names(by)) by[[cn]] <- round(by[[cn]], 2)
     DT::datatable(by, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
   })
 

@@ -25,6 +25,14 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   4326 geography, ÷1609.34). This is the base grain for the capacity table AND the
   what-if section picker. **All `COUNT(*)` cast `::int`** (RPostgres returns
   `integer64`/bit64 which mis-reads as a garbage double otherwise).
+- **RA exclusion** — active sites inside Restricted Area polygons with `monitor_ok = FALSE`
+  (no work happens there) are dropped from every site count and acre figure, in both
+  loaders, via `ra_exclusion_sql()`. The list (`data/ra_excluded_sites.csv`) is built offline
+  by `scripts/build_ra_exclusions.R` (spatial test of `loc_breeding_sites.geom` centroids
+  against `extra/qgis/ra_view.gpkg`) and committed; re-run when RA data or sites change.
+  The gpkg's `e_restrctspec` values (employee/FOS numbers like 1904) are ignored; sites stay
+  with the FOS of their section (`gis_sectcode.fosarea`). First build: 5,860 of 86,525 sites
+  (40,690 acres) excluded.
 - **`load_capacity_by_priority()`** — site grain grouped by facility/fosarea/zone/priority
   (priority is a site attribute, so it can't roll up from section grain).
 - **`default_staffing()`** — ROM-confirmed district staffing per facility (crews, techs per
@@ -93,15 +101,17 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   **added techs = ceil(new_P1/per_tech) − ceil(cur_P1/per_tech)** (the increase caused by
   the promotion; unaffected FOS = 0). `per_tech` defaults to the district average P1
   load/tech and is editable in the UI. Also reports `gap_now` (current over/under vs baseline).
-  **Travel time (`drive_minutes`, `travel_adjust`):** per FOS, `travel_ratio` = (avg one-way
-  drive minutes to its current P1 sections) ÷ (avg to its promoted sections). The promoted
-  load is worked at `per_tech × travel_ratio` (farther than usual → ratio < 1 → each tech
-  carries less): `needed_new = ceil(cur_P1/per_tech + added_load/(per_tech × ratio))`; the
-  existing P1 load keeps the baseline capacity, and drone offload is applied first. Ratio 1
-  (no promoted sections, missing times, or travel off) reproduces the unadjusted formula
-  exactly. By-FOS table shows Avg P1 min / Avg promoted min / Travel ratio. The ratio is
-  relative, so the field-speed % does not change Estimate A (it does change B's travel hours);
-  switching routed ↔ straight-line source does.
+  **Travel time (`drive_minutes`, `travel_adjust`, `travel_share`):** per FOS,
+  `travel_ratio` = (median one-way drive minutes to its current P1 sections) ÷ (median to its
+  promoted sections). Only the travel share `s` of a tech's day (editable, default 20%)
+  scales with it: `capacity_factor = 1 / ((1 − s) + s / ratio)`, bounded above by 1/(1 − s).
+  The promoted load is worked at `per_tech × capacity_factor`:
+  `needed_new = ceil(cur_P1/per_tech + added_load/(per_tech × factor))`; the existing P1 load
+  keeps the baseline capacity, and drone offload is applied first. Factor 1 (no promoted
+  sections, missing times, travel off, or s = 0) reproduces the unadjusted formula exactly.
+  By-FOS table shows Median P1 min / Median promoted min / Travel ratio / Capacity factor. The ratio is
+  relative, so the field-speed %, avg mph and circuity do not change Estimate A (they live under
+  Estimate B); switching routed ↔ straight-line source and the travel share do.
 - **Shared travel control (What-If, top well):** one "Include travel time" checkbox
   (`wi_travel`, default on) + source (routed / straight-line) + field speed % / avg mph /
   circuity feed BOTH estimates. Off → A uses ratio 1 and B's travel hours are 0.

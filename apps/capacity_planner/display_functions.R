@@ -292,10 +292,16 @@ staffing_baseline <- function(cap, staff) {
 #'                  -> each tech carries less). The existing P1 load keeps the
 #'                  baseline capacity.
 #' @param travel_adjust apply the travel-time ratio (default FALSE = no adjustment)
+#' @param travel_share percent of a tech's workday spent driving (default 20). Only
+#'                  that share scales with the ratio, so the promoted load's capacity
+#'                  multiplier is 1 / ((1 - s) + s / ratio), with s = travel_share / 100.
+#'                  It is bounded above by 1 / (1 - s). Typical drive times are the
+#'                  MEDIAN over sections so one far section cannot skew the ratio.
 #' @return list(by_fos = df, totals = list)
 whatif_compute <- function(sections, promote_sectcodes, cap,
                            metric = "ground_sites", per_tech = NULL,
-                           drive_minutes = NULL, travel_adjust = FALSE) {
+                           drive_minutes = NULL, travel_adjust = FALSE,
+                           travel_share = 20) {
   empty <- list(by_fos = data.frame(), totals = list(added_techs = 0))
   if (is.null(sections) || nrow(sections) == 0) return(empty)
   if (!metric %in% setdiff(CAPACITY_ZONE_METRICS, "avg_miles")) {
@@ -345,9 +351,12 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
 
   # Travel-time ratio per FOS: avg drive time to current P1 sections / avg drive
   # time to promoted sections (1 = no adjustment / not computable)
-  by$avg_p1_min <- NA_real_
-  by$avg_promoted_min <- NA_real_
+  by$med_p1_min <- NA_real_
+  by$med_promoted_min <- NA_real_
   by$travel_ratio <- 1
+  by$capacity_factor <- 1
+  s <- if (is.null(travel_share) || is.na(travel_share)) 20 else travel_share
+  s <- min(max(s, 0), 99) / 100
   use_travel <- isTRUE(travel_adjust) && !is.null(drive_minutes) &&
     length(drive_minutes) == nrow(sec)
   if (use_travel) {
@@ -356,18 +365,20 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
     pr <- sec[sec$promoted, , drop = FALSE]
     raw1 <- raw2 <- rep(NA_real_, nrow(by))
     if (nrow(p1) > 0) {
-      m1 <- tapply(p1$dm, as.character(p1$fosarea), mean, na.rm = TRUE)
+      m1 <- tapply(p1$dm, as.character(p1$fosarea), median, na.rm = TRUE)
       raw1 <- as.numeric(m1[as.character(by$fosarea)])
     }
     if (nrow(pr) > 0) {
-      m2 <- tapply(pr$dm, as.character(pr$fosarea), mean, na.rm = TRUE)
+      m2 <- tapply(pr$dm, as.character(pr$fosarea), median, na.rm = TRUE)
       raw2 <- as.numeric(m2[as.character(by$fosarea)])
     }
-    by$avg_p1_min <- round(raw1, 1)           # rounded for display only
-    by$avg_promoted_min <- round(raw2, 1)
+    by$med_p1_min <- round(raw1, 1)           # rounded for display only
+    by$med_promoted_min <- round(raw2, 1)
     ratio <- raw1 / raw2                      # the calculation uses the exact ratio
     ratio[is.na(ratio) | !is.finite(ratio) | ratio <= 0] <- 1
     by$travel_ratio <- ratio
+    # only the travel share of the day scales with the ratio
+    by$capacity_factor <- 1 / ((1 - s) + s / ratio)
   }
 
   # Per-tech capacity: default = current district average P1 load / tech
@@ -380,10 +391,10 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
   if (!is.na(per_tech) && per_tech > 0) {
     # Techs a load requires at the per-tech baseline
     by$needed_now <- ceiling(by$cur_p1 / per_tech)   # for current P1 load
-    # After promotion: the promoted load is worked at per_tech x travel_ratio
-    # (ratio 1 reproduces ceiling(new_p1 / per_tech) exactly)
-    eff_new <- ifelse(by$travel_ratio == 1, by$new_p1,
-                      by$cur_p1 + by$added_load / by$travel_ratio)
+    # After promotion: the promoted load is worked at per_tech x capacity_factor
+    # (factor 1 reproduces ceiling(new_p1 / per_tech) exactly)
+    eff_new <- ifelse(by$capacity_factor == 1, by$new_p1,
+                      by$cur_p1 + by$added_load / by$capacity_factor)
     by$needed_new <- ceiling(eff_new / per_tech)
     # Additional techs the PROMOTION creates (0 for unaffected FOS)
     by$added_techs <- pmax(0, by$needed_new - by$needed_now)
@@ -401,8 +412,8 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
 
   list(
     by_fos = by[, c("facility_name", "fos_name", "fosarea", "n_techs",
-                    "cur_p1", "new_p1", "added_load", "avg_p1_min",
-                    "avg_promoted_min", "travel_ratio", "needed_new",
+                    "cur_p1", "new_p1", "added_load", "med_p1_min",
+                    "med_promoted_min", "travel_ratio", "capacity_factor", "needed_new",
                     "added_techs", "gap_now")],
     totals = list(
       per_tech    = round(per_tech, 1),

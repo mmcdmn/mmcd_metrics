@@ -1,375 +1,217 @@
 # Inspections App - UI Helper Functions
+# =============================================================================
+# Layout for the prehatch coverage (51% goal) app. Only defines functions, so it
+# is safe to source on its own (tests do).
+#
+# The words "Sampled" / "Missing" come from COVERAGE_LABEL_COUNTING /
+# COVERAGE_LABEL_NOT_COUNTING (coverage_functions.R), so they can be renamed in
+# one place.
 
 library(shiny)
 library(DT)
 library(plotly)
-library(ggplot2)
 
-# Source shared helpers
-source("../../shared/db_helpers.R")
-source("../../shared/stat_box_helpers.R")
-
-# Get facility choices with full names for display
-get_facility_display_choices <- function() {
-  facilities <- get_facility_lookup()
-  if (nrow(facilities) == 0) {
-    return(c("All Facilities" = "all"))
-  }
-  
-  # Use full names as labels, short names as values for SQL
-  choices <- setNames(facilities$short_name, facilities$full_name)
-  choices <- c("All Facilities" = "all", choices)
-  return(choices)
+# Styles for the progress hero + progress bar
+coverage_css <- function() {
+  tags$head(tags$style(HTML("
+    .cov-hero { border-radius: 8px; padding: 18px 24px; margin-bottom: 16px; }
+    .cov-hero .cov-pct { font-size: 56px; font-weight: 700; line-height: 1.05; }
+    .cov-hero .cov-sub { font-size: 20px; margin-top: 4px; }
+    .cov-hero .cov-need { font-size: 22px; font-weight: 600; margin-top: 10px; }
+    .cov-bar { position: relative; height: 22px; border-radius: 11px; margin: 16px 0 6px 0;
+               background: rgba(0,0,0,0.25); }
+    .cov-bar .cov-fill { height: 100%; border-radius: 11px; }
+    .cov-bar .cov-goal { position: absolute; top: -7px; bottom: -7px; width: 4px;
+                         background: #111; border-radius: 2px; }
+    .cov-goal-label { position: relative; height: 22px; font-size: 15px; }
+    .cov-goal-label span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+    .cov-note { color: #555; font-size: 15px; margin: 4px 0 14px 0; }
+    .cov-legend td, .cov-legend th { padding: 6px 12px; vertical-align: top; }
+    .cov-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+                  margin-right: 6px; vertical-align: -2px; }
+  ")))
 }
 
-# Get FOS area choices with full names from foremen lookup
-get_fosarea_display_choices <- function() {
-  return(get_foreman_choices(include_all = TRUE))
+# Plain-language explanation tab
+create_rules_panel <- function() {
+  sampled <- COVERAGE_LABEL_COUNTING
+  missing <- COVERAGE_LABEL_NOT_COUNTING
+  id_pending <- COVERAGE_LABEL_ID_PENDING
+  goal <- coverage_goal_pct()
+  status_label <- function(key) COVERAGE_STATUS_LABELS[[key]]
+
+  tagList(
+    h3("The goal"),
+    p("At least ", strong(paste0(goal, "% of ground PREHATCH sites")), " should be ", strong(sampled),
+      ". A site is ", strong(sampled), " if either of these is true:"),
+    tags$ol(
+      tags$li(strong("Red bug in the last 5 years: "),
+              "a sample taken at the site came back red (redblue = R) on an inspection in the last 5 years."),
+      tags$li(strong("Sampled this year: "),
+              "any inspection this calendar year produced a sample number, whatever the result ",
+              "(red, blue, no bugs, or a result not yet entered).")
+    ),
+    p("Every other site is ", strong(missing), ". The Progress tab shows the percentage that are ", sampled,
+      " and how many more sites it takes to reach the goal."),
+    h3("Why the number doesn't always move when you inspect"),
+    tags$ul(
+      tags$li(strong("Inspecting is not the same as sampling. "),
+              "An inspection that finds the site dry, or finds no larvae to dip, produces no sample. ",
+              "Those sites show as “", status_label("inspected_no_sample"), "” and stay ", missing, "."),
+      tags$li(strong("Red bugs age out. "),
+              "A red bug stops counting 5 years after the inspection that found it. ",
+              "The Progress tab shows how many sites drop to ", missing, " each month."),
+      tags$li(strong("A this-year sample is temporary. "),
+              "A site that is ", sampled, " only because it was sampled this year (not red) drops to ",
+              missing, " on Jan 1."),
+      tags$li(strong(id_pending, ". "),
+              "A sample was taken this year and its result is not entered yet. The site counts as ", sampled,
+              " in the meantime. Once the result is entered it is simply red or blue and is no longer ",
+              id_pending, ": red keeps the site ", sampled, " for 5 years; blue (or no bugs) keeps it ", sampled,
+              " until Jan 1, then it is ", missing, " unless another sample is taken."),
+      tags$li(strong("Pupae bioassays count only if they found something. "),
+              "A pupae bioassay (action P) counts as a sample only when it has a sample number ",
+              "AND a number per dip greater than 0. A bioassay with no number per dip is ignored. ",
+              "Like any other sample, it shows as ", id_pending, " until its result is entered.")
+    ),
+    h3("What each status means"),
+    tags$table(class = "cov-legend",
+      tags$thead(tags$tr(tags$th("Status"), tags$th("Group"), tags$th("What to do"))),
+      tags$tbody(
+        tags$tr(tags$td(status_label("red_5yr")), tags$td(sampled),
+                tags$td(paste0("Nothing needed until the “", sampled, " through” date."))),
+        tags$tr(tags$td(status_label("sampled_this_year")), tags$td(paste0(sampled, ", until Dec 31")),
+                tags$td(paste0("Needs a red bug (or a fresh sample next year) to stay ", sampled,
+                               "."))),
+        tags$tr(tags$td(status_label("red_expired")), tags$td(missing),
+                tags$td("Sample it when wet; a red bug brings it back for another 5 years.")),
+        tags$tr(tags$td(status_label("no_red_sampled")), tags$td(missing),
+                tags$td("Sampled in the last 5 yrs but never red, and not sampled this year. Sample again when wet.")),
+        tags$tr(tags$td(status_label("inspected_no_sample")), tags$td(missing),
+                tags$td("Visited but nothing to sample. Check 'Likely to yield' (how often it is wet).")),
+        tags$tr(tags$td(status_label("not_inspected")), tags$td(missing),
+                tags$td("No visit on record in the last 5 years."))
+      )
+    ),
+    h3("Which sites are included"),
+    p("Ground sites (not air) that are still active on the 'as of' date and have a ",
+      "prehatch type of PREHATCH, PELLET, BRIQUET or PRE1ONLY. BTI-only sites are not prehatch sites. ",
+      "Drone sites are included. The same numbers drive the Prehatch Red Bugs tile on the Overview.")
+  )
 }
 
-# Create the main UI panel with shared filters
+# Create the main UI
 create_main_ui <- function() {
+  sampled <- COVERAGE_LABEL_COUNTING
+  missing <- COVERAGE_LABEL_NOT_COUNTING
+  id_pending <- COVERAGE_LABEL_ID_PENDING
+
   accessible_page(
-    # Use universal CSS from db_helpers for consistent text sizing
     get_universal_text_css(),
-    
-    # Application title
-    titlePanel("Site Inspection Analysis"),
-    
-    # Sidebar with controls
+    coverage_css(),
+
+    titlePanel("Prehatch Coverage"),
+
     sidebarLayout(
       sidebarPanel(
-        # Load Data button at the top
-        actionButton("load_data", "Load New Data", icon = icon("refresh"), class = "btn-success", style = "width: 100%;"),
-        hr(),
-        
-        # Data summary
-        div(class = "summary-box",
-          div(class = "summary-text", 
-            textOutput("data_summary"),
-            style = "text-align: center;")
-        ),
-        
-        tags$small(
-          tags$i(class = "fa fa-info-circle", style = "color: #0f6377;"),
-          " Note: This button will load in new data. To run an analysis on this data, click the analysis buttons below.",
-          style = "color: #666; font-style: italic; display: block; margin-bottom: 15px;"
-        ),
-        hr(),
-        
-        # Global filters
-        selectInput("air_gnd", "Site Type:", 
-          choices = c("🚁 Air Sites" = "A", "🚶 Ground Sites" = "G", "All Sites" = "both"), 
-          selected = "A"),
-        
-        selectInput("facility", "Facility:", 
-          choices = get_facility_display_choices(), 
-          selected = "all"),
-        
-        selectizeInput("fosarea", "FOS Area:", 
-          choices = get_fosarea_display_choices(), 
+        actionButton("refresh", "Refresh data", icon = icon("refresh"),
+          class = "btn-success", style = "width: 100%;"),
+        selectInput("facility", "Facility:",
+          choices = get_facility_choices(), selected = "all"),
+
+        selectizeInput("fosarea", "FOS Area:",
+          choices = get_foreman_choices(include_all = TRUE),
           selected = "all", multiple = TRUE),
-        
-        radioButtons("zone", "Zone Display:",
-          choices = c("P1 Only" = "1", 
-                     "P2 Only" = "2", 
-                     "P1 and P2" = "1,2"),
-          selected = "1,2",
-          inline = FALSE),
-        
-        selectizeInput("priority", "Priority:", 
-          choices = get_priority_choices(include_all = TRUE), 
+
+        radioButtons("zone", "Zone:",
+          choices = c("P1 Only" = "1", "P2 Only" = "2", "P1 and P2" = "1,2"),
+          selected = "1,2"),
+
+        selectizeInput("priority", "Priority:",
+          choices = get_priority_choices(include_all = TRUE),
           selected = "all", multiple = TRUE),
-        
-        numericInput("years_back", "Years Back:", 
-          value = 5, min = 1, max = 20, step = 1),
-        
-        radioButtons("drone_filter", "Drone Sites:", 
-          choices = c("Drone Sites Only" = "drone_only", 
-                     "Non-Drone Sites Only" = "no_drone",
-                     "Include Drone Sites" = "include_drone"), 
-          selected = "include_drone", inline = FALSE),
-        
-        checkboxInput("spring_only", "Spring Sites Only", 
-          value = FALSE),
-        tags$small("(Inspections before spring cutoff date)", 
-          style = "color: #666; font-style: italic; display: block; margin-bottom: 10px;"),
-        
-        checkboxInput("prehatch_only", "Prehatch Sites Only",
-          value = FALSE),
-        
+
+        radioButtons("drone_filter", "Drone Sites:",
+          choices = c("Include Drone Sites" = "include_drone",
+                      "Drone Sites Only" = "drone_only",
+                      "Non-Drone Sites Only" = "no_drone"),
+          selected = "include_drone"),
+
+        dateInput("as_of", "as of:"),
+
         hr(),
-        
         selectInput("color_theme", "Color Theme:",
-          choices = get_available_themes(),
-          selected = "MMCD")
+          choices = get_theme_choices(), selected = "MMCD")
       ),
-      
-      # Main panel with tabs
+
       accessible_main_panel(
         tabsetPanel(
           id = "tabs",
-          
-          # Inspection Gaps Tab
-          tabPanel("Inspection Gaps", value = "gaps",
+
+          tabPanel("Progress", value = "progress",
+            br(),
+            uiOutput("hero"),
             fluidRow(
-              column(4,
-                numericInput("years_gap", "Years Since Last Inspection:", 
-                  value = 3, min = 1, max = 10, step = 1)
-              ),
-              column(4,
-                br(),
-                div(style = "position: relative;",
-                  uiOutput("gaps_button_ui"),
-                  div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
-                    HTML("&#x27A4;")
-                  ),
-                  tags$small("← Click here after loading data!", 
-                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
-                )
-              ),
-              column(4,
-                div(style = "margin-top: 25px;",
-                  textOutput("gaps_summary")
-                )
-              )
+              column(4, uiOutput("box_sampled")),
+              column(4, uiOutput("box_id_pending")),
+              column(4, uiOutput("box_not_counting"))
             ),
-            hr(),
-            
-            fluidRow(
-              column(12,
-                h3("Gap Analysis by Facility"),
-                plotlyOutput("facility_gap_chart", height = "800px")
-              )
-            ),
-            
-            fluidRow(
-              column(12,
-                h3("Sites with Inspection Gaps"),
-                div(style = "margin-bottom: 10px; text-align: right;",
-                  downloadButton("download_gaps_data", "Download CSV", 
-                    class = "btn-success btn-sm")),
-                DT::dataTableOutput("gaps_table")
-              )
-            )
+            p(class = "cov-note",
+              id_pending, " is a sample taken this year whose result is not entered yet. Those sites are ",
+              sampled, " for now, so ", sampled, " + ", id_pending, " is the total above."),
+            h3("Prehatch Sites that haven't had a Red Bug in the Last 5 Years (aka missing)"),
+            p(class = "cov-note", "Click a bar to list those sites."),
+            plotlyOutput("reason_chart", height = "320px"),
+            h3("Progress toward the goal"),
+            radioButtons("group_by", "Show by:",
+              choices = c("Facility" = "facility_display", "FOS" = "fos_name"),
+              selected = "facility_display", inline = TRUE),
+            # Height depends on how many bars there are (see group_chart_height)
+            uiOutput("group_chart_ui"),
+            h3(paste0("When ", sampled, " sites drop to ", missing)),
+            p(class = "cov-note",
+              "Red bugs leave the 5-year window as the sample ages; sites that are ", sampled,
+              " only because of this year's sample reset on Jan 1. "),
+            plotlyOutput("aging_chart", height = "360px")
           ),
-          
-          # Red Bug Gaps Tab
-          tabPanel("Red Bug Gaps", value = "red_bug_gaps",
+
+          tabPanel("Site List", value = "sites",
+            br(),
             fluidRow(
               column(4,
-                numericInput("years_red_bug_gap", "Years Since Last Red Bug:",
-                  value = 5, min = 1, max = 20, step = 1)
+                selectInput("site_status", "Show:",
+                  choices = c(setNames("not_counting", paste(missing, "sites")),
+                              setNames("counting", paste(sampled, "sites")),
+                              setNames("id_pending", paste(id_pending, "sites")),
+                              "All sites" = "all"),
+                  selected = "not_counting")
               ),
-              column(4,
+              column(5,
+                selectInput("site_reason", "Reason:",
+                  choices = c("Any reason" = "all",
+                              setNames(COVERAGE_STATUS_LEVELS,
+                                       unname(COVERAGE_STATUS_LABELS[COVERAGE_STATUS_LEVELS]))),
+                  selected = "all")
+              ),
+              column(3,
                 br(),
-                div(style = "position: relative;",
-                  uiOutput("red_bug_button_ui"),
-                  div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
-                    HTML("&#x27A4;")
-                  ),
-                  tags$small("← Click here after loading data!",
-                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
-                )
-              ),
-              column(4,
-                div(style = "margin-top: 25px;",
-                  textOutput("red_bug_summary")
-                )
+                downloadButton("download_sites", "Download CSV", class = "btn-success btn-sm")
               )
             ),
-            hr(),
-            
-            fluidRow(
-              column(6,
-                radioButtons("red_bug_group_by", "Group By:",
-                  choices = c("Facility" = "facility", "FOS (Foreman)" = "fos"),
-                  selected = "facility", inline = TRUE)
-              )
-            ),
-            
-            fluidRow(
-              column(12,
-                h3("Red Bug Gap Analysis"),
-                plotlyOutput("red_bug_gap_chart", height = "800px")
-              )
-            ),
-            
-            fluidRow(
-              column(12,
-                h3("Sites Without Recent Red Bugs"),
-                div(style = "margin-bottom: 10px; text-align: right;",
-                  downloadButton("download_red_bug_data", "Download CSV",
-                    class = "btn-success btn-sm")),
-                DT::dataTableOutput("red_bug_gap_table")
-              )
-            )
+            textOutput("site_count_text"),
+            p(class = "cov-note",
+              missing, " sites are sorted with the best chance of a sample first ",
+              "(sites that are wet most often); ", id_pending, " sites by oldest sample first. ",
+              "Click a site code to open it in Webster."),
+            DT::dataTableOutput("sites_table")
           ),
-          
-          # Site Analytics Tab
-          tabPanel("Wet Analysis", value = "analytics",
-            fluidRow(
-              column(6,
-                numericInput("min_inspections", "Minimum Inspections for Wet Analysis:", 
-                  value = 5, min = 1, max = 50, step = 1)
-              ),
-              column(6,
-                br(),
-                div(style = "position: relative;",
-                  uiOutput("wet_button_ui"),
-                  div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
-                    HTML("&#x27A4;")
-                  ),
-                  tags$small("← Click here after loading data!", 
-                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
-                )
-              )
-            ),
-            hr(),
-            
-            fluidRow(
-              column(6,
-                uiOutput("total_active_sites_box")
-              ),
-              column(6,
-                uiOutput("overall_wet_percentage_box")
-              )
-            ),
-            
-            fluidRow(
-              column(6,
-                h3("Wet Frequency Distribution"),
-                plotlyOutput("wet_frequency_chart", height = "300px")
-              ),
-              column(6,
-                h3("Sites by Priority"),
-                plotlyOutput("priority_chart", height = "300px")
-              )
-            ),
-            
-            fluidRow(
-              column(12,
-                h3("Wet Analysis - All Records with Wet Values"),
-                div(style = "margin-bottom: 10px; text-align: right;",
-                  downloadButton("download_wet_frequency_data", "Download CSV", 
-                    class = "btn-success btn-sm")),
-                DT::dataTableOutput("wet_frequency_table")
-              )
-            )
-          ),
-          
-          # Larvae Threshold Tab
-          tabPanel("Larvae Threshold", value = "larvae",
-            fluidRow(
-              column(4,
-                numericInput("larvae_threshold", "Sites with at least this num dip:", 
-                  value = 2, min = 0, max = 100, step = 1)
-              ),
-              column(4,
-                br(),
-                div(style = "position: relative;",
-                  uiOutput("larvae_button_ui"),
-                  div(
-                    style = "position: absolute; left: -60px; top: 5px; font-size: 40px; color: #c0390f; animation: bounce 1s infinite;",
-                    HTML("&#x27A4;")
-                  ),
-                  tags$small("← Click here after loading data!", 
-                    style = "position: absolute; left: -60px; top: 50px; color: #c0390f; font-weight: bold; white-space: nowrap;")
-                )
-              ),
-              column(4,
-                div(style = "margin-top: 25px;",
-                  textOutput("larvae_summary")
-                )
-              )
-            ),
-            hr(),
-            fluidRow(
-              column(6,
-                h3("Exceedance Frequency Distribution"),
-                plotlyOutput("exceedance_frequency_chart", height = "300px")
-              ),
-              column(6,
-                h3("Avg dip Count Distribution"),
-                plotlyOutput("larvae_distribution_chart", height = "300px")
-              )
-            ),
-            
-            fluidRow(
-              column(12,
-                h3("High dip count Sites Analysis"),
-                div(style = "margin-bottom: 10px; text-align: right;",
-                  downloadButton("download_larvae_data", "Download CSV", 
-                    class = "btn-success btn-sm")),
-                DT::dataTableOutput("larvae_table")
-              )
-            )
+
+          tabPanel("How It's Counted", value = "rules",
+            br(),
+            create_rules_panel()
           )
         )
       )
-    ),
-    
-    # Custom CSS
-    tags$head(
-      tags$style(HTML("
-        @keyframes bounce {
-          0%, 20%, 50%, 80%, 100% {
-            transform: translateX(0);
-          }
-          40% {
-            transform: translateX(-10px);
-          }
-          60% {
-            transform: translateX(-5px);
-          }
-        }
-        .summary-box {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          padding: 15px;
-          border-radius: 8px;
-          margin: 10px 0;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        .summary-text {
-          font-size: 16px;
-          font-weight: 500;
-        }
-        .stat-box {
-          background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-          color: white;
-          padding: 20px;
-          border-radius: 8px;
-          margin: 10px 0;
-          text-align: center;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        .stat-number {
-          font-size: 32px;
-          font-weight: bold;
-          margin-bottom: 5px;
-        }
-        .stat-label {
-          font-size: 14px;
-          opacity: 0.9;
-        }
-        .btn-success {
-          background: linear-gradient(45deg, #2196F3, #21CBF3);
-          border: none;
-          color: white;
-          font-weight: bold;
-          transition: all 0.3s ease;
-          border-radius: 6px;
-        }
-        .btn-success:hover {
-          background: linear-gradient(45deg, #1976D2, #1E88E5);
-          transform: translateY(-1px);
-          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-        }
-      "))
     )
   )
 }

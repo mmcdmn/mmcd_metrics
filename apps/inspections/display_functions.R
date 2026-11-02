@@ -1,666 +1,276 @@
 # Inspections App - Display Functions
+# =============================================================================
+# Charts and tables for the prehatch coverage (51% goal) views. Everything takes
+# the classified site data from coverage_functions.R. Colors come from the
+# selected theme (get_status_colors) so colorblind themes keep working.
 
 library(DT)
-library(dplyr)
 library(plotly)
-library(ggplot2)
-library(tidyr)
+library(dplyr)
 
-# Format inspection gaps data for display
-format_inspection_gaps <- function(data) {
-  if (nrow(data) == 0) {
-    return(data.frame())
-  }
-  
-  # Format the data for display
-  result <- data %>%
-    mutate(
-      `Site Code` = sitecode,
-      `Facility` = facility,
-      `FOS Area` = fosarea,
-      `Zone` = zone,
-      `Air/Ground` = air_gnd,
-      `Priority` = priority,
-      `Drone Site` = case_when(
-        is.na(drone) | drone != 'Y' ~ "No",
-        drone == 'Y' ~ "Yes",
-        TRUE ~ "No"
-      ),
-      `Last Inspection` = case_when(
-        last_inspection_date == as.Date('1900-01-01') ~ "Never",
-        is.na(last_inspection_date) ~ "Never",
-        TRUE ~ format(last_inspection_date, "%Y-%m-%d")
-      ),
-      `Dip Count` = case_when(
-        is.na(last_numdip) ~ "-",
-        TRUE ~ as.character(last_numdip)
-      ),
-      `Days Since` = days_since_inspection,  # Keep numeric for coloring
-      `Status` = inspection_status
-    ) %>%
-    select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Drone Site`, `Last Inspection`, `Dip Count`, `Days Since`, `Status`)
-  
-  # Link sitecodes to data.mmcd.org map
-  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
-  result
+CHART_FONT <- list(size = 15, family = "Arial, sans-serif", color = "#333")
+
+#' Theme color for each coverage status. Greens/blues count toward the goal,
+#' warm colors and gray do not.
+coverage_status_colors <- function(theme = "MMCD") {
+  sc <- get_status_colors(theme = theme)
+  c(
+    red_5yr             = unname(sc["active"]),
+    sampled_this_year   = unname(sc["completed"]),
+    red_expired         = unname(sc["needs_treatment"]),
+    no_red_sampled      = unname(sc["needs_action"]),
+    inspected_no_sample = unname(sc["planned"]),
+    not_inspected       = unname(sc["unknown"])
+  )
 }
 
-# Render the inspection gap table
-render_gap_table <- function(data, theme = "MMCD") {
-  formatted_data <- format_inspection_gaps(data)
-  
-  if (nrow(formatted_data) == 0) {
-    return(DT::datatable(data.frame(Message = "No sites found with inspection gaps"), 
-                        rownames = FALSE, options = list(dom = 't')))
-  }
-  
-  # Get status colors from db_helpers for consistent coloring
-  status_colors <- get_status_colors(theme = theme)
-
-  DT::datatable(
-    formatted_data,
-    escape = FALSE,
-    rownames = FALSE,
-    options = list(
-      pageLength = 25, 
-      autoWidth = TRUE, 
-      scrollX = TRUE,
-      order = list(list(9, 'desc')),  # Sort by Days Since descending 
-      initComplete = JS(
-        "function(settings, json) {",
-        "$(this.api().table().container()).find('table').css('font-size', '14px');",
-        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
-        "}"
-      )
-    ),
-    filter = 'top',
-    class = 'compact stripe hover'
-  ) %>%
-  DT::formatStyle(
-    'Status',
-    backgroundColor = DT::styleEqual(
-      c('Never Inspected', 'Inspection Gap'),
-      c('#ffebee', status_colors['planned'])  # Use status orange for planned/pending
-    )
-  ) %>%
-  DT::formatStyle(
-    'Drone Site',
-    backgroundColor = DT::styleEqual(
-      'Yes',
-      '#e8f5e8'  # Light green for drone sites
-    )
-  ) %>%
-  DT::formatStyle(
-    'Days Since',
-    backgroundColor = DT::styleInterval(
-      cuts = c(365, 730, 1095),  # 3 cuts
-      values = c("#e8f5e8", "#ffeb3b", "#ff9800", "#f44336")  # 4 values - green to yellow to orange to red
-    )
-  ) %>%
-  DT::formatCurrency('Days Since', currency = "", digits = 0, mark = ",") %>%
-  DT::formatString('Days Since', suffix = " days")
-}
-
-# Format wet frequency data for display
-format_wet_frequency_data <- function(data) {
-  if (nrow(data) == 0) {
-    return(data.frame())
-  }
-  
-  result <- data %>%
-    mutate(
-      `Site Code` = sitecode,
-      `Facility` = facility,
-      `FOS Area` = fosarea,
-      `Zone` = zone,
-      `Air/Ground` = air_gnd,
-      `Priority` = priority,
-      `Acres` = format(acres, digits = 2, nsmall = 1),
-      `Years with Data` = years_with_data,
-      `Total Inspections` = format(total_inspections, big.mark = ","),
-      `Wet Count` = format(wet_count, big.mark = ","),
-      `Water Present` = wet_percentage / 100,  # Convert to decimal for formatPercentage
-      `Flooded Count` = format(flooded_count, big.mark = ","),
-      `Flooded %` = flooded_percentage / 100   # Convert to decimal for formatPercentage
-    ) %>%
-    select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Acres`, `Years with Data`, `Total Inspections`, `Wet Count`, `Water Present`, `Flooded Count`, `Flooded %`)
-  
-  # Link sitecodes to data.mmcd.org map
-  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
-  result
-}
-
-# Render wet frequency table
-render_wet_frequency_table <- function(data, theme = "MMCD") {
-  formatted_data <- format_wet_frequency_data(data)
-  
-  if (nrow(formatted_data) == 0) {
-    return(DT::datatable(data.frame(Message = "No sites found with minimum inspection threshold"), 
-                        rownames = FALSE, options = list(dom = 't')))
-  }
-  
-  # Get status colors from db_helpers for consistent coloring
-  status_colors <- get_status_colors(theme = theme)
-  
-  DT::datatable(
-    formatted_data,
-    escape = FALSE,
-    rownames = FALSE,
-    options = list(
-      pageLength = 25, 
-      autoWidth = TRUE, 
-      scrollX = TRUE,
-      order = list(list(8, 'desc')),  # Sort by Water Present descending
-      initComplete = JS(
-        "function(settings, json) {",
-        "$(this.api().table().container()).find('table').css('font-size', '14px');",
-        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
-        "}"
-      )
-    ),
-    filter = 'top',
-    class = 'compact stripe hover'
-  ) %>%
-  DT::formatStyle(
-    'Water Present',
-    backgroundColor = DT::styleInterval(
-      cuts = c(0.10, 0.20, 0.40, 0.60, 0.80, 0.95),  # Decimal cuts for percentage values
-      values = c("#f8f9fa", "#e3f2fd", "#bbdefb", "#64b5f6", "#42a5f5", "#2196f3", "#1e88e5")  # 7 values - light to dark blue
-    )
-  ) %>%
-  DT::formatStyle(
-    'Flooded %',
-    backgroundColor = DT::styleInterval(
-      cuts = c(0.05, 0.10, 0.20, 0.40, 0.60, 0.80),  # Decimal cuts for percentage values
-      values = c("#f8f9fa", "#e8f5e8", "#c8e6c8", "#81c784", "#66bb6a", "#4caf50", "#388e3c")  # 7 values - light to dark green
-    )
-  ) %>%
-  DT::formatPercentage(c('Water Present', 'Flooded %'), digits = 1)
-}
-
-# Format high larvae sites data for display
-format_high_larvae_data <- function(data) {
-  if (nrow(data) == 0) {
-    return(data.frame())
-  }
-  
-  result <- data %>%
-    mutate(
-      `Site Code` = sitecode,
-      `Facility` = facility,
-      `FOS Area` = fosarea,
-      `Zone` = zone,
-      `Air/Ground` = air_gnd,
-      `Priority` = priority,
-      `Acres` = format(acres, digits = 2, nsmall = 1),
-      `Years with Data` = years_with_data,
-      `Total Inspections` = total_inspections,
-      `Exceedances` = threshold_exceedances,
-      `Exceedance Frequency` = exceedance_frequency / 100,  # Convert to decimal for formatPercentage
-      `Max Dip Count` = format(max_dip_count, big.mark = ","),
-      `Avg Dip Count` = avg_dip_count,
-      `First High Date` = case_when(
-        is.na(first_high_date) | is.infinite(first_high_date) ~ "-",
-        TRUE ~ format(as.Date(first_high_date), "%Y-%m-%d")
-      ),
-      `Last High Date` = case_when(
-        is.na(last_high_date) | is.infinite(last_high_date) ~ "-",
-        TRUE ~ format(as.Date(last_high_date), "%Y-%m-%d")
-      )
-    ) %>%
-    select(`Site Code`, `Facility`, `FOS Area`, `Zone`, `Air/Ground`, `Priority`, 
-           `Acres`, `Years with Data`, `Total Inspections`, `Exceedances`, `Exceedance Frequency`, 
-           `Max Dip Count`, `Avg Dip Count`, `First High Date`, `Last High Date`)
-  
-  # Link sitecodes to data.mmcd.org map
-  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
-  result
-}
-
-# Render high larvae table
-render_high_larvae_table <- function(data, theme = "MMCD") {
-  formatted_data <- format_high_larvae_data(data)
-  
-  if (nrow(formatted_data) == 0) {
-    return(DT::datatable(data.frame(Message = "No sites found above larvae threshold"), 
-                        rownames = FALSE, options = list(dom = 't')))
-  }
-  
-  # Get status colors from db_helpers for consistent coloring
-  status_colors <- get_status_colors(theme = theme)
-  
-  DT::datatable(
-    formatted_data,
-    escape = FALSE,
-    rownames = FALSE,
-    options = list(
-      pageLength = 25, 
-      autoWidth = TRUE, 
-      scrollX = TRUE,
-      order = list(list(8, 'desc')),  # Sort by Exceedance Frequency descending
-      initComplete = JS(
-        "function(settings, json) {",
-        "$(this.api().table().container()).find('table').css('font-size', '14px');",
-        "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
-        "}"
-      )
-    ),
-    filter = 'top',
-    class = 'compact stripe hover'
-  ) %>%
-  DT::formatStyle(
-    'Exceedance Frequency',
-    backgroundColor = DT::styleInterval(
-      cuts = c(0.05, 0.10, 0.25, 0.50, 0.75, 0.90),  # Decimal cuts for percentage values
-      values = c("#f3e5f5", "#e1bee7", "#ce93d8", "#ba68c8", "#ab47bc", "#9c27b0", "#f44336")  # 7 values - light to dark (purple to red)
-    )
-  ) %>%
-  DT::formatStyle(
-    'Avg Dip Count',
-    backgroundColor = DT::styleInterval(
-      cuts = c(1, 3, 6, 12, 25),  # 5 cuts
-      values = c("#e3f2fd", "#bbdefb", "#90caf9", "#64b5f6", "#ff8a65", "#ff6f00")  # 6 values - light blue to orange
-    )
-  ) %>%
-  DT::formatPercentage('Exceedance Frequency', digits = 1)
+# Light tint of a color for table cell backgrounds (keeps dark text readable)
+tint_color <- function(col, alpha = 0.3) {
+  grDevices::adjustcolor(col, alpha.f = alpha)
 }
 
 # =============================================================================
-# VISUALIZATION FUNCTIONS
+# PROGRESS CHARTS
 # =============================================================================
 
-# Create wet frequency distribution chart
-create_wet_frequency_chart <- function(data, theme = "MMCD") {
-  if (nrow(data) == 0) return(NULL)
-  
-  # Create frequency bins using the correct column name 'wet_percentage' from raw data
-  wet_freq_bins <- cut(data$wet_percentage, 
-                      breaks = c(0, 10, 25, 50, 75, 90, 100),
-                      labels = c("0-10%", "10-25%", "25-50%", "50-75%", "75-90%", "90-100%"),
-                      include.lowest = TRUE)
-  
-  freq_counts <- table(wet_freq_bins)
-  
-  create_distribution_chart(
-    x_values = names(freq_counts),
-    y_values = as.numeric(freq_counts),
-    title = "Distribution of Wet Frequencies",
-    x_label = "Wet Frequency Range",
-    bar_color = "lightblue",
-    border_color = "darkblue"
-  )
-}
+#' Horizontal bar: how many Missing sites fall in each reason.
+#' Bars carry key = status so a click can jump to that reason in the site list.
+create_reason_chart <- function(sites, theme = "MMCD") {
+  not_counting <- sites[!sites$counts, , drop = FALSE]
+  if (nrow(not_counting) == 0) return(NULL)
 
-# Create priority distribution chart
-create_priority_chart <- function(data, theme = "MMCD") {
-  if (nrow(data) == 0) return(NULL)
-  
-  priority_counts <- data %>%
-    count(priority, name = "count") %>%
-    mutate(priority = ifelse(is.na(priority), "Unassigned", priority))
-  
-  # Get dynamic priority choices from db_helpers
-  priority_choices <- get_priority_choices(include_all = FALSE)
-  status_colors <- get_status_colors(theme = theme)
-  
-  # Create color mapping that actually matches priority names
-  colors <- c(
-    "RED" = "red",                    # Literal red color for RED priority
-    "YELLOW" = "yellow",              # Literal yellow color for YELLOW priority  
-    "GREEN" = "green",                # Literal green color for GREEN priority
-    "BLUE" = "blue",                  # Literal blue color for BLUE priority
-    "PURPLE" = "purple",              # Literal purple color for PURPLE priority
-    "Unassigned" = "#888888"          # Gray color for unassigned
-  )
-  
-  p <- plot_ly(
-    priority_counts,
-    labels = ~priority,
-    values = ~count,
-    type = 'pie',
-    marker = list(colors = colors[priority_counts$priority]),
-    textfont = list(size = 18, family = "Arial, sans-serif", color = "white"),
-    textinfo = "label+percent",
-    textposition = "inside"
+  tab <- not_counting %>%
+    count(status, status_label, name = "n") %>%
+    arrange(n)
+  cols <- coverage_status_colors(theme)
+
+  plot_ly(
+    tab, x = ~n, y = ~as.character(status_label), type = "bar", orientation = "h",
+    key = ~as.character(status), source = "reason_chart",
+    marker = list(color = unname(cols[as.character(tab$status)])),
+    text = ~format(n, big.mark = ","), textposition = "outside", cliponaxis = FALSE,
+    hovertemplate = "%{y}: %{x:,} sites<br>Click to list these sites<extra></extra>"
   ) %>%
-  layout(
-    title = list(text = "Sites by Priority Level", font = list(size = 20, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-    margin = list(l = 20, r = 20, t = 100, b = 20),
-    font = list(size = 18, family = "Arial, sans-serif"),
-    legend = list(font = list(size = 18, family = "Arial, sans-serif")),
-    textfont = list(size = 18, family = "Arial, sans-serif", color = "white")
-  )
-  
-  return(p)
-}
-
-# Create exceedance frequency distribution chart
-create_exceedance_frequency_chart <- function(data, theme = "MMCD") {
-  if (nrow(data) == 0) return(NULL)
-  
-  # Create frequency bins for exceedance rates with ordered levels
-  ordered_labels <- c("0-5%", "5-15%", "15-30%", "30-50%", "50-75%", "75-100%")
-  freq_bins <- cut(data$exceedance_frequency,
-                  breaks = c(0, 5, 15, 30, 50, 75, 100),
-                  labels = ordered_labels,
-                  include.lowest = TRUE)
-  
-  bin_counts <- table(freq_bins)
-  freq_df <- data.frame(
-    bin = factor(names(bin_counts), levels = ordered_labels),
-    count = as.numeric(bin_counts)
-  )
-  
-  create_distribution_chart(
-    x_values = freq_df$bin,
-    y_values = freq_df$count,
-    title = "Distribution of Exceedance Frequencies",
-    x_label = "Exceedance Frequency Range",
-    bar_color = "lightcoral",
-    border_color = "darkred"
-  ) %>% layout(xaxis = list(categoryorder = "array", categoryarray = ordered_labels))
-}
-
-# Create larvae count distribution chart
-create_larvae_distribution_chart <- function(data, theme = "MMCD") {
-  if (nrow(data) == 0) return(NULL)
-  
-  # Create bins for average dip count with ordered levels
-  ordered_labels <- c("0-1", "1-2", "2-5", "5-10", "10-20", "20+")
-  avg_bins <- cut(data$avg_dip_count, 
-                 breaks = c(0, 1, 2, 5, 10, 20, Inf),
-                 labels = ordered_labels,
-                 include.lowest = TRUE)
-  
-  freq_counts <- table(avg_bins)
-  freq_df <- data.frame(
-    bin = factor(names(freq_counts), levels = ordered_labels),
-    count = as.numeric(freq_counts)
-  )
-  
-  create_distribution_chart(
-    x_values = freq_df$bin,
-    y_values = freq_df$count,
-    title = "Average Dip Count Distribution",
-    x_label = "Average Dip Count Range",
-    bar_color = "orange",
-    border_color = "darkorange"
-  ) %>% layout(xaxis = list(categoryorder = "array", categoryarray = ordered_labels))
-}
-
-# Create facility gap chart - Stacked percentage comparison by facility only
-create_facility_gap_chart <- function(facility_analysis, theme = "MMCD") {
-  if (nrow(facility_analysis) == 0) return(NULL)
-  
-  # Aggregate by facility only (sum across FOS areas)
-  facility_summary <- facility_analysis %>%
-    group_by(facility) %>%
-    summarise(
-      total_sites = sum(total_sites),
-      gap_sites = sum(gap_sites),
-      recently_inspected_sites = sum(recently_inspected_sites),
-      .groups = 'drop'
-    ) %>%
-    mutate(
-      gap_percentage = round(100 * gap_sites / total_sites, 1),
-      recently_inspected_percentage = round(100 * recently_inspected_sites / total_sites, 1)
-    )
-  
-  # Map facility codes to display names
-  facility_summary <- map_facility_names(facility_summary)
-  
-  # Get themed status colors (green for active/good, red/orange for gaps/issues)
-  status_colors <- get_status_colors(theme = theme)
-  
-  # Calculate overall percentage of green sites across all facilities
-  overall_green_pct <- round(100 * sum(facility_summary$recently_inspected_sites) / sum(facility_summary$total_sites), 1)
-  
-  # Create the stacked percentage bar chart (each bar = 100%)
-  p <- plot_ly(facility_summary) %>%
-    add_trace(
-      x = ~facility_display, 
-      y = ~recently_inspected_percentage, 
-      type = 'bar',
-      name = "Recently Inspected",
-      text = ~paste("Recently Inspected:", recently_inspected_percentage, "%<br>", 
-                   recently_inspected_sites, " of ", total_sites, " sites"),
-      hovertemplate = "%{text}<extra></extra>",
-      marker = list(color = status_colors["active"], line = list(color = 'white', width = 1))
-    ) %>%
-    add_trace(
-      x = ~facility_display, 
-      y = ~gap_percentage,
-      type = 'bar', 
-      name = "Has Inspection Gap",
-      text = ~paste("Has Gap:", gap_percentage, "%<br>", 
-                   gap_sites, " of ", total_sites, " sites"),
-      hovertemplate = "%{text}<extra></extra>",
-      hoverlabel = list(bgcolor = "white", bordercolor = "black", font = list(size = 12)),
-      marker = list(color = status_colors["needs_treatment"])
-    ) %>%
     layout(
-      title = list(text = "Inspection Gap Analysis by Facility", font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-      xaxis = list(
-        title = list(text = "Facility", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-        tickangle = -45,
-        categoryorder = "array",
-        categoryarray = unique(facility_summary$facility_display),
-        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-      ),
-      yaxis = list(
-        title = list(text = "Percentage of Total Sites in Category", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
-        range = c(0, 115)  # Extend range to 115% to provide space for hover text above bars
-      ),
-      barmode = 'stack',
-      margin = list(l = 80, r = 30, t = 80, b = 200),
-      legend = list(
-        orientation = "h",
-        x = 0.5,
-        xanchor = "center",
-        y = -0.25,
-        font = list(size = 18, family = "Arial, sans-serif")
-      ),
-      font = list(size = 18, family = "Arial, sans-serif"),
-      annotations = list(
-        text = paste0("Each bar shows percentage of green (recently inspected) sites in all facilities. Overall: ", overall_green_pct, "% of sites are recently inspected."),
-        showarrow = FALSE,
-        x = 0.5,
-        y = -0.98,
-        xref = "paper",
-        yref = "paper",
-        font = list(size = 16, color = "#666", family = "Arial, sans-serif")
-      )
-    )
-  
-  return(p)
-}
-
-# =============================================================================
-# RED BUG GAP DISPLAY FUNCTIONS
-# =============================================================================
-
-# Format red bug gap data for table display
-format_red_bug_gaps <- function(data) {
-  if (nrow(data) == 0) return(data.frame())
-  
-  result <- data %>%
-    mutate(
-      `Site Code` = sitecode,
-      `Facility` = facility,
-      `FOS` = fos_name,
-      `Zone` = zone,
-      `Air/Ground` = air_gnd,
-      `Priority` = priority,
-      `Last Red Bug` = case_when(
-        is.na(last_red_bug_date) ~ "Never",
-        TRUE ~ format(last_red_bug_date, "%Y-%m-%d")
-      ),
-      `Days Since` = days_since_red_bug,
-      `Status` = red_bug_status
+      xaxis = list(title = list(text = paste(COVERAGE_LABEL_NOT_COUNTING, "sites"), font = CHART_FONT),
+                   tickfont = CHART_FONT, rangemode = "tozero"),
+      yaxis = list(title = "", tickfont = CHART_FONT,
+                   categoryorder = "array", categoryarray = as.character(tab$status_label)),
+      margin = list(l = 230, r = 60, t = 10, b = 50),
+      font = CHART_FONT
     ) %>%
-    select(`Site Code`, `Facility`, `FOS`, `Zone`, `Air/Ground`, `Priority`,
-           `Last Red Bug`, `Days Since`, `Status`)
-  
-  result$`Site Code` <- make_sitecode_link(result$`Site Code`)
-  result
+    event_register("plotly_click")
 }
 
-# Render the red bug gap table
-render_red_bug_gap_table <- function(data, theme = "MMCD") {
-  formatted_data <- format_red_bug_gaps(data)
-  
-  if (nrow(formatted_data) == 0) {
-    return(DT::datatable(data.frame(Message = "No sites found with red bug gaps"),
-                        rownames = FALSE, options = list(dom = 't')))
+# Layout of the progress chart: one row per facility / FOS plus the margins
+GROUP_ROW_PX <- 28
+GROUP_MARGIN_TOP_PX <- 40
+GROUP_MARGIN_BOTTOM_PX <- 120
+
+#' Pixel height of the progress chart. It grows with the number of bars: a fixed
+#' output height clips the chart once there are more than ~10 rows (every FOS),
+#' so the UI sizes plotlyOutput() with this.
+group_chart_height <- function(n_groups) {
+  max(340, GROUP_ROW_PX * n_groups + GROUP_MARGIN_TOP_PX + GROUP_MARGIN_BOTTOM_PX)
+}
+
+#' Horizontal stacked bars (percent of sites) per facility / FOS with the goal
+#' line and the number of sites still needed to reach it. Most complete group on
+#' top, least complete at the bottom.
+#'
+#' The chart fills its output box; size that box with group_chart_height().
+#'
+#' @param summary_df summarise_coverage() output with a label column
+#' @param label_col column holding the bar labels
+create_group_chart <- function(summary_df, label_col, goal = 51, theme = "MMCD") {
+  if (nrow(summary_df) == 0) return(NULL)
+  cols <- coverage_status_colors(theme)
+  sampled <- COVERAGE_LABEL_COUNTING
+  missing <- COVERAGE_LABEL_NOT_COUNTING
+
+  d <- summary_df
+  d$label <- as.character(d[[label_col]])
+  d$via_red_pct <- 100 * d$via_red / d$total
+  d$via_sample_pct <- 100 * d$via_sample_only / d$total
+  d$not_pct <- 100 * d$not_counting / d$total
+  d$note <- ifelse(d$goal_met,
+                   paste0("+", format(d$cushion, big.mark = ","), " spare"),
+                   paste0("needs ", format(d$needed, big.mark = ",")))
+  d <- d[order(-d$pct, d$needed, d$label), ]
+  d$label <- factor(d$label, levels = d$label)
+
+  # Plotly draws the first category at the bottom; reverse the axis so the
+  # first (most complete) row is on top.
+  plot_area_px <- GROUP_ROW_PX * nrow(d)
+
+  plot_ly(d, y = ~label) %>%
+    add_trace(x = ~via_red_pct, type = "bar", orientation = "h",
+              name = paste0(sampled, ": red bug in last 5 yrs"),
+              marker = list(color = cols[["red_5yr"]]),
+              hovertemplate = paste0("%{y}<br>", sampled, " (red bug): %{x:.1f}% of sites<extra></extra>")) %>%
+    add_trace(x = ~via_sample_pct, type = "bar", orientation = "h",
+              name = paste0(sampled, ": this year's sample only"),
+              marker = list(color = cols[["sampled_this_year"]]),
+              hovertemplate = paste0("%{y}<br>", sampled, " (this year only): %{x:.1f}%<extra></extra>")) %>%
+    add_trace(x = ~not_pct, type = "bar", orientation = "h", name = missing,
+              marker = list(color = cols[["red_expired"]]),
+              hovertemplate = paste0("%{y}<br>", missing, ": %{x:.1f}%<extra></extra>")) %>%
+    add_trace(x = rep(103, nrow(d)), y = ~label, type = "scatter", mode = "text",
+              text = ~note, textposition = "middle right", showlegend = FALSE, hoverinfo = "skip",
+              textfont = list(size = 13, color = "#333")) %>%
+    layout(
+      barmode = "stack",
+      xaxis = list(title = list(text = "% of prehatch sites", font = CHART_FONT),
+                   range = c(0, 125), tickvals = c(0, 25, 50, 75, 100), tickfont = CHART_FONT),
+      yaxis = list(title = "", tickfont = list(size = 14, family = "Arial, sans-serif"),
+                   categoryorder = "array", categoryarray = levels(d$label),
+                   autorange = "reversed", automargin = TRUE),
+      shapes = list(list(type = "line", x0 = goal, x1 = goal, y0 = 0, y1 = 1, yref = "paper",
+                         line = list(color = "#111", width = 3, dash = "dash"))),
+      annotations = list(list(x = goal, y = 1.02, yref = "paper", text = paste0("Goal ", goal, "%"),
+                              showarrow = FALSE, font = list(size = 14, color = "#111"))),
+      # paper units are the plot area, so convert ~55px under the axis to a fraction
+      legend = list(orientation = "h", x = 0.5, xanchor = "center",
+                    y = -55 / plot_area_px, yanchor = "top", font = CHART_FONT),
+      margin = list(l = 130, r = 20, t = GROUP_MARGIN_TOP_PX, b = GROUP_MARGIN_BOTTOM_PX),
+      font = CHART_FONT
+    )
+}
+
+#' Sites that drop to Missing, by month: red bugs ageing out of the 5-year window
+#' versus this year's samples resetting on Jan 1.
+create_aging_chart <- function(aging_df, theme = "MMCD") {
+  if (nrow(aging_df) == 0 || sum(aging_df$n) == 0) return(NULL)
+  cols <- coverage_status_colors(theme)
+  aging_df$month_label <- format(aging_df$month, "%b %Y")
+  levels_m <- unique(aging_df$month_label[order(aging_df$month)])
+  aging_df$month_label <- factor(aging_df$month_label, levels = levels_m)
+
+  series <- c("Red bug ages out of 5-yr window" = cols[["red_5yr"]],
+              "This year's sample (resets Jan 1)" = cols[["sampled_this_year"]])
+
+  p <- plot_ly()
+  for (nm in names(series)) {
+    d <- aging_df[aging_df$drops_because == nm, ]
+    p <- add_trace(p, data = d, x = ~month_label, y = ~n, type = "bar", name = nm,
+                   marker = list(color = unname(series[[nm]])),
+                   hovertemplate = paste0("%{x}<br>", nm, ": %{y:,} sites<extra></extra>"))
   }
-  
-  status_colors <- get_status_colors(theme = theme)
-  
+  p %>% layout(
+    barmode = "stack",
+    xaxis = list(title = "", tickfont = CHART_FONT, tickangle = -45),
+    yaxis = list(title = list(text = paste("Sites that drop to", COVERAGE_LABEL_NOT_COUNTING), font = CHART_FONT),
+                 tickfont = CHART_FONT),
+    legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.3, font = CHART_FONT),
+    margin = list(l = 70, r = 20, t = 10, b = 110),
+    font = CHART_FONT
+  )
+}
+
+# =============================================================================
+# SITE LIST TABLE
+# =============================================================================
+
+#' Order sites for the work list: best chance of getting a sample first
+sort_sites_for_work <- function(sites, view = "not_counting") {
+  if (nrow(sites) == 0) return(sites)
+  if (view == "not_counting" || view == "all") {
+    rank <- match(sites$likely_to_yield, c("High", "Medium", "Unknown", "Low"))
+    sites[order(sites$counts, rank, -ifelse(is.na(sites$wet_pct), -1, sites$wet_pct), sites$sitecode), ]
+  } else if (view == "id_pending") {
+    # waiting on the lab: the sample that has waited longest first
+    sites[order(sites$last_sample_date, sites$sitecode), ]
+  } else {
+    # counting: the ones that stop counting soonest first
+    sites[order(ifelse(is.na(sites$days_left), Inf, sites$days_left), sites$sitecode), ]
+  }
+}
+
+#' Friendly column set for the site table / CSV
+format_coverage_sites <- function(sites, link = TRUE) {
+  if (nrow(sites) == 0) return(data.frame())
+
+  facility <- if ("facility_display" %in% names(sites)) sites$facility_display else sites$facility
+  fos <- if ("fos_name" %in% names(sites)) sites$fos_name else sites$fosarea
+  result <- ifelse(is.na(sites$last_sample_date), NA_character_,
+                   ifelse(sites$last_sample_result %in% "R", "Red",
+                          ifelse(sites$last_sample_result %in% "B", "Blue", "Not entered yet")))
+
+  out <- data.frame(
+    `Site` = if (link) make_sitecode_link(sites$sitecode) else sites$sitecode,
+    `Status` = as.character(sites$status_label),
+    `Why` = sites$reason,
+    `Facility` = facility,
+    `FOS` = fos,
+    `Zone` = sites$zone,
+    `Priority` = sites$priority,
+    `Visits (5 yr)` = sites$insp_5y,
+    `Visits (this yr)` = sites$insp_this_year,
+    `Wet %` = sites$wet_pct,
+    `Wet visits` = ifelse(sites$wet_n > 0, paste0(sites$wet_count, " of ", sites$wet_n), NA_character_),
+    `Likely to yield` = sites$likely_to_yield,
+    `Last inspected` = sites$last_insp_date,
+    `Last wet` = sites$last_wet_date,
+    `Samples (5 yr)` = sites$samples_5y,
+    `Samples (this yr)` = sites$samples_this_year,
+    `Samples ID pending` = sites$pending_this_year,
+    `Last sample` = sites$last_sample_date,
+    `Last sample result` = result,
+    `Last red bug` = sites$last_red_date,
+    `Counts through` = sites$counts_through,
+    `Days left` = sites$days_left,
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+  # "Sampled through <date>": the last day the site stays in the Sampled group
+  names(out)[names(out) == "Counts through"] <- paste(COVERAGE_LABEL_COUNTING, "through")
+  names(out)[names(out) == "Samples ID pending"] <- paste("Samples", COVERAGE_LABEL_ID_PENDING)
+  out
+}
+
+render_coverage_site_table <- function(sites, theme = "MMCD") {
+  formatted <- format_coverage_sites(sites)
+
+  if (nrow(formatted) == 0) {
+    return(DT::datatable(data.frame(Message = "No sites match these filters"),
+                         rownames = FALSE, options = list(dom = "t")))
+  }
+
+  cols <- coverage_status_colors(theme)
+  labels <- unname(COVERAGE_STATUS_LABELS[COVERAGE_STATUS_LEVELS])
+
   DT::datatable(
-    formatted_data,
+    formatted,
     escape = FALSE,
     rownames = FALSE,
+    filter = "top",
+    class = "compact stripe hover",
     options = list(
       pageLength = 25,
-      autoWidth = TRUE,
       scrollX = TRUE,
-      order = list(list(7, 'desc')),
+      autoWidth = FALSE,
+      order = list(),   # rows arrive pre-sorted (sort_sites_for_work)
+      columnDefs = list(list(width = "420px", targets = 2)),
       initComplete = JS(
         "function(settings, json) {",
         "$(this.api().table().container()).find('table').css('font-size', '14px');",
         "$(this.api().table().container()).find('thead').css('font-weight', 'bold');",
         "}"
       )
-    ),
-    filter = 'top',
-    class = 'compact stripe hover'
-  ) %>%
-  DT::formatStyle(
-    'Status',
-    backgroundColor = DT::styleEqual(
-      c('Never Found', 'Red Bug Gap'),
-      c('#ffebee', status_colors['planned'])
     )
   ) %>%
-  DT::formatStyle(
-    'Days Since',
-    backgroundColor = DT::styleInterval(
-      cuts = c(365, 730, 1095, 1825),
-      values = c("#e8f5e8", "#ffeb3b", "#ff9800", "#f44336", "#b71c1c")
-    )
-  ) %>%
-  DT::formatCurrency('Days Since', currency = "", digits = 0, mark = ",") %>%
-  DT::formatString('Days Since', suffix = " days")
-}
-
-# Create red bug gap chart by facility - stacked percentage bar chart
-create_red_bug_facility_chart <- function(facility_analysis, theme = "MMCD") {
-  if (nrow(facility_analysis) == 0) return(NULL)
-  
-  facility_analysis <- map_facility_names(facility_analysis)
-  status_colors <- get_status_colors(theme = theme)
-  
-  overall_found_pct <- round(100 * sum(facility_analysis$recently_found_sites) / 
-                             sum(facility_analysis$total_sites), 1)
-  
-  p <- plot_ly(facility_analysis) %>%
-    add_trace(
-      x = ~facility_display, y = ~recently_found_percentage,
-      type = 'bar', name = "Red Bugs Found Recently",
-      text = ~paste("Recently Found:", recently_found_percentage, "%<br>",
-                   recently_found_sites, " of ", total_sites, " sites"),
-      hovertemplate = "%{text}<extra></extra>",
-      marker = list(color = status_colors["active"], line = list(color = 'white', width = 1))
+    DT::formatStyle(
+      "Status",
+      backgroundColor = DT::styleEqual(labels, tint_color(unname(cols[COVERAGE_STATUS_LEVELS]), 0.35))
     ) %>%
-    add_trace(
-      x = ~facility_display, y = ~gap_percentage,
-      type = 'bar', name = "No Red Bugs (Gap)",
-      text = ~paste("No Red Bugs:", gap_percentage, "%<br>",
-                   gap_sites, " of ", total_sites, " sites"),
-      hovertemplate = "%{text}<extra></extra>",
-      marker = list(color = status_colors["needs_treatment"])
-    ) %>%
-    layout(
-      title = list(text = "Red Bug Gap Analysis by Facility", 
-                  font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-      xaxis = list(
-        title = list(text = "Facility", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-        tickangle = -45,
-        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-      ),
-      yaxis = list(
-        title = list(text = "Percentage of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
-        range = c(0, 115)
-      ),
-      barmode = 'stack',
-      margin = list(l = 80, r = 30, t = 80, b = 200),
-      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.25,
-                   font = list(size = 18, family = "Arial, sans-serif")),
-      font = list(size = 18, family = "Arial, sans-serif"),
-      annotations = list(
-        text = paste0("Overall: ", overall_found_pct, "% of sites have had red bugs found recently."),
-        showarrow = FALSE, x = 0.5, y = -0.98, xref = "paper", yref = "paper",
-        font = list(size = 16, color = "#666", family = "Arial, sans-serif")
+    DT::formatStyle(
+      "Likely to yield",
+      backgroundColor = DT::styleEqual(
+        c("High", "Medium", "Low", "Unknown"),
+        c(tint_color("#16a34a", 0.3), tint_color("#eab308", 0.3), tint_color("#9ca3af", 0.3), "transparent")
       )
-    )
-  
-  return(p)
-}
-
-# Create red bug gap chart by FOS (foreman) - stacked percentage bar chart
-create_red_bug_fos_chart <- function(fos_analysis, theme = "MMCD") {
-  if (nrow(fos_analysis) == 0) return(NULL)
-  
-  status_colors <- get_status_colors(theme = theme)
-  
-  overall_found_pct <- round(100 * sum(fos_analysis$recently_found_sites) / 
-                             sum(fos_analysis$total_sites), 1)
-  
-  p <- plot_ly(fos_analysis) %>%
-    add_trace(
-      x = ~fos_name, y = ~recently_found_percentage,
-      type = 'bar', name = "Red Bugs Found Recently",
-      text = ~paste("Recently Found:", recently_found_percentage, "%<br>",
-                   recently_found_sites, " of ", total_sites, " sites"),
-      hovertemplate = "%{text}<extra></extra>",
-      marker = list(color = status_colors["active"], line = list(color = 'white', width = 1))
     ) %>%
-    add_trace(
-      x = ~fos_name, y = ~gap_percentage,
-      type = 'bar', name = "No Red Bugs (Gap)",
-      text = ~paste("No Red Bugs:", gap_percentage, "%<br>",
-                   gap_sites, " of ", total_sites, " sites"),
-      hovertemplate = "%{text}<extra></extra>",
-      marker = list(color = status_colors["needs_treatment"])
-    ) %>%
-    layout(
-      title = list(text = "Red Bug Gap Analysis by FOS (Foreman)",
-                  font = list(size = 24, family = "Arial, sans-serif", color = "#333"), x = 0.5),
-      xaxis = list(
-        title = list(text = "FOS (Foreman)", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-        tickangle = -45,
-        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333")
-      ),
-      yaxis = list(
-        title = list(text = "Percentage of Sites", font = list(size = 18, family = "Arial, sans-serif", color = "#333")),
-        tickfont = list(size = 18, family = "Arial, sans-serif", color = "#333"),
-        range = c(0, 115)
-      ),
-      barmode = 'stack',
-      margin = list(l = 80, r = 30, t = 80, b = 200),
-      legend = list(orientation = "h", x = 0.5, xanchor = "center", y = -0.25,
-                   font = list(size = 18, family = "Arial, sans-serif")),
-      font = list(size = 18, family = "Arial, sans-serif"),
-      annotations = list(
-        text = paste0("Overall: ", overall_found_pct, "% of sites have had red bugs found recently."),
-        showarrow = FALSE, x = 0.5, y = -0.98, xref = "paper", yref = "paper",
-        font = list(size = 16, color = "#666", family = "Arial, sans-serif")
-      )
+    DT::formatStyle(
+      "Days left",
+      backgroundColor = DT::styleInterval(c(30, 90), c(tint_color("#dc2626", 0.3), tint_color("#eab308", 0.3), "transparent"))
     )
-  
-  return(p)
 }

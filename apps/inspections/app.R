@@ -1,16 +1,18 @@
-# Inspections App - Site Inspection Coverage Gaps and Analytics
+# Inspections App - Prehatch Coverage (the 51% goal)
+# Shows which ground PREHATCH sites count toward the goal (red bug in 5 years OR
+# sampled this year) and, for the ones that don't, why. See NOTES.md.
 
 library(shiny)
 library(DT)
 library(dplyr)
 library(lubridate)
 library(plotly)
-library(ggplot2)
 
 # Source shared database helpers and local functions
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/server_utilities.R")
+source("../../shared/stat_box_helpers.R")
 source("../../shared/url_state_helpers.R")  # deep-linking + auto-refresh engine
 source("data_functions.R")
 source("display_functions.R")
@@ -19,672 +21,275 @@ source("ui_helper.R")
 # Set application name for AWS RDS monitoring
 set_app_name("inspections")
 
+# Preload lookups so the first page render doesn't wait on them
+invisible(get_facility_lookup())
+invisible(get_foremen_lookup())
+
+# Old links used ?tabs=gaps|analytics|larvae|red_bug_gaps (and, briefly, scorecard);
+# send them somewhere sensible
+legacy_tab_to_new <- function(value) {
+  switch(as.character(value)[1],
+    progress = , sites = , rules = as.character(value)[1],
+    red_bug_gaps = "sites",
+    "progress")
+}
+
+# ?fos= accepts a foreman shortname or the 4-digit area code (emp_num)
+fos_to_shortname <- function(value) {
+  codes <- trimws(unlist(strsplit(as.character(value), ",")))
+  lookup <- get_foremen_lookup()
+  vapply(codes, function(code) {
+    if (grepl("^[0-9]+$", code) && nrow(lookup) > 0) {
+      hit <- lookup$shortname[sprintf("%04d", as.numeric(lookup$emp_num)) == sprintf("%04d", as.numeric(code))]
+      if (length(hit) > 0) return(hit[1])
+    }
+    code
+  }, character(1), USE.NAMES = FALSE)
+}
+
+fmt_n <- function(x) format(x, big.mark = ",", scientific = FALSE)
+
 # Define UI
 ui <- tagList(url_state_js(), create_main_ui())
 
 # Define server logic
 server <- function(input, output, session) {
 
-  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Two-stage app:
-  # load_data must run before each tab's analyze_* button, so refresh_for
-  # returns a SEQUENCE [load_data, analyze_<tab>].
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Filters apply
+  # live, so there is no Refresh button to click after the inputs are set.
   wire_deep_links(input, output, session,
     spec = list(
-      tabs              = list(input = "tabs",              type = "tab"),
-      facility          = list(input = "facility",          type = "select"),
-      zone              = list(input = "zone",              type = "radio"),
-      fos               = list(input = "fosarea",           type = "selectize"),
-      priority          = list(input = "priority",          type = "selectize"),
-      air_gnd           = list(input = "air_gnd",           type = "select"),
-      drone_filter      = list(input = "drone_filter",      type = "radio"),
-      red_bug_group_by  = list(input = "red_bug_group_by",  type = "radio"),
-      prehatch_only     = list(input = "prehatch_only",     type = "checkbox"),
-      spring_only       = list(input = "spring_only",       type = "checkbox"),
-      years_gap         = list(input = "years_gap",         type = "numeric"),
-      years_red_bug_gap = list(input = "years_red_bug_gap", type = "numeric"),
-      years_back        = list(input = "years_back",        type = "numeric"),
-      larvae_threshold  = list(input = "larvae_threshold",  type = "numeric"),
-      min_inspections   = list(input = "min_inspections",   type = "numeric"),
-      color_theme       = list(input = "color_theme",       type = "select")
+      tabs         = list(input = "tabs",         type = "tab", transform = legacy_tab_to_new),
+      facility     = list(input = "facility",     type = "select"),
+      zone         = list(input = "zone",         type = "radio"),
+      fos          = list(input = "fosarea",      type = "selectize", transform = fos_to_shortname),
+      priority     = list(input = "priority",     type = "selectize"),
+      drone_filter = list(input = "drone_filter", type = "radio"),
+      status       = list(input = "site_status",  type = "select"),
+      reason       = list(input = "site_reason",  type = "select"),
+      as_of        = list(input = "as_of",        type = "date"),
+      color_theme  = list(input = "color_theme",  type = "select")
     ),
-    refresh_for = function(state) {
-      tb <- state[["tabs"]]; if (is.null(tb)) tb <- "red_bug_gaps"
-      analyze <- switch(tb,
-        gaps = "analyze_gaps", larvae = "analyze_larvae",
-        red_bug_gaps = "analyze_red_bugs", analytics = "analyze_wet",
-        "analyze_red_bugs")
-      c("load_data", analyze)
-    })
+    refresh_for = function(state) character(0))
 
   # Reactive theme handling
   current_theme <- reactive({
-    input$color_theme
+    input$color_theme %||% "MMCD"
   })
-  
-  # Set global theme option when changed
+
   observeEvent(input$color_theme, {
     options(mmcd.color.theme = input$color_theme)
   })
-  
+
   # Update FOS choices when facility changes
   observeEvent(input$facility, {
     foremen_lookup <- get_foremen_lookup()
-    
+
     if (input$facility == "all") {
-      # Show all FOS when "All Facilities" is selected
-      fosarea_choices <- get_fosarea_display_choices()
+      fosarea_choices <- get_foreman_choices(include_all = TRUE)
     } else {
-      # Filter FOS by selected facility
       filtered_foremen <- foremen_lookup[foremen_lookup$facility == input$facility, ]
       fosarea_choices <- c("All FOS" = "all")
       if (nrow(filtered_foremen) > 0) {
         display_names <- paste0(filtered_foremen$shortname, " (", filtered_foremen$facility, ")")
-        fosarea_choices <- c(
-          fosarea_choices,
-          setNames(filtered_foremen$shortname, display_names)
-        )
+        fosarea_choices <- c(fosarea_choices, setNames(filtered_foremen$shortname, display_names))
       }
     }
-    
+
     updateSelectizeInput(session, "fosarea", choices = fosarea_choices, selected = "all")
   })
-  
-  # ============= SINGLE UNIFIED DATA RETRIEVAL =============
-  # Single reactive data source that loads ALL inspection data with shared filters
-  comprehensive_data <- eventReactive(input$load_data, {
-    withProgress(message = "Loading inspection data...", value = 0.5, {
-      # Apply ALL shared filters consistently
-      facility_filter <- if (length(input$facility) == 0 || "all" %in% input$facility) NULL else input$facility
-      fosarea_filter <- if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea
-      
-      # Parse zone filter - handle radio button
-      zone_value <- input$zone %||% "all"
-      zone_filter <- if (zone_value == "all") {
-      NULL
-    } else if (zone_value == "1,2") {
-      c("1", "2")
-    } else {
-      zone_value
-    }
-    
-    priority_filter <- if (length(input$priority) == 0 || "all" %in% input$priority) NULL else input$priority
-    drone_filter <- input$drone_filter %||% "include_drone"
-    spring_only <- input$spring_only %||% FALSE
-    prehatch_only <- input$prehatch_only %||% FALSE
-    
-    # ONE SINGLE QUERY GETS ALL DATA
-    
-    cached_load_raw_data(
-      "inspections",
-      facility_filter = facility_filter,
-      fosarea_filter = fosarea_filter,
-      zone_filter = zone_filter,
-      priority_filter = priority_filter,
-      drone_filter = drone_filter,
-      spring_only = spring_only,
-      prehatch_only = prehatch_only
-    )
+
+  # ============= DATA =============
+  # One per-site table (all facilities/zones) drives every view; filters below
+  # are applied in R. Same function the Overview tile uses.
+  as_of_date <- reactive({
+    if (is.null(input$as_of) || is.na(input$as_of)) Sys.Date() else as.Date(input$as_of)
+  })
+
+  site_data <- eventReactive(list(input$refresh, input$as_of), {
+    as_of <- as_of_date()
+    withProgress(message = "Loading prehatch coverage...", value = 0.5, {
+      raw <- cached_call("inspections_site_coverage", load_prehatch_site_coverage, as_of = as_of)
+      sites <- classify_site_coverage(raw, as_of)
+      sites <- add_fos_names(sites)
+      if (nrow(sites) > 0) sites <- map_facility_names(sites)
+      sites
     })
   }, ignoreNULL = FALSE)
-  
-  # Data loading summary
-  output$data_summary <- renderText({
-    if (input$load_data == 0) {
-      "Click 'Load Data' to begin analysis"
-    } else {
-      comp_data <- comprehensive_data()
-      if (nrow(comp_data) == 0) {
-        "No data found with current filters"
-      } else {
-        total_sites <- get_total_sites_count_from_data(comp_data, input$air_gnd %||% "both")
-        total_records <- format(nrow(comp_data), big.mark = ",")
-        paste0(format(total_sites, big.mark = ","), " sites | ", total_records, " records loaded")
-      }
+
+  filtered_sites <- reactive({
+    df <- site_data()
+    if (nrow(df) == 0) return(df)
+
+    if (length(input$facility) > 0 && !"all" %in% input$facility) {
+      df <- df[df$facility %in% input$facility, , drop = FALSE]
     }
+    if (length(input$fosarea) > 0 && !"all" %in% input$fosarea) {
+      df <- df[df$fos_name %in% input$fosarea, , drop = FALSE]
+    }
+    zones <- strsplit(input$zone %||% "1,2", ",")[[1]]
+    df <- df[df$zone %in% zones, , drop = FALSE]
+    if (length(input$priority) > 0 && !"all" %in% input$priority) {
+      df <- df[df$priority %in% input$priority, , drop = FALSE]
+    }
+    drone_value <- input$drone_filter %||% "include_drone"
+    if (drone_value == "drone_only") {
+      df <- df[df$drone %in% "Y", , drop = FALSE]
+    } else if (drone_value == "no_drone") {
+      df <- df[!(df$drone %in% "Y"), , drop = FALSE]
+    }
+    df
   })
-  
-  # ============= DYNAMIC BUTTON RENDERING =============
-  # Gaps button with count
-  output$gaps_button_ui <- renderUI({
-    if (input$load_data == 0) {
-      actionButton("analyze_gaps", 
-        " Analyze Inspection Gaps", 
-        class = "btn-refresh", 
-        style = "width: 100%; padding: 12px;")
-    } else {
-      comp_data <- comprehensive_data()
-      filtered_data <- comp_data
-      if (!is.null(input$air_gnd) && input$air_gnd != "both") {
-        filtered_data <- filtered_data %>% filter(air_gnd == input$air_gnd)
-      }
-      gap_result <- get_inspection_gaps_from_data(filtered_data, input$years_gap %||% 3, Sys.Date())
-      count <- format(nrow(gap_result), big.mark = ",")
-      years <- input$years_gap %||% 3
-      actionButton("analyze_gaps", 
-        paste0(count, " sites with gaps ≥ ", years, " years"), 
-        class = "btn-refresh", 
-        style = "width: 100%; padding: 12px;")
-    }
+
+  overall <- reactive({
+    summarise_coverage(filtered_sites())
   })
-  
-  # Wet frequency button with count
-  output$wet_button_ui <- renderUI({
-    if (input$load_data == 0) {
-      actionButton("analyze_wet", 
-        " Analyze Wet Frequency", 
-        class = "btn-refresh", 
-        style = "width: 100%; padding: 12px;")
+
+  # ============= PROGRESS =============
+  # Wording for the two sides of the goal lives in coverage_functions.R
+  # (COVERAGE_LABEL_COUNTING = "Sampled", COVERAGE_LABEL_NOT_COUNTING = "Missing")
+  output$hero <- renderUI({
+    s <- overall()
+    if (s$total == 0) {
+      return(div(class = "cov-note", "No prehatch sites match these filters."))
+    }
+
+    goal <- coverage_goal_pct()
+    level <- if (s$pct >= goal) "good" else if (s$pct >= coverage_warning_pct()) "warning" else "alert"
+    bg <- resolve_box_color(level, theme = current_theme())
+    fg <- if (exists("contrast_text_color", mode = "function", inherits = TRUE)) contrast_text_color(bg) else "#ffffff"
+
+    need_text <- if (s$goal_met) {
+      sprintf("Goal met - %s sites to spare. That many could drop to %s before the total falls below %s%%.",
+              fmt_n(s$cushion), COVERAGE_LABEL_NOT_COUNTING, goal)
     } else {
-      comp_data <- comprehensive_data()
-      filtered_data <- comp_data
-      if (!is.null(input$air_gnd) && input$air_gnd != "both") {
-        filtered_data <- filtered_data %>% filter(air_gnd == input$air_gnd)
-      }
-      wet_result <- get_wet_frequency_from_data(filtered_data, input$air_gnd %||% "both", 
-                                                 input$min_inspections %||% 5, 5)
-      count <- format(nrow(wet_result), big.mark = ",")
-      min_insp <- input$min_inspections %||% 5
-      actionButton("analyze_wet", 
-        paste0(count, " sites with ≥ ", min_insp, " inspections"), 
-        class = "btn-refresh", 
-        style = "width: 100%; padding: 12px;")
+      sprintf("%s more sites need to be %s to reach %s%%.",
+              fmt_n(s$needed), COVERAGE_LABEL_COUNTING, goal)
     }
-  })
-  
-  # Larvae button with count
-  output$larvae_button_ui <- renderUI({
-    if (input$load_data == 0) {
-      actionButton("analyze_larvae", 
-        " Find High Dip Count Sites", 
-        class = "btn-refresh", 
-        style = "width: 100%; padding: 12px;")
-    } else {
-      comp_data <- comprehensive_data()
-      filtered_data <- comp_data
-      if (!is.null(input$air_gnd) && input$air_gnd != "both") {
-        filtered_data <- filtered_data %>% filter(air_gnd == input$air_gnd)
-      }
-      larvae_result <- get_high_larvae_sites_from_data(filtered_data, input$larvae_threshold %||% 2, 5, input$air_gnd %||% "both")
-      count <- format(nrow(larvae_result), big.mark = ",")
-      threshold <- input$larvae_threshold %||% 2
-      actionButton("analyze_larvae", 
-        paste0(count, " sites with larvae ≥ ", threshold, " in the last 5 years"), 
-        class = "btn-refresh", 
-        style = "width: 100%; padding: 12px;")
-    }
-  })
-  
-  # ============= INSPECTION GAPS TAB =============
-  gap_data <- eventReactive(input$analyze_gaps, {
-    if (input$load_data == 0) {
-      showNotification("Please load data first using the 'Load Data' button above", type = "warning")
-      return(data.frame())
-    }
-    
-    comp_data <- comprehensive_data()
-    
-    # Apply air/ground filter for this specific analysis
-    filtered_data <- comp_data
-    if (!is.null(input$air_gnd) && input$air_gnd != "both") {
-      filtered_data <- filtered_data %>% 
-        filter(air_gnd == input$air_gnd)
-    }
-    
-    get_inspection_gaps_from_data(
-      comprehensive_data = filtered_data,
-      years_gap = input$years_gap %||% 3,
-      ref_date = Sys.Date()
+
+    div(class = "cov-hero", style = sprintf("background: %s; color: %s;", bg, fg),
+      div(class = "cov-pct", sprintf("%.1f%%", coverage_pct_label(s$pct))),
+      div(class = "cov-sub",
+          sprintf("%s of %s prehatch sites are %s (as of %s)",
+                  fmt_n(s$counting), fmt_n(s$total), COVERAGE_LABEL_COUNTING,
+                  format(as_of_date(), "%Y-%m-%d"))),
+      div(class = "cov-bar", role = "progressbar",
+          `aria-valuenow` = round(s$pct, 1), `aria-valuemin` = 0, `aria-valuemax` = 100,
+          `aria-label` = paste("Percent of prehatch sites that are", COVERAGE_LABEL_COUNTING),
+          div(class = "cov-fill", style = sprintf("width: %.1f%%; background: %s;", min(100, s$pct), fg)),
+          div(class = "cov-goal", style = sprintf("left: %s%%;", goal))),
+      div(class = "cov-goal-label", span(style = sprintf("left: %s%%;", goal), sprintf("Goal %s%%", goal))),
+      div(class = "cov-need", need_text)
     )
   })
-  
-  output$gaps_summary <- renderText({
-    if (input$analyze_gaps == 0) {
-      "Configure settings and click 'Analyze'"
-    } else {
-      data <- gap_data()
-      if (nrow(data) == 0) {
-        "No sites found with inspection gaps"
-      } else {
-        never_inspected <- sum(data$inspection_status == "Never Inspected", na.rm = TRUE)
-        gap_sites <- sum(data$inspection_status == "Inspection Gap", na.rm = TRUE)
-        paste0(format(nrow(data), big.mark = ","), " gap sites: ", 
-               format(never_inspected, big.mark = ","), " never inspected, ",
-               format(gap_sites, big.mark = ","), " with ", input$years_gap, "+ year gaps")
-      }
+
+  stat_box <- function(value, title, status_key, icon_name) {
+    colors <- get_status_colors(theme = current_theme())
+    create_stat_box(
+      value = fmt_n(value), title = title,
+      bg_color = unname(colors[status_key]), icon = icon(icon_name)
+    )
+  }
+
+  # The three boxes split every site once: ID pending (a sample taken this year
+  # with no result entered yet), Sampled with nothing pending, and Missing.
+  # Sampled + ID pending is the hero count: pending sites count toward the goal.
+  output$box_sampled <- renderUI({
+    df <- filtered_sites()
+    stat_box(sum(df$counts & !df$id_pending), paste0("Sites ",COVERAGE_LABEL_COUNTING, ", ID entered"),
+             "active", "check-circle")
+  })
+  # in_lab is the theme's "lab / needs ID" color (also used for Needs ID in air_sites_simple)
+  output$box_id_pending <- renderUI({
+    stat_box(sum(filtered_sites()$id_pending), COVERAGE_LABEL_ID_PENDING, "in_lab", "microscope")
+  })
+  output$box_not_counting <- renderUI({
+    stat_box(overall()$not_counting, COVERAGE_LABEL_NOT_COUNTING, "needs_treatment", "times-circle")
+  })
+
+  output$reason_chart <- renderPlotly({
+    p <- create_reason_chart(filtered_sites(), current_theme())
+    validate(need(!is.null(p), "Every site in this selection counts toward the goal."))
+    p
+  })
+
+  # Clicking a reason bar jumps to those sites
+  observeEvent(event_data("plotly_click", source = "reason_chart"), {
+    clicked <- event_data("plotly_click", source = "reason_chart")
+    if (!is.null(clicked$key)) {
+      updateSelectInput(session, "site_status", selected = "not_counting")
+      updateSelectInput(session, "site_reason", selected = as.character(clicked$key[[1]]))
+      updateTabsetPanel(session, "tabs", selected = "sites")
     }
   })
 
-  output$gaps_table <- DT::renderDataTable({
-    if (input$analyze_gaps == 0 || input$load_data == 0) {
-      DT::datatable(
-        data.frame(Message = "Load data and click 'Analyze Inspection Gaps' to view results"),
-        rownames = FALSE,
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      render_gap_table(gap_data(), theme = current_theme())
-    }
+  # Progress by facility / FOS. The output box is sized from the number of bars
+  # (a fixed height clipped the chart once every FOS was listed).
+  group_summary <- reactive({
+    df <- filtered_sites()
+    if (nrow(df) == 0) return(NULL)
+    summarise_coverage(df, by = input$group_by %||% "facility_display")
   })
-  
-  # ============= RED BUG GAPS TAB =============
-  # Button UI with dynamic count
-  output$red_bug_button_ui <- renderUI({
-    if (input$load_data == 0) {
-      actionButton("analyze_red_bugs",
-        " Analyze Red Bug Gaps",
-        class = "btn-refresh",
-        style = "width: 100%; padding: 12px;")
-    } else {
-      actionButton("analyze_red_bugs",
-        " Analyze Red Bug Gaps",
-        class = "btn-refresh",
-        style = "width: 100%; padding: 12px;")
-    }
+
+  output$group_chart_ui <- renderUI({
+    s <- group_summary()
+    plotlyOutput("group_chart", height = paste0(group_chart_height(if (is.null(s)) 0L else nrow(s)), "px"))
   })
-  
-  # Parse shared filters for red bug queries
-  red_bug_filters <- reactive({
-    facility_filter <- if (length(input$facility) == 0 || "all" %in% input$facility) NULL else input$facility
-    fosarea_filter <- if (length(input$fosarea) == 0 || "all" %in% input$fosarea) NULL else input$fosarea
-    zone_value <- input$zone %||% "all"
-    zone_filter <- if (zone_value == "all") {
-      NULL
-    } else if (zone_value == "1,2") {
-      c("1", "2")
-    } else {
-      zone_value
-    }
-    priority_filter <- if (length(input$priority) == 0 || "all" %in% input$priority) NULL else input$priority
-    
-    list(
-      facility_filter = facility_filter,
-      fosarea_filter = fosarea_filter,
-      zone_filter = zone_filter,
-      priority_filter = priority_filter,
-      air_gnd_filter = input$air_gnd %||% "both",
-      drone_filter = input$drone_filter %||% "include_drone",
-      prehatch_only = input$prehatch_only %||% FALSE
-    )
+
+  output$group_chart <- renderPlotly({
+    s <- group_summary()
+    validate(need(!is.null(s), "No prehatch sites match these filters."))
+    create_group_chart(s, label_col = input$group_by %||% "facility_display",
+                       goal = coverage_goal_pct(), theme = current_theme())
   })
-  
-  red_bug_data <- eventReactive(input$analyze_red_bugs, {
-    if (input$load_data == 0) {
-      showNotification("Please load data first using the 'Load Data' button above", type = "warning")
-      return(data.frame())
-    }
-    
-    withProgress(message = "Querying red bug data...", value = 0.5, {
-      filters <- red_bug_filters()
-      get_red_bug_gaps(
-        years_gap = input$years_red_bug_gap %||% 5,
-        facility_filter = filters$facility_filter,
-        fosarea_filter = filters$fosarea_filter,
-        zone_filter = filters$zone_filter,
-        priority_filter = filters$priority_filter,
-        air_gnd_filter = filters$air_gnd_filter,
-        drone_filter = filters$drone_filter,
-        prehatch_only = filters$prehatch_only,
-        ref_date = Sys.Date()
-      )
-    })
+
+  output$aging_chart <- renderPlotly({
+    p <- create_aging_chart(aging_out_by_month(filtered_sites(), as_of_date(), 12), current_theme())
+    validate(need(!is.null(p), sprintf("No %s sites are due to drop to %s in the next 12 months.",
+                                       COVERAGE_LABEL_COUNTING, COVERAGE_LABEL_NOT_COUNTING)))
+    p
   })
-  
-  red_bug_all_sites <- eventReactive(input$analyze_red_bugs, {
-    if (input$load_data == 0) return(data.frame())
-    
-    filters <- red_bug_filters()
-    get_red_bug_all_sites(
-      facility_filter = filters$facility_filter,
-      fosarea_filter = filters$fosarea_filter,
-      zone_filter = filters$zone_filter,
-      priority_filter = filters$priority_filter,
-      air_gnd_filter = filters$air_gnd_filter,
-      drone_filter = filters$drone_filter,
-      prehatch_only = filters$prehatch_only,
-      ref_date = Sys.Date()
-    )
+
+  # ============= SITE LIST =============
+  site_view <- reactive({
+    df <- filtered_sites()
+    if (nrow(df) == 0) return(df)
+
+    view <- input$site_status %||% "not_counting"
+    df <- switch(view,
+      not_counting = df[!df$counts, , drop = FALSE],
+      counting     = df[df$counts, , drop = FALSE],
+      id_pending   = df[df$id_pending, , drop = FALSE],
+      df)
+
+    reason <- input$site_reason %||% "all"
+    if (reason != "all") df <- df[as.character(df$status) == reason, , drop = FALSE]
+
+    sort_sites_for_work(df, view)
   })
-  
-  output$red_bug_summary <- renderText({
-    if (input$analyze_red_bugs == 0) {
-      "Configure settings and click 'Analyze'"
-    } else {
-      data <- red_bug_data()
-      if (nrow(data) == 0) {
-        "No sites found with red bug gaps"
-      } else {
-        never_found <- sum(data$red_bug_status == "Never Found", na.rm = TRUE)
-        gap_sites <- sum(data$red_bug_status == "Red Bug Gap", na.rm = TRUE)
-        paste0(format(nrow(data), big.mark = ","), " sites: ",
-               format(never_found, big.mark = ","), " never had red bugs, ",
-               format(gap_sites, big.mark = ","), " with ", input$years_red_bug_gap, "+ year gaps")
-      }
-    }
+
+  output$site_count_text <- renderText({
+    paste0(fmt_n(nrow(site_view())), " sites")
   })
-  
-  output$red_bug_gap_chart <- renderPlotly({
-    if (input$analyze_red_bugs == 0 || input$load_data == 0) return(NULL)
-    
-    gap_result <- red_bug_data()
-    all_sites <- red_bug_all_sites()
-    group_by <- input$red_bug_group_by %||% "facility"
-    
-    if (group_by == "fos") {
-      fos_analysis <- get_red_bug_fos_analysis(gap_result, all_sites)
-      create_red_bug_fos_chart(fos_analysis, theme = current_theme())
-    } else {
-      facility_analysis <- get_red_bug_facility_analysis(gap_result, all_sites)
-      create_red_bug_facility_chart(facility_analysis, theme = current_theme())
-    }
+
+  output$sites_table <- DT::renderDataTable({
+    render_coverage_site_table(site_view(), current_theme())
   })
-  
-  output$red_bug_gap_table <- DT::renderDataTable({
-    if (input$analyze_red_bugs == 0 || input$load_data == 0) {
-      DT::datatable(
-        data.frame(Message = "Load data and click 'Analyze Red Bug Gaps' to view results"),
-        rownames = FALSE,
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      render_red_bug_gap_table(red_bug_data(), theme = current_theme())
-    }
-  })
-  
-  output$download_red_bug_data <- downloadHandler(
+
+  output$download_sites <- downloadHandler(
     filename = function() {
-      paste0("red_bug_gaps_", Sys.Date(), ".csv")
+      paste0("prehatch_coverage_sites_", Sys.Date(), ".csv")
     },
     content = function(file) {
-      if (input$analyze_red_bugs == 0 || input$load_data == 0) {
-        export_csv_safe(data.frame("No data available" = "Load data and analyze red bug gaps first"), file)
+      data <- format_coverage_sites(site_view(), link = FALSE)
+      if (nrow(data) > 0) {
+        export_csv_safe(data, file)
       } else {
-        data <- red_bug_data()
-        if (!is.null(data) && nrow(data) > 0) {
-          export_csv_safe(data, file)
-        } else {
-          export_csv_safe(data.frame("No red bug gap sites found" = character(0)), file)
-        }
-      }
-    }
-  )
-  
-  # ============= SITE ANALYTICS TAB =============
-  # ============= WET ANALYSIS TAB (USES MAIN DATA) =============
-  wet_analysis_data <- eventReactive(input$analyze_wet, {
-    if (input$load_data == 0) {
-      showNotification("Please load data first using the 'Load Data' button above", type = "warning")
-      return(list())
-    }
-    
-    # Use the SAME comprehensive data - no separate query needed!
-    comp_data <- comprehensive_data()
-    air_gnd_filter <- input$air_gnd %||% "both"
-    
-    list(
-      total_sites = get_total_sites_count_from_data(comp_data, air_gnd_filter),
-      wet_frequency = get_wet_frequency_from_data(comp_data, air_gnd_filter, input$min_inspections %||% 5, input$years_back %||% 5),
-      summary_stats = get_summary_stats_from_data(comp_data, air_gnd_filter, input$years_back %||% 5)
-    )
-  })
-  
-  # Auto-calculate basic stats when data is loaded
-  observe({
-    if (input$load_data > 0) {
-      comp_data <- comprehensive_data()
-      air_gnd_filter <- input$air_gnd %||% "both"
-      
-      output$total_sites_count <- renderText({
-        total_sites <- get_total_sites_count_from_data(comp_data, air_gnd_filter)
-        format(total_sites, big.mark = ",")
-      })
-      
-      stats <- get_summary_stats_from_data(comp_data, air_gnd_filter, input$years_back %||% 5)
-      
-      # Total active sites stat box - use wet analysis data
-      output$total_active_sites_box <- renderUI({
-        if (input$analyze_wet == 0) {
-          total_sites <- 0
-        } else {
-          wet_data_result <- wet_analysis_data()
-          wet_comp_data <- if (length(wet_data_result) > 0 && !is.null(wet_data_result$wet_frequency)) {
-            # Get unique sites from wet frequency data
-            wet_data_result$wet_frequency %>% distinct(sitecode) %>% nrow()
-          } else {
-            0
-          }
-          total_sites <- wet_comp_data
-        }
-        
-        # Get theme-based colors
-        status_colors <- get_status_colors(theme = current_theme())
-        
-        create_stat_box(
-          value = format(total_sites, big.mark = ","),
-          title = "Sites Analyzed",
-          bg_color = unname(status_colors["active"]),
-          icon = icon("map-marker")
-        )
-      })
-      
-      # Overall wet percentage stat box
-      output$overall_wet_percentage_box <- renderUI({
-        if (input$analyze_wet == 0) {
-          wet_pct <- 0
-        } else {
-          wet_data_result <- wet_analysis_data()
-          wet_pct <- if (length(wet_data_result) > 0 && !is.null(wet_data_result$wet_frequency) && nrow(wet_data_result$wet_frequency) > 0) {
-            # Calculate average wet percentage across all sites
-            round(mean(wet_data_result$wet_frequency$wet_percentage, na.rm = TRUE), 1)
-          } else {
-            0
-          }
-        }
-        
-        # Get theme-based colors
-        status_colors <- get_status_colors(theme = current_theme())
-        
-        create_stat_box(
-          value = paste0(wet_pct, "%"),
-          title = "Average Wet Frequency",
-          bg_color = unname(status_colors["completed"]),
-          icon = icon("percentage")
-        )
-      })
-    } else {
-      output$total_sites_count <- renderText("-")
-      
-      # Default stat boxes when no data
-      output$total_active_sites_box <- renderUI({
-        status_colors <- get_status_colors(theme = current_theme())
-        
-        create_stat_box(
-          value = "-",
-          title = "Sites Analyzed",
-          bg_color = unname(status_colors["unknown"]),
-          icon = icon("map-marker")
-        )
-      })
-      
-      output$overall_wet_percentage_box <- renderUI({
-        status_colors <- get_status_colors(theme = current_theme())
-        
-        create_stat_box(
-          value = "-",
-          title = "Average Wet Frequency",
-          bg_color = unname(status_colors["unknown"]),
-          icon = icon("percentage")
-        )
-      })
-    }
-  })
-  
-  output$wet_frequency_table <- DT::renderDataTable({
-    if (input$analyze_wet == 0 || input$load_data == 0) {
-      DT::datatable(
-        data.frame(Message = "Load data and click 'Analyze Wet Frequency' to view detailed results"),
-        rownames = FALSE,
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      data <- wet_analysis_data()
-      render_wet_frequency_table(data$wet_frequency, theme = current_theme())
-    }
-  })
-  
-  # ============= LARVAE THRESHOLD TAB =============
-  larvae_data <- eventReactive(input$analyze_larvae, {
-    if (input$load_data == 0) {
-      showNotification("Please load data first using the 'Load Data' button above", type = "warning")
-      return(data.frame())
-    }
-    
-    comp_data <- comprehensive_data()
-    air_gnd_filter <- input$air_gnd %||% "both"
-    
-    get_high_larvae_sites_from_data(
-      comprehensive_data = comp_data,
-      threshold = input$larvae_threshold %||% 2,
-      years_back = input$years_back %||% 5,
-      air_gnd_filter = air_gnd_filter
-    )
-  })
-  
-  output$larvae_summary <- renderText({
-    if (input$analyze_larvae == 0) {
-      "Configure settings and click 'Find High Larvae Sites'"
-    } else {
-      data <- larvae_data()
-      threshold <- input$larvae_threshold %||% 2
-      years_back <- input$years_back %||% 5
-      
-      if (nrow(data) == 0) {
-        paste0("No sites found with larvae ≥ ", threshold, 
-               " in the last ", years_back, " years")
-      } else {
-        paste0(format(nrow(data), big.mark = ","), " sites with larvae ≥ ", 
-               threshold, " in the last ", years_back, " years")
-      }
-    }
-  })
-  
-  output$larvae_table <- DT::renderDataTable({
-    if (input$analyze_larvae == 0 || input$load_data == 0) {
-      DT::datatable(
-        data.frame(Message = "Load data and click 'Find High Larvae Sites' to view results"),
-        rownames = FALSE,
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      render_high_larvae_table(larvae_data(), theme = current_theme())
-    }
-  })
-  
-  # ============= CHART OUTPUTS =============
-  
-  # Wet frequency chart
-  output$wet_frequency_chart <- renderPlotly({
-    if (input$analyze_wet == 0 || input$load_data == 0) return(NULL)
-    wet_result <- wet_analysis_data()
-    if (length(wet_result) == 0 || is.null(wet_result$wet_frequency) || nrow(wet_result$wet_frequency) == 0) return(NULL)
-    create_wet_frequency_chart(wet_result$wet_frequency, theme = current_theme())
-  })
-  
-  # Priority distribution chart  
-  output$priority_chart <- renderPlotly({
-    if (input$load_data == 0) return(NULL)
-    comp_data <- comprehensive_data()
-    if (nrow(comp_data) == 0) return(NULL)
-    
-    # Get unique sites with priority info
-    site_data <- comp_data %>%
-      distinct(sitecode, priority, .keep_all = TRUE)
-    create_priority_chart(site_data, theme = current_theme())
-  })
-  
-  # Exceedance frequency chart
-  output$exceedance_frequency_chart <- renderPlotly({
-    if (input$analyze_larvae == 0 || input$load_data == 0) return(NULL)
-    larvae_data_result <- larvae_data()
-    create_exceedance_frequency_chart(larvae_data_result, theme = current_theme())
-  })
-  
-  # Larvae distribution chart
-  output$larvae_distribution_chart <- renderPlotly({
-    if (input$analyze_larvae == 0 || input$load_data == 0) return(NULL)
-    larvae_data_result <- larvae_data()
-    create_larvae_distribution_chart(larvae_data_result, theme = current_theme())
-  })
-  
-  # Facility gap chart
-  output$facility_gap_chart <- renderPlotly({
-    if (input$analyze_gaps == 0 || input$load_data == 0) return(NULL)
-    
-    # Get both comprehensive data and gap data for analysis
-    comp_data <- comprehensive_data()
-    gap_data_result <- gap_data()
-    
-    # Create facility analysis
-    facility_analysis <- get_facility_gap_analysis(comp_data, gap_data_result)
-    
-    # Create the chart
-    create_facility_gap_chart(facility_analysis, theme = current_theme())
-  })
-  
-  # Download handlers for CSV exports
-  output$download_gaps_data <- downloadHandler(
-    filename = function() {
-      paste0("inspection_gaps_", Sys.Date(), ".csv")
-    },
-    content = function(file) {
-      if (input$analyze_gaps == 0 || input$load_data == 0) {
-        export_csv_safe(data.frame("No data available" = "Load data and analyze gaps first"), file)
-      } else {
-        gap_data_result <- gap_data()
-        if (!is.null(gap_data_result) && nrow(gap_data_result) > 0) {
-          export_csv_safe(gap_data_result, file)
-        } else {
-          export_csv_safe(data.frame("No gaps found" = character(0)), file)
-        }
-      }
-    }
-  )
-  
-  output$download_wet_frequency_data <- downloadHandler(
-    filename = function() {
-      paste0("wet_frequency_analysis_", Sys.Date(), ".csv")
-    },
-    content = function(file) {
-      if (input$analyze_wet == 0 || input$load_data == 0) {
-        export_csv_safe(data.frame("No data available" = "Load data and analyze wet frequency first"), file)
-      } else {
-        wet_data <- wet_analysis_data()
-        if (!is.null(wet_data$wet_frequency) && nrow(wet_data$wet_frequency) > 0) {
-          export_csv_safe(wet_data$wet_frequency, file)
-        } else {
-          export_csv_safe(data.frame("No wet frequency data" = character(0)), file)
-        }
-      }
-    }
-  )
-  
-  output$download_larvae_data <- downloadHandler(
-    filename = function() {
-      paste0("larvae_analysis_", Sys.Date(), ".csv")
-    },
-    content = function(file) {
-      if (input$analyze_larvae == 0 || input$load_data == 0) {
-        export_csv_safe(data.frame("No data available" = "Load data and analyze larvae first"), file)
-      } else {
-        larvae_data_result <- larvae_data()
-        if (!is.null(larvae_data_result) && nrow(larvae_data_result) > 0) {
-          export_csv_safe(larvae_data_result, file)
-        } else {
-          export_csv_safe(data.frame("No high larvae sites found" = character(0)), file)
-        }
+        export_csv_safe(data.frame("No sites match these filters" = character(0)), file)
       }
     }
   )
 }
 
-# Run the application
+# Create Shiny app
 shinyApp(ui = ui, server = server)

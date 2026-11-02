@@ -91,7 +91,7 @@ get_app_config <- function(force_reload = FALSE) {
       ),
       fixed_pct = list(
         air_sites = list(direction = "higher_is_better", good = 85, warning = 60),
-        prehatch_coverage = list(direction = "higher_is_better", good = 80, warning = 70),
+        prehatch_coverage = list(direction = "higher_is_better", good = 51, warning = 41),
         vector_index = list(direction = "lower_is_better", good = 30, warning = 60)
       ),
       pct_of_average = list(
@@ -106,7 +106,7 @@ get_app_config <- function(force_reload = FALSE) {
       drone = "Percent of Prehatch Drone acres with active treatment",
       ground_prehatch = "Percent of Ground Prehatch acres with active treatment (excludes drone)",
       air_sites = "Percent of red air sites that have received treatment for last brood",
-      prehatch_coverage = "Percent of Prehatch sites with target species in sample last 5 years",
+      prehatch_coverage = "Percent of ground Prehatch sites with a red bug sample in the last 5 years OR sampled this year (goal: 51%)",
       catch_basin = "Percent of wet Catch Basins with active treatment",
       structure = "Percent of wet structures with active treatment (needs better priority)",
       vector_index = "Highest Vector Index - risk of getting bit by an infectious mosquito",

@@ -79,7 +79,7 @@ thresholds:
       warning: 60          # Yellow if >= 60%, Red if below
     prehatch_coverage:
       direction: higher_is_better
-      good: 51             # Green if >= 51% recently sampled sites with target species
+      good: 51             # Green if >= 51% of prehatch sites count (red bug in 5 yrs OR sampled this year)
       warning: 41          # Yellow if >= 41%, Red if below
     vector_index:
       direction: lower_is_better
@@ -146,7 +146,7 @@ descriptions:
   drone: "Percent of Prehatch Drone acres with active treatment"
   ground_prehatch: "Percent of Ground Prehatch acres with active treatment (excludes drone)"
   air_sites: "Percent of red air sites that have received treatment for last brood"
-  prehatch_coverage: "Percent of Prehatch sites with target species in sample last 5 years"
+  prehatch_coverage: "Percent of ground Prehatch sites with a red bug sample in the last 5 years OR sampled this year (goal: 51%)"
   catch_basin: "Percent of wet Catch Basins with active treatment"
   structure: "Percent of wet structures with active treatment (needs better priority)"
   vector_index: "Highest Vector Index — risk of getting bit by an infectious mosquito"
@@ -209,6 +209,6 @@ capacity_planner:
     "Sr": { crews: 4, techs_per_crew: 5, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Rosemount
     "Sj": { crews: 4, techs_per_crew: 6, drone_techs: 2, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # South Jordan
     "Wp": { crews: 5, techs_per_crew: 5, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # Plymouth
-    "N":   { crews: 6, techs_per_crew: 8, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # North
-    "E":   { crews: 7, techs_per_crew: 6, drone_techs: 3, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # East
+    "N":   { crews: 6, techs_per_crew: 6.666666666666667, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # North
+    "E":   { crews: 7, techs_per_crew: 5.714285714285714, drone_techs: 3, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # East
     "Wm": { crews: 5, techs_per_crew: 5, drone_techs: 4, drone_offload_pct: 0, drone_air_offload_pct: 0 }   # West Maple Grove

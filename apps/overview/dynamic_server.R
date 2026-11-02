@@ -329,6 +329,10 @@ calculate_display_pct <- function(metric_id, config, total, active, expiring, me
     } else {
       pct <- if (total > 0) round(active / total * 100, 1) else 0
     }
+  } else if (isTRUE(config$pct_exact)) {
+    # Goal metrics (prehatch_coverage): show the true value, truncated to 1 decimal.
+    # ceiling() would show 50.1% as "51%" and turn the tile green before the goal is met.
+    pct <- if (total > 0) floor(1000 * active / total + 1e-9) / 10 else 0
   } else if (isTRUE(config$display_as_average)) {
     pct <- if (total > 0) round(100 * active / total, 1) else 0
   } else {

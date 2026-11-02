@@ -490,30 +490,30 @@ get_metric_bg_color <- function(config, theme = getOption("mmcd.color.theme", "M
       historical_enabled = FALSE,  # Coverage is point-in-time, not trended
       use_active_calculation = FALSE,
       display_metric = "coverage",
+      pct_exact = TRUE,  # Goal metric: show the true % (never rounded up past the 51% goal)
       chart_types = c("bar"),
       default_chart_type = "bar",
       chart_stacked_mode = TRUE,  # Bars stack: active + expiring = total (not overlay)
-      # Detail boxes: covered (red bug found, or pending lab ID) + gaps
+      # Detail boxes: Sampled (counts toward the goal) + Missing
       detail_boxes = list(
-        list(id = "inspected", title = "Covered (Red Bug or Pending ID)", column = "active", icon = "check-circle", status = "active"),
-        list(id = "gaps", title = "No Red Bugs (5yr)", column = "expiring", icon = "calendar-times", status = "needs_treatment")
+        list(id = "inspected", title = "Sampled (Red Bug in 5 Yrs or Sampled This Year)", column = "active", icon = "check-circle", status = "active"),
+        list(id = "gaps", title = "Missing", column = "expiring", icon = "calendar-times", status = "needs_treatment")
       ),
-      # Color: fewer gaps = better. Higher % sampled = green.
+      # Color: goal is 51%. Thresholds also live in config/app_config.yaml (which wins).
       color_mode = "fixed_pct",
-      color_thresholds = list(good = 85, warning = 60),
+      color_thresholds = list(good = 51, warning = 41),
       chart_labels = list(
         total = "Total Prehatch Sites",
-        active = "Covered (Red Bug or Pending ID)",
-        expiring = "No Red Bugs (\u22655 yrs)"
+        active = "Sampled (Red Bug in 5 Yrs or Sampled This Year)",
+        expiring = "Missing"
       ),
-      filter_info = HTML("<b>Prehatch Red Bug Coverage:</b><br>
-                         • Ground sites only (prehatch)<br>
-                         • Covered if: red bug sample within last 5 years,<br>
-                         &nbsp;&nbsp;OR sampled this year with lab ID still pending<br>
-                         • Gap threshold: 5 years<br>
-                         • Includes never-sampled sites<br>
+      filter_info = HTML("<b>Prehatch Coverage (51% goal):</b><br>
+                         • Ground prehatch sites (PREHATCH, PELLET, BRIQUET, PRE1ONLY)<br>
+                         • Sampled if: red bug sample within last 5 years,<br>
+                         &nbsp;&nbsp;OR any sample taken this year (any result)<br>
+                         • A this-year sample drops to Missing on Jan 1<br>
                          • Zone filter from dropdown<br>
-                         <a href='/inspections/' target='_blank' style='color:#93c5fd'>&#8599; Open Inspections App</a>"),
+                         <a href='/inspections/' target='_blank' style='color:#93c5fd'>&#8599; See which sites are Missing</a>"),
       load_params = list(expiring_days = 0)
     )
   )

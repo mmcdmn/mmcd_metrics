@@ -169,7 +169,13 @@ create_overview_chart <- function(data, title, y_label, theme = "MMCD", metric_t
       y_total = total,
       y_active = if (stacked_mode) active else pmax(0, active - expiring),
       y_expiring = expiring,
-      pct = if (display_as_average) round(active, 1) else ceiling(100 * active / pmax(1, total)),
+      pct = if (display_as_average) {
+        round(active, 1)
+      } else if (isTRUE(metric_config$pct_exact)) {
+        floor(1000 * active / pmax(1, total) + 1e-9) / 10   # true value, never rounded up
+      } else {
+        ceiling(100 * active / pmax(1, total))
+      },
       tooltip_text = if (display_as_goal) {
         paste0(
           display_name, "\n",

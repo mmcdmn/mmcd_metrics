@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 # Install OpenResty (nginx + LuaJIT + lua-resty-redis) for dynamic load-aware routing
 RUN apt-get install -y --no-install-recommends wget gnupg lsb-release && \
     wget -qO - https://openresty.org/package/pubkey.gpg | gpg --dearmor -o /usr/share/keyrings/openresty.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu noble main" \
       > /etc/apt/sources.list.d/openresty.list && \
     apt-get update && \
     apt-get install -y openresty && \

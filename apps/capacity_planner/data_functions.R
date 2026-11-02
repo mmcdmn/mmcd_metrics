@@ -48,7 +48,7 @@ DEFAULT_TRIPS_PER_SECTION <- 8
 CAPACITY_STAFFING_FALLBACK <- data.frame(
   facility          = c("Sr", "Sj", "Wp", "N", "E", "Wm"),
   crews             = c(4, 4, 5, 6, 7, 5),
-  techs_per_crew    = c(5, 6, 5, 8, 6, 5),
+  techs_per_crew    = c(5, 6, 5, 40 / 6, 40 / 7, 5),
   drone_techs       = c(2, 2, 4, 4, 3, 4),
   drone_offload_pct = c(0, 0, 0, 0, 0, 0),
   drone_air_offload_pct = c(0, 0, 0, 0, 0, 0),
@@ -109,6 +109,26 @@ load_jobs_per_site <- function(year = as.integer(format(Sys.Date(), "%Y")) - 1) 
   df
 }
 
+# Sites inside Restricted Areas with monitor_ok = FALSE (no work there), built offline by
+# scripts/build_ra_exclusions.R from extra/qgis/ra_view.gpkg. Dropped from all site/acre loads.
+RA_EXCLUSION_FILE <- "data/ra_excluded_sites.csv"
+
+#' SQL fragment (" AND NOT (...)") that removes RA monitor_ok = FALSE sites; "" when the
+#' lookup file is missing. Sites stay with their section's FOS (gis_sectcode.fosarea); the
+#' RA layer's e_restrctspec employee numbers are not used.
+#'
+#' @param alias table alias of loc_breeding_sites in the query
+ra_exclusion_sql <- function(alias = "b", path = RA_EXCLUSION_FILE) {
+  if (!file.exists(path)) return("")
+  d <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, colClasses = "character"),
+                error = function(e) NULL)
+  if (is.null(d) || !"sitecode" %in% names(d)) return("")
+  codes <- unique(d$sitecode[grepl("^[0-9A-Za-z-]+$", d$sitecode)])
+  if (length(codes) == 0) return("")
+  sprintf(" AND NOT (%s.sitecode = ANY(string_to_array('%s', ',')))",
+          alias, paste(codes, collapse = ","))
+}
+
 #' Section-grain capacity: one row per section with its site/catch-basin loads and
 #' straight-line miles from its facility. This is the base grain for the capacity
 #' table (aggregated up) AND the what-if section picker (used as-is).
@@ -144,7 +164,7 @@ load_capacity_sections <- function() {
              (COUNT(*) FILTER (WHERE b.prehatch IN %s))::int AS prehatch_sites,
              COALESCE(SUM(b.acres) FILTER (WHERE b.prehatch IN %s), 0)::numeric AS prehatch_acres
       FROM loc_breeding_sites b
-      WHERE b.enddate IS NULL
+      WHERE b.enddate IS NULL %s
       GROUP BY left(b.sitecode, 7)
     ) bs ON bs.sectcode = sc.sectcode
     LEFT JOIN (
@@ -158,7 +178,7 @@ load_capacity_sections <- function() {
     WHERE sc.fosarea IS NOT NULL AND sc.fosarea <> ''
       AND sc.zone IN ('1', '2')
     ORDER BY sc.facility, sc.fosarea, sc.zone, sc.sectcode
-  ", .prehatch_in_sql, .prehatch_in_sql)
+  ", .prehatch_in_sql, .prehatch_in_sql, ra_exclusion_sql("b"))
 
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_sections]", e$message)); data.frame()
@@ -192,11 +212,11 @@ load_capacity_by_priority <- function() {
     FROM loc_breeding_sites b
     JOIN gis_sectcode sc ON left(b.sitecode, 7) = sc.sectcode
     WHERE b.enddate IS NULL AND sc.fosarea IS NOT NULL AND sc.fosarea <> ''
-      AND sc.zone IN ('1', '2')
+      AND sc.zone IN ('1', '2') %s
     GROUP BY sc.facility, sc.fosarea, sc.zone,
              COALESCE(NULLIF(b.priority, ''), '(none)')
     ORDER BY sc.facility, sc.fosarea, sc.zone, priority
-  ", .prehatch_in_sql, .prehatch_in_sql)
+  ", .prehatch_in_sql, .prehatch_in_sql, ra_exclusion_sql("b"))
 
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_by_priority]", e$message)); data.frame()

@@ -1,6 +1,43 @@
 # display_functions.R
 # Display and visualization functions for Section Cards
 
+# Relative table column widths: a little roomier for the columns techs write more in,
+# tighter for the short ones. Any other column (e.g. [DB] columns) stays at 1.
+TABLE_COL_WEIGHTS <- c(date = 1.12, emp_num = 1.12, sample_num = 1.28,
+                       wet_pct = 0.88, num_dip = 0.88, amt = 0.8, mat = 0.8)
+
+#' Build the opening of a card table: column widths, header row and <tbody>
+#'
+#' @param table_fields Vector of field names to display in table
+#' @param field_labels Named list of field display labels
+#' @return HTML string, to be followed by the table rows
+build_table_header <- function(table_fields, field_labels) {
+  weights <- unname(TABLE_COL_WEIGHTS[table_fields])
+  weights[is.na(weights)] <- 1
+  widths <- 100 * weights / sum(weights)
+
+  col_parts <- character(length(table_fields))
+  header_parts <- character(length(table_fields))
+  for (i in seq_along(table_fields)) {
+    field <- table_fields[i]
+    label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
+    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
+    col_parts[i] <- sprintf('        <col style="width: %.2f%%">\n', widths[i])
+    # Largest font that keeps this label inside its column: 6px for cell padding and
+    # borders, about 0.6em per bold character. In cqw so it holds at any card width.
+    fit <- sprintf("calc((%.2fcqw - 6px) / %.2f)", widths[i], nchar(label) * 0.6)
+    header_parts[i] <- paste0('        <th class="', col_class, '" style="--sc-th-fit: ', fit, '">', label, '</th>\n')
+  }
+
+  paste0(
+    '    <table class="card-table">\n      <colgroup>\n',
+    paste0(col_parts, collapse = ""),
+    '      </colgroup>\n      <thead><tr>\n',
+    paste0(header_parts, collapse = ""),
+    '      </tr></thead>\n      <tbody>\n'
+  )
+}
+
 #' Generate HTML for section cards with printable layout
 #' 
 #' Creates a printable layout of section cards (6 per page)
@@ -41,7 +78,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
     type = "Type",
     air_gnd = "Air/Gnd",
     spr_aedes = "Spring Aedes",
-    perturbans = "Perturbans",
+    perturbans = "Cattail",
     prehatch = "Prehatch",
     prehatch_calc = "Prehatch Calculation",
     sample = "Sample Site",
@@ -80,27 +117,21 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # ---- Density scaling ----
   # Scale factor: 6 cards = 1.0 (baseline), more cards = smaller, fewer = capped at 1.0
   card_scale <- min(1.0, 6 / cards_per_page)  # 4->1.0, 6->1.0, 8->0.75, 10->0.6, 12->0.5
-  # Page margins shrink to reclaim space at higher density
-  page_margin <- switch(as.character(cards_per_page),
-    "4"  = "0.5in",
-    "6"  = "0.5in",
-    "8"  = "0.4in",
-    "10" = "0.3in",
-    "12" = "0.25in",
-    "0.5in"
-  )
-  margin_num <- as.numeric(gsub("in", "", page_margin))
-  # Usable print area on letter paper (8.5 x 11).
-  # This is set as the card-page height. Since card-page has padding = page_margin
-  # and box-sizing: border-box, the CONTENT area is (11 - 2*margin) - 2*margin.
-  # But we set usable_height = 11 (the full page) because @page margin is 0.
-  usable_height <- 11
+  # Printed page layout on letter paper (8.5 x 11), in inches. @page margin is 0, so
+  # the card-page itself sets the whitespace. It stops short of the paper's bottom edge
+  # because printers can cut off the last ~0.25in or more, and a card-page taller than
+  # the printable area spills onto the next sheet. The small bottom padding keeps the
+  # bottom card borders from being clipped.
+  usable_height <- 10.5
+  page_pad_top <- 0.2
+  page_pad_sides <- 0.25
+  page_pad_bottom <- 0.05
   # Gap between cards scales down
   grid_gap <- max(2, round(15 * card_scale))
   
   # ---- Dynamic font / row sizing ----
   # Content area inside card-page after padding is subtracted (border-box)
-  content_height_in <- 11 - 2 * margin_num
+  content_height_in <- usable_height - page_pad_top - page_pad_bottom
   # Available height per card in px (96 dpi: 1in = 96px)
   card_height_px <- (content_height_in * 96 / grid_rows) - grid_gap
   # Account for card border (2px top + 2px bottom)
@@ -109,6 +140,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # Baseline VISIBLE sizes (what the user sees after scale transform)
   base_title_font   <- 14
   base_remarks_font <- 8
+  base_remarks_box  <- 40  # standard remarks space: two lines of handwriting
   base_info_font    <- 7
   base_header_pad   <- 6
   base_header_gap   <- 3
@@ -120,7 +152,13 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # ---- Squeeze: computed against VISIBLE card height ----
   # card_height_px is the grid cell = the visible size on paper.
   # Base sizes are also visible sizes. Squeeze is purely: does it fit?
-  hdr1 <- base_title_font * 1.15 + base_remarks_font * 1.15 * 3 + base_header_gap * 3 + 2 * base_header_pad + 4
+  # With Remarks on the card: one line of info fields plus the standard remarks space.
+  # Without: allow for the info fields wrapping onto a few lines.
+  has_remarks <- "remarks" %in% title_fields
+  info_space <- function(remarks_font, remarks_box) {
+    if (has_remarks) remarks_font * 1.15 + remarks_box else remarks_font * 1.15 * 3
+  }
+  hdr1 <- base_title_font * 1.15 + info_space(base_remarks_font, base_remarks_box) + base_header_gap * 3 + 2 * base_header_pad + 4
   th1  <- base_th_font * 1.15 + 2 * base_td_pad + 2
   rows_space1 <- card_height_px - hdr1 - th1
   td1 <- rows_space1 / num_rows
@@ -129,11 +167,12 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # Pass 2: re-estimate header with squeezed fonts, reclaim space
   s1_title   <- max(7, floor(base_title_font   * squeeze1))
   s1_remarks <- max(6, floor(base_remarks_font * squeeze1))
+  s1_box     <- max(ceiling(s1_remarks * 2.4), floor(base_remarks_box * squeeze1))
   s1_hpad    <- max(1, floor(base_header_pad   * squeeze1))
   s1_hgap    <- max(1, floor(base_header_gap   * squeeze1))
   s1_th      <- max(5, floor(base_th_font      * squeeze1))
   s1_tdpad   <- max(1, floor(base_td_pad       * squeeze1))
-  hdr2 <- s1_title * 1.15 + s1_remarks * 1.15 * 3 + s1_hgap * 3 + 2 * s1_hpad + 4
+  hdr2 <- s1_title * 1.15 + info_space(s1_remarks, s1_box) + s1_hgap * 3 + 2 * s1_hpad + 4
   th2  <- s1_th * 1.15 + 2 * s1_tdpad + 2
   rows_space2 <- card_height_px - hdr2 - th2
   td2 <- rows_space2 / num_rows
@@ -142,6 +181,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # Compute VISIBLE sizes (what the user sees on paper)
   vis_title_font   <- max(7,  floor(base_title_font   * squeeze))
   vis_remarks_font <- max(6,  floor(base_remarks_font * squeeze))
+  vis_remarks_box  <- max(ceiling(vis_remarks_font * 2.4), floor(base_remarks_box * squeeze))
   vis_info_font    <- max(6,  floor(base_info_font    * squeeze))
   vis_header_pad   <- max(1,  floor(base_header_pad   * squeeze))
   vis_header_gap   <- max(1,  floor(base_header_gap   * squeeze))
@@ -154,6 +194,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # so we divide visible sizes by card_scale to get internal values.
   sc_title_font   <- round(vis_title_font   / card_scale)
   sc_remarks_font <- round(vis_remarks_font / card_scale)
+  sc_remarks_box  <- round(vis_remarks_box  / card_scale)
   sc_info_font    <- round(vis_info_font    / card_scale)
   sc_header_pad   <- round(vis_header_pad   / card_scale)
   sc_header_gap   <- round(vis_header_gap   / card_scale)
@@ -176,13 +217,14 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   </style>
   
   <div class="cards-container" style="
-      --sc-page-margin: ', page_margin, ';
+      --sc-page-padding: ', page_pad_top, 'in ', page_pad_sides, 'in ', page_pad_bottom, 'in;
       --sc-usable-height: ', usable_height, 'in;
       --sc-grid-rows: ', grid_rows, ';
       --sc-grid-gap: ', grid_gap, 'px;
       --sc-card-scale: ', card_scale, ';
       --sc-title-font: ', sc_title_font, 'px;
       --sc-remarks-font: ', sc_remarks_font, 'px;
+      --sc-remarks-box: ', sc_remarks_box, 'px;
       --sc-info-font: ', sc_info_font, 'px;
       --sc-header-pad: ', sc_header_pad, 'px;
       --sc-header-gap: ', sc_header_gap, 'px;
@@ -196,18 +238,7 @@ generate_section_cards_html <- function(data, title_fields, table_fields, num_ro
   # =========================================================================
   # OPTIMIZATION: Pre-build table header + empty rows (identical for all cards)
   # =========================================================================
-  table_header_parts <- character(length(table_fields))
-  for (i in seq_along(table_fields)) {
-    field <- table_fields[i]
-    label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
-    col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
-    table_header_parts[i] <- paste0('        <th class="', col_class, '">', label, '</th>\n')
-  }
-  prebuilt_table_header <- paste0(
-    '    <table class="card-table">\n      <thead><tr>\n',
-    paste0(table_header_parts, collapse = ""),
-    '      </tr></thead>\n      <tbody>\n'
-  )
+  prebuilt_table_header <- build_table_header(table_fields, field_labels)
   
   # Pre-build empty rows
   empty_row_cells <- character(length(table_fields))
@@ -445,18 +476,27 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         }
         # If not Y, don't show anything
       } else if (field == "ra") {
-        # Restricted Area - only show if Y with pink background
+        # Restricted Area - only show if Y with hot pink background
         if (!is.na(row[[field]]) && row[[field]] != "" && toupper(row[[field]]) == "Y") {
           html <- paste0(html, '        <div class="info-item"><span class="ra-field">',
                         'Restricted</span></div>\n')
         }
         # If not Y, don't show anything
       } else if (field == "prehatch") {
-        # Prehatch with blue background
+        # Prehatch and Pellet are green, Briquet a darker green, BTI red
         if (!is.na(value) && value != "") {
-          html <- paste0(html, '        <div class="info-item"><span class="prehatch-field">',
+          material_class <- switch(toupper(value),
+            "BRIQUET" = " prehatch-briquet",
+            "BTI" = " prehatch-bti",
+            ""
+          )
+          html <- paste0(html, '        <div class="info-item"><span class="prehatch-field', material_class, '">',
                         toupper(value), '</span></div>\n')
         }
+      } else if (field == "drone" && toupper(value) == "Y") {
+        # Drone:Y with purple background; other codes fall through to normal display
+        html <- paste0(html, '        <div class="info-item"><span class="drone-field">',
+                      label, ': ', toupper(value), '</span></div>\n')
       } else if (field == "status_udw") {
         # Structure status (D/W/U) with color coding
         if (!is.na(value) && value != "") {
@@ -502,11 +542,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
           html <- paste0(html, '        <div class="info-item"><span class="', priority_class, '">', toupper(value), '</span></div>\n')
         }
       } else if (field == "remarks") {
-        # Remarks get special styling - larger and full width (skip if empty)
-        if (!is.na(value) && value != "") {
-          html <- paste0(html, '        <div class="info-item remarks"><span class="info-label">',
-                        label, ':</span> ', value, '</div>\n')
-        }
+        # Remarks get a standard-size, full width space, even when blank so techs can write in it
+        html <- paste0(html, '        <div class="info-item remarks"><span class="info-label">',
+                      label, ':</span> ', value, '</div>\n')
       } else {
         # Normal display for other fields (skip if empty/NA)
         if (!is.na(value) && value != "") {
@@ -584,18 +622,9 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
     html <- paste0(html, prebuilt_table_header, prebuilt_table_footer)
   } else {
     # Fallback: build table dynamically
-    html <- paste0(html, '    <table class="card-table">\n')
-    html <- paste0(html, '      <thead><tr>\n')
+    html <- paste0(html, build_table_header(table_fields, field_labels))
     
-    for (i in seq_along(table_fields)) {
-      field <- table_fields[i]
-      label <- if (field %in% names(field_labels)) field_labels[[field]] else humanize_column_name(field)
-      col_class <- if (i %% 2 == 1) "col-odd" else "col-even"
-      html <- paste0(html, '        <th class="', col_class, '">', label, '</th>\n')
-    }
     
-    html <- paste0(html, '      </tr></thead>\n')
-    html <- paste0(html, '      <tbody>\n')
     
     for (j in 1:num_rows) {
       html <- paste0(html, '        <tr>\n')
@@ -623,7 +652,7 @@ generate_card_html <- function(row, title_fields, table_fields, num_rows,
         wm_items <- c(wm_items, '<span class="watermark-item watermark-spring-aedes">Spring Aedes</span>')
       } else if (wm_field == "perturbans" && "perturbans" %in% names(row) &&
                  !is.na(row[["perturbans"]]) && toupper(row[["perturbans"]]) == "Y") {
-        wm_items <- c(wm_items, '<span class="watermark-item watermark-perturbans">Perturbans</span>')
+        wm_items <- c(wm_items, '<span class="watermark-item watermark-perturbans">Cattail</span>')
       } else if (wm_field == "prehatch_calc") {
         prehatch_val <- row[["prehatch"]]
         acres_val <- row[["acres"]]

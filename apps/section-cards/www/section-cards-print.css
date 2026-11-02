@@ -39,7 +39,7 @@
     /* @page margin is 0 (to suppress browser headers/footers),
        so we use padding here for content spacing instead. */
     margin: 0 !important;
-    padding: var(--sc-page-margin, 0.25in) !important;
+    padding: var(--sc-page-padding, 0.25in) !important;
     box-sizing: border-box;
     page-break-inside: avoid;
     break-inside: avoid;
@@ -81,6 +81,7 @@
   font-family: Arial, sans-serif;
   font-size: 11px;
   position: relative;
+  container-type: inline-size; /* column labels size against the card width (cqw) */
   transform: scale(var(--sc-card-scale, 1));
   transform-origin: top left;
   width: calc(100% / var(--sc-card-scale, 1));
@@ -115,6 +116,10 @@
 .info-item.remarks {
   font-size: var(--sc-remarks-font, 10px);
   width: 100%;
+  /* Same space on every card; 2.4em holds two typed lines at any font size.
+     min-height (not height) so a long remark grows instead of being cut off. */
+  min-height: max(var(--sc-remarks-box, 40px), 2.4em);
+  order: 1; /* stay below the other info fields, whatever order they were picked in */
   margin-top: var(--sc-header-gap, 3px);
   line-height: 1.2;
   white-space: normal;
@@ -133,7 +138,7 @@
 /* ---------- Priority badges ---------- */
 .priority-green  { background-color: #90EE90 !important; background: #90EE90 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 .priority-red    { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.priority-yellow { background-color: #FFFFE0 !important; background: #FFFFE0 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.priority-yellow { background-color: #FFFF00 !important; background: #FFFF00 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 .priority-blue   { background-color: #ADD8E6 !important; background: #ADD8E6 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 .priority-orange { background-color: #FFD580 !important; background: #FFD580 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 .priority-purple { background-color: #E6D5FF !important; background: #E6D5FF !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
@@ -143,8 +148,11 @@
 .sample-field        { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 .spring-aedes-field  { background-color: #FFD580 !important; background: #FFD580 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 .perturbans-field    { background-color: #4169E1 !important; background: #4169E1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; color: white !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.prehatch-field      { background-color: #DDA0DD !important; background: #DDA0DD !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-.ra-field            { background-color: #FFB6C1 !important; background: #FFB6C1 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.prehatch-field      { background-color: #32CD32 !important; background: #32CD32 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.prehatch-briquet    { background-color: #008000 !important; background: #008000 !important; color: white !important; }
+.prehatch-bti        { background-color: #D00000 !important; background: #D00000 !important; color: white !important; }
+.ra-field            { background-color: #FF69B4 !important; background: #FF69B4 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+.drone-field         { background-color: #B388FF !important; background: #B388FF !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
 
 /* ---------- Structure status badges ---------- */
 .status-dry     { background-color: #F4A460 !important; background: #F4A460 !important; padding: var(--sc-badge-pad, 2px 4px); border-radius: 3px; font-weight: bold; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
@@ -197,8 +205,8 @@
 .card-table th {
   background: #e0e0e0;
   border: 1px solid #333;
-  padding: 1px 2px; font-size: var(--sc-th-font, 7px); font-weight: bold; text-align: center;
-  white-space: nowrap;
+  padding: 1px 2px; font-size: min(var(--sc-th-font, 7px), var(--sc-th-fit, 7px)); font-weight: bold; text-align: center;
+  white-space: nowrap; overflow: hidden;
 }
 .card-table th.col-odd  { background: #f0f0f0; }
 .card-table th.col-even { background: #e8e8e8; }

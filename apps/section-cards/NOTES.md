@@ -261,11 +261,15 @@ Displays as a red overlay with "2.5/ac" label and the computed value.
 
 ### Priority Color Coding
 
-`GREEN` → `#90EE90`, `RED` → `#FFB6C1`, `YELLOW` → `#FFFFE0`, `BLUE` → `#ADD8E6`, `ORANGE` → `#FFD580`, `PURPLE` → `#E6D5FF`.
+`GREEN` → `#90EE90`, `RED` → `#FFB6C1`, `YELLOW` → `#FFFF00`, `BLUE` → `#ADD8E6`, `ORANGE` → `#FFD580`, `PURPLE` → `#E6D5FF`.
 
 ### Special Field Display
 
 - **Culex / Spring Aedes / Perturbans / Sample / RA**: Only shown if value is `"Y"` — displayed as colored badges
+- **Perturbans**: Labeled "Cattail" on cards and in the UI; the column and the `watermark_fields` value stay `perturbans`
+- **RA / Prehatch / Drone**: Badge colors follow the mapping standards — RA hot pink `#FF69B4`, Prehatch and Pellet green `#32CD32`, Briquet dark green `#008000`, BTI red `#D00000`, Drone purple `#B388FF` (only `Y`; other drone codes stay plain text)
+- **Remarks**: Standard two-line space (`--sc-remarks-box`, grows only for long remarks); shown even when blank so techs can write in it, as long as Remarks is a selected title field
+- **Table columns**: Widths come from `TABLE_COL_WEIGHTS` (Date, Emp #, Sample # wider; Wet %, #/Dip, Amt, Mat narrower); each label's font shrinks only as far as needed to stay inside its column (`--sc-th-fit`)
 - **Chambers**: Only shown for PR-type structures with value > 0
 - **Status (D/W/U)**: Mapped to Dry/Wet/Unknown with color coding
 - **Facility / Foreman**: Codes resolved to human names via lookup maps at display time

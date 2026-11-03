@@ -54,8 +54,66 @@ ui <- accessible_page(
     .well { background:#f5f7fa; }
     h2 { color:#2c5aa0; }
     .metric-note { color:#555; font-size:13px; }
+    caption { color:#555; }
+    .shift-hint { display:inline; }
+    .touch-hint { display:none; }
+    @media (hover: none) {
+      .shift-hint { display:none; }
+      .touch-hint { display:inline; }
+    }
+    /* Phone layout */
+    @media (max-width: 767px) {
+      .container-fluid { padding-left:8px; padding-right:8px; }
+      .row { margin-left:-8px; margin-right:-8px; }
+      [class*='col-'] { padding-left:8px; padding-right:8px; }
+      .well { padding:10px; }
+      .form-control, .selectize-input { font-size:16px; }
+      .btn, .shiny-download-link { width:100%; min-height:40px; margin-bottom:6px; }
+      .nav-tabs { display:flex; flex-wrap:nowrap; overflow-x:auto; white-space:nowrap; }
+      .nav-tabs > li { float:none; }
+      .metric-note, .eq-box p { overflow-wrap:anywhere; }
+      .eq-box p { font-size:11px !important; }
+      table.dataTable { font-size:12px; }
+      .dataTables_wrapper .dataTables_filter, .dataTables_wrapper .dataTables_length,
+      .dataTables_wrapper .dataTables_info { float:none; text-align:left; }
+      .dataTables_wrapper .dataTables_paginate { float:none; text-align:center; }
+      #wi_map { height:320px !important; }
+    }
   "))),
   url_state_js(),  # deep-linking client glue (shared)
+  tags$script(HTML("
+    window.wiSel = [];
+    window.wiApplySel = function() {
+      var s = window.wiSel || [];
+      document.querySelectorAll('input.wi-sel').forEach(function(c) {
+        c.checked = s.indexOf(c.getAttribute('data-sect')) !== -1;
+      });
+    };
+    // DataTables a11y: the scrolling body must be keyboard reachable, and the hidden sizing
+    // copy of the header that scrollX adds must not be read as empty header cells.
+    function a11yDT() {
+      $('.dataTables_wrapper').each(function() {
+        var body = $(this).find('.dataTables_scrollBody');
+        if (body.length) {
+          var cap = $.trim($(this).find('caption').first().text());
+          var id = ($(this).parent().attr('id') || '').replace(/_/g, ' ');
+          body.attr({tabindex: 0, role: 'region',
+                     'aria-label': (cap || id || 'Data') + ' table, scrollable, use arrow keys to scroll'});
+          body.find('thead').attr('aria-hidden', 'true');
+          body.find('thead th').each(function() {
+            var tx = $.trim($(this).text());
+            if (tx) { $(this).attr('aria-label', tx); }
+          });
+        }
+      });
+    }
+    $(document).on('init.dt draw.dt column-sizing.dt', function() { a11yDT(); setTimeout(a11yDT, 400); });
+    $(document).on('shiny:connected', function() {
+      Shiny.addCustomMessageHandler('wi_sel_sync', function(m) {
+        window.wiSel = [].concat(m || []); window.wiApplySel();
+      });
+    });
+  ")),
   titlePanel("FOS Capacity & Border-to-Border Planning"),
   uiOutput("load_banner"),
   tags$p(class = "metric-note",
@@ -222,7 +280,7 @@ ui <- accessible_page(
           NULL
         ),
         # Equations — how each estimate is computed (shown up front)
-        tags$div(style = paste0("background:#eef3fb;border:1px solid #d0daec;",
+        tags$div(class = "eq-box", style = paste0("background:#eef3fb;border:1px solid #d0daec;",
                                 "border-radius:6px;padding:10px 14px;margin-top:6px;"),
           tags$div(style = "font-weight:600;color:#2c5aa0;margin-bottom:4px;",
                    "How the estimates are computed"),
@@ -241,9 +299,11 @@ ui <- accessible_page(
           tags$p(style = "margin:0 0 4px 18px;font-family:Consolas,monospace;font-size:12px;color:#555;",
             HTML("travel time off: capacity factor = 1, travel = 0. travel ratio above 1 = less time traveling, below 1 = more")),
           tags$p(class = "metric-note", style = "margin:8px 0 0;",
-            "Click a section on the map to add/remove it; hold ",
-            tags$b("Shift"), " and drag a box to add many. Every number in the ",
-            "equations is shown in the tables below and updates live.")
+            tags$span(class = "touch-hint", "Tap a section to add or remove it. To select many, turn on ",
+              tags$b("Box select"), " on the map and drag one box (it turns off after each box). "),
+            tags$span(class = "shift-hint", "Click a section on the map to add/remove it; hold ",
+              tags$b("Shift"), " and drag a box to add many. "),
+            "Every number in the equations is shown in the tables below and updates live.")
         )
       ),
       fluidRow(
@@ -254,11 +314,14 @@ ui <- accessible_page(
             actionButton("wi_clear", "Clear", class = "btn-default btn-sm"),
             uiOutput("wi_selcount", inline = TRUE)
           ),
-          leaflet::leafletOutput("wi_map", height = 440),
+          a11y_figure(
+            leaflet::leafletOutput("wi_map", height = 440),
+            label = paste("Map of the facility's priority 2 sections. Click or tap a section to",
+                          "select it for promotion, or tick sections in the section list below.")),
           br(),
           tags$details(
             tags$summary(style = "cursor:pointer;color:#2c5aa0;",
-                         "Show section list / details"),
+                         "Show section list (tick boxes to select; works with the keyboard)"),
             div(style = "overflow-x:auto;margin-top:8px;", DT::DTOutput("wi_sections"))
           )
         ),
@@ -482,8 +545,8 @@ server <- function(input, output, session) {
       disp <- pri[, c("facility", "FOS", "Zone", "priority", pcols)]
       names(disp) <- c("Facility", "FOS", "Zone", "Priority",
                        unname(CAPACITY_METRIC_LABELS[pcols]))
-      return(DT::datatable(disp, rownames = FALSE, filter = "top",
-                           options = list(pageLength = 25, scrollX = TRUE)))
+      return(capacity_dt(disp, left = 2, rownames = FALSE, filter = "top",
+                         options = list(pageLength = 25)))
     }
 
     w <- capacity_wide(cap)
@@ -500,10 +563,11 @@ server <- function(input, output, session) {
     }
     disp <- select_measure_cols(w, input$cap_measure %||% "both")
     disp$facility <- NULL; disp$fosarea <- NULL
+    if ("n_techs" %in% names(disp)) disp$n_techs <- round(disp$n_techs, 1)  # 40 techs / 6 crews
     # explicit labels: "Ground sites P1", "Ground acres P1", ...
     names(disp) <- vapply(names(disp), capacity_col_label, character(1))
-    DT::datatable(disp, rownames = FALSE, filter = "top",
-                  options = list(pageLength = 40, scrollX = TRUE))
+    capacity_dt(disp, left = 2, rownames = FALSE, filter = "top",
+                options = list(pageLength = 40))
   })
 
   output$drive_note <- renderUI({
@@ -517,9 +581,9 @@ server <- function(input, output, session) {
     b <- base(); req(b)
     s <- routed_summary(b$sections, input$avg_mph %||% 45, input$circuity %||% 1.3)
     req(nrow(s) > 0)
-    DT::datatable(s, rownames = FALSE, selection = "none",
-                  caption = "Median per section (sections more than 1 mile from the facility)",
-                  options = list(dom = "t", ordering = FALSE, scrollX = TRUE))
+    capacity_dt(s, rownames = FALSE, selection = "none",
+                caption = "Median per section (sections more than 1 mile from the facility)",
+                options = list(dom = "t", ordering = FALSE))
   })
 
   output$cap_download <- downloadHandler(
@@ -539,7 +603,7 @@ server <- function(input, output, session) {
     measure <- input$cap_measure %||% "both"
     a <- capacity_averages(cap, zone_val, capacity_visible_metrics(measure))
     names(a) <- vapply(names(a), capacity_col_label, character(1))
-    DT::datatable(a, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+    capacity_dt(a, rownames = FALSE, options = list(pageLength = 15))
   }
   output$avg_p1 <- DT::renderDT(avg_table("1"))
   output$avg_p2 <- DT::renderDT(avg_table("2"))
@@ -559,7 +623,8 @@ server <- function(input, output, session) {
         xaxis = list(title = ""),
         yaxis = list(title = sprintf("%s per FOS area (P%s)",
                                      capacity_col_label(m), zone_val)),
-        showlegend = FALSE)
+        showlegend = FALSE, margin = list(l = 50, r = 10, t = 10, b = 60)) %>%
+      plotly::config(displayModeBar = FALSE)
   }
   # Text summary of the same numbers (the plot itself is not screen-reader friendly)
   box_note <- function(zone_val) {
@@ -652,8 +717,8 @@ server <- function(input, output, session) {
               ph_acres_per_crew = "Prehatch acres/crew")
     disp <- bl[, names(cols)]
     names(disp) <- unname(cols)
-    DT::datatable(disp, rownames = FALSE, selection = "none",
-                  options = list(dom = "t", pageLength = 20, ordering = FALSE, scrollX = TRUE))
+    capacity_dt(disp, rownames = FALSE, selection = "none",
+                options = list(dom = "t", pageLength = 20, ordering = FALSE))
   })
 
   output$staff_table <- DT::renderDT({
@@ -669,6 +734,7 @@ server <- function(input, output, session) {
     p1$wetcb_per_tech <- pt(p1$wet_cb)
     s <- staff()
     p1$fos_in_facility <- as.integer(s$crews[match(p1$facility, s$facility)])
+    p1$n_techs <- round(p1$n_techs, 1)
     disp <- p1[, c("facility_name", "fos_name", "n_techs", "fos_in_facility",
                    "ground_sites", "ground_per_tech", "ground_acres", "ground_acres_per_tech",
                    "air_sites", "air_per_tech", "air_acres", "air_acres_per_tech",
@@ -677,8 +743,8 @@ server <- function(input, output, session) {
                      "P1 Ground sites", "Ground sites/tech", "P1 Ground acres", "Ground acres/tech",
                      "P1 Air sites", "Air sites/tech", "P1 Air acres", "Air acres/tech",
                      "P1 Sections", "Sections/tech", "P1 Wet CB", "Wet CB/tech")
-    DT::datatable(disp, rownames = FALSE, filter = "top",
-                  options = list(pageLength = 40, scrollX = TRUE))
+    capacity_dt(disp, left = 2, rownames = FALSE, filter = "top",
+                options = list(pageLength = 40))
   })
 
   # ---- What-If: shared selection state (sectcodes to promote) -----------
@@ -688,6 +754,13 @@ server <- function(input, output, session) {
   observeEvent(input$wi_selectall, {
     g <- wi_geo(); if (!is.null(g) && nrow(g) > 0) sel(unique(as.character(g$sectcode)))
   })
+
+  # Section-list checkboxes (keyboard route): toggle one section; tell the table the selection
+  observeEvent(input$wi_toggle, {
+    x <- input$wi_toggle; cur <- sel()
+    sel(if (isTRUE(x$on)) union(cur, as.character(x$code)) else setdiff(cur, as.character(x$code)))
+  })
+  observe(session$sendCustomMessage("wi_sel_sync", as.list(sel())))
 
   wi_p2 <- reactive({
     b <- base(); req(b, input$wi_facility)
@@ -712,11 +785,11 @@ server <- function(input, output, session) {
   })
 
   output$wi_selcount <- renderUI({
-    tags$span(style = "color:#2c5aa0;font-weight:600;",
+    tags$span(style = "color:#2c5aa0;font-weight:600;", role = "status",
               sprintf("Selected: %d section(s)", length(sel())))
   })
 
-  # ---- Map (click to toggle; Shift+drag box to add) ---------------------
+  # ---- Map (click to toggle; Shift+drag or Box select toggle to add many) --
   .box_js <- "
   function(el, x) {
     var map = this;
@@ -742,6 +815,72 @@ server <- function(input, output, session) {
       var sw=b.getSouthWest(), ne=b.getNorthEast();
       Shiny.setInputValue('wi_box', {s:sw.lat, w:sw.lng, n:ne.lat, e:ne.lng, nonce:Math.random()}, {priority:'event'});
       start = null;
+    });
+
+    // Touch / pen / mouse: a Box select toggle on the map. While on, one-finger drag
+    // draws the rectangle (map panning is off); a tap with no drag still toggles a section.
+    var boxMode = false, pStart = null, pRect = null, pId = null, moved = false, boxBtn = null;
+    var cont = map.getContainer();
+    function setBox(on) {
+      boxMode = on;
+      if (boxBtn) {
+        boxBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        boxBtn.innerHTML = 'Box select: ' + (on ? 'ON' : 'off');
+        boxBtn.style.background = on ? '#2c5aa0' : '#fff';
+        boxBtn.style.color = on ? '#fff' : '#1f2933';
+      }
+      if (on) { map.dragging.disable(); } else { map.dragging.enable(); }
+      cont.style.touchAction = on ? 'none' : '';
+    }
+    var Ctl = L.Control.extend({
+      options: {position: 'topright'},
+      onAdd: function() {
+        var d = L.DomUtil.create('div', 'leaflet-bar');
+        var a = L.DomUtil.create('button', '', d);
+        a.type = 'button'; a.title = 'Drag a box on the map to select many sections';
+        a.setAttribute('aria-pressed', 'false');
+        a.style.cssText = 'min-width:44px;min-height:40px;padding:0 10px;border:0;cursor:pointer;' +
+          'background:#fff;color:#1f2933;font:600 13px sans-serif;';
+        a.innerHTML = 'Box select: off';
+        L.DomEvent.disableClickPropagation(d);
+        boxBtn = a;
+        L.DomEvent.on(a, 'click', function() { setBox(!boxMode); });
+        return d;
+      }
+    });
+    map.addControl(new Ctl());
+    function ll(e) {
+      var r = cont.getBoundingClientRect();
+      return map.containerPointToLatLng(L.point(e.clientX - r.left, e.clientY - r.top));
+    }
+    cont.addEventListener('pointerdown', function(e) {
+      if (!boxMode || !e.isPrimary || e.target.closest('.leaflet-control')) { return; }
+      pId = e.pointerId; pStart = ll(e); moved = false;
+      cont._x0 = e.clientX; cont._y0 = e.clientY;
+      try { cont.setPointerCapture(pId); } catch (err) {}
+    });
+    cont.addEventListener('pointermove', function(e) {
+      if (pStart === null || e.pointerId !== pId) { return; }
+      if (Math.abs(e.clientX - cont._x0) + Math.abs(e.clientY - cont._y0) > 10) { moved = true; }
+      if (!moved) { return; }
+      var b = L.latLngBounds(pStart, ll(e));
+      if (pRect) { pRect.setBounds(b); }
+      else { pRect = L.rectangle(b, {color:'#2c5aa0', weight:1, dashArray:'4', fillOpacity:0.1}).addTo(map); }
+    });
+    function endBox(e) {
+      if (pStart === null || e.pointerId !== pId) { return; }
+      var b = L.latLngBounds(pStart, ll(e));
+      if (pRect) { map.removeLayer(pRect); pRect = null; }
+      pStart = null; pId = null;
+      if (!moved) { return; }
+      var sw = b.getSouthWest(), ne = b.getNorthEast();
+      Shiny.setInputValue('wi_box', {s:sw.lat, w:sw.lng, n:ne.lat, e:ne.lng, nonce:Math.random()}, {priority:'event'});
+      setBox(false);   // one box per tap, so page scrolling returns right away
+    }
+    cont.addEventListener('pointerup', endBox);
+    cont.addEventListener('pointercancel', function() {
+      if (pRect) { map.removeLayer(pRect); pRect = null; }
+      pStart = null; pId = null;
     });
   }"
 
@@ -804,7 +943,9 @@ server <- function(input, output, session) {
   # Section list (informational; reflects current selection)
   output$wi_sections <- DT::renderDT({
     s <- wi_p2(); req(nrow(s) > 0)
-    s$Sel <- ifelse(as.character(s$sectcode) %in% sel(), "✓", "")
+    s$Sel <- sprintf(
+      '<input type="checkbox" class="wi-sel" data-sect="%s" aria-label="Select section %s">',
+      as.character(s$sectcode), as.character(s$sectcode))
     disp <- s[, c("Sel", "sectcode", "fos_name", "ground_sites", "ground_acres",
                   "air_sites", "air_acres", "prehatch_sites", "prehatch_acres",
                   "wet_cb", "miles")]
@@ -812,11 +953,16 @@ server <- function(input, output, session) {
     disp$drive_min <- section_drive_minutes(s, input$wi_drive_mode %||% "estimate",
                                             input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3,
                                             input$wi_speed_pct %||% 100)
-    names(disp) <- c("Sel", "Section", "FOS", "Ground sites", "Ground acres",
+    names(disp) <- c("Select", "Section", "FOS", "Ground sites", "Ground acres",
                      "Air sites", "Air acres", "PH sites", "PH acres",
                      "WetCB", "Miles", "Drive min")
-    DT::datatable(disp, rownames = FALSE, filter = "top", selection = "none",
-                  options = list(pageLength = 10, scrollX = TRUE))
+    capacity_dt(disp, left = 2, rownames = FALSE, filter = "top", selection = "none",
+                escape = -1,
+                callback = DT::JS("table.on('change', 'input.wi-sel', function() {",
+                  "Shiny.setInputValue('wi_toggle', {code: this.getAttribute('data-sect'),",
+                  "on: this.checked, nonce: Math.random()}, {priority: 'event'}); });"),
+                options = list(pageLength = 10,
+                               drawCallback = DT::JS("function() { if (window.wiApplySel) window.wiApplySel(); }")))
   })
 
   # ---- What-If staffing controls (shared with the Staffing tab) ----------
@@ -896,6 +1042,7 @@ server <- function(input, output, session) {
 
   output$wi_by_fos <- DT::renderDT({
     r <- wi_result(); by <- r$by_fos
+    by$n_techs <- round(by$n_techs, 1)
     by <- by[by$added_load != 0 | (!is.na(by$added_techs) & by$added_techs != 0), ]
     if (nrow(by) == 0) return(DT::datatable(
       data.frame(Note = "Select sections on the map to see per-FOS impact"),
@@ -913,7 +1060,7 @@ server <- function(input, output, session) {
     by$emp <- NULL
     for (cn in c("Travel ratio", "Capacity factor"))
       if (cn %in% names(by)) by[[cn]] <- round(by[[cn]], 2)
-    DT::datatable(by, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+    capacity_dt(by, left = 2, rownames = FALSE, options = list(pageLength = 15))
   })
 
   # ---- Estimate B: crews (2001 study method, live) ----------------------
@@ -983,8 +1130,8 @@ server <- function(input, output, session) {
       Jobs = sum(bj$Jobs, na.rm = TRUE), `Hrs/job` = NA,
       Hours = t$hours,
       check.names = FALSE)
-    DT::datatable(rbind(bj, travel_row, total_row), rownames = FALSE,
-                  options = list(dom = "t", scrollX = TRUE))
+    capacity_dt(rbind(bj, travel_row, total_row), rownames = FALSE,
+                options = list(dom = "t"))
   })
 
   output$wi_rates <- DT::renderDT({
@@ -992,9 +1139,9 @@ server <- function(input, output, session) {
     r$Job <- JOB_TYPE_LABELS[r$job_type]
     disp <- r[, c("Job", "jobs", "distinct_sites", "rate")]
     names(disp) <- c("Job", "Jobs (season)", "Distinct sites", "Jobs/site")
-    DT::datatable(disp, rownames = FALSE,
+    capacity_dt(disp, rownames = FALSE,
       caption = sprintf("%s P1 sites, season %s", wi_scope(), unique(r$year)),
-      options = list(dom = "t", scrollX = TRUE))
+      options = list(dom = "t"))
   })
 }
 

@@ -205,3 +205,18 @@ equations are shown up front, and every input number is exposed:
 | `get_db_connection()` / `safe_disconnect()` | `shared/db_helpers.R` |
 | `get_foremen_lookup()` / `get_facility_lookup()` | `shared/db_helpers.R` |
 | `set_app_name()` | `shared/db_pool.R` |
+
+## Phone layout
+
+- One `@media (max-width: 767px)` block in the `app.R` head: tighter gutters/wells, full-width
+  buttons, 16 px inputs (no iOS zoom), tabs swipe in one row, equations wrap, smaller DT font,
+  What-If map 320 px tall. Desktop is unchanged.
+- Every table goes through `capacity_dt()` (`display_functions.R`): `scrollX` plus DT's
+  FixedColumns, so the facility/FOS label columns stay pinned while the rest swipe. Pass `left`
+  for how many leading columns to pin (default 1; the editable Staffing table is not pinned).
+- Map selection: tap toggles a section. To select many on touch, the map has a **Box select**
+  toggle (top right): while ON, one-finger drag draws a rectangle (map panning is off) and adds
+  every section whose centroid is inside, same as desktop Shift+drag (pointer events, so it also
+  works with mouse/pen). A tap without dragging still toggles one section. The hint text switches
+  on `@media (hover: none)`. "Select all shown" / "Clear" work on both.
+- Box plots hide the Plotly mode bar and use compact margins.

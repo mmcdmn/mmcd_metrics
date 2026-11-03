@@ -425,3 +425,20 @@ whatif_compute <- function(sections, promote_sectcodes, cap,
     )
   )
 }
+
+#' DT table for the capacity planner with the first `left` column(s) pinned while
+#' the rest swipe sideways (phone friendly). Extra arguments go to DT::datatable();
+#' `options` is merged over the defaults so callers keep dom / pageLength / ordering.
+#'
+#' @param data     data.frame to show; the label column(s) must come first
+#' @param left     number of leading columns to freeze (0 = none)
+#' @param options  DT options list (e.g. pageLength, dom, ordering)
+capacity_dt <- function(data, left = 1, options = list(), ...) {
+  opts <- utils::modifyList(list(scrollX = TRUE), options)
+  extra <- list(...)
+  if (left > 0 && ncol(data) > left) {
+    opts$fixedColumns <- list(leftColumns = left)
+    extra$extensions <- unique(c(extra$extensions, "FixedColumns"))
+  }
+  do.call(DT::datatable, c(list(data = data, options = opts), extra))
+}

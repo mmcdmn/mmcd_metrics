@@ -91,7 +91,7 @@ On every `refreshData()` run, per tab (skipping anything in `SKIP_TABS`):
 | `API_ENDPOINT` | Which API endpoint to call. See [Endpoints](#endpoints-this-script-can-use) below — not every endpoint works here. | `/private/site-inspections` |
 | `FACILITY` | Limit results to one facility: `E`, `N`, `Sj`, `Sr`, `Wm`, `Wp`. **Always set this.** Blank pulls all ~86,000 active sites district-wide. | `''` |
 | `ACTIONS` | Action codes to keep, e.g. `[9]` or `[1,2,3]`. Required for `/private/site-inspections`. | `[]` |
-| `LOOKBACK_DAYS` | How many days back the API searches. A site with no record in this window is treated as open and its columns clear (except `PRESERVE_COLS`). | `14` |
+| `LOOKBACK_DAYS` | How many days back the API searches (1–200 on both endpoints). A site with no record in this window is treated as open and its columns clear (except `PRESERVE_COLS`). | `14` |
 | `REFRESH_MINUTES` | Interval used by `setupAutoRefresh`. Does nothing until that's run. | `1` |
 | `FILLED_FIELD` | API field that marks a site "done." `was_completed` for `/private/site-inspections`, `was_inspected` for `/private/air-checklist`. | `was_completed` |
 | `DATA_START` | First row that may hold a sitecode. Row 1 is always a header and is always skipped. | `2` |
@@ -135,6 +135,18 @@ site with no record at all. Pair with `always: true`:
 | `priority` | `RED` / `ORANGE` / `YELLOW` / `BLUE` / `GREEN` / `PURPLE`. |
 | `site_type` | Site type code. |
 | `site_remarks` | The site's standing notes — access, owner, permissions. **This is what you want for "remarks."** `rems1`/`rems2` below are per-visit notes, populated on under 1% of ground visits. |
+| `remarks` | The air-site access card note if there is one, otherwise `site_remarks`. Same value the Air Checklist shows. |
+| `restricted_area`, `drone`, `needs_sample` | `true` / `false` flags from the site and its access card. |
+| `facility`, `fac_for_air` | The site's facility, and its facility for air work. They differ on a few sites; the `FACILITY` setting filters on `facility`. |
+| `zone`, `fosarea`, `fos_name`, `sectcode`, `township_name`, `airmap_num` | Where the site sits. |
+
+**ACTIVE TREATMENT fields** — the site's latest treatment (action `3`, `A` or `D`), no matter which `ACTIONS` you chose. Pair with `always: true`:
+
+| Field | Meaning |
+|---|---|
+| `has_active_treatment` | `true` while that treatment is inside its effect window. |
+| `active_material`, `active_trt_date`, `active_trt_expiry` | What was applied, when, and when it stops being active. |
+| `is_prehatch` | `true` if the material is a prehatch product. |
 
 **INSPECTION fields** — blank until the site has a record in the lookback
 window:
@@ -156,7 +168,9 @@ window:
 | `rems1` / `rems2` | Per-visit remarks — almost always empty, use `site_remarks`. |
 | `comments` | Free-text comments field. |
 | `action` | The action code itself (`'1'`, `'9'`, `'D'`, etc). |
-| `activeTrt` | True if the material is still within its effect window (uses that material's own `effect_days` — if you need a fixed window instead, e.g. exactly 30 days regardless of material, use `LOOKBACK_DAYS` + a highlight rule on `action` instead; see example below). |
+| `inspector_name` | `emp1` as a short name. |
+| `bug_status` | Lab result for that record's sample: `Red Bugs`, `Blue Bugs`, `No Bugs`, `Pending Lab` or `No Sample`. |
+| `activeTrt` | True if *that record's* material is still within its effect window (uses the material's own `effect_days`). For "does the site have an active treatment" use `has_active_treatment` above. For a fixed window, e.g. exactly 30 days regardless of material, use `LOOKBACK_DAYS` + a highlight rule on `action` instead; see example below. |
 
 ### `mode: 'highlight'`
 

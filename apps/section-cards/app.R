@@ -68,6 +68,8 @@ ui <- accessible_page(
       h3 { font-size: 24px !important; }
       h4 { font-size: 20px !important; }
       .btn { font-size: 16px !important; }
+      /* The 16px rule above must not push a column label past its column */
+      .card-table th { font-size: min(16px, var(--sc-th-fit, 16px)) !important; }
       .print-button {
         position: sticky;
         top: 10px;
@@ -439,7 +441,7 @@ server <- function(input, output, session) {
       watermark_choices <- list(
         "Culex" = "culex",
         "Spring Aedes" = "spr_aedes",
-        "Perturbans" = "perturbans",
+        "Cattail" = "perturbans",
         "Prehatch Calculation" = "prehatch_calc",
         "Sample Site" = "sample"
       )
@@ -1020,12 +1022,6 @@ server <- function(input, output, session) {
     setProgress(value = 1, detail = "Done!")
     
     }) # end withProgress
-    
-    showNotification(
-      paste("Generated", nrow(cards_data()), "section cards"),
-      type = "message",
-      duration = 3
-    )
   })
   
   # Download handler for HTML file

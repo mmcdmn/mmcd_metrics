@@ -203,8 +203,9 @@ SUCO_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "species_name")
 
 # Load + filter SUCO data once (reuses get_suco_data + filter_suco_data). The facility
 # is filtered in SQL by get_suco_data; filter_suco_data still applies it (idempotent).
-.load_suco <- function(ds, dr, fac, fman, zn, spp) {
-  data <- suco_env$get_suco_data(data_source = ds, date_range = dr, facility_filter = fac)
+.load_suco <- function(ds, dr, fac, fman, zn, spp, species_details = FALSE) {
+  data <- suco_env$get_suco_data(data_source = ds, date_range = dr,
+                                 return_species_details = species_details, facility_filter = fac)
   if (is.null(data) || nrow(data) == 0) return(data)
   suco_env$filter_suco_data(
     data, facility_filter = fac, foreman_filter = fman,
@@ -219,6 +220,18 @@ SUCO_GROUP_BYS <- c("mmcd_all", "facility", "foreman", "species_name")
 .suco_rows <- function(df) {
   if (is.null(df) || nrow(df) == 0) return(list())
   lapply(seq_len(nrow(df)), function(i) as.list(df[i, , drop = FALSE]))
+}
+# get_top_locations returns one row per sample for the app's stacked chart. Roll that up
+# to one row per location, best first, so the ranking and `limit` apply to locations.
+.suco_rank_locations <- function(top, mode) {
+  col <- if (mode == "species") "species_count" else "visits"
+  ranked <- top %>%
+    dplyr::group_by(location) %>%
+    dplyr::summarize(value = sum(.data[[col]], na.rm = TRUE),
+                     first_suco = min(inspdate), last_suco = max(inspdate), .groups = "drop") %>%
+    dplyr::arrange(dplyr::desc(value), location)
+  names(ranked)[names(ranked) == "value"] <- col
+  as.data.frame(ranked)
 }
 
 # ── SUCO Summary (district totals + weekly goal) ──
@@ -291,11 +304,13 @@ function(req, res, group_by = "facility", facility = NULL, foreman = NULL, zone 
     spp <- if (!is.null(species) && nzchar(species)) clean_text(species, 64L) else "All"
     dr  <- .suco_date_range(start_date, end_date)
 
-    filt <- .load_suco(ds, dr, fac, fman, zn, spp)
-    if (is.null(filt) || nrow(filt) == 0) {
+    by_species <- grp == "species_name"
+    filt <- .load_suco(ds, dr, fac, fman, zn, spp, species_details = by_species)
+    if (is.null(filt) || nrow(filt) == 0 || (by_species && all(is.na(filt$species_name)))) {
       return(list(group_by = grp, groups = list()))
     }
-    st <- suco_env$create_summary_stats(filt, group_by = grp, data_source = ds)
+    # The app's species branch is named "species"; any other name falls through to foreman.
+    st <- suco_env$create_summary_stats(filt, group_by = if (by_species) "species" else grp, data_source = ds)
     list(group_by = grp, groups = .suco_rows(st))
   }, error = function(e) api_error(res, 400, e$message))
 }
@@ -329,7 +344,7 @@ function(req, res, mode = "visits", species = NULL, facility = NULL, zone = "1,2
     if (is.null(filt) || nrow(filt) == 0) return(list(mode = md, count = 0L, data = list()))
     top <- suco_env$get_top_locations(filt, mode = md, species_filter = spp)
     if (is.null(top) || nrow(top) == 0) return(list(mode = md, count = 0L, data = list()))
-    out <- apply_row_limit(top, limit, default_limit = 25L)
+    out <- apply_row_limit(.suco_rank_locations(top, md), limit, default_limit = 25L)
     c(list(mode = md, filters = list(facility = fac, zone = zn, species = spp)), out)
   }, error = function(e) api_error(res, 400, e$message))
 }

@@ -26,23 +26,25 @@ source("/srv/shiny-server/apps/air_inspection_checklist/data_functions.R", local
 #* @param facility Facility code. Omit for all.
 #* @param zone Zone filter: 1, 2, or 1,2. Default 1,2.
 #* @param priority Priority filter: RED, YELLOW, BLUE, GREEN, PURPLE (comma-separated). Omit for all.
-#* @param drone_filter Drone filter: Y, M, C, all. Default all.
+#* @param drone_filter drone_only, no_drone, or include_drone. Default include_drone.
 #* @param start_year Start year for historical. Omit for current only.
 #* @param end_year End year for historical. Omit for current only.
+#* @param limit Max rows to return. Omit for all rows.
 #* @get /larval
 #* @serializer json
 function(req, res,
          facility = NULL,
          zone = "1,2",
          priority = NULL,
-         drone_filter = "all",
+         drone_filter = "include_drone",
          start_year = NULL,
-         end_year = NULL) {
+         end_year = NULL,
+         limit = NULL) {
   tryCatch({
     fac  <- if (!is.null(facility) && nzchar(facility)) validate_facility(facility) else NULL
     zn   <- validate_zone(zone)
     pri  <- if (!is.null(priority) && nzchar(priority)) validate_priority(priority) else NULL
-    df   <- if (!is.null(drone_filter) && drone_filter %in% c("Y", "M", "C", "all")) drone_filter else "all"
+    df   <- .insp_drone_filter(drone_filter)
     sy   <- if (!is.null(start_year) && nzchar(start_year)) as.integer(start_year) else NULL
     ey   <- if (!is.null(end_year) && nzchar(end_year)) as.integer(end_year) else NULL
 
@@ -55,12 +57,12 @@ function(req, res,
       end_year        = ey
     )
 
-    sites <- data$sites
-    if (is.null(sites) || nrow(sites) == 0) {
+    # Without status_types, load_raw_data returns the inspections as a plain data frame.
+    if (is.null(data) || nrow(data) == 0) {
       return(list(count = 0L, data = list()))
     }
 
-    list(count = nrow(sites), data = sites)
+    apply_row_limit(data, limit)
   }, error = function(e) api_error(res, 400, e$message))
 }
 
@@ -104,7 +106,7 @@ function(req, res,
 #* @param drone_filter drone_only, no_drone, or include_drone. Default include_drone.
 #* @param prehatch_only If true, prehatch sites only. Default false.
 #* @param sort_by oldest (longest-standing gap first) or newest. Default oldest.
-#* @param limit Max rows to return. Default 500.
+#* @param limit Max rows to return. Omit for all rows.
 #* @get /red-bug-gaps
 #* @serializer json
 function(req, res, years_gap = 5, facility = NULL, fosarea = NULL, zone = "1,2",

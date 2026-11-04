@@ -23,6 +23,41 @@ test_that("process_catch_basin_data handles empty data", {
   expect_equal(nrow(result), 0)
 })
 
+test_that("summary-by-facility route rolls up load_raw_data sections by facility", {
+  # Regression: the route passed load_raw_data()'s list to a data-frame function and
+  # returned 400 on every call. Evaluates the real route with the loader stubbed.
+  route_file <- file.path(get_project_root(), "api/routes/catch_basins.R")
+  exprs <- parse(route_file, keep.source = TRUE)
+  first_lines <- vapply(attr(exprs, "srcref"), function(s) as.integer(s[1]), integer(1))
+  route_line <- grep("@get /summary-by-facility", readLines(route_file))
+  helper <- Filter(function(e) length(e) > 1 && identical(e[[2]], as.name(".cb_group_rows")), as.list(exprs))[[1]]
+
+  env <- new.env(parent = globalenv())
+  eval(helper, env)
+  env$validate_zone <- function(zone) c("1", "2")
+  env$validate_date <- function(d) as.Date("2026-07-01")
+  env$CB_EXPIRING_DEFAULT <- 7L
+  env$api_error <- function(res, status, message) stop(message)
+  env$cb_env <- list(load_raw_data = function(expiring_days, ...) {
+    expect_equal(expiring_days, 7L)
+    list(treatments = data.frame(), total_count = 3, sites = data.frame(
+      facility = c("E", "E", "N"), facility_full = c("East", "East", "North"),
+      sectcode = c("1904A", "1904B", "2001A"), fosarea = c("1", "1", "2"),
+      foreman_name = c("A", "A", "B"),
+      total_count = c(10L, 10L, 5L), active_count = c(5L, 5L, 0L),
+      expiring_count = c(1L, 1L, 0L), expired_count = c(2L, 2L, 5L)
+    ))
+  })
+  route <- eval(exprs[[which(first_lines > route_line)[1]]], env)
+
+  result <- route(req = list(), res = list())
+  expect_equal(result$analysis_date, "2026-07-01")
+  expect_equal(vapply(result$facility_summaries, `[[`, "", "facility"), c("East", "North"))
+  east <- result$facility_summaries[[1]]
+  expect_equal(c(east$total_count, east$active_count, east$expiring_count, east$expired_count), c(20L, 10L, 2L, 4L))
+  expect_equal(east$pct_treated, 50)
+})
+
 test_that("process_catch_basin_data aggregates by mmcd_all", {
   root <- get_project_root()
   source(file.path(root, "apps/catch_basin_status/data_functions.R"), local = TRUE)

@@ -317,8 +317,8 @@ function(req, res, start_year = NULL, end_year = NULL, facility = NULL,
     if (gen != "both") eff <- eff[tolower(eff$genus) == gen, , drop = FALSE]
     if (!is.null(seas) && "season" %in% names(eff)) eff <- eff[eff$season %in% seas, , drop = FALSE]
     if (!is.null(ttypes) && "trt_action" %in% names(eff)) eff <- eff[eff$trt_action %in% ttypes, , drop = FALSE]
-    if (mtype %in% c("methoprene", "spinosad") && "mattype" %in% names(eff)) {
-      eff <- eff[grepl(mtype, tolower(eff$mattype %||% ""), fixed = TRUE), , drop = FALSE]
+    if (mtype %in% c("methoprene", "spinosad")) {
+      eff <- eff[grepl(mtype, tolower(eff$active_ingredient), fixed = TRUE), , drop = FALSE]
     }
     if (nrow(eff) == 0) return(empty)
 
@@ -350,6 +350,9 @@ function(req, res, start_year = NULL, end_year = NULL, facility = NULL,
 #* @serializer json
 function(req, res) {
   tryCatch({
-    efficacy_env$load_dosage_options(matcode = NULL)
+    con <- get_db_connection()
+    if (is.null(con)) stop("database connection failed")
+    on.exit(safe_disconnect(con), add = TRUE)
+    efficacy_env$load_dosage_options(con) %||% list()
   }, error = function(e) api_error(res, 400, e$message))
 }

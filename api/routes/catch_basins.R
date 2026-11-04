@@ -203,28 +203,18 @@ function(req, res,
       analysis_date   = adate,
       facility_filter = "all",
       foreman_filter  = "all",
-      zone_filter     = zn
+      zone_filter     = zn,
+      expiring_days   = CB_EXPIRING_DEFAULT
     )
 
-    grouped <- cb_env$process_catch_basin_data(
-      data,
-      group_by     = "facility",
-      combine_zones = TRUE
-    )
-
-    if (is.null(grouped) || nrow(grouped) == 0) {
-      return(list(analysis_date = as.character(adate), facility_summaries = list()))
-    }
-
-    rows <- lapply(seq_len(nrow(grouped)), function(i) {
-      r <- grouped[i, ]
+    rows <- lapply(.cb_group_rows(data$sites, "facility"), function(g) {
       list(
-        facility        = r$display_name,
-        total_count     = as.integer(r$total_count),
-        active_count    = as.integer(r$active_count),
-        expiring_count  = as.integer(r$expiring_count %||% 0),
-        expired_count   = as.integer(r$expired_count %||% 0),
-        pct_treated     = round(as.numeric(r$pct_treated %||% 0), 1)
+        facility        = g$display_name,
+        total_count     = g$total_count,
+        active_count    = g$active_count,
+        expiring_count  = g$expiring_count,
+        expired_count   = g$expired_count,
+        pct_treated     = g$pct_treated
       )
     })
 

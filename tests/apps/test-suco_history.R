@@ -114,6 +114,14 @@ test_that("filter_suco_data filters by zone", {
   expect_true(all(result$zone == "1"))
 })
 
+test_that("filter_suco_data accepts multiple zones", {
+  # Regression: the API's default zone is c("1", "2"), which used to raise an error in `&&`.
+  data <- data.frame(zone = c("1", "2", "3"), facility = "E")
+  result <- filter_suco_data(data, "all", "all", c("1", "2"), NULL)
+  expect_equal(result$zone, c("1", "2"))
+  expect_equal(nrow(filter_suco_data(data, "all", "all", "all", NULL)), 3)
+})
+
 test_that("filter_suco_data filters by date range", {
   skip_if(!use_stubs, "Requires stub data")
   
@@ -546,7 +554,7 @@ test_that("every SUCO caller passes the facility to get_suco_data", {
   expect_equal(lengths(regmatches(emb, gregexpr("env\\$get_suco_data\\(", emb))), 4)
   expect_equal(lengths(regmatches(emb, gregexpr("env\\$get_suco_data\\([^)]*facility_filter = p\\$facility", emb))), 4)
   # API loader shared by /suco/summary, /suco/summary-by-group, /suco/top-locations
-  expect_true(grepl("get_suco_data\\(data_source = ds, date_range = dr, facility_filter = fac\\)",
+  expect_true(grepl("get_suco_data\\([^)]*facility_filter = fac\\)",
                     txt("api/routes/surveillance.R")))
   # suco_history app (facility is part of the cached_call key)
   expect_true(grepl("facility_filter = normalize_suco_facility\\(inputs\\$facility_filter\\)",

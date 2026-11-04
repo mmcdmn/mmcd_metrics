@@ -376,7 +376,7 @@ filter_suco_data <- function(data, facility_filter, foreman_filter, zone_filter,
   filtered_data <- data
   
   # Apply zone filter
-  if (!is.null(zone_filter) && length(zone_filter) > 0 && zone_filter != "all" && "zone" %in% names(filtered_data)) {
+  if (!is.null(zone_filter) && length(zone_filter) > 0 && !("all" %in% zone_filter) && "zone" %in% names(filtered_data)) {
     filtered_data <- filtered_data %>%
       filter(zone %in% zone_filter)
   }

@@ -161,12 +161,15 @@ api_error <- function(res, status, msg) {
   list(error = msg)
 }
 
-# Server-side row limit for API responses.
-# LLM callers pass limit=200 (default); dashboards can request more.
-apply_row_limit <- function(df, limit = NULL, default_limit = 500L, max_limit = 5000L) {
-  n <- suppressWarnings(as.integer(limit %||% default_limit))
-  if (is.na(n) || n < 1L) n <- default_limit
-  if (n > max_limit) n <- max_limit
+# Optional row limit for API responses. Omitted or invalid means default_limit
+# (all rows unless a route sets one); a requested limit is capped at max_limit.
+apply_row_limit <- function(df, limit = NULL, default_limit = Inf, max_limit = 5000L) {
+  n <- suppressWarnings(as.integer(limit %||% NA))
+  if (is.na(n) || n < 1L) {
+    n <- default_limit
+  } else if (n > max_limit) {
+    n <- max_limit
+  }
   total <- nrow(df)
   if (total > n) {
     list(

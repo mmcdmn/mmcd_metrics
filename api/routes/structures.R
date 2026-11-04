@@ -118,7 +118,7 @@ STRUCT_GROUP_BYS <- c("facility", "foreman", "mmcd_all")
 #* @param priority loc.priority code(s), comma-separated. Omit for all.
 #* @param status status_udw: D,W,U (comma-separated). Default D,W,U (full universe).
 #* @param analysis_date Date YYYY-MM-DD. Default today.
-#* @param limit Max rows to return. Default 500.
+#* @param limit Max rows to return. Omit for all rows.
 #* @get /struct-treatments
 #* @serializer json
 function(req, res,

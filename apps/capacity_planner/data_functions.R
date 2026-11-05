@@ -136,6 +136,19 @@ load_jobs_per_site <- function(year = as.integer(format(Sys.Date(), "%Y")) - 1) 
 # scripts/build_ra_exclusions.R from extra/qgis/ra_view.gpkg. Dropped from all site/acre loads.
 RA_EXCLUSION_FILE <- "data/ra_excluded_sites.csv"
 
+# Values read from a file are kept per R process (workers outlive sessions), keyed by the file's
+# content hash, so only the first session after a start or an edit pays for the read / parse.
+.capacity_memo <- new.env(parent = emptyenv())
+.memo_file <- function(tag, path, build) {
+  key <- tryCatch(unname(tools::md5sum(path)), error = function(e) NA_character_)
+  if (is.na(key)) return(build())
+  hit <- .capacity_memo[[tag]]
+  if (!is.null(hit) && identical(hit$key, key)) return(hit$value)
+  v <- build()
+  assign(tag, list(key = key, value = v), envir = .capacity_memo)
+  v
+}
+
 #' SQL fragment (" AND NOT (...)") that removes RA monitor_ok = FALSE sites; "" when the
 #' lookup file is missing. Sites stay with their section's FOS (gis_sectcode.fosarea); the
 #' RA layer's e_restrctspec employee numbers are not used.
@@ -143,13 +156,91 @@ RA_EXCLUSION_FILE <- "data/ra_excluded_sites.csv"
 #' @param alias table alias of loc_breeding_sites in the query
 ra_exclusion_sql <- function(alias = "b", path = RA_EXCLUSION_FILE) {
   if (!file.exists(path)) return("")
-  d <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, colClasses = "character"),
-                error = function(e) NULL)
-  if (is.null(d) || !"sitecode" %in% names(d)) return("")
-  codes <- unique(d$sitecode[grepl("^[0-9A-Za-z-]+$", d$sitecode)])
-  if (length(codes) == 0) return("")
-  sprintf(" AND NOT (%s.sitecode = ANY(string_to_array('%s', ',')))",
-          alias, paste(codes, collapse = ","))
+  codes <- .memo_file(paste0("ra:", path), path, function() {
+    d <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, colClasses = "character"),
+                  error = function(e) NULL)
+    if (is.null(d) || !"sitecode" %in% names(d)) return("")
+    cs <- unique(d$sitecode[grepl("^[0-9A-Za-z-]+$", d$sitecode)])
+    paste(cs, collapse = ",")
+  })
+  if (!nzchar(codes)) return("")
+  sprintf(" AND NOT (%s.sitecode = ANY(string_to_array('%s', ',')))", alias, codes)
+}
+
+# ---- Shared cache for the heavy section / priority queries -------------------------------
+# Redis (shared by every worker and session, see shared/redis_cache.R) holds the results for
+# CAPACITY_CACHE_TTL (config cache.ttl.capacity_planner, default 24 h), so a visit does not re-run
+# the two aggregates over loc_breeding_sites / loc_catchbasin. Bump CAPACITY_CACHE_VERSION when a
+# query's columns change; the key also carries a fingerprint of the RA exclusion file and the
+# prehatch types, so editing either never serves stale numbers.
+CAPACITY_CACHE_VERSION <- 1L
+
+capacity_cache_ttl <- function() {
+  if (!exists("get_app_config", mode = "function") && file.exists("../../shared/config.R")) {
+    source("../../shared/config.R")
+  }
+  v <- tryCatch(get_app_config()$cache$ttl$capacity_planner, error = function(e) NULL)
+  if (is.null(v) || !is.numeric(v) || length(v) != 1 || !is.finite(v) || v <= 0) 86400L else as.integer(v)
+}
+
+#' list(get, set) backed by Redis, or NULL when Redis is not available (then nothing is cached).
+capacity_cache_store <- function() {
+  ok <- exists("redis_is_active", mode = "function") && exists("redis_get", mode = "function") &&
+    exists("redis_set", mode = "function") &&
+    isTRUE(tryCatch(redis_is_active(), error = function(e) FALSE))
+  if (!ok) return(NULL)
+  list(get = redis_get, set = redis_set)
+}
+
+capacity_cache_fingerprint <- function(path = RA_EXCLUSION_FILE) {
+  md5 <- if (file.exists(path)) tryCatch(unname(tools::md5sum(path)), error = function(e) "unreadable") else "none"
+  substr(rlang::hash(list(md5, .prehatch_in_sql)), 1, 8)
+}
+
+#' Run `loader` through the shared cache.
+#'
+#' A hit returns the stored value without touching the database. A miss (or `refresh = TRUE`)
+#' calls the loader and stores the result for everyone, except an empty / NULL result, which is
+#' returned but never stored (the loaders return an empty table when the database is
+#' unreachable, and that must not stick for a day). No store (Redis down) just loads.
+#'
+#' @param name   short name of the data set ("sections", "priority", ...)
+#' @param loader function() -> data.frame
+#' @param store  list(get = function(key), set = function(key, value, ttl)) or NULL
+#' @return list(data, at = POSIXct the data was read, cached = TRUE for a hit)
+capacity_cached <- function(name, loader, refresh = FALSE, ttl = capacity_cache_ttl(),
+                            store = capacity_cache_store(),
+                            fingerprint = capacity_cache_fingerprint()) {
+  key <- sprintf("capacity:%s:v%d:%s", name, CAPACITY_CACHE_VERSION, fingerprint)
+  t0 <- Sys.time()
+  if (!is.null(store) && !isTRUE(refresh)) {
+    hit <- tryCatch(store$get(key), error = function(e) NULL)
+    if (is.list(hit) && !is.null(hit$data) && inherits(hit$at, "POSIXct")) {
+      message(sprintf("[capacity_planner] cache HIT  %-9s (%.0f min old, %.2fs)", name,
+                      as.numeric(difftime(Sys.time(), hit$at, units = "mins")),
+                      as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      return(list(data = hit$data, at = hit$at, cached = TRUE))
+    }
+  }
+  data <- loader()
+  at <- Sys.time()
+  stored <- FALSE
+  if (!is.null(store) && !is.null(data) && NROW(data) > 0) {
+    stored <- isTRUE(tryCatch({ store$set(key, list(data = data, at = at), ttl); TRUE },
+                              error = function(e) FALSE))
+  }
+  message(sprintf("[capacity_planner] cache MISS %-9s (%s, %.2fs)", name,
+                  if (stored) "stored" else "not stored",
+                  as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+  list(data = data, at = at, cached = FALSE)
+}
+
+#' Fill (or refresh) the shared cache; run at server start so the first visitor gets a hit.
+warm_capacity_cache <- function(refresh = FALSE) {
+  s <- capacity_cached("sections", load_capacity_sections, refresh = refresh)
+  p <- capacity_cached("priority", load_capacity_by_priority, refresh = refresh)
+  capacity_cached("geo", load_section_geo, ttl = 7L * 86400L, refresh = refresh)   # What-If map shapes
+  invisible(list(sections = NROW(s$data), priority = NROW(p$data)))
 }
 
 #' Section-grain capacity: one row per section with its site/catch-basin loads and
@@ -275,18 +366,20 @@ ROUTED_DRIVETIME_FILE <- "data/facility_section_drivetime.csv"
 #'   app then falls back to the straight-line estimate)
 load_routed_drivetimes <- function(path = ROUTED_DRIVETIME_FILE) {
   if (!file.exists(path)) return(NULL)
-  d <- tryCatch(suppressWarnings(utils::read.csv(path, stringsAsFactors = FALSE,
-                                                 colClasses = c(sectcode = "character"))),
-                error = function(e) { warning(paste("[load_routed_drivetimes]", e$message)); NULL })
-  need <- c("facility", "sectcode", "drive_min", "drive_miles")
-  if (is.null(d) || !all(need %in% names(d))) return(NULL)
-  if (!"snap_m" %in% names(d)) d$snap_m <- NA_real_
-  if (!"snap_flag" %in% names(d)) d$snap_flag <- !is.na(d$snap_m) & d$snap_m > 1000
-  if (!"straight_miles" %in% names(d)) d$straight_miles <- NA_real_
-  names(d)[names(d) == "drive_min"]   <- "drive_min_routed"
-  names(d)[names(d) == "drive_miles"] <- "drive_miles_routed"
-  d[, c("facility", "sectcode", "drive_min_routed", "drive_miles_routed", "snap_m",
-        "snap_flag", "straight_miles")]
+  .memo_file(paste0("routed:", path), path, function() {   # parsed once per R process
+    d <- tryCatch(suppressWarnings(utils::read.csv(path, stringsAsFactors = FALSE,
+                                                   colClasses = c(sectcode = "character"))),
+                  error = function(e) { warning(paste("[load_routed_drivetimes]", e$message)); NULL })
+    need <- c("facility", "sectcode", "drive_min", "drive_miles")
+    if (is.null(d) || !all(need %in% names(d))) return(NULL)
+    if (!"snap_m" %in% names(d)) d$snap_m <- NA_real_
+    if (!"snap_flag" %in% names(d)) d$snap_flag <- !is.na(d$snap_m) & d$snap_m > 1000
+    if (!"straight_miles" %in% names(d)) d$straight_miles <- NA_real_
+    names(d)[names(d) == "drive_min"]   <- "drive_min_routed"
+    names(d)[names(d) == "drive_miles"] <- "drive_miles_routed"
+    d[, c("facility", "sectcode", "drive_min_routed", "drive_miles_routed", "snap_m",
+          "snap_flag", "straight_miles")]
+  })
 }
 
 #' Add the routed drive-time columns to the section-grain table. Sections with no

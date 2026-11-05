@@ -277,6 +277,35 @@ drive times and travel ratio; Estimate A shows only techs.
    them to another facility) and see what that adds (sections, sites, acres, catch basins,
    drive time) by facility and by FOS area, then the techs (per FOS area) and crews estimates.
 
+## Caching and page-open speed
+
+Opening the page used to run two big aggregates (`load_capacity_sections`,
+`load_capacity_by_priority`) and re-read two CSVs on EVERY visit, inside the first Shiny flush,
+so nothing painted until they finished. Now:
+- **Shared Redis cache, 24 h** (`capacity_cached()` in `data_functions.R`; Redis is the embedded
+  one from `startup.sh`, shared by all workers and sessions; TTL `cache.ttl.capacity_planner` in
+  `config/app_config.yaml`). Stores `list(data, at)`. A miss, or **Refresh data** (button next to
+  the "Counts as of ..." line, shown in the viewer's own time zone), reloads and re-stores for
+  everyone. An empty or NULL result is returned but never stored (the loaders return an empty
+  table when the DB is unreachable, which must not stick for a day). No Redis, or Redis erroring,
+  just loads. Key = `capacity:<name>:v<CAPACITY_CACHE_VERSION>:<8-char hash of the RA exclusion
+  file + prehatch types>`: bump the version when a query's columns change; editing the exclusion
+  CSV changes the key by itself. Cached: `sections`, `priority` (24 h) and `geo`, the What-If map
+  shapes (7 days; Refresh data leaves them alone).
+- **Pre-loaded at start**: `warm_capacity_cache()` runs from `startup.sh` (`warm_capacity_planner`,
+  in BOTH the multi-worker and the default single-worker mode; the older overview warm-up only
+  existed in multi-worker) and logs to `/var/log/cache-warmup.log`. Redis is memory-only, so every
+  restart starts empty; the warm-up fills it before the first visitor.
+- **Per-process memo** (`.memo_file()`, keyed by the file's md5): the 19,242-row drive-time CSV
+  and the RA exclusion codes are parsed once per R process, not once per session.
+- **Timing log**: the load observer logs each step (`[capacity_planner] load ...`) and every cache
+  `HIT` / `MISS` to the app log.
+- **The load stays synchronous on purpose.** The shared-link restore (`expand_share()`) needs
+  `base()` loaded before the first `shiny:idle`; deferring the load to paint a spinner first would
+  make links open with a "data did not load" banner.
+- Measured on the local container: cold visit = sections 1.3 s + priority 0.4 s of database time
+  (page ready in 3.6 s); warm visit = 0.03 s for both, page ready in 1.2 s, identical tables.
+
 ## Cross-checks (validated against live DB)
 
 - Sr FOS 1905 (Alex D) P1: 102 sections, 1881 ground, 190 air, 561 prehatch sites,

@@ -219,6 +219,32 @@ drive times and travel ratio; Estimate A shows only techs.
   - **A. Techs change** (per FOS area) = ceil((P1 - removed + added / capacity factor) / load-per-tech) - ceil(P1 / load-per-tech)
   - **B. Net crews** = [ Sum_jobtype ( (added - removed sites) x jobs-per-site x hours-per-job ) + travel ] / hours-per-crew-season,
     where **travel = Sum_section ( round trips x 2 x one-way drive time )**, added minus removed.
+- **Share a scenario** — **Copy link to this scenario** (section 1) makes a link whose `s=`
+  parameter carries everything: the changed sections (one bitmap per destination group over the
+  sorted section list, plus a fingerprint of that list), all `wi_*` inputs except the three
+  per-facility staffing boxes, the WHOLE staffing table (17-digit text, because the image's
+  jsonlite keeps only 15 digits and 6.666666666666667 techs per crew must round-trip exactly), the
+  map centre / zoom, the date and a data stamp (P1 / P2 counts). Nothing is stored server-side
+  (Redis is memory-only, the DB connection is read-only), so links never expire. Pure functions
+  `scenario_pack` / `scenario_unpack` / `scenario_share_state` / `share_token_encode` /
+  `share_token_decode` / `share_state_*` in `display_functions.R` (unit tested, incl. tampered
+  and oversized tokens: JSON only, 12,000-char cap, allow-listed ids, validated values).
+  Opening a link runs `expand_share()` through the shared engine's `expand_state` hook: it
+  restores the scenario, staffing table and map view, then the engine applies the saved settings
+  (two passes). The recipient gets an editable copy plus a banner; a link made against a different
+  section list says it can't be restored (never guessed), and a changed P1 / P2 count adds a
+  data-changed note. The link is built in the page from `location.origin + pathname` (the app
+  sits behind OpenResty) and shown in a read-only box, the fallback when the clipboard is blocked.
+- **Staffing boxes (`wi_techs_per_crew`, `wi_drone_offload`, `wi_drone_air_offload`)** show the
+  selected facility's row. They used to be written back from `input$wi_*`, which looped forever
+  when a stale value pushed for one facility arrived after the selection moved to another (seen
+  with any link that selects a non-first facility). Now the server pushes values with a
+  `wi_staff_set` custom message that names the facility and is never an edit; the page sends
+  `wi_staff_edit` (tagged with the facility) only for a genuine edit while the boxes belong to the
+  selected facility; `staff_apply_edit()` writes to that facility only and ignores display
+  rounding (5.71 for 5.714...), which also stops East's techs drifting to 5.71.
+- **Selected table rows** use a light highlight with dark text (`--dt-row-selected*` in the head
+  CSS); DataTables' default white-on-blue (4.2:1) failed WCAG AA.
 - **CSV downloads** — every results table has a "Download CSV" button (`csv_out()` at the end
   of the server): Capacity (the existing one, plus averages and the drive-time summary),
   Staffing (assumptions, baseline, techs per FOS area), and What-If (changed sections, by

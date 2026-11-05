@@ -669,6 +669,225 @@ scenario_crews <- function(after, rates, hours_per_job = STUDY_HOURS_PER_JOB,
   )
 }
 
+#' Apply one edit from the What-If staffing inputs to the staffing table.
+#'
+#' The edit names the facility it was made for (the page tags every edit with the facility it
+#' was showing at that moment), so a late echo of a value the server itself pushed for another
+#' facility can never be written to the facility now selected. `tol` ignores a value within
+#' display rounding of the stored one (5.71 shown for 5.714 must not overwrite it).
+#'
+#' @param staff staffing table (facility, crews, techs_per_crew, ...)
+#' @param fac   facility the edit is for
+#' @param col   column to change
+#' @param v     new value (clamped to [lo, hi]); NULL / NA / non-numeric is ignored
+#' @return the table, changed only when the edit is for a known facility and differs
+staff_apply_edit <- function(staff, fac, col, v, lo = 0, hi = Inf, tol = 0) {
+  if (is.null(staff) || is.null(fac) || length(fac) != 1 || is.na(fac) || !fac %in% staff$facility) return(staff)
+  if (!col %in% names(staff) || is.null(v) || length(v) != 1 || !is.numeric(v) || !is.finite(v)) return(staff)
+  v <- min(max(v, lo), hi); i <- which(staff$facility == fac)
+  if (isTRUE(abs(staff[[col]][i] - v) > tol)) staff[[col]][i] <- v
+  staff
+}
+
+# ---- Sharing a scenario as a link -------------------------------------------------------
+# A link carries the whole scenario in one query parameter, `s` = base64url(gzip(JSON))
+#the changed sections (one bitmap per
+# destination group over the sorted list of ALL section codes), the What-If settings, the
+# staffing table, the map view, the date and a data stamp. The token is user input: it is only
+# ever parsed as JSON, size-capped, and every value is validated on use.
+
+SHARE_TOKEN_VERSION <- 1L
+SHARE_MAX_TOKEN_CHARS <- 12000L        # refused before decompressing
+SHARE_MAX_JSON_BYTES <- 200000L        # refused after decompressing
+
+.b64url_enc <- function(raw) {
+  s <- gsub("[
+
+]", "", jsonlite::base64_enc(raw))      # base64_enc wraps long output
+  s <- gsub("+", "-", s, fixed = TRUE)
+  s <- gsub("/", "_", s, fixed = TRUE)
+  sub("=+$", "", s)
+}
+.b64url_dec <- function(s) {
+  s <- gsub("-", "+", s, fixed = TRUE)
+  s <- gsub("_", "/", s, fixed = TRUE)
+  jsonlite::base64_dec(paste0(s, strrep("=", (4 - nchar(s) %% 4) %% 4)))
+}
+
+# The section universe a bitmap is indexed against: sorted unique codes, plus a short
+# fingerprint so a link made against a different section list is detected, never guessed at.
+.share_or <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+.share_codes <- function(sectcodes) sort(unique(as.character(sectcodes)))
+.share_hash <- function(codes) substr(rlang::hash(codes), 1, 8)
+
+#' Pack a scenario's changes into bitmap groups.
+#'
+#' One group per distinct destination (to_facility, to_zone); each holds a bitmap with one bit
+#' per section code (sorted order). Codes that are not in `sectcodes` are dropped.
+#'
+#' @param changes  data.frame(sectcode, to_facility, to_zone)
+#' @param sectcodes every section code (the universe)
+#' @return list(u = list(n, h), g = list of list(f, z, b))
+scenario_pack <- function(changes, sectcodes) {
+  codes <- .share_codes(sectcodes)
+  out <- list(u = list(n = length(codes), h = .share_hash(codes)), g = list())
+  if (is.null(changes) || nrow(changes) == 0) return(out)
+  ch <- changes[!duplicated(as.character(changes$sectcode), fromLast = TRUE), , drop = FALSE]
+  idx <- match(as.character(ch$sectcode), codes)
+  ch <- ch[!is.na(idx), , drop = FALSE]; idx <- idx[!is.na(idx)]
+  if (length(idx) == 0) return(out)
+  f <- ifelse(is.na(ch$to_facility), "", as.character(ch$to_facility))
+  z <- ifelse(is.na(ch$to_zone), "", as.character(ch$to_zone))
+  key <- paste(f, z, sep = "|")
+  for (k in unique(key)) {
+    sel <- key == k
+    bits <- rep(FALSE, length(codes)); bits[idx[sel]] <- TRUE
+    bits <- c(bits, rep(FALSE, (8 - length(bits) %% 8) %% 8))
+    out$g[[length(out$g) + 1]] <- list(f = f[sel][1], z = z[sel][1],
+                                       b = .b64url_enc(packBits(bits, "raw")))
+  }
+  out
+}
+
+#' Unpack scenario_pack() output against the CURRENT section list.
+#'
+#' @return list(changes = data.frame(sectcode, to_facility, to_zone), ok, reason). `ok` is FALSE
+#'   (reason "sections_changed") when the section list is not the one the link was made from;
+#'   nothing is restored then, because the bit positions would point at the wrong sections.
+scenario_unpack <- function(packed, sectcodes) {
+  empty <- data.frame(sectcode = character(0), to_facility = character(0),
+                      to_zone = character(0), stringsAsFactors = FALSE)
+  codes <- .share_codes(sectcodes)
+  u <- packed$u
+  n_ok <- !is.null(u$n) && length(u$n) == 1 && isTRUE(as.numeric(u$n) == length(codes))
+  h_ok <- !is.null(u$h) && length(u$h) == 1 && identical(as.character(u$h), .share_hash(codes))
+  if (!n_ok || !h_ok) return(list(changes = empty, ok = FALSE, reason = "sections_changed"))
+  rows <- list()
+  for (g in packed$g) {
+    raw <- tryCatch(.b64url_dec(as.character(g$b)), error = function(e) NULL)
+    if (is.null(raw) || length(raw) == 0) next
+    bits <- as.logical(rawToBits(raw))
+    hit <- which(bits[seq_len(min(length(bits), length(codes)))])
+    if (length(hit) == 0) next
+    f <- as.character(.share_or(g$f, "")); z <- as.character(.share_or(g$z, ""))
+    f <- if (length(f) == 1 && nzchar(f) && nchar(f) <= 12) f else NA_character_
+    z <- if (length(z) == 1 && z %in% c("1", "2")) z else NA_character_
+    if (is.na(f) && is.na(z)) next
+    rows[[length(rows) + 1]] <- data.frame(sectcode = codes[hit], to_facility = f, to_zone = z,
+                                           stringsAsFactors = FALSE)
+  }
+  ch <- if (length(rows) == 0) empty else do.call(rbind, rows)
+  rownames(ch) <- NULL
+  list(changes = ch, ok = TRUE, reason = NA_character_)
+}
+
+#' The whole share state, ready for share_token_encode().
+#'
+#' @param changes   the scenario (data.frame(sectcode, to_facility, to_zone))
+#' @param sections  section-grain table (sectcode, zone); gives the universe and the data stamp
+#' @param settings  named list of the What-If inputs (NULL / NA / empty values are dropped)
+#' @param staff     the staffing table, saved WHOLE so the link does not depend on later defaults
+#' @param view      list(lat, lng, z) of the map, or NULL
+#' @param today     date of the link
+scenario_share_state <- function(changes, sections, settings = list(), staff = NULL,
+                                 view = NULL, today = Sys.Date()) {
+  keep <- vapply(settings, function(v) {
+    length(v) == 1 && !is.na(v) && !(is.character(v) && !nzchar(v))
+  }, logical(1))
+  settings <- settings[keep]
+  zone <- as.character(sections$zone)
+  st <- NULL
+  if (!is.null(staff) && nrow(staff) > 0) {
+    # Saved as 17-digit text, not JSON numbers: how many digits a JSON writer keeps depends on its
+    # version (the image's jsonlite keeps 15), and 6.666666666666667 techs per crew must come back
+    # bit-for-bit or a value on a rounding boundary (30.55) can display differently after the link.
+    ex <- function(v) sprintf("%.17g", v)
+    st <- lapply(seq_len(nrow(staff)), function(i) list(
+      f = as.character(staff$facility[i]), c = ex(staff$crews[i]), t = ex(staff$techs_per_crew[i]),
+      d = ex(staff$drone_techs[i]), o = ex(staff$drone_offload_pct[i]),
+      a = ex(staff$drone_air_offload_pct[i])))
+  }
+  packed <- scenario_pack(changes, sections$sectcode)
+  out <- list(v = SHARE_TOKEN_VERSION, t = format(today, "%Y-%m-%d"), u = packed$u, g = packed$g,
+              o = settings, d = list(p1 = sum(zone == "1"), p2 = sum(zone == "2")))
+  if (!is.null(st)) out$st <- st
+  if (!is.null(view) && all(c("lat", "lng", "z") %in% names(view)) &&
+      all(vapply(view[c("lat", "lng", "z")], function(x) length(x) == 1 && is.finite(x), logical(1)))) {
+    out$m <- list(lat = round(view$lat, 4), lng = round(view$lng, 4), z = round(view$z, 2))
+  }
+  out
+}
+
+#' state -> link token (base64url of gzipped JSON).
+share_token_encode <- function(state) {
+  json <- jsonlite::toJSON(state, auto_unbox = TRUE, null = "null", na = "null", digits = NA)
+  .b64url_enc(memCompress(charToRaw(as.character(json)), "gzip"))
+}
+
+#' link token -> state, or NULL for anything that is not a valid token of this version.
+#' Never errors and never evaluates anything: JSON only, size capped before and after.
+share_token_decode <- function(token) {
+  if (is.null(token) || length(token) != 1 || is.na(token)) return(NULL)
+  token <- as.character(token)
+  if (!nzchar(token) || nchar(token) > SHARE_MAX_TOKEN_CHARS) return(NULL)
+  if (!grepl("^[A-Za-z0-9_-]+$", token)) return(NULL)
+  tryCatch({
+    raw <- memDecompress(.b64url_dec(token), type = "gzip", asChar = FALSE)
+    if (length(raw) == 0 || length(raw) > SHARE_MAX_JSON_BYTES) return(NULL)
+    x <- jsonlite::fromJSON(rawToChar(raw), simplifyVector = FALSE)
+    if (!is.list(x) || is.null(names(x)) || length(x$v) != 1 ||
+        !isTRUE(as.integer(x$v) == SHARE_TOKEN_VERSION)) return(NULL)
+    x
+  }, error = function(e) NULL, warning = function(w) NULL)
+}
+
+#' The settings in a decoded share state as deep-link params: only the allowed input ids,
+#' only scalar values, everything as text (what the URL-state engine applies).
+#'
+#' @param allowed input ids that may be restored (the What-If entries of the deep-link spec)
+share_state_settings <- function(x, allowed) {
+  o <- x$o
+  if (!is.list(o) || length(o) == 0) return(list())
+  out <- list()
+  for (id in intersect(names(o), allowed)) {
+    v <- o[[id]]
+    if (length(v) != 1 || is.list(v) || is.na(v)) next
+    if (is.logical(v)) v <- tolower(as.character(v))
+    else if (is.numeric(v)) { if (!is.finite(v)) next; v <- as.character(v) }
+    else v <- as.character(v)
+    if (nzchar(v) && nchar(v) <= 40) out[[id]] <- v
+  }
+  out
+}
+
+#' Apply the saved staffing table to the current one: known facilities only, finite
+#' non-negative numbers (offload percentages 0-100); anything else is ignored.
+share_state_staff <- function(x, staff) {
+  rows <- x$st
+  if (!is.list(rows) || length(rows) == 0 || is.null(staff)) return(staff)
+  num <- function(v, hi = Inf) {
+    if (length(v) == 1 && is.character(v)) v <- suppressWarnings(as.numeric(v))
+    if (length(v) != 1 || is.list(v) || !is.numeric(v) || !is.finite(v) || v < 0 || v > hi) NA_real_ else v
+  }
+  for (r in rows) {
+    i <- match(as.character(.share_or(r$f, "")), staff$facility)
+    if (is.na(i)) next
+    set <- function(col, v) if (!is.na(v)) staff[[col]][i] <<- v
+    set("crews", num(r$c)); set("techs_per_crew", num(r$t)); set("drone_techs", num(r$d))
+    set("drone_offload_pct", num(r$o, 100)); set("drone_air_offload_pct", num(r$a, 100))
+  }
+  staff
+}
+
+#' The saved map view as list(lat, lng, z), or NULL when missing or out of range.
+share_state_view <- function(x) {
+  m <- x$m
+  ok <- is.list(m) && all(c("lat", "lng", "z") %in% names(m)) &&
+    all(vapply(m[c("lat", "lng", "z")], function(v) length(v) == 1 && is.numeric(v) && is.finite(v), logical(1)))
+  if (!ok || m$lat < -90 || m$lat > 90 || m$lng < -180 || m$lng > 180 || m$z < 0 || m$z > 22) return(NULL)
+  list(lat = m$lat, lng = m$lng, z = m$z)
+}
+
 # ---- CSV exports of the What-If results (plain numbers, snake_case headers) -------------
 # The tables on the page show formatted text ("+4,443", "319.3 -> 320.9"); the downloads
 # hold the numbers themselves so they open cleanly in a spreadsheet.

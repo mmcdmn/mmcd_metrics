@@ -84,6 +84,11 @@ ui <- accessible_page(
       .dataTables_wrapper .dataTables_paginate { float:none; text-align:center; }
       #wi_map { height:320px !important; }
     }
+    /* DataTables' default selected row is white text on a mid blue (4.2:1, fails WCAG AA); a clicked
+       facility row (the FOS drill-down) uses a light highlight with dark text instead. html:root
+       outranks the library's own :root whatever order the stylesheets load in. */
+    html:root { --dt-row-selected: 205, 222, 250; --dt-row-selected-text: 31, 41, 51;
+                --dt-row-selected-link: 28, 70, 140; }
     /* What-If results update in place: no fading while they recalculate */
     #wi_workload.recalculating, #wi_workload_fos.recalculating, #wi_pertech.recalculating,
     #wi_a_table.recalculating, #wi_a_fos.recalculating, #wi_crew_by_job.recalculating,
@@ -126,6 +131,19 @@ ui <- accessible_page(
         }, 50);
       }
     }, true);
+    // The three staffing boxes are shared by whichever facility is selected. The server fills them
+    // with `wi_staff_set` (which says which facility the values belong to and does not count as an
+    // edit); an edit is sent, tagged with that facility, only while the facility selector and the
+    // boxes agree. A value typed or applied in the instant between the selection changing and the
+    // new facility's values arriving is dropped instead of being written to the wrong facility.
+    window.wiStaffFac = null; window.wiStaffPushing = false;
+    $(document).on('change', '#wi_techs_per_crew, #wi_drone_offload, #wi_drone_air_offload', function() {
+      if (window.wiStaffPushing || !window.Shiny || !Shiny.setInputValue) { return; }
+      var fac = $('#wi_facility').val();
+      if (!fac || fac !== window.wiStaffFac) { return; }
+      Shiny.setInputValue('wi_staff_edit', {id: this.id, value: parseFloat(this.value),
+        fac: fac, nonce: Math.random()}, {priority: 'event'});
+    });
     // Restyle only the changed sections on the What-If map (no redraw of every polygon)
     function wiRestyle(m, tries) {
       var w = window.HTMLWidgets && HTMLWidgets.find('#wi_map');
@@ -149,6 +167,33 @@ ui <- accessible_page(
         window.wiSel = [].concat(m || []); window.wiApplySel();
       });
       Shiny.addCustomMessageHandler('wi_restyle', function(m) { wiRestyle(m, 0); });
+      Shiny.addCustomMessageHandler('wi_staff_set', function(m) {
+        window.wiStaffFac = m.fac; window.wiStaffPushing = true;
+        try {
+          [['wi_techs_per_crew', m.techs], ['wi_drone_offload', m.off], ['wi_drone_air_offload', m.air]].forEach(function(p) {
+            var el = document.getElementById(p[0]);
+            if (el && p[1] !== null && p[1] !== undefined) { el.value = p[1]; $(el).trigger('change'); }
+          });
+        } finally { window.wiStaffPushing = false; }
+      });
+      // Build the link from the page's own address (the server sits behind a proxy), show it
+      // and copy it; the box is the fallback when the browser blocks clipboard access.
+      Shiny.addCustomMessageHandler('wi_share_link', function(m) {
+        var url = window.location.origin + window.location.pathname + '?tabs=whatif&s=' + m.token;
+        var box = document.getElementById('wi_share_url'),
+            wrap = document.getElementById('wi_share_box'),
+            st = document.getElementById('wi_share_status');
+        if (!box || !wrap || !st) { return; }
+        wrap.style.display = 'block'; box.value = url;
+        var msg = ' (' + url.length + ' characters).';
+        var warn = url.length > 2000 ? ' Some chat and email apps cut off long links; download the changed sections CSV to share instead.' : '';
+        function manual() { box.focus(); box.select(); st.textContent = 'Select the link above and copy it' + msg + warn; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function() {
+            st.textContent = 'Link copied to the clipboard' + msg + warn;
+          }, manual);
+        } else { manual(); }
+      });
     });
   ")),
   titlePanel("FOS Capacity & Border-to-Border Planning"),
@@ -281,6 +326,7 @@ ui <- accessible_page(
     tabPanel(
       "What-If Planner", value = "whatif",
       br(),
+      uiOutput("wi_shared_note"),
       h4("1. Build a scenario"),
       tags$p(class = "metric-note",
         "Click a P2 section on the map, or drag a box, to promote it to P1 right away. Pick a ",
@@ -294,7 +340,15 @@ ui <- accessible_page(
         div(style = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;",
           actionButton("wi_undo", "Reset scenario", class = "btn-default btn-sm"),
           dl_btn("dl_wi_sections", "Download changed sections (CSV)"),
-          uiOutput("wi_selcount", inline = TRUE))
+          actionButton("wi_share", "Copy link to this scenario", icon = icon("link"),
+                       class = "btn-default btn-sm"),
+          uiOutput("wi_selcount", inline = TRUE)),
+        tags$div(id = "wi_share_box", style = "display:none;margin-top:8px;",
+          tags$label(`for` = "wi_share_url", "Link to this scenario"),
+          tags$input(id = "wi_share_url", type = "text", readonly = NA, class = "form-control",
+                     onfocus = "this.select()"),
+          tags$p(id = "wi_share_status", class = "metric-note", role = "status",
+                 style = "margin:4px 0 0;"))
       ),
       a11y_figure(
         leaflet::leafletOutput("wi_map", height = 440),
@@ -467,6 +521,52 @@ ui <- accessible_page(
 )
 
 # =============================================================================
+# DEEP LINKS / SHARED SCENARIOS
+# =============================================================================
+# Every What-If input is a deep-link parameter (hand-editable), and the same list is what a
+# shared-scenario link saves and restores (share_state_settings() only accepts these ids).
+DEEPLINK_SPEC <- list(
+  tabs           = list(input = "tabs",         type = "tab"),
+  cap_facility   = list(input = "cap_facility", type = "select"),
+  cap_priority   = list(input = "cap_priority", type = "checkbox"),
+  cap_measure    = list(input = "cap_measure",  type = "radio"),
+  avg_metric     = list(input = "avg_metric",   type = "select"),
+  cap_drivetime  = list(input = "cap_drivetime", type = "checkbox"),
+  avg_mph        = list(input = "avg_mph",      type = "numeric"),
+  circuity       = list(input = "circuity",     type = "numeric"),
+  cap_drive_mode = list(input = "cap_drive_mode", type = "radio"),
+  cap_speed_pct  = list(input = "cap_speed_pct",  type = "numeric"),
+  wi_travel      = list(input = "wi_travel",      type = "checkbox"),
+  wi_drive_mode  = list(input = "wi_drive_mode",  type = "radio"),
+  wi_speed_pct   = list(input = "wi_speed_pct",   type = "numeric"),
+  wi_travel_share = list(input = "wi_travel_share", type = "numeric"),
+  wi_facility    = list(input = "wi_facility",  type = "select"),
+  wi_metric      = list(input = "wi_metric",    type = "select"),
+  wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
+  wi_techs_per_crew = list(input = "wi_techs_per_crew", type = "numeric"),
+  wi_drone_offload  = list(input = "wi_drone_offload",  type = "numeric"),
+  wi_drone_air_offload = list(input = "wi_drone_air_offload", type = "numeric"),
+  wi_rate_year   = list(input = "wi_rate_year", type = "select"),
+  wi_rate_scope  = list(input = "wi_rate_scope", type = "radio"),
+  wi_crew_hours  = list(input = "wi_crew_hours", type = "numeric"),
+  wi_crew_trips  = list(input = "wi_crew_trips", type = "numeric"),
+  wi_avg_mph     = list(input = "wi_avg_mph",   type = "numeric"),
+  wi_circuity    = list(input = "wi_circuity",  type = "numeric"),
+  wi_measure     = list(input = "wi_measure",   type = "radio"),
+  wi_drill       = list(input = "wi_drill",     type = "select"),
+  wi_move_to     = list(input = "wi_move_to",   type = "select"),
+  wi_h_air_trt      = list(input = "wi_h_air_trt",      type = "numeric"),
+  wi_h_air_insp     = list(input = "wi_h_air_insp",     type = "numeric"),
+  wi_h_gnd_insp_trt = list(input = "wi_h_gnd_insp_trt", type = "numeric"),
+  wi_h_gnd_trt      = list(input = "wi_h_gnd_trt",      type = "numeric"),
+  wi_h_gnd_insp     = list(input = "wi_h_gnd_insp",     type = "numeric")
+)
+# The three staffing boxes just show the selected facility's row of the staffing table, which a
+# link saves whole, so they are not saved separately.
+SHARE_SETTING_IDS <- setdiff(grep("^wi_", names(DEEPLINK_SPEC), value = TRUE),
+                             c("wi_techs_per_crew", "wi_drone_offload", "wi_drone_air_offload"))
+
+# =============================================================================
 # SERVER
 # =============================================================================
 server <- function(input, output, session) {
@@ -476,34 +576,9 @@ server <- function(input, output, session) {
   # character(0): the engine applies inputs (with its two-pass settle so the
   # facility->section-selection reset doesn't clobber deep-linked values) and
   # clicks nothing.
-  wire_deep_links(input, output, session, spec = list(
-    tabs           = list(input = "tabs",         type = "tab"),
-    cap_facility   = list(input = "cap_facility", type = "select"),
-    cap_priority   = list(input = "cap_priority", type = "checkbox"),
-    cap_measure    = list(input = "cap_measure",  type = "radio"),
-    avg_metric     = list(input = "avg_metric",   type = "select"),
-    cap_drivetime  = list(input = "cap_drivetime", type = "checkbox"),
-    avg_mph        = list(input = "avg_mph",      type = "numeric"),
-    circuity       = list(input = "circuity",     type = "numeric"),
-    cap_drive_mode = list(input = "cap_drive_mode", type = "radio"),
-    cap_speed_pct  = list(input = "cap_speed_pct",  type = "numeric"),
-    wi_travel      = list(input = "wi_travel",      type = "checkbox"),
-    wi_drive_mode  = list(input = "wi_drive_mode",  type = "radio"),
-    wi_speed_pct   = list(input = "wi_speed_pct",   type = "numeric"),
-    wi_travel_share = list(input = "wi_travel_share", type = "numeric"),
-    wi_facility    = list(input = "wi_facility",  type = "select"),
-    wi_metric      = list(input = "wi_metric",    type = "select"),
-    wi_per_tech    = list(input = "wi_per_tech",  type = "numeric"),
-    wi_techs_per_crew = list(input = "wi_techs_per_crew", type = "numeric"),
-    wi_drone_offload  = list(input = "wi_drone_offload",  type = "numeric"),
-    wi_drone_air_offload = list(input = "wi_drone_air_offload", type = "numeric"),
-    wi_rate_year   = list(input = "wi_rate_year", type = "select"),
-    wi_rate_scope  = list(input = "wi_rate_scope", type = "radio"),
-    wi_crew_hours  = list(input = "wi_crew_hours", type = "numeric"),
-    wi_crew_trips  = list(input = "wi_crew_trips", type = "numeric"),
-    wi_avg_mph     = list(input = "wi_avg_mph",   type = "numeric"),
-    wi_circuity    = list(input = "wi_circuity",  type = "numeric")
-  ), refresh_for = function(state) character(0))
+  wire_deep_links(input, output, session, spec = DEEPLINK_SPEC,
+                  refresh_for = function(state) character(0),
+                  expand_state = function(state) expand_share(state))
 
   # ---- Staffing state (defaults from config; user-editable) -------------
   # Single source for the Staffing and What-If tabs.
@@ -844,6 +919,66 @@ server <- function(input, output, session) {
   changes <- reactiveVal(no_changes)
   wi_msg <- reactiveVal("")
 
+  # ---- Shared scenarios (a link carries the whole scenario in its `s` parameter) ----
+  # expand_share() runs once when the page opens from a link (shared/url_state_helpers.R):
+  # it restores the scenario, the staffing table and the map view, and hands the saved settings
+  # back to the engine, which applies them like ordinary deep-link params (explicit URL params
+  # win). A link that cannot be restored leaves the app at its starting point and says why.
+  shared_info <- reactiveVal(NULL)
+  restore_view <- reactiveVal(NULL)
+
+  expand_share <- function(state) {
+    tok <- state[["s"]]
+    if (is.null(tok) || length(tok) == 0 || !nzchar(as.character(tok)[1])) return(state)
+    if (is.null(state[["tabs"]])) state[["tabs"]] <- "whatif"
+    x <- share_token_decode(as.character(tok)[1])
+    if (is.null(x)) { shared_info(list(status = "invalid")); return(state) }
+    date <- if (is.character(x$t) && length(x$t) == 1 && grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x$t)) x$t else ""
+    b <- isolate(base())
+    if (is.null(b)) { shared_info(list(status = "nodata", date = date)); return(state) }
+    un <- scenario_unpack(x, b$sections$sectcode)
+    if (!isTRUE(un$ok)) { shared_info(list(status = un$reason, date = date)); return(state) }
+    changes(un$changes)
+    staff(share_state_staff(x, isolate(staff())))
+    restore_view(share_state_view(x))
+    a <- scenario_apply(b$sections, un$changes, b$times)
+    zone <- as.character(b$sections$zone)
+    num <- function(v) if (length(v) == 1 && is.numeric(v)) v else NA_real_
+    then_changed <- !is.na(num(x$d$p1)) && (num(x$d$p1) != sum(zone == "1") || num(x$d$p2) != sum(zone == "2"))
+    shared_info(list(status = "ok", date = date, promoted = sum(a$promoted), moved = sum(a$moved),
+                     data_changed = isTRUE(then_changed), p1_then = num(x$d$p1), p1_now = sum(zone == "1")))
+    utils::modifyList(share_state_settings(x, SHARE_SETTING_IDS), state)
+  }
+
+  output$wi_shared_note <- renderUI({
+    si <- shared_info(); if (is.null(si)) return(NULL)
+    when <- if (nzchar(si$date %||% "")) format(as.Date(si$date), " made %b %d, %Y") else ""
+    body <- switch(si$status,
+      ok = tagList(
+        tags$b(sprintf("Opened from a shared scenario%s: ", when)),
+        sprintf(paste0("%d section(s) promoted to P1, %d moved to another facility. Change ",
+                       "anything you like; your changes are not saved to the link. Use Copy ",
+                       "link to this scenario to share your own."), si$promoted, si$moved),
+        if (isTRUE(si$data_changed)) tags$p(style = "margin:6px 0 0;", sprintf(
+          paste0("The section data has changed since this link was made (%s P1 sections then, ",
+                 "%s now), so the numbers can differ from what the sender saw."),
+          format(si$p1_then, big.mark = ","), format(si$p1_now, big.mark = ",")))),
+      sections_changed = "This link was made before the section list changed, so the scenario can't be restored. The planner is showing the starting point.",
+      nodata = "This link could not be restored because the section data did not load. Reload the page to try again.",
+      "This link is damaged or incomplete, so the scenario can't be restored. The planner is showing the starting point.")
+    tags$div(class = "alert alert-info", role = "status", body)
+  })
+
+  # Copy link: pack the scenario, every What-If setting, the staffing table and the map view
+  observeEvent(input$wi_share, {
+    b <- base(); req(b)
+    settings <- lapply(setNames(SHARE_SETTING_IDS, SHARE_SETTING_IDS), function(id) input[[id]])
+    ctr <- input$wi_map_center; zm <- input$wi_map_zoom
+    view <- if (!is.null(ctr) && !is.null(zm)) list(lat = ctr$lat, lng = ctr$lng, z = zm) else NULL
+    st <- scenario_share_state(changes(), b$sections, settings, staff(), view)
+    session$sendCustomMessage("wi_share_link", list(token = share_token_encode(st)))
+  })
+
   # Section table with the scenario applied (facility / zone hold the NEW values,
   # facility_from / zone_from the original ones; row order matches base()$sections)
   wi_after <- reactive({
@@ -1096,6 +1231,11 @@ server <- function(input, output, session) {
     styled$key <- character(0)
     # proxy calls go out after this flush; send the scenario's styles right behind them
     session$onFlushed(restyle_sync, once = TRUE)
+    rv <- isolate(restore_view())               # a shared link's map view replaces the fit-to-data view
+    if (!is.null(rv)) {
+      leaflet::leafletProxy("wi_map") %>% leaflet::setView(rv$lng, rv$lat, rv$z)
+      restore_view(NULL)
+    }
   })
 
   # Highest priority, so the map reacts before the tables below are recomputed
@@ -1279,23 +1419,31 @@ server <- function(input, output, session) {
     s <- staff(); fac <- input$wi_facility
     req(fac, fac %in% s$facility)
     row <- s[s$facility == fac, ]
-    updateNumericInput(session, "wi_techs_per_crew", value = round(row$techs_per_crew, 2))
-    updateNumericInput(session, "wi_drone_offload", value = row$drone_offload_pct)
-    updateNumericInput(session, "wi_drone_air_offload", value = row$drone_air_offload_pct)
+    session$sendCustomMessage("wi_staff_set", list(
+      fac = fac, techs = round(row$techs_per_crew, 2), off = row$drone_offload_pct,
+      air = row$drone_air_offload_pct))
   })
 
-  set_wi_staff <- function(col, v, lo, hi) {
-    fac <- isolate(input$wi_facility); s <- isolate(staff())
-    if (is.null(fac) || !fac %in% s$facility || is.null(v) || is.na(v)) return()
-    v <- min(max(v, lo), hi); i <- which(s$facility == fac)
-    if (!isTRUE(s[[col]][i] == v)) { s[[col]][i] <- v; staff(s) }
-  }
-  observeEvent(input$wi_techs_per_crew, set_wi_staff("techs_per_crew", input$wi_techs_per_crew, 0, Inf),
-               ignoreInit = TRUE)
-  observeEvent(input$wi_drone_offload, set_wi_staff("drone_offload_pct", input$wi_drone_offload, 0, 100),
-               ignoreInit = TRUE)
-  observeEvent(input$wi_drone_air_offload, set_wi_staff("drone_air_offload_pct", input$wi_drone_air_offload, 0, 100),
-               ignoreInit = TRUE)
+  # The three inputs are shared by whichever facility is selected, so a value pushed for one
+  # facility can arrive back after the selection moved to another; reading input$wi_techs_per_crew
+  # here wrote that stale value into the new facility and the two values then bounced back and
+  # forth forever (seen when a link restored a non-first facility). Values are now pushed with
+  # `wi_staff_set` (tagged with their facility, never echoed as edits) and the page sends
+  # `wi_staff_edit` only for a genuine edit made while the boxes belong to the selected facility;
+  # staff_apply_edit() writes to THAT facility only.
+  WI_STAFF_EDIT <- list(
+    wi_techs_per_crew    = list(col = "techs_per_crew",        lo = 0, hi = Inf, tol = 0.005),
+    wi_drone_offload     = list(col = "drone_offload_pct",     lo = 0, hi = 100, tol = 0),
+    wi_drone_air_offload = list(col = "drone_air_offload_pct", lo = 0, hi = 100, tol = 0))
+  observeEvent(input$wi_staff_edit, {
+    x <- input$wi_staff_edit
+    sp <- WI_STAFF_EDIT[[as.character(x$id)[1]]]
+    if (is.null(sp)) return()
+    s <- isolate(staff())
+    new <- staff_apply_edit(s, as.character(x$fac)[1], sp$col,
+                            suppressWarnings(as.numeric(x$value)), sp$lo, sp$hi, sp$tol)
+    if (!identical(new, s)) staff(new)
+  })
 
   output$wi_baseline <- renderUI({
     bl <- staffing_baseline(cap_live(), staff()); req(nrow(bl) > 0, input$wi_facility)

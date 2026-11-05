@@ -68,9 +68,11 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate —
   no routing dependency; used when routed times are unavailable or the user picks it.
 - **Routed drive times (default)** — `data/facility_section_drivetime.csv` (facility, sectcode,
-  drive_min, drive_miles, snap_m, snap_flag, built, osm_extract): one-way free-flow driving
-  time and road distance from the facility point (`gis_facility` centroid) to each section
-  centroid (`gis_sectcode.latloncentroid`), routed on OpenStreetMap roads by a self-hosted
+  drive_min, drive_miles, snap_m, straight_miles, snap_flag, built, osm_extract): one-way
+  free-flow driving time and road distance from each facility point (`gis_facility` centroid)
+  to **every** section centroid (`gis_sectcode.latloncentroid`), so a section moved to another
+  facility in the What-If planner has a real time from its new facility (6 x 3,207 = 19,242
+  pairs; `straight_miles` is the haversine distance for the straight-line fallback), routed on OpenStreetMap roads by a self-hosted
   **OSRM** (Docker, Minnesota Geofabrik extract). Built **offline** by
   `scripts/build_drivetimes.R` (setup commands are in its header) and committed, because the
   app's database connection is read-only; re-run it when sections or facilities change.
@@ -96,23 +98,43 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   `(1 − pct/100)` before Estimate A, so ground techs are staffed only for what drones don't
   take. Drone treatments (action `D`) are on GROUND sites. Default 0% (not yet calibrated).
   Sections / wet CB are never offloaded.
-- **`whatif_compute(sections, promote_sectcodes, cap, metric, per_tech)`** — moves promoted
-  P2 sections into P1, recomputes each FOS's P1 load of `metric`, and estimates
-  **added techs = ceil(new_P1/per_tech) − ceil(cur_P1/per_tech)** (the increase caused by
-  the promotion; unaffected FOS = 0). `per_tech` defaults to the district average P1
-  load/tech and is editable in the UI. Also reports `gap_now` (current over/under vs baseline).
-  **Travel time (`drive_minutes`, `travel_adjust`, `travel_share`):** per FOS,
-  `travel_ratio` = (median one-way drive minutes to its current P1 sections) ÷ (median to its
-  promoted sections). Only the travel share `s` of a tech's day (editable, default 20%)
-  scales with it: `capacity_factor = 1 / ((1 − s) + s / ratio)`, bounded above by 1/(1 − s).
-  The promoted load is worked at `per_tech × capacity_factor`:
-  `needed_new = ceil(cur_P1/per_tech + added_load/(per_tech × factor))`; the existing P1 load
-  keeps the baseline capacity, and drone offload is applied first. Factor 1 (no promoted
-  sections, missing times, travel off, or s = 0) reproduces the unadjusted formula exactly.
-  By-FOS table shows Median P1 min / Median promoted min / Travel ratio / Capacity factor. The ratio is
-  relative, so the field-speed %, avg mph and circuity do not change Estimate A (they live under
-  Estimate B); switching routed ↔ straight-line source and the travel share do.
-- **Shared travel control (What-If, top well):** one "Include travel time" checkbox
+- **Scenarios (What-If)** — a scenario is a set of per-section changes `(sectcode, to_facility,
+  to_zone)`. Everything the user clicks is promoted to P1 and, when a destination facility is
+  picked, moved there (P1 sections can only change by being moved). Pure functions:
+  - `scenario_apply(sections, changes, times)` — returns the section table with the NEW
+    `facility`/`zone` plus `facility_from`, `zone_from`, `fos_new` (NA once moved to another
+    facility: it belongs to none of that facility's FOS areas), `moved`, `promoted`,
+    `time_missing`. Rules: promote is P2 -> P1 only (no demotion); a moved section keeps its
+    priority unless it is also promoted; unknown facilities / no-ops are ignored; the last
+    change for a section wins. A moved row's `miles` and routed drive columns are re-keyed to
+    its new facility from `times` (the full drive-time table).
+  - `scenario_compare(after, zone = "1", metrics, facility = NULL, dm_before, dm_after)` — the
+    P1 change per facility + DISTRICT (`facility = NULL`) or per FOS area of one facility
+    (`facility = "Sj"`, with an "unassigned" row for sections moved in), each metric as
+    `_before`, `_after`, `_chg`, plus `p1_min_before` / `added_min` (median drive minutes to the
+    group's P1 sections now / to the sections newly in its P1). The What changed tables show the
+    `_chg` values. `scenario_cap()` + `staffing_baseline()` give load per tech/crew before and
+    after; `scenario_drive_summary()` the median P1 drive minutes.
+  - `scenario_staffing(after, staff, metric, per_tech, ...)` (Estimate A) — **per FOS area**
+    (one FOS area = one crew). **added** = sections newly in the FOS area's P1 (promoted in
+    place), **removed** = its P1 sections moved away. Sections moved INTO a facility land in
+    that facility's **unassigned** row (no current P1 or techs, so all the techs it needs are new):
+    `techs change = ceil((P1 - removed + added / capacity factor) / per_tech) - ceil(P1 / per_tech)`;
+    negative = techs freed. `by_facility` sums the FOS rows; the UI shows it by facility and
+    drills into the FOS areas of one facility on click. `per_tech` defaults to the district
+    average P1 load per tech and is editable. Drone offload is applied first. **Travel:**
+    `travel_ratio` = median one-way minutes to the FOS area's added sections / median to its
+    current P1 sections (timed from the facility; the unassigned row uses the facility's median
+    P1 time): above 1 = the added sections are farther (more driving), below 1 = closer. Only the
+    travel share `s` of a tech's day (editable, default 20%) scales with it:
+    `capacity_factor = 1 / ((1 - s) + s * ratio)`, bounded above by 1/(1 - s); only the added
+    load is scaled, removed load frees techs at the baseline. Factor 1 (nothing added, missing
+    times, travel off, or s = 0) gives the plain formula. The field-speed %, avg mph and
+    circuity cancel out of the ratio (they live in the Estimate settings).
+  - `scenario_crews(after, rates, ...)` (Estimate B) — `estimate_crews()` per facility on the
+    added sections minus the removed ones (each timed from its own facility), with district rates
+    or each facility's own; net crews + per-facility hours. Not per FOS area.
+- **Shared travel control (What-If, Staffing impact):** one "Include travel time" checkbox
   (`wi_travel`, default on) + source (routed / straight-line) + field speed % / avg mph /
   circuity feed BOTH estimates. Off → A uses ratio 1 and B's travel hours are 0.
 
@@ -148,30 +170,69 @@ added on top of the study's on-site hours — see the `estimate_crews` bullet.
   value). **Caveat:** if the study hours-per-job already include travel, set trips = 0
   to avoid double-counting.
 
-## Interactive section map (What-If)
+## Interactive scenario builder (What-If)
 
-`load_section_geo(facility)` returns each section's WGS84 polygon (`the_geom`) as WKT +
-centroid lat/lon; the app builds an `sf` (P2 only) and renders a Leaflet map. Selection
-of sections to promote is driven by the map into a shared `sel` reactiveVal:
-- **Click** a polygon → toggle (add/remove); `layerId = sectcode`, selected sections get a
-  highlighted overlay in group `"sel"` (redrawn via `leafletProxy`). Overlay `layerId`s are
-  prefixed `sel_` and stripped on click so a highlighted section deselects.
-- **Shift + drag a box** → add all sections whose centroid falls in the box. Implemented
-  with a dependency-free `htmlwidgets::onRender` handler (`leaflet.extras` is NOT installed)
-  that disables box-zoom, draws a rectangle, and sends bounds to `Shiny.setInputValue('wi_box')`.
-- Buttons: **Select all shown**, **Clear**; a live "Selected: N" readout; the section list
-  DT mirrors the selection (read-only `Sel` column).
-
-Both estimates recompute **live** from `sel()` (no run button). The two governing
-equations are shown up front, and every input number is exposed:
-- **A. Added techs** = Σ_FOS ( ⌈current P1 ÷ load-per-tech + added load ÷ (load-per-tech × travel ratio)⌉ − ⌈current P1 ÷ load-per-tech⌉ )
-- **B. Additional crews** = [ Σ_jobtype ( sites × jobs-per-site × hours-per-job ) + travel ] ÷ hours-per-crew-season,
-  where **travel = Σ_section ( round trips × 2 × one-way drive time )**. The by-job table
-  shows sites, jobs/site, jobs, hrs/job, hours, plus a **Travel (drive time)** row and a
-  **TOTAL (incl. travel)** row; the summary breaks out on-site + travel = total hrs.
-  Computed from the **promoted sections only**, so it is the *additional* crews to service
-  the selected area at P1 intensity (matches the study's expansion figure, Table 11.6) —
-  **not** a facility total, and not net of current P2 effort.
+Workflow: build a scenario, see what it adds, load per tech / crew, then the staffing estimates
+(all visible, no Apply button). Page order: 1 Build a scenario, 2 What changed, 3 Load per tech
+and per crew, 4 Staffing estimates. Each number appears once: What changed holds the added load,
+drive times and travel ratio; Estimate A shows only techs.
+- **Map** — `load_section_geo()` (no argument = all facilities, simplified polygons) is loaded
+  once when the tab is first opened and drawn on a canvas Leaflet map. **Every section is always
+  shown** (no facility / priority filters). Color = the facility the section belongs to now (a
+  moved section takes its new facility's color), solid = P1, light = P2 (a promoted section turns
+  solid). The polygons are drawn ONCE with `leafletProxy`, only after the map reports its bounds
+  (`map_ready`, proxy messages sent before the browser builds the map are dropped). A change then
+  restyles only the sections that changed: `restyle_sync()` diffs against the last styled state and
+  sends a `wi_restyle` custom message (`setStyle` + `setTooltipContent` in the page script), from
+  an observer with priority 1000 so the map moves before the tables are recomputed (about 50 ms
+  click to recolor). It must not redraw: clearing and re-adding 3,207 polygons is what made it
+  flash. The hover highlight sets only `weight` (leaflet restores the creation-time values on
+  mouseout, so a highlighted fillOpacity would undo the restyle). `scenario_apply()` takes
+  `facilities =` because restyle applies a subset of rows and would otherwise reject a move to a
+  facility that is not in the subset.
+- **Change sections** — they apply immediately through `scenario_toggle()` (pure, unit tested):
+  selecting a P2 section promotes it to P1 and, with a destination under **Move sections to**,
+  moves it there; **selecting it again undoes that** (a promoted section goes back to P2). A
+  P1 section can only change by being moved. With a different destination picked, selecting a
+  moved section re-moves it instead of undoing it. A **box** (Shift + drag on desktop, the
+  **Box select** button on touch, one box per tap) undoes everything in it when every section it
+  can change is already in the scenario, otherwise it adds the missing ones. The section-list
+  checkboxes (keyboard route) always apply / undo. **Reset scenario** clears everything. The
+  scenario is interactive and not deep-linked.
+- **What changed** — what the scenario ADDS to P1, by facility: sections, ground/air/prehatch
+  sites and acres, wet catch basins, then the drive times. Both are **medians** of one-way
+  minutes: **to current P1** (the group's P1 sections today) and **to added sections** (the
+  sections the scenario brings into its P1, timed from that facility). **Travel ratio** = added
+  / current (above 1 = the added sections are farther away, so more driving), computed from the
+  two numbers in the row, so it can be checked by hand; hidden when travel is off. Estimate A turns the ratio into
+  its capacity factor (see the equations); the factor itself is not shown. A move shows as + at
+  the receiving facility and - at the one giving up P1 sections. Click a facility row (or use the
+  picker) for the same table by FOS area; an "unassigned" row (sections moved in) has no P1 of
+  its own, so it is compared with the facility's median P1 time. The travel controls (include
+  travel, drive source, travel share) sit at the top of this section.
+- **Load per tech and per crew** — P1 load per tech (sites and acres) and per crew, now -> after.
+- **Staffing estimates** — Estimate A driver / load per tech, the equations, Estimate A, Estimate
+  B (net crews, by facility). Estimate A is only techs: techs, need now, need after, **techs
+  change**, gap now (by facility, drill into FOS areas); the load added / removed, drive times and
+  travel ratio are in What changed. The staffing edits for one facility, jobs per site, hours per job
+  and trips sit in a collapsed "Estimate settings" section.
+  - **A. Techs change** (per FOS area) = ceil((P1 - removed + added / capacity factor) / load-per-tech) - ceil(P1 / load-per-tech)
+  - **B. Net crews** = [ Sum_jobtype ( (added - removed sites) x jobs-per-site x hours-per-job ) + travel ] / hours-per-crew-season,
+    where **travel = Sum_section ( round trips x 2 x one-way drive time )**, added minus removed.
+- **CSV downloads** — every results table has a "Download CSV" button (`csv_out()` at the end
+  of the server): Capacity (the existing one, plus averages and the drive-time summary),
+  Staffing (assumptions, baseline, techs per FOS area), and What-If (changed sections, by
+  facility, by FOS area for all facilities, load per tech and crew, Estimate A per FOS area,
+  Estimate B by job type and by facility). The Capacity and Staffing files are the tables as
+  shown; the What-If files hold plain numbers with snake_case headers (`scenario_export_*()`,
+  unit tested), not the formatted text on the page (so "+4,443" is 4443 and "319.3 -> 320.9" is
+  a `_now` and an `_after` column). Files are named `capacity_<table>_<date>.csv`.
+- **Tables update in place** — `live_dt()` renders a table once and then pushes new numbers with
+  `DT::replaceData`, so a click does not re-initialise (flash) the results tables. It rebuilds a
+  table only when its columns change (Show: sites/acres, travel on/off, or the empty "Note"
+  placeholder). The section list is built from today's sections and not rebuilt per change (its
+  ticks follow the scenario through `wi_sel_sync`). The CSS also stops Shiny's fade on the
+  What-If outputs.
 
 ## App (`app.R`) — three tabs
 
@@ -182,9 +243,9 @@ equations are shown up front, and every input number is exposed:
    Reset to defaults, DB FOS-area cross-check), the P1 baseline table (acres/tech,
    acres/crew, air sites/tech), and techs per FOS with P1 load-per-tech ratios.
    Edits drive every estimate (`staff` reactiveVal → `cap_live()`).
-3. **What-If Planner** — pick facility → (optionally edit that facility's techs/crew and
-   drone offload %, shared with the Staffing tab) → select P2 sections → Estimate →
-   added-techs summary + per-FOS impact table.
+3. **What-If Planner** — click sections on the map to promote them to P1 (optionally moving
+   them to another facility) and see what that adds (sections, sites, acres, catch basins,
+   drive time) by facility and by FOS area, then the techs (per FOS area) and crews estimates.
 
 ## Cross-checks (validated against live DB)
 
@@ -216,7 +277,7 @@ equations are shown up front, and every input number is exposed:
   for how many leading columns to pin (default 1; the editable Staffing table is not pinned).
 - Map selection: tap toggles a section. To select many on touch, the map has a **Box select**
   toggle (top right): while ON, one-finger drag draws a rectangle (map panning is off) and adds
-  every section whose centroid is inside, same as desktop Shift+drag (pointer events, so it also
+  (or undoes, if all are already in) every section whose centroid is inside, same as desktop Shift+drag (pointer events, so it also
   works with mouse/pen). A tap without dragging still toggles one section. The hint text switches
-  on `@media (hover: none)`. "Select all shown" / "Clear" work on both.
+  on `@media (hover: none)`. Selecting a section again undoes it, on both.
 - Box plots hide the Plotly mode bar and use compact margins.

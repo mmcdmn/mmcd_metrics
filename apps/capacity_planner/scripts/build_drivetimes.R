@@ -1,8 +1,9 @@
 # Build the routed facility -> section drive-time lookup (run by hand, not by the app)
 # =============================================================================
-# For every facility and every section it serves, ask an OSRM router (OpenStreetMap
-# roads) for the driving time and road distance from the facility point to the
-# section centroid, and save the result to
+# For EVERY facility and EVERY section (not just the section's own facility, so the
+# What-If planner can move a section to another facility), ask an OSRM router
+# (OpenStreetMap roads) for the driving time and road distance from the facility point
+# to the section centroid, and save the result to
 #   apps/capacity_planner/data/facility_section_drivetime.csv
 # The app (load_routed_drivetimes) uses this file instead of the straight-line
 # estimate. The app's database connection is read-only, so the lookup is a tracked
@@ -59,12 +60,21 @@ sec <- dbGetQuery(con, "
     AND sc.latloncentroid IS NOT NULL")
 
 sec <- sec[sec$facility %in% fac$facility, ]
-cat(sprintf("%d sections across %d facilities\n", nrow(sec), length(unique(sec$facility))))
+cat(sprintf("%d sections, %d facilities -> %d facility x section pairs\n",
+            nrow(sec), nrow(fac), nrow(sec) * nrow(fac)))
 
 # ---- Router check ------------------------------------------------------------
 chk <- tryCatch(GET(paste0(osrm_url, "/route/v1/driving/-93.2650,44.9778;-93.0900,44.9537?overview=false"), timeout(10)),
                 error = function(e) NULL)
 if (is.null(chk) || status_code(chk) != 200) stop("OSRM router not reachable at ", osrm_url)
+
+# Straight-line miles (haversine), for the straight-line fallback of a moved section
+haversine_mi <- function(lon1, lat1, lon2, lat2) {
+  rad <- pi / 180
+  a <- sin((lat2 - lat1) * rad / 2)^2 +
+    cos(lat1 * rad) * cos(lat2 * rad) * sin((lon2 - lon1) * rad / 2)^2
+  2 * 3958.7613 * asin(pmin(1, sqrt(a)))
+}
 
 # ---- Route facility -> each section centroid -----------------------------
 route_chunk <- function(origin, dests) {
@@ -86,12 +96,12 @@ route_chunk <- function(origin, dests) {
 
 res <- list()
 for (f in fac$facility) {
-  s <- sec[sec$facility == f, ]
-  if (nrow(s) == 0) next
+  s <- sec                                   # every section, from every facility
   origin <- fac[fac$facility == f, ]
   idx <- split(seq_len(nrow(s)), ceiling(seq_len(nrow(s)) / chunk_size))
   parts <- lapply(idx, function(i) route_chunk(origin, s[i, ]))
   r <- cbind(facility = f, sectcode = s$sectcode, do.call(rbind, parts))
+  r$straight_miles <- round(haversine_mi(origin$lon, origin$lat, s$lon, s$lat), 2)
   res[[f]] <- r
   cat(sprintf("  %-3s %4d sections routed\n", f, nrow(r)))
 }

@@ -236,9 +236,12 @@ ROUTED_DRIVETIME_FILE <- "data/facility_section_drivetime.csv"
 #' Read the routed facility -> section drive-time lookup.
 #'
 #' @param path CSV written by scripts/build_drivetimes.R
+#' The file holds EVERY facility x section pair (so a section moved to another facility
+#' in the What-If planner has a time from its new facility), plus the straight-line miles.
+#'
 #' @return data.frame(facility, sectcode, drive_min_routed, drive_miles_routed,
-#'   snap_m, snap_flag), or NULL when the file is missing/unreadable (the app then
-#'   falls back to the straight-line estimate)
+#'   snap_m, snap_flag, straight_miles), or NULL when the file is missing/unreadable (the
+#'   app then falls back to the straight-line estimate)
 load_routed_drivetimes <- function(path = ROUTED_DRIVETIME_FILE) {
   if (!file.exists(path)) return(NULL)
   d <- tryCatch(suppressWarnings(utils::read.csv(path, stringsAsFactors = FALSE,
@@ -248,9 +251,11 @@ load_routed_drivetimes <- function(path = ROUTED_DRIVETIME_FILE) {
   if (is.null(d) || !all(need %in% names(d))) return(NULL)
   if (!"snap_m" %in% names(d)) d$snap_m <- NA_real_
   if (!"snap_flag" %in% names(d)) d$snap_flag <- !is.na(d$snap_m) & d$snap_m > 1000
+  if (!"straight_miles" %in% names(d)) d$straight_miles <- NA_real_
   names(d)[names(d) == "drive_min"]   <- "drive_min_routed"
   names(d)[names(d) == "drive_miles"] <- "drive_miles_routed"
-  d[, c("facility", "sectcode", "drive_min_routed", "drive_miles_routed", "snap_m", "snap_flag")]
+  d[, c("facility", "sectcode", "drive_min_routed", "drive_miles_routed", "snap_m",
+        "snap_flag", "straight_miles")]
 }
 
 #' Add the routed drive-time columns to the section-grain table. Sections with no
@@ -270,23 +275,31 @@ attach_routed_drivetimes <- function(sections, routed = load_routed_drivetimes()
   sections
 }
 
-#' Section polygons + centroids for one facility, for the interactive map.
+#' Section polygons + centroids for the interactive map: one facility, or every
+#' facility when `facility` is NULL (the What-If planner moves sections between
+#' facilities). The all-facilities polygons are simplified (about 30 m) to keep the
+#' payload and phone rendering light.
 #'
-#' @param facility facility abbreviation
-#' @return data.frame: sectcode, zone, fosarea, lat, lon, wkt (WGS84 polygon WKT)
-load_section_geo <- function(facility) {
+#' @param facility facility abbreviation, or NULL for all
+#' @return data.frame: sectcode, facility, zone, fosarea, lat, lon, wkt (WGS84 polygon WKT)
+load_section_geo <- function(facility = NULL) {
   con <- get_db_connection()
   on.exit(safe_disconnect(con), add = TRUE)
+  where_fac <- if (is.null(facility)) "" else
+    sprintf("sc.facility = '%s' AND ", gsub("'", "''", facility))
+  geom <- if (is.null(facility)) {
+    "ST_SimplifyPreserveTopology(ST_Transform(sc.the_geom, 4326), 0.0003)"
+  } else "ST_Transform(sc.the_geom, 4326)"
   q <- sprintf("
-    SELECT sc.sectcode, sc.zone, sc.fosarea,
+    SELECT sc.sectcode, sc.facility, sc.zone, sc.fosarea,
            ST_Y(ST_Transform(sc.latloncentroid, 4326)) AS lat,
            ST_X(ST_Transform(sc.latloncentroid, 4326)) AS lon,
-           ST_AsText(ST_Transform(sc.the_geom, 4326)) AS wkt
+           ST_AsText(%s) AS wkt
     FROM gis_sectcode sc
-    WHERE sc.facility = '%s' AND sc.the_geom IS NOT NULL
+    WHERE %ssc.the_geom IS NOT NULL
       AND sc.fosarea IS NOT NULL AND sc.fosarea <> '' AND sc.zone IN ('1','2')
     ORDER BY sc.sectcode
-  ", gsub("'", "''", facility))
+  ", geom, where_fac)
   tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_section_geo]", e$message)); data.frame()
   })

@@ -11,7 +11,7 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 | `loc_breeding_sites` | `sitecode`, `air_gnd` (G/A), `priority`, `prehatch`, `acres`, `enddate` |
 | `gis_sectcode` | `sectcode`, `facility`, `zone` (1/2), `fosarea`, `latloncentroid` |
 | `loc_catchbasin` | `sitecode`, `status_udw`, `lettergrp`, `enddate` |
-| `gis_facility` | `abbrv`, `the_geom` (facility point) |
+| `gis_facility` | `abbrv`, address fields (office location source) |
 | `employee_list` | *(no longer used for tech counts: the `active` flag was unreliable)* |
 
 ## R-Side Logic (`data_functions.R`)
@@ -20,9 +20,9 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   ground/air/prehatch site counts **and acres** (`ground_acres`, `air_acres`,
   `prehatch_acres`; every site count has an acres partner; from `loc_breeding_sites`, joined
   `LEFT(sitecode,7)=sectcode`, `enddate IS NULL`), wet catch basins
-  (`status_udw='W'`, `lettergrp<>'Z'`), and straight-line **miles** facility→section
-  (`ST_Distance` on `gis_facility.the_geom` centroid vs `gis_sectcode.latloncentroid`,
-  4326 geography, ÷1609.34). This is the base grain for the capacity table AND the
+  (`status_udw='W'`, `lettergrp<>'Z'`), and straight-line **miles** from the office
+  coordinates in `data/facility_locations.csv` to `gis_sectcode.latloncentroid`
+  (haversine distance). This is the base grain for the capacity table AND the
   what-if section picker. **All `COUNT(*)` cast `::int`** (RPostgres returns
   `integer64`/bit64 which mis-reads as a garbage double otherwise).
 - **RA exclusion** — active sites inside Restricted Area polygons with `monitor_ok = FALSE`
@@ -67,9 +67,13 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 - **`est_drive_minutes(miles, avg_mph, circuity)`** = `miles × circuity ÷ avg_mph × 60`
   (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate —
   no routing dependency; used when routed times are unavailable or the user picks it.
+- **Facility locations** — `data/facility_locations.csv` records the six facility office
+  coordinates and addresses. Both the route builder and straight-line distance calculations
+  use these points; `gis_facility.the_geom` is a service-area polygon, not an office point.
+  Update this file if an office moves, then rebuild the routed lookup.
 - **Routed drive times (default)** — `data/facility_section_drivetime.csv` (facility, sectcode,
   drive_min, drive_miles, snap_m, straight_miles, snap_flag, built, osm_extract): one-way
-  free-flow driving time and road distance from each facility point (`gis_facility` centroid)
+  free-flow driving time and road distance from each facility office
   to **every** section centroid (`gis_sectcode.latloncentroid`), so a section moved to another
   facility in the What-If planner has a real time from its new facility (6 x 3,207 = 19,242
   pairs; `straight_miles` is the haversine distance for the straight-line fallback), routed on OpenStreetMap roads by a self-hosted

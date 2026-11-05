@@ -5,7 +5,7 @@
 #   - sections managed                                 (gis_sectcode)
 #   - wet catch basins                                 (loc_catchbasin)
 #   - techs per crew / crews / drone techs per facility (config defaults, user-editable)
-#   - straight-line miles facility -> section centroid (PostGIS)
+#   - straight-line miles facility office -> section centroid
 # All grouped by facility / fosarea / zone (P1 = '1', P2 = '2').
 # =============================================================================
 
@@ -16,6 +16,29 @@ if (!exists("get_db_connection", mode = "function")) {
 # Prehatch site types (matches apps/ground_prehatch_progress/data_functions.R)
 CAPACITY_PREHATCH_TYPES <- c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")
 .prehatch_in_sql <- "('PREHATCH','BRIQUET','PELLET','PRE1ONLY')"
+
+# Facility office locations used by routed and straight-line drive estimates.
+FACILITY_LOCATION_FILE <- "data/facility_locations.csv"
+
+load_facility_locations <- function(path = FACILITY_LOCATION_FILE) {
+  if (!file.exists(path)) stop("Missing facility locations file: ", path)
+  locations <- utils::read.csv(path, stringsAsFactors = FALSE)
+  required <- c("facility", "lon", "lat")
+  if (!all(required %in% names(locations)) || anyDuplicated(locations$facility) ||
+      any(!is.finite(locations$lon)) || any(!is.finite(locations$lat)) ||
+      any(locations$lon < -180 | locations$lon > 180 |
+          locations$lat < -90 | locations$lat > 90)) {
+    stop("Invalid facility locations in ", path)
+  }
+  locations
+}
+
+.haversine_miles <- function(lon1, lat1, lon2, lat2) {
+  rad <- pi / 180
+  a <- sin((lat2 - lat1) * rad / 2)^2 +
+    cos(lat1 * rad) * cos(lat2 * rad) * sin((lon2 - lon1) * rad / 2)^2
+  2 * 3958.7613 * asin(pmin(1, sqrt(a)))
+}
 
 # 2001 Workload Study defaults (Ch. 11). The 5 larval-control job types, the
 # district-mean hours per job (Table 11.3), and the avg hours a crew works
@@ -130,7 +153,7 @@ ra_exclusion_sql <- function(alias = "b", path = RA_EXCLUSION_FILE) {
 }
 
 #' Section-grain capacity: one row per section with its site/catch-basin loads and
-#' straight-line miles from its facility. This is the base grain for the capacity
+#' straight-line miles from its facility office. This is the base grain for the capacity
 #' table (aggregated up) AND the what-if section picker (used as-is).
 #'
 #' @return data.frame: facility, fosarea, zone, sectcode, ground_sites, air_sites,
@@ -148,13 +171,9 @@ load_capacity_sections <- function() {
            COALESCE(bs.prehatch_sites, 0) AS prehatch_sites,
            COALESCE(bs.prehatch_acres, 0) AS prehatch_acres,
            COALESCE(cb.wet_cb, 0)         AS wet_cb,
-           CASE WHEN f.the_geom IS NOT NULL AND sc.latloncentroid IS NOT NULL
-                THEN ST_Distance(
-                       ST_Transform(ST_Centroid(f.the_geom), 4326)::geography,
-                       ST_Transform(sc.latloncentroid, 4326)::geography) / 1609.34
-                ELSE NULL END AS miles
+           ST_X(ST_Transform(sc.latloncentroid, 4326)) AS section_lon,
+           ST_Y(ST_Transform(sc.latloncentroid, 4326)) AS section_lat
     FROM gis_sectcode sc
-    LEFT JOIN gis_facility f ON f.abbrv = sc.facility
     LEFT JOIN (
       SELECT left(b.sitecode, 7) AS sectcode,
              (COUNT(*) FILTER (WHERE b.air_gnd = 'G'))::int AS ground_sites,
@@ -184,6 +203,18 @@ load_capacity_sections <- function() {
     warning(paste("[load_capacity_sections]", e$message)); data.frame()
   })
   if (nrow(df) > 0) {
+    locations <- load_facility_locations()
+    location_idx <- match(df$facility, locations$facility)
+    if (anyNA(location_idx)) {
+      stop("No office coordinates for facility: ",
+           paste(unique(df$facility[is.na(location_idx)]), collapse = ", "))
+    }
+    df$miles <- .haversine_miles(
+      locations$lon[location_idx], locations$lat[location_idx],
+      df$section_lon, df$section_lat
+    )
+    df$section_lon <- NULL
+    df$section_lat <- NULL
     for (col in c("ground_acres", "air_acres", "prehatch_acres")) {
       df[[col]] <- round(as.numeric(df[[col]]), 3)   # round after summing, not per section
     }
@@ -230,7 +261,7 @@ load_capacity_by_priority <- function() {
 }
 
 # Routed drive-time lookup built offline by scripts/build_drivetimes.R (OSRM on
-# OpenStreetMap roads). Free-flow times, facility point -> section centroid.
+# OpenStreetMap roads). Free-flow times, facility office -> section centroid.
 ROUTED_DRIVETIME_FILE <- "data/facility_section_drivetime.csv"
 
 #' Read the routed facility -> section drive-time lookup.

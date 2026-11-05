@@ -2,7 +2,7 @@
 # =============================================================================
 # For EVERY facility and EVERY section (not just the section's own facility, so the
 # What-If planner can move a section to another facility), ask an OSRM router
-# (OpenStreetMap roads) for the driving time and road distance from the facility point
+# (OpenStreetMap roads) for the driving time and road distance from each facility office
 # to the section centroid, and save the result to
 #   apps/capacity_planner/data/facility_section_drivetime.csv
 # The app (load_routed_drivetimes) uses this file instead of the straight-line
@@ -34,6 +34,7 @@ args <- commandArgs(trailingOnly = TRUE)
 osrm_url   <- if (length(args) >= 1) args[1] else "http://localhost:5000"
 osm_label  <- if (length(args) >= 2) args[2] else "geofabrik minnesota-latest"
 out_path   <- "apps/capacity_planner/data/facility_section_drivetime.csv"
+locations_path <- "apps/capacity_planner/data/facility_locations.csv"
 chunk_size <- 400          # destinations per OSRM table request (server max-table-size is 2000)
 snap_flag_m <- 1000
 
@@ -44,11 +45,15 @@ source("shared/db_helpers.R")
 con <- get_db_connection()
 on.exit(safe_disconnect(con), add = TRUE)
 
-fac <- dbGetQuery(con, "
-  SELECT abbrv AS facility,
-         ST_X(ST_Transform(ST_Centroid(the_geom), 4326)) AS lon,
-         ST_Y(ST_Transform(ST_Centroid(the_geom), 4326)) AS lat
-  FROM gis_facility WHERE the_geom IS NOT NULL")
+if (!file.exists(locations_path)) stop("Missing facility locations file: ", locations_path)
+fac <- read.csv(locations_path, stringsAsFactors = FALSE)
+required_locations <- c("facility", "lon", "lat")
+if (!all(required_locations %in% names(fac)) ||
+    anyDuplicated(fac$facility) ||
+    any(!is.finite(fac$lon)) || any(!is.finite(fac$lat)) ||
+    any(fac$lon < -180 | fac$lon > 180 | fac$lat < -90 | fac$lat > 90)) {
+  stop("Invalid facility locations in ", locations_path)
+}
 
 # Same section universe as load_capacity_sections()
 sec <- dbGetQuery(con, "
@@ -59,6 +64,12 @@ sec <- dbGetQuery(con, "
   WHERE sc.fosarea IS NOT NULL AND sc.fosarea <> '' AND sc.zone IN ('1', '2')
     AND sc.latloncentroid IS NOT NULL")
 
+missing_fac <- setdiff(unique(sec$facility), fac$facility)
+if (length(missing_fac)) {
+  stop("No office coordinates in ", locations_path, " for: ",
+       paste(missing_fac, collapse = ", "))
+}
+fac <- fac[fac$facility %in% unique(sec$facility), ]
 sec <- sec[sec$facility %in% fac$facility, ]
 cat(sprintf("%d sections, %d facilities -> %d facility x section pairs\n",
             nrow(sec), nrow(fac), nrow(sec) * nrow(fac)))
@@ -76,7 +87,7 @@ haversine_mi <- function(lon1, lat1, lon2, lat2) {
   2 * 3958.7613 * asin(pmin(1, sqrt(a)))
 }
 
-# ---- Route facility -> each section centroid -----------------------------
+# ---- Route each facility office -> each section centroid -----------------
 route_chunk <- function(origin, dests) {
   coords <- c(sprintf("%.6f,%.6f", origin$lon, origin$lat),
               sprintf("%.6f,%.6f", dests$lon, dests$lat))

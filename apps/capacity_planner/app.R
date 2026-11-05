@@ -144,6 +144,19 @@ ui <- accessible_page(
       Shiny.setInputValue('wi_staff_edit', {id: this.id, value: parseFloat(this.value),
         fac: fac, nonce: Math.random()}, {priority: 'event'});
     });
+    // The counts-as-of time is written in UTC by the server; show it in the viewer's own time zone
+    function wiLocalTimes() {
+      document.querySelectorAll('time.local-time').forEach(function(t) {
+        var iso = t.getAttribute('datetime');
+        if (t.getAttribute('data-done') === iso) { return; }
+        var d = new Date(iso);
+        if (!isNaN(d.getTime())) {
+          t.setAttribute('data-done', iso);
+          t.textContent = d.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'});
+        }
+      });
+    }
+    $(function() { new MutationObserver(wiLocalTimes).observe(document.body, {childList: true, subtree: true}); });
     // Restyle only the changed sections on the What-If map (no redraw of every polygon)
     function wiRestyle(m, tries) {
       var w = window.HTMLWidgets && HTMLWidgets.find('#wi_map');
@@ -198,6 +211,7 @@ ui <- accessible_page(
   ")),
   titlePanel("FOS Capacity & Border-to-Border Planning"),
   uiOutput("load_banner"),
+  uiOutput("data_asof"),
   tags$p(class = "metric-note",
     "Per-FOS-area inventory for 5-year planning. Zones: P1 and P2. ",
     "All counts are the active universe (breeding sites, wet catch basins, ",
@@ -594,13 +608,41 @@ server <- function(input, output, session) {
   load_nonce  <- reactiveVal(0)
   routed_available <- reactiveVal(FALSE)
   observeEvent(input$data_retry, load_nonce(load_nonce() + 1))
+
+  # The section / priority counts come from the shared cache (capacity_cached(), 24 h) so a visit
+  # does not re-run the two big queries; Refresh data forces a fresh read for everyone.
+  data_asof <- reactiveVal(NULL)           # when the counts were read from the database
+  force_refresh <- reactiveVal(FALSE)
+  observeEvent(input$data_refresh, {
+    force_refresh(TRUE); base(NULL); load_nonce(load_nonce() + 1)
+  })
+
+  output$data_asof <- renderUI({
+    at <- data_asof(); if (is.null(at)) return(NULL)
+    tags$p(class = "metric-note", role = "status", "Counts as of ",
+           tags$time(class = "local-time", datetime = format(at, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+                     format(at, "%b %d, %Y %H:%M UTC", tz = "UTC")),
+           " (shared by everyone, refreshed daily). ",
+           actionButton("data_refresh", "Refresh data", class = "btn-default btn-xs"))
+  })
+
   observe({
     load_nonce()
     if (!is.null(isolate(base()))) return()
-    sections <- tryCatch(load_capacity_sections(), error = function(e) {
+    refresh <- isTRUE(isolate(force_refresh()))
+    first <- is.null(isolate(data_asof()))     # choices / defaults are set once, not on a refresh
+    tm <- local({ t <- Sys.time(); function(what) {
+      now <- Sys.time()
+      message(sprintf("[capacity_planner] load %-22s %.2fs", what, as.numeric(difftime(now, t, units = "secs"))))
+      t <<- now
+    } })
+    sec_res <- tryCatch(capacity_cached("sections", load_capacity_sections, refresh = refresh),
+                        error = function(e) {
       message("[capacity_planner] load_capacity_sections failed: ", conditionMessage(e))
-      data.frame()
+      list(data = data.frame(), at = Sys.time())
     })
+    sections <- sec_res$data
+    tm("sections (cache or db)")
     if (is.null(sections) || nrow(sections) == 0) {
       message("[capacity_planner] no section data returned (database unreachable or query failed)")
       load_failed(TRUE)
@@ -608,16 +650,20 @@ server <- function(input, output, session) {
     }
     load_failed(FALSE)
     routed <- load_routed_drivetimes()          # every facility x section pair
+    tm("routed drive times")
     sections <- attach_routed_drivetimes(sections, routed)
     has_routed <- any(!is.na(sections$drive_min_routed))
     routed_available(has_routed)
-    for (id in c("cap_drive_mode", "wi_drive_mode")) {
+    if (first) for (id in c("cap_drive_mode", "wi_drive_mode")) {
       updateRadioButtons(session, id, selected = if (has_routed) "routed" else "estimate")
     }
     cap      <- aggregate_capacity_by_fos(sections, staff())
-    priority <- load_capacity_by_priority()
+    pri_res  <- capacity_cached("priority", load_capacity_by_priority, refresh = refresh)
+    priority <- pri_res$data
+    tm("priority (cache or db)")
     # FOS name onto sections for the what-if picker
     foremen <- tryCatch(get_foremen_lookup(), error = function(e) data.frame())
+    tm("foremen lookup")
     fos_name <- if (nrow(foremen) > 0) {
       setNames(foremen$shortname, as.character(foremen$emp_num))
     } else character(0)
@@ -625,6 +671,9 @@ server <- function(input, output, session) {
                                 fos_name[as.character(sections$fosarea)],
                                 paste0("FOS ", sections$fosarea))
     base(list(sections = sections, priority = priority, times = routed))
+    data_asof(min(sec_res$at, pri_res$at))
+    force_refresh(FALSE)
+    if (!first) { tm("done (refresh)"); return() }
     # Populate facility choices
     facs <- sort(unique(cap$facility))
     fac_lkp <- tryCatch(get_facility_lookup(), error = function(e) data.frame())
@@ -649,6 +698,7 @@ server <- function(input, output, session) {
     yrs <- as.character(seq(cur_yr, cur_yr - 5))
     updateSelectInput(session, "wi_rate_year", choices = yrs,
                       selected = as.character(cur_yr - 1))
+    tm("choices + lookups")
   })
 
   output$load_banner <- renderUI({
@@ -1000,7 +1050,8 @@ server <- function(input, output, session) {
   observe({
     req(base(), identical(input$tabs, "whatif"))
     if (!is.null(isolate(geo_raw()))) return()
-    geo <- load_section_geo()
+    # section shapes almost never change: cached for a week (Refresh data leaves them alone)
+    geo <- capacity_cached("geo", load_section_geo, ttl = 7L * 86400L)$data
     geo <- geo[!is.na(geo$wkt), , drop = FALSE]
     if (nrow(geo) == 0) return()
     geo_raw(tryCatch(sf::st_as_sf(geo[, c("sectcode", "lat", "lon", "wkt")],

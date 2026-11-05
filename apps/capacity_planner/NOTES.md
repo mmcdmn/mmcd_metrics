@@ -11,7 +11,7 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 | `loc_breeding_sites` | `sitecode`, `air_gnd` (G/A), `priority`, `prehatch`, `acres`, `enddate` |
 | `gis_sectcode` | `sectcode`, `facility`, `zone` (1/2), `fosarea`, `latloncentroid` |
 | `loc_catchbasin` | `sitecode`, `status_udw`, `lettergrp`, `enddate` |
-| `gis_facility` | `abbrv`, `the_geom` (facility point) |
+| `gis_facility` | `abbrv`, address fields (office location source) |
 | `employee_list` | *(no longer used for tech counts: the `active` flag was unreliable)* |
 
 ## R-Side Logic (`data_functions.R`)
@@ -20,9 +20,9 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   ground/air/prehatch site counts **and acres** (`ground_acres`, `air_acres`,
   `prehatch_acres`; every site count has an acres partner; from `loc_breeding_sites`, joined
   `LEFT(sitecode,7)=sectcode`, `enddate IS NULL`), wet catch basins
-  (`status_udw='W'`, `lettergrp<>'Z'`), and straight-line **miles** facility→section
-  (`ST_Distance` on `gis_facility.the_geom` centroid vs `gis_sectcode.latloncentroid`,
-  4326 geography, ÷1609.34). This is the base grain for the capacity table AND the
+  (`status_udw='W'`, `lettergrp<>'Z'`), and straight-line **miles** from the office
+  coordinates in `data/facility_locations.csv` to `gis_sectcode.latloncentroid`
+  (haversine distance). This is the base grain for the capacity table AND the
   what-if section picker. **All `COUNT(*)` cast `::int`** (RPostgres returns
   `integer64`/bit64 which mis-reads as a garbage double otherwise).
 - **RA exclusion** — active sites inside Restricted Area polygons with `monitor_ok = FALSE`
@@ -67,9 +67,13 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 - **`est_drive_minutes(miles, avg_mph, circuity)`** = `miles × circuity ÷ avg_mph × 60`
   (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate —
   no routing dependency; used when routed times are unavailable or the user picks it.
+- **Facility locations** — `data/facility_locations.csv` records the six facility office
+  coordinates and addresses. Both the route builder and straight-line distance calculations
+  use these points; `gis_facility.the_geom` is a service-area polygon, not an office point.
+  Update this file if an office moves, then rebuild the routed lookup.
 - **Routed drive times (default)** — `data/facility_section_drivetime.csv` (facility, sectcode,
   drive_min, drive_miles, snap_m, straight_miles, snap_flag, built, osm_extract): one-way
-  free-flow driving time and road distance from each facility point (`gis_facility` centroid)
+  free-flow driving time and road distance from each facility office
   to **every** section centroid (`gis_sectcode.latloncentroid`), so a section moved to another
   facility in the What-If planner has a real time from its new facility (6 x 3,207 = 19,242
   pairs; `straight_miles` is the haversine distance for the straight-line fallback), routed on OpenStreetMap roads by a self-hosted
@@ -272,6 +276,35 @@ drive times and travel ratio; Estimate A shows only techs.
 3. **What-If Planner** — click sections on the map to promote them to P1 (optionally moving
    them to another facility) and see what that adds (sections, sites, acres, catch basins,
    drive time) by facility and by FOS area, then the techs (per FOS area) and crews estimates.
+
+## Caching and page-open speed
+
+Opening the page used to run two big aggregates (`load_capacity_sections`,
+`load_capacity_by_priority`) and re-read two CSVs on EVERY visit, inside the first Shiny flush,
+so nothing painted until they finished. Now:
+- **Shared Redis cache, 24 h** (`capacity_cached()` in `data_functions.R`; Redis is the embedded
+  one from `startup.sh`, shared by all workers and sessions; TTL `cache.ttl.capacity_planner` in
+  `config/app_config.yaml`). Stores `list(data, at)`. A miss, or **Refresh data** (button next to
+  the "Counts as of ..." line, shown in the viewer's own time zone), reloads and re-stores for
+  everyone. An empty or NULL result is returned but never stored (the loaders return an empty
+  table when the DB is unreachable, which must not stick for a day). No Redis, or Redis erroring,
+  just loads. Key = `capacity:<name>:v<CAPACITY_CACHE_VERSION>:<8-char hash of the RA exclusion
+  file + prehatch types>`: bump the version when a query's columns change; editing the exclusion
+  CSV changes the key by itself. Cached: `sections`, `priority` (24 h) and `geo`, the What-If map
+  shapes (7 days; Refresh data leaves them alone).
+- **Pre-loaded at start**: `warm_capacity_cache()` runs from `startup.sh` (`warm_capacity_planner`,
+  in BOTH the multi-worker and the default single-worker mode; the older overview warm-up only
+  existed in multi-worker) and logs to `/var/log/cache-warmup.log`. Redis is memory-only, so every
+  restart starts empty; the warm-up fills it before the first visitor.
+- **Per-process memo** (`.memo_file()`, keyed by the file's md5): the 19,242-row drive-time CSV
+  and the RA exclusion codes are parsed once per R process, not once per session.
+- **Timing log**: the load observer logs each step (`[capacity_planner] load ...`) and every cache
+  `HIT` / `MISS` to the app log.
+- **The load stays synchronous on purpose.** The shared-link restore (`expand_share()`) needs
+  `base()` loaded before the first `shiny:idle`; deferring the load to paint a spinner first would
+  make links open with a "data did not load" banner.
+- Measured on the local container: cold visit = sections 1.3 s + priority 0.4 s of database time
+  (page ready in 3.6 s); warm visit = 0.03 s for both, page ready in 1.2 s, identical tables.
 
 ## Cross-checks (validated against live DB)
 

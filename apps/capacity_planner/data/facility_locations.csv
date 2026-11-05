@@ -1,0 +1,7 @@
+facility,lon,lat,address,source
+E,-92.9660270,45.0245729,"6989 55th St N, Oakdale, MN 55128",OpenStreetMap
+N,-93.2969774,45.2193154,"1260 Bunker Lake Blvd NW, Andover, MN 55304",OpenStreetMap
+Sj,-93.6130078,44.6940791,"17575 Valley View Drive, Jordan, MN 55352",Photon
+Sr,-93.1205639,44.7183211,"2695 160th St W, Rosemount, MN 55128",OpenStreetMap
+Wm,-93.4056918,45.1139081,"8774 Monticello Lane N, Maple Grove, MN 55369",OpenStreetMap
+Wp,-93.4590330,45.0110176,"14105 Olson Memorial Hwy, Plymouth, MN 55447",ArcGIS

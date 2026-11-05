@@ -221,6 +221,23 @@ send_copy_link <- function(session, url) {
   session$sendCustomMessage("mmcd_copy_link", list(url = url))
 }
 
+#' Let an app turn the parsed URL state into a fuller one before it is applied. Used by
+#' links that carry more than inputs (e.g. one packed `s=` parameter that restores a whole
+#' scenario): the hook sees the parsed state, may set app state, and returns the state to
+#' apply. A NULL hook, a hook that errors or one that returns something other than a list
+#' leaves the state unchanged.
+#' @param state named list from parse_url_state()
+#' @param expand_state NULL or function(state) -> named list
+#' @export
+expand_url_state <- function(state, expand_state = NULL) {
+  if (is.null(expand_state)) return(state)
+  out <- tryCatch(expand_state(state), error = function(e) {
+    warning(sprintf("[url_state] expand_state failed: %s", conditionMessage(e)))
+    NULL
+  })
+  if (is.list(out)) out else state
+}
+
 #' One-call deep-link + auto-refresh wiring for an app's server().
 #'
 #' Reads ?params once (after the client settles), applies them to inputs via
@@ -233,10 +250,13 @@ send_copy_link <- function(session, url) {
 #'   view (default always "refresh"); use it to pick e.g. "hist_refresh" when
 #'   ?tabs=historical.
 #' @param autorefresh_interval_ms cadence for ?autorefresh=true (default 5 min)
+#' @param expand_state optional function(state) -> state, run ONCE in pass 1 on the parsed
+#'   URL state (see expand_url_state()); both passes then apply what it returns.
 #' @export
 wire_deep_links <- function(input, output, session, spec,
                             refresh_for = function(state) "refresh",
-                            autorefresh_interval_ms = 300000) {
+                            autorefresh_interval_ms = 300000,
+                            expand_state = NULL) {
   applied_flag <- shiny::reactiveVal(FALSE)
   reapplied_flag <- shiny::reactiveVal(FALSE)
   saved_state <- shiny::reactiveVal(NULL)
@@ -249,7 +269,7 @@ wire_deep_links <- function(input, output, session, spec,
   shiny::observeEvent(input$mmcd_url_state_raw, {
     if (isTRUE(applied_flag())) return()
     applied_flag(TRUE)
-    state <- parse_url_state(input$mmcd_url_state_raw)
+    state <- expand_url_state(parse_url_state(input$mmcd_url_state_raw), expand_state)
     saved_state(state)
     apply_url_state(session, state, spec)
     session$sendCustomMessage("mmcd_deeplink_reapply", list())

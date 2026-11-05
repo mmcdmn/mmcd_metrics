@@ -1,7 +1,7 @@
 # FOS Capacity & Border-to-Border Planning — Data Functions
 # =============================================================================
 # Static inventory / capacity data per FOS area for offseason 5-year planning:
-#   - ground / air / prehatch sites + prehatch acres  (loc_breeding_sites)
+#   - ground / air / ground-prehatch sites + acres  (loc_breeding_sites)
 #   - sections managed                                 (gis_sectcode)
 #   - wet catch basins                                 (loc_catchbasin)
 #   - techs per crew / crews / drone techs per facility (config defaults, user-editable)
@@ -16,6 +16,11 @@ if (!exists("get_db_connection", mode = "function")) {
 # Prehatch site types (matches apps/ground_prehatch_progress/data_functions.R)
 CAPACITY_PREHATCH_TYPES <- c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")
 .prehatch_in_sql <- "('PREHATCH','BRIQUET','PELLET','PRE1ONLY')"
+# Prehatch here means GROUND prehatch (the same set the Ground Prehatch Progress app uses): a
+# site with a prehatch type AND air_gnd = 'G'. Air sites that carry a prehatch type are already
+# counted as air sites and must not inflate the prehatch load (one FOS had 975 of its 1,208
+# "prehatch" acres on air sites).
+.ground_prehatch_sql <- paste0("b.air_gnd = 'G' AND b.prehatch IN ", .prehatch_in_sql)
 
 # Facility office locations used by routed and straight-line drive estimates.
 FACILITY_LOCATION_FILE <- "data/facility_locations.csv"
@@ -172,7 +177,7 @@ ra_exclusion_sql <- function(alias = "b", path = RA_EXCLUSION_FILE) {
 # CAPACITY_CACHE_TTL (config cache.ttl.capacity_planner, default 24 h), so a visit does not re-run
 # the two aggregates over loc_breeding_sites / loc_catchbasin. Bump CAPACITY_CACHE_VERSION when a
 # query's columns change; the key also carries a fingerprint of the RA exclusion file and the
-# prehatch types, so editing either never serves stale numbers.
+# ground-prehatch definition, so editing either never serves stale numbers.
 CAPACITY_CACHE_VERSION <- 1L
 
 capacity_cache_ttl <- function() {
@@ -194,7 +199,7 @@ capacity_cache_store <- function() {
 
 capacity_cache_fingerprint <- function(path = RA_EXCLUSION_FILE) {
   md5 <- if (file.exists(path)) tryCatch(unname(tools::md5sum(path)), error = function(e) "unreadable") else "none"
-  substr(rlang::hash(list(md5, .prehatch_in_sql)), 1, 8)
+  substr(rlang::hash(list(md5, .ground_prehatch_sql)), 1, 8)
 }
 
 #' Run `loader` through the shared cache.
@@ -271,8 +276,8 @@ load_capacity_sections <- function() {
              (COUNT(*) FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites,
              COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'G'), 0)::numeric AS ground_acres,
              COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'A'), 0)::numeric AS air_acres,
-             (COUNT(*) FILTER (WHERE b.prehatch IN %s))::int AS prehatch_sites,
-             COALESCE(SUM(b.acres) FILTER (WHERE b.prehatch IN %s), 0)::numeric AS prehatch_acres
+             (COUNT(*) FILTER (WHERE %s))::int AS prehatch_sites,
+             COALESCE(SUM(b.acres) FILTER (WHERE %s), 0)::numeric AS prehatch_acres
       FROM loc_breeding_sites b
       WHERE b.enddate IS NULL %s
       GROUP BY left(b.sitecode, 7)
@@ -288,7 +293,7 @@ load_capacity_sections <- function() {
     WHERE sc.fosarea IS NOT NULL AND sc.fosarea <> ''
       AND sc.zone IN ('1', '2')
     ORDER BY sc.facility, sc.fosarea, sc.zone, sc.sectcode
-  ", .prehatch_in_sql, .prehatch_in_sql, ra_exclusion_sql("b"))
+  ", .ground_prehatch_sql, .ground_prehatch_sql, ra_exclusion_sql("b"))
 
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_sections]", e$message)); data.frame()
@@ -329,8 +334,8 @@ load_capacity_by_priority <- function() {
            (COUNT(*) FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites,
            COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'G'), 0)::numeric AS ground_acres,
            COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'A'), 0)::numeric AS air_acres,
-           (COUNT(*) FILTER (WHERE b.prehatch IN %s))::int AS prehatch_sites,
-           COALESCE(SUM(b.acres) FILTER (WHERE b.prehatch IN %s), 0)::numeric AS prehatch_acres
+           (COUNT(*) FILTER (WHERE %s))::int AS prehatch_sites,
+           COALESCE(SUM(b.acres) FILTER (WHERE %s), 0)::numeric AS prehatch_acres
     FROM loc_breeding_sites b
     JOIN gis_sectcode sc ON left(b.sitecode, 7) = sc.sectcode
     WHERE b.enddate IS NULL AND sc.fosarea IS NOT NULL AND sc.fosarea <> ''
@@ -338,7 +343,7 @@ load_capacity_by_priority <- function() {
     GROUP BY sc.facility, sc.fosarea, sc.zone,
              COALESCE(NULLIF(b.priority, ''), '(none)')
     ORDER BY sc.facility, sc.fosarea, sc.zone, priority
-  ", .prehatch_in_sql, .prehatch_in_sql, ra_exclusion_sql("b"))
+  ", .ground_prehatch_sql, .ground_prehatch_sql, ra_exclusion_sql("b"))
 
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_by_priority]", e$message)); data.frame()

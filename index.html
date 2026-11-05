@@ -1012,8 +1012,10 @@
             fetch(window.location.origin + '/v1/public/llm-config')
                 .then(r => r.json())
                 .then(data => {
-                    if (data.tunnel_url) {
-                        LLM_ENDPOINT = data.tunnel_url + '/api/chat';
+                    // Plumber boxes scalars, so an unregistered URL arrives as [""], which is truthy.
+                    const tunnelUrl = [].concat(data.tunnel_url)[0];
+                    if (tunnelUrl) {
+                        LLM_ENDPOINT = tunnelUrl + '/api/chat';
                         document.getElementById('llm-status').textContent = 'Dynamic Grapher';
                         document.getElementById('llm-status').style.color = '#5f6368';
                         document.getElementById('chat-send-btn').disabled = false;

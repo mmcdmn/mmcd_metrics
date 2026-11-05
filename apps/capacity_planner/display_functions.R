@@ -5,7 +5,7 @@
 # so they can be unit-tested against the live data loaders.
 # =============================================================================
 
-# Every site count is paired with an acres figure (ground, air, prehatch).
+# Every site count is paired with an acres figure (ground, air, ground prehatch).
 # Sections and wet catch basins are not sites with acres, so they are count-only.
 CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "ground_acres",
                            "air_sites", "air_acres",
@@ -17,7 +17,7 @@ CAPACITY_ACRE_METRICS <- c("ground_acres", "air_acres", "prehatch_acres")
 CAPACITY_METRIC_LABELS <- c(
   sections = "Sections", ground_sites = "Ground sites", ground_acres = "Ground acres",
   air_sites = "Air sites", air_acres = "Air acres",
-  prehatch_sites = "Prehatch sites", prehatch_acres = "Prehatch acres",
+  prehatch_sites = "Ground prehatch sites", prehatch_acres = "Ground prehatch acres",
   wet_cb = "Wet catch basins", avg_miles = "Avg miles", n_techs = "Techs",
   max_miles = "Max miles")
 
@@ -975,7 +975,8 @@ scenario_export_staffing <- function(res) {
 scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
   cols <- c("sectcode", "facility_from", "zone_from", "facility_to", "zone_to", "promoted",
             "moved", "fos_area_from", "ground_sites", "ground_acres", "air_sites", "air_acres",
-            "prehatch_sites", "prehatch_acres", "wet_cb", "drive_min_from", "drive_min_to")
+            "ground_prehatch_sites", "ground_prehatch_acres", "wet_cb", "drive_min_from",
+            "drive_min_to")
   empty <- as.data.frame(stats::setNames(rep(list(character(0)), length(cols)), cols),
                          stringsAsFactors = FALSE)
   if (is.null(after) || nrow(after) == 0) return(empty)
@@ -989,7 +990,8 @@ scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
     moved = d$moved, fos_area_from = as.character(d$fosarea),
     ground_sites = d$ground_sites, ground_acres = round(d$ground_acres, 2),
     air_sites = d$air_sites, air_acres = round(d$air_acres, 2),
-    prehatch_sites = d$prehatch_sites, prehatch_acres = round(d$prehatch_acres, 2),
+    ground_prehatch_sites = d$prehatch_sites,
+    ground_prehatch_acres = round(d$prehatch_acres, 2),
     wet_cb = d$wet_cb, drive_min_from = pick(dm_before), drive_min_to = pick(dm_after),
     stringsAsFactors = FALSE)
   out <- out[order(out$facility_from, out$sectcode), ]

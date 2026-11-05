@@ -38,8 +38,8 @@ METRIC_CHOICES <- c(
   "Ground acres"   = "ground_acres",
   "Air sites"      = "air_sites",
   "Air acres"      = "air_acres",
-  "Prehatch sites" = "prehatch_sites",
-  "Prehatch acres" = "prehatch_acres",
+  "Ground prehatch sites" = "prehatch_sites",
+  "Ground prehatch acres" = "prehatch_acres",
   "Sections"       = "sections",
   "Wet catch basins" = "wet_cb"
 )
@@ -278,7 +278,7 @@ ui <- accessible_page(
       ),
       h4("Capacity per FOS area (P1 / P2)"),
       tags$p(class = "metric-note",
-             "Columns are labelled as site counts or acres (ground, air and prehatch ",
+             "Columns are labelled as site counts or acres (ground, air and ground prehatch ",
              "each have both). Sections and wet catch basins are counts only. ",
              "Use the toggle above to show sites, acres, or both."),
       div(style = "overflow-x:auto;", DT::DTOutput("cap_table")),
@@ -311,7 +311,7 @@ ui <- accessible_page(
              "Double-click a Crews, Techs/crew, Drone techs or offload cell to ",
              "change it; all estimates update. Drone techs are kept out of the ground ",
              "tech count. Ground offload % = share of a facility's ground-treated load ",
-             "(ground sites, prehatch sites/acres) that drones take over. Air offload % = ",
+             "(ground sites, ground prehatch sites/acres) that drones take over. Air offload % = ",
              "share of air-site inspections drones take over. All ground techs inspect air ",
              "sites too; drones only help. Offloads lower the load the techs are staffed for."),
       div(style = "overflow-x:auto;", DT::DTOutput("staff_edit")),
@@ -322,7 +322,7 @@ ui <- accessible_page(
       br(),
       h4("Baseline: what each tech and crew carries (P1)"),
       tags$p(class = "metric-note",
-             "P1 ground, air and prehatch sites and acres divided by ground techs and ",
+             "P1 ground, air and ground prehatch sites and acres divided by ground techs and ",
              "crews. This is the average load a tech / crew carries, and the baseline ",
              "for the What-If planner. All ground techs inspect air sites."),
       div(style = "overflow-x:auto;", DT::DTOutput("staff_baseline")),
@@ -494,7 +494,7 @@ ui <- accessible_page(
           ),
           tags$p(class = "metric-note",
                  "Staffing edits here are shared with the Staffing tab. Ground offload ",
-                 "applies to ground sites and prehatch sites/acres; air offload applies to ",
+                 "applies to ground sites and ground prehatch sites/acres; air offload applies to ",
                  "air sites (all techs inspect air sites, drones help). Sections and catch ",
                  "basins are not offloaded."),
           fluidRow(
@@ -919,9 +919,9 @@ server <- function(input, output, session) {
               p1_air_sites = "P1 Air sites", air_sites_per_tech = "Air sites/tech",
               p1_air_acres = "P1 Air acres", air_acres_per_tech = "Air acres/tech",
               air_acres_per_crew = "Air acres/crew",
-              p1_ph_sites = "P1 Prehatch sites", ph_sites_per_tech = "Prehatch sites/tech",
-              p1_ph_acres = "P1 Prehatch acres", ph_acres_per_tech = "Prehatch acres/tech",
-              ph_acres_per_crew = "Prehatch acres/crew")
+              p1_ph_sites = "P1 Ground prehatch sites", ph_sites_per_tech = "Ground prehatch sites/tech",
+              p1_ph_acres = "P1 Ground prehatch acres", ph_acres_per_tech = "Ground prehatch acres/tech",
+              ph_acres_per_crew = "Ground prehatch acres/crew")
     disp <- bl[, names(cols)]
     names(disp) <- unname(cols)
     disp
@@ -1317,7 +1317,8 @@ server <- function(input, output, session) {
                   "wet_cb", "drive_min")]
     for (col in c("ground_acres", "air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
     names(disp) <- c("Promote", "Section", "Facility", "Priority", "FOS", "Ground sites",
-                     "Ground acres", "Air sites", "Air acres", "PH sites", "PH acres",
+                     "Ground acres", "Air sites", "Air acres", "Ground prehatch sites",
+                     "Ground prehatch acres",
                      "WetCB", "Drive min")
     capacity_dt(disp, left = 2, rownames = FALSE, filter = "top", selection = "none",
                 escape = -1,
@@ -1453,10 +1454,10 @@ server <- function(input, output, session) {
       `Ground acres/tech` = arrow(b0$ground_acres_per_tech[i0], b1$ground_acres_per_tech),
       `Air sites/tech` = arrow(b0$air_sites_per_tech[i0], b1$air_sites_per_tech),
       `Air acres/tech` = arrow(b0$air_acres_per_tech[i0], b1$air_acres_per_tech),
-      `Prehatch acres/tech` = arrow(b0$ph_acres_per_tech[i0], b1$ph_acres_per_tech),
+      `Ground prehatch acres/tech` = arrow(b0$ph_acres_per_tech[i0], b1$ph_acres_per_tech),
       `Ground acres/crew` = arrow(b0$ground_acres_per_crew[i0], b1$ground_acres_per_crew),
       `Air acres/crew` = arrow(b0$air_acres_per_crew[i0], b1$air_acres_per_crew),
-      `Prehatch acres/crew` = arrow(b0$ph_acres_per_crew[i0], b1$ph_acres_per_crew),
+      `Ground prehatch acres/crew` = arrow(b0$ph_acres_per_crew[i0], b1$ph_acres_per_crew),
       check.names = FALSE, stringsAsFactors = FALSE)
   })
   live_dt("wi_pertech", wi_pertech_df,
@@ -1505,7 +1506,7 @@ server <- function(input, output, session) {
         paste0("<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs",
                "<br/>Ground: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
                "<br/>Air: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
-               "<br/>Prehatch: %s acres/tech &middot; %s acres/crew"),
+               "<br/>Ground prehatch: %s acres/tech &middot; %s acres/crew"),
         r$facility, f(r$crews), f(r$ground_techs), f(r$drone_techs),
         f(r$ground_sites_per_tech), f(r$ground_acres_per_tech), f(r$ground_acres_per_crew),
         f(r$air_sites_per_tech), f(r$air_acres_per_tech), f(r$air_acres_per_crew),

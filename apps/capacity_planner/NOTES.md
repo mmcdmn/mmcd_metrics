@@ -91,11 +91,6 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   First build (2026-10-26, 3,207 sections, none unreachable, 20 snapped > 1 km): median
   circuity 1.43 (1.35–1.62 by facility; Sr highest because of river crossings) and implied
   speed ~34 mph, so the old 1.3 / 45 mph estimate understated drive time by ~1.4× (Sr ~1.8×).
-- **`staffing_baseline(cap, staff)`** — per facility + DISTRICT: P1 ground, air and prehatch
-  sites and acres divided by ground techs (crews × techs/crew) and crews → sites/tech,
-  acres/tech, acres/crew for each of ground, air and prehatch. **ALL ground techs inspect air sites**, so
-  air load is per ground tech, not per drone tech. This is the "what a tech /
-  crew can cover" baseline.
 - **Drone offload** — drones help ground techs in two ways, each its own per-facility %:
   `drone_offload_pct` scales `DRONE_OFFSET_METRICS` (ground sites/acres, prehatch sites/acres) and
   `drone_air_offload_pct` scales `DRONE_AIR_OFFSET_METRICS` (air sites = air *inspections*) by

@@ -89,13 +89,10 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   (What changed + its CSV, "+ Residents"), but not in `SCENARIO_METRICS` / `METRIC_CHOICES`, so
   Estimate A cannot be driven by them. The section picker has Residents / Residents per sq mi
   columns (sortable) and the map tooltips show them.
-- **Map shading** (`wi_shade`: Facility, Population density, Residents per section, Dense P2
-  sections) — Facility is the original look. The other modes fill each section by its residents
+- **Map shading** (`wi_shade`: Facility, Population density, Residents per section) — Facility is the original look. The other modes fill each section by its residents
   (`shade_fill`; 9 YlOrRd classes, grey = no data, bounds in `SHADE_SCALES`) and move the facility
   color to a thin outline (`shade_outline`: P1 weight 1 solid, P2 0.5 dashed) so the fill is
-  readable with the whole district on screen. Dense P2 = P2 section at or above
-  `SHADE_HOTSPOT_DENSITY` (300 residents per sq mi, the 300psqmi layer; 54 sections today, 4 at
-  1,000) is filled magenta with a heavy outline; P1 is blue, other P2 grey. A switch sends one
+  readable with the whole district on screen. A switch sends one
   `wi_restyle` message for every section (fill, outline, weight, dash, tooltip; no redraw), the
   legend is replaced (`layerId = "wi_legend"`), and a promote / move while shaded keeps the mode.
   First look at the data: P2 has 1,101 sections under 300 per sq mi, 41 at 300-600, 9 at

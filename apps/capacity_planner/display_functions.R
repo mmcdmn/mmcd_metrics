@@ -1011,10 +1011,7 @@ capacity_dt <- function(data, left = 1, options = list(), ...) {
 # The map is colored by facility by default. The other modes fill each section by its
 # population, and the facility color moves to the outline (solid = P1, dashed = P2).
 SHADE_MODES <- c("Facility" = "facility", "Population density" = "density",
-                 "Residents per section" = "residents", "Dense P2 sections" = "hotspot")
-# Residents per sq mi: a P2 section at or above this is "dense" (a promotion candidate). 300 matches the
-# 300psqmi layer of the census file; with it 54 P2 sections qualify (at 1,000 only 4 do).
-SHADE_HOTSPOT_DENSITY <- 300
+                 "Residents per section" = "residents")
 SHADE_NO_DATA <- "#bdbdbd"
 # ColorBrewer YlOrRd (9 classes); the lower bounds are round numbers close to the QGIS styling
 SHADE_COLORS <- c("#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c",
@@ -1024,7 +1021,6 @@ SHADE_SCALES <- list(
                    lower = c(0, 300, 600, 1000, 2500, 4000, 5000, 6000, 7500)),
   residents = list(title = "Residents per section", value = "population",
                    lower = c(0, 250, 500, 1000, 2000, 3000, 4000, 5000, 7000)))
-SHADE_HOTSPOT_COLORS <- c(dense = "#c51b7d", p1 = "#4575b4", other = "#d9d9d9")
 
 #' Class labels for a set of lower bounds: "Under 300", "300 to 600", ..., "7,500 or more".
 shade_labels <- function(lower) {
@@ -1035,16 +1031,10 @@ shade_labels <- function(lower) {
 }
 
 # Outline weights in the shaded modes: thin, so the population fill stays visible when the whole
-# district is on screen (about 1,900 P1 sections); a hot spot gets a heavy outline of its own.
-SHADE_WEIGHT <- c(p1 = 1, p2 = 0.5, hot = 3)
+# district is on screen (about 1,900 P1 sections).
+SHADE_WEIGHT <- c(p1 = 1, p2 = 0.5)
 
-#' P2 sections at or above the hot-spot density (the promotion candidates).
-shade_dense <- function(a) {
-  d <- if ("density" %in% names(a)) suppressWarnings(as.numeric(a$density)) else rep(NA_real_, nrow(a))
-  as.character(a$zone) != "1" & !is.na(d) & d >= SHADE_HOTSPOT_DENSITY
-}
-
-#' Fill color of each section for a shading mode ("density", "residents" or "hotspot");
+#' Fill color of each section for a shading mode ("density" or "residents");
 #' @param a rows of scenario_apply() output (zone, population, density)
 shade_fill <- function(a, mode) {
   n <- nrow(a)
@@ -1054,40 +1044,23 @@ shade_fill <- function(a, mode) {
     i <- findInterval(num(sc$value), sc$lower)
     return(ifelse(is.na(i) | i < 1, SHADE_NO_DATA, SHADE_COLORS[pmax(i, 1L, na.rm = TRUE)]))
   }
-  if (identical(mode, "hotspot")) {
-    p1 <- as.character(a$zone) == "1"
-    dense <- shade_dense(a)
-    return(unname(ifelse(dense, SHADE_HOTSPOT_COLORS["dense"],
-                         ifelse(p1, SHADE_HOTSPOT_COLORS["p1"], SHADE_HOTSPOT_COLORS["other"]))))
-  }
   NULL
 }
 # change the shade based on the mode and value pf the section
 shade_opacity <- function(a, mode) {
   p1 <- as.character(a$zone) == "1"
-  if (identical(mode, "hotspot")) {
-    dense <- shade_dense(a)
-    return(ifelse(dense, 0.85, ifelse(p1, 0.45, 0.2)))
-  }
   if (mode %in% names(SHADE_SCALES)) return(ifelse(p1, 0.8, 0.55))
   ifelse(p1, 0.75, 0.15)
 }
 
 #' Outline of each section in a shaded mode: the facility color (so the facility stays readable),
-#' thin and solid for P1, thinner and dashed for P2; in the hot-spot mode a dense P2 section is
-#' outlined heavily in the hot-spot color instead.
+#' thin and solid for P1, thinner and dashed for P2.
 #' @param facility_color outline color per row (the facility's color)
 #' @return list(ol, w, dash)
 shade_outline <- function(a, mode, facility_color) {
   p1 <- as.character(a$zone) == "1"
-  ol <- facility_color
   w <- ifelse(p1, SHADE_WEIGHT[["p1"]], SHADE_WEIGHT[["p2"]])
-  if (identical(mode, "hotspot")) {
-    dense <- shade_dense(a)
-    ol[dense] <- SHADE_HOTSPOT_COLORS[["dense"]]
-    w[dense] <- SHADE_WEIGHT[["hot"]]
-  }
-  list(ol = ol, w = w, dash = ifelse(p1, "", "4 3"))
+  list(ol = facility_color, w = w, dash = ifelse(p1, "", "4 3"))
 }
 
 #' Legend of a shading mode: list(title, colors, labels); NULL for "facility".
@@ -1096,13 +1069,6 @@ shade_legend <- function(mode) {
     sc <- SHADE_SCALES[[mode]]
     return(list(title = sc$title, colors = c(SHADE_COLORS, SHADE_NO_DATA),
                 labels = c(shade_labels(sc$lower), "No land / no data")))
-  }
-  if (identical(mode, "hotspot")) {
-    th <- format(SHADE_HOTSPOT_DENSITY, big.mark = ",", scientific = FALSE, trim = TRUE)
-    return(list(title = "Promotion candidates",
-                colors = unname(SHADE_HOTSPOT_COLORS[c("dense", "p1", "other")]),
-                labels = c(paste0("P2 section, ", th, "+ residents per sq mi"), "P1 section",
-                           "Other P2 section")))
   }
   NULL
 }

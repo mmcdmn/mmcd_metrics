@@ -82,6 +82,28 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
+# --------------- Capacity planner cache warm-up  ---------
+warm_capacity_planner() {
+    echo "Starting capacity planner cache warm-up in the background..."
+    (
+        cd /srv/shiny-server/apps/capacity_planner 2>/dev/null || exit 0
+        Rscript -e '
+          tryCatch({
+            source("../../shared/db_helpers.R")
+            source("data_functions.R")
+            r <- warm_capacity_cache()
+            cat(sprintf("[startup] Capacity planner cache warm-up complete (%d sections, %d priority rows)
+",
+                        r$sections, r$priority))
+          }, error = function(e) {
+            cat("[startup] Capacity planner cache warm-up failed:", conditionMessage(e), "
+")
+          })
+        ' >> /var/log/cache-warmup.log 2>&1
+    ) &
+    disown
+}
+
 # =============================================================================
 # MODE: Multi-worker with nginx (only if ENABLE_NGINX=true)
 # =============================================================================
@@ -217,6 +239,7 @@ if [ "${ENABLE_NGINX}" = "true" ]; then
         disown  # Detach so wait -n doesn't track the Rscript process
         echo "   Cache warm-up running in background (check /var/log/cache-warmup.log)"
         echo "   Cache warm-up running in background (check /var/log/cache-warmup.log)"
+    warm_capacity_planner
 
     echo ""
     echo "============================================================"
@@ -269,6 +292,8 @@ echo "  ✓ Plumber watchdog on port ${PLUMBER_PORT}  (watchdog PID $!)"
   done
 ) &
 echo "  ✓ Companion restart listener on port 9001  (watchdog PID $!)"
+
+warm_capacity_planner
 
 SHINY_INSTANCE_ID="1" SHINY_INSTANCE_PORT="$LISTEN_PORT" exec /usr/bin/shiny-server
 cleanup

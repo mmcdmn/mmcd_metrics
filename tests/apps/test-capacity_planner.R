@@ -50,6 +50,19 @@ test_that("load_routed_drivetimes returns NULL for a missing or malformed file",
   expect_null(env$load_routed_drivetimes(bad))
 })
 
+test_that("facility office coordinates are valid and used for straight-line distance", {
+  env <- new.env(); load_capacity_fns(env)
+  root <- get_project_root()
+  locations <- env$load_facility_locations(
+    file.path(root, "apps/capacity_planner/data/facility_locations.csv")
+  )
+  expect_equal(sort(locations$facility), c("E", "N", "Sj", "Sr", "Wm", "Wp"))
+  sr <- locations[locations$facility == "Sr", ]
+  expect_equal(sr$lon, -93.1205639)
+  expect_equal(sr$lat, 44.7183211)
+  expect_equal(round(env$.haversine_miles(sr$lon, sr$lat, -92.84310, 44.73851), 1), 13.7)
+})
+
 test_that("attach_routed_drivetimes matches on facility + sectcode, NA when no row", {
   env <- new.env(); load_capacity_fns(env)
   s <- env$attach_routed_drivetimes(stub_sections(), env$load_routed_drivetimes(stub_routed_csv()))
@@ -770,6 +783,125 @@ test_that("the shared staffing inputs are written through tagged edits, not read
   expect_false(has("observeEvent(input$wi_drone_air_offload"))
 })
 
+# ---- Shared cache for the heavy queries -----------------------------------------------------
+fake_store <- function() {
+  e <- new.env()
+  list(env = e,
+       get = function(k) e[[k]],
+       set = function(k, v, ttl) { e[[k]] <- v; e$.last_ttl <- ttl; TRUE })
+}
+
+test_that("capacity_cached: a hit never calls the loader; a miss loads and stores", {
+  env <- new.env(); load_capacity_fns(env)
+  st <- fake_store(); calls <- 0
+  loader <- function() { calls <<- calls + 1; data.frame(a = 1:3) }
+  r1 <- env$capacity_cached("sections", loader, store = st, ttl = 60, fingerprint = "fp")
+  expect_false(r1$cached); expect_equal(calls, 1); expect_equal(r1$data$a, 1:3)
+  expect_s3_class(r1$at, "POSIXct")
+  expect_equal(st$env$.last_ttl, 60)
+  r2 <- env$capacity_cached("sections", loader, store = st, ttl = 60, fingerprint = "fp")
+  expect_true(r2$cached); expect_equal(calls, 1)                    # no second query
+  expect_equal(r2$data, r1$data); expect_equal(r2$at, r1$at)        # same data, same "as of" time
+  # the key names the data set, the cache version and the fingerprint
+  expect_match(setdiff(ls(st$env, all.names = FALSE), ".last_ttl"),
+               "^capacity:sections:v[0-9]+:fp$")
+  # other data sets and other fingerprints are separate entries
+  env$capacity_cached("priority", loader, store = st, fingerprint = "fp")
+  env$capacity_cached("sections", loader, store = st, fingerprint = "other")
+  expect_equal(calls, 3)
+})
+
+test_that("capacity_cached: refresh bypasses the cache and replaces what everyone sees", {
+  env <- new.env(); load_capacity_fns(env)
+  st <- fake_store(); n <- 0
+  loader <- function() { n <<- n + 1; data.frame(v = n) }
+  env$capacity_cached("sections", loader, store = st, fingerprint = "fp")
+  r <- env$capacity_cached("sections", loader, store = st, fingerprint = "fp", refresh = TRUE)
+  expect_false(r$cached); expect_equal(r$data$v, 2)
+  again <- env$capacity_cached("sections", loader, store = st, fingerprint = "fp")
+  expect_true(again$cached); expect_equal(again$data$v, 2)           # the refreshed value is shared
+})
+
+test_that("capacity_cached: an empty or failed load is returned but never stored", {
+  env <- new.env(); load_capacity_fns(env)
+  st <- fake_store(); calls <- 0
+  empty <- function() { calls <<- calls + 1; data.frame() }
+  r <- env$capacity_cached("sections", empty, store = st, fingerprint = "fp")
+  expect_equal(nrow(r$data), 0); expect_false(r$cached)
+  env$capacity_cached("sections", empty, store = st, fingerprint = "fp")
+  expect_equal(calls, 2)                                             # tried again, not served from cache
+  expect_equal(length(setdiff(ls(st$env), ".last_ttl")), 0)
+  expect_null(env$capacity_cached("sections", function() NULL, store = st, fingerprint = "fp")$data)
+})
+
+test_that("capacity_cached: no Redis, or a broken one, just loads", {
+  env <- new.env(); load_capacity_fns(env)
+  loader <- function() data.frame(a = 1)
+  expect_equal(env$capacity_cached("sections", loader, store = NULL, fingerprint = "fp")$data$a, 1)
+  bad <- list(get = function(k) stop("redis down"), set = function(k, v, ttl) stop("redis down"))
+  r <- env$capacity_cached("sections", loader, store = bad, fingerprint = "fp")
+  expect_equal(r$data$a, 1); expect_false(r$cached)
+  # a stored value of the wrong shape is ignored, not trusted
+  junk <- list(get = function(k) "not a cache entry", set = function(k, v, ttl) TRUE)
+  expect_false(env$capacity_cached("sections", loader, store = junk, fingerprint = "fp")$cached)
+})
+
+test_that("the cache fingerprint follows the RA exclusion file, and the TTL has a safe default", {
+  env <- new.env(); load_capacity_fns(env)
+  f <- tempfile(fileext = ".csv")
+  writeLines(c("sitecode", "190101-001"), f)
+  a <- env$capacity_cache_fingerprint(f)
+  expect_identical(env$capacity_cache_fingerprint(f), a)
+  writeLines(c("sitecode", "190101-001", "190101-002"), f)
+  b <- env$capacity_cache_fingerprint(f)
+  expect_false(identical(a, b))                                      # edited file: new key, no stale counts
+  expect_false(identical(env$capacity_cache_fingerprint(tempfile()), a))   # missing file is its own state
+  expect_match(a, "^[0-9a-f]{8}$")
+  ttl <- env$capacity_cache_ttl()
+  expect_true(is.integer(ttl) && ttl > 0)
+})
+
+test_that("files are read once per process and again when their content changes", {
+  env <- new.env(); load_capacity_fns(env)
+  f <- tempfile(fileext = ".csv")
+  writeLines(c("sitecode", "A-1", "A-2"), f)
+  s1 <- env$ra_exclusion_sql("b", f)
+  expect_match(s1, "A-1,A-2", fixed = TRUE)
+  expect_identical(env$ra_exclusion_sql("b", f), s1)
+  expect_match(env$ra_exclusion_sql("x", f), "x.sitecode", fixed = TRUE)   # alias still applied per call
+  writeLines(c("sitecode", "B-9"), f)
+  expect_match(env$ra_exclusion_sql("b", f), "B-9", fixed = TRUE)
+  expect_false(grepl("A-1", env$ra_exclusion_sql("b", f), fixed = TRUE))
+  # routed drive times: the same parsed object comes back until the file changes
+  csv <- stub_routed_csv()
+  r1 <- env$load_routed_drivetimes(csv); r2 <- env$load_routed_drivetimes(csv)
+  expect_identical(r1, r2)
+  d <- read.csv(csv, stringsAsFactors = FALSE); d$drive_min[1] <- 99
+  write.csv(d, csv, row.names = FALSE)
+  expect_equal(env$load_routed_drivetimes(csv)$drive_min_routed[1], 99)
+})
+
+test_that("the app, start-up and config are wired for the shared cache", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_true(has('capacity_cached("sections", load_capacity_sections, refresh = refresh)'))
+  expect_true(has('capacity_cached("priority", load_capacity_by_priority, refresh = refresh)'))
+  expect_true(has('capacity_cached("geo", load_section_geo, ttl = 7L * 86400L)'))
+  expect_false(has("geo <- load_section_geo()"))
+  expect_true(has('uiOutput("data_asof")'))
+  expect_true(has('actionButton("data_refresh"'))
+  expect_true(has("observeEvent(input$data_refresh"))
+  expect_true(has("time.local-time"))
+  # the heavy loaders are no longer called straight from the page
+  expect_false(has("sections <- tryCatch(load_capacity_sections()"))
+  startup <- paste(readLines(file.path(root, "startup.sh"), warn = FALSE), collapse = "\n")
+  expect_true(grepl("warm_capacity_cache()", startup, fixed = TRUE))
+  expect_equal(length(gregexpr("\n *warm_capacity_planner *\r?\n", startup)[[1]]), 2)   # both modes
+  cfg <- paste(readLines(file.path(root, "config", "app_config.yaml"), warn = FALSE), collapse = "\n")
+  expect_true(grepl("capacity_planner: 86400", cfg, fixed = TRUE))
+})
+
 # ---- Phone layout: capacity_dt pins the label columns ------------------------
 test_that("capacity_dt freezes leading columns, scrolls sideways and keeps caller options", {
   skip_if_not_installed("DT")
@@ -839,7 +971,221 @@ test_that("What-If page: no priority filter, no section 5, per-tech above the es
   # Estimate A: just the techs (no "n more needed, n freed", no repeated load columns)
   expect_false(has("more needed")); expect_false(has('"P1 now"')); expect_false(has('"P1 after"'))
   # the map is drawn once and restyled in place, not redrawn on every change
-  expect_true(has("wi_restyle")); expect_true(has("setStyle({color: col[i]"))
+  expect_true(has("wi_restyle")); expect_true(has("setStyle({color: ol[i], fillColor: fill[i]"))
   expect_true(has("observeEvent(changes(), restyle_sync()"))
   expect_false(has("fillOpacity = 0.9"))       # leaflet hover highlight would reset the fill
+})
+
+# ---- Prehatch means GROUND prehatch ----------------------------------------------------------
+test_that("prehatch counts are ground prehatch only: air sites with a prehatch type are excluded", {
+  env <- new.env(); load_capacity_fns(env)
+  # the definition: ground AND a prehatch type
+  expect_match(env$.ground_prehatch_sql, "b.air_gnd = 'G'", fixed = TRUE)
+  expect_match(env$.ground_prehatch_sql, "'PREHATCH','BRIQUET','PELLET','PRE1ONLY'", fixed = TRUE)
+  # both heavy queries filter every prehatch count / acre sum through it, never by type alone
+  root <- file.path(dirname(test_path()), "..", "..")
+  src <- paste(readLines(file.path(root, "apps", "capacity_planner", "data_functions.R"), warn = FALSE),
+               collapse = "\n")
+  expect_equal(length(gregexpr("FILTER (WHERE %s)", src, fixed = TRUE)[[1]]), 4)   # 2 queries x (sites, acres)
+  expect_false(grepl("FILTER (WHERE b.prehatch IN", src, fixed = TRUE))
+  expect_equal(length(gregexpr(".ground_prehatch_sql, .ground_prehatch_sql", src, fixed = TRUE)[[1]]), 2)
+  # the cache key follows the definition, so counts cached under the old (air-inclusive) one are not served
+  f <- tempfile(fileext = ".csv"); writeLines(c("sitecode", "190101-001"), f)
+  fp_new <- env$capacity_cache_fingerprint(f)
+  env$.ground_prehatch_sql <- env$.prehatch_in_sql
+  expect_false(identical(env$capacity_cache_fingerprint(f), fp_new))
+})
+
+test_that("every prehatch label says ground prehatch", {
+  env <- new.env(); load_capacity_fns(env)
+  expect_equal(unname(env$CAPACITY_METRIC_LABELS[c("prehatch_sites", "prehatch_acres")]),
+               c("Ground prehatch sites", "Ground prehatch acres"))
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  # a bare "Prehatch ..." / "PH ..." label would hide that air sites are not in it
+  expect_false(grepl('"(P1 )?Prehatch (sites|acres)', app_src))
+  expect_false(grepl('`Prehatch acres/', app_src, fixed = TRUE))
+  expect_false(grepl('"PH (sites|acres)"', app_src))
+  expect_true(grepl("Ground prehatch sites/tech", app_src, fixed = TRUE))
+  expect_true(grepl("Ground prehatch acres/crew", app_src, fixed = TRUE))
+  # CSV of the changed sections
+  expect_true(all(c("ground_prehatch_sites", "ground_prehatch_acres") %in%
+                    names(env$scenario_export_changes(NULL))))
+})
+
+# ---- 2020 census residents per section ---------------------------------------------------------
+pop_fixture <- function() {
+  x <- scenario_fixture()
+  x$sec$population <- c(1000, 2000, 3000, 4000, 500, 700)
+  x$sec$land_sqmi  <- c(1, 1, 1, 2, 1, 1)
+  x$sec$density    <- x$sec$population / x$sec$land_sqmi
+  x
+}
+no_census <- function(sec) sec[, setdiff(names(sec), c("population", "land_sqmi", "density"))]
+
+test_that("build script: blocks go to the section holding their internal point, population conserved", {
+  skip_if_not_installed("sf")
+  root <- file.path(dirname(test_path()), "..", "..")
+  e <- new.env(); options(section_population_no_run = TRUE); on.exit(options(section_population_no_run = NULL))
+  source(file.path(root, "apps", "capacity_planner", "scripts", "build_section_population.R"), local = e)
+  sq <- function(x0, y0, w = 1000) sf::st_polygon(list(rbind(c(x0, y0), c(x0 + w, y0), c(x0 + w, y0 + w),
+                                                              c(x0, y0 + w), c(x0, y0))))
+  secs <- sf::st_sf(sectcode = c("0000002", "0000001", "0000003"),     # not in sorted order on purpose
+                    geometry = sf::st_sfc(sq(480000, 4980000), sq(481000, 4980000), sq(490000, 4990000),
+                                          crs = 26915))
+  xy <- data.frame(x = c(480500, 481500, 480200, 495000), y = c(4980500, 4980500, 4980900, 4995000))
+  ll <- sf::st_coordinates(sf::st_transform(sf::st_as_sf(xy, coords = c("x", "y"), crs = 26915), 4326))
+  blocks <- data.frame(pop = c(100L, 50L, 25L, 7L), land_m2 = c(e$SQMI_M2, e$SQMI_M2 / 2, e$SQMI_M2 / 4, 1000),
+                       lon = ll[, 1], lat = ll[, 2])
+  r <- e$assign_blocks_to_sections(blocks, secs)
+  d <- r$per_section
+  expect_equal(d$sectcode, c("0000001", "0000002", "0000003"))          # sorted
+  expect_equal(d$population, c(50L, 125L, 0L))
+  expect_equal(d$blocks, c(1L, 2L, 0L))
+  expect_equal(d$land_sqmi, c(0.5, 1.25, 0))
+  expect_equal(d$density, c(100, 100, NA_real_))                        # no land -> NA, not 0 / Inf
+  expect_equal(r$block_section, c("0000002", "0000001", "0000002", NA))
+  # nothing is lost: the sections plus the blocks outside every section add up to the file
+  expect_equal(sum(d$population) + sum(blocks$pop[is.na(r$block_section)]), sum(blocks$pop))
+})
+
+test_that("load_section_population / attach_section_population: lookup, fallbacks, one parse per file", {
+  env <- new.env(); load_capacity_fns(env)
+  f <- tempfile(fileext = ".csv")
+  writeLines(c("sectcode,population,land_sqmi,density", "0100001,1200,0.8,9999", "0100002,0,0,NA"), f)
+  p <- env$load_section_population(f)
+  expect_equal(p$sectcode, c("0100001", "0100002"))
+  expect_equal(p$density, c(1500, NA_real_))                            # recomputed from the two counts
+  expect_identical(env$load_section_population(f), p)                  # memoized
+  writeLines(c("sectcode,population,land_sqmi", "0100001,10,1"), f)     # edited file is re-read
+  expect_equal(env$load_section_population(f)$population, 10)
+  expect_null(env$load_section_population(tempfile()))                  # missing file
+  writeLines(c("a,b", "1,2"), f); expect_null(env$load_section_population(f))   # wrong columns
+  s <- data.frame(sectcode = c("0100001", "0999999"), stringsAsFactors = FALSE)
+  writeLines(c("sectcode,population,land_sqmi", "0100001,300,2"), f)
+  a <- env$attach_section_population(s, env$load_section_population(f))
+  expect_equal(a$population, c(300, NA)); expect_equal(a$density, c(150, NA))   # unknown section: NA
+  n <- env$attach_section_population(s, NULL)
+  expect_true(all(is.na(n$population)) && all(c("population", "land_sqmi", "density") %in% names(n)))
+})
+
+test_that("the committed section_population.csv covers every section with plausible numbers", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  d <- read.csv(file.path(root, "apps", "capacity_planner", "data", "section_population.csv"),
+                stringsAsFactors = FALSE, colClasses = c(sectcode = "character"))
+  expect_true(all(c("sectcode", "population", "land_sqmi", "density", "blocks") %in% names(d)))
+  expect_false(anyDuplicated(d$sectcode) > 0)
+  expect_true(all(nchar(d$sectcode) == 7))
+  expect_true(all(d$population >= 0) && all(d$land_sqmi >= 0) && !anyNA(d$population))
+  expect_equal(sum(d$population), 3163104)                              # the whole 2020 file, none lost
+  times <- read.csv(file.path(root, "apps", "capacity_planner", "data", "facility_section_drivetime.csv"),
+                    stringsAsFactors = FALSE, colClasses = c(sectcode = "character"))
+  expect_true(all(unique(times$sectcode) %in% d$sectcode))              # every routed section has a row
+  expect_true(all(is.na(d$density) | d$density <= 40000))
+})
+
+test_that("residents roll up per FOS area and are reported by What-If, but never drive Estimate A", {
+  env <- new.env(); load_capacity_fns(env); x <- pop_fixture()
+  cap <- env$aggregate_capacity_by_fos(x$sec, x$staff)
+  p1 <- cap[cap$facility == "Sr" & cap$zone == "1", ]
+  expect_equal(p1$population, 3000); expect_equal(p1$density, 1500)     # (1000+2000) / (1+1) sq mi
+  expect_true(all(c("population_P1", "density_P1", "population_P2", "density_P2") %in% names(env$capacity_wide(cap))))
+  # no census columns at all: still works, residents empty
+  cap0 <- env$aggregate_capacity_by_fos(no_census(x$sec), x$staff)
+  expect_true(all(cap0$population == 0)); expect_true(all(is.na(cap0$density)))
+  w0 <- env$capacity_wide(cap0)
+  expect_equal(ncol(env$drop_empty_population(w0)) + 4, ncol(w0))
+  # What-If: promoting s3 (3,000 residents) adds them to Sr's P1
+  a <- env$scenario_apply(x$sec, chg("s3", NA, "1"), x$times)
+  cmp <- env$scenario_compare(a, "1", env$SCENARIO_CHANGE_METRICS)
+  expect_equal(cmp$population_chg[cmp$key == "Sr"], 3000)
+  expect_equal(cmp$population_chg[cmp$key == "DISTRICT"], 3000)
+  # population is not a workload metric: Estimate A ignores it
+  expect_false(any(c("population", "density") %in% env$SCENARIO_METRICS))
+  expect_true("population" %in% env$SCENARIO_CHANGE_METRICS)
+  s_pop <- env$scenario_staffing(a, x$staff, metric = "population", per_tech = 100)
+  s_gnd <- env$scenario_staffing(a, x$staff, metric = "ground_sites", per_tech = 100)
+  expect_equal(s_pop$by_fos, s_gnd$by_fos)
+  # a scenario table without the column does not fail
+  b <- env$scenario_apply(no_census(x$sec), chg("s3", NA, "1"), x$times)
+  expect_false("population_chg" %in% names(env$scenario_compare(b, "1", env$SCENARIO_CHANGE_METRICS)))
+})
+
+test_that("CSV exports carry the residents of what changed", {
+  env <- new.env(); load_capacity_fns(env); x <- pop_fixture()
+  a <- env$scenario_apply(x$sec, rbind(chg("s3", NA, "1"), chg("s4", "Sj", "1")), x$times)
+  e <- env$scenario_export_changes(a)
+  expect_equal(e$population, c(3000, 4000)); expect_equal(e$residents_per_sq_mi, c(3000, 2000))
+  cmp <- env$scenario_compare(a, "1", env$SCENARIO_CHANGE_METRICS)
+  ex <- env$scenario_export_compare(cmp)
+  expect_equal(ex$population_p1_change[ex$facility == "DISTRICT"], 7000)
+  # no census data: empty columns rather than an error
+  b <- env$scenario_apply(no_census(x$sec), chg("s3", NA, "1"), x$times)
+  expect_true(is.na(env$scenario_export_changes(b)$population))
+})
+
+test_that("map shading: classes, no-data grey, legends", {
+  env <- new.env(); load_capacity_fns(env)
+  a <- data.frame(zone = c("1", "2", "2", "2", "2", "1"),
+                  density = c(0, 299.9, 300, 1200, NA, 99999),
+                  population = c(0, 10, 260, 1500, NA, 9000), stringsAsFactors = FALSE)
+  d <- env$shade_fill(a, "density")
+  expect_equal(d[1], env$SHADE_COLORS[1]); expect_equal(d[2], env$SHADE_COLORS[1])
+  expect_equal(d[3], env$SHADE_COLORS[2])                               # 300 starts the second class
+  expect_equal(d[4], env$SHADE_COLORS[4])                               # 1,000 to 2,500
+  expect_equal(d[5], env$SHADE_NO_DATA); expect_equal(d[6], env$SHADE_COLORS[9])
+  r <- env$shade_fill(a, "residents")
+  expect_equal(r[3], env$SHADE_COLORS[2]); expect_equal(r[4], env$SHADE_COLORS[4]); expect_equal(r[6], env$SHADE_COLORS[9])
+  expect_null(env$shade_fill(a, "facility"))
+  expect_null(env$shade_fill(a, "hotspot"))                             # the removed mode is not a mode
+  od <- env$shade_opacity(a, "density")
+  expect_true(all(od[c(1, 6)] > od[c(2, 3)]))                           # P1 stronger than P2
+  expect_equal(env$shade_opacity(a, "facility"), ifelse(a$zone == "1", 0.75, 0.15))   # the original look
+  # a table with no census columns gets the no-data color, not an error
+  expect_equal(env$shade_fill(data.frame(zone = "1"), "density"), env$SHADE_NO_DATA)
+  # legends: one color per label, no-data entry, readable class names
+  for (m in c("density", "residents")) {
+    lg <- env$shade_legend(m)
+    expect_equal(length(lg$colors), length(lg$labels)); expect_true(nzchar(lg$title))
+  }
+  expect_equal(env$shade_legend("density")$labels[c(1, 2, 9, 10)],
+               c("Under 300", "300 to 600", "7,500 or more", "No land / no data"))
+  expect_null(env$shade_legend("facility"))
+  expect_equal(unname(env$SHADE_MODES), c("facility", "density", "residents"))
+  expect_null(env$shade_legend("hotspot"))
+  expect_false(exists("SHADE_HOTSPOT_DENSITY", envir = env)); expect_false(exists("shade_dense", envir = env))
+})
+
+test_that("drop_empty_population removes empty residents columns only", {
+  env <- new.env(); load_capacity_fns(env)
+  df <- data.frame(ground_sites_P1 = 1:2, population_P1 = c(NA, 0), density_P1 = c(NA, NA),
+                   population_P2 = c(5, 6), stringsAsFactors = FALSE)
+  expect_equal(names(env$drop_empty_population(df)), c("ground_sites_P1", "population_P2"))
+  expect_equal(names(env$drop_empty_population(data.frame(a = 1))), "a")
+})
+
+test_that("the app wires residents shading and keeps residents out of the estimate choices", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_true(has('radioButtons("wi_shade"'))
+  expect_true(has('wi_shade       = list(input = "wi_shade",     type = "radio")'))   # deep link + shared link
+  expect_true(has("observeEvent(input$wi_shade"))
+  expect_true(has("attach_section_population(sections)"))
+  expect_true(has('layerId = "wi_legend"'))
+  # Estimate A driver and the metric choices must not offer residents
+  m <- regmatches(app_src, regexpr("METRIC_CHOICES <- c\\([^)]*\\)", app_src))
+  expect_false(grepl("population|density", m))
+  expect_true(has("SCENARIO_CHANGE_METRICS"))
+  expect_false(grepl("scenario_staffing\\([^)]*SCENARIO_CHANGE_METRICS", app_src))
+})
+
+test_that("shaded-mode outlines are thin and keep the facility color", {
+  env <- new.env(); load_capacity_fns(env)
+  a <- data.frame(zone = c("1", "2", "2", "1"), density = c(5000, 5000, 200, NA), stringsAsFactors = FALSE)
+  fc <- c("#111111", "#222222", "#333333", "#444444")
+  o <- env$shade_outline(a, "density", fc)
+  expect_equal(o$ol, fc)                                              # facility stays on the outline
+  expect_equal(o$w, c(1, 0.5, 0.5, 1)); expect_equal(o$dash, c("", "4 3", "4 3", ""))
+  expect_lt(max(o$w), 2)                                              # thin: the fill must show at district zoom
 })

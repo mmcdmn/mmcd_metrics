@@ -16,10 +16,6 @@ if (!exists("get_db_connection", mode = "function")) {
 # Prehatch site types (matches apps/ground_prehatch_progress/data_functions.R)
 CAPACITY_PREHATCH_TYPES <- c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")
 .prehatch_in_sql <- "('PREHATCH','BRIQUET','PELLET','PRE1ONLY')"
-# Prehatch here means GROUND prehatch (the same set the Ground Prehatch Progress app uses): a
-# site with a prehatch type AND air_gnd = 'G'. Air sites that carry a prehatch type are already
-# counted as air sites and must not inflate the prehatch load (one FOS had 975 of its 1,208
-# "prehatch" acres on air sites).
 .ground_prehatch_sql <- paste0("b.air_gnd = 'G' AND b.prehatch IN ", .prehatch_in_sql)
 
 # Facility office locations used by routed and straight-line drive estimates.
@@ -173,11 +169,6 @@ ra_exclusion_sql <- function(alias = "b", path = RA_EXCLUSION_FILE) {
 }
 
 # ---- Shared cache for the heavy section / priority queries -------------------------------
-# Redis (shared by every worker and session, see shared/redis_cache.R) holds the results for
-# CAPACITY_CACHE_TTL (config cache.ttl.capacity_planner, default 24 h), so a visit does not re-run
-# the two aggregates over loc_breeding_sites / loc_catchbasin. Bump CAPACITY_CACHE_VERSION when a
-# query's columns change; the key also carries a fingerprint of the RA exclusion file and the
-# ground-prehatch definition, so editing either never serves stale numbers.
 CAPACITY_CACHE_VERSION <- 1L
 
 capacity_cache_ttl <- function() {
@@ -404,6 +395,40 @@ attach_routed_drivetimes <- function(sections, routed = load_routed_drivetimes()
   sections
 }
 
+# 2020 census residents per section, built offline by scripts/build_section_population.R from the
+# census block geopackage (too big and slow to load in the app). Informational only.
+SECTION_POPULATION_FILE <- "data/section_population.csv"
+
+#' Read the section population lookup.
+#' @return data.frame(sectcode, population, land_sqmi, density), or NULL when the file is
+#'   missing / unreadable (the population columns and the density map shading then stay empty)
+load_section_population <- function(path = SECTION_POPULATION_FILE) {
+  if (!file.exists(path)) return(NULL)
+  .memo_file(paste0("population:", path), path, function() {   # parsed once per R process
+    d <- tryCatch(suppressWarnings(utils::read.csv(path, stringsAsFactors = FALSE,
+                                                   colClasses = c(sectcode = "character"))),
+                  error = function(e) { warning(paste("[load_section_population]", e$message)); NULL })
+    if (is.null(d) || !all(c("sectcode", "population", "land_sqmi") %in% names(d))) return(NULL)
+    d$population <- as.numeric(d$population)
+    d$land_sqmi  <- as.numeric(d$land_sqmi)
+    d$density <- ifelse(is.finite(d$land_sqmi) & d$land_sqmi > 0,
+                        round(d$population / d$land_sqmi, 1), NA_real_)
+    d[!duplicated(d$sectcode), c("sectcode", "population", "land_sqmi", "density")]
+  })
+}
+
+#' Add population, land_sqmi and density to the section-grain table. Sections the file does
+#' not list (or no file at all) get NA.
+attach_section_population <- function(sections, pop = load_section_population()) {
+  if (is.null(sections) || nrow(sections) == 0) return(sections)
+  idx <- if (is.null(pop)) rep(NA_integer_, nrow(sections)) else
+    match(as.character(sections$sectcode), pop$sectcode)
+  for (col in c("population", "land_sqmi", "density")) {
+    sections[[col]] <- if (is.null(pop)) NA_real_ else pop[[col]][idx]
+  }
+  sections
+}
+
 #' Section polygons + centroids for the interactive map: one facility, or every
 #' facility when `facility` is NULL (the What-If planner moves sections between
 #' facilities). The all-facilities polygons are simplified (about 30 m) to keep the
@@ -491,6 +516,10 @@ db_fos_area_counts <- function(sections) {
 aggregate_capacity_by_fos <- function(sections, staffing) {
   if (is.null(sections) || nrow(sections) == 0) return(data.frame())
 
+  # residents are informational and come from the census file; absent = NA, shown as empty
+  if (!"population" %in% names(sections)) sections$population <- NA_real_
+  if (!"land_sqmi" %in% names(sections)) sections$land_sqmi <- NA_real_
+
   agg <- sections %>%
     dplyr::group_by(facility, fosarea, zone) %>%
     dplyr::summarise(
@@ -502,6 +531,10 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
       prehatch_sites = sum(prehatch_sites, na.rm = TRUE),
       prehatch_acres = round(sum(prehatch_acres, na.rm = TRUE), 1),
       wet_cb         = sum(wet_cb, na.rm = TRUE),
+      density        = if (sum(land_sqmi, na.rm = TRUE) > 0)
+                         round(sum(population, na.rm = TRUE) / sum(land_sqmi, na.rm = TRUE), 0)
+                       else NA_real_,
+      population     = sum(population, na.rm = TRUE),
       avg_miles      = round(mean(miles, na.rm = TRUE), 1),
       max_miles      = round(max(miles, na.rm = TRUE), 1),
       .groups = "drop"

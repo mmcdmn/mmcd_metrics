@@ -329,6 +329,79 @@
             text-decoration: underline;
         }
 
+        .chat-md {
+            white-space: normal;
+        }
+
+        .chat-md > :first-child {
+            margin-top: 0;
+        }
+
+        .chat-md > :last-child {
+            margin-bottom: 0;
+        }
+
+        .chat-md p,
+        .chat-md ul,
+        .chat-md ol,
+        .chat-md pre {
+            margin: 0 0 8px;
+        }
+
+        .chat-md ul,
+        .chat-md ol {
+            padding-left: 20px;
+        }
+
+        .chat-md h3,
+        .chat-md h4 {
+            margin: 4px 0 6px;
+            font-size: 15px;
+            line-height: 1.3;
+        }
+
+        .chat-md h4 {
+            font-size: 14px;
+        }
+
+        .chat-md code,
+        .chat-md pre {
+            background-color: #f1f3f5;
+            border-radius: 4px;
+            font-size: 12.5px;
+        }
+
+        .chat-md code {
+            padding: 0 4px;
+        }
+
+        .chat-md pre {
+            padding: 6px 8px;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        .chat-md-table {
+            overflow-x: auto;
+            margin: 0 0 8px;
+        }
+
+        .chat-md table {
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .chat-md th,
+        .chat-md td {
+            border: 1px solid #e0e4ea;
+            padding: 3px 8px;
+            text-align: left;
+        }
+
+        .chat-md th {
+            background-color: #f5f7fa;
+        }
+
         .chat-bubble-user {
             background-color: #2c5aa0;
             color: #fff;
@@ -1051,6 +1124,99 @@
             if (window.A11y) window.A11y.enhance(container);
         }
 
+        // Replies are markdown. Build DOM nodes rather than an HTML string so
+        // nothing the model writes can inject markup into this public page.
+        function appendInline(parent, text) {
+            const pattern = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g;
+            let last = 0;
+            let m;
+            while ((m = pattern.exec(text))) {
+                if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+                const el = document.createElement(m[1] !== undefined ? 'strong' : m[2] !== undefined ? 'code' : 'em');
+                el.textContent = m[1] ?? m[2] ?? m[3];
+                parent.appendChild(el);
+                last = pattern.lastIndex;
+            }
+            if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+        }
+
+        function renderMarkdown(parent, text) {
+            const root = document.createElement('div');
+            root.className = 'chat-md';
+            const lines = text.replace(/\r\n/g, '\n').split('\n');
+            const isRow = line => /^\s*\|.*\|\s*$/.test(line);
+            const isDivider = line => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+            const cells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+            const bullet = /^\s*[-*+]\s+(.*)$/;
+            const numbered = /^\s*\d+[.)]\s+(.*)$/;
+            let para = [];
+            const flush = () => {
+                if (!para.length) return;
+                const p = document.createElement('p');
+                appendInline(p, para.join(' '));
+                root.appendChild(p);
+                para = [];
+            };
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                let m;
+                if (!line.trim()) {
+                    flush();
+                } else if (/^\s*```/.test(line)) {
+                    flush();
+                    const code = [];
+                    while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i]);
+                    const pre = document.createElement('pre');
+                    pre.textContent = code.join('\n');
+                    root.appendChild(pre);
+                } else if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+                    flush();
+                    const h = document.createElement(m[1].length <= 2 ? 'h3' : 'h4');
+                    appendInline(h, m[2]);
+                    root.appendChild(h);
+                } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+                    flush();
+                    root.appendChild(document.createElement('hr'));
+                } else if (isRow(line) && i + 1 < lines.length && isDivider(lines[i + 1])) {
+                    flush();
+                    const wrap = document.createElement('div');
+                    wrap.className = 'chat-md-table';
+                    const table = document.createElement('table');
+                    const headRow = table.createTHead().insertRow();
+                    for (const c of cells(line)) {
+                        const th = document.createElement('th');
+                        appendInline(th, c);
+                        headRow.appendChild(th);
+                    }
+                    const body = table.createTBody();
+                    i++;
+                    while (i + 1 < lines.length && isRow(lines[i + 1])) {
+                        const row = body.insertRow();
+                        for (const c of cells(lines[++i])) appendInline(row.insertCell(), c);
+                    }
+                    wrap.appendChild(table);
+                    root.appendChild(wrap);
+                } else if (bullet.test(line) || numbered.test(line)) {
+                    flush();
+                    const pattern = bullet.test(line) ? bullet : numbered;
+                    const list = document.createElement(pattern === bullet ? 'ul' : 'ol');
+                    i--;
+                    while (i + 1 < lines.length && (m = pattern.exec(lines[i + 1]))) {
+                        const li = document.createElement('li');
+                        appendInline(li, m[1]);
+                        list.appendChild(li);
+                        i++;
+                    }
+                    root.appendChild(list);
+                } else {
+                    para.push(line.trim());
+                }
+            }
+            flush();
+            parent.appendChild(root);
+        }
+
         function appendMessage(role, text) {
             const container = document.getElementById('chat-messages');
             const div = document.createElement('div');
@@ -1066,11 +1232,7 @@
                 for (let i = 0; i < parts.length; i++) {
                     if (i % 3 === 0) {
                         // Plain text segment
-                        if (parts[i].trim()) {
-                            const span = document.createElement('span');
-                            span.textContent = parts[i];
-                            bubble.appendChild(span);
-                        }
+                        if (parts[i].trim()) renderMarkdown(bubble, parts[i]);
                     } else if (i % 3 === 2) {
                         // Image src (follows alt text at i-1)
                         const img = document.createElement('img');
@@ -1082,6 +1244,8 @@
                         bubble.appendChild(img);
                     }
                 }
+            } else if (role === 'assistant') {
+                renderMarkdown(bubble, text);
             } else {
                 bubble.textContent = text;
             }

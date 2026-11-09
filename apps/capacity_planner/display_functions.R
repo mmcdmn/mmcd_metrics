@@ -3,13 +3,37 @@
 # Pure functions (no Shiny, no DB) that shape the aggregated capacity data.
 # Every site count is paired with an acres figure (ground, air, ground prehatch).
 # Sections and wet catch basins are not sites with acres, so they are count-only.
+# Residents per site / acre (2020 census; informational, never feeds a staffing number).
+# One ratio per category, exactly like the metrics they divide: ground, air and ground prehatch
+# are never combined. Higher = more residents around each site / acre of that kind of work.
+RESIDENT_RATIOS <- list(
+  ground_sites   = list(csv = "residents_per_ground_site",
+                        label = "Residents per ground site"),
+  ground_acres   = list(csv = "residents_per_ground_acre",
+                        label = "Residents per ground acre"),
+  air_sites      = list(csv = "residents_per_air_site",
+                        label = "Residents per air site"),
+  air_acres      = list(csv = "residents_per_air_acre",
+                        label = "Residents per air acre"),
+  prehatch_sites = list(csv = "residents_per_ground_prehatch_site",
+                        label = "Residents per ground prehatch site"),
+  prehatch_acres = list(csv = "residents_per_ground_prehatch_acre",
+                        label = "Residents per ground prehatch acre"))
+RESIDENT_RATIO_COLS   <- unname(vapply(RESIDENT_RATIOS, function(r) r$csv, ""))
+RESIDENT_RATIO_LABELS <- stats::setNames(
+  unname(vapply(RESIDENT_RATIOS, function(r) r$label, "")), RESIDENT_RATIO_COLS)
+
 CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "ground_acres",
                            "air_sites", "air_acres",
                            "prehatch_sites", "prehatch_acres", "wet_cb",
-                           "population", "density",
                            "avg_miles")
-CAPACITY_SITE_METRICS <- c("ground_sites", "air_sites", "prehatch_sites")
-CAPACITY_ACRE_METRICS <- c("ground_acres", "air_acres", "prehatch_acres")
+# 2020 census columns: their own "Census data" tables (Capacity tab and What-If), not the workload table
+CENSUS_METRICS <- c("population", "density", RESIDENT_RATIO_COLS)
+# the sites / acres toggle also covers each ratio (a per-site ratio is a "sites" column)
+CAPACITY_SITE_METRICS <- c("ground_sites", "air_sites", "prehatch_sites",
+                           RESIDENT_RATIO_COLS[grepl("_site$", RESIDENT_RATIO_COLS)])
+CAPACITY_ACRE_METRICS <- c("ground_acres", "air_acres", "prehatch_acres",
+                           RESIDENT_RATIO_COLS[grepl("_acre$", RESIDENT_RATIO_COLS)])
 
 CAPACITY_METRIC_LABELS <- c(
   sections = "Sections", ground_sites = "Ground sites", ground_acres = "Ground acres",
@@ -17,7 +41,7 @@ CAPACITY_METRIC_LABELS <- c(
   prehatch_sites = "Ground prehatch sites", prehatch_acres = "Ground prehatch acres",
   wet_cb = "Wet catch basins", population = "Residents", density = "Residents per sq mi",
   avg_miles = "Avg miles", n_techs = "Techs",
-  max_miles = "Max miles")
+  max_miles = "Max miles", RESIDENT_RATIO_LABELS)
 
 #' Metrics shown for the sites / acres / both toggle (count-only metrics always show).
 capacity_visible_metrics <- function(measure = "both") {
@@ -27,11 +51,20 @@ capacity_visible_metrics <- function(measure = "both") {
   m
 }
 
+#' Census columns shown for the sites / acres / both toggle (residents and density always show).
+census_visible_metrics <- function(measure = "both") {
+  m <- CENSUS_METRICS
+  if (identical(measure, "sites")) return(setdiff(m, CAPACITY_ACRE_METRICS))
+  if (identical(measure, "acres")) return(setdiff(m, CAPACITY_SITE_METRICS))
+  m
+}
+
 #' Drop the hidden-measure columns from a table whose columns are metric names,
 #' optionally with a _P1/_P2/_mean/_median suffix.
 select_measure_cols <- function(df, measure = "both") {
   base_nm <- sub("(_P[12]|_mean|_median)$", "", names(df))
-  hide <- setdiff(CAPACITY_ZONE_METRICS, capacity_visible_metrics(measure))
+  hide <- setdiff(c(CAPACITY_ZONE_METRICS, CENSUS_METRICS),
+                  c(capacity_visible_metrics(measure), census_visible_metrics(measure)))
   df[, !(base_nm %in% hide), drop = FALSE]
 }
 
@@ -195,6 +228,35 @@ capacity_wide <- function(cap) {
   }
   as.data.frame(w) %>% dplyr::arrange(facility, fos_name)
 }
+
+#' The 2020 census columns per FOS area, one wide row per FOS area (P1 / P2 columns): residents,
+#' residents per sq mi and the six residents-per site / acre ratios. A zone the FOS area has no
+#' sections in has a blank density and blank ratios (residents are 0).
+#' @param cap  Output of aggregate_capacity_by_fos()
+census_wide <- function(cap) {
+  if (is.null(cap) || nrow(cap) == 0) return(data.frame())
+  need <- c("sections", CENSUS_METRICS)
+  for (m in setdiff(need, names(cap))) cap[[m]] <- NA_real_
+  long <- cap[, c("facility", "facility_name", "fos_name", "fosarea", "zone", need)]
+  w <- tidyr::pivot_wider(
+    long,
+    id_cols     = c("facility", "facility_name", "fos_name", "fosarea"),
+    names_from  = "zone",
+    values_from = dplyr::all_of(need),
+    names_glue  = "{.value}_P{zone}",
+    values_fill = 0
+  )
+  for (z in c("1", "2")) {
+    sc <- paste0("sections_P", z)
+    if (!sc %in% names(w)) next
+    none <- w[[sc]] == 0
+    for (col in paste0(setdiff(CENSUS_METRICS, "population"), "_P", z)) {
+      if (col %in% names(w)) w[[col]][none] <- NA
+    }
+    w[[sc]] <- NULL
+  }
+  as.data.frame(w) %>% dplyr::arrange(facility, fos_name)
+}
 DRONE_OFFSET_METRICS <- c("ground_sites", "ground_acres", "prehatch_sites", "prehatch_acres")
 DRONE_AIR_OFFSET_METRICS <- c("air_sites", "air_acres")
 #'
@@ -249,7 +311,7 @@ staffing_baseline <- function(cap, staff) {
 # Metrics a scenario reports as a WORKLOAD (avg_miles is a per-FOS-area average, and population /
 # density describe the people, not the work). Estimate A is driven by these only: residents are
 # informational and never change the techs-needed numbers.
-SCENARIO_METRICS <- setdiff(CAPACITY_ZONE_METRICS, c("avg_miles", "population", "density"))
+SCENARIO_METRICS <- setdiff(CAPACITY_ZONE_METRICS, "avg_miles")
 # What the "What changed" table and its CSV report: the workload plus the residents it adds.
 SCENARIO_CHANGE_METRICS <- c(SCENARIO_METRICS, "population")
 
@@ -431,6 +493,28 @@ scenario_compare <- function(after, zone = "1", metrics = SCENARIO_METRICS, faci
       # no P1 of its own yet: compare the moved-in sections with the facility's median P1 time
       out$p1_min_before[out$key == "unassigned"] <- out$p1_min_before[1]
     }
+  }
+  rownames(out) <- NULL
+  out
+}
+
+#' Census numbers of what a scenario changes, from scenario_compare() output (one row per group):
+#' residents added to P1 (`population_chg`), residents in P1 after, and each residents-per ratio
+#' for the group's P1 before and after (`<ratio>_before`, `<ratio>_after`; total residents / total
+#' sites or acres of that kind, so ground, air and prehatch stay separate). Needs the cmp to hold
+#' population and the six site / acre metrics (SCENARIO_CHANGE_METRICS); NULL when it has no population.
+#' @param measure "both", "sites" or "acres" (the same Show: choice as the What changed table)
+scenario_census <- function(cmp, measure = "both") {
+  pop <- c("population_before", "population_after", "population_chg")
+  if (is.null(cmp) || nrow(cmp) == 0 || !all(pop %in% names(cmp))) return(NULL)
+  out <- cmp[, c("key", "label", pop), drop = FALSE]
+  vis <- census_visible_metrics(measure)
+  for (k in names(RESIDENT_RATIOS)) {
+    col <- RESIDENT_RATIOS[[k]]$csv
+    b <- paste0(k, "_before"); a <- paste0(k, "_after")
+    if (!col %in% vis || !all(c(b, a) %in% names(cmp))) next
+    out[[paste0(col, "_before")]] <- round(residents_per(cmp$population_before, cmp[[b]]), 1)
+    out[[paste0(col, "_after")]]  <- round(residents_per(cmp$population_after,  cmp[[a]]), 1)
   }
   rownames(out) <- NULL
   out
@@ -965,7 +1049,7 @@ scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
   cols <- c("sectcode", "facility_from", "zone_from", "facility_to", "zone_to", "promoted",
             "moved", "fos_area_from", "ground_sites", "ground_acres", "air_sites", "air_acres",
             "ground_prehatch_sites", "ground_prehatch_acres", "wet_cb", "population",
-            "residents_per_sq_mi", "drive_min_from", "drive_min_to")
+            "residents_per_sq_mi", RESIDENT_RATIO_COLS, "drive_min_from", "drive_min_to")
   empty <- as.data.frame(stats::setNames(rep(list(character(0)), length(cols)), cols),
                          stringsAsFactors = FALSE)
   if (is.null(after) || nrow(after) == 0) return(empty)
@@ -986,6 +1070,9 @@ scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
     residents_per_sq_mi = d_or_na(d$density),
     drive_min_from = pick(dm_before), drive_min_to = pick(dm_after),
     stringsAsFactors = FALSE)
+  rr <- resident_ratio_cols(d)
+  for (nm in RESIDENT_RATIO_COLS) out[[nm]] <- round(rr[[nm]], 2)
+  out <- out[, cols, drop = FALSE]
   out <- out[order(out$facility_from, out$sectcode), ]
   rownames(out) <- NULL
   out
@@ -1073,13 +1160,33 @@ shade_legend <- function(mode) {
   NULL
 }
 
+# -----------------------------------------------------------------------------
+# Residents per site / acre helpers (the RESIDENT_RATIOS definition is at the top of the file)
+# -----------------------------------------------------------------------------
+#' residents / amount; NA (shown as a dash) when residents are unknown or the amount is 0.
+residents_per <- function(population, amount) {
+  p <- suppressWarnings(as.numeric(population))
+  a <- suppressWarnings(as.numeric(amount))
+  ifelse(is.na(p) | is.na(a) | a <= 0, NA_real_, p / a)
+}
+
+#' The six residents-per ratios of the rows of a section table (columns named RESIDENT_RATIO_COLS).
+#' A table without the census or site columns gives NA, not an error.
+resident_ratio_cols <- function(s) {
+  n <- nrow(s)
+  col <- function(k) if (k %in% names(s)) s[[k]] else rep(NA_real_, n)
+  out <- lapply(names(RESIDENT_RATIOS), function(k) residents_per(col("population"), col(k)))
+  names(out) <- RESIDENT_RATIO_COLS
+  as.data.frame(out, stringsAsFactors = FALSE)
+}
+
 #' Drop the population / density columns of a table when the census file is not available
 #' (they are empty), keeping everything else. Handles _P1/_P2/_mean/_median suffixes.
 drop_empty_population <- function(df) {
   if (is.null(df) || ncol(df) == 0) return(df)
   base_nm <- sub("(_P[12]|_mean|_median)$", "", names(df))
   empty <- vapply(seq_along(df), function(i) {
-    base_nm[i] %in% c("population", "density") &&
+    base_nm[i] %in% c("population", "density", RESIDENT_RATIO_COLS) &&
       all(is.na(df[[i]]) | df[[i]] == 0)
   }, logical(1))
   df[, !empty, drop = FALSE]

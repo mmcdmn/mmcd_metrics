@@ -16,10 +16,6 @@ if (!exists("get_db_connection", mode = "function")) {
 # Prehatch site types (matches apps/ground_prehatch_progress/data_functions.R)
 CAPACITY_PREHATCH_TYPES <- c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")
 .prehatch_in_sql <- "('PREHATCH','BRIQUET','PELLET','PRE1ONLY')"
-# Prehatch here means GROUND prehatch (the same set the Ground Prehatch Progress app uses): a
-# site with a prehatch type AND air_gnd = 'G'. Air sites that carry a prehatch type are already
-# counted as air sites and must not inflate the prehatch load (one FOS had 975 of its 1,208
-# "prehatch" acres on air sites).
 .ground_prehatch_sql <- paste0("b.air_gnd = 'G' AND b.prehatch IN ", .prehatch_in_sql)
 
 # Facility office locations used by routed and straight-line drive estimates.
@@ -173,11 +169,6 @@ ra_exclusion_sql <- function(alias = "b", path = RA_EXCLUSION_FILE) {
 }
 
 # ---- Shared cache for the heavy section / priority queries -------------------------------
-# Redis (shared by every worker and session, see shared/redis_cache.R) holds the results for
-# CAPACITY_CACHE_TTL (config cache.ttl.capacity_planner, default 24 h), so a visit does not re-run
-# the two aggregates over loc_breeding_sites / loc_catchbasin. Bump CAPACITY_CACHE_VERSION when a
-# query's columns change; the key also carries a fingerprint of the RA exclusion file and the
-# ground-prehatch definition, so editing either never serves stale numbers.
 CAPACITY_CACHE_VERSION <- 1L
 
 capacity_cache_ttl <- function() {

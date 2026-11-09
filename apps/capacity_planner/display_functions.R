@@ -1,10 +1,6 @@
 # FOS Capacity & Border-to-Border Planning — Display & What-If logic
 # =============================================================================
-# Pure functions (no Shiny, no DB) that shape the aggregated capacity data for
-# display and run the what-if P2 -> P1 promotion / staffing math. Kept separate
-# so they can be unit-tested against the live data loaders.
-# =============================================================================
-
+# Pure functions (no Shiny, no DB) that shape the aggregated capacity data.
 # Every site count is paired with an acres figure (ground, air, ground prehatch).
 # Sections and wet catch basins are not sites with acres, so they are count-only.
 CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "ground_acres",
@@ -671,11 +667,6 @@ scenario_crews <- function(after, rates, hours_per_job = STUDY_HOURS_PER_JOB,
 
 #' Apply one edit from the What-If staffing inputs to the staffing table.
 #'
-#' The edit names the facility it was made for (the page tags every edit with the facility it
-#' was showing at that moment), so a late echo of a value the server itself pushed for another
-#' facility can never be written to the facility now selected. `tol` ignores a value within
-#' display rounding of the stored one (5.71 shown for 5.714 must not overwrite it).
-#'
 #' @param staff staffing table (facility, crews, techs_per_crew, ...)
 #' @param fac   facility the edit is for
 #' @param col   column to change
@@ -690,12 +681,6 @@ staff_apply_edit <- function(staff, fac, col, v, lo = 0, hi = Inf, tol = 0) {
 }
 
 # ---- Sharing a scenario as a link -------------------------------------------------------
-# A link carries the whole scenario in one query parameter, `s` = base64url(gzip(JSON))
-#the changed sections (one bitmap per
-# destination group over the sorted list of ALL section codes), the What-If settings, the
-# staffing table, the map view, the date and a data stamp. The token is user input: it is only
-# ever parsed as JSON, size-capped, and every value is validated on use.
-
 SHARE_TOKEN_VERSION <- 1L
 SHARE_MAX_TOKEN_CHARS <- 12000L        # refused before decompressing
 SHARE_MAX_JSON_BYTES <- 200000L        # refused after decompressing
@@ -969,9 +954,6 @@ scenario_export_staffing <- function(res) {
     stringsAsFactors = FALSE)
 }
 
-#' The sections a scenario changes (promoted to P1 and/or moved), with where they were and
-#' are, their loads and the one-way drive minutes from the old and the new facility.
-#' Header-only when nothing is changed.
 scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
   cols <- c("sectcode", "facility_from", "zone_from", "facility_to", "zone_to", "promoted",
             "moved", "fos_area_from", "ground_sites", "ground_acres", "air_sites", "air_acres",
@@ -1000,9 +982,6 @@ scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
 }
 
 #' DT table for the capacity planner with the first `left` column(s) pinned while
-#' the rest swipe sideways (phone friendly). Extra arguments go to DT::datatable();
-#' `options` is merged over the defaults so callers keep dom / pageLength / ordering.
-#'
 #' @param data     data.frame to show; the label column(s) must come first
 #' @param left     number of leading columns to freeze (0 = none)
 #' @param options  DT options list (e.g. pageLength, dom, ordering)

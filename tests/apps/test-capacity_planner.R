@@ -1089,12 +1089,12 @@ test_that("residents roll up per FOS area and are reported by What-If, but never
   cap <- env$aggregate_capacity_by_fos(x$sec, x$staff)
   p1 <- cap[cap$facility == "Sr" & cap$zone == "1", ]
   expect_equal(p1$population, 3000); expect_equal(p1$density, 1500)     # (1000+2000) / (1+1) sq mi
-  expect_true(all(c("population_P1", "density_P1", "population_P2", "density_P2") %in% names(env$capacity_wide(cap))))
+  expect_true(all(c("population_P1", "density_P1", "population_P2", "density_P2") %in% names(env$census_wide(cap))))
   # no census columns at all: still works, residents empty
   cap0 <- env$aggregate_capacity_by_fos(no_census(x$sec), x$staff)
   expect_true(all(cap0$population == 0)); expect_true(all(is.na(cap0$density)))
-  w0 <- env$capacity_wide(cap0)
-  expect_equal(ncol(env$drop_empty_population(w0)) + 4, ncol(w0))
+  w0 <- env$census_wide(cap0)
+  expect_equal(ncol(env$drop_empty_population(w0)) + 2 * length(env$CENSUS_METRICS), ncol(w0))
   # What-If: promoting s3 (3,000 residents) adds them to Sr's P1
   a <- env$scenario_apply(x$sec, chg("s3", NA, "1"), x$times)
   cmp <- env$scenario_compare(a, "1", env$SCENARIO_CHANGE_METRICS)
@@ -1188,4 +1188,177 @@ test_that("shaded-mode outlines are thin and keep the facility color", {
   expect_equal(o$ol, fc)                                              # facility stays on the outline
   expect_equal(o$w, c(1, 0.5, 0.5, 1)); expect_equal(o$dash, c("", "4 3", "4 3", ""))
   expect_lt(max(o$w), 2)                                              # thin: the fill must show at district zoom
+})
+
+test_that("residents per site / acre: six separate ratios, never combined", {
+  env <- new.env(); load_capacity_fns(env)
+  expect_equal(env$residents_per(c(1000, 0, NA, 500), c(4, 5, 2, 0)), c(250, 0, NA, NA))
+  s <- data.frame(population = c(1000, 600, NA),
+                  ground_sites = c(10, 0, 5), ground_acres = c(50, 0, 5),
+                  air_sites = c(2, 3, 1), air_acres = c(8, 12, 1),
+                  prehatch_sites = c(1, 0, 0), prehatch_acres = c(4, 0, 0))
+  r <- env$resident_ratio_cols(s)
+  expect_equal(names(r), c("residents_per_ground_site", "residents_per_ground_acre",
+                           "residents_per_air_site", "residents_per_air_acre",
+                           "residents_per_ground_prehatch_site", "residents_per_ground_prehatch_acre"))
+  expect_equal(r$residents_per_ground_site, c(100, NA, NA))
+  expect_equal(r$residents_per_ground_acre, c(20, NA, NA))
+  expect_equal(r$residents_per_air_site, c(500, 200, NA))
+  expect_equal(r$residents_per_air_acre, c(125, 50, NA))
+  expect_equal(r$residents_per_ground_prehatch_site, c(1000, NA, NA))
+  expect_equal(r$residents_per_ground_prehatch_acre, c(250, NA, NA))
+  # independent: changing ground acres moves only the ground acre ratio
+  s2 <- s; s2$ground_acres[1] <- 100
+  r2 <- env$resident_ratio_cols(s2)
+  expect_equal(r2$residents_per_ground_acre[1], 10)
+  expect_equal(r2[-2], r[-2])
+  # no combined "site acres" ratio anywhere
+  expect_false(any(grepl("site_acre|total|combined", names(r))))
+  expect_equal(unname(env$RESIDENT_RATIO_LABELS["residents_per_ground_prehatch_acre"]),
+               "Residents per ground prehatch acre")
+  # a table without census or site columns: all NA, no error
+  expect_true(all(is.na(unlist(env$resident_ratio_cols(s[, c("ground_sites", "air_acres")])))))
+  expect_equal(nrow(env$resident_ratio_cols(s[0, ])), 0)
+  # drop_empty_population hides empty ratio columns and keeps the others
+  df <- data.frame(a = 1:2, residents_per_ground_site = c(NA, NA), residents_per_air_site = c(3, 4))
+  expect_equal(names(env$drop_empty_population(df)), c("a", "residents_per_air_site"))
+})
+
+test_that("changed-sections CSV carries the six residents-per ratios", {
+  env <- new.env(); load_capacity_fns(env); x <- pop_fixture()
+  a <- env$scenario_apply(x$sec, chg("s3", NA, "1"), x$times)
+  e <- env$scenario_export_changes(a)
+  expect_equal(names(e)[match("residents_per_sq_mi", names(e)) + 1:6], env$RESIDENT_RATIO_COLS)
+  expect_equal(names(e)[match("residents_per_sq_mi", names(e)) + 7], "drive_min_from")
+  s3 <- x$sec[x$sec$sectcode == "s3", ]
+  expect_equal(e$residents_per_ground_acre, round(env$residents_per(s3$population, s3$ground_acres), 2))
+  expect_equal(e$residents_per_air_site, round(env$residents_per(s3$population, s3$air_sites), 2))
+  expect_equal(e$residents_per_ground_prehatch_acre,
+               round(env$residents_per(s3$population, s3$prehatch_acres), 2))
+  expect_identical(names(env$scenario_export_changes(NULL)), names(e))
+  # no census data: NA ratios, no error
+  b <- env$scenario_apply(no_census(x$sec), chg("s3", NA, "1"), x$times)
+  expect_true(all(is.na(unlist(env$scenario_export_changes(b)[env$RESIDENT_RATIO_COLS]))))
+})
+
+test_that("the app shows the residents-per ratios but never offers them to Estimate A", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_true(has("resident_ratio_cols(s)"))          # section picker
+  expect_false(has("resident_ratio_cols(g)"))         # NOT in the map tooltip (tables only)
+  expect_false(has("Residents per acre:"))
+  expect_true(has("RESIDENT_RATIO_LABELS"))           # picker headers and box-plot choices
+  m <- regmatches(app_src, regexpr("METRIC_CHOICES <- c\\([^)]*\\)", app_src))
+  expect_false(grepl("residents_per|population|density", m))
+  env <- new.env(); load_capacity_fns(env)
+  expect_false(any(env$RESIDENT_RATIO_COLS %in% c(env$SCENARIO_METRICS, env$SCENARIO_CHANGE_METRICS)))
+  expect_true(all(env$RESIDENT_RATIO_COLS %in% env$CENSUS_METRICS))          # the Census data tables
+  expect_true(all(env$RESIDENT_RATIO_COLS %in% names(env$CAPACITY_METRIC_LABELS)))
+})
+
+test_that("capacity: census data is its own table, not part of the workload table", {
+  env <- new.env(); load_capacity_fns(env); x <- pop_fixture()
+  cap <- env$aggregate_capacity_by_fos(x$sec, x$staff)
+  p1 <- cap[cap$facility == "Sr" & cap$zone == "1", ]
+  # per FOS area: ratio of totals, 1 decimal
+  expect_equal(p1$residents_per_ground_site, round(p1$population / p1$ground_sites, 1))
+  expect_equal(p1$residents_per_air_acre, round(p1$population / p1$air_acres, 1))
+  expect_equal(p1$residents_per_ground_prehatch_acre, round(p1$population / p1$prehatch_acres, 1))
+  odd <- env$aggregate_capacity_by_fos(transform(x$sec, population = x$sec$population * 1.37), x$staff)
+  v <- unlist(odd[env$RESIDENT_RATIO_COLS])
+  expect_true(all(abs(v * 10 - round(v * 10)) < 1e-6, na.rm = TRUE))       # rounded to 1 decimal
+  expect_false(any(grepl("site_acre|total|combined", names(cap))))          # never combined
+  # workload table has NO census columns; the census table has all of them
+  w <- env$capacity_wide(cap)
+  expect_false(any(grepl("population|density|residents_per", names(w))))
+  expect_false(any(c("population", "density", env$RESIDENT_RATIO_COLS) %in% env$CAPACITY_ZONE_METRICS))
+  cw <- env$census_wide(cap)
+  expect_true(all(c("population_P1", "density_P2", "residents_per_ground_acre_P1",
+                    "residents_per_air_site_P2") %in% names(cw)))
+  expect_false(any(grepl("^sections|n_techs|ground_sites_P|miles", names(cw))))
+  expect_equal(nrow(cw), nrow(w))
+  expect_equal(env$capacity_col_label("residents_per_ground_prehatch_acre_P1"),
+               "Residents per ground prehatch acre P1")
+  # Show toggle: per-site ratios are "sites" columns, per-acre ratios "acres" columns; residents always
+  sites <- names(env$select_measure_cols(cw, "sites")); acres <- names(env$select_measure_cols(cw, "acres"))
+  expect_true("residents_per_ground_site_P1" %in% sites); expect_false("residents_per_ground_acre_P1" %in% sites)
+  expect_true("residents_per_ground_acre_P1" %in% acres); expect_false("residents_per_ground_site_P1" %in% acres)
+  expect_true(all(c("population_P1", "density_P1") %in% sites) && all(c("population_P1", "density_P1") %in% acres))
+  expect_true(all(c("residents_per_air_site_P1", "residents_per_air_acre_P1") %in% names(env$select_measure_cols(cw, "both"))))
+  # the Show toggle on the workload table is unaffected by census columns
+  expect_equal(names(env$select_measure_cols(w, "sites")), setdiff(names(w), grep("acres", names(w), value = TRUE)))
+  # a facility with one zone only: no error, no P2 columns
+  one <- env$census_wide(cap[cap$zone == "1", ])
+  expect_false(any(grepl("_P2$", names(one))))
+  # averages across FOS areas still work on the census metrics
+  av <- env$capacity_averages(cap, "1", env$census_visible_metrics("both"))
+  expect_true("residents_per_ground_acre_mean" %in% names(av))
+  # no census data: NA ratios, every census column dropped
+  cap0 <- env$aggregate_capacity_by_fos(no_census(x$sec), x$staff)
+  expect_true(all(is.na(unlist(cap0[env$RESIDENT_RATIO_COLS]))))
+  c0 <- env$census_wide(cap0)
+  expect_equal(ncol(env$drop_empty_population(c0)), ncol(c0) - 2 * length(env$CENSUS_METRICS))
+})
+
+test_that("What-If census table: residents added and residents-per before -> after, ground / air / prehatch separate", {
+  env <- new.env(); load_capacity_fns(env)
+  # hand-checkable group: P1 has 1,000 residents / 50 ground acres / 10 ground sites now;
+  # the scenario adds 600 residents, 50 ground acres, 5 ground sites, 8 air acres (P1 had none)
+  cmp <- data.frame(key = c("DISTRICT", "Sr"), label = c("DISTRICT", "Sr"),
+                    population_before = c(1000, 1000), population_after = c(1600, 1600), population_chg = c(600, 600),
+                    ground_sites_before = c(10, 10), ground_sites_after = c(15, 15),
+                    ground_acres_before = c(50, 50), ground_acres_after = c(100, 100),
+                    air_sites_before = c(0, 0), air_sites_after = c(2, 2),
+                    air_acres_before = c(0, 0), air_acres_after = c(8, 8),
+                    prehatch_sites_before = c(1, 1), prehatch_sites_after = c(1, 1),
+                    prehatch_acres_before = c(4, 4), prehatch_acres_after = c(4, 4),
+                    stringsAsFactors = FALSE)
+  cs <- env$scenario_census(cmp)
+  expect_equal(cs$population_chg, c(600, 600)); expect_equal(cs$population_after, c(1600, 1600))
+  expect_equal(cs$residents_per_ground_acre_before, c(20, 20))      # 1000 / 50
+  expect_equal(cs$residents_per_ground_acre_after,  c(16, 16))      # 1600 / 100
+  expect_equal(cs$residents_per_ground_site_before, c(100, 100))
+  expect_equal(cs$residents_per_ground_site_after,  c(106.7, 106.7))   # 1600 / 15
+  expect_true(all(is.na(cs$residents_per_air_acre_before)))          # no air acres in P1 now: blank, not Inf
+  expect_equal(cs$residents_per_air_acre_after, c(200, 200))         # 1600 / 8
+  expect_equal(cs$residents_per_ground_prehatch_acre_before, c(250, 250))
+  expect_equal(cs$residents_per_ground_prehatch_acre_after,  c(400, 400))
+  # separate: changing only the air acres moves only the air ratios
+  cmp2 <- cmp; cmp2$air_acres_after <- c(16, 16)
+  cs2 <- env$scenario_census(cmp2)
+  expect_equal(cs2$residents_per_air_acre_after, c(100, 100))
+  expect_equal(cs2[setdiff(names(cs2), "residents_per_air_acre_after")],
+               cs[setdiff(names(cs), "residents_per_air_acre_after")])
+  # the Show choice
+  expect_false(any(grepl("_acre_", names(env$scenario_census(cmp, "sites")))))
+  expect_false(any(grepl("_site_", names(env$scenario_census(cmp, "acres")))))
+  expect_true(all(c("population_chg", "population_after") %in% names(env$scenario_census(cmp, "acres"))))
+  # nothing without population
+  expect_null(env$scenario_census(cmp[, !grepl("population", names(cmp))]))
+  expect_null(env$scenario_census(data.frame()))
+  # end to end on a scenario: promoting s3 adds its residents
+  x <- pop_fixture(); a <- env$scenario_apply(x$sec, chg("s3", NA, "1"), x$times)
+  full <- env$scenario_compare(a, "1", env$SCENARIO_CHANGE_METRICS)
+  fc <- env$scenario_census(full)
+  expect_equal(fc$population_chg[fc$key == "DISTRICT"], 3000)
+  expect_equal(fc$residents_per_ground_acre_after[fc$key == "DISTRICT"],
+               round(full$population_after[full$key == "DISTRICT"] / full$ground_acres_after[full$key == "DISTRICT"], 1))
+})
+
+test_that("the app shows census data in its own tables (Capacity tab and What-If), never in the map or Estimate A", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_equal(lengths(regmatches(app_src, gregexpr('h4("Census data")', app_src, fixed = TRUE))), 2L)  # both places
+  expect_true(has('DT::DTOutput("census_table")')); expect_true(has('DT::DTOutput("wi_census")'))
+  expect_true(has('DT::DTOutput("wi_census_fos")'))
+  expect_true(has("census_wide(cap)")); expect_true(has("scenario_census(cmp"))
+  expect_true(has('dl_btn("dl_census"'))
+  expect_false(has("resident_ratio_cols(g)")); expect_false(has("Residents per acre:"))   # not in the map tooltip
+  # What changed has no residents column of its own (they are in the Census data table)
+  expect_true(has("mets <- intersect(SCENARIO_METRICS, capacity_visible_metrics(input$wi_measure"))
+  # Estimate A cannot be driven by census numbers
+  m <- regmatches(app_src, regexpr("METRIC_CHOICES <- c\\([^)]*\\)", app_src))
+  expect_false(grepl("residents_per|population|density", m))
 })

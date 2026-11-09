@@ -67,6 +67,40 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 - **`est_drive_minutes(miles, avg_mph, circuity)`** = `miles × circuity ÷ avg_mph × 60`
   (avg_mph default 45, circuity 1.3; both editable in the UI). Straight-line estimate —
   no routing dependency; used when routed times are unavailable or the user picks it.
+- **Population (2020 census, informational)** — `data/section_population.csv` (sectcode,
+  population, land_sqmi, density, blocks, built): residents per section, built **offline** by
+  `scripts/build_section_population.R` from `extra/qgis/2020CensusBlockAnalysis.gpkg` and committed.
+  The geopackage (47,031 census blocks of the 7-county metro, 3,163,104 people, EPSG:26915,
+  ~74 MB) is never loaded by the app: it is slow (QGIS draws the 47k polygons) and the block
+  polygons are not needed. The script reads only the block attributes (`GEOID20`, `POPTOTAL`,
+  `ALAND20`, internal point `INTPTLAT20/LON20`; the two "2020BlockswPop" layers are the same
+  blocks with different QGIS styles, `MMCD_PriorityZones` is one Zone 1 polygon and is unused),
+  puts each block in the section holding its internal point (one DB query for the section
+  outlines; set `SECTION_GEOM_RDS` to cache them) and sums per section. A block is in exactly one
+  section, so population is conserved: all 3,163,104 residents land in the 3,207 sections (the 34
+  blocks outside every section have 0 people). `density` = population / land sqmi (NA when a
+  section has no land, 243 water-only or empty sections). Only total population exists in the
+  file (no housing units, age or income); it is the 2020 count, so it ages.
+  `load_section_population()` (memoized per process) / `attach_section_population()` add
+  `population`, `land_sqmi`, `density` to the section table; a missing file leaves them NA and
+  every residents column / the shading hides itself.
+  **Residents never change a staffing number**: `population` and `density` are in
+  `CAPACITY_ZONE_METRICS` (capacity table, averages, box plot, CSV) and `SCENARIO_CHANGE_METRICS`
+  (What changed + its CSV, "+ Residents"), but not in `SCENARIO_METRICS` / `METRIC_CHOICES`, so
+  Estimate A cannot be driven by them. The section picker has Residents / Residents per sq mi
+  columns (sortable) and the map tooltips show them.
+- **Map shading** (`wi_shade`: Facility, Population density, Residents per section, Dense P2
+  sections) — Facility is the original look. The other modes fill each section by its residents
+  (`shade_fill`; 9 YlOrRd classes, grey = no data, bounds in `SHADE_SCALES`) and move the facility
+  color to a thin outline (`shade_outline`: P1 weight 1 solid, P2 0.5 dashed) so the fill is
+  readable with the whole district on screen. Dense P2 = P2 section at or above
+  `SHADE_HOTSPOT_DENSITY` (300 residents per sq mi, the 300psqmi layer; 54 sections today, 4 at
+  1,000) is filled magenta with a heavy outline; P1 is blue, other P2 grey. A switch sends one
+  `wi_restyle` message for every section (fill, outline, weight, dash, tooltip; no redraw), the
+  legend is replaced (`layerId = "wi_legend"`), and a promote / move while shaded keeps the mode.
+  First look at the data: P2 has 1,101 sections under 300 per sq mi, 41 at 300-600, 9 at
+  600-1,000 and 4 above 1,000, so the priority zones already follow population; P1 still holds
+  388 sections under 300.
 - **Facility locations** — `data/facility_locations.csv` records the six facility office
   coordinates and addresses. Both the route builder and straight-line distance calculations
   use these points; `gis_facility.the_geom` is a service-area polygon, not an office point.

@@ -395,6 +395,40 @@ attach_routed_drivetimes <- function(sections, routed = load_routed_drivetimes()
   sections
 }
 
+# 2020 census residents per section, built offline by scripts/build_section_population.R from the
+# census block geopackage (too big and slow to load in the app). Informational only.
+SECTION_POPULATION_FILE <- "data/section_population.csv"
+
+#' Read the section population lookup.
+#' @return data.frame(sectcode, population, land_sqmi, density), or NULL when the file is
+#'   missing / unreadable (the population columns and the density map shading then stay empty)
+load_section_population <- function(path = SECTION_POPULATION_FILE) {
+  if (!file.exists(path)) return(NULL)
+  .memo_file(paste0("population:", path), path, function() {   # parsed once per R process
+    d <- tryCatch(suppressWarnings(utils::read.csv(path, stringsAsFactors = FALSE,
+                                                   colClasses = c(sectcode = "character"))),
+                  error = function(e) { warning(paste("[load_section_population]", e$message)); NULL })
+    if (is.null(d) || !all(c("sectcode", "population", "land_sqmi") %in% names(d))) return(NULL)
+    d$population <- as.numeric(d$population)
+    d$land_sqmi  <- as.numeric(d$land_sqmi)
+    d$density <- ifelse(is.finite(d$land_sqmi) & d$land_sqmi > 0,
+                        round(d$population / d$land_sqmi, 1), NA_real_)
+    d[!duplicated(d$sectcode), c("sectcode", "population", "land_sqmi", "density")]
+  })
+}
+
+#' Add population, land_sqmi and density to the section-grain table. Sections the file does
+#' not list (or no file at all) get NA.
+attach_section_population <- function(sections, pop = load_section_population()) {
+  if (is.null(sections) || nrow(sections) == 0) return(sections)
+  idx <- if (is.null(pop)) rep(NA_integer_, nrow(sections)) else
+    match(as.character(sections$sectcode), pop$sectcode)
+  for (col in c("population", "land_sqmi", "density")) {
+    sections[[col]] <- if (is.null(pop)) NA_real_ else pop[[col]][idx]
+  }
+  sections
+}
+
 #' Section polygons + centroids for the interactive map: one facility, or every
 #' facility when `facility` is NULL (the What-If planner moves sections between
 #' facilities). The all-facilities polygons are simplified (about 30 m) to keep the
@@ -482,6 +516,10 @@ db_fos_area_counts <- function(sections) {
 aggregate_capacity_by_fos <- function(sections, staffing) {
   if (is.null(sections) || nrow(sections) == 0) return(data.frame())
 
+  # residents are informational and come from the census file; absent = NA, shown as empty
+  if (!"population" %in% names(sections)) sections$population <- NA_real_
+  if (!"land_sqmi" %in% names(sections)) sections$land_sqmi <- NA_real_
+
   agg <- sections %>%
     dplyr::group_by(facility, fosarea, zone) %>%
     dplyr::summarise(
@@ -493,6 +531,10 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
       prehatch_sites = sum(prehatch_sites, na.rm = TRUE),
       prehatch_acres = round(sum(prehatch_acres, na.rm = TRUE), 1),
       wet_cb         = sum(wet_cb, na.rm = TRUE),
+      density        = if (sum(land_sqmi, na.rm = TRUE) > 0)
+                         round(sum(population, na.rm = TRUE) / sum(land_sqmi, na.rm = TRUE), 0)
+                       else NA_real_,
+      population     = sum(population, na.rm = TRUE),
       avg_miles      = round(mean(miles, na.rm = TRUE), 1),
       max_miles      = round(max(miles, na.rm = TRUE), 1),
       .groups = "drop"

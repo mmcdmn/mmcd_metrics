@@ -43,7 +43,9 @@ METRIC_CHOICES <- c(
   "Sections"       = "sections",
   "Wet catch basins" = "wet_cb"
 )
-BOX_METRIC_CHOICES <- c(METRIC_CHOICES, "Avg miles from facility" = "avg_miles")
+BOX_METRIC_CHOICES <- c(METRIC_CHOICES, "Residents (2020 census)" = "population",
+                        "Residents per sq mi" = "density",
+                        "Avg miles from facility" = "avg_miles")
 
 # Small "Download CSV" button used under the result tables
 dl_btn <- function(id, label = "Download CSV") {
@@ -161,14 +163,17 @@ ui <- accessible_page(
     function wiRestyle(m, tries) {
       var w = window.HTMLWidgets && HTMLWidgets.find('#wi_map');
       var map = w && w.getMap && w.getMap();
-      var ids = [].concat(m.id || []), col = [].concat(m.col || []),
-          op = [].concat(m.op || []), lbl = [].concat(m.lbl || []);
-      var missing = {id: [], col: [], op: [], lbl: []};
+      var ids = [].concat(m.id || []), fill = [].concat(m.fill || []), ol = [].concat(m.ol || []),
+          op = [].concat(m.op || []), w = [].concat(m.w || []), dash = [].concat(m.dash || []),
+          lbl = [].concat(m.lbl || []);
+      var missing = {id: [], fill: [], ol: [], op: [], w: [], dash: [], lbl: []};
       ids.forEach(function(id, i) {
         var l = map && map.layerManager && map.layerManager.getLayer('shape', id);
-        if (!l) { missing.id.push(id); missing.col.push(col[i]); missing.op.push(op[i]);
+        if (!l) { missing.id.push(id); missing.fill.push(fill[i]); missing.ol.push(ol[i]);
+                  missing.op.push(op[i]); missing.w.push(w[i]); missing.dash.push(dash[i]);
                   missing.lbl.push(lbl[i]); return; }
-        l.setStyle({color: col[i], fillColor: col[i], fillOpacity: op[i]});
+        l.setStyle({color: ol[i], fillColor: fill[i], fillOpacity: op[i], weight: w[i],
+                    dashArray: dash[i] || null});
         if (l.setTooltipContent) { l.setTooltipContent(lbl[i]); }
       });
       if (missing.id.length && tries < 20) {          // polygons still being drawn: try again
@@ -364,9 +369,18 @@ ui <- accessible_page(
           tags$p(id = "wi_share_status", class = "metric-note", role = "status",
                  style = "margin:4px 0 0;"))
       ),
+      radioButtons("wi_shade", "Shade the map by:", choices = SHADE_MODES, selected = "facility",
+                   inline = TRUE),
+      conditionalPanel(
+        "input.wi_shade != 'facility'",
+        tags$p(class = "metric-note", style = "margin-top:-6px;",
+               "Fill shows 2020 census residents (people living in each section). The outline keeps ",
+               "the facility color; a solid outline is P1 and a dashed one is P2. Residents are ",
+               "shown for information and do not change the staffing estimates.")),
       a11y_figure(
         leaflet::leafletOutput("wi_map", height = 440),
-        label = paste("Map of all priority 1 and priority 2 sections, colored by facility.",
+        label = paste("Map of all priority 1 and priority 2 sections, colored by facility or,",
+                      "when chosen, shaded by 2020 census residents.",
                       "Click or tap a section to promote it to P1 and again to undo it, or tick",
                       "sections in the section list below.")),
       tags$p(class = "metric-note", style = "margin:6px 0;",
@@ -374,7 +388,8 @@ ui <- accessible_page(
           tags$b("Box select"), " on the map and drag one box (it turns off after each box). "),
         tags$span(class = "shift-hint", "Click a section to promote it (click again to undo); hold ",
           tags$b("Shift"), " and drag a box to do many. "),
-        "Color is the facility each section belongs to; solid is P1 and light is P2. ",
+        "Color is the facility each section belongs to; solid is P1 and light is P2 (unless you ",
+        "shade the map by residents above). ",
         "Promoted sections turn solid, and moved sections take the new facility's color."),
       tags$details(
         tags$summary(style = "cursor:pointer;color:#2c5aa0;",
@@ -567,6 +582,7 @@ DEEPLINK_SPEC <- list(
   wi_avg_mph     = list(input = "wi_avg_mph",   type = "numeric"),
   wi_circuity    = list(input = "wi_circuity",  type = "numeric"),
   wi_measure     = list(input = "wi_measure",   type = "radio"),
+  wi_shade       = list(input = "wi_shade",     type = "radio"),
   wi_drill       = list(input = "wi_drill",     type = "select"),
   wi_move_to     = list(input = "wi_move_to",   type = "select"),
   wi_h_air_trt      = list(input = "wi_h_air_trt",      type = "numeric"),
@@ -652,6 +668,7 @@ server <- function(input, output, session) {
     routed <- load_routed_drivetimes()          # every facility x section pair
     tm("routed drive times")
     sections <- attach_routed_drivetimes(sections, routed)
+    sections <- attach_section_population(sections)   # 2020 census residents (informational)
     has_routed <- any(!is.na(sections$drive_min_routed))
     routed_available(has_routed)
     if (first) for (id in c("cap_drive_mode", "wi_drive_mode")) {
@@ -758,7 +775,7 @@ server <- function(input, output, session) {
         w[[paste0("drive_min_P", z)]] <- m$dm[match(paste(w$fosarea, z), paste(m$fosarea, m$zone))]
       }
     }
-    disp <- select_measure_cols(w, input$cap_measure %||% "both")
+    disp <- drop_empty_population(select_measure_cols(w, input$cap_measure %||% "both"))
     disp$facility <- NULL; disp$fosarea <- NULL
     if ("n_techs" %in% names(disp)) disp$n_techs <- round(disp$n_techs, 1)  # 40 techs / 6 crews
     # explicit labels: "Ground sites P1", "Ground acres P1", ...
@@ -801,7 +818,7 @@ server <- function(input, output, session) {
   avg_data <- function(zone_val) {
     cap <- cap_live(); req(nrow(cap) > 0)
     measure <- input$cap_measure %||% "both"
-    a <- capacity_averages(cap, zone_val, capacity_visible_metrics(measure))
+    a <- drop_empty_population(capacity_averages(cap, zone_val, capacity_visible_metrics(measure)))
     names(a) <- vapply(names(a), capacity_col_label, character(1))
     a
   }
@@ -1198,19 +1215,65 @@ server <- function(input, output, session) {
     f <- map_facs(); unname(fac_colors(f)[match(facility, f)])
   }
   sec_opacity <- function(zone) ifelse(as.character(zone) == "1", 0.75, 0.15)
+  shade_mode <- function() {
+    v <- input$wi_shade %||% "facility"
+    if (v %in% SHADE_MODES) v else "facility"
+  }
+  # Style of each section (rows of scenario_apply() output) for a shading mode: fill, outline,
+  # fill opacity, outline weight and dash. Facility mode is the original look (fill = outline =
+  # facility color); the residents modes fill by population and keep the facility on the outline.
+  sec_style <- function(a, mode = isolate(shade_mode())) {
+    fcol <- sec_color(a$facility)
+    fill <- shade_fill(a, mode)
+    n <- length(fcol)
+    if (is.null(fill)) {
+      return(data.frame(fill = fcol, ol = fcol, op = sec_opacity(a$zone), w = rep(1, n),
+                        dash = rep("", n), stringsAsFactors = FALSE))
+    }
+    o <- shade_outline(a, mode, fcol)
+    data.frame(fill = fill, ol = o$ol, op = shade_opacity(a, mode), w = o$w, dash = o$dash,
+               stringsAsFactors = FALSE)
+  }
   # Hover label of a section (rows of scenario_apply() output)
   sec_label <- function(g) {
     changed <- g$moved | g$promoted
     where <- ifelse(changed,
                     sprintf("%s P%s &rarr; %s P%s", g$facility_from, g$zone_from, g$facility, g$zone),
                     sprintf("%s P%s", g$facility, g$zone))
+    pop <- if ("population" %in% names(g)) g$population else rep(NA_real_, nrow(g))
+    dens <- if ("density" %in% names(g)) g$density else rep(NA_real_, nrow(g))
+    people <- ifelse(is.na(pop), "",
+                     sprintf("<br/>%s residents%s", format(round(pop), big.mark = ",", trim = TRUE),
+                             ifelse(is.na(dens), "",
+                                    sprintf(" (%s per sq mi)", format(round(dens), big.mark = ",", trim = TRUE)))))
     sprintf(
       paste0("<b>%s</b> (FOS %s)<br/>%s<br/>Ground %d sites / %.1f ac &middot; ",
-             "Air %d sites / %.1f ac &middot; WetCB %d%s"),
+             "Air %d sites / %.1f ac &middot; WetCB %d%s%s"),
       g$sectcode, g$fos_name, where, g$ground_sites, g$ground_acres, g$air_sites, g$air_acres,
-      g$wet_cb,
+      g$wet_cb, people,
       ifelse(is.na(g$drive_min_routed), "",
              sprintf("<br/>~%.0f min drive from %s (OSM)", g$drive_min_routed, g$facility)))
+  }
+  # Send the styles of rows `idx` of scenario_apply() output to the page (no redraw)
+  send_restyle <- function(a, idx) {
+    st <- sec_style(a[idx, , drop = FALSE])
+    session$sendCustomMessage("wi_restyle", list(
+      id = as.list(as.character(a$sectcode[idx])), fill = as.list(st$fill), ol = as.list(st$ol),
+      op = as.list(st$op), w = as.list(st$w), dash = as.list(st$dash),
+      lbl = as.list(sec_label(a[idx, , drop = FALSE]))))
+  }
+  # Legend for the current shading mode (replaces the one already on the map)
+  set_legend <- function(mode, proxy = leaflet::leafletProxy("wi_map")) {
+    facs <- map_facs()
+    lg <- shade_legend(mode)
+    proxy <- leaflet::removeControl(proxy, "wi_legend")
+    if (is.null(lg)) {
+      leaflet::addLegend(proxy, "bottomright", colors = unname(fac_colors(facs)), labels = facs,
+                         title = "Facility", opacity = 0.9, layerId = "wi_legend")
+    } else {
+      leaflet::addLegend(proxy, "bottomright", colors = lg$colors, labels = lg$labels,
+                         title = lg$title, opacity = 0.9, layerId = "wi_legend")
+    }
   }
 
   output$wi_map <- leaflet::renderLeaflet({
@@ -1223,7 +1286,7 @@ server <- function(input, output, session) {
     m %>%
       leaflet::fitBounds(bb[1], bb[2], bb[3], bb[4]) %>%
       leaflet::addLegend("bottomright", colors = unname(fac_colors(facs)), labels = facs,
-                         title = "Facility", opacity = 0.9) %>%
+                         title = "Facility", opacity = 0.9, layerId = "wi_legend") %>%
       htmlwidgets::onRender(.box_js)
   })
 
@@ -1253,13 +1316,20 @@ server <- function(input, output, session) {
     prev <- ifelse(code %in% names(styled$key), styled$key[code], orig)
     send <- which(cur != prev)
     styled$key <- setNames(cur[cur != orig], code[cur != orig])
-    if (length(send) > 0) {
-      session$sendCustomMessage("wi_restyle", list(
-        id = as.list(code[send]), col = as.list(sec_color(a$facility[send])),
-        op = as.list(sec_opacity(a$zone[send])), lbl = as.list(sec_label(a[send, , drop = FALSE]))))
-    }
+    if (length(send) > 0) send_restyle(a, send)
     invisible()
   }
+
+  # Changing the shading restyles every section in place (one message, no redraw) and swaps the legend
+  observeEvent(input$wi_shade, {
+    req(map_ready(), !is.null(geo_raw()))
+    b <- base(); req(b)
+    mode <- shade_mode()
+    set_legend(mode)
+    a <- scenario_apply(b$sections, isolate(changes()), b$times,
+                        facilities = unique(b$sections$facility))
+    send_restyle(a, seq_len(nrow(a)))
+  }, ignoreInit = TRUE)
 
   observe({
     req(map_ready(), !is.null(geo_raw()))
@@ -1268,17 +1338,19 @@ server <- function(input, output, session) {
     d <- merge(g[, "sectcode"],
                a[, c("sectcode", "facility", "zone", "facility_from", "zone_from", "moved",
                      "promoted", "fos_name", "ground_sites", "ground_acres", "air_sites",
-                     "air_acres", "wet_cb", "drive_min_routed")],
+                     "air_acres", "wet_cb", "population", "density", "drive_min_routed")],
                by = "sectcode")
-    cols <- sec_color(d$facility)
+    mode <- isolate(shade_mode())
+    st <- sec_style(sf::st_drop_geometry(d), mode)
     leaflet::leafletProxy("wi_map") %>%
       leaflet::clearGroup("base") %>%
       leaflet::addPolygons(
         data = d, layerId = d$sectcode, group = "base",
-        weight = 1, color = cols, opacity = 0.9,
-        fillColor = cols, fillOpacity = sec_opacity(d$zone),
+        weight = st$w, color = st$ol, opacity = 0.9, dashArray = st$dash,
+        fillColor = st$fill, fillOpacity = st$op,
         label = lapply(sec_label(d), htmltools::HTML),
         highlightOptions = leaflet::highlightOptions(weight = 3))
+    set_legend(mode)
     styled$key <- character(0)
     # proxy calls go out after this flush; send the scenario's styles right behind them
     session$onFlushed(restyle_sync, once = TRUE)
@@ -1314,12 +1386,15 @@ server <- function(input, output, session) {
                                          input$wi_speed_pct %||% 100)
     disp <- s[, c("Sel", "sectcode", "facility", "Priority", "fos_name", "ground_sites",
                   "ground_acres", "air_sites", "air_acres", "prehatch_sites", "prehatch_acres",
-                  "wet_cb", "drive_min")]
+                  "wet_cb", "drive_min", "population", "density")]
     for (col in c("ground_acres", "air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
+    disp$density <- round(disp$density)
+    disp <- drop_empty_population(disp)           # no census file: no residents columns
     names(disp) <- c("Promote", "Section", "Facility", "Priority", "FOS", "Ground sites",
                      "Ground acres", "Air sites", "Air acres", "Ground prehatch sites",
                      "Ground prehatch acres",
-                     "WetCB", "Drive min")
+                     "WetCB", "Drive min",
+                     c("Residents", "Residents per sq mi")[c("population", "density") %in% names(disp)])
     capacity_dt(disp, left = 2, rownames = FALSE, filter = "top", selection = "none",
                 escape = -1,
                 callback = DT::JS("table.on('change', 'input.wi-sel', function() {",
@@ -1339,7 +1414,8 @@ server <- function(input, output, session) {
   # sections the scenario adds to its P1. Travel ratio = added / current (above 1 = the added
   # sections are farther away, so more driving), the number Estimate A turns into a capacity factor.
   chg_table <- function(cmp, first) {
-    mets <- intersect(SCENARIO_METRICS, capacity_visible_metrics(input$wi_measure %||% "both"))
+    mets <- intersect(SCENARIO_CHANGE_METRICS, capacity_visible_metrics(input$wi_measure %||% "both"))
+    if (!any(!is.na(base()$sections$population))) mets <- setdiff(mets, "population")  # no census file
     out <- data.frame(cmp$label, stringsAsFactors = FALSE)
     names(out) <- first
     for (k in mets) out[[paste("+", capacity_col_label(k))]] <- fmt_chg(cmp[[paste0(k, "_chg")]])
@@ -1398,7 +1474,7 @@ server <- function(input, output, session) {
 
   wi_cmp <- reactive({
     a <- wi_after(); dm <- wi_dm()
-    scenario_compare(a, "1", SCENARIO_METRICS, dm_before = dm$before, dm_after = dm$after)
+    scenario_compare(a, "1", SCENARIO_CHANGE_METRICS, dm_before = dm$before, dm_after = dm$after)
   })
 
   wi_workload_df <- reactive({
@@ -1424,7 +1500,7 @@ server <- function(input, output, session) {
   wi_workload_fos_df <- reactive({
     f <- input$wi_drill %||% ""; req(nzchar(f))
     a <- wi_after(); dm <- wi_dm()
-    cmp <- scenario_compare(a, "1", SCENARIO_METRICS, facility = f,
+    cmp <- scenario_compare(a, "1", SCENARIO_CHANGE_METRICS, facility = f,
                             dm_before = dm$before, dm_after = dm$after)
     req(nrow(cmp) > 0)
     chg_table(cmp, "FOS area")

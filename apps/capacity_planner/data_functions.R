@@ -540,6 +540,14 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
       .groups = "drop"
     )
 
+  # residents per site / acre of each kind: total residents / total of that metric (a ratio of the
+  # FOS-area totals, not an average of section ratios); NA without census data
+  has_census <- any(!is.na(sections$population))
+  for (k in names(RESIDENT_RATIOS)) {
+    agg[[RESIDENT_RATIOS[[k]]$csv]] <-
+      if (has_census) round(residents_per(agg$population, agg[[k]]), 1) else NA_real_
+  }
+
   # Names + facility full name + techs
   foremen <- tryCatch(get_foremen_lookup(), error = function(e) data.frame())
   fac_lkp <- tryCatch(get_facility_lookup(), error = function(e) data.frame())

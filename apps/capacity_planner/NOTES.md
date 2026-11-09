@@ -85,10 +85,27 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
   `population`, `land_sqmi`, `density` to the section table; a missing file leaves them NA and
   every residents column / the shading hides itself.
   **Residents never change a staffing number**: `population` and `density` are in
-  `CAPACITY_ZONE_METRICS` (capacity table, averages, box plot, CSV) and `SCENARIO_CHANGE_METRICS`
-  (What changed + its CSV, "+ Residents"), but not in `SCENARIO_METRICS` / `METRIC_CHOICES`, so
-  Estimate A cannot be driven by them. The section picker has Residents / Residents per sq mi
-  columns (sortable) and the map tooltips show them.
+  `CENSUS_METRICS` (the "Census data" tables, box plot, CSV) and `SCENARIO_CHANGE_METRICS`
+  (What-If Census data and the what-changed CSVs), but not in `SCENARIO_METRICS` / `METRIC_CHOICES`,
+  so Estimate A cannot be driven by them. The section picker has Residents / Residents per sq mi
+  columns (sortable) and the map tooltips show residents and density.
+  **Residents per site / acre** — six separate ratios (`RESIDENT_RATIOS`): residents per ground
+  site, ground acre, air site, air acre, ground prehatch site and ground prehatch acre (higher =
+  more people around each unit of that kind of work). Ground, air and prehatch are never combined
+  into one "site acres" number; a dash (NA) where the denominator is 0. Informational: not in
+  `SCENARIO_METRICS` / `METRIC_CHOICES`. **They live in tables called "Census data", never on the
+  map** (the tooltip stays short), and **not in the workload table** (`CENSUS_METRICS` is separate
+  from `CAPACITY_ZONE_METRICS` because of how many columns it is):
+  - *Capacity tab*: "Census data" table per FOS area (`census_wide()`: residents, residents per sq
+    mi and the six ratios, P1 / P2; follows the Show toggle: per-site ratios with "sites", per-acre
+    with "acres") + CSV. The FOS value is total residents / total sites or acres, not an average of
+    section ratios. The box plot can still plot any of them.
+  - *What-If*: "Census data" under What changed, same rows (district / facility, and the FOS areas
+    of the facility picked there) and the same Show choice: `scenario_census(cmp)` gives "+ Residents"
+    added to P1, residents in P1 after, and each ratio for the group's P1 as "before → after".
+    What changed itself no longer has a residents column.
+  - *Per section*: the section list (collapsed) and the changed-sections CSV have the six ratios
+    (`resident_ratio_cols()`).
 - **Map shading** (`wi_shade`: Facility, Population density, Residents per section) — Facility is the original look. The other modes fill each section by its residents
   (`shade_fill`; 9 YlOrRd classes, grey = no data, bounds in `SHADE_SCALES`) and move the facility
   color to a thin outline (`shade_outline`: P1 weight 1 solid, P2 0.5 dashed) so the fill is

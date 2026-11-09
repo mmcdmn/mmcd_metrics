@@ -45,6 +45,7 @@ METRIC_CHOICES <- c(
 )
 BOX_METRIC_CHOICES <- c(METRIC_CHOICES, "Residents (2020 census)" = "population",
                         "Residents per sq mi" = "density",
+                        stats::setNames(RESIDENT_RATIO_COLS, unname(RESIDENT_RATIO_LABELS)),
                         "Avg miles from facility" = "avg_miles")
 
 # Small "Download CSV" button used under the result tables
@@ -288,6 +289,18 @@ ui <- accessible_page(
              "Use the toggle above to show sites, acres, or both."),
       div(style = "overflow-x:auto;", DT::DTOutput("cap_table")),
       br(),
+      h4("Census data"),
+      tags$p(class = "metric-note",
+             "2020 census residents per FOS area (P1 / P2), residents per square mile, and residents ",
+             "per site and per acre for ground, air and ground prehatch (each kept separate; ",
+             "higher = more people around each site or acre of that work). Residents per site or ",
+             "acre = the FOS area's total residents / its total sites or acres. Informational only: ",
+             "it never changes a staffing number. The toggle above shows the per-site ratios, the ",
+             "per-acre ratios, or both."),
+      uiOutput("census_note"),
+      div(style = "overflow-x:auto;", DT::DTOutput("census_table")),
+      div(style = "margin:6px 0;", dl_btn("dl_census", "Download census data (CSV)")),
+      br(),
       h4("Averages per FOS area"),
       tags$p(class = "metric-note",
              "Mean and median load per FOS area, by facility and district-wide (all facilities, ",
@@ -426,6 +439,18 @@ ui <- accessible_page(
                   width = "320px"),
       uiOutput("wi_drill_title"),
       div(style = "overflow-x:auto;", DT::DTOutput("wi_workload_fos")),
+      hr(),
+      h4("Census data"),
+      tags$p(class = "metric-note",
+        "What the scenario does to the 2020 census numbers of P1, same rows as What changed: ",
+        tags$b("+ Residents"), " added to P1, residents in P1 after, and residents per site and ",
+        "per acre of P1 for ground, air and ground prehatch (each separate), shown as ",
+        tags$b("before \u2192 after"), ". Informational only: it never changes the staffing ",
+        "estimates. The Show choice above applies here too."),
+      uiOutput("wi_census_note"),
+      div(style = "overflow-x:auto;", DT::DTOutput("wi_census")),
+      uiOutput("wi_census_fos_title"),
+      div(style = "overflow-x:auto;", DT::DTOutput("wi_census_fos")),
       hr(),
       h4("3. Load per tech and per crew (P1), now to after"),
       tags$p(class = "metric-note",
@@ -775,7 +800,7 @@ server <- function(input, output, session) {
         w[[paste0("drive_min_P", z)]] <- m$dm[match(paste(w$fosarea, z), paste(m$fosarea, m$zone))]
       }
     }
-    disp <- drop_empty_population(select_measure_cols(w, input$cap_measure %||% "both"))
+    disp <- select_measure_cols(w, input$cap_measure %||% "both")
     disp$facility <- NULL; disp$fosarea <- NULL
     if ("n_techs" %in% names(disp)) disp$n_techs <- round(disp$n_techs, 1)  # 40 techs / 6 crews
     # explicit labels: "Ground sites P1", "Ground acres P1", ...
@@ -813,12 +838,38 @@ server <- function(input, output, session) {
     }
   )
 
+  # ---- Census data table (own table: it is a lot of columns) ------------
+  census_df <- reactive({
+    cap <- cap_filtered(); req(nrow(cap) > 0)
+    w <- drop_empty_population(select_measure_cols(census_wide(cap), input$cap_measure %||% "both"))
+    w
+  })
+  output$census_note <- renderUI({
+    if (any(!is.na(base()$sections$population))) return(NULL)
+    tags$p(class = "metric-note", style = "color:#a15c00;",
+           "The census file (data/section_population.csv) is not available for this deployment.")
+  })
+  output$census_table <- DT::renderDT({
+    disp <- census_df()
+    req(any(!is.na(base()$sections$population)))
+    disp$facility <- NULL; disp$fosarea <- NULL
+    names(disp) <- vapply(names(disp), capacity_col_label, character(1))
+    capacity_dt(disp, left = 2, rownames = FALSE, filter = "top",
+                options = list(pageLength = 40))
+  })
+  output$dl_census <- downloadHandler(
+    filename = function() paste0("fos_census_", Sys.Date(), ".csv"),
+    content = function(file) {
+      utils::write.csv(census_df(), file, row.names = FALSE)
+    }
+  )
+
   # The averages section always covers every facility (not the facility filter), so
   # the DISTRICT row / box is the true district, not just the filtered facility.
   avg_data <- function(zone_val) {
     cap <- cap_live(); req(nrow(cap) > 0)
     measure <- input$cap_measure %||% "both"
-    a <- drop_empty_population(capacity_averages(cap, zone_val, capacity_visible_metrics(measure)))
+    a <- capacity_averages(cap, zone_val, capacity_visible_metrics(measure))
     names(a) <- vapply(names(a), capacity_col_label, character(1))
     a
   }
@@ -1389,12 +1440,15 @@ server <- function(input, output, session) {
                   "wet_cb", "drive_min", "population", "density")]
     for (col in c("ground_acres", "air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
     disp$density <- round(disp$density)
+    rr <- resident_ratio_cols(s)                   # six separate residents-per ratios
+    for (col in RESIDENT_RATIO_COLS) disp[[col]] <- round(rr[[col]], 1)
     disp <- drop_empty_population(disp)           # no census file: no residents columns
     names(disp) <- c("Promote", "Section", "Facility", "Priority", "FOS", "Ground sites",
                      "Ground acres", "Air sites", "Air acres", "Ground prehatch sites",
                      "Ground prehatch acres",
                      "WetCB", "Drive min",
-                     c("Residents", "Residents per sq mi")[c("population", "density") %in% names(disp)])
+                     c("Residents", "Residents per sq mi")[c("population", "density") %in% names(disp)],
+                     unname(RESIDENT_RATIO_LABELS[intersect(RESIDENT_RATIO_COLS, names(disp))]))
     capacity_dt(disp, left = 2, rownames = FALSE, filter = "top", selection = "none",
                 escape = -1,
                 callback = DT::JS("table.on('change', 'input.wi-sel', function() {",
@@ -1414,8 +1468,7 @@ server <- function(input, output, session) {
   # sections the scenario adds to its P1. Travel ratio = added / current (above 1 = the added
   # sections are farther away, so more driving), the number Estimate A turns into a capacity factor.
   chg_table <- function(cmp, first) {
-    mets <- intersect(SCENARIO_CHANGE_METRICS, capacity_visible_metrics(input$wi_measure %||% "both"))
-    if (!any(!is.na(base()$sections$population))) mets <- setdiff(mets, "population")  # no census file
+    mets <- intersect(SCENARIO_METRICS, capacity_visible_metrics(input$wi_measure %||% "both"))
     out <- data.frame(cmp$label, stringsAsFactors = FALSE)
     names(out) <- first
     for (k in mets) out[[paste("+", capacity_col_label(k))]] <- fmt_chg(cmp[[paste0(k, "_chg")]])
@@ -1497,15 +1550,61 @@ server <- function(input, output, session) {
     tags$h5(sprintf("%s by FOS area (sections moved in from another facility are unassigned)", f))
   })
 
-  wi_workload_fos_df <- reactive({
+  # the picked facility by FOS area (shared by What changed and Census data)
+  wi_cmp_fos <- reactive({
     f <- input$wi_drill %||% ""; req(nzchar(f))
     a <- wi_after(); dm <- wi_dm()
-    cmp <- scenario_compare(a, "1", SCENARIO_CHANGE_METRICS, facility = f,
-                            dm_before = dm$before, dm_after = dm$after)
-    req(nrow(cmp) > 0)
+    scenario_compare(a, "1", SCENARIO_CHANGE_METRICS, facility = f,
+                     dm_before = dm$before, dm_after = dm$after)
+  })
+  wi_workload_fos_df <- reactive({
+    cmp <- wi_cmp_fos(); req(nrow(cmp) > 0)
     chg_table(cmp, "FOS area")
   })
   live_dt("wi_workload_fos", wi_workload_fos_df,
+          build = function(d) capacity_dt(d, left = 1, rownames = FALSE, selection = "none",
+                                          options = list(dom = "t", ordering = FALSE, pageLength = 20)))
+
+  # Census data of the scenario (own table under What changed; same rows, same Show: choice)
+  wi_has_census <- reactive(any(!is.na(base()$sections$population)))
+  census_chg_table <- function(cmp, first) {
+    cs <- scenario_census(cmp, input$wi_measure %||% "both")
+    req(wi_has_census(), !is.null(cs), nrow(cs) > 0)
+    f1 <- function(x) ifelse(is.na(x), "-", fmt_n(x))
+    out <- data.frame(cmp$label, stringsAsFactors = FALSE)
+    names(out) <- first
+    out[["+ Residents"]] <- fmt_chg(cs$population_chg)
+    out[["Residents in P1 after"]] <- fmt_n(cs$population_after)
+    for (col in RESIDENT_RATIO_COLS) {
+      b <- paste0(col, "_before"); a <- paste0(col, "_after")
+      if (b %in% names(cs))
+        out[[paste0(RESIDENT_RATIO_LABELS[[col]], " (P1)")]] <- paste0(f1(cs[[b]]), " \u2192 ", f1(cs[[a]]))
+    }
+    out
+  }
+  output$wi_census_note <- renderUI({
+    if (wi_has_census()) return(NULL)
+    tags$p(class = "metric-note", style = "color:#a15c00;",
+           "The census file (data/section_population.csv) is not available for this deployment.")
+  })
+  wi_census_df <- reactive({
+    cmp <- wi_cmp(); req(nrow(cmp) > 0)
+    census_chg_table(cmp, "Facility")
+  })
+  live_dt("wi_census", wi_census_df,
+          build = function(d) capacity_dt(d, left = 1, rownames = FALSE, selection = "none",
+                                          options = list(dom = "t", ordering = FALSE, pageLength = 20)))
+  output$wi_census_fos_title <- renderUI({
+    f <- input$wi_drill %||% ""
+    if (!nzchar(f) || !wi_has_census()) return(NULL)
+    tags$h5(sprintf("Census data of %s by FOS area (the facility picked under What changed)", f))
+  })
+  wi_census_fos_df <- reactive({
+    req(nzchar(input$wi_drill %||% ""))
+    cmp <- wi_cmp_fos(); req(nrow(cmp) > 0)
+    census_chg_table(cmp, "FOS area")
+  })
+  live_dt("wi_census_fos", wi_census_fos_df,
           build = function(d) capacity_dt(d, left = 1, rownames = FALSE, selection = "none",
                                           options = list(dom = "t", ordering = FALSE, pageLength = 20)))
 

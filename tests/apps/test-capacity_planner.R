@@ -1124,7 +1124,7 @@ test_that("CSV exports carry the residents of what changed", {
   expect_true(is.na(env$scenario_export_changes(b)$population))
 })
 
-test_that("map shading: classes, no-data grey, hot spots, legends", {
+test_that("map shading: classes, no-data grey, legends", {
   env <- new.env(); load_capacity_fns(env)
   a <- data.frame(zone = c("1", "2", "2", "2", "2", "1"),
                   density = c(0, 299.9, 300, 1200, NA, 99999),
@@ -1137,26 +1137,23 @@ test_that("map shading: classes, no-data grey, hot spots, legends", {
   r <- env$shade_fill(a, "residents")
   expect_equal(r[3], env$SHADE_COLORS[2]); expect_equal(r[4], env$SHADE_COLORS[4]); expect_equal(r[6], env$SHADE_COLORS[9])
   expect_null(env$shade_fill(a, "facility"))
-  # hot spots: only P2 sections at or above the threshold are marked; P1 and the rest recede
-  h <- env$shade_fill(a, "hotspot")
-  hc <- env$SHADE_HOTSPOT_COLORS
-  expect_equal(h, unname(c(hc["p1"], hc["other"], hc["dense"], hc["dense"], hc["other"], hc["p1"])))
-  o <- env$shade_opacity(a, "hotspot")                                  # 300 is the threshold (inclusive)
-  expect_true(min(o[c(3, 4)]) > max(o[c(2, 5)])); expect_true(all(o > 0 & o <= 1))
+  expect_null(env$shade_fill(a, "hotspot"))                             # the removed mode is not a mode
   od <- env$shade_opacity(a, "density")
   expect_true(all(od[c(1, 6)] > od[c(2, 3)]))                           # P1 stronger than P2
   expect_equal(env$shade_opacity(a, "facility"), ifelse(a$zone == "1", 0.75, 0.15))   # the original look
   # a table with no census columns gets the no-data color, not an error
   expect_equal(env$shade_fill(data.frame(zone = "1"), "density"), env$SHADE_NO_DATA)
   # legends: one color per label, no-data entry, readable class names
-  for (m in c("density", "residents", "hotspot")) {
+  for (m in c("density", "residents")) {
     lg <- env$shade_legend(m)
     expect_equal(length(lg$colors), length(lg$labels)); expect_true(nzchar(lg$title))
   }
   expect_equal(env$shade_legend("density")$labels[c(1, 2, 9, 10)],
                c("Under 300", "300 to 600", "7,500 or more", "No land / no data"))
   expect_null(env$shade_legend("facility"))
-  expect_equal(unname(env$SHADE_MODES), c("facility", "density", "residents", "hotspot"))
+  expect_equal(unname(env$SHADE_MODES), c("facility", "density", "residents"))
+  expect_null(env$shade_legend("hotspot"))
+  expect_false(exists("SHADE_HOTSPOT_DENSITY", envir = env)); expect_false(exists("shade_dense", envir = env))
 })
 
 test_that("drop_empty_population removes empty residents columns only", {
@@ -1183,7 +1180,7 @@ test_that("the app wires residents shading and keeps residents out of the estima
   expect_false(grepl("scenario_staffing\\([^)]*SCENARIO_CHANGE_METRICS", app_src))
 })
 
-test_that("shaded-mode outlines are thin, keep the facility color, and mark hot spots heavily", {
+test_that("shaded-mode outlines are thin and keep the facility color", {
   env <- new.env(); load_capacity_fns(env)
   a <- data.frame(zone = c("1", "2", "2", "1"), density = c(5000, 5000, 200, NA), stringsAsFactors = FALSE)
   fc <- c("#111111", "#222222", "#333333", "#444444")
@@ -1191,9 +1188,4 @@ test_that("shaded-mode outlines are thin, keep the facility color, and mark hot 
   expect_equal(o$ol, fc)                                              # facility stays on the outline
   expect_equal(o$w, c(1, 0.5, 0.5, 1)); expect_equal(o$dash, c("", "4 3", "4 3", ""))
   expect_lt(max(o$w), 2)                                              # thin: the fill must show at district zoom
-  h <- env$shade_outline(a, "hotspot", fc)
-  expect_equal(h$ol, c("#111111", env$SHADE_HOTSPOT_COLORS[["dense"]], "#333333", "#444444"))
-  expect_equal(h$w, c(1, 3, 0.5, 1))                                  # only the dense P2 section is heavy
-  expect_equal(env$shade_dense(a), c(FALSE, TRUE, FALSE, FALSE))
-  expect_equal(env$shade_dense(data.frame(zone = "2")), FALSE)        # no density column: nothing is dense
 })

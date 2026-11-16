@@ -19,6 +19,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking engine
 source("../../shared/cache_utilities.R")
 source("../../shared/config.R")
 
@@ -51,11 +52,12 @@ ui <- accessible_dashboard_page(
       menuItem("App Config", tabName = "config", icon = icon("cog")),
       menuItem("Metric Registry", tabName = "registry", icon = icon("list")),
       menuItem("Site Claims", tabName = "claims", icon = icon("map-pin")),
-      hr(style = "margin: 5px 15px; border-color: #444;"),
+      # Separators and the theme picker sit directly inside the menu <ul>, so each is an <li>.
+      tags$li(`aria-hidden` = "true", hr(style = "margin: 5px 15px; border-color: #444;")),
       menuItem("Color Reference", tabName = "colors", icon = icon("palette")),
-      hr(style = "margin: 5px 15px; border-color: #444;"),
+      tags$li(`aria-hidden` = "true", hr(style = "margin: 5px 15px; border-color: #444;")),
       # Theme selector at bottom
-      div(style = "padding: 10px 15px;",
+      tags$li(style = "padding: 10px 15px;",
         selectInput("color_theme", 
                     label = tags$span(style = "color: #aaa; font-size: 11px;", "Color Theme"),
                     choices = get_available_themes(),
@@ -67,6 +69,7 @@ ui <- accessible_dashboard_page(
   
   dashboardBody(
     useShinyjs(),
+    url_state_js(),
     # Compact styling
     tags$head(tags$style(HTML("
       .small-box { min-height: 80px; }
@@ -133,9 +136,9 @@ ui <- accessible_dashboard_page(
       # =====================================================================
       tabItem(tabName = "cache",
         tabBox(
-          title = NULL, width = 12,
+          id = "cache_tabs", title = NULL, width = 12,
           # --- Historical Cache Sub-tab ---
-          tabPanel("Historical Cache",
+          tabPanel("Historical Cache", value = "historical",
             icon = icon("history"),
             fluidRow(
               column(8,
@@ -179,7 +182,7 @@ ui <- accessible_dashboard_page(
           ),
           
           # --- Lookup Cache Sub-tab ---
-          tabPanel("Lookup Cache",
+          tabPanel("Lookup Cache", value = "lookup",
             icon = icon("table"),
             fluidRow(
               column(6,
@@ -210,7 +213,7 @@ ui <- accessible_dashboard_page(
           ),
           
           # --- Tiered Cache Sub-tab ---
-          tabPanel("Tiered Cache",
+          tabPanel("Tiered Cache", value = "tiered",
             icon = icon("layer-group"),
             fluidRow(
               column(8,
@@ -261,9 +264,9 @@ ui <- accessible_dashboard_page(
       # =====================================================================
       tabItem(tabName = "runtime",
         tabBox(
-          title = NULL, width = 12,
+          id = "runtime_tabs", title = NULL, width = 12,
           # --- Environment Sub-tab ---
-          tabPanel("Environment",
+          tabPanel("Environment", value = "environment",
             icon = icon("info-circle"),
             fluidRow(
               column(6,
@@ -289,7 +292,7 @@ ui <- accessible_dashboard_page(
           ),
           
           # --- Load Balancing Sub-tab ---
-          tabPanel("Load Balancing",
+          tabPanel("Load Balancing", value = "load_balancing",
             icon = icon("balance-scale"),
             fluidRow(
               column(6,
@@ -323,7 +326,7 @@ ui <- accessible_dashboard_page(
           ),
           
           # --- Access Log Sub-tab ---
-          tabPanel("Access Log",
+          tabPanel("Access Log", value = "access_log",
             icon = icon("file-alt"),
             fluidRow(
               box(title = "nginx Access Log", status = "info", 
@@ -450,15 +453,15 @@ ui <- accessible_dashboard_page(
       # =====================================================================
       tabItem(tabName = "colors",
         tabBox(
-          title = NULL, width = 12,
-          tabPanel("Facilities & FOS",
+          id = "colors_tabs", title = NULL, width = 12,
+          tabPanel("Facilities & FOS", value = "facilities",
             icon = icon("building"),
             fluidRow(
               column(6, h4("Facilities"), DTOutput("facilityInfo")),
               column(6, h4("Field Operations Supervisors"), DTOutput("fosInfo"))
             )
           ),
-          tabPanel("Status Colors",
+          tabPanel("Status Colors", value = "status_colors",
             icon = icon("traffic-light"),
             fluidRow(
               column(6, h4("Hex Colors (Charts)"), DTOutput("statusColors")),
@@ -468,7 +471,7 @@ ui <- accessible_dashboard_page(
               column(12, h4("Color Mapping (Visualizations)"), DTOutput("statusColorMap"))
             )
           ),
-          tabPanel("Treatment Plans",
+          tabPanel("Treatment Plans", value = "treatment_plans",
             icon = icon("spray-can"),
             fluidRow(
               column(6, h4("By Code"), DTOutput("treatmentColorsCodes")),
@@ -478,11 +481,11 @@ ui <- accessible_dashboard_page(
               column(12, h4("Plan Types"), DTOutput("treatmentPlanTypes"))
             )
           ),
-          tabPanel("Mosquito Species",
+          tabPanel("Mosquito Species", value = "species",
             icon = icon("bug"),
             DTOutput("mosquitoColors")
           ),
-          tabPanel("Theme Preview",
+          tabPanel("Theme Preview", value = "theme_preview",
             icon = icon("swatchbook"),
             fluidRow(column(12, uiOutput("themeInfo"))),
             fluidRow(
@@ -501,6 +504,17 @@ ui <- accessible_dashboard_page(
 # SERVER
 # =============================================================================
 server <- function(input, output, session) {
+
+  # Deep links: ?tabs=<page> opens a sidebar page; cache_tabs / runtime_tabs / colors_tabs open the
+  # inner tab of the Cache Manager, Runtime & Routing and Color Reference pages. Nothing is loaded
+  # automatically (refresh_for returns no buttons).
+  wire_deep_links(input, output, session,
+                  spec = list(
+                    tabs         = list(input = "tabs",         type = "tab"),
+                    cache_tabs   = list(input = "cache_tabs",   type = "tab"),
+                    runtime_tabs = list(input = "runtime_tabs", type = "tab"),
+                    colors_tabs  = list(input = "colors_tabs",  type = "tab")),
+                  refresh_for = function(state) character(0))
   
   # ===========================================================================
   # SYSTEM OVERVIEW

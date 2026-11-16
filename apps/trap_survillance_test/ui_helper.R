@@ -6,6 +6,7 @@ trap_ui <- function() {
     dashboardHeader(title = "Trap Surveillance Test"),
     dashboardSidebar(
       sidebarMenu(
+        id = "tabs",
         menuItem("Polygon Map", tabName = "map_sf", icon = icon("chart-area")),
         menuItem("Table", tabName = "table", icon = icon("table"))
       )

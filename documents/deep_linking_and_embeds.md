@@ -35,9 +35,9 @@ Engine: `shared/url_state_helpers.R` (deep link + auto-refresh),
 | Catch Basin Status | `/catch_basin_status/` | 2 refresh buttons, split yearly/weekly metric |
 | Drone | `/drone/` | 4 tabs |
 | Red Air Sites | `/air_sites_simple/` | one refresh button; tab values are titles |
-| Inspections | `/inspections/` | **two-stage**: auto-clicks Load Data → the tab's Analyze |
+| Inspections (Prehatch Coverage) | `/inspections/` | filters apply live, nothing to click |
 | Cattail Inspections | `/cattail_inspections/` | 2 refresh buttons (per tab) |
-| Trap Surveillance | `/trap_surveillance/` | targets the main map view |
+| Trap Surveillance | `/trap_surveillance/` | all five pages (Map, Trend, Table, Causal Analysis, Methods) via `?tabs=`; map filters + Refresh Data |
 | Checkback Efficacy | `/control_efficacy/` | single refresh, 4 tabs (incl. Bioassay Efficacy); route keeps the `control_efficacy` id |
 | Mosquito Monitoring | `/mosquito-monitoring/` | Update button per tab (All / Compare) |
 | Mosquito Surveillance Map | `/mosquito_surveillance_map/` | auto-updating map (no refresh click) |
@@ -222,28 +222,26 @@ Example: `.../drone/?tabs=historical&facility=Sr&zone=p1_only&time_period=weekly
 
 Example: `.../air_sites_simple/?main_tabset=Historical%20Analysis&facility=Sr&metric_type=acres`
 
-### Inspections — `/inspections/` (two-stage: Load Data → Analyze)
+### Inspections (Prehatch Coverage, the 51% goal) — `/inspections/`
+
+Filters apply live, so there is no refresh button to click.
 
 | Param | Options |
 |---|---|
-| `tabs` | `gaps` \| `larvae` \| `red_bug_gaps` \| `analytics` |
+| `tabs` | `progress` \| `sites` \| `rules` |
 | `facility` | facility |
 | `zone` | `1` \| `2` \| `1,2` |
-| `fos` | fos |
+| `fos` | foreman shortname, or the 4-digit area code |
 | `priority` | `(from DB)` |
-| `air_gnd` | `A` \| `G` \| `both` |
-| `drone_filter` | `drone_only` \| `no_drone` \| `include_drone` |
-| `red_bug_group_by` | `facility` \| `fos` |
-| `prehatch_only` | `true` \| `false` |
-| `spring_only` | `true` \| `false` |
-| `years_gap` | number |
-| `years_red_bug_gap` | number |
-| `years_back` | number |
-| `larvae_threshold` | number |
-| `min_inspections` | number |
+| `drone_filter` | `include_drone` \| `drone_only` \| `no_drone` |
+| `status` | `not_counting` \| `counting` \| `id_pending` \| `all` (Site List) |
+| `reason` | `all` \| `red_5yr` \| `sampled_this_year` \| `red_expired` \| `no_red_sampled` \| `inspected_no_sample` \| `not_inspected` (Site List) |
+| `as_of` | date (`YYYY-MM-DD`), default today |
 | `color_theme` | color_theme |
 
-Example: `.../inspections/?tabs=red_bug_gaps&facility=Sr&zone=1&years_red_bug_gap=5`
+Old links keep working: `tabs=red_bug_gaps` opens the Site List (the Missing sites); `tabs=scorecard`, `gaps`, `analytics` and `larvae` open the Progress tab. (`status=not_counting` means the Missing sites, `status=counting` the Sampled ones and `status=id_pending` the sites waiting on a result; the first two URL values did not change when the labels did. `status=ending_soon` no longer exists.) The old `air_gnd`, `prehatch_only`, `spring_only`, `years_*`, `larvae_threshold` and `min_inspections` params are ignored (the app is now ground prehatch sites only).
+
+Example: `.../inspections/?tabs=sites&status=not_counting&reason=inspected_no_sample&facility=Sr&zone=1`
 
 ### Cattail Inspections — `/cattail_inspections/`
 
@@ -263,13 +261,15 @@ Example: `.../inspections/?tabs=red_bug_gaps&facility=Sr&zone=1&years_red_bug_ga
 
 Example: `.../cattail_inspections/?tabs=Historical%20Comparison&hist_metric=acres&hist_years=5`
 
-### Trap Surveillance — `/trap_surveillance/` (main map view)
+### Trap Surveillance — `/trap_surveillance/` (every page)
 
 | Param | Options |
 |---|---|
+| `tabs` | `map` \| `trend` \| `table` \| `analysis` \| `methods` (the menu names `map_tab`, `trend_tab`, `table_tab`, `trap_analysis_tab`, `methods_tab` also work) |
 | `metric_type` | `abundance` \| `infection` \| `vector_index` |
 | `species` | `(from DB)` |
 | `year` | `(from DB)` |
+| `compare_year` | `(from DB)` — overlays a second year on the Trend tab's vector index graph (omit for none) |
 | `yrwk` | `(from DB)` |
 | `infection_metric` | `mle` \| `mir` |
 | `compare_mode` | `true` \| `false` |
@@ -280,6 +280,8 @@ Example: `.../cattail_inspections/?tabs=Historical%20Comparison&hist_metric=acre
 | `color_theme` | color_theme |
 
 Example: `.../trap_surveillance/?metric_type=vector_index&infection_metric=mle`
+
+Link to a page: `.../trap_surveillance/?tabs=methods` (Methods), `.../trap_surveillance/?tabs=trend&year=2025&species=Total_Cx_vectors` (Trend); compare two years of vector index: `.../trap_surveillance/?tabs=trend&year=2026&compare_year=2025&species=Total_Cx_vectors&infection_metric=mle`. `map` and `table` click Refresh Data; `analysis` clicks Run Analysis (use with `analysis_year`, `analysis_bandwidth`, `analysis_radius`); `trend` and `methods` load nothing extra.
 
 ### Checkback Efficacy — `/control_efficacy/`
 
@@ -407,12 +409,14 @@ Example: `.../air_inspection_checklist/?facility=Sr&zone=1&priority=RED&lookback
 ### Capacity Planner — `/capacity_planner/` (live, no Refresh click)
 
 Estimates recompute reactively, so params apply and the view updates with no
-button click. (Section promotion in the What-If planner is interactive and not
-deep-linked.)
+button click. The What-If scenario itself (the sections you select, move and promote) is too
+big for individual params; it travels in one packed `s` parameter, made by the **Copy link to
+this scenario** button (see "Sharing a What-If scenario" below).
 
 | Param | Options |
 |---|---|
 | `tabs` | `capacity` \| `staffing` \| `whatif` |
+| `avg_zone` | `p1` \| `p2` — P1/P2 box plot tab inside the Capacity tab |
 | `cap_facility` | `all` `(or facility from DB)` — Capacity tab facility |
 | `cap_priority` | `true` \| `false` — break down by priority |
 | `cap_measure` | `both` \| `sites` \| `acres` — show site counts, acres, or both |
@@ -422,23 +426,80 @@ deep-linked.)
 | `cap_speed_pct` | number (field speed as % of map speed, routed mode) |
 | `avg_mph` | number (Capacity tab drive-time speed, estimate mode) |
 | `circuity` | number (road circuity factor) |
-| `wi_facility` | a facility `(from DB)` — What-If planner facility |
+| `wi_facility` | a facility `(from DB)` — the facility whose staffing (techs per crew, drone offload) the What-If "Estimate settings" section edits |
 | `wi_metric` | staffing driver id `(from DB)` — Estimate A |
 | `wi_per_tech` | number (capacity per tech) |
 | `wi_techs_per_crew` | number (techs per crew for the What-If facility) |
 | `wi_drone_offload` | number 0-100 (% of the What-If facility's ground load drones take over) |
 | `wi_drone_air_offload` | number 0-100 (% of the What-If facility's air-site inspections drones take over) |
 | `wi_rate_year` | a year `(from DB)` — jobs/site season |
-| `wi_rate_scope` | `DISTRICT` \| `FAC` |
+| `wi_rate_scope` | `DISTRICT` \| `FAC` — Estimate B job rates: district-wide, or each facility's own |
 | `wi_crew_hours` | number (hrs / crew-season) |
 | `wi_crew_trips` | number (round trips/section/season) |
 | `wi_travel` | `true` \| `false` — include travel time in both estimates (default true) |
 | `wi_drive_mode` | `routed` \| `estimate` — drive-time source for Estimate A and B |
 | `wi_speed_pct` | number (field speed as % of map speed, routed mode) |
+| `wi_travel_share` | number (percent of a tech's workday spent driving, default 20; Estimate A capacity factor) |
 | `wi_avg_mph` | number (What-If drive-time speed, estimate mode) |
 | `wi_circuity` | number (What-If circuity factor) |
+| `wi_measure` | `both` \| `sites` \| `acres` — What changed: site counts, acres, or both |
+| `wi_shade` | `facility` \| `density` \| `residents` — What-If map shading: facility color (default), 2020 census residents per sq mi, or residents per section. Saved in shared links |
+| `wi_drill` | a facility `(from DB)` — facility broken down by FOS area in What changed / Estimate A |
+| `wi_move_to` | `keep` \| a facility `(from DB)` — the "Move sections to" destination |
+| `wi_h_air_trt`, `wi_h_air_insp`, `wi_h_gnd_insp_trt`, `wi_h_gnd_trt`, `wi_h_gnd_insp` | numbers (Estimate B hours per job) |
+| `s` | packed scenario from Copy link (see below); not meant to be typed |
 
 Example: `.../capacity_planner/?tabs=whatif&wi_facility=Sr&wi_rate_scope=FAC`
+
+#### Sharing a What-If scenario
+
+Build a scenario (promote and move sections, change settings, pan the map), press **Copy link
+to this scenario**, and send the link. Whoever opens it lands on the What-If tab with the same
+sections promoted or moved, the same settings and staffing table, and the same map view. They
+get an **editable copy**: their changes are never saved to your link, and they can press Copy
+link to make their own.
+
+- **Nothing is stored on the server.** The link carries the scenario itself in `s`
+  (base64url of gzipped JSON), so it never expires and survives rebuilds. A bitmap per
+  destination over the sorted section list keeps it short: about 800 characters for a 286-section
+  move with settings; 300 scattered sections about 500.
+- **What it saves:** the promoted / moved sections and where they go, every What-If input in
+  the table above (except the three per-facility staffing boxes, which come from the staffing
+  table), the whole staffing table (crews, techs per crew, drone techs, offload %), the map
+  centre and zoom, the date, and a data stamp (number of P1 / P2 sections).
+- **Numbers are recalculated from the live database when the link is opened**, not frozen. If the
+  P1 / P2 section counts differ from the stamp, a banner says the data changed since the link was
+  made.
+- **If the section list itself changed** (sections added or removed), the link says it can't be
+  restored and the planner opens at its starting point, instead of putting changes on the wrong
+  sections.
+- Explicit URL params next to `s` win over what the link saved (e.g. `...&s=...&wi_metric=air_sites`).
+- A damaged, truncated or tampered `s` shows "damaged or incomplete" and is otherwise ignored.
+  It is only ever parsed as size-limited JSON (never unserialized), and every value is validated.
+- Links over about 2,000 characters can be cut off by chat and email apps; the page warns, and the
+  **Download changed sections (CSV)** button is the alternative.
+- Plumbing: `shared/url_state_helpers.R` `wire_deep_links(expand_state = fn)` lets an app turn the
+  parsed URL into a fuller state once before it is applied; capacity_planner uses it to restore
+  the scenario (`expand_share()` in `app.R`; pack / token functions in `display_functions.R`).
+
+### Admin Tools — `/test-app/` (nothing auto-loads)
+
+| Param | Options |
+|---|---|
+| `tabs` | `overview` \| `cache` \| `runtime` \| `config` \| `registry` \| `claims` \| `colors` |
+| `cache_tabs` | `historical` \| `lookup` \| `tiered` — inner tab of Cache Manager |
+| `runtime_tabs` | `environment` \| `load_balancing` \| `access_log` — inner tab of Runtime & Routing |
+| `colors_tabs` | `facilities` \| `status_colors` \| `treatment_plans` \| `species` \| `theme_preview` — inner tab of Color Reference |
+
+Example: `.../test-app/?tabs=cache&cache_tabs=tiered`
+
+### Trap Surveillance (test) — `/trap_survillance_test/` (nothing auto-loads)
+
+| Param | Options |
+|---|---|
+| `tabs` | `map_sf` \| `table` |
+
+Example: `.../trap_survillance_test/?tabs=table`
 
 ### Overview (its own params) — `/overview/`
 
@@ -473,6 +534,7 @@ Examples:
 - `http://localhost:3838/embed/?app=ground_prehatch_progress&view=historical&facility=Sr&display_metric=acres`
 - `<iframe src="http://localhost:3838/embed/?app=drone&view=historical" width="600" height="400" style="border:0"></iframe>`
 - `http://localhost:3838/embed/?app=trap_surveillance&view=map&metric_type=vector_index&infection_metric=mle` (VI-area choropleth)
+- `http://localhost:3838/embed/?app=trap_surveillance&view=vector_index&year=2026&compare_year=2025&species=Total_Cx_vectors&infection_metric=mle` (district vector index, 2026 vs 2025 by epiweek; `compare_year` applies to the `vector_index` view only)
 - `http://localhost:3838/embed/?app=air_sites_simple&view=pipeline&metric_type=acres` (process-summary table)
 - `http://localhost:3838/embed/?app=cattail_treatments&view=historical&hist_status_metric=treated&group_by=foreman`
 - `http://localhost:3838/embed/?app=control_efficacy&view=bioassay&bio_comparison=window` (bioassay % inhibition)

@@ -301,6 +301,32 @@ test_that("accessible_dashboard_page(): skip link precedes the dashboard header"
   expect_true(regexpr("a11y-skip-link", body, fixed = TRUE) < regexpr("main-header", body, fixed = TRUE))
 })
 
+test_that("accessible_dashboard_page(): sidebar menu list holds only list items (WCAG 1.3.1)", {
+  skip_if_not_installed("shinydashboard")
+  ui <- accessible_dashboard_page(
+    shinydashboard::dashboardHeader(title = "T"),
+    shinydashboard::dashboardSidebar(
+      shinydashboard::sidebarMenu(
+        id = "tabs",
+        shinydashboard::menuItem("A", tabName = "a"),
+        shinydashboard::menuItem("B", tabName = "b")
+      )
+    ),
+    shinydashboard::dashboardBody(shinydashboard::tabItems(
+      shinydashboard::tabItem("a", "one"), shinydashboard::tabItem("b", "two")
+    ))
+  )
+  body <- render_body(ui)
+  menu <- regmatches(body, regexpr('(?s)<ul class="sidebar-menu"[^>]*>.*?</ul>', body, perl = TRUE))
+  expect_length(menu, 1)
+  expect_false(grepl("<div", menu, fixed = TRUE))
+  # the tab-state holder is a hidden <li>, still a direct child so updateTabItems() can find the links
+  expect_true(grepl('<li[^>]*sidebarMenuSelectedTabItem', menu, perl = TRUE))
+  expect_true(grepl('aria-hidden="true"', menu, fixed = TRUE))
+  expect_true(grepl('data-value="a"', menu, fixed = TRUE))
+  expect_true(grepl('data-value="b"', menu, fixed = TRUE))
+})
+
 test_that("a11y_disclosure(): real button whose aria-controls resolves", {
   html <- as.character(a11y_disclosure("help", "Show/Hide Help", shiny::p("text")))
   expect_true(grepl('<button type="button" id="help"', html, fixed = TRUE))

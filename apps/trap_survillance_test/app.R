@@ -7,14 +7,21 @@ library(plotly)
 
 source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
+source("../../shared/url_state_helpers.R")  # deep-linking engine
 source("ui_helper.R")
 source("data_functions.R")
 source("mle_trap_based.R")
 source("display_functions.R")
 
-ui <- trap_ui()
+ui <- tagList(url_state_js(), trap_ui())
 
 server <- function(input, output, session) {
+  # Deep link to a page: ?tabs=map_sf or ?tabs=table. Nothing is loaded automatically;
+  # the map has its own Refresh button.
+  wire_deep_links(input, output, session,
+                  spec = list(tabs = list(input = "tabs", type = "tab")),
+                  refresh_for = function(state) character(0))
+
   # Initialize selectors - load species choices on app start
   species_choices <- get_species_choices()
   

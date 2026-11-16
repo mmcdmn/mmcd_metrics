@@ -1977,4 +1977,38 @@ generate_risk_surface <- function(risk_data, grid_res = 0.005, bandwidth_km = 3)
   grid
 }
 
+# =============================================================================
+# TREND CSV EXPORT
+# =============================================================================
+# Joins a plotted trend series with its 5-yr / 10-yr epiweek averages so the
+# CSV holds every line on the graph. `main` and the avg frames share a numeric
+# `week` column; `avg_col` names the value column in the avg frames (NULL when
+# the graph has no avg lines). Averages become `<avg_col>_5yr` / `_10yr`;
+# weeks that only have an average keep NA in the main columns.
+build_trend_export <- function(main, avg5 = NULL, avg10 = NULL, avg_col = NULL) {
+  out <- as.data.frame(main)
+  avgs <- list(`5yr` = avg5, `10yr` = avg10)
+  for (lbl in names(avgs)) {
+    a <- avgs[[lbl]]
+    if (is.null(avg_col) || is.null(a) || nrow(a) == 0) next
+    a <- a[, c("week", avg_col), drop = FALSE]
+    names(a)[2] <- paste0(avg_col, "_", lbl)
+    out <- merge(out, a, by = "week", all = TRUE)
+  }
+  out <- out[order(out$week), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+# Adds a second year's series to a trend export, side by side by epiweek.
+# `cols` are columns of `other` to bring across; they become `<col>_<year>`.
+add_trend_comparison <- function(export, other, year, cols) {
+  o <- as.data.frame(other)[, c("week", cols), drop = FALSE]
+  names(o)[-1] <- paste0(cols, "_", year)
+  out <- merge(as.data.frame(export), o, by = "week", all = TRUE)
+  out <- out[order(out$week), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
 message(" trap_surveillance/data_functions.R loaded")

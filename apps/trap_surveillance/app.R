@@ -22,14 +22,38 @@ source("display_functions.R")
 
 ui <- tagList(url_state_js(), trap_surveillance_ui())
 
+# ?tabs= picks the page. It accepts the short names below as well as the menu's own
+# tabName, so both ?tabs=methods and ?tabs=methods_tab open the Methods page.
+TRAP_TAB_ALIASES <- c(map = "map_tab", trend = "trend_tab", table = "table_tab",
+                      analysis = "trap_analysis_tab", causal = "trap_analysis_tab",
+                      methods = "methods_tab")
+trap_tab_value <- function(x) {
+  x <- tolower(trimws(as.character(x)[1]))
+  if (x %in% names(TRAP_TAB_ALIASES)) TRAP_TAB_ALIASES[[x]] else x
+}
+
+# Which button a link clicks for its page. Map and Table read the Refresh Data results,
+# Causal Analysis has its own Run Analysis button. Trend follows the year/species inputs
+# and Methods is static text, so neither needs a data load.
+trap_refresh_for <- function(state) {
+  tab <- if (is.null(state[["tabs"]])) "map_tab" else trap_tab_value(state[["tabs"]])
+  switch(tab,
+         trap_analysis_tab = "analysis_refresh",
+         trend_tab = , methods_tab = character(0),
+         "refresh")
+}
+
 server <- function(input, output, session) {
 
-  # Deep-linking + auto-refresh (shared/url_state_helpers.R). Targets the main
-  # map view (filters + Refresh Data). The analysis tab has its own button.
+  # Deep-linking + auto-refresh (shared/url_state_helpers.R). ?tabs= opens any of the five
+  # pages; the filters apply to the map/trend/table and the analysis_* params to Causal Analysis.
+  # compare_year overlays a second year on the Trend tab's vector index graph.
   wire_deep_links(input, output, session, spec = list(
+    tabs               = list(input = "tabs",               type = "tab", transform = trap_tab_value),
     metric_type        = list(input = "metric_type",        type = "select"),
     species            = list(input = "species",            type = "select"),
     year               = list(input = "year",               type = "select"),
+    compare_year       = list(input = "vi_compare_year",    type = "select"),
     yrwk               = list(input = "yrwk",               type = "select"),
     infection_metric   = list(input = "infection_metric",   type = "select"),
     compare_mode       = list(input = "compare_mode",       type = "checkbox"),
@@ -38,7 +62,7 @@ server <- function(input, output, session) {
     analysis_bandwidth = list(input = "analysis_bandwidth", type = "slider"),
     analysis_radius    = list(input = "analysis_radius",    type = "slider"),
     color_theme        = list(input = "color_theme",        type = "select")
-  ))
+  ), refresh_for = trap_refresh_for)
 
   # =========================================================================
   # INITIALIZATION - Load years and species on startup
@@ -53,6 +77,8 @@ server <- function(input, output, session) {
     years <- fetch_available_years()
     if (!is.null(years)) {
       updateSelectInput(session, "year", choices = years, selected = years[1])
+      updateSelectInput(session, "vi_compare_year",
+                        choices = c("None" = "", years), selected = "")
     }
   })
   
@@ -194,6 +220,97 @@ server <- function(input, output, session) {
     )
   })
   
+  # Trend-graph data lives in reactives so each graph and its CSV download share
+  # one fetch (clicking Download does not re-query the database).
+  mle_trend_data <- reactive({
+    req(input$year)
+    main <- fetch_mle_trend(input$year)
+    if (is.null(main) || nrow(main) == 0) return(list(main = main))
+    main$week <- as.numeric(substr(as.character(main$yrwk), 5, 6))
+    list(main  = main,
+         avg5  = fetch_mle_avg_by_epiweek(input$year, 5),
+         avg10 = fetch_mle_avg_by_epiweek(input$year, 10))
+  })
+
+  mir_trend_data <- reactive({
+    req(input$year)
+    main <- fetch_mir_trend(input$year)
+    if (is.null(main) || nrow(main) == 0) return(list(main = main))
+    main$week <- as.numeric(substr(as.character(main$yrwk), 5, 6))
+    list(main  = main,
+         avg5  = fetch_mir_avg_by_epiweek(input$year, 5),
+         avg10 = fetch_mir_avg_by_epiweek(input$year, 10))
+  })
+
+  abundance_trend_data <- reactive({
+    req(input$year, input$species)
+    raw <- fetch_abundance_data(year = as.integer(input$year), spp_name = input$species)
+    if (is.null(raw) || nrow(raw) == 0) return(list(agg = NULL))
+
+    # District-wide (for the bold line and avg comparison)
+    district <- raw %>%
+      dplyr::group_by(yrwk) %>%
+      dplyr::summarise(
+        total_count = sum(mosqcount, na.rm = TRUE),
+        num_traps = dplyr::n_distinct(loc_code),
+        avg_per_trap = total_count / max(num_traps, 1),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
+
+    # Per area (the colored lines)
+    agg <- raw %>%
+      dplyr::group_by(yrwk, viarea) %>%
+      dplyr::summarise(
+        total_count = sum(mosqcount, na.rm = TRUE),
+        num_traps = dplyr::n_distinct(loc_code),
+        avg_per_trap = total_count / max(num_traps, 1),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
+
+    list(agg      = agg,
+         district = district,
+         avg5     = fetch_abundance_avg_by_epiweek(input$year, 5, input$species),
+         avg10    = fetch_abundance_avg_by_epiweek(input$year, 10, input$species))
+  })
+
+  vi_district_trend_data <- reactive({
+    req(input$year, input$species)
+    infection_met <- input$infection_metric %||% "mle"
+    main <- fetch_vi_district_trend(
+      year = as.integer(input$year),
+      spp_name = input$species,
+      infection_metric = infection_met
+    )
+    if (is.null(main) || nrow(main) == 0) return(list(main = main))
+    list(main  = main,
+         avg5  = fetch_vi_avg_by_epiweek(input$year, 5, input$species, infection_met),
+         avg10 = fetch_vi_avg_by_epiweek(input$year, 10, input$species, infection_met))
+  })
+
+  # Same series for a second year (epiweeks line up on the `week` column).
+  # NULL when no comparison year is chosen or it equals the main year.
+  vi_compare_trend_data <- reactive({
+    req(input$year, input$species)
+    cmp <- input$vi_compare_year
+    if (is.null(cmp) || !nzchar(cmp) || cmp == input$year) return(NULL)
+    fetch_vi_district_trend(
+      year = as.integer(cmp),
+      spp_name = input$species,
+      infection_metric = input$infection_metric %||% "mle"
+    )
+  })
+
+  vi_area_trend_data <- reactive({
+    req(input$year, input$species)
+    fetch_vi_area_trend(
+      year = as.integer(input$year),
+      spp_name = input$species,
+      infection_metric = input$infection_metric %||% "mle"
+    )
+  })
+
   # =========================================================================
   # TREND PLOTS
   # =========================================================================
@@ -201,18 +318,17 @@ server <- function(input, output, session) {
   output$mle_trend_plot <- plotly::renderPlotly({
     req(input$year)
     
-    trend_data <- fetch_mle_trend(input$year)
+    d <- mle_trend_data()
+    trend_data <- d$main
     if (is.null(trend_data) || nrow(trend_data) == 0) {
       return(plotly::plot_ly() %>% 
                plotly::layout(title = "No MLE trend data available"))
     }
     
-    # Extract week number for x-axis
-    trend_data$week <- as.numeric(substr(as.character(trend_data$yrwk), 5, 6))
     
     # Fetch 5-year and 10-year averages
-    avg_5yr  <- fetch_mle_avg_by_epiweek(input$year, 5)
-    avg_10yr <- fetch_mle_avg_by_epiweek(input$year, 10)
+    avg_5yr  <- d$avg5
+    avg_10yr <- d$avg10
     
     p <- ggplot(trend_data, aes(x = week, y = mle)) +
       geom_ribbon(aes(ymin = mle_lower, ymax = mle_upper), alpha = 0.2, fill = "#2c5aa0")
@@ -262,18 +378,17 @@ server <- function(input, output, session) {
   output$mir_trend_plot <- plotly::renderPlotly({
     req(input$year)
     
-    trend_data <- fetch_mir_trend(input$year)
+    d <- mir_trend_data()
+    trend_data <- d$main
     if (is.null(trend_data) || nrow(trend_data) == 0) {
       return(plotly::plot_ly() %>% 
                plotly::layout(title = "No MIR trend data available"))
     }
     
-    # Extract week number for x-axis
-    trend_data$week <- as.numeric(substr(as.character(trend_data$yrwk), 5, 6))
     
     # Fetch 5-year and 10-year averages
-    avg_5yr  <- fetch_mir_avg_by_epiweek(input$year, 5)
-    avg_10yr <- fetch_mir_avg_by_epiweek(input$year, 10)
+    avg_5yr  <- d$avg5
+    avg_10yr <- d$avg10
     
     p <- ggplot(trend_data, aes(x = week, y = mir)) +
       geom_ribbon(aes(ymin = pmax(mir - mir_se, 0), ymax = mir + mir_se), 
@@ -322,40 +437,19 @@ server <- function(input, output, session) {
     req(input$year, input$species)
     
     withProgress(message = "Loading abundance trend...", value = 0.3, {
-      abundance_data <- fetch_abundance_data(year = as.integer(input$year), spp_name = input$species)
+      d <- abundance_trend_data()
       setProgress(1)
     })
-    
-    if (is.null(abundance_data) || nrow(abundance_data) == 0) {
+
+    if (is.null(d$agg) || nrow(d$agg) == 0) {
       return(plotly::plot_ly() %>%
                plotly::layout(title = "No abundance data available"))
     }
-    
-    # Aggregate by yrwk (district-wide for cleaner chart with avg lines)
-    trend_district <- abundance_data %>%
-      dplyr::group_by(yrwk) %>%
-      dplyr::summarise(
-        total_count = sum(mosqcount, na.rm = TRUE),
-        num_traps = dplyr::n_distinct(loc_code),
-        avg_per_trap = total_count / max(num_traps, 1),
-        .groups = "drop"
-      ) %>%
-      dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
-    
-    # Also aggregate by area for the colored lines
-    trend_agg <- abundance_data %>%
-      dplyr::group_by(yrwk, viarea) %>%
-      dplyr::summarise(
-        total_count = sum(mosqcount, na.rm = TRUE),
-        num_traps = dplyr::n_distinct(loc_code),
-        avg_per_trap = total_count / max(num_traps, 1),
-        .groups = "drop"
-      ) %>%
-      dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
-    
-    # Fetch 5-year and 10-year averages
-    avg_5yr  <- fetch_abundance_avg_by_epiweek(input$year, 5, input$species)
-    avg_10yr <- fetch_abundance_avg_by_epiweek(input$year, 10, input$species)
+
+    trend_district <- d$district
+    trend_agg <- d$agg
+    avg_5yr  <- d$avg5
+    avg_10yr <- d$avg10
     
     p <- ggplot(trend_agg, aes(x = week, y = avg_per_trap, color = viarea)) +
       geom_line(linewidth = 0.8, alpha = 0.6) +
@@ -411,11 +505,8 @@ server <- function(input, output, session) {
     infection_met <- input$infection_metric %||% "mle"
     
     withProgress(message = "Loading vector index trend...", value = 0.3, {
-      trend_data <- fetch_vi_district_trend(
-        year = as.integer(input$year),
-        spp_name = input$species,
-        infection_metric = infection_met
-      )
+      d <- vi_district_trend_data()
+      trend_data <- d$main
       setProgress(1)
     })
     
@@ -427,9 +518,16 @@ server <- function(input, output, session) {
     infection_label <- if (infection_met == "mle") "MLE" else "MIR"
     
     # Fetch 5-year and 10-year VI averages
-    avg_5yr  <- fetch_vi_avg_by_epiweek(input$year, 5, input$species, infection_met)
-    avg_10yr <- fetch_vi_avg_by_epiweek(input$year, 10, input$species, infection_met)
-    
+    avg_5yr  <- d$avg5
+    avg_10yr <- d$avg10
+
+    # Optional comparison year (second solid line)
+    cmp_year <- input$vi_compare_year
+    cmp_data <- vi_compare_trend_data()
+    has_cmp  <- !is.null(cmp_data) && nrow(cmp_data) > 0
+    cmp_missing <- !is.null(cmp_year) && nzchar(cmp_year) &&
+      cmp_year != input$year && !has_cmp
+
     # Build linetype scale dynamically based on available data
     lt_values <- c(setNames("solid", as.character(input$year)))
     lt_colors <- c("#c0392b")
@@ -453,7 +551,17 @@ server <- function(input, output, session) {
       lt_values <- c(lt_values, "5-yr Avg" = "dashed")
       lt_colors <- c(lt_colors, "#27ae60")
     }
-    
+    # Add comparison-year line (drawn under the selected year)
+    if (has_cmp) {
+      p <- p +
+        geom_line(data = cmp_data, aes(x = week, y = vector_index, linetype = as.character(cmp_year)),
+                  color = "#2c5aa0", linewidth = 1) +
+        geom_point(data = cmp_data, aes(x = week, y = vector_index),
+                   color = "#2c5aa0", size = 2)
+      lt_values <- c(lt_values, setNames("solid", as.character(cmp_year)))
+      lt_colors <- c(lt_colors, "#2c5aa0")
+    }
+
     p <- p +
       geom_line(aes(linetype = as.character(input$year)), color = "#c0392b", linewidth = 1) +
       geom_point(color = "#c0392b", size = 2) +
@@ -463,8 +571,10 @@ server <- function(input, output, session) {
         guide = guide_legend(override.aes = list(color = lt_colors))
       ) +
       labs(
-        title = sprintf("District-Wide Vector Index — %s — %s (%s)", input$year,
+        title = sprintf("District-Wide Vector Index — %s%s — %s (%s)", input$year,
+                        if (has_cmp) paste(" vs", cmp_year) else "",
                         SPECIES_MAP[[input$species]]$label %||% input$species, infection_label),
+        subtitle = if (cmp_missing) sprintf("No vector index data available for %s", cmp_year),
         x = "Epiweek",
         y = "Vector Index (N × P)"
       ) +
@@ -490,11 +600,7 @@ server <- function(input, output, session) {
     infection_met <- input$infection_metric %||% "mle"
     
     withProgress(message = "Loading VI by area...", value = 0.3, {
-      vi_data <- fetch_vi_area_trend(
-        year = as.integer(input$year),
-        spp_name = input$species,
-        infection_metric = infection_met
-      )
+      vi_data <- vi_area_trend_data()
       setProgress(1)
     })
     
@@ -1029,6 +1135,82 @@ server <- function(input, output, session) {
     }
   )
   
+  # =========================================================================
+  # TREND GRAPH DOWNLOADS - the data behind each graph on the Trend tab
+  # =========================================================================
+
+  make_trend_download <- function(prefix, get_export, use_species = FALSE) {
+    downloadHandler(
+      filename = function() {
+        sprintf("trap_%s_%s%s_%s.csv", prefix, input$year,
+                if (use_species) paste0("_", input$species) else "", Sys.Date())
+      },
+      content = function(file) {
+        tryCatch({
+          out <- get_export()
+          if (is.null(out) || nrow(out) == 0) {
+            out <- data.frame(Message = "No data available")
+          }
+          write.csv(out, file, row.names = FALSE, na = "")
+        }, error = function(e) {
+          write.csv(data.frame(Error = paste("Download failed:", e$message)), file, row.names = FALSE)
+        })
+      }
+    )
+  }
+
+  output$download_mle_trend <- make_trend_download("mle_trend", function() {
+    d <- mle_trend_data()
+    if (is.null(d$main) || nrow(d$main) == 0) return(NULL)
+    main <- d$main[, setdiff(names(d$main), "mle_id"), drop = FALSE]
+    cbind(year = input$year, build_trend_export(main, d$avg5, d$avg10, "avg_mle"))
+  })
+
+  output$download_mir_trend <- make_trend_download("mir_trend", function() {
+    d <- mir_trend_data()
+    if (is.null(d$main) || nrow(d$main) == 0) return(NULL)
+    main <- d$main[, setdiff(names(d$main), "mir_id"), drop = FALSE]
+    cbind(year = input$year, build_trend_export(main, d$avg5, d$avg10, "avg_mir"))
+  })
+
+  output$download_abundance_trend <- make_trend_download("abundance_trend", function() {
+    d <- abundance_trend_data()
+    if (is.null(d$agg) || nrow(d$agg) == 0) return(NULL)
+    # Per-area rows, with the district-wide series repeated alongside
+    dist <- as.data.frame(d$district[, c("week", "total_count", "num_traps", "avg_per_trap")])
+    names(dist)[-1] <- paste0("district_", names(dist)[-1])
+    main <- merge(as.data.frame(d$agg), dist, by = "week", all.x = TRUE)
+    cbind(year = input$year, species = input$species,
+          build_trend_export(main, d$avg5, d$avg10, "avg_per_trap"))
+  }, use_species = TRUE)
+
+  output$download_vi_trend <- make_trend_download("vi_district_trend", function() {
+    d <- vi_district_trend_data()
+    if (is.null(d$main) || nrow(d$main) == 0) return(NULL)
+    out <- build_trend_export(d$main, d$avg5, d$avg10, "avg_vi")
+    cmp_data <- vi_compare_trend_data()
+    if (!is.null(cmp_data) && nrow(cmp_data) > 0) {
+      out <- add_trend_comparison(out, cmp_data, input$vi_compare_year,
+                                  c("vector_index", "vi_lower", "vi_upper"))
+    }
+    cbind(year = input$year, species = input$species,
+          infection_metric = input$infection_metric %||% "mle", out)
+  }, use_species = TRUE)
+
+  output$download_vi_area_trend <- make_trend_download("vi_area_trend", function() {
+    vi_data <- vi_area_trend_data()
+    if (is.null(vi_data) || nrow(vi_data) == 0) return(NULL)
+    # Per-area rows, with the district average (the bold line) alongside
+    dist <- vi_data %>%
+      dplyr::group_by(week) %>%
+      dplyr::summarise(district_vector_index = mean(vector_index, na.rm = TRUE),
+                       .groups = "drop")
+    main <- merge(as.data.frame(vi_data), as.data.frame(dist), by = "week", all.x = TRUE)
+    cbind(year = input$year, species = input$species,
+          infection_metric = input$infection_metric %||% "mle",
+          build_trend_export(main))
+  }, use_species = TRUE)
+
   # =========================================================================
   # DOWNLOAD
   # =========================================================================

@@ -1036,6 +1036,7 @@ EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
   default_view = "abundance",
   params = list(
     year             = list(type = "int",    default = NULL),
+    compare_year     = list(type = "int",    default = NULL),  # vector_index view: overlay a 2nd year
     yrwk             = list(type = "int",    default = NULL),
     analysis_date    = list(type = "date",   default = NULL),
     species          = list(type = "string", default = "Total_Cx_vectors"),
@@ -1112,11 +1113,34 @@ EMBED_PARAM_SPEC[["trap_surveillance"]] <- list(
   if (!is.data.frame(td) || nrow(td) == 0) return(.embed_desc(data.frame(), "week", "vector_index"))
   td <- .trap_week_col(td)
   ycol <- if ("vector_index" %in% names(td)) "vector_index" else .embed_pick_col(td, c("vi", "value"))
+  opts <- list(view = "vector_index", infection_metric = met,
+               species = p$species %||% "Total_Cx_vectors", graph_type = "line")
+
+  # Optional second year, lined up by epiweek (one series per year, named by year).
+  # Ignored when it equals the main year or has no data.
+  cmp_year <- suppressWarnings(as.integer(p$compare_year))
+  main_year <- .trap_year(p)
+  if (length(cmp_year) == 1 && !is.na(cmp_year) && cmp_year != main_year) {
+    cd <- env$fetch_vi_district_trend(year = cmp_year,
+                                      spp_name = p$species %||% "Total_Cx_vectors",
+                                      infection_metric = met)
+    if (is.data.frame(cd) && nrow(cd) > 0) {
+      cd <- .trap_week_col(cd)
+      both <- rbind(
+        data.frame(week = td$week, value = td[[ycol]], series = as.character(main_year),
+                   stringsAsFactors = FALSE),
+        data.frame(week = cd$week, value = cd[[ycol]], series = as.character(cmp_year),
+                   stringsAsFactors = FALSE))
+      names(both)[2] <- ycol
+      opts$compare_year <- cmp_year
+      return(.embed_desc(both, x_col = "week", y_col = ycol, group_col = "series",
+                         x_label = "Epiweek", y_label = "Vector Index (N x P)",
+                         resolved_options = opts))
+    }
+  }
   .embed_desc(td, x_col = "week", y_col = ycol, group_col = NULL,
               x_label = "Epiweek", y_label = "Vector Index (N x P)",
-              resolved_options = list(view = "vector_index", infection_metric = met,
-                                      species = p$species %||% "Total_Cx_vectors",
-                                      graph_type = "line"))
+              resolved_options = opts)
 }
 # VI-area choropleth: shaded polygons, exactly as render_surveillance_map draws
 # them. Reproduces its metric selection + non-linear colorBin scale, joins the

@@ -80,7 +80,7 @@ function(req, res, yrwk) {
   }, error = function(e) api_error(res, 400, e$message))
 }
 
-#* Get MLE trend data for the year.
+#* Weekly MLE (West Nile infection rate) for a year; not the vector index.
 #* @param year Year (YYYY). Default current year.
 #* @get /mle/trend
 #* @serializer json
@@ -101,6 +101,37 @@ function(req, res, n_years = 5) {
     if (is.na(n) || n < 1 || n > 20) n <- 5L
     yr <- as.integer(format(Sys.Date(), "%Y"))
     trap_env$fetch_mle_avg_by_epiweek(current_year = yr, n_years = n)
+  }, error = function(e) api_error(res, 400, e$message))
+}
+
+#* Weekly district Vector Index (VI) for a year: Culex vectors per trap x MLE.
+#* One row per week with avg_per_trap, infection_rate, vector_index and its
+#* vi_lower/vi_upper bounds. Same numbers as the Trap Surveillance app's
+#* district Vector Index chart (fetch_vi_district_trend).
+#* @param year Year (YYYY). Default current year.
+#* @param species Species name. Default Total_Cx_vectors.
+#* @param infection_metric mle or mir. Default mle.
+#* @get /vi/trend
+#* @serializer json
+function(req, res, year = NULL, species = "Total_Cx_vectors", infection_metric = "mle") {
+  tryCatch({
+    yr <- if (!is.null(year) && nzchar(year)) suppressWarnings(as.integer(year)) else
+      as.integer(format(Sys.Date(), "%Y"))
+    if (is.na(yr) || yr < 2000 || yr > as.integer(format(Sys.Date(), "%Y"))) {
+      stop("year must be a four-digit year no later than the current year")
+    }
+    spp    <- clean_text(species, 64L) %||% "Total_Cx_vectors"
+    metric <- tolower(clean_text(infection_metric, 8L) %||% "mle")
+    if (!metric %in% c("mle", "mir")) stop("infection_metric must be mle or mir")
+
+    data <- trap_env$fetch_vi_district_trend(year = yr, spp_name = spp, infection_metric = metric)
+    if (is.null(data) || nrow(data) == 0) return(list())
+
+    cols <- c("yrwk", "week", "avg_per_trap", "infection_rate", "vector_index", "vi_lower", "vi_upper")
+    data <- data[, intersect(cols, names(data)), drop = FALSE]
+    num  <- vapply(data, is.numeric, logical(1)) & !names(data) %in% c("yrwk", "week")
+    data[num] <- lapply(data[num], function(x) round(as.numeric(x), 4))
+    data
   }, error = function(e) api_error(res, 400, e$message))
 }
 

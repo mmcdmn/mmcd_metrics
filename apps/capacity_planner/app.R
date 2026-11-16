@@ -311,10 +311,10 @@ ui <- accessible_page(
       div(style = "margin-bottom:8px;", dl_btn("dl_avg", "Download averages (CSV)")),
       selectInput("avg_metric", "Box plot metric:", choices = BOX_METRIC_CHOICES,
                   selected = "ground_sites", width = "320px"),
-      tabsetPanel(
-        tabPanel("P1", br(), plotly::plotlyOutput("box_p1", height = 380),
+      tabsetPanel(id = "avg_zone",
+        tabPanel("P1", value = "p1", br(), plotly::plotlyOutput("box_p1", height = 380),
                  uiOutput("box_note_p1"), br(), DT::DTOutput("avg_p1")),
-        tabPanel("P2", br(), plotly::plotlyOutput("box_p2", height = 380),
+        tabPanel("P2", value = "p2", br(), plotly::plotlyOutput("box_p2", height = 380),
                  uiOutput("box_note_p2"), br(), DT::DTOutput("avg_p2"))
       )
     ),
@@ -585,6 +585,7 @@ DEEPLINK_SPEC <- list(
   cap_priority   = list(input = "cap_priority", type = "checkbox"),
   cap_measure    = list(input = "cap_measure",  type = "radio"),
   avg_metric     = list(input = "avg_metric",   type = "select"),
+  avg_zone       = list(input = "avg_zone",     type = "tab"),
   cap_drivetime  = list(input = "cap_drivetime", type = "checkbox"),
   avg_mph        = list(input = "avg_mph",      type = "numeric"),
   circuity       = list(input = "circuity",     type = "numeric"),

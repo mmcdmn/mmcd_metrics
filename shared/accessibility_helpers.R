@@ -300,6 +300,36 @@ accessible_page <- function(..., title = NULL, theme = NULL, lang = "en",
 }
 
 
+#' shinydashboard puts a hidden <div class="sidebarMenuSelectedTabItem"> directly inside the
+#' menu's <ul> whenever sidebarMenu() has an id (WCAG 1.3.1: a list may only contain list
+#' items; axe rule "list"). Turn it into a hidden <li>. It must stay a direct child of the <ul>:
+#' shinydashboard's tab binding looks the menu links up through its parent, so wrapping it or
+#' moving it out would break updateTabItems() and with it ?tabs= deep links.
+.a11y_fix_sidebar_menu <- function(x) {
+  if (inherits(x, "shiny.tag")) {
+    kids <- x$children
+    cls <- paste(x$attribs[["class"]], collapse = " ")
+    if (identical(x$name, "ul") && grepl("sidebar-menu", cls, fixed = TRUE)) {
+      kids <- lapply(kids, function(k) {
+        if (inherits(k, "shiny.tag") && identical(k$name, "div") &&
+            grepl("sidebarMenuSelectedTabItem", paste(k$attribs[["class"]], collapse = " "), fixed = TRUE)) {
+          k$name <- "li"
+          k$attribs[["aria-hidden"]] <- "true"
+          k$attribs[["style"]] <- "display:none;"
+        }
+        k
+      })
+    }
+    x$children <- lapply(kids, .a11y_fix_sidebar_menu)
+    return(x)
+  }
+  if (inherits(x, "shiny.tag.list") || identical(class(x), "list")) {
+    x[] <- lapply(x, .a11y_fix_sidebar_menu)
+  }
+  x
+}
+
+
 #' Accessible drop-in for shinydashboard::dashboardPage()
 #' @param ... Arguments passed straight through to dashboardPage()
 #' @param lang Page language for WCAG 3.1.1 (default "en")
@@ -314,7 +344,7 @@ accessible_dashboard_page <- function(..., lang = "en", skip_target = "main-cont
   page <- shiny::tagList(
     accessibility_head(),
     skip_link(skip_target),
-    shinydashboard::dashboardPage(...)
+    .a11y_fix_sidebar_menu(shinydashboard::dashboardPage(...))
   )
   attr(page, "lang") <- lang
   page

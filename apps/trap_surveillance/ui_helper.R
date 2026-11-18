@@ -1,6 +1,13 @@
 library(shiny)
 library(shinydashboard)
 
+# "Y-axis max" box shown above a trend graph (blank = automatic range).
+trend_ymax_input <- function(id) {
+  div(style = "min-width: 170px; margin-bottom: -15px;",
+    numericInput(id, "Y-axis max (blank = auto):", value = NA, min = 0, width = "100%")
+  )
+}
+
 trap_surveillance_ui <- function() {
   accessible_dashboard_page(
     dashboardHeader(title = "Trap Surveillance"),
@@ -72,24 +79,27 @@ trap_surveillance_ui <- function() {
         tabItem(tabName = "trend_tab",
           fluidRow(
             box(width = 12, title = "District-Wide MLE Trend", status = "primary", solidHeader = TRUE,
-                div(style = "margin-bottom: 10px;",
-                  downloadButton("download_mle_trend", "Download CSV", class = "btn-primary btn-sm")
+                div(style = "margin-bottom: 10px; display: flex; align-items: flex-end; gap: 15px;",
+                  downloadButton("download_mle_trend", "Download CSV", class = "btn-primary btn-sm"),
+                  trend_ymax_input("mle_ymax")
                 ),
                 plotly::plotlyOutput("mle_trend_plot", height = "400px")
             )
           ),
           fluidRow(
             box(width = 12, title = "District-Wide MIR Trend", status = "warning", solidHeader = TRUE,
-                div(style = "margin-bottom: 10px;",
-                  downloadButton("download_mir_trend", "Download CSV", class = "btn-primary btn-sm")
+                div(style = "margin-bottom: 10px; display: flex; align-items: flex-end; gap: 15px;",
+                  downloadButton("download_mir_trend", "Download CSV", class = "btn-primary btn-sm"),
+                  trend_ymax_input("mir_ymax")
                 ),
                 plotly::plotlyOutput("mir_trend_plot", height = "400px")
             )
           ),
           fluidRow(
             box(width = 12, title = "Abundance by Area Over Time", status = "info", solidHeader = TRUE,
-                div(style = "margin-bottom: 10px;",
-                  downloadButton("download_abundance_trend", "Download CSV", class = "btn-primary btn-sm")
+                div(style = "margin-bottom: 10px; display: flex; align-items: flex-end; gap: 15px;",
+                  downloadButton("download_abundance_trend", "Download CSV", class = "btn-primary btn-sm"),
+                  trend_ymax_input("abundance_ymax")
                 ),
                 plotly::plotlyOutput("abundance_trend_plot", height = "400px")
             )
@@ -98,6 +108,7 @@ trap_surveillance_ui <- function() {
             box(width = 12, title = "District-Wide Vector Index Trend", status = "danger", solidHeader = TRUE,
                 div(style = "margin-bottom: 10px; display: flex; align-items: flex-end; gap: 15px;",
                   downloadButton("download_vi_trend", "Download CSV", class = "btn-primary btn-sm"),
+                  trend_ymax_input("vi_ymax"),
                   div(style = "min-width: 200px; margin-bottom: -15px;",
                     selectInput("vi_compare_year", "Compare to year:",
                                 choices = c("None" = ""), selected = "", width = "100%")
@@ -108,8 +119,9 @@ trap_surveillance_ui <- function() {
           ),
           fluidRow(
             box(width = 12, title = "Vector Index by Area Over Time", status = "danger", solidHeader = TRUE,
-                div(style = "margin-bottom: 10px;",
-                  downloadButton("download_vi_area_trend", "Download CSV", class = "btn-primary btn-sm")
+                div(style = "margin-bottom: 10px; display: flex; align-items: flex-end; gap: 15px;",
+                  downloadButton("download_vi_area_trend", "Download CSV", class = "btn-primary btn-sm"),
+                  trend_ymax_input("vi_area_ymax")
                 ),
                 plotly::plotlyOutput("vi_area_trend_plot", height = "400px")
             )

@@ -228,7 +228,8 @@ server <- function(input, output, session) {
     if (is.null(main) || nrow(main) == 0) return(list(main = main))
     main$week <- as.numeric(substr(as.character(main$yrwk), 5, 6))
     list(main  = main,
-         avg5  = fetch_mle_avg_by_epiweek(input$year, 5),
+         ref   = reference_series(input$year, function() fetch_mle_trend(REFERENCE_YEAR),
+                                  "mle", "avg_mle"),
          avg10 = fetch_mle_avg_by_epiweek(input$year, 10))
   })
 
@@ -238,7 +239,8 @@ server <- function(input, output, session) {
     if (is.null(main) || nrow(main) == 0) return(list(main = main))
     main$week <- as.numeric(substr(as.character(main$yrwk), 5, 6))
     list(main  = main,
-         avg5  = fetch_mir_avg_by_epiweek(input$year, 5),
+         ref   = reference_series(input$year, function() fetch_mir_trend(REFERENCE_YEAR),
+                                  "mir", "avg_mir"),
          avg10 = fetch_mir_avg_by_epiweek(input$year, 10))
   })
 
@@ -248,15 +250,7 @@ server <- function(input, output, session) {
     if (is.null(raw) || nrow(raw) == 0) return(list(agg = NULL))
 
     # District-wide (for the bold line and avg comparison)
-    district <- raw %>%
-      dplyr::group_by(yrwk) %>%
-      dplyr::summarise(
-        total_count = sum(mosqcount, na.rm = TRUE),
-        num_traps = dplyr::n_distinct(loc_code),
-        avg_per_trap = total_count / max(num_traps, 1),
-        .groups = "drop"
-      ) %>%
-      dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
+    district <- abundance_district_by_week(raw)
 
     # Per area (the colored lines)
     agg <- raw %>%
@@ -271,7 +265,11 @@ server <- function(input, output, session) {
 
     list(agg      = agg,
          district = district,
-         avg5     = fetch_abundance_avg_by_epiweek(input$year, 5, input$species),
+         ref      = reference_series(
+           input$year,
+           function() abundance_district_by_week(
+             fetch_abundance_data(year = REFERENCE_YEAR, spp_name = input$species)),
+           "avg_per_trap", "avg_per_trap"),
          avg10    = fetch_abundance_avg_by_epiweek(input$year, 10, input$species))
   })
 
@@ -285,7 +283,11 @@ server <- function(input, output, session) {
     )
     if (is.null(main) || nrow(main) == 0) return(list(main = main))
     list(main  = main,
-         avg5  = fetch_vi_avg_by_epiweek(input$year, 5, input$species, infection_met),
+         ref   = reference_series(
+           input$year,
+           function() fetch_vi_district_trend(
+             year = REFERENCE_YEAR, spp_name = input$species, infection_metric = infection_met),
+           "vector_index", "avg_vi"),
          avg10 = fetch_vi_avg_by_epiweek(input$year, 10, input$species, infection_met))
   })
 
@@ -326,34 +328,23 @@ server <- function(input, output, session) {
     }
     
     
-    # Fetch 5-year and 10-year averages
-    avg_5yr  <- d$avg5
-    avg_10yr <- d$avg10
-    
     p <- ggplot(trend_data, aes(x = week, y = mle)) +
       geom_ribbon(aes(ymin = mle_lower, ymax = mle_upper), alpha = 0.2, fill = "#2c5aa0")
-    
-    # Add 10-year avg line (behind 5-year)
-    if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) {
-      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_mle, linetype = "10-yr Avg"),
-                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
-    }
-    # Add 5-year avg line
-    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
-      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_mle, linetype = "5-yr Avg"),
-                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
-    }
-    
-    p <- p +
+
+    # 10-year average and the reference year (2025) for comparison
+    lay <- add_reference_layers(p, d$ref, d$avg10, "avg_mle",
+                                as.character(input$year), "#2c5aa0")
+
+    p <- lay$p +
       geom_line(aes(linetype = paste0(input$year)), color = "#2c5aa0", linewidth = 1) +
       geom_point(color = "#2c5aa0", size = 2) +
       scale_linetype_manual(
         name = "",
-        values = c(setNames("solid", input$year), "5-yr Avg" = "dashed", "10-yr Avg" = "dotted"),
-        guide = guide_legend(override.aes = list(
-          color = c("#2c5aa0", "#27ae60", "#e67e22")
-        ))
+        values = lay$values,
+        breaks = names(lay$values),
+        guide = guide_legend(override.aes = list(color = lay$colors))
       ) +
+      epiweek_x_scale(input$year, trend_data$week, d$avg10$week, d$ref$week) +
       labs(
         title = sprintf("District-Wide MLE — %s", input$year),
         x = "Epiweek",
@@ -366,6 +357,7 @@ server <- function(input, output, session) {
             plot.margin = margin(b = 40))
     
     plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      set_plotly_y_max(input$mle_ymax) %>%
       plotly::layout(
         legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
         margin = list(b = 80)
@@ -386,35 +378,24 @@ server <- function(input, output, session) {
     }
     
     
-    # Fetch 5-year and 10-year averages
-    avg_5yr  <- d$avg5
-    avg_10yr <- d$avg10
-    
     p <- ggplot(trend_data, aes(x = week, y = mir)) +
-      geom_ribbon(aes(ymin = pmax(mir - mir_se, 0), ymax = mir + mir_se), 
+      geom_ribbon(aes(ymin = pmax(mir - mir_se, 0), ymax = mir + mir_se),
                   alpha = 0.2, fill = "#8e44ad")
-    
-    # Add 10-year avg line (behind 5-year)
-    if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) {
-      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_mir, linetype = "10-yr Avg"),
-                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
-    }
-    # Add 5-year avg line
-    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
-      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_mir, linetype = "5-yr Avg"),
-                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
-    }
-    
-    p <- p +
+
+    # 10-year average and the reference year (2025) for comparison
+    lay <- add_reference_layers(p, d$ref, d$avg10, "avg_mir",
+                                as.character(input$year), "#8e44ad")
+
+    p <- lay$p +
       geom_line(aes(linetype = paste0(input$year)), color = "#8e44ad", linewidth = 1) +
       geom_point(color = "#8e44ad", size = 2) +
       scale_linetype_manual(
         name = "",
-        values = c(setNames("solid", input$year), "5-yr Avg" = "dashed", "10-yr Avg" = "dotted"),
-        guide = guide_legend(override.aes = list(
-          color = c("#8e44ad", "#27ae60", "#e67e22")
-        ))
+        values = lay$values,
+        breaks = names(lay$values),
+        guide = guide_legend(override.aes = list(color = lay$colors))
       ) +
+      epiweek_x_scale(input$year, trend_data$week, d$avg10$week, d$ref$week) +
       labs(
         title = sprintf("District-Wide MIR — %s", input$year),
         x = "Epiweek",
@@ -427,6 +408,7 @@ server <- function(input, output, session) {
             plot.margin = margin(b = 40))
     
     plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      set_plotly_y_max(input$mir_ymax) %>%
       plotly::layout(
         legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
         margin = list(b = 80)
@@ -448,9 +430,9 @@ server <- function(input, output, session) {
 
     trend_district <- d$district
     trend_agg <- d$agg
-    avg_5yr  <- d$avg5
+    ref_data <- d$ref
     avg_10yr <- d$avg10
-    
+
     p <- ggplot(trend_agg, aes(x = week, y = avg_per_trap, color = viarea)) +
       geom_line(linewidth = 0.8, alpha = 0.6) +
       geom_point(size = 1.5, alpha = 0.6)
@@ -461,9 +443,9 @@ server <- function(input, output, session) {
                          color = "#e67e22", linewidth = 1.2, linetype = "dotted",
                          inherit.aes = FALSE)
     }
-    # Add 5-year avg line
-    if (!is.null(avg_5yr) && nrow(avg_5yr) > 0) {
-      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_per_trap, color = NULL),
+    # Add reference-year (2025) district line
+    if (!is.null(ref_data) && nrow(ref_data) > 0) {
+      p <- p + geom_line(data = ref_data, aes(x = week, y = avg_per_trap, color = NULL),
                          color = "#27ae60", linewidth = 1.2, linetype = "dashed",
                          inherit.aes = FALSE)
     }
@@ -472,11 +454,19 @@ server <- function(input, output, session) {
                        color = "#2c3e50", linewidth = 1.3, linetype = "solid",
                        inherit.aes = FALSE)
     
+    legend_txt <- paste(
+      c("Solid black = district avg",
+        if (!is.null(ref_data) && nrow(ref_data) > 0)
+          sprintf("Dashed green = %s", REFERENCE_YEAR),
+        if (!is.null(avg_10yr) && nrow(avg_10yr) > 0) "Dotted orange = 10-yr avg"),
+      collapse = " | ")
+
     p <- p +
+      epiweek_x_scale(input$year, trend_agg$week, avg_10yr$week, ref_data$week) +
       labs(
         title = sprintf("Abundance by Area — %s — %s", input$year, 
                         SPECIES_MAP[[input$species]]$label %||% input$species),
-        subtitle = "Solid black = district avg | Dashed green = 5-yr avg | Dotted orange = 10-yr avg",
+        subtitle = legend_txt,
         x = "Epiweek",
         y = "Avg Mosquitoes/Trap",
         color = "VI Area"
@@ -487,9 +477,10 @@ server <- function(input, output, session) {
             plot.subtitle = element_text(size = 10, color = "#666"))
     
     plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      set_plotly_y_max(input$abundance_ymax) %>%
       plotly::layout(
         annotations = list(
-          list(text = "Dashed green = 5-yr avg | Dotted orange = 10-yr avg | Bold black = district avg",
+          list(text = legend_txt,
                x = 0.5, y = 1.05, xref = "paper", yref = "paper",
                showarrow = FALSE, font = list(size = 11, color = "#666"))
         )
@@ -517,10 +508,6 @@ server <- function(input, output, session) {
     
     infection_label <- if (infection_met == "mle") "MLE" else "MIR"
     
-    # Fetch 5-year and 10-year VI averages
-    avg_5yr  <- d$avg5
-    avg_10yr <- d$avg10
-
     # Optional comparison year (second solid line)
     cmp_year <- input$vi_compare_year
     cmp_data <- vi_compare_trend_data()
@@ -528,29 +515,18 @@ server <- function(input, output, session) {
     cmp_missing <- !is.null(cmp_year) && nzchar(cmp_year) &&
       cmp_year != input$year && !has_cmp
 
-    # Build linetype scale dynamically based on available data
-    lt_values <- c(setNames("solid", as.character(input$year)))
-    lt_colors <- c("#c0392b")
-    has_5yr  <- !is.null(avg_5yr) && nrow(avg_5yr) > 0
-    has_10yr <- !is.null(avg_10yr) && nrow(avg_10yr) > 0
-    
+    # The reference-year line is redundant when that year is the comparison year
+    ref_data <- if (identical(as.character(cmp_year), as.character(REFERENCE_YEAR))) NULL else d$ref
+
     p <- ggplot(trend_data, aes(x = week, y = vector_index)) +
       geom_ribbon(aes(ymin = vi_lower, ymax = vi_upper), alpha = 0.2, fill = "#c0392b")
-    
-    # Add 10-year avg line (behind 5-year)
-    if (has_10yr) {
-      p <- p + geom_line(data = avg_10yr, aes(x = week, y = avg_vi, linetype = "10-yr Avg"),
-                         color = "#e67e22", linewidth = 0.9, alpha = 0.7)
-      lt_values <- c(lt_values, "10-yr Avg" = "dotted")
-      lt_colors <- c(lt_colors, "#e67e22")
-    }
-    # Add 5-year avg line
-    if (has_5yr) {
-      p <- p + geom_line(data = avg_5yr, aes(x = week, y = avg_vi, linetype = "5-yr Avg"),
-                         color = "#27ae60", linewidth = 0.9, alpha = 0.7)
-      lt_values <- c(lt_values, "5-yr Avg" = "dashed")
-      lt_colors <- c(lt_colors, "#27ae60")
-    }
+
+    # 10-year average and the reference year (2025) for comparison
+    lay <- add_reference_layers(p, ref_data, d$avg10, "avg_vi",
+                                as.character(input$year), "#c0392b")
+    p <- lay$p
+    lt_values <- lay$values
+    lt_colors <- lay$colors
     # Add comparison-year line (drawn under the selected year)
     if (has_cmp) {
       p <- p +
@@ -568,8 +544,10 @@ server <- function(input, output, session) {
       scale_linetype_manual(
         name = "",
         values = lt_values,
+        breaks = names(lt_values),
         guide = guide_legend(override.aes = list(color = lt_colors))
       ) +
+      epiweek_x_scale(input$year, trend_data$week, d$avg10$week, ref_data$week, cmp_data$week) +
       labs(
         title = sprintf("District-Wide Vector Index — %s%s — %s (%s)", input$year,
                         if (has_cmp) paste(" vs", cmp_year) else "",
@@ -585,6 +563,7 @@ server <- function(input, output, session) {
             plot.margin = margin(b = 40))
     
     plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      set_plotly_y_max(input$vi_ymax) %>%
       plotly::layout(
         legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
         margin = list(b = 80)
@@ -625,6 +604,7 @@ server <- function(input, output, session) {
       geom_line(data = vi_district, aes(x = week, y = vector_index),
                color = "#2c3e50", linewidth = 1.3, linetype = "solid",
                inherit.aes = FALSE) +
+      epiweek_x_scale(input$year, vi_data$week) +
       labs(
         title = sprintf("Vector Index by Area \u2014 %s \u2014 %s (%s)", input$year,
                         SPECIES_MAP[[input$species]]$label %||% input$species, infection_label),
@@ -639,6 +619,7 @@ server <- function(input, output, session) {
             plot.subtitle = element_text(size = 10, color = "#666"))
     
     plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      set_plotly_y_max(input$vi_area_ymax) %>%
       plotly::layout(
         annotations = list(
           list(text = "Bold black = district avg",
@@ -1163,14 +1144,14 @@ server <- function(input, output, session) {
     d <- mle_trend_data()
     if (is.null(d$main) || nrow(d$main) == 0) return(NULL)
     main <- d$main[, setdiff(names(d$main), "mle_id"), drop = FALSE]
-    cbind(year = input$year, build_trend_export(main, d$avg5, d$avg10, "avg_mle"))
+    cbind(year = input$year, build_trend_export(main, d$ref, d$avg10, "avg_mle"))
   })
 
   output$download_mir_trend <- make_trend_download("mir_trend", function() {
     d <- mir_trend_data()
     if (is.null(d$main) || nrow(d$main) == 0) return(NULL)
     main <- d$main[, setdiff(names(d$main), "mir_id"), drop = FALSE]
-    cbind(year = input$year, build_trend_export(main, d$avg5, d$avg10, "avg_mir"))
+    cbind(year = input$year, build_trend_export(main, d$ref, d$avg10, "avg_mir"))
   })
 
   output$download_abundance_trend <- make_trend_download("abundance_trend", function() {
@@ -1181,13 +1162,13 @@ server <- function(input, output, session) {
     names(dist)[-1] <- paste0("district_", names(dist)[-1])
     main <- merge(as.data.frame(d$agg), dist, by = "week", all.x = TRUE)
     cbind(year = input$year, species = input$species,
-          build_trend_export(main, d$avg5, d$avg10, "avg_per_trap"))
+          build_trend_export(main, d$ref, d$avg10, "avg_per_trap"))
   }, use_species = TRUE)
 
   output$download_vi_trend <- make_trend_download("vi_district_trend", function() {
     d <- vi_district_trend_data()
     if (is.null(d$main) || nrow(d$main) == 0) return(NULL)
-    out <- build_trend_export(d$main, d$avg5, d$avg10, "avg_vi")
+    out <- build_trend_export(d$main, d$ref, d$avg10, "avg_vi")
     cmp_data <- vi_compare_trend_data()
     if (!is.null(cmp_data) && nrow(cmp_data) > 0) {
       out <- add_trend_comparison(out, cmp_data, input$vi_compare_year,

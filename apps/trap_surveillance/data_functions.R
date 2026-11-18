@@ -1978,16 +1978,107 @@ generate_risk_surface <- function(risk_data, grid_res = 0.005, bandwidth_km = 3)
 }
 
 # =============================================================================
+# TREND GRAPH HELPERS: reference year line + month-labelled epiweek axis
+# =============================================================================
+# Every trend graph overlays this year so any other year can be compared to it.
+REFERENCE_YEAR <- 2025L
+
+# One reference-year series for a trend graph, as a `week` + `avg_col` frame
+# (the shape the 10-yr average frames already have). NULL when the selected
+# year is the reference year itself, or when the data is missing, so a failed
+# fetch never breaks the graph.
+reference_series <- function(year, fetch, value_col, avg_col) {
+  if (as.integer(year) == REFERENCE_YEAR) return(NULL)
+  d <- tryCatch(fetch(), error = function(e) NULL)
+  if (!is.data.frame(d) || nrow(d) == 0 || !(value_col %in% names(d))) return(NULL)
+  week <- if ("week" %in% names(d)) as.numeric(d$week)
+          else as.numeric(substr(as.character(d$yrwk), 5, 6))
+  out <- data.frame(week = week, v = as.numeric(d[[value_col]]))
+  names(out)[2] <- avg_col
+  out <- out[order(out$week), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+# District-wide mean mosquitoes per trap by week (the bold line on the
+# abundance graph, and the reference-year line).
+abundance_district_by_week <- function(raw) {
+  if (!is.data.frame(raw) || nrow(raw) == 0) return(NULL)
+  raw %>%
+    dplyr::group_by(yrwk) %>%
+    dplyr::summarise(
+      total_count = sum(mosqcount, na.rm = TRUE),
+      num_traps = dplyr::n_distinct(loc_code),
+      avg_per_trap = total_count / max(num_traps, 1),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(week = as.numeric(substr(as.character(yrwk), 5, 6)))
+}
+
+# Adds the 10-yr average and reference-year lines to a trend ggplot. Returns
+# the plot plus the linetype legend spec (`values`/`colors`, main series first)
+# so the caller can append more series before building the scale.
+add_reference_layers <- function(p, ref, avg10, y_col, main_label, main_color) {
+  lt_values <- setNames("solid", main_label)
+  lt_colors <- main_color
+  if (!is.null(avg10) && nrow(avg10) > 0) {
+    p <- p + ggplot2::geom_line(
+      data = avg10,
+      ggplot2::aes(x = week, y = .data[[y_col]], linetype = "10-yr Avg"),
+      color = "#e67e22", linewidth = 0.9, alpha = 0.7)
+    lt_values <- c(lt_values, "10-yr Avg" = "dotted")
+    lt_colors <- c(lt_colors, "#e67e22")
+  }
+  if (!is.null(ref) && nrow(ref) > 0) {
+    ref_label <- as.character(REFERENCE_YEAR)
+    p <- p + ggplot2::geom_line(
+      data = ref,
+      ggplot2::aes(x = week, y = .data[[y_col]], linetype = ref_label),
+      color = "#27ae60", linewidth = 0.9, alpha = 0.7)
+    lt_values <- c(lt_values, setNames("dashed", ref_label))
+    lt_colors <- c(lt_colors, "#27ae60")
+  }
+  list(p = p, values = lt_values, colors = lt_colors)
+}
+
+# First day (Sunday) of epiweek `week` in `year`. MMCD epiweeks follow the US
+# Sunday-based week-of-year (%U): week 1 starts on the year's first Sunday.
+epiweek_start_date <- function(year, week) {
+  jan1 <- as.Date(sprintf("%d-01-01", as.integer(year)))
+  first_sunday <- jan1 + ((7 - as.POSIXlt(jan1)$wday) %% 7)
+  first_sunday + 7 * (as.integer(week) - 1L)
+}
+
+# x axis for the trend graphs: the epiweek number, with the month name under
+# the week in which that month begins (the week containing the 1st), e.g.
+# "31" / "Aug". Weeks come from every series on the graph so the ticks cover
+# the whole axis. The months follow `year`'s calendar; a comparison year can sit
+# one week off, which only matters for the month label.
+epiweek_x_scale <- function(year, ...) {
+  w <- suppressWarnings(as.integer(unlist(list(...))))
+  w <- sort(unique(w[is.finite(w)]))
+  if (length(w) == 0) return(ggplot2::scale_x_continuous())
+  wk <- seq(min(w), max(w))
+  last_day <- epiweek_start_date(year, wk) + 6
+  has_first <- as.integer(format(last_day, "%d")) <= 7  # the 1st falls in this week
+  mon <- month.abb[as.integer(format(last_day, "%m"))]
+  keep <- if (length(wk) <= 30) rep(TRUE, length(wk)) else (wk %% 2 == 0 | has_first)
+  labs <- ifelse(has_first[keep], paste0(wk[keep], "\n", mon[keep]), as.character(wk[keep]))
+  ggplot2::scale_x_continuous(breaks = wk[keep], labels = labs)
+}
+
+# =============================================================================
 # TREND CSV EXPORT
 # =============================================================================
-# Joins a plotted trend series with its 5-yr / 10-yr epiweek averages so the
-# CSV holds every line on the graph. `main` and the avg frames share a numeric
-# `week` column; `avg_col` names the value column in the avg frames (NULL when
-# the graph has no avg lines). Averages become `<avg_col>_5yr` / `_10yr`;
-# weeks that only have an average keep NA in the main columns.
-build_trend_export <- function(main, avg5 = NULL, avg10 = NULL, avg_col = NULL) {
+# Joins a plotted trend series with its reference-year / 10-yr epiweek lines so
+# the CSV holds every line on the graph. `main`, `ref` and `avg10` share a
+# numeric `week` column; `avg_col` names the value column in `ref`/`avg10` (NULL
+# when the graph has no such lines). They become `<avg_col>_<REFERENCE_YEAR>` /
+# `<avg_col>_10yr`; weeks that only have a reference value keep NA in the main
+# columns.
+build_trend_export <- function(main, ref = NULL, avg10 = NULL, avg_col = NULL) {
   out <- as.data.frame(main)
-  avgs <- list(`5yr` = avg5, `10yr` = avg10)
+  avgs <- setNames(list(ref, avg10), c(as.character(REFERENCE_YEAR), "10yr"))
   for (lbl in names(avgs)) {
     a <- avgs[[lbl]]
     if (is.null(avg_col) || is.null(a) || nrow(a) == 0) next

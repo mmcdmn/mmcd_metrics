@@ -2041,6 +2041,24 @@ add_reference_layers <- function(p, ref, avg10, y_col, main_label, main_color) {
   list(p = p, values = lt_values, colors = lt_colors)
 }
 
+# Caps a plotly graph's y axis at `ymax` (floor 0); blank/invalid = leave auto.
+# Used with the "Y-axis max" box above each trend graph.
+set_plotly_y_max <- function(plt, ymax) {
+  ymax <- suppressWarnings(as.numeric(ymax))
+  if (length(ymax) != 1 || !is.finite(ymax) || ymax <= 0) return(plt)
+  # ggplotly pins the y ticks to the original scale (tickmode "array"), so a
+  # narrower range would show few or no labels. Drop them and let plotly pick
+  # ticks that fit the new range.
+  plt <- plotly::plotly_build(plt)
+  plt$x$layout$yaxis$tickvals <- NULL
+  plt$x$layout$yaxis$ticktext <- NULL
+  plt$x$layout$yaxis$tickmode <- "auto"
+  plt$x$layout$yaxis$nticks   <- 8
+  plt$x$layout$yaxis$range    <- c(0, ymax)
+  plt$x$layout$yaxis$autorange <- FALSE
+  plt
+}
+
 # First day (Sunday) of epiweek `week` in `year`. MMCD epiweeks follow the US
 # Sunday-based week-of-year (%U): week 1 starts on the year's first Sunday.
 epiweek_start_date <- function(year, week) {

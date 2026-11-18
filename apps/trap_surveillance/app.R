@@ -357,6 +357,7 @@ server <- function(input, output, session) {
             plot.margin = margin(b = 40))
     
     plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      set_plotly_y_max(input$mle_ymax) %>%
       plotly::layout(
         legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
         margin = list(b = 80)
@@ -407,6 +408,7 @@ server <- function(input, output, session) {
             plot.margin = margin(b = 40))
     
     plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      set_plotly_y_max(input$mir_ymax) %>%
       plotly::layout(
         legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
         margin = list(b = 80)
@@ -475,6 +477,7 @@ server <- function(input, output, session) {
             plot.subtitle = element_text(size = 10, color = "#666"))
     
     plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      set_plotly_y_max(input$abundance_ymax) %>%
       plotly::layout(
         annotations = list(
           list(text = legend_txt,
@@ -560,6 +563,7 @@ server <- function(input, output, session) {
             plot.margin = margin(b = 40))
     
     plotly::ggplotly(p, tooltip = c("x", "y")) %>%
+      set_plotly_y_max(input$vi_ymax) %>%
       plotly::layout(
         legend = list(orientation = "h", y = -0.25, x = 0.5, xanchor = "center"),
         margin = list(b = 80)
@@ -615,6 +619,7 @@ server <- function(input, output, session) {
             plot.subtitle = element_text(size = 10, color = "#666"))
     
     plotly::ggplotly(p, tooltip = c("x", "y", "colour")) %>%
+      set_plotly_y_max(input$vi_area_ymax) %>%
       plotly::layout(
         annotations = list(
           list(text = "Bold black = district avg",

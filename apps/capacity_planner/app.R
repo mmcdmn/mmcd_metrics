@@ -1324,7 +1324,7 @@ server <- function(input, output, session) {
                               "facilities keep the straight-line estimate."), type = "error", duration = NULL)
       return(invisible())
     }
-    routes <- fac_routes(); failed <- FALSE
+    routes <- fac_routes(); failed <- NULL
     withProgress(message = "Recalculating drive times on the road network", value = 0, {
       for (f in need) {
         o <- ov[ov$facility == f, , drop = FALSE]
@@ -1332,16 +1332,16 @@ server <- function(input, output, session) {
                         error = function(e) e)
         if (inherits(res, "error")) {              # the router answers every facility alike: stop at the first failure
           message("[capacity_planner] route recalculation failed for ", f, " via ", url, ": ", conditionMessage(res))
-          failed <- TRUE
+          failed <- trimws(substr(gsub("<[^>]*>|[[:space:]]+", " ", conditionMessage(res)), 1, 160))   # what went wrong, one line
           break
         }
         routes[[f]] <- list(lon = o$lon, lat = o$lat, times = res)
         incProgress(1 / length(need), detail = fac_label(f))
       }
     })
-    if (failed) {
-      showNotification(sprintf(paste0("The routing service could not be reached (tried %s). The moved facilities keep the ",
-                                      "straight-line estimate. Press Recalculate drive times again later."), url),
+    if (!is.null(failed)) {
+      showNotification(sprintf(paste0("The routing service could not be reached (tried %s: %s). The moved facilities keep the ",
+                                      "straight-line estimate. Press Recalculate drive times again later."), url, failed),
                        type = "error", duration = NULL)
     }
     fac_routes(routes)

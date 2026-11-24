@@ -1725,7 +1725,7 @@ test_that("the app wires the facility dots, Facility X, the pin and the recalcul
   # the Recalculate button is never hidden, and the dialog is always offered
   expect_false(has("nzchar(osrm_url)")); expect_false(has("routing service is not available"))
   expect_true(has("find_osrm_url()")); expect_true(has("The routing service could not be reached"))
-  expect_true(has("standard routed ")); expect_false(has("The routing service did not answer"))
+  expect_true(has("moved facilities keep the straight-line")); expect_false(has("The routing service did not answer"))
   # none of the new inputs is a saved link setting (they are actions)
   expect_false(grepl("^\\s*(pin_again|fac_reset|fac_recalc)\\s*=\\s*list\\(input", app_src, perl = TRUE))
   cfg <- paste(readLines(file.path(root, "config", "app_config.yaml"), warn = FALSE), collapse = "\n")

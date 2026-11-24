@@ -17,6 +17,9 @@ if (!exists("get_db_connection", mode = "function")) {
 CAPACITY_PREHATCH_TYPES <- c("PREHATCH", "BRIQUET", "PELLET", "PRE1ONLY")
 .prehatch_in_sql <- "('PREHATCH','BRIQUET','PELLET','PRE1ONLY')"
 .ground_prehatch_sql <- paste0("b.air_gnd = 'G' AND b.prehatch IN ", .prehatch_in_sql)
+# RED air sites: air sites (A) whose priority is RED (a subset of the air sites; the same RED the
+# air inspection app uses)
+.red_air_sql <- "b.air_gnd = 'A' AND b.priority = 'RED'"
 
 # Facility office locations used by routed and straight-line drive estimates.
 FACILITY_LOCATION_FILE <- "data/facility_locations.csv"
@@ -190,15 +193,10 @@ capacity_cache_store <- function() {
 
 capacity_cache_fingerprint <- function(path = RA_EXCLUSION_FILE) {
   md5 <- if (file.exists(path)) tryCatch(unname(tools::md5sum(path)), error = function(e) "unreadable") else "none"
-  substr(rlang::hash(list(md5, .ground_prehatch_sql)), 1, 8)
+  substr(rlang::hash(list(md5, .ground_prehatch_sql, .red_air_sql)), 1, 8)
 }
 
 #' Run `loader` through the shared cache.
-#'
-#' A hit returns the stored value without touching the database. A miss (or `refresh = TRUE`)
-#' calls the loader and stores the result for everyone, except an empty / NULL result, which is
-#' returned but never stored (the loaders return an empty table when the database is
-#' unreachable, and that must not stick for a day). No store (Redis down) just loads.
 #'
 #' @param name   short name of the data set ("sections", "priority", ...)
 #' @param loader function() -> data.frame
@@ -231,17 +229,34 @@ capacity_cached <- function(name, loader, refresh = FALSE, ttl = capacity_cache_
   list(data = data, at = at, cached = FALSE)
 }
 
+#' Town (township / city) names by town code.
+#' @return data.frame(towncode4, city); empty when the table cannot be read (the list then
+#'   shows the bare codes)
+load_town_names <- function() {
+  con <- get_db_connection()
+  on.exit(safe_disconnect(con), add = TRUE)
+  tryCatch(dbGetQuery(con, "
+    SELECT LPAD(CAST(towncode AS text), 4, '0') AS towncode4, MIN(city) AS city
+    FROM lookup_towncode_name
+    WHERE city IS NOT NULL AND towncode IS NOT NULL
+    GROUP BY LPAD(CAST(towncode AS text), 4, '0')
+    ORDER BY 1"),
+    error = function(e) {
+      warning(paste("[load_town_names]", e$message))
+      data.frame(towncode4 = character(), city = character(), stringsAsFactors = FALSE)
+    })
+}
+
 #' Fill (or refresh) the shared cache; run at server start so the first visitor gets a hit.
 warm_capacity_cache <- function(refresh = FALSE) {
   s <- capacity_cached("sections", load_capacity_sections, refresh = refresh)
   p <- capacity_cached("priority", load_capacity_by_priority, refresh = refresh)
   capacity_cached("geo", load_section_geo, ttl = 7L * 86400L, refresh = refresh)   # What-If map shapes
+  capacity_cached("towns", load_town_names, ttl = 7L * 86400L, refresh = refresh)  # township names
   invisible(list(sections = NROW(s$data), priority = NROW(p$data)))
 }
 
-#' Section-grain capacity: one row per section with its site/catch-basin loads and
-#' straight-line miles from its facility office. This is the base grain for the capacity
-#' table (aggregated up) AND the what-if section picker (used as-is).
+#' Section capacity
 #'
 #' @return data.frame: facility, fosarea, zone, sectcode, ground_sites, air_sites,
 #'   ground_acres, air_acres, prehatch_sites, prehatch_acres, wet_cb, miles
@@ -255,6 +270,8 @@ load_capacity_sections <- function() {
            COALESCE(bs.air_sites, 0)      AS air_sites,
            COALESCE(bs.ground_acres, 0)   AS ground_acres,
            COALESCE(bs.air_acres, 0)      AS air_acres,
+           COALESCE(bs.red_air_sites, 0)  AS red_air_sites,
+           COALESCE(bs.red_air_acres, 0)  AS red_air_acres,
            COALESCE(bs.prehatch_sites, 0) AS prehatch_sites,
            COALESCE(bs.prehatch_acres, 0) AS prehatch_acres,
            COALESCE(cb.wet_cb, 0)         AS wet_cb,
@@ -267,6 +284,8 @@ load_capacity_sections <- function() {
              (COUNT(*) FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites,
              COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'G'), 0)::numeric AS ground_acres,
              COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'A'), 0)::numeric AS air_acres,
+             (COUNT(*) FILTER (WHERE %s))::int AS red_air_sites,
+             COALESCE(SUM(b.acres) FILTER (WHERE %s), 0)::numeric AS red_air_acres,
              (COUNT(*) FILTER (WHERE %s))::int AS prehatch_sites,
              COALESCE(SUM(b.acres) FILTER (WHERE %s), 0)::numeric AS prehatch_acres
       FROM loc_breeding_sites b
@@ -284,7 +303,7 @@ load_capacity_sections <- function() {
     WHERE sc.fosarea IS NOT NULL AND sc.fosarea <> ''
       AND sc.zone IN ('1', '2')
     ORDER BY sc.facility, sc.fosarea, sc.zone, sc.sectcode
-  ", .ground_prehatch_sql, .ground_prehatch_sql, ra_exclusion_sql("b"))
+  ", .red_air_sql, .red_air_sql, .ground_prehatch_sql, .ground_prehatch_sql, ra_exclusion_sql("b"))
 
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_sections]", e$message)); data.frame()
@@ -302,7 +321,7 @@ load_capacity_sections <- function() {
     )
     df$section_lon <- NULL
     df$section_lat <- NULL
-    for (col in c("ground_acres", "air_acres", "prehatch_acres")) {
+    for (col in c("ground_acres", "air_acres", "red_air_acres", "prehatch_acres")) {
       df[[col]] <- round(as.numeric(df[[col]]), 3)   # round after summing, not per section
     }
     df$miles <- round(as.numeric(df$miles), 1)
@@ -325,6 +344,8 @@ load_capacity_by_priority <- function() {
            (COUNT(*) FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites,
            COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'G'), 0)::numeric AS ground_acres,
            COALESCE(SUM(b.acres) FILTER (WHERE b.air_gnd = 'A'), 0)::numeric AS air_acres,
+           (COUNT(*) FILTER (WHERE %s))::int AS red_air_sites,
+           COALESCE(SUM(b.acres) FILTER (WHERE %s), 0)::numeric AS red_air_acres,
            (COUNT(*) FILTER (WHERE %s))::int AS prehatch_sites,
            COALESCE(SUM(b.acres) FILTER (WHERE %s), 0)::numeric AS prehatch_acres
     FROM loc_breeding_sites b
@@ -334,28 +355,24 @@ load_capacity_by_priority <- function() {
     GROUP BY sc.facility, sc.fosarea, sc.zone,
              COALESCE(NULLIF(b.priority, ''), '(none)')
     ORDER BY sc.facility, sc.fosarea, sc.zone, priority
-  ", .ground_prehatch_sql, .ground_prehatch_sql, ra_exclusion_sql("b"))
+  ", .red_air_sql, .red_air_sql, .ground_prehatch_sql, .ground_prehatch_sql, ra_exclusion_sql("b"))
 
   df <- tryCatch(dbGetQuery(con, q), error = function(e) {
     warning(paste("[load_capacity_by_priority]", e$message)); data.frame()
   })
   if (nrow(df) > 0) {
-    for (col in c("ground_acres", "air_acres", "prehatch_acres")) {
+    for (col in c("ground_acres", "air_acres", "red_air_acres", "prehatch_acres")) {
       df[[col]] <- round(as.numeric(df[[col]]), 3)   # round after summing, not per section
     }
   }
   df
 }
 
-# Routed drive-time lookup built offline by scripts/build_drivetimes.R (OSRM on
-# OpenStreetMap roads). Free-flow times, facility office -> section centroid.
 ROUTED_DRIVETIME_FILE <- "data/facility_section_drivetime.csv"
 
 #' Read the routed facility -> section drive-time lookup.
 #'
 #' @param path CSV written by scripts/build_drivetimes.R
-#' The file holds EVERY facility x section pair (so a section moved to another facility
-#' in the What-If planner has a time from its new facility), plus the straight-line miles.
 #'
 #' @return data.frame(facility, sectcode, drive_min_routed, drive_miles_routed,
 #'   snap_m, snap_flag, straight_miles), or NULL when the file is missing/unreadable (the
@@ -395,8 +412,7 @@ attach_routed_drivetimes <- function(sections, routed = load_routed_drivetimes()
   sections
 }
 
-# 2020 census residents per section, built offline by scripts/build_section_population.R from the
-# census block geopackage (too big and slow to load in the app). Informational only.
+
 SECTION_POPULATION_FILE <- "data/section_population.csv"
 
 #' Read the section population lookup.
@@ -417,7 +433,7 @@ load_section_population <- function(path = SECTION_POPULATION_FILE) {
   })
 }
 
-#' Add population, land_sqmi and density to the section-grain table. Sections the file does
+#' Add population, land_sqmi and density to the section table. Sections the file does
 #' not list (or no file at all) get NA.
 attach_section_population <- function(sections, pop = load_section_population()) {
   if (is.null(sections) || nrow(sections) == 0) return(sections)
@@ -429,10 +445,7 @@ attach_section_population <- function(sections, pop = load_section_population())
   sections
 }
 
-#' Section polygons + centroids for the interactive map: one facility, or every
-#' facility when `facility` is NULL (the What-If planner moves sections between
-#' facilities). The all-facilities polygons are simplified (about 30 m) to keep the
-#' payload and phone rendering light.
+#' Section polygons and centroids for the interactive map
 #'
 #' @param facility facility abbreviation, or NULL for all
 #' @return data.frame: sectcode, facility, zone, fosarea, lat, lon, wkt (WGS84 polygon WKT)
@@ -459,11 +472,7 @@ load_section_geo <- function(facility = NULL) {
   })
 }
 
-#' District staffing defaults (replaces the unreliable employee_list.active
-#' count). Read from config/app_config.yaml (capacity_planner.staffing); falls
-#' back to CAPACITY_STAFFING_FALLBACK if the config is missing or unreadable.
-#' One crew = 1 FOS area + its ground techs. Drone techs are facility-level and
-#' are NOT counted in techs_per_crew.
+#' District staffing defaults.
 #'
 #' @return data.frame: facility, crews, techs_per_crew, drone_techs, drone_offload_pct,
 #'   drone_air_offload_pct
@@ -488,8 +497,7 @@ default_staffing <- function() {
   df
 }
 
-#' Number of FOS areas the DB has per facility (from section-grain data). Used
-#' only as a cross-check against the configured crew counts (1 crew = 1 FOS area).
+#' Number of FOS areas the DB has per facility (from section data). 
 #'
 #' @param sections Output of load_capacity_sections()
 #' @return data.frame: facility, db_fos_areas
@@ -506,10 +514,6 @@ db_fos_area_counts <- function(sections) {
 # -----------------------------------------------------------------------------
 # Aggregation helpers (pure R — no DB)
 # -----------------------------------------------------------------------------
-
-#' Roll section-grain data up to one row per facility x fosarea x zone, add FOS
-#' shortname, facility full name, and tech counts.
-#'
 #' @param sections  Output of load_capacity_sections()
 #' @param staffing  Staffing table (default_staffing() or the user's edited copy)
 #' @return data.frame per facility/fosarea/zone with the capacity columns
@@ -528,6 +532,8 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
       air_sites      = sum(air_sites, na.rm = TRUE),
       ground_acres   = round(sum(ground_acres, na.rm = TRUE), 1),
       air_acres      = round(sum(air_acres, na.rm = TRUE), 1),
+      red_air_sites  = sum(red_air_sites, na.rm = TRUE),
+      red_air_acres  = round(sum(red_air_acres, na.rm = TRUE), 1),
       prehatch_sites = sum(prehatch_sites, na.rm = TRUE),
       prehatch_acres = round(sum(prehatch_acres, na.rm = TRUE), 1),
       wet_cb         = sum(wet_cb, na.rm = TRUE),
@@ -548,7 +554,7 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
       if (has_census) round(residents_per(agg$population, agg[[k]]), 1) else NA_real_
   }
 
-  # Names + facility full name + techs
+  # Names and facility full name + techs
   foremen <- tryCatch(get_foremen_lookup(), error = function(e) data.frame())
   fac_lkp <- tryCatch(get_facility_lookup(), error = function(e) data.frame())
   fos_name <- if (nrow(foremen) > 0) {
@@ -577,7 +583,6 @@ aggregate_capacity_by_fos <- function(sections, staffing) {
 }
 
 #' Mean AND median of the capacity columns across FOS areas, for a given zone.
-#' Returns per-facility rows and a district-wide row (DISTRICT is first).
 #'
 #' @param cap  Output of aggregate_capacity_by_fos()
 #' @param zone_val  "1" or "2"

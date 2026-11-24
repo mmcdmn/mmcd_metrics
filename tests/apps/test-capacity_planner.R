@@ -14,6 +14,7 @@ get_project_root <- function() {
 load_capacity_fns <- function(env) {
   root <- get_project_root()
   source(file.path(root, "apps/capacity_planner/data_functions.R"), local = env)
+  source(file.path(root, "apps/capacity_planner/routing_functions.R"), local = env)
   source(file.path(root, "apps/capacity_planner/display_functions.R"), local = env)
 }
 
@@ -139,6 +140,7 @@ scenario_fixture <- function() {
     sectcode = c("s1", "s2", "s3", "s4", "j1", "j2"),
     ground_sites = c(100, 100, 100, 100, 50, 80), ground_acres = c(10, 10, 10, 10, 5, 8),
     air_sites = c(1, 2, 3, 4, 5, 6), air_acres = c(10, 20, 30, 40, 50, 60),
+    red_air_sites = c(1, 1, 1, 2, 1, 2), red_air_acres = c(5, 5, 5, 10, 5, 10),
     prehatch_sites = 1, prehatch_acres = 1, wet_cb = c(1, 1, 1, 1, 1, 1),
     miles = c(10, 15, 25, 50, 12, 30), drive_min_routed = c(20, 30, 50, 100, 25, 60),
     drive_miles_routed = c(8, 12, 20, 40, 10, 25), snap_m = 0, snap_flag = FALSE,
@@ -930,7 +932,7 @@ test_that("map selection has a keyboard route, a real button and an accessible n
   expect_true(has("observeEvent(input$wi_toggle"))
   expect_false(has("wi_pick"))
   # map is a labelled figure and the selection count is announced
-  expect_true(has('leaflet::leafletOutput("wi_map", height = 440),'))
+  expect_true(has('leaflet::leafletOutput("wi_map", height = 640),'))
   expect_true(has("a11y_figure("))
   expect_true(has('role = "status"'))
   # the Box select control is a <button> with pressed state, never a link
@@ -986,7 +988,7 @@ test_that("prehatch counts are ground prehatch only: air sites with a prehatch t
   root <- file.path(dirname(test_path()), "..", "..")
   src <- paste(readLines(file.path(root, "apps", "capacity_planner", "data_functions.R"), warn = FALSE),
                collapse = "\n")
-  expect_equal(length(gregexpr("FILTER (WHERE %s)", src, fixed = TRUE)[[1]]), 4)   # 2 queries x (sites, acres)
+  expect_equal(length(gregexpr("FILTER (WHERE %s)", src, fixed = TRUE)[[1]]), 8)   # 2 queries x (RED air, prehatch) x (sites, acres)
   expect_false(grepl("FILTER (WHERE b.prehatch IN", src, fixed = TRUE))
   expect_equal(length(gregexpr(".ground_prehatch_sql, .ground_prehatch_sql", src, fixed = TRUE)[[1]]), 2)
   # the cache key follows the definition, so counts cached under the old (air-inclusive) one are not served
@@ -1190,17 +1192,21 @@ test_that("shaded-mode outlines are thin and keep the facility color", {
   expect_lt(max(o$w), 2)                                              # thin: the fill must show at district zoom
 })
 
-test_that("residents per site / acre: six separate ratios, never combined", {
+test_that("residents per site / acre: separate ratios per kind, never combined", {
   env <- new.env(); load_capacity_fns(env)
   expect_equal(env$residents_per(c(1000, 0, NA, 500), c(4, 5, 2, 0)), c(250, 0, NA, NA))
   s <- data.frame(population = c(1000, 600, NA),
                   ground_sites = c(10, 0, 5), ground_acres = c(50, 0, 5),
                   air_sites = c(2, 3, 1), air_acres = c(8, 12, 1),
+                  red_air_sites = c(1, 3, 0), red_air_acres = c(2, 6, 0),
                   prehatch_sites = c(1, 0, 0), prehatch_acres = c(4, 0, 0))
   r <- env$resident_ratio_cols(s)
   expect_equal(names(r), c("residents_per_ground_site", "residents_per_ground_acre",
                            "residents_per_air_site", "residents_per_air_acre",
+                           "residents_per_red_air_site", "residents_per_red_air_acre",
                            "residents_per_ground_prehatch_site", "residents_per_ground_prehatch_acre"))
+  expect_equal(r$residents_per_red_air_site, c(1000, 200, NA))     # 1000 / 1, 600 / 3, no census
+  expect_equal(r$residents_per_red_air_acre, c(500, 100, NA))      # 1000 / 2, 600 / 6
   expect_equal(r$residents_per_ground_site, c(100, NA, NA))
   expect_equal(r$residents_per_ground_acre, c(20, NA, NA))
   expect_equal(r$residents_per_air_site, c(500, 200, NA))
@@ -1224,12 +1230,13 @@ test_that("residents per site / acre: six separate ratios, never combined", {
   expect_equal(names(env$drop_empty_population(df)), c("a", "residents_per_air_site"))
 })
 
-test_that("changed-sections CSV carries the six residents-per ratios", {
+test_that("changed-sections CSV carries the residents-per ratios", {
   env <- new.env(); load_capacity_fns(env); x <- pop_fixture()
   a <- env$scenario_apply(x$sec, chg("s3", NA, "1"), x$times)
   e <- env$scenario_export_changes(a)
-  expect_equal(names(e)[match("residents_per_sq_mi", names(e)) + 1:6], env$RESIDENT_RATIO_COLS)
-  expect_equal(names(e)[match("residents_per_sq_mi", names(e)) + 7], "drive_min_from")
+  n <- length(env$RESIDENT_RATIO_COLS)
+  expect_equal(names(e)[match("residents_per_sq_mi", names(e)) + seq_len(n)], env$RESIDENT_RATIO_COLS)
+  expect_equal(names(e)[match("residents_per_sq_mi", names(e)) + n + 1], "drive_min_from")
   s3 <- x$sec[x$sec$sectcode == "s3", ]
   expect_equal(e$residents_per_ground_acre, round(env$residents_per(s3$population, s3$ground_acres), 2))
   expect_equal(e$residents_per_air_site, round(env$residents_per(s3$population, s3$air_sites), 2))
@@ -1361,4 +1368,380 @@ test_that("the app shows census data in its own tables (Capacity tab and What-If
   # Estimate A cannot be driven by census numbers
   m <- regmatches(app_src, regexpr("METRIC_CHOICES <- c\\([^)]*\\)", app_src))
   expect_false(grepl("residents_per|population|density", m))
+})
+
+# ---- RED air sites ------------------------------------------------------------------------------
+test_that("RED air sites: air sites with priority RED, a subset of air, in both heavy queries", {
+  env <- new.env(); load_capacity_fns(env)
+  expect_match(env$.red_air_sql, "b.air_gnd = 'A'", fixed = TRUE)
+  expect_match(env$.red_air_sql, "b.priority = 'RED'", fixed = TRUE)
+  root <- file.path(dirname(test_path()), "..", "..")
+  src <- paste(readLines(file.path(root, "apps", "capacity_planner", "data_functions.R"), warn = FALSE),
+               collapse = "\n")
+  expect_equal(length(gregexpr(".red_air_sql, .red_air_sql, .ground_prehatch_sql, .ground_prehatch_sql", src,
+                               fixed = TRUE)[[1]]), 2)                       # both queries, sites + acres each
+  expect_true(grepl("AS red_air_sites", src, fixed = TRUE) && grepl("AS red_air_acres", src, fixed = TRUE))
+  # air sites / acres themselves are untouched (all air sites, not only RED)
+  expect_true(grepl("FILTER (WHERE b.air_gnd = 'A'))::int AS air_sites", src, fixed = TRUE))
+  # the cache key follows the definition
+  f <- tempfile(fileext = ".csv"); writeLines(c("sitecode", "190101-001"), f)
+  fp <- env$capacity_cache_fingerprint(f)
+  env$.red_air_sql <- "b.air_gnd = 'A' AND b.priority IN ('RED','YELLOW')"
+  expect_false(identical(fp, env$capacity_cache_fingerprint(f)))
+})
+
+test_that("RED air sites / acres sit next to air everywhere: lists, labels, baseline, drone offload, exports", {
+  env <- new.env(); load_capacity_fns(env); x <- scenario_fixture()
+  m <- env$CAPACITY_ZONE_METRICS
+  expect_equal(m[match("air_acres", m) + 1:2], c("red_air_sites", "red_air_acres"))   # right after air
+  expect_true("red_air_sites" %in% env$CAPACITY_SITE_METRICS && "red_air_acres" %in% env$CAPACITY_ACRE_METRICS)
+  expect_equal(unname(env$CAPACITY_METRIC_LABELS[c("red_air_sites", "red_air_acres")]),
+               c("RED air sites", "RED air acres"))
+  expect_true(all(c("red_air_sites", "red_air_acres") %in% env$SCENARIO_METRICS))     # What changed + Estimate A driver
+  expect_true(all(c("red_air_sites", "red_air_acres") %in% env$DRONE_AIR_OFFSET_METRICS))
+  expect_false(any(c("red_air_sites", "red_air_acres") %in% env$DRONE_OFFSET_METRICS))
+  # the Show toggle
+  expect_false("red_air_acres" %in% env$capacity_visible_metrics("sites"))
+  expect_false("red_air_sites" %in% env$capacity_visible_metrics("acres"))
+  expect_true(all(c("red_air_sites", "red_air_acres") %in% env$capacity_visible_metrics("both")))
+  # capacity table: summed per FOS area and zone, wide P1 / P2 columns, labelled
+  cap <- env$aggregate_capacity_by_fos(x$sec, x$staff)
+  p1 <- cap[cap$facility == "Sr" & cap$zone == "1", ]
+  expect_equal(p1$red_air_sites, 2); expect_equal(p1$red_air_acres, 10)              # s1 + s2
+  w <- env$capacity_wide(cap)
+  expect_true(all(c("red_air_sites_P1", "red_air_acres_P2") %in% names(w)))
+  expect_equal(env$capacity_col_label("red_air_acres_P1"), "RED air acres P1")
+  # Staffing: per tech / per crew
+  bl <- env$staffing_baseline(cap, x$staff)
+  expect_true(all(c("p1_red_air_sites", "red_air_sites_per_tech", "red_air_acres_per_tech",
+                    "red_air_acres_per_crew") %in% names(bl)))
+  expect_equal(bl$p1_red_air_sites[bl$facility == "Sr"], 2)
+  # What-If: promoting s3 + s4 adds their RED air sites / acres
+  a <- env$scenario_apply(x$sec, rbind(chg("s3", NA, "1"), chg("s4", NA, "1")), x$times)
+  cmp <- env$scenario_compare(a, "1", env$SCENARIO_METRICS)
+  expect_equal(cmp$red_air_sites_chg[cmp$key == "DISTRICT"], 3)                      # 1 + 2
+  expect_equal(cmp$red_air_acres_chg[cmp$key == "DISTRICT"], 15)                     # 5 + 10
+  # the drone AIR offload applies to RED air
+  st <- x$staff; st$drone_air_offload_pct <- 50; st$drone_offload_pct <- 0
+  r <- env$scenario_staffing(a, st, metric = "red_air_sites", per_tech = 1)
+  expect_equal(sum(r$by_fos$added_load), 1.5)                                         # 3 sites x (1 - 50%)
+  # exports
+  e <- env$scenario_export_changes(a)
+  expect_equal(names(e)[match("air_acres", names(e)) + 1:2], c("red_air_sites", "red_air_acres"))
+  expect_equal(e$red_air_sites, c(1, 2))
+  ex <- env$scenario_export_compare(cmp)
+  expect_true(all(c("red_air_sites_p1_change", "red_air_acres_p1_after") %in% names(ex)))
+  b0 <- env$staffing_baseline(env$scenario_cap(transform(a, facility = facility_from, zone = zone_from)), x$staff)
+  b1 <- env$staffing_baseline(env$scenario_cap(a), x$staff)
+  expect_true(all(c("red_air_sites_per_tech_now", "red_air_acres_per_crew_after") %in%
+                    names(env$scenario_export_load(b0, b1))))
+  # the Census data ratios are separate per RED air too
+  expect_true(all(c("residents_per_red_air_site", "residents_per_red_air_acre") %in% env$RESIDENT_RATIO_COLS))
+})
+
+test_that("the app shows RED air in the metric choices, tooltip, section list and staffing tables", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_true(has('"RED air sites"  = "red_air_sites"')); expect_true(has('"RED air acres"  = "red_air_acres"'))
+  expect_true(has("RED air %d sites / %.1f ac"))                    # map tooltip
+  expect_true(has('"RED air sites", "RED air acres"'))              # section list headers
+  expect_true(has("RED air sites/tech")); expect_true(has("RED air acres/crew"))   # staffing + What-If load tables
+  expect_true(has("P1 RED air sites"))
+})
+
+# ---- Township quick add --------------------------------------------------------------------------
+town_fixture <- function() {
+  sec <- data.frame(
+    sectcode = c("1911001", "1911002", "1911003", "1904001", "1904002", "2501001"),
+    facility = c("Wp", "Wp", "Sj", "Sj", "Sj", "N"),
+    zone = c("2", "2", "1", "2", "1", "2"), fosarea = "9", stringsAsFactors = FALSE)
+  towns <- data.frame(towncode4 = c("1904", "1911"), city = c("Eagan", "Lakeville"), stringsAsFactors = FALSE)
+  list(sec = sec, towns = towns)
+}
+
+test_that("town helpers: town = first 4 digits, choices by name with section counts", {
+  env <- new.env(); load_capacity_fns(env); x <- town_fixture()
+  expect_equal(env$town_code(c("1911001", "190401x")), c("1911", "1904"))
+  ch <- env$town_choices(x$sec, x$towns)
+  expect_equal(unname(ch[1]), ""); expect_equal(names(ch)[1], "Pick a township")
+  expect_equal(unname(ch[-1]), c("1904", "1911", "2501"))                    # Eagan, Lakeville, then the unnamed one (by code)
+  expect_equal(names(ch)[-1], c("Eagan (1904) - 2 sections", "Lakeville (1911) - 3 sections", "2501 - 1 section"))
+  # no name table: bare codes
+  expect_equal(names(env$town_choices(x$sec, NULL))[2], "1904 - 2 sections")
+  expect_equal(names(env$town_choices(x$sec[0, ], x$towns)), "Pick a township")
+  expect_equal(env$town_sections(x$sec, "1911"), c("1911001", "1911002", "1911003"))
+  expect_equal(env$town_sections(x$sec, "9999"), character(0))
+  expect_equal(env$town_name("1911", x$towns), "Lakeville"); expect_equal(env$town_name("2501", x$towns), "2501")
+})
+
+test_that("township quick add = a box on every section of the town, with the Move sections to facility", {
+  env <- new.env(); load_capacity_fns(env); x <- town_fixture()
+  codes <- env$town_sections(x$sec, "1911")
+  none <- data.frame(sectcode = character(), to_facility = character(), to_zone = character(), stringsAsFactors = FALSE)
+  # destination Wp: the two P2 sections already in Wp are promoted, the P1 section from Sj is moved to Wp
+  r <- env$scenario_toggle(x$sec, none, codes, "Wp", "toggle")
+  expect_equal(sort(r$changes$sectcode), sort(codes))
+  a <- env$scenario_apply(transform(x$sec, ground_sites = 1), r$changes, NULL)
+  expect_true(all(a$facility[a$sectcode %in% codes] == "Wp"))
+  expect_true(all(a$zone[a$sectcode %in% codes] == "1"))                      # the whole township is P1 in Wp
+  expect_equal(a$facility[!a$sectcode %in% codes], x$sec$facility[!x$sec$sectcode %in% codes])   # nothing else changes
+  # destination Keep facility: only the P2 sections are promoted; the P1 one stays as is
+  k <- env$scenario_toggle(x$sec, none, codes, "keep", "toggle")
+  expect_equal(sort(k$changes$sectcode), c("1911001", "1911002")); expect_equal(k$skipped, 1L)
+  # picking the town again undoes it
+  again <- env$scenario_toggle(x$sec, r$changes, codes, "Wp", "toggle")
+  expect_equal(nrow(again$changes), 0)
+  # a destination different from the first one re-moves instead of undoing
+  other <- env$scenario_toggle(x$sec, r$changes, codes, "N", "toggle")
+  expect_true(all(other$changes$to_facility[other$changes$sectcode %in% codes] == "N"))
+})
+
+test_that("the app wires the township quick add next to Move sections to", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_true(has('selectInput("quick_town", "Quick add a township:"'))
+  expect_true(has("observeEvent(input$quick_town"))
+  expect_true(has("town_choices(sections, towns)"))
+  expect_true(has('capacity_cached("towns", load_town_names'))
+  dat <- paste(readLines(file.path(root, "apps", "capacity_planner", "data_functions.R"), warn = FALSE), collapse = "\n")
+  expect_true(grepl("FROM lookup_towncode_name", dat, fixed = TRUE))
+  expect_true(grepl('capacity_cached("towns"', dat, fixed = TRUE))             # warmed at start
+  # the township picker is not a deep-linked / shared setting (it only triggers an action)
+  expect_false(has("quick_town       = list("))
+})
+
+# ---- Facility dots, Facility X and recalculated drive times ----------------------------------------
+pos_fixture <- function() {
+  x <- scenario_fixture()
+  geo <- data.frame(sectcode = x$sec$sectcode,
+                    lon = c(-93.00, -93.05, -93.10, -93.15, -93.40, -93.45),
+                    lat = c(44.70, 44.72, 44.75, 44.78, 45.00, 45.02), stringsAsFactors = FALSE)
+  locs <- data.frame(facility = c("Sr", "Sj"), lon = c(-93.03, -93.42), lat = c(44.72, 45.01),
+                     stringsAsFactors = FALSE)
+  list(x = x, geo = geo, locs = locs)
+}
+
+test_that("facility dots: office locations, a moved one at its new place, Facility X once pinned", {
+  env <- new.env(); load_capacity_fns(env); p <- pos_fixture()
+  none <- env$facility_positions(p$locs)
+  expect_equal(none$facility, c("Sr", "Sj")); expect_false(any(none$moved))
+  ov <- data.frame(facility = c("Sj", "X"), lon = c(-93.5, -93.2), lat = c(45.1, 44.9), stringsAsFactors = FALSE)
+  d <- env$facility_positions(p$locs, ov)
+  expect_equal(d$facility, c("Sr", "Sj", "X"))
+  expect_equal(d$lon, c(-93.03, -93.5, -93.2)); expect_equal(d$moved, c(FALSE, TRUE, TRUE))
+  expect_equal(env$FACILITY_X, "X"); expect_equal(env$FACILITY_X_LABEL, "Facility X (new)")
+  expect_true(env$same_place(-93.2, 44.9, -93.2000001, 44.9)); expect_false(env$same_place(-93.2, 44.9, -93.21, 44.9))
+})
+
+test_that("effective_times: moved facilities get recalculated rows when current, straight-line rows otherwise", {
+  env <- new.env(); load_capacity_fns(env); p <- pos_fixture(); x <- p$x
+  ov <- data.frame(facility = "Sr", lon = -93.2, lat = 44.8, stringsAsFactors = FALSE)
+  # nothing moved: the lookup is returned as is
+  expect_identical(env$effective_times(x$times, env$NO_FAC_POS, list(), p$geo), x$times)
+  # moved, not recalculated: Sr's rows are straight-line (no routed time), the other facility is untouched
+  e <- env$effective_times(x$times, ov, list(), p$geo)
+  expect_equal(nrow(e), nrow(x$times))                                       # same facility x section grid
+  sr <- e[e$facility == "Sr", ]
+  expect_true(all(is.na(sr$drive_min_routed)) && all(is.na(sr$drive_miles_routed)))
+  expect_equal(sr$straight_miles, round(env$route_haversine_miles(-93.2, 44.8, p$geo$lon, p$geo$lat), 2)[match(sr$sectcode, p$geo$sectcode)])
+  expect_true(isTRUE(all.equal(e[e$facility == "Sj", ], x$times[x$times$facility == "Sj", ], check.attributes = FALSE)))
+  expect_equal(env$facilities_needing_recalc(ov, list()), "Sr")
+  # recalculated for THIS spot: those rows are used
+  rt <- data.frame(facility = "Sr", sectcode = p$geo$sectcode, drive_min_routed = 11, drive_miles_routed = 7,
+                   snap_m = 0, snap_flag = FALSE, straight_miles = 6, stringsAsFactors = FALSE)
+  routes <- list(Sr = list(lon = -93.2, lat = 44.8, times = rt))
+  e2 <- env$effective_times(x$times, ov, routes, p$geo)
+  expect_true(all(e2$drive_min_routed[e2$facility == "Sr"] == 11))
+  expect_equal(env$facilities_needing_recalc(ov, routes), character(0))
+  # recalculated for an OLD spot: stale, back to straight-line and flagged
+  ov2 <- transform(ov, lon = -93.3)
+  expect_true(all(is.na(env$effective_times(x$times, ov2, routes, p$geo)$drive_min_routed[
+    env$effective_times(x$times, ov2, routes, p$geo)$facility == "Sr"])))
+  expect_equal(env$facilities_needing_recalc(ov2, routes), "Sr")
+  # Facility X has no row in the lookup at all: it gets its own rows; no lookup (NULL) works too
+  ox <- data.frame(facility = "X", lon = -93.1, lat = 44.76, stringsAsFactors = FALSE)
+  ex <- env$effective_times(x$times, ox, list(), p$geo)
+  expect_equal(sum(ex$facility == "X"), nrow(p$geo)); expect_equal(nrow(ex), nrow(x$times) + nrow(p$geo))
+  expect_equal(sort(unique(env$effective_times(NULL, ox, list(), p$geo)$facility)), "X")
+})
+
+test_that("a moved facility changes the sections' miles and routed times; the others are untouched", {
+  env <- new.env(); load_capacity_fns(env); p <- pos_fixture(); x <- p$x
+  ov <- data.frame(facility = "Sr", lon = -93.2, lat = 44.8, stringsAsFactors = FALSE)
+  te <- env$effective_times(x$times, ov, list(), p$geo)
+  s2 <- env$apply_facility_times(x$sec, te, "Sr")
+  sr <- x$sec$facility == "Sr"
+  expect_true(all(is.na(s2$drive_min_routed[sr])))                           # no routed time from the new spot yet
+  expect_equal(s2$miles[sr], round(env$route_haversine_miles(-93.2, 44.8, p$geo$lon[sr], p$geo$lat[sr]), 1))
+  expect_true(isTRUE(all.equal(s2[!sr, ], x$sec[!sr, ], check.attributes = FALSE)))
+  # the drive time then falls back to the straight-line estimate (the Estimate settings)
+  expect_equal(env$section_drive_minutes(s2, "routed", 45, 1.3)[sr], env$est_drive_minutes(s2$miles[sr], 45, 1.3))
+  expect_equal(env$section_drive_minutes(s2, "routed", 45, 1.3)[!sr], env$section_drive_minutes(x$sec, "routed", 45, 1.3)[!sr])
+  # nothing to apply: unchanged
+  expect_identical(env$apply_facility_times(x$sec, te, character(0)), x$sec)
+  # recalculated routes give a routed time again
+  rt <- data.frame(facility = "Sr", sectcode = p$geo$sectcode, drive_min_routed = 11, drive_miles_routed = 7,
+                   snap_m = 0, snap_flag = FALSE, straight_miles = 6, stringsAsFactors = FALSE)
+  s3 <- env$apply_facility_times(x$sec, env$effective_times(x$times, ov, list(Sr = list(lon = -93.2, lat = 44.8, times = rt)), p$geo), "Sr")
+  expect_true(all(s3$drive_min_routed[sr] == 11)); expect_true(all(s3$miles[sr] == 6))
+})
+
+test_that("Facility X: sections can move to it; its drive time needs the pin", {
+  env <- new.env(); load_capacity_fns(env); p <- pos_fixture(); x <- p$x
+  facs <- c(unique(x$sec$facility), env$FACILITY_X)
+  ch <- data.frame(sectcode = c("s3", "s4"), to_facility = "X", to_zone = "1", stringsAsFactors = FALSE)
+  # not pinned: the move is allowed, there is no drive time (the page says so)
+  a0 <- env$scenario_apply(x$sec, ch, x$times, facilities = facs)
+  expect_true(all(a0$facility[a0$sectcode %in% c("s3", "s4")] == "X")); expect_true(all(a0$moved[a0$sectcode %in% c("s3", "s4")]))
+  expect_true(all(a0$time_missing[a0$sectcode %in% c("s3", "s4")]))
+  # without X in the facility list the move is ignored (the old behaviour for unknown facilities)
+  expect_false(any(env$scenario_apply(x$sec, ch, x$times)$facility == "X"))
+  # pinned: its sections get straight-line times from the pin
+  ox <- data.frame(facility = "X", lon = -93.1, lat = 44.76, stringsAsFactors = FALSE)
+  tx <- env$effective_times(x$times, ox, list(), p$geo)
+  a1 <- env$scenario_apply(x$sec, ch, tx, facilities = facs)
+  expect_false(any(a1$time_missing)); expect_true(all(is.na(a1$drive_min_routed[a1$facility == "X"])))
+  expect_equal(a1$miles[a1$sectcode == "s3"], round(env$route_haversine_miles(-93.1, 44.76, p$geo$lon[3], p$geo$lat[3]), 2))
+  # X rolls up like any facility: its P1 and the "unassigned" row; Estimate A needs every tech to be new
+  cmp <- env$scenario_compare(a1, "1", env$SCENARIO_CHANGE_METRICS)
+  expect_true("X" %in% cmp$key); expect_equal(cmp$ground_sites_chg[cmp$key == "X"], 200)
+  st <- env$scenario_staffing(a1, x$staff, metric = "ground_sites", per_tech = 100)
+  expect_equal(st$by_facility$added_load[st$by_facility$facility == "X"], 200)
+  expect_equal(st$by_facility$n_techs[st$by_facility$facility == "X"], 0)    # no crews: all techs are new
+  # a facility not in the staff table has no rates: the DISTRICT rates are used (no error)
+  rates <- list(DISTRICT = c(air_trt = 1, air_insp = 1, gnd_insp_trt = 1, gnd_trt = 1, gnd_insp = 1))
+  expect_s3_class(env$scenario_crews(a1, rates)$by_facility, "data.frame")
+})
+
+test_that("a moved dot changes the drive-time medians but not the load numbers", {
+  env <- new.env(); load_capacity_fns(env); p <- pos_fixture(); x <- p$x
+  ch <- data.frame(sectcode = "s3", to_facility = NA_character_, to_zone = "1", stringsAsFactors = FALSE)
+  run <- function(ov) {
+    te <- env$effective_times(x$times, ov, list(), p$geo)
+    sec <- env$apply_facility_times(x$sec, te, ov$facility)
+    a <- env$scenario_apply(sec, ch, te, facilities = c("Sr", "Sj", "X"))
+    list(a = a, dm = env$section_drive_minutes(a, "estimate", 45, 1.3), dmb = env$section_drive_minutes(sec, "estimate", 45, 1.3))
+  }
+  base <- run(env$NO_FAC_POS)
+  far <- run(data.frame(facility = "Sr", lon = -92.0, lat = 44.0, stringsAsFactors = FALSE))     # ~70 miles away
+  expect_equal(far$a$ground_sites, base$a$ground_sites)                       # load: unchanged
+  c0 <- env$scenario_compare(base$a, "1", env$SCENARIO_METRICS, dm_before = base$dmb, dm_after = base$dm)
+  c1 <- env$scenario_compare(far$a, "1", env$SCENARIO_METRICS, dm_before = far$dmb, dm_after = far$dm)
+  expect_gt(c1$p1_min_before[c1$key == "Sr"], c0$p1_min_before[c0$key == "Sr"])            # the current P1 is farther
+  expect_gt(c1$added_min[c1$key == "Sr"], c0$added_min[c0$key == "Sr"])                    # so is the added section
+})
+
+test_that("a share link keeps the moved dots and Facility X; bad entries are dropped", {
+  env <- new.env(); load_capacity_fns(env); x <- scenario_fixture()
+  fp <- data.frame(facility = c("Sr", "X"), lon = c(-93.25, -93.1), lat = c(44.81, 44.76), stringsAsFactors = FALSE)
+  st <- env$scenario_share_state(NULL, x$sec, list(), NULL, NULL, fac_pos = fp)
+  back <- env$share_state_fac_pos(env$share_token_decode(env$share_token_encode(st)), c("Sr", "Sj", "X"))
+  expect_equal(back$facility, c("Sr", "X")); expect_equal(back$lon, c(-93.25, -93.1)); expect_equal(back$lat, c(44.81, 44.76))
+  expect_null(env$scenario_share_state(NULL, x$sec)$fp)                       # nothing moved: no key
+  bad <- list(fp = list(list(f = "Zz", lon = -93, lat = 44), list(f = "Sr", lon = 500, lat = 44),
+                        list(f = "Sj", lon = "a", lat = 44), list(f = "Sj", lon = -93.5, lat = 45)))
+  ok <- env$share_state_fac_pos(bad, c("Sr", "Sj", "X"))
+  expect_equal(ok$facility, "Sj"); expect_equal(nrow(env$share_state_fac_pos(list(), "Sr")), 0)
+})
+
+test_that("osrm_route_facility: chunked /table requests, snap flag, straight miles, errors", {
+  env <- new.env(); load_capacity_fns(env)
+  dests <- data.frame(sectcode = sprintf("s%d", 1:5), lon = c(-93.0, -93.1, -93.2, -93.3, -93.4),
+                      lat = c(44.7, 44.8, 44.9, 45.0, 45.1), stringsAsFactors = FALSE)
+  urls <- character(0)
+  fake <- function(url, timeout_s) {
+    urls <<- c(urls, url)
+    n <- length(strsplit(sub(".*destinations=([0-9;]+).*", "\\1", url), ";")[[1]])
+    snap <- if (length(urls) == 1) c(0, 2500)[seq_len(n)] else rep(10, n)
+    list(status = 200L, text = jsonlite::toJSON(list(
+      code = "Ok", durations = list(seq_len(n) * 60), distances = list(seq_len(n) * 1609.344),
+      destinations = data.frame(distance = snap)), auto_unbox = TRUE))
+  }
+  r <- env$osrm_route_facility(list(facility = "Q", lon = -93.2, lat = 44.8), dests, "http://router:5000",
+                               chunk_size = 2, http_get = fake)
+  expect_equal(length(urls), 3)                                              # 5 destinations, 2 per request
+  expect_match(urls[1], "^http://router:5000/table/v1/driving/-93.200000,44.800000;-93.000000,44.700000;-93.100000,44.800000\\?sources=0&destinations=1;2&annotations=duration,distance$")
+  expect_equal(names(r), env$ROUTED_TIME_COLUMNS)
+  expect_equal(r$sectcode, dests$sectcode); expect_true(all(r$facility == "Q"))
+  expect_equal(r$drive_min_routed, c(1, 2, 1, 2, 1)); expect_equal(r$drive_miles_routed, c(1, 2, 1, 2, 1))
+  expect_equal(r$snap_flag, c(FALSE, TRUE, FALSE, FALSE, FALSE))             # 2,500 m > 1 km is flagged
+  expect_equal(r$straight_miles, round(env$route_haversine_miles(-93.2, 44.8, dests$lon, dests$lat), 2))
+  # errors: no router, HTTP failure, router error code, bad origin, nothing to route
+  expect_error(env$osrm_route_facility(list(lon = -93, lat = 44), dests, "", http_get = fake), "No routing service")
+  expect_error(env$osrm_route_facility(list(lon = -93, lat = 44), dests, "http://x",
+                                       http_get = function(u, t) list(status = 500L, text = "boom")), "HTTP 500")
+  expect_error(env$osrm_route_facility(list(lon = -93, lat = 44), dests, "http://x",
+                                       http_get = function(u, t) list(status = 200L, text = '{"code":"NoTable"}')), "NoTable")
+  expect_error(env$osrm_route_facility(list(lon = 500, lat = 44), dests, "http://x", http_get = fake), "Invalid facility")
+  expect_error(env$osrm_route_facility(list(lon = -93, lat = 44), dests[0, ], "http://x", http_get = fake), "No sections")
+  # reachability check
+  expect_true(env$osrm_reachable("http://x", http_get = function(u, t) list(status = 200L, text = "{}")))
+  expect_false(env$osrm_reachable("http://x", http_get = function(u, t) stop("down")))
+  expect_false(env$osrm_reachable("", http_get = fake))
+})
+
+test_that("the router address comes from OSRM_URL, else the config; empty means unavailable", {
+  env <- new.env(); load_capacity_fns(env)
+  old <- Sys.getenv("OSRM_URL", NA); on.exit(if (is.na(old)) Sys.unsetenv("OSRM_URL") else Sys.setenv(OSRM_URL = old))
+  Sys.setenv(OSRM_URL = "http://osrm:5000/")
+  expect_equal(env$capacity_osrm_url(), "http://osrm:5000")                   # trailing slash trimmed
+  Sys.unsetenv("OSRM_URL")
+  expect_type(env$capacity_osrm_url(), "character")                           # the config value ("" until set)
+})
+
+test_that("the build script uses the shared routing function (one copy of the OSRM request code)", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  s <- paste(readLines(file.path(root, "apps", "capacity_planner", "scripts", "build_drivetimes.R"), warn = FALSE), collapse = "\n")
+  expect_true(grepl('source("apps/capacity_planner/routing_functions.R")', s, fixed = TRUE))
+  expect_true(grepl("osrm_route_facility(", s, fixed = TRUE))
+  expect_false(grepl("/table/v1/driving", s, fixed = TRUE))
+  expect_true(grepl("/table/v1/driving", paste(readLines(file.path(root, "apps", "capacity_planner", "routing_functions.R"), warn = FALSE), collapse = "\n"), fixed = TRUE))
+})
+
+test_that("the app wires the facility dots, Facility X, the pin and the recalculate prompt", {
+  root <- file.path(dirname(test_path()), "..", "..")
+  app_src <- paste(readLines(file.path(root, "apps", "capacity_planner", "app.R"), warn = FALSE), collapse = "\n")
+  has <- function(x) grepl(x, app_src, fixed = TRUE)
+  expect_true(has('source("routing_functions.R")'))
+  expect_true(has("wi_fac_dots")); expect_true(has("draggable: true")); expect_true(has("wi_fac_moved"))
+  expect_true(has("'aria-modal': 'true'"))                                    # the recalculate dialog is a labelled dialog
+  expect_true(has("observeEvent(input$wi_fac_moved")); expect_true(has("wi_pin_mode"))
+  expect_true(has('fac_x <- setNames(FACILITY_X, FACILITY_X_LABEL)'))
+  expect_true(has('c("Keep facility" = "keep", fac_choices, fac_x)'))        # Facility X under Move sections to
+  expect_true(has("scenario_apply(wi_sections(), changes(), wi_times(), facilities = wi_facs())"))
+  expect_true(has('title = "Recalculate drive times?"')); expect_true(has("Recalculating takes up to a minute"))
+
+  expect_true(has('actionButton("fac_reset"')); expect_true(has('actionButton("fac_recalc"'))
+  expect_true(has("scenario_share_state(changes(), b$sections, settings, staff(), view, fac_pos = fac_pos())"))
+  expect_true(has("share_state_fac_pos(x, fac_known())"))
+  expect_true(has("if (isTRUE(pin_mode())) { pin_at(e$lng, e$lat); return() }"))
+  # Facility X: just a "Pin Facility X" button, no status text, no section picker
+  expect_true(has('actionButton("pin_again", "Pin Facility X"'))
+  expect_false(has("pin_section")); expect_false(has("wi_pin_status")); expect_false(has("Or pin Facility X"))
+  expect_false(has("Facility X is pinned")); expect_false(has("Pin the location of Facility X"))
+  # the Recalculate button is never hidden, and the dialog is always offered
+  expect_false(has("nzchar(osrm_url)")); expect_false(has("routing service is not available"))
+  expect_true(has("find_osrm_url()")); expect_true(has("The routing service did not answer"))
+  # none of the new inputs is a saved link setting (they are actions)
+  expect_false(grepl("^\\s*(pin_again|fac_reset|fac_recalc)\\s*=\\s*list\\(input", app_src, perl = TRUE))
+  cfg <- paste(readLines(file.path(root, "config", "app_config.yaml"), warn = FALSE), collapse = "\n")
+  expect_true(grepl("osrm_url:", cfg, fixed = TRUE))
+  # the container forwards OSRM_URL to the apps (startup.sh writes the .env they read)
+  sh <- paste(readLines(file.path(root, "startup.sh"), warn = FALSE), collapse = "\n")
+  expect_true(grepl("OSRM_URL=${OSRM_URL:-}", sh, fixed = TRUE))
+})
+
+test_that("the router is looked for at the usual addresses when none is configured", {
+  env <- new.env(); load_capacity_fns(env)
+  expect_equal(env$capacity_osrm_candidates(""), env$OSRM_DEFAULT_URLS)
+  expect_true(all(c("http://host.docker.internal:5000", "http://localhost:5000") %in% env$OSRM_DEFAULT_URLS))
+  expect_equal(env$capacity_osrm_candidates("http://router:9"), "http://router:9")      # an explicit address wins
+  seen <- character(0)
+  only_local <- function(u, t) { seen <<- c(seen, u); if (grepl("localhost", u)) list(status = 200L, text = "{}") else stop("no route to host") }
+  expect_equal(env$find_osrm_url(env$OSRM_DEFAULT_URLS, only_local), "http://localhost:5000")
+  expect_equal(length(seen), 2)                                                          # stops at the first that answers
+  expect_equal(env$find_osrm_url(env$OSRM_DEFAULT_URLS, function(u, t) stop("down")), "")
+  expect_equal(env$find_osrm_url("http://router:9", function(u, t) list(status = 503L, text = "")), "")
 })

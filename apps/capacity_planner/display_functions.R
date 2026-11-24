@@ -15,6 +15,10 @@ RESIDENT_RATIOS <- list(
                         label = "Residents per air site"),
   air_acres      = list(csv = "residents_per_air_acre",
                         label = "Residents per air acre"),
+  red_air_sites  = list(csv = "residents_per_red_air_site",
+                        label = "Residents per RED air site"),
+  red_air_acres  = list(csv = "residents_per_red_air_acre",
+                        label = "Residents per RED air acre"),
   prehatch_sites = list(csv = "residents_per_ground_prehatch_site",
                         label = "Residents per ground prehatch site"),
   prehatch_acres = list(csv = "residents_per_ground_prehatch_acre",
@@ -24,20 +28,21 @@ RESIDENT_RATIO_LABELS <- stats::setNames(
   unname(vapply(RESIDENT_RATIOS, function(r) r$label, "")), RESIDENT_RATIO_COLS)
 
 CAPACITY_ZONE_METRICS <- c("sections", "ground_sites", "ground_acres",
-                           "air_sites", "air_acres",
+                           "air_sites", "air_acres", "red_air_sites", "red_air_acres",
                            "prehatch_sites", "prehatch_acres", "wet_cb",
                            "avg_miles")
 # 2020 census columns: their own "Census data" tables (Capacity tab and What-If), not the workload table
 CENSUS_METRICS <- c("population", "density", RESIDENT_RATIO_COLS)
 # the sites / acres toggle also covers each ratio (a per-site ratio is a "sites" column)
-CAPACITY_SITE_METRICS <- c("ground_sites", "air_sites", "prehatch_sites",
+CAPACITY_SITE_METRICS <- c("ground_sites", "air_sites", "red_air_sites", "prehatch_sites",
                            RESIDENT_RATIO_COLS[grepl("_site$", RESIDENT_RATIO_COLS)])
-CAPACITY_ACRE_METRICS <- c("ground_acres", "air_acres", "prehatch_acres",
+CAPACITY_ACRE_METRICS <- c("ground_acres", "air_acres", "red_air_acres", "prehatch_acres",
                            RESIDENT_RATIO_COLS[grepl("_acre$", RESIDENT_RATIO_COLS)])
 
 CAPACITY_METRIC_LABELS <- c(
   sections = "Sections", ground_sites = "Ground sites", ground_acres = "Ground acres",
   air_sites = "Air sites", air_acres = "Air acres",
+  red_air_sites = "RED air sites", red_air_acres = "RED air acres",
   prehatch_sites = "Ground prehatch sites", prehatch_acres = "Ground prehatch acres",
   wet_cb = "Wet catch basins", population = "Residents", density = "Residents per sq mi",
   avg_miles = "Avg miles", n_techs = "Techs",
@@ -258,7 +263,7 @@ census_wide <- function(cap) {
   as.data.frame(w) %>% dplyr::arrange(facility, fos_name)
 }
 DRONE_OFFSET_METRICS <- c("ground_sites", "ground_acres", "prehatch_sites", "prehatch_acres")
-DRONE_AIR_OFFSET_METRICS <- c("air_sites", "air_acres")
+DRONE_AIR_OFFSET_METRICS <- c("air_sites", "air_acres", "red_air_sites", "red_air_acres")
 #'
 #' @param cap    aggregate_capacity_by_fos() output (P1/P2 rows per FOS area)
 #' @param staff  staffing table (facility, crews, techs_per_crew, drone_techs,
@@ -279,6 +284,8 @@ staffing_baseline <- function(cap, staff) {
       p1_ground_acres = round(sum(ground_acres, na.rm = TRUE), 1),
       p1_air_sites    = sum(air_sites, na.rm = TRUE),
       p1_air_acres    = round(sum(air_acres, na.rm = TRUE), 1),
+      p1_red_air_sites = sum(red_air_sites, na.rm = TRUE),
+      p1_red_air_acres = round(sum(red_air_acres, na.rm = TRUE), 1),
       p1_ph_sites     = sum(prehatch_sites, na.rm = TRUE),
       p1_ph_acres     = round(sum(prehatch_acres, na.rm = TRUE), 1),
       .groups = "drop")
@@ -407,6 +414,38 @@ scenario_toggle <- function(sections, current, codes, dest = "keep", mode = "tog
   out <- rbind(cur[!cur$sectcode %in% c(drop, add$sectcode), , drop = FALSE], add)
   rownames(out) <- NULL
   list(changes = out, skipped = as.integer(sum(!can & !has)))
+}
+
+#' Town code of section codes: the first 4 digits (1911 = Lakeville).
+town_code <- function(sectcode) substr(as.character(sectcode), 1, 4)
+
+#' The "Quick add a township" choices: every town that has sections, by name (the bare code when
+#' the name is unknown), with its section count. The first choice is the blank "Pick a township".
+#' @param sections section-grain df (sectcode)
+#' @param towns    data.frame(towncode4, city) or NULL
+town_choices <- function(sections, towns = NULL) {
+  blank <- c("Pick a township" = "")
+  if (is.null(sections) || nrow(sections) == 0) return(blank)
+  n <- table(town_code(sections$sectcode))
+  codes <- names(n)
+  city <- if (!is.null(towns) && nrow(towns) > 0) as.character(towns$city[match(codes, towns$towncode4)]) else
+    rep(NA_character_, length(codes))
+  nm <- ifelse(is.na(city) | !nzchar(city), codes, city)
+  label <- sprintf("%s (%s) - %d section%s", nm, codes, as.integer(n), ifelse(n == 1, "", "s"))
+  label <- ifelse(nm == codes, sprintf("%s - %d section%s", codes, as.integer(n), ifelse(n == 1, "", "s")), label)
+  o <- order(nm == codes, tolower(nm), codes)          # named towns A-Z, towns without a name last
+  c(blank, stats::setNames(codes[o], label[o]))
+}
+
+#' Section codes of one town.
+town_sections <- function(sections, code) {
+  as.character(sections$sectcode)[town_code(sections$sectcode) == as.character(code)]
+}
+
+#' Name of a town for messages: "Lakeville", or the code when the name is unknown.
+town_name <- function(code, towns = NULL) {
+  city <- if (!is.null(towns) && nrow(towns) > 0) as.character(towns$city[match(code, towns$towncode4)]) else NA_character_
+  if (is.na(city) || !nzchar(city)) as.character(code) else city
 }
 
 #' Facility totals of the scenario metrics
@@ -865,8 +904,9 @@ scenario_unpack <- function(packed, sectcodes) {
 #' @param staff     the staffing table, saved WHOLE so the link does not depend on later defaults
 #' @param view      list(lat, lng, z) of the map, or NULL
 #' @param today     date of the link
+#' @param fac_pos   data.frame(facility, lon, lat) of the moved / pinned facility dots, or NULL
 scenario_share_state <- function(changes, sections, settings = list(), staff = NULL,
-                                 view = NULL, today = Sys.Date()) {
+                                 view = NULL, today = Sys.Date(), fac_pos = NULL) {
   keep <- vapply(settings, function(v) {
     length(v) == 1 && !is.na(v) && !(is.character(v) && !nzchar(v))
   }, logical(1))
@@ -887,6 +927,11 @@ scenario_share_state <- function(changes, sections, settings = list(), staff = N
   out <- list(v = SHARE_TOKEN_VERSION, t = format(today, "%Y-%m-%d"), u = packed$u, g = packed$g,
               o = settings, d = list(p1 = sum(zone == "1"), p2 = sum(zone == "2")))
   if (!is.null(st)) out$st <- st
+  if (!is.null(fac_pos) && nrow(fac_pos) > 0) {          # moved facility dots / Facility X
+    out$fp <- lapply(seq_len(nrow(fac_pos)), function(i) list(
+      f = as.character(fac_pos$facility[i]), lon = round(fac_pos$lon[i], 6),
+      lat = round(fac_pos$lat[i], 6)))
+  }
   if (!is.null(view) && all(c("lat", "lng", "z") %in% names(view)) &&
       all(vapply(view[c("lat", "lng", "z")], function(x) length(x) == 1 && is.finite(x), logical(1)))) {
     out$m <- list(lat = round(view$lat, 4), lng = round(view$lng, 4), z = round(view$z, 2))
@@ -1014,8 +1059,9 @@ scenario_export_fos <- function(after, dm_before = NULL, dm_after = NULL) {
 scenario_export_load <- function(b0, b1) {
   if (is.null(b1) || nrow(b1) == 0) return(data.frame())
   cols <- c("ground_sites_per_tech", "ground_acres_per_tech", "air_sites_per_tech",
-            "air_acres_per_tech", "ph_acres_per_tech", "ground_acres_per_crew",
-            "air_acres_per_crew", "ph_acres_per_crew")
+            "air_acres_per_tech", "red_air_sites_per_tech", "red_air_acres_per_tech",
+            "ph_acres_per_tech", "ground_acres_per_crew",
+            "air_acres_per_crew", "red_air_acres_per_crew", "ph_acres_per_crew")
   i0 <- match(b1$facility, b0$facility)
   out <- data.frame(facility = b1$facility, ground_techs = round(b1$ground_techs, 1),
                     stringsAsFactors = FALSE)
@@ -1048,7 +1094,7 @@ scenario_export_staffing <- function(res) {
 scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
   cols <- c("sectcode", "facility_from", "zone_from", "facility_to", "zone_to", "promoted",
             "moved", "fos_area_from", "ground_sites", "ground_acres", "air_sites", "air_acres",
-            "ground_prehatch_sites", "ground_prehatch_acres", "wet_cb", "population",
+            "red_air_sites", "red_air_acres", "ground_prehatch_sites", "ground_prehatch_acres", "wet_cb", "population",
             "residents_per_sq_mi", RESIDENT_RATIO_COLS, "drive_min_from", "drive_min_to")
   empty <- as.data.frame(stats::setNames(rep(list(character(0)), length(cols)), cols),
                          stringsAsFactors = FALSE)
@@ -1064,6 +1110,7 @@ scenario_export_changes <- function(after, dm_before = NULL, dm_after = NULL) {
     moved = d$moved, fos_area_from = as.character(d$fosarea),
     ground_sites = d$ground_sites, ground_acres = round(d$ground_acres, 2),
     air_sites = d$air_sites, air_acres = round(d$air_acres, 2),
+    red_air_sites = d$red_air_sites, red_air_acres = round(d$red_air_acres, 2),
     ground_prehatch_sites = d$prehatch_sites,
     ground_prehatch_acres = round(d$prehatch_acres, 2),
     wet_cb = d$wet_cb, population = d_or_na(d$population),
@@ -1190,4 +1237,113 @@ drop_empty_population <- function(df) {
       all(is.na(df[[i]]) | df[[i]] == 0)
   }, logical(1))
   df[, !empty, drop = FALSE]
+}
+
+# -----------------------------------------------------------------------------
+# Facility positions: draggable dots on the What-If map, and Facility X
+# -----------------------------------------------------------------------------
+FACILITY_X <- "X"
+FACILITY_X_LABEL <- "Facility X (new)"
+FACILITY_X_COLOR <- "#111111"
+NO_FAC_POS <- data.frame(facility = character(), lon = numeric(), lat = numeric(),
+                         stringsAsFactors = FALSE)
+
+same_place <- function(lon1, lat1, lon2, lat2, tol = 1e-5) {
+  abs(lon1 - lon2) < tol & abs(lat1 - lat2) < tol
+}
+
+#' The dots to draw
+#' @param locations data.frame(facility, lon, lat), load_facility_locations()
+#' @param overrides data.frame(facility, lon, lat) of the facilities that were moved or pinned
+facility_positions <- function(locations, overrides = NO_FAC_POS) {
+  out <- data.frame(facility = as.character(locations$facility), lon = as.numeric(locations$lon),
+                    lat = as.numeric(locations$lat), moved = FALSE, stringsAsFactors = FALSE)
+  if (is.null(overrides) || nrow(overrides) == 0) return(out)
+  for (i in seq_len(nrow(overrides))) {
+    f <- as.character(overrides$facility[i]); j <- match(f, out$facility)
+    if (is.na(j)) {
+      out <- rbind(out, data.frame(facility = f, lon = overrides$lon[i], lat = overrides$lat[i],
+                                   moved = TRUE, stringsAsFactors = FALSE))
+    } else {
+      out$lon[j] <- overrides$lon[i]; out$lat[j] <- overrides$lat[i]; out$moved[j] <- TRUE
+    }
+  }
+  out
+}
+
+#' Straight-line rows for a facility at (lon, lat)
+#' @param geo data.frame(sectcode, lon, lat), the section centroids
+straight_times <- function(facility, lon, lat, geo) {
+  data.frame(facility = facility, sectcode = as.character(geo$sectcode),
+             drive_min_routed = NA_real_, drive_miles_routed = NA_real_, snap_m = NA_real_,
+             snap_flag = NA,
+             straight_miles = round(route_haversine_miles(lon, lat, geo$lon, geo$lat), 2),
+             stringsAsFactors = FALSE)
+}
+
+#' The routed lookup with each moved / pinned facility's rows replaced: 
+#' @param times     routed lookup (ROUTED_TIME_COLUMNS) or NULL
+#' @param overrides data.frame(facility, lon, lat)
+#' @param routes    list: facility -> list(lon, lat, times) of recalculated routes
+#' @param geo       data.frame(sectcode, lon, lat)
+effective_times <- function(times, overrides, routes = list(), geo) {
+  if (is.null(overrides) || nrow(overrides) == 0) return(times)
+  keep <- if (is.null(times)) NULL else times[!times$facility %in% overrides$facility, , drop = FALSE]
+  parts <- lapply(seq_len(nrow(overrides)), function(i) {
+    f <- as.character(overrides$facility[i]); r <- routes[[f]]
+    if (!is.null(r) && same_place(r$lon, r$lat, overrides$lon[i], overrides$lat[i])) {
+      r$times[, ROUTED_TIME_COLUMNS, drop = FALSE]
+    } else straight_times(f, overrides$lon[i], overrides$lat[i], geo)
+  })
+  out <- do.call(rbind, c(list(keep), parts))
+  rownames(out) <- NULL
+  out
+}
+
+#' The moved / pinned facilities whose drive times have not been recalculated for their current spot.
+facilities_needing_recalc <- function(overrides, routes = list()) {
+  if (is.null(overrides) || nrow(overrides) == 0) return(character(0))
+  need <- vapply(seq_len(nrow(overrides)), function(i) {
+    r <- routes[[as.character(overrides$facility[i])]]
+    is.null(r) || !same_place(r$lon, r$lat, overrides$lon[i], overrides$lat[i])
+  }, logical(1))
+  as.character(overrides$facility[need])
+}
+
+#' Point the section table's miles and routed columns at the facilities' effective times, for the
+#' sections that start in one of `facilities`.
+apply_facility_times <- function(sections, times, facilities) {
+  if (is.null(sections) || nrow(sections) == 0 || is.null(times) || length(facilities) == 0) return(sections)
+  rows <- which(sections$facility %in% facilities)
+  if (length(rows) == 0) return(sections)
+  idx <- match(paste(sections$facility[rows], sections$sectcode[rows]),
+               paste(times$facility, times$sectcode))
+  pick <- function(col) if (is.null(times[[col]])) rep(NA, length(rows)) else times[[col]][idx]
+  if ("miles" %in% names(sections)) {
+    m <- pick("straight_miles")
+    sections$miles[rows] <- ifelse(is.na(m), sections$miles[rows], round(m, 1))
+  }
+  for (col in c("drive_min_routed", "drive_miles_routed", "snap_m", "snap_flag")) {
+    if (col %in% names(sections)) sections[[col]][rows] <- pick(col)
+  }
+  sections
+}
+
+#' Saved facility positions of a decoded share state as data.frame(facility, lon, lat)
+#' @param valid the facility codes that may be restored (the offices and Facility X)
+share_state_fac_pos <- function(x, valid) {
+  rows <- x$fp
+  if (!is.list(rows) || length(rows) == 0) return(NO_FAC_POS)
+  num <- function(v, lo, hi) {
+    if (length(v) != 1 || is.list(v) || !is.numeric(v) || !is.finite(v) || v < lo || v > hi) NA_real_ else v
+  }
+  out <- lapply(rows, function(r) {
+    f <- as.character(.share_or(r$f, "")); lon <- num(r$lon, -180, 180); lat <- num(r$lat, -90, 90)
+    if (length(f) != 1 || !f %in% valid || is.na(lon) || is.na(lat)) return(NULL)
+    data.frame(facility = f, lon = lon, lat = lat, stringsAsFactors = FALSE)
+  })
+  out <- out[!vapply(out, is.null, logical(1))]
+  if (length(out) == 0) return(NO_FAC_POS)
+  out <- do.call(rbind, out)
+  out[!duplicated(out$facility, fromLast = TRUE), , drop = FALSE]
 }

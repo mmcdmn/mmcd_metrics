@@ -1320,9 +1320,9 @@ server <- function(input, output, session) {
     # the routing service (OSRM): the configured address, else the usual local ones
     url <- withProgress(message = "Connecting to the routing service", value = 0.2, find_osrm_url())
     if (!nzchar(url)) {
-      showNotification(sprintf(paste0("The routing service did not answer (tried %s), so the drive times stay a ",
-                                      "straight-line estimate. Start the routing service and press Recalculate ",
-                                      "drive times again."), paste(capacity_osrm_candidates(), collapse = ", ")),
+      showNotification(sprintf(paste0("The routing service could not be reached (tried %s).the moved facilities keep the straight-line ",
+                                      "estimate. Press Recalculate drive times again later."),
+                               paste(capacity_osrm_candidates(), collapse = ", ")),
                        type = "error", duration = NULL)
       return(invisible())
     }

@@ -1688,7 +1688,8 @@ test_that("the router address comes from OSRM_URL, else the config; empty means 
   Sys.setenv(OSRM_URL = "http://osrm:5000/")
   expect_equal(env$capacity_osrm_url(), "http://osrm:5000")                   # trailing slash trimmed
   Sys.unsetenv("OSRM_URL")
-  expect_type(env$capacity_osrm_url(), "character")                           # the config value ("" until set)
+  expect_type(env$capacity_osrm_url(), "character")                           # the config value
+  expect_equal(env$capacity_osrm_url(), "https://mmcd-osrm.alex-dyakin.com")   # the committed tunnel address
 })
 
 test_that("the build script uses the shared routing function (one copy of the OSRM request code)", {
@@ -1723,7 +1724,8 @@ test_that("the app wires the facility dots, Facility X, the pin and the recalcul
   expect_false(has("Facility X is pinned")); expect_false(has("Pin the location of Facility X"))
   # the Recalculate button is never hidden, and the dialog is always offered
   expect_false(has("nzchar(osrm_url)")); expect_false(has("routing service is not available"))
-  expect_true(has("find_osrm_url()")); expect_true(has("The routing service did not answer"))
+  expect_true(has("find_osrm_url()")); expect_true(has("The routing service could not be reached"))
+  expect_true(has("standard routed ")); expect_false(has("The routing service did not answer"))
   # none of the new inputs is a saved link setting (they are actions)
   expect_false(grepl("^\\s*(pin_again|fac_reset|fac_recalc)\\s*=\\s*list\\(input", app_src, perl = TRUE))
   cfg <- paste(readLines(file.path(root, "config", "app_config.yaml"), warn = FALSE), collapse = "\n")
@@ -1744,4 +1746,29 @@ test_that("the router is looked for at the usual addresses when none is configur
   expect_equal(length(seen), 2)                                                          # stops at the first that answers
   expect_equal(env$find_osrm_url(env$OSRM_DEFAULT_URLS, function(u, t) stop("down")), "")
   expect_equal(env$find_osrm_url("http://router:9", function(u, t) list(status = 503L, text = "")), "")
+})
+
+test_that("the key goes to a remote (https) router only, and never into a message", {
+  env <- new.env(); load_capacity_fns(env)
+  old <- Sys.getenv("API_KEYS", NA); on.exit(if (is.na(old)) Sys.unsetenv("API_KEYS") else Sys.setenv(API_KEYS = old))
+  Sys.unsetenv("API_KEYS")
+  expect_equal(env$osrm_api_key(), env$OSRM_DEFAULT_API_KEY)                              # the startup.sh default
+  expect_equal(env$osrm_api_key(), "mmcd-sheets-abc123xyz")
+  Sys.setenv(API_KEYS = " first , second ")
+  expect_equal(env$osrm_api_key(), "first")                                               # first value, trimmed
+  Sys.setenv(API_KEYS = "")
+  expect_equal(env$osrm_api_key(), env$OSRM_DEFAULT_API_KEY)
+  Sys.setenv(API_KEYS = "first,second")
+  h <- env$osrm_request_headers("https://mmcd-osrm.alex-dyakin.com")
+  expect_equal(names(h), "X-API-Key"); expect_equal(unname(h), "first")
+  expect_equal(unname(env$osrm_request_headers("HTTPS://router.example")), "first")       # scheme is case-blind
+  for (u in c("http://host.docker.internal:5000", "http://localhost:5000", "http://osrm:5000", ""))
+    expect_length(env$osrm_request_headers(u), 0)                                         # local routers: no header
+  # the key must not leak through the errors the planner shows or logs
+  Sys.setenv(API_KEYS = "SECRETKEY123")
+  bad <- function(u, t) list(status = 401L, text = '{"code":"Unauthorized"}')
+  msg <- tryCatch(env$osrm_route_facility(list(lon = -93, lat = 44), data.frame(sectcode = "190100001", lon = -93.1, lat = 44.1),
+                                          "https://router.example", http_get = bad), error = function(e) conditionMessage(e))
+  expect_match(msg, "401"); expect_false(grepl("SECRETKEY123", msg, fixed = TRUE))
+  expect_equal(env$find_osrm_url("https://router.example", bad), "")                      # a 401 is "not reachable", no key shown
 })

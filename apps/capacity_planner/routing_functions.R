@@ -1,15 +1,5 @@
 # Road routing for the capacity planner (OSRM, OpenStreetMap roads)
 # =============================================================================
-# One facility location -> every section centroid: driving time and road distance.
-# Shared by scripts/build_drivetimes.R (the committed lookup of the six offices) and by the
-# What-If planner, which recalculates it on request when a facility dot is moved or Facility X is
-# pinned. No database and no Shiny in here.
-#
-# The router is an OSRM service running the Minnesota OpenStreetMap extract (setup commands are in
-# scripts/build_drivetimes.R). The app finds it through the OSRM_URL environment variable or
-# capacity_planner.osrm_url in config/app_config.yaml; with neither,
-# the planner looks for a router at the default addresses (OSRM_DEFAULT_URLS) and, when none answers, says
-# so and keeps its straight-line estimate for the moved facility.
 
 OSRM_CHUNK_SIZE <- 400          # destinations per /table request (the server's max-table-size is 2000)
 OSRM_SNAP_FLAG_M <- 1000        # a centroid snapped further than this to a road is flagged
@@ -42,7 +32,7 @@ capacity_osrm_url <- function() {
 
 # Where the router is looked for when nothing is configured: from inside the dashboard container the
 # machine's own OSRM (Docker Desktop's host.docker.internal), a router run directly on this machine, and
-# a compose service called "osrm" (apps/capacity_planner/osrm/docker-compose.yml).
+# a compose service called "osrm".
 OSRM_DEFAULT_URLS <- c("http://host.docker.internal:5000", "http://localhost:5000", "http://osrm:5000")
 
 #' The addresses to try: the configured one only when there is one (it wins and is not second-guessed),
@@ -51,9 +41,24 @@ capacity_osrm_candidates <- function(configured = capacity_osrm_url()) {
   if (nzchar(configured)) configured else OSRM_DEFAULT_URLS
 }
 
+OSRM_DEFAULT_API_KEY <- "mmcd-sheets-abc123xyz"
+
+osrm_api_key <- function() {
+  keys <- trimws(unlist(strsplit(Sys.getenv("API_KEYS", ""), ",", fixed = TRUE)))
+  keys <- keys[nzchar(keys)]
+  if (length(keys)) keys[[1]] else OSRM_DEFAULT_API_KEY
+}
+
+#' Headers to send to the router at `url`: the key for https, nothing for a local http router.
+osrm_request_headers <- function(url) {
+  if (grepl("^https://", url, ignore.case = TRUE)) c("X-API-Key" = osrm_api_key()) else character(0)
+}
+
 # HTTP GET behind a small interface so tests can stand in for the router
 .osrm_http_get <- function(url, timeout_s = 120) {
-  r <- httr::GET(url, httr::timeout(timeout_s))
+  h <- osrm_request_headers(url)
+  r <- if (length(h)) httr::GET(url, httr::timeout(timeout_s), httr::add_headers(.headers = h))
+       else httr::GET(url, httr::timeout(timeout_s))
   list(status = httr::status_code(r), text = httr::content(r, "text", encoding = "UTF-8"))
 }
 

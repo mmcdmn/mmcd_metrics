@@ -21,37 +21,34 @@ route_haversine_miles <- function(lon1, lat1, lon2, lat2) {
 capacity_osrm_url <- function() {
   u <- Sys.getenv("OSRM_URL", "")
   if (!nzchar(u)) {
-    if (!exists("get_app_config", mode = "function") && file.exists("../../shared/config.R")) {
-      source("../../shared/config.R")
-    }
-    cfg <- tryCatch(get_app_config()$capacity_planner$osrm_url, error = function(e) NULL)
+    cfg <- .capacity_config()$capacity_planner$osrm_url
     u <- if (is.character(cfg) && length(cfg) == 1 && !is.na(cfg)) cfg else ""
   }
   sub("/+$", "", trimws(u))
 }
 
-# Where the router is looked for when nothing is configured: from inside the dashboard container the
-# machine's own OSRM (Docker Desktop's host.docker.internal), a router run directly on this machine, and
-# a compose service called "osrm".
-OSRM_DEFAULT_URLS <- c("http://host.docker.internal:5000", "http://localhost:5000", "http://osrm:5000")
-
-#' The addresses to try: the configured one only when there is one (it wins and is not second-guessed),
-#' otherwise the defaults.
-capacity_osrm_candidates <- function(configured = capacity_osrm_url()) {
-  if (nzchar(configured)) configured else OSRM_DEFAULT_URLS
+# config/app_config.yaml as a list (shared/config.R is loaded on demand); an empty list when unavailable
+.capacity_config <- function() {
+  if (!exists("get_app_config", mode = "function") && file.exists("../../shared/config.R")) {
+    source("../../shared/config.R")
+  }
+  cfg <- tryCatch(get_app_config(), error = function(e) NULL)
+  if (is.list(cfg)) cfg else list()
 }
 
-OSRM_DEFAULT_API_KEY <- "mmcd-sheets-abc123xyz"
 
-osrm_api_key <- function() {
-  keys <- trimws(unlist(strsplit(Sys.getenv("API_KEYS", ""), ",", fixed = TRUE)))
+osrm_api_key <- function(config = .capacity_config()) {
+  raw <- config$api_keys
+  if (!(is.character(raw) && length(raw) == 1 && !is.na(raw) && nzchar(trimws(raw)))) raw <- Sys.getenv("API_KEYS", "")
+  keys <- trimws(unlist(strsplit(raw, ",", fixed = TRUE)))
   keys <- keys[nzchar(keys)]
-  if (length(keys)) keys[[1]] else OSRM_DEFAULT_API_KEY
+  if (length(keys)) keys[[1]] else ""
 }
 
 #' Headers to send to the router at `url`: the key for https, nothing for a local http router.
-osrm_request_headers <- function(url) {
-  if (grepl("^https://", url, ignore.case = TRUE)) c("X-API-Key" = osrm_api_key()) else character(0)
+osrm_request_headers <- function(url, config = .capacity_config()) {
+  key <- osrm_api_key(config)
+  if (nzchar(key) && grepl("^https://", url, ignore.case = TRUE)) c("X-API-Key" = key) else character(0)
 }
 
 # HTTP GET behind a small interface so tests can stand in for the router
@@ -60,20 +57,6 @@ osrm_request_headers <- function(url) {
   r <- if (length(h)) httr::GET(url, httr::timeout(timeout_s), httr::add_headers(.headers = h))
        else httr::GET(url, httr::timeout(timeout_s))
   list(status = httr::status_code(r), text = httr::content(r, "text", encoding = "UTF-8"))
-}
-
-#' Is the router answering? (a tiny route request)
-osrm_reachable <- function(osrm_url, http_get = .osrm_http_get, timeout_s = 5) {
-  if (!nzchar(osrm_url)) return(FALSE)
-  r <- tryCatch(http_get(paste0(osrm_url, "/route/v1/driving/-93.2650,44.9778;-93.0900,44.9537?overview=false"),
-                         timeout_s), error = function(e) NULL)
-  !is.null(r) && identical(as.integer(r$status), 200L)
-}
-
-#' The first address that answers, or "" when none does.
-find_osrm_url <- function(candidates = capacity_osrm_candidates(), http_get = .osrm_http_get, timeout_s = 3) {
-  for (u in candidates) if (osrm_reachable(u, http_get, timeout_s)) return(u)
-  ""
 }
 
 # One /table request: `origin` (lon, lat) to the rows of `dests`
@@ -107,7 +90,7 @@ find_osrm_url <- function(candidates = capacity_osrm_candidates(), http_get = .o
 #' @return data.frame(ROUTED_TIME_COLUMNS): one row per destination; a destination the router
 #'   cannot reach has NA minutes / miles
 osrm_route_facility <- function(origin, dests, osrm_url, chunk_size = OSRM_CHUNK_SIZE,
-                                http_get = .osrm_http_get, timeout_s = 120) {
+                                http_get = .osrm_http_get, timeout_s = 30) {
   if (!nzchar(osrm_url)) stop("No routing service is configured")
   lon <- as.numeric(origin$lon); lat <- as.numeric(origin$lat)
   if (length(lon) != 1 || length(lat) != 1 || !is.finite(lon) || !is.finite(lat) ||

@@ -8,13 +8,6 @@
 # INTERNAL PORT: 9000 (never exposed externally)
 # EXTERNAL URL:  https://metrics.mmcd.org/v1/...
 #
-# ─── CHANGING THE API KEY ────────────────────────────────────────────────────
-# The key is set via the API_KEYS environment variable.
-# Default placeholder is written in startup.sh — search that file for:
-#   API_KEYS=
-# Change it there, then rebuild the container.
-# For production you should pass it as a Docker/AWS env var instead of
-# hardcoding it in startup.sh.
 #
 # ─── ROUTES ──────────────────────────────────────────────────────────────────
 # Public  (no key):  GET /v1/public/health

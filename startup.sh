@@ -32,10 +32,13 @@ echo "CARTO_API_KEY=${CARTO_API_KEY}" >> /srv/shiny-server/.env
 # Routing service (OSRM)
 echo "OSRM_URL=${OSRM_URL:-}" >> /srv/shiny-server/.env
 
-# ─────────────────────────────────────────────────────────────────────────────
-# API KEY — used by the Plumber REST API to protect private endpoints.
-# ─────────────────────────────────────────────────────────────────────────────
-echo "API_KEYS=${API_KEYS:-mmcd-sheets-abc123xyz}" >> /srv/shiny-server/.env
+#api keys for API.
+API_KEYS="$(sed -n 's/^api_keys:[[:space:]]*"\([^"]*\)".*/\1/p' /srv/shiny-server/config/app_config.yaml 2>/dev/null | head -n 1 | tr -d '\r')"
+export API_KEYS
+if [ -z "$API_KEYS" ]; then
+    echo "WARNING: api_keys is missing in config/app_config.yaml - every private API request will be rejected"
+fi
+echo "API_KEYS=${API_KEYS}" >> /srv/shiny-server/.env
 
 # Write runtime mode so R apps know the actual deployment state
 echo "ENABLE_NGINX=${ENABLE_NGINX:-false}" >> /srv/shiny-server/.env

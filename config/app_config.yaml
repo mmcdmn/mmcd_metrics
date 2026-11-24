@@ -4,6 +4,9 @@
 # Changes to this file take effect on next app restart (or cache clear).
 # =============================================================================
 
+# API KEY(S) 
+api_keys: "mmcd-sheets-abc123xyz"
+
 
 # =============================================================================
 # CACHE TTL SETTINGS (seconds)

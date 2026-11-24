@@ -1317,31 +1317,33 @@ server <- function(input, output, session) {
     if (length(need) == 0) return(invisible())
     geo <- tryCatch(wi_geo_df(), error = function(e) NULL)
     if (is.null(geo)) return(invisible())
-    # the routing service (OSRM): the configured address, else the usual local ones
-    url <- withProgress(message = "Connecting to the routing service", value = 0.2, find_osrm_url())
+    # the routing service (OSRM): ONE address, OSRM_URL else capacity_planner.osrm_url in the config
+    url <- capacity_osrm_url()
     if (!nzchar(url)) {
-      showNotification(sprintf(paste0("The routing service could not be reached (tried %s). The moved facilities keep the straight-line ",
-                                      "estimate. Press Recalculate drive times again later."),
-                               paste(capacity_osrm_candidates(), collapse = ", ")),
-                       type = "error", duration = NULL)
+      showNotification(paste0("No routing service address is set (osrm_url in config/app_config.yaml), so the moved ",
+                              "facilities keep the straight-line estimate."), type = "error", duration = NULL)
       return(invisible())
     }
-    routes <- fac_routes()
+    routes <- fac_routes(); failed <- FALSE
     withProgress(message = "Recalculating drive times on the road network", value = 0, {
       for (f in need) {
         o <- ov[ov$facility == f, , drop = FALSE]
         res <- tryCatch(osrm_route_facility(list(facility = f, lon = o$lon, lat = o$lat), geo, url),
                         error = function(e) e)
-        if (inherits(res, "error")) {
-          message("[capacity_planner] route recalculation failed for ", f, ": ", conditionMessage(res))
-          showNotification(sprintf("Could not recalculate the drive times from %s; the straight-line estimate stays.",
-                                   fac_label(f)), type = "error", duration = 10)
-          next
+        if (inherits(res, "error")) {              # the router answers every facility alike: stop at the first failure
+          message("[capacity_planner] route recalculation failed for ", f, " via ", url, ": ", conditionMessage(res))
+          failed <- TRUE
+          break
         }
         routes[[f]] <- list(lon = o$lon, lat = o$lat, times = res)
         incProgress(1 / length(need), detail = fac_label(f))
       }
     })
+    if (failed) {
+      showNotification(sprintf(paste0("The routing service could not be reached (tried %s). The moved facilities keep the ",
+                                      "straight-line estimate. Press Recalculate drive times again later."), url),
+                       type = "error", duration = NULL)
+    }
     fac_routes(routes)
   }
   observeEvent(input$wi_fac_moved, {

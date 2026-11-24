@@ -35,11 +35,13 @@ osrm_url   <- if (length(args) >= 1) args[1] else "http://localhost:5000"
 osm_label  <- if (length(args) >= 2) args[2] else "geofabrik minnesota-latest"
 out_path   <- "apps/capacity_planner/data/facility_section_drivetime.csv"
 locations_path <- "apps/capacity_planner/data/facility_locations.csv"
-chunk_size <- 400          # destinations per OSRM table request (server max-table-size is 2000)
-snap_flag_m <- 1000
+snap_flag_m <- 1000        # (the routing code flags a centroid snapped further than this)
 
 if (!file.exists("shared/db_helpers.R")) stop("Run from the project root (mmcd_metrics/).")
 source("shared/db_helpers.R")
+# The routing request itself lives in routing_functions.R: the What-If planner uses the same code to
+# recalculate drive times when a facility dot is moved or Facility X is pinned.
+source("apps/capacity_planner/routing_functions.R")
 
 # ---- Inputs from the database ----------------------------------------------
 con <- get_db_connection()
@@ -79,45 +81,17 @@ chk <- tryCatch(GET(paste0(osrm_url, "/route/v1/driving/-93.2650,44.9778;-93.090
                 error = function(e) NULL)
 if (is.null(chk) || status_code(chk) != 200) stop("OSRM router not reachable at ", osrm_url)
 
-# Straight-line miles (haversine), for the straight-line fallback of a moved section
-haversine_mi <- function(lon1, lat1, lon2, lat2) {
-  rad <- pi / 180
-  a <- sin((lat2 - lat1) * rad / 2)^2 +
-    cos(lat1 * rad) * cos(lat2 * rad) * sin((lon2 - lon1) * rad / 2)^2
-  2 * 3958.7613 * asin(pmin(1, sqrt(a)))
-}
-
 # ---- Route each facility office -> each section centroid -----------------
-route_chunk <- function(origin, dests) {
-  coords <- c(sprintf("%.6f,%.6f", origin$lon, origin$lat),
-              sprintf("%.6f,%.6f", dests$lon, dests$lat))
-  url <- sprintf("%s/table/v1/driving/%s?sources=0&destinations=%s&annotations=duration,distance",
-                 osrm_url, paste(coords, collapse = ";"),
-                 paste(seq_len(nrow(dests)), collapse = ";"))
-  r <- GET(url, timeout(120))
-  if (status_code(r) != 200) stop("OSRM table request failed: HTTP ", status_code(r), " ", substr(content(r, "text"), 1, 200))
-  j <- fromJSON(content(r, "text", encoding = "UTF-8"))
-  if (!identical(j$code, "Ok")) stop("OSRM error: ", j$code)
-  data.frame(
-    drive_min   = round(as.numeric(j$durations[1, ]) / 60, 1),
-    drive_miles = round(as.numeric(j$distances[1, ]) / 1609.344, 2),
-    snap_m      = round(as.numeric(j$destinations$distance), 0)
-  )
-}
-
 res <- list()
 for (f in fac$facility) {
-  s <- sec                                   # every section, from every facility
-  origin <- fac[fac$facility == f, ]
-  idx <- split(seq_len(nrow(s)), ceiling(seq_len(nrow(s)) / chunk_size))
-  parts <- lapply(idx, function(i) route_chunk(origin, s[i, ]))
-  r <- cbind(facility = f, sectcode = s$sectcode, do.call(rbind, parts))
-  r$straight_miles <- round(haversine_mi(origin$lon, origin$lat, s$lon, s$lat), 2)
+  # every section, from every facility (osrm_route_facility: one /table request per 400 sections)
+  r <- osrm_route_facility(fac[fac$facility == f, ], sec, osrm_url)
+  names(r)[names(r) == "drive_min_routed"]   <- "drive_min"       # the committed CSV's column names
+  names(r)[names(r) == "drive_miles_routed"] <- "drive_miles"
   res[[f]] <- r
   cat(sprintf("  %-3s %4d sections routed\n", f, nrow(r)))
 }
 out <- do.call(rbind, res)
-out$snap_flag <- !is.na(out$snap_m) & out$snap_m > snap_flag_m
 out$built     <- as.character(Sys.Date())
 out$osm_extract <- osm_label
 out <- out[order(out$facility, out$sectcode), ]

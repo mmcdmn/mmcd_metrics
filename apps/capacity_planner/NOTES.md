@@ -17,7 +17,7 @@ build 5-year border-to-border plans and estimate staffing to move P2 areas into 
 ## R-Side Logic (`data_functions.R`)
 
 - **`load_capacity_sections()`** — section grain (one row per `gis_sectcode`), with
-  ground/air/prehatch site counts **and acres** (`ground_acres`, `air_acres`,
+  ground/air/RED air/prehatch site counts **and acres** (`ground_acres`, `air_acres`, `red_air_acres`,
   `prehatch_acres`; every site count has an acres partner; from `loc_breeding_sites`, joined
   `LEFT(sitecode,7)=sectcode`, `enddate IS NULL`), wet catch basins
   (`status_udw='W'`, `lettergrp<>'Z'`), and straight-line **miles** from the office

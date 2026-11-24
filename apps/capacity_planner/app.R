@@ -23,6 +23,7 @@ source("../../shared/db_helpers.R")
 source("../../shared/accessibility_helpers.R")
 source("../../shared/url_state_helpers.R")  # deep-linking engine
 source("data_functions.R")
+source("routing_functions.R")
 source("display_functions.R")
 
 set_app_name("capacity_planner")
@@ -38,6 +39,8 @@ METRIC_CHOICES <- c(
   "Ground acres"   = "ground_acres",
   "Air sites"      = "air_sites",
   "Air acres"      = "air_acres",
+  "RED air sites"  = "red_air_sites",
+  "RED air acres"  = "red_air_acres",
   "Ground prehatch sites" = "prehatch_sites",
   "Ground prehatch acres" = "prehatch_acres",
   "Sections"       = "sections",
@@ -85,7 +88,7 @@ ui <- accessible_page(
       .dataTables_wrapper .dataTables_filter, .dataTables_wrapper .dataTables_length,
       .dataTables_wrapper .dataTables_info { float:none; text-align:left; }
       .dataTables_wrapper .dataTables_paginate { float:none; text-align:center; }
-      #wi_map { height:320px !important; }
+      #wi_map { height:400px !important; }
     }
     /* DataTables' default selected row is white text on a mid blue (4.2:1, fails WCAG AA); a clicked
        facility row (the FOS drill-down) uses a light highlight with dark text instead. html:root
@@ -97,6 +100,15 @@ ui <- accessible_page(
     #wi_a_table.recalculating, #wi_a_fos.recalculating, #wi_crew_by_job.recalculating,
     #wi_crew_fac.recalculating, #wi_selcount.recalculating, #wi_a_summary.recalculating,
     #wi_crew_summary.recalculating { opacity:1 !important; }
+    /* Facility dots on the What-If map: a coloured dot with the facility letters; a moved one is ringed */
+    .wi-fac-icon { background:transparent; border:0; }
+    .wi-fac-dot { display:block; width:22px; height:22px; border-radius:50%; border:3px solid #fff;
+                  box-shadow:0 0 0 2px #111; cursor:grab; }
+    .wi-fac-moved .wi-fac-dot { box-shadow:0 0 0 2px #111, 0 0 0 5px #fff, 0 0 0 7px #111; }
+    .wi-fac-lbl { position:absolute; left:26px; top:2px; background:#fff; color:#111; border:1px solid #111;
+                  border-radius:3px; padding:0 4px; font:700 12px/16px Arial, sans-serif; white-space:nowrap; }
+    .leaflet-marker-icon.wi-fac-icon:focus { outline:3px solid #2c5aa0; outline-offset:3px; }
+    #wi_map.wi-pin-mode, #wi_map.wi-pin-mode .leaflet-interactive { cursor:crosshair !important; }
   "))),
   url_state_js(),  # deep-linking client glue (shared)
   tags$script(HTML("
@@ -160,6 +172,48 @@ ui <- accessible_page(
       });
     }
     $(function() { new MutationObserver(wiLocalTimes).observe(document.body, {childList: true, subtree: true}); });
+    // Dialogs (the recalculate prompt): a labelled modal dialog for screen readers, and its content
+    // counts as inside a landmark for the accessibility check
+    $(document).on('shown.bs.modal', '.modal', function() {
+      var m = $(this), t = m.find('.modal-title').first();
+      if (t.length && !t.attr('id')) { t.attr('id', 'modal-title-' + new Date().getTime()); }
+      m.attr({role: 'dialog', 'aria-modal': 'true'});
+      if (t.attr('id')) { m.attr('aria-labelledby', t.attr('id')); }
+    });
+    // Facility dots (draggable) on the What-If map. The last list is kept so a re-built map gets them back.
+    window.wiFacItems = []; window.wiFacMarkers = {};
+    window.wiFacDraw = function(tries) {
+      var w = window.HTMLWidgets && HTMLWidgets.find('#wi_map');
+      var map = w && w.getMap && w.getMap();
+      if (!map || !window.L) { if ((tries || 0) < 40) { setTimeout(function() { window.wiFacDraw((tries || 0) + 1); }, 250); } return; }
+      var keep = {};
+      (window.wiFacItems || []).forEach(function(d) {
+        keep[d.fac] = true;
+        var icon = L.divIcon({className: 'wi-fac-icon' + (d.moved ? ' wi-fac-moved' : ''),
+          html: '<span class=\"wi-fac-dot\" style=\"background:' + d.color + '\"></span><span class=\"wi-fac-lbl\">' + d.label + '</span>',
+          iconSize: [26, 26], iconAnchor: [13, 13]});
+        var mk = window.wiFacMarkers[d.fac];
+        if (mk && mk._map === map) {
+          mk.setLatLng([d.lat, d.lon]); mk.setIcon(icon); mk.options.title = d.title;
+        } else {
+          mk = L.marker([d.lat, d.lon], {icon: icon, draggable: true, keyboard: true, title: d.title, zIndexOffset: 1000}).addTo(map);
+          window.wiFacMarkers[d.fac] = mk;
+          (function(fac) {
+            mk.on('dragend', function() {
+              var p = this.getLatLng();
+              if (window.Shiny && Shiny.setInputValue) {
+                Shiny.setInputValue('wi_fac_moved', {fac: fac, lat: p.lat, lon: p.lng, nonce: Math.random()}, {priority: 'event'});
+              }
+            });
+          })(d.fac);
+        }
+        var el = mk.getElement();
+        if (el) { el.setAttribute('aria-label', d.title); el.setAttribute('title', d.title); }
+      });
+      Object.keys(window.wiFacMarkers).forEach(function(k) {
+        if (!keep[k]) { window.wiFacMarkers[k].remove(); delete window.wiFacMarkers[k]; }
+      });
+    };
     // Restyle only the changed sections on the What-If map (no redraw of every polygon)
     function wiRestyle(m, tries) {
       var w = window.HTMLWidgets && HTMLWidgets.find('#wi_map');
@@ -186,6 +240,16 @@ ui <- accessible_page(
         window.wiSel = [].concat(m || []); window.wiApplySel();
       });
       Shiny.addCustomMessageHandler('wi_restyle', function(m) { wiRestyle(m, 0); });
+      Shiny.addCustomMessageHandler('wi_fac_dots', function(m) {
+        window.wiFacItems = [].concat(m.items || []); window.wiFacDraw(0);
+      });
+      Shiny.addCustomMessageHandler('wi_pin_mode', function(m) {
+        var el = document.getElementById('wi_map');
+        if (el) { el.classList.toggle('wi-pin-mode', !!m.on); }
+        var b = document.getElementById('pin_again');
+        if (b) { b.classList.toggle('btn-primary', !!m.on); b.classList.toggle('btn-default', !m.on);
+                 b.setAttribute('aria-pressed', m.on ? 'true' : 'false'); }
+      });
       Shiny.addCustomMessageHandler('wi_staff_set', function(m) {
         window.wiStaffFac = m.fac; window.wiStaffPushing = true;
         try {
@@ -367,8 +431,20 @@ ui <- accessible_page(
       wellPanel(
         fluidRow(
           column(4, selectInput("wi_move_to", "Move sections to:",
-                                choices = c("Keep facility" = "keep")))
+                                choices = c("Keep facility" = "keep"))),
+          column(4, selectInput("quick_town", "Quick add a township:",
+                                choices = c("Pick a township" = "")))
         ),
+        tags$p(class = "metric-note", style = "margin:-4px 0 8px;",
+               "Quick add promotes every P2 section of the township to P1 and, when a facility is ",
+               "chosen under Move sections to, moves the whole township to that facility. Pick the ",
+               "same township again to undo it."),
+        conditionalPanel(
+          "input.wi_move_to == 'X'",
+          div(style = "margin:0 0 8px;",
+              actionButton("pin_again", "Pin Facility X", class = "btn-default btn-sm",
+                           `aria-describedby` = "pin_hint"),
+              tags$span(id = "pin_hint", class = "sr-only", "Then click the map where Facility X should go."))),
         div(style = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;",
           actionButton("wi_undo", "Reset scenario", class = "btn-default btn-sm"),
           dl_btn("dl_wi_sections", "Download changed sections (CSV)"),
@@ -390,10 +466,12 @@ ui <- accessible_page(
                "Fill shows 2020 census residents (people living in each section). The outline keeps ",
                "the facility color; a solid outline is P1 and a dashed one is P2. Residents are ",
                "shown for information and do not change the staffing estimates.")),
+      uiOutput("wi_pos_note"),
       a11y_figure(
-        leaflet::leafletOutput("wi_map", height = 440),
+        leaflet::leafletOutput("wi_map", height = 640),
         label = paste("Map of all priority 1 and priority 2 sections, colored by facility or,",
-                      "when chosen, shaded by 2020 census residents.",
+                      "when chosen, shaded by 2020 census residents. A draggable dot marks each",
+                      "facility office and Facility X once it is pinned.",
                       "Click or tap a section to promote it to P1 and again to undo it, or tick",
                       "sections in the section list below.")),
       tags$p(class = "metric-note", style = "margin:6px 0;",
@@ -412,10 +490,7 @@ ui <- accessible_page(
       hr(),
       h4("2. What changed"),
       tags$p(class = "metric-note",
-        "Added to P1, by facility, with the median one-way drive minutes to the current P1 ",
-        "sections and to the added ones, and their ratio (above 1 = the added sections are ",
-        "farther away, so more driving). A move shows as + at the facility that receives the sections and - at ",
-        "the one that gives them up. Click a facility row, or pick it below, to see its FOS areas."),
+        " "),
       fluidRow(
         column(3, checkboxInput("wi_travel", "Include travel time", TRUE)),
         column(5, conditionalPanel(
@@ -646,6 +721,7 @@ server <- function(input, output, session) {
   # "check your logs" error until the page was reloaded, so a failed load is
   # reported (banner + log line) and retried via the button instead.
   base <- reactiveVal(NULL)
+  town_df <- reactiveVal(NULL)       # town code -> name (for the township quick add)
   load_failed <- reactiveVal(FALSE)
   load_nonce  <- reactiveVal(0)
   routed_available <- reactiveVal(FALSE)
@@ -734,8 +810,14 @@ server <- function(input, output, session) {
                       choices = c("All facilities" = "all", fac_choices))
     updateSelectInput(session, "wi_facility", choices = fac_choices,
                       selected = facs[1])
-    updateSelectInput(session, "wi_move_to", choices = c("Keep facility" = "keep", fac_choices))
-    updateSelectInput(session, "wi_drill", choices = c("Pick a facility" = "", fac_choices))
+    fac_x <- setNames(FACILITY_X, FACILITY_X_LABEL)          # a facility that does not exist yet
+    updateSelectInput(session, "wi_move_to", choices = c("Keep facility" = "keep", fac_choices, fac_x))
+    updateSelectInput(session, "wi_drill", choices = c("Pick a facility" = "", fac_choices, fac_x))
+
+    towns <- tryCatch(capacity_cached("towns", load_town_names, ttl = 7L * 86400L)$data,
+                      error = function(e) NULL)
+    town_df(towns)
+    updateSelectInput(session, "quick_town", choices = town_choices(sections, towns), selected = "")
     # Jobs/site season selector: last complete year default, choices last 6 yrs
     cur_yr <- as.integer(format(Sys.Date(), "%Y"))
     yrs <- as.character(seq(cur_yr, cur_yr - 5))
@@ -988,6 +1070,9 @@ server <- function(input, output, session) {
               p1_air_sites = "P1 Air sites", air_sites_per_tech = "Air sites/tech",
               p1_air_acres = "P1 Air acres", air_acres_per_tech = "Air acres/tech",
               air_acres_per_crew = "Air acres/crew",
+              p1_red_air_sites = "P1 RED air sites", red_air_sites_per_tech = "RED air sites/tech",
+              p1_red_air_acres = "P1 RED air acres", red_air_acres_per_tech = "RED air acres/tech",
+              red_air_acres_per_crew = "RED air acres/crew",
               p1_ph_sites = "P1 Ground prehatch sites", ph_sites_per_tech = "Ground prehatch sites/tech",
               p1_ph_acres = "P1 Ground prehatch acres", ph_acres_per_tech = "Ground prehatch acres/tech",
               ph_acres_per_crew = "Ground prehatch acres/crew")
@@ -1009,6 +1094,8 @@ server <- function(input, output, session) {
     p1$ground_acres_per_tech <- pt(p1$ground_acres)
     p1$air_per_tech <- pt(p1$air_sites)
     p1$air_acres_per_tech <- pt(p1$air_acres)
+    p1$red_air_per_tech <- pt(p1$red_air_sites)
+    p1$red_air_acres_per_tech <- pt(p1$red_air_acres)
     p1$sections_per_tech <- pt(p1$sections)
     p1$wetcb_per_tech <- pt(p1$wet_cb)
     s <- staff()
@@ -1017,10 +1104,12 @@ server <- function(input, output, session) {
     disp <- p1[, c("facility_name", "fos_name", "n_techs", "fos_in_facility",
                    "ground_sites", "ground_per_tech", "ground_acres", "ground_acres_per_tech",
                    "air_sites", "air_per_tech", "air_acres", "air_acres_per_tech",
+                   "red_air_sites", "red_air_per_tech", "red_air_acres", "red_air_acres_per_tech",
                    "sections", "sections_per_tech", "wet_cb", "wetcb_per_tech")]
     names(disp) <- c("Facility", "FOS", "Techs", "FOS in facility",
                      "P1 Ground sites", "Ground sites/tech", "P1 Ground acres", "Ground acres/tech",
                      "P1 Air sites", "Air sites/tech", "P1 Air acres", "Air acres/tech",
+                     "P1 RED air sites", "RED air sites/tech", "P1 RED air acres", "RED air acres/tech",
                      "P1 Sections", "Sections/tech", "P1 Wet CB", "Wet CB/tech")
     disp
   })
@@ -1037,6 +1126,17 @@ server <- function(input, output, session) {
                            to_zone = character(), stringsAsFactors = FALSE)
   changes <- reactiveVal(no_changes)
   wi_msg <- reactiveVal("")
+
+  # ---- Facility dots: positions, Facility X, recalculated drive times -----------------
+  # The dots start at the offices. A moved dot (or the pinned Facility X) is kept in fac_pos();
+  # drive times from it are a straight-line estimate until the user recalculates them on the
+  # road network (fac_routes), which needs the routing service (OSRM) the app is configured with.
+  fac_locs   <- tryCatch(load_facility_locations(), error = function(e) NULL)
+  fac_pos    <- reactiveVal(NO_FAC_POS)       # moved / pinned facilities only
+  fac_routes <- reactiveVal(list())           # facility -> list(lon, lat, times), recalculated on request
+  pin_mode   <- reactiveVal(FALSE)            # the next map click pins Facility X
+  fac_known  <- function() c(fac_locs$facility, FACILITY_X)
+  fac_label  <- function(f) if (identical(f, FACILITY_X)) "Facility X" else paste("Facility", f)
 
   # ---- Shared scenarios (a link carries the whole scenario in its `s` parameter) ----
   # expand_share() runs once when the page opens from a link (shared/url_state_helpers.R):
@@ -1059,8 +1159,9 @@ server <- function(input, output, session) {
     if (!isTRUE(un$ok)) { shared_info(list(status = un$reason, date = date)); return(state) }
     changes(un$changes)
     staff(share_state_staff(x, isolate(staff())))
+    fac_pos(share_state_fac_pos(x, fac_known())); fac_routes(list())      # moved dots / Facility X
     restore_view(share_state_view(x))
-    a <- scenario_apply(b$sections, un$changes, b$times)
+    a <- scenario_apply(b$sections, un$changes, b$times, facilities = c(unique(b$sections$facility), FACILITY_X))
     zone <- as.character(b$sections$zone)
     num <- function(v) if (length(v) == 1 && is.numeric(v)) v else NA_real_
     then_changed <- !is.na(num(x$d$p1)) && (num(x$d$p1) != sum(zone == "1") || num(x$d$p2) != sum(zone == "2"))
@@ -1094,15 +1195,36 @@ server <- function(input, output, session) {
     settings <- lapply(setNames(SHARE_SETTING_IDS, SHARE_SETTING_IDS), function(id) input[[id]])
     ctr <- input$wi_map_center; zm <- input$wi_map_zoom
     view <- if (!is.null(ctr) && !is.null(zm)) list(lat = ctr$lat, lng = ctr$lng, z = zm) else NULL
-    st <- scenario_share_state(changes(), b$sections, settings, staff(), view)
+    st <- scenario_share_state(changes(), b$sections, settings, staff(), view, fac_pos = fac_pos())
     session$sendCustomMessage("wi_share_link", list(token = share_token_encode(st)))
   })
 
   # Section table with the scenario applied (facility / zone hold the NEW values,
   # facility_from / zone_from the original ones; row order matches base()$sections)
-  wi_after <- reactive({
+  # Section centroids (for routing and for pinning), the facilities a section can move to, and the
+  # section table / routed lookup with any moved facility dot applied
+  wi_geo_df <- reactive({
+    g <- geo_raw(); req(g)
+    data.frame(sectcode = as.character(g$sectcode), lon = g$lon, lat = g$lat, stringsAsFactors = FALSE)
+  })
+  wi_facs <- reactive({
     b <- base(); req(b)
-    scenario_apply(b$sections, changes(), b$times)
+    c(unique(b$sections$facility), FACILITY_X)
+  })
+  wi_times <- reactive({
+    b <- base(); req(b)
+    ov <- fac_pos()
+    if (nrow(ov) == 0) return(b$times)
+    effective_times(b$times, ov, fac_routes(), wi_geo_df())
+  })
+  wi_sections <- reactive({
+    b <- base(); req(b)
+    ov <- fac_pos()
+    if (nrow(ov) == 0) return(b$sections)
+    apply_facility_times(b$sections, wi_times(), ov$facility)
+  })
+  wi_after <- reactive({
+    scenario_apply(wi_sections(), changes(), wi_times(), facilities = wi_facs())
   })
 
   # One-way drive minutes for each section at its ORIGINAL and its NEW facility
@@ -1111,7 +1233,7 @@ server <- function(input, output, session) {
     f <- function(s) section_drive_minutes(s, input$wi_drive_mode %||% "estimate",
                                            input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3,
                                            input$wi_speed_pct %||% 100)
-    list(before = f(b$sections), after = f(a))
+    list(before = f(wi_sections()), after = f(a))
   })
 
   # Section polygons for every facility: loaded once, when the tab is first opened
@@ -1143,14 +1265,176 @@ server <- function(input, output, session) {
   }
 
   observeEvent(input$wi_map_shape_click, {
-    id <- input$wi_map_shape_click$id
+    e <- input$wi_map_shape_click
+    if (isTRUE(pin_mode())) { pin_at(e$lng, e$lat); return() }     # pinning Facility X, not promoting
+    id <- e$id
     if (!is.null(id)) update_changes(id, "toggle")
+  })
+  observeEvent(input$wi_map_click, {                               # a click outside every section
+    e <- input$wi_map_click
+    if (isTRUE(pin_mode())) pin_at(e$lng, e$lat)
+  })
+
+  # ---- Facility dots: drag, pin Facility X, recalculate drive times -------------
+  set_fac_pos <- function(fac, lon, lat) {
+    lon <- suppressWarnings(as.numeric(lon)); lat <- suppressWarnings(as.numeric(lat))
+    if (length(fac) != 1 || !fac %in% fac_known() || length(lon) != 1 || length(lat) != 1 ||
+        !is.finite(lon) || !is.finite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+      return(invisible(FALSE))
+    }
+    ov <- fac_pos(); ov <- ov[ov$facility != fac, , drop = FALSE]
+    home <- fac_locs[fac_locs$facility == fac, , drop = FALSE]
+    if (!(nrow(home) == 1 && same_place(home$lon, home$lat, lon, lat))) {   # back on its office = not moved
+      ov <- rbind(ov, data.frame(facility = fac, lon = lon, lat = lat, stringsAsFactors = FALSE))
+    }
+    fac_pos(ov)
+    r <- fac_routes(); r[[fac]] <- NULL; fac_routes(r)                      # any routes were for the old spot
+    invisible(TRUE)
+  }
+  # After a drop / pin: offer to recalculate the drive times on the road network
+  ask_recalc <- function(fac) {
+    if (!(fac %in% fac_pos()$facility)) return(invisible())
+    showModal(modalDialog(
+      title = "Recalculate drive times?", easyClose = TRUE,
+      tags$p(sprintf(paste0("%s is at a new location. Until the drive times from it are recalculated on ",
+                            "the road network they are a straight-line estimate, so they will be off."),
+                     fac_label(fac))),
+      tags$p("Recalculating takes up to a minute. Do you want to do it now?"),
+      footer = tagList(modalButton("Not now"),
+                       actionButton("fac_recalc_now", "Recalculate drive times", class = "btn-primary"))))
+  }
+  pin_at <- function(lng, lat) {
+    ok <- set_fac_pos(FACILITY_X, lng, lat)
+    pin_mode(FALSE)
+    if (isTRUE(ok)) ask_recalc(FACILITY_X)
+  }
+  reset_positions <- function() {
+    fac_pos(NO_FAC_POS); fac_routes(list())
+    pin_mode(identical(isolate(input$wi_move_to), FACILITY_X))
+  }
+  do_recalc <- function() {
+    ov <- fac_pos(); need <- facilities_needing_recalc(ov, fac_routes())
+    if (length(need) == 0) return(invisible())
+    geo <- tryCatch(wi_geo_df(), error = function(e) NULL)
+    if (is.null(geo)) return(invisible())
+    # the routing service (OSRM): the configured address, else the usual local ones
+    url <- withProgress(message = "Connecting to the routing service", value = 0.2, find_osrm_url())
+    if (!nzchar(url)) {
+      showNotification(sprintf(paste0("The routing service could not be reached (tried %s). The moved facilities keep the straight-line ",
+                                      "estimate. Press Recalculate drive times again later."),
+                               paste(capacity_osrm_candidates(), collapse = ", ")),
+                       type = "error", duration = NULL)
+      return(invisible())
+    }
+    routes <- fac_routes()
+    withProgress(message = "Recalculating drive times on the road network", value = 0, {
+      for (f in need) {
+        o <- ov[ov$facility == f, , drop = FALSE]
+        res <- tryCatch(osrm_route_facility(list(facility = f, lon = o$lon, lat = o$lat), geo, url),
+                        error = function(e) e)
+        if (inherits(res, "error")) {
+          message("[capacity_planner] route recalculation failed for ", f, ": ", conditionMessage(res))
+          showNotification(sprintf("Could not recalculate the drive times from %s; the straight-line estimate stays.",
+                                   fac_label(f)), type = "error", duration = 10)
+          next
+        }
+        routes[[f]] <- list(lon = o$lon, lat = o$lat, times = res)
+        incProgress(1 / length(need), detail = fac_label(f))
+      }
+    })
+    fac_routes(routes)
+  }
+  observeEvent(input$wi_fac_moved, {
+    x <- input$wi_fac_moved
+    if (isTRUE(set_fac_pos(as.character(x$fac), x$lon, x$lat))) ask_recalc(as.character(x$fac))
+  })
+  observeEvent(input$wi_move_to, {                                  # picking Facility X asks for its location
+    v <- input$wi_move_to %||% "keep"
+    pin_mode(identical(v, FACILITY_X) && !(FACILITY_X %in% isolate(fac_pos())$facility))
+  }, ignoreNULL = FALSE)
+  observeEvent(input$pin_again, pin_mode(TRUE))
+  observeEvent(input$fac_recalc_now, { removeModal(); do_recalc() })
+  observeEvent(input$fac_recalc, do_recalc())
+  observeEvent(input$fac_reset, reset_positions())
+  observe(session$sendCustomMessage("wi_pin_mode", list(on = isTRUE(pin_mode()))))
+
+  # The dots (office locations, moved ones at their new spot, Facility X once pinned)
+  observe({
+    req(map_ready(), !is.null(geo_raw()), base())
+    pos <- facility_positions(fac_locs, fac_pos())
+    items <- lapply(seq_len(nrow(pos)), function(i) {
+      f <- pos$facility[i]
+      list(fac = f, lat = pos$lat[i], lon = pos$lon[i], moved = pos$moved[i], label = f,
+           color = {cl <- sec_color(f); if (is.na(cl)) "#666666" else cl},
+           title = sprintf("%s office%s. Drag it to move it; drive times from a new spot need recalculating.",
+                           fac_label(f), if (pos$moved[i]) " (moved)" else ""))
+    })
+    session$sendCustomMessage("wi_fac_dots", list(items = items))
+  })
+  # A new spot or new routes change the drive times shown in the section tooltips
+  observeEvent(list(fac_pos(), fac_routes()), {
+    req(map_ready(), !is.null(geo_raw()), base())
+    restyle_all()
+  }, ignoreInit = TRUE)
+
+  output$wi_pos_note <- renderUI({
+    ov <- fac_pos()
+    hint <- tags$p(class = "metric-note", style = "margin:6px 0 0;",
+      "The dots mark the facility offices: drag one to see how a different location changes the drive ",
+      "times. Pick Facility X under Move sections to and click the map to place a new facility.")
+    if (nrow(ov) == 0) return(hint)
+    need <- facilities_needing_recalc(ov, fac_routes())
+    moved <- paste(vapply(ov$facility, fac_label, ""), collapse = ", ")
+    body <- if (length(need) == 0) {
+      tagList(tags$b(paste0("Moved: ", moved, ". ")),
+              "Drive times from the moved locations were recalculated on the road network (OpenStreetMap). ")
+    } else {
+      tagList(tags$b(paste0("Moved: ", moved, ". ")),
+              sprintf("Drive times from %s are a straight-line estimate (not recalculated), so they will be off. ",
+                      paste(vapply(need, fac_label, ""), collapse = ", ")),
+              actionButton("fac_recalc", "Recalculate drive times (up to a minute)", class = "btn-primary btn-sm"))
+    }
+    div(class = paste("alert", if (length(need) == 0) "alert-info" else "alert-warning"), role = "status",
+        body, " ", actionButton("fac_reset", "Reset facility positions", class = "btn-default btn-sm"))
   })
   observeEvent(input$wi_toggle, {                       # section-list checkbox (keyboard route)
     x <- input$wi_toggle
     update_changes(x$code, if (isTRUE(x$on)) "set" else "off")
   })
-  observeEvent(input$wi_undo, { changes(no_changes); wi_msg("") })
+  # Quick add: every section of the picked township is selected like a box would, with the
+  # current "Move sections to" facility (promoted to P1 there). Picking it again undoes it.
+  observeEvent(input$quick_town, {
+    code <- input$quick_town %||% ""
+    req(nzchar(code))
+    b <- base(); req(b)
+    codes <- town_sections(b$sections, code)
+    req(length(codes) > 0)
+    before <- changes()
+    update_changes(codes, "toggle")
+    after <- changes()
+    dest <- input$wi_move_to %||% "keep"
+    nm <- town_name(code, town_df())
+    added <- setdiff(after$sectcode, before$sectcode)
+    dropped <- setdiff(before$sectcode, after$sectcode)
+    sec_added <- b$sections[as.character(b$sections$sectcode) %in% added, , drop = FALSE]
+    n_promo <- sum(as.character(sec_added$zone) == "2")
+    n_moved <- if (identical(dest, "keep")) 0L else sum(as.character(sec_added$facility) != dest)
+    wi_msg(if (length(added) > 0) {
+      sprintf("%s: %d section(s) added (%d promoted to P1%s).", nm, length(added), n_promo,
+              if (!identical(dest, "keep")) sprintf(", %d moved to %s", n_moved, dest) else "")
+    } else if (length(dropped) > 0) {
+      sprintf("%s: %d section(s) put back.", nm, length(dropped))
+    } else {
+      sprintf("%s: nothing to change (its sections are already P1 here; pick a facility under Move sections to move them).", nm)
+    })
+    g <- geo_raw()
+    if (!is.null(g) && any(g$sectcode %in% codes)) {
+      bb <- as.numeric(sf::st_bbox(g[g$sectcode %in% codes, ]))
+      leaflet::fitBounds(leaflet::leafletProxy("wi_map"), bb[1], bb[2], bb[3], bb[4])
+    }
+    updateSelectInput(session, "quick_town", selected = "")   # so the same township can be picked again
+  }, ignoreInit = TRUE)
+  observeEvent(input$wi_undo, { changes(no_changes); wi_msg(""); reset_positions() })
   observe(session$sendCustomMessage("wi_sel_sync", as.list(changes()$sectcode)))
 
   output$wi_selcount <- renderUI({
@@ -1255,6 +1539,7 @@ server <- function(input, output, session) {
       if (pRect) { map.removeLayer(pRect); pRect = null; }
       pStart = null; pId = null;
     });
+    if (window.wiFacDraw) { window.wiFacDraw(0); }
   }"
 
   # Facility colors (qualitative); the same facility always gets the same color
@@ -1264,7 +1549,8 @@ server <- function(input, output, session) {
   }
   map_facs <- function() sort(unique(isolate(base())$sections$facility))
   sec_color <- function(facility) {
-    f <- map_facs(); unname(fac_colors(f)[match(facility, f)])
+    f <- map_facs(); col <- unname(fac_colors(f)[match(facility, f)])
+    ifelse(as.character(facility) == FACILITY_X, FACILITY_X_COLOR, col)     # Facility X has its own color
   }
   sec_opacity <- function(zone) ifelse(as.character(zone) == "1", 0.75, 0.15)
   shade_mode <- function() {
@@ -1300,9 +1586,9 @@ server <- function(input, output, session) {
                                     sprintf(" (%s per sq mi)", format(round(dens), big.mark = ",", trim = TRUE)))))
     sprintf(
       paste0("<b>%s</b> (FOS %s)<br/>%s<br/>Ground %d sites / %.1f ac &middot; ",
-             "Air %d sites / %.1f ac &middot; WetCB %d%s%s"),
+             "Air %d sites / %.1f ac &middot; RED air %d sites / %.1f ac &middot; WetCB %d%s%s"),
       g$sectcode, g$fos_name, where, g$ground_sites, g$ground_acres, g$air_sites, g$air_acres,
-      g$wet_cb, people,
+      g$red_air_sites, g$red_air_acres, g$wet_cb, people,
       ifelse(is.na(g$drive_min_routed), "",
              sprintf("<br/>~%.0f min drive from %s (OSM)", g$drive_min_routed, g$facility)))
   }
@@ -1320,7 +1606,8 @@ server <- function(input, output, session) {
     lg <- shade_legend(mode)
     proxy <- leaflet::removeControl(proxy, "wi_legend")
     if (is.null(lg)) {
-      leaflet::addLegend(proxy, "bottomright", colors = unname(fac_colors(facs)), labels = facs,
+      leaflet::addLegend(proxy, "bottomright", colors = c(unname(fac_colors(facs)), FACILITY_X_COLOR),
+                         labels = c(facs, "X (new)"),
                          title = "Facility", opacity = 0.9, layerId = "wi_legend")
     } else {
       leaflet::addLegend(proxy, "bottomright", colors = lg$colors, labels = lg$labels,
@@ -1337,7 +1624,8 @@ server <- function(input, output, session) {
     bb <- as.numeric(sf::st_bbox(g))
     m %>%
       leaflet::fitBounds(bb[1], bb[2], bb[3], bb[4]) %>%
-      leaflet::addLegend("bottomright", colors = unname(fac_colors(facs)), labels = facs,
+      leaflet::addLegend("bottomright", colors = c(unname(fac_colors(facs)), FACILITY_X_COLOR),
+                         labels = c(facs, "X (new)"),
                          title = "Facility", opacity = 0.9, layerId = "wi_legend") %>%
       htmlwidgets::onRender(.box_js)
   })
@@ -1354,14 +1642,29 @@ server <- function(input, output, session) {
   styled <- new.env(parent = emptyenv())
   styled$key <- character(0)           # sectcode -> "facility|zone" for sections now restyled
 
+  # The section table, routed lookup and facility list with any moved dot applied (NULL while the
+  # map data is still loading)
+  wi_state <- function() {
+    tryCatch(list(sec = isolate(wi_sections()), times = isolate(wi_times()), facs = isolate(wi_facs())),
+             error = function(e) NULL)
+  }
+  # Restyle every section (fill, outline, tooltip) in one message: a new shading, a moved dot
+  restyle_all <- function() {
+    st <- wi_state(); if (is.null(st)) return(invisible())
+    a <- scenario_apply(st$sec, isolate(changes()), st$times, facilities = st$facs)
+    send_restyle(a, seq_len(nrow(a)))
+    invisible()
+  }
+
   restyle_sync <- function() {
     b <- isolate(base()); if (is.null(b)) return(invisible())
     ch <- isolate(changes())
     codes <- unique(c(names(styled$key), ch$sectcode))
     if (length(codes) == 0) return(invisible())
-    sec <- b$sections[as.character(b$sections$sectcode) %in% codes, , drop = FALSE]
-    a <- scenario_apply(sec, ch[ch$sectcode %in% codes, , drop = FALSE], b$times,
-                        facilities = unique(b$sections$facility))
+    ws <- wi_state(); if (is.null(ws)) return(invisible())
+    sec <- ws$sec[as.character(ws$sec$sectcode) %in% codes, , drop = FALSE]
+    a <- scenario_apply(sec, ch[ch$sectcode %in% codes, , drop = FALSE], ws$times,
+                        facilities = ws$facs)
     code <- as.character(a$sectcode)
     cur <- paste(a$facility, a$zone, sep = "|")
     orig <- paste(a$facility_from, a$zone_from, sep = "|")
@@ -1378,9 +1681,7 @@ server <- function(input, output, session) {
     b <- base(); req(b)
     mode <- shade_mode()
     set_legend(mode)
-    a <- scenario_apply(b$sections, isolate(changes()), b$times,
-                        facilities = unique(b$sections$facility))
-    send_restyle(a, seq_len(nrow(a)))
+    restyle_all()
   }, ignoreInit = TRUE)
 
   observe({
@@ -1390,7 +1691,8 @@ server <- function(input, output, session) {
     d <- merge(g[, "sectcode"],
                a[, c("sectcode", "facility", "zone", "facility_from", "zone_from", "moved",
                      "promoted", "fos_name", "ground_sites", "ground_acres", "air_sites",
-                     "air_acres", "wet_cb", "population", "density", "drive_min_routed")],
+                     "air_acres", "red_air_sites", "red_air_acres", "wet_cb", "population",
+                     "density", "drive_min_routed")],
                by = "sectcode")
     mode <- isolate(shade_mode())
     st <- sec_style(sf::st_drop_geometry(d), mode)
@@ -1406,6 +1708,7 @@ server <- function(input, output, session) {
     styled$key <- character(0)
     # proxy calls go out after this flush; send the scenario's styles right behind them
     session$onFlushed(restyle_sync, once = TRUE)
+    if (nrow(isolate(fac_pos())) > 0) session$onFlushed(restyle_all, once = TRUE)   # a link with a moved dot
     rv <- isolate(restore_view())               # a shared link's map view replaces the fit-to-data view
     if (!is.null(rv)) {
       leaflet::leafletProxy("wi_map") %>% leaflet::setView(rv$lng, rv$lat, rv$z)
@@ -1427,7 +1730,7 @@ server <- function(input, output, session) {
   # sections as they are today and is not rebuilt when the scenario changes (the ticks follow it).
   output$wi_sections <- DT::renderDT({
     b <- base(); req(b)
-    s <- b$sections; req(nrow(s) > 0)
+    s <- wi_sections(); req(nrow(s) > 0)
     s <- s[order(s$facility, s$zone, s$sectcode), ]
     s$Sel <- sprintf(
       '<input type="checkbox" class="wi-sel" data-sect="%s" aria-label="Promote section %s">',
@@ -1437,15 +1740,17 @@ server <- function(input, output, session) {
                                          input$wi_avg_mph %||% 45, input$wi_circuity %||% 1.3,
                                          input$wi_speed_pct %||% 100)
     disp <- s[, c("Sel", "sectcode", "facility", "Priority", "fos_name", "ground_sites",
-                  "ground_acres", "air_sites", "air_acres", "prehatch_sites", "prehatch_acres",
+                  "ground_acres", "air_sites", "air_acres", "red_air_sites", "red_air_acres",
+                  "prehatch_sites", "prehatch_acres",
                   "wet_cb", "drive_min", "population", "density")]
-    for (col in c("ground_acres", "air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
+    for (col in c("ground_acres", "air_acres", "red_air_acres", "prehatch_acres")) disp[[col]] <- round(disp[[col]], 1)
     disp$density <- round(disp$density)
     rr <- resident_ratio_cols(s)                   # six separate residents-per ratios
     for (col in RESIDENT_RATIO_COLS) disp[[col]] <- round(rr[[col]], 1)
     disp <- drop_empty_population(disp)           # no census file: no residents columns
     names(disp) <- c("Promote", "Section", "Facility", "Priority", "FOS", "Ground sites",
-                     "Ground acres", "Air sites", "Air acres", "Ground prehatch sites",
+                     "Ground acres", "Air sites", "Air acres", "RED air sites", "RED air acres",
+                     "Ground prehatch sites",
                      "Ground prehatch acres",
                      "WetCB", "Drive min",
                      c("Residents", "Residents per sq mi")[c("population", "density") %in% names(disp)],
@@ -1633,6 +1938,9 @@ server <- function(input, output, session) {
       `Ground prehatch acres/tech` = arrow(b0$ph_acres_per_tech[i0], b1$ph_acres_per_tech),
       `Ground acres/crew` = arrow(b0$ground_acres_per_crew[i0], b1$ground_acres_per_crew),
       `Air acres/crew` = arrow(b0$air_acres_per_crew[i0], b1$air_acres_per_crew),
+      `RED air sites/tech` = arrow(b0$red_air_sites_per_tech[i0], b1$red_air_sites_per_tech),
+      `RED air acres/tech` = arrow(b0$red_air_acres_per_tech[i0], b1$red_air_acres_per_tech),
+      `RED air acres/crew` = arrow(b0$red_air_acres_per_crew[i0], b1$red_air_acres_per_crew),
       `Ground prehatch acres/crew` = arrow(b0$ph_acres_per_crew[i0], b1$ph_acres_per_crew),
       check.names = FALSE, stringsAsFactors = FALSE)
   })
@@ -1682,10 +1990,12 @@ server <- function(input, output, session) {
         paste0("<b>%s baseline (P1):</b> %s crews &middot; %s ground techs &middot; %s drone techs",
                "<br/>Ground: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
                "<br/>Air: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
+               "<br/>RED air: %s sites/tech &middot; %s acres/tech &middot; %s acres/crew",
                "<br/>Ground prehatch: %s acres/tech &middot; %s acres/crew"),
         r$facility, f(r$crews), f(r$ground_techs), f(r$drone_techs),
         f(r$ground_sites_per_tech), f(r$ground_acres_per_tech), f(r$ground_acres_per_crew),
         f(r$air_sites_per_tech), f(r$air_acres_per_tech), f(r$air_acres_per_crew),
+        f(r$red_air_sites_per_tech), f(r$red_air_acres_per_tech), f(r$red_air_acres_per_crew),
         f(r$ph_acres_per_tech), f(r$ph_acres_per_crew))))
   })
 

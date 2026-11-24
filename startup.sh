@@ -29,6 +29,9 @@ echo "Alex is really cool"
 # ─────────────────────────────────────────────────────────────────────────────
 echo "CARTO_API_KEY=${CARTO_API_KEY}" >> /srv/shiny-server/.env
 
+# Routing service (OSRM)
+echo "OSRM_URL=${OSRM_URL:-}" >> /srv/shiny-server/.env
+
 # ─────────────────────────────────────────────────────────────────────────────
 # API KEY — used by the Plumber REST API to protect private endpoints.
 # ─────────────────────────────────────────────────────────────────────────────

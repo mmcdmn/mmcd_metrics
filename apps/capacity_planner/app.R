@@ -250,6 +250,38 @@ ui <- accessible_page(
         if (b) { b.classList.toggle('btn-primary', !!m.on); b.classList.toggle('btn-default', !m.on);
                  b.setAttribute('aria-pressed', m.on ? 'true' : 'false'); }
       });
+      // Recalculate drive times: THIS browser asks the routing service (the way the chat widget asks its tunnel), so
+      // the server never has to reach it. The raw seconds / meters go back to the app as wi_route_done.
+      Shiny.addCustomMessageHandler('wi_route', function(m) {
+        var n = m.lon.length, size = m.chunk, jobs = [];
+        var back = function(extra) {
+          Shiny.setInputValue('wi_route_done', Object.assign({ fac: m.fac, olon: m.olon, olat: m.olat,
+                                                               nonce: Math.random() }, extra), { priority: 'event' });
+        };
+        var miss = function(v) { return v === null ? -1 : v; };
+        for (var i = 0; i < n; i += size) {
+          (function(a, b) {
+            var c = [m.olon.toFixed(6) + ',' + m.olat.toFixed(6)], idx = [];
+            for (var k = a; k < b; k++) { c.push(m.lon[k].toFixed(6) + ',' + m.lat[k].toFixed(6)); idx.push(k - a + 1); }
+            var url = m.url + '/table/v1/driving/' + c.join(';') + '?sources=0&destinations=' + idx.join(';') +
+                      '&annotations=duration,distance';
+            jobs.push(fetch(url).then(function(r) {
+              if (!r.ok) { throw new Error('HTTP ' + r.status); }
+              return r.json();
+            }).then(function(j) {
+              if (j.code !== 'Ok') { throw new Error('the router answered ' + j.code); }
+              return { dur: j.durations[0].map(miss), dist: j.distances[0].map(miss),
+                       snap: j.destinations.map(function(d) { return miss(d.distance); }) };
+            }));
+          })(i, Math.min(i + size, n));
+        }
+        Promise.all(jobs).then(function(parts) {
+          var cat = function(key) { return [].concat.apply([], parts.map(function(p) { return p[key]; })); };
+          back({ ok: true, dur: cat('dur'), dist: cat('dist'), snap: cat('snap') });
+        }).catch(function(e) {
+          back({ ok: false, error: String((e && e.message) || e) });
+        });
+      });
       Shiny.addCustomMessageHandler('wi_staff_set', function(m) {
         window.wiStaffFac = m.fac; window.wiStaffPushing = true;
         try {
@@ -1312,40 +1344,51 @@ server <- function(input, output, session) {
     fac_pos(NO_FAC_POS); fac_routes(list())
     pin_mode(identical(isolate(input$wi_move_to), FACILITY_X))
   }
+  route_pending <- reactiveVal(0L)                     # recalculations the browser is still working on
   do_recalc <- function() {
     ov <- fac_pos(); need <- facilities_needing_recalc(ov, fac_routes())
     if (length(need) == 0) return(invisible())
     geo <- tryCatch(wi_geo_df(), error = function(e) NULL)
     if (is.null(geo)) return(invisible())
-    # the routing service (OSRM): ONE address, OSRM_URL else capacity_planner.osrm_url in the config
+    # the routing service (OSRM): ONE address, OSRM_URL else capacity_planner.osrm_url in the config. The visitor's
+    # BROWSER asks it, as the chat widget asks its tunnel, so the server never has to reach it.
     url <- capacity_osrm_url()
     if (!nzchar(url)) {
       showNotification(paste0("No routing service address is set (osrm_url in config/app_config.yaml), so the moved ",
                               "facilities keep the straight-line estimate."), type = "error", duration = NULL)
       return(invisible())
     }
-    routes <- fac_routes(); failed <- NULL
-    withProgress(message = "Recalculating drive times on the road network", value = 0, {
-      for (f in need) {
-        o <- ov[ov$facility == f, , drop = FALSE]
-        res <- tryCatch(osrm_route_facility(list(facility = f, lon = o$lon, lat = o$lat), geo, url),
-                        error = function(e) e)
-        if (inherits(res, "error")) {              # the router answers every facility alike: stop at the first failure
-          message("[capacity_planner] route recalculation failed for ", f, " via ", url, ": ", conditionMessage(res))
-          failed <- trimws(substr(gsub("<[^>]*>|[[:space:]]+", " ", conditionMessage(res)), 1, 160))   # what went wrong, one line
-          break
-        }
-        routes[[f]] <- list(lon = o$lon, lat = o$lat, times = res)
-        incProgress(1 / length(need), detail = fac_label(f))
-      }
-    })
-    if (!is.null(failed)) {
+    showNotification("Recalculating drive times on the road network...", id = "wi_route_busy", type = "message",
+                     duration = NULL, closeButton = FALSE)
+    route_pending(length(need))
+    for (f in need) {
+      o <- ov[ov$facility == f, , drop = FALSE]
+      session$sendCustomMessage("wi_route", list(fac = f, url = url, olon = o$lon, olat = o$lat,
+                                                 lon = geo$lon, lat = geo$lat, chunk = OSRM_CHUNK_SIZE))
+    }
+  }
+  observeEvent(input$wi_route_done, {                    # what the browser got from the routing service
+    x <- input$wi_route_done; f <- as.character(x$fac)
+    left <- max(0L, isolate(route_pending()) - 1L); route_pending(left)
+    if (left == 0L) removeNotification("wi_route_busy")
+    if (!(f %in% fac_pos()$facility)) return(invisible())   # the dot was reset meanwhile
+    res <- if (isTRUE(x$ok)) {
+      tryCatch(osrm_routes_from_raw(list(facility = f, lon = x$olon, lat = x$olat), wi_geo_df(),
+                                    x$dur, x$dist, x$snap), error = function(e) e)
+    } else simpleError(as.character(x$error %||% "no answer"))
+    if (inherits(res, "error")) {
+      url <- capacity_osrm_url()
+      message("[capacity_planner] route recalculation failed for ", f, " via ", url, ": ", conditionMessage(res))
+      failed <- trimws(substr(gsub("<[^>]*>|[[:space:]]+", " ", conditionMessage(res)), 1, 160))   # what went wrong, one line
       showNotification(sprintf(paste0("The routing service could not be reached (tried %s: %s). The moved facilities keep the ",
                                       "straight-line estimate. Press Recalculate drive times again later."), url, failed),
                        type = "error", duration = NULL)
+      return(invisible())
     }
+    routes <- fac_routes()
+    routes[[f]] <- list(lon = x$olon, lat = x$olat, times = res)
     fac_routes(routes)
-  }
+  })
   observeEvent(input$wi_fac_moved, {
     x <- input$wi_fac_moved
     if (isTRUE(set_fac_pos(as.character(x$fac), x$lon, x$lat))) ask_recalc(as.character(x$fac))

@@ -1734,3 +1734,18 @@ test_that("the app wires the facility dots, Facility X, the pin and the recalcul
   sh <- paste(readLines(file.path(root, "startup.sh"), warn = FALSE), collapse = "\n")
   expect_true(grepl("OSRM_URL=${OSRM_URL:-}", sh, fixed = TRUE))
 })
+
+test_that("osrm_routes_from_raw: the page's seconds / meters become the routed rows, -1 means missing", {
+  env <- new.env(); load_capacity_fns(env)
+  dests <- data.frame(sectcode = c("190100001", "190100002", "190100003"), lon = c(-93.1, -93.2, -93.3),
+                      lat = c(44.1, 44.2, 44.3), stringsAsFactors = FALSE)
+  r <- env$osrm_routes_from_raw(list(facility = "Q", lon = -93.2, lat = 44.8), dests,
+                                duration_s = c(600, -1, 3660), distance_m = c(16093.44, -1, 32186.88), snap_m = c(12.4, -1, 1500))
+  expect_equal(names(r), env$ROUTED_TIME_COLUMNS)
+  expect_equal(r$drive_min_routed, c(10, NA, 61))
+  expect_equal(r$drive_miles_routed, c(10, NA, 20))
+  expect_equal(r$snap_m, c(12, NA, 1500)); expect_equal(r$snap_flag, c(FALSE, FALSE, TRUE))
+  expect_equal(r$facility, rep("Q", 3)); expect_false(anyNA(r$straight_miles))
+  expect_error(env$osrm_routes_from_raw(list(lon = -93, lat = 44), dests, 1:2, 1:3, 1:3), "does not match")
+  expect_error(env$osrm_routes_from_raw(list(lon = 500, lat = 44), dests, 1:3, 1:3, 1:3), "Invalid facility")
+})
